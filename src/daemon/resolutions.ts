@@ -1,5 +1,5 @@
-import type { FinishPolicy, PendingWork } from '@shared/tasks.js'
-import { FINISH_LABELS, policyLands, policyVerifies } from '@shared/tasks.js'
+import type { FinishPolicy, PendingWork, ResolveRetryCause } from '@shared/tasks.js'
+import { FINISH_LABELS, policyLands, policyVerifies, resolveRetryCauses } from '@shared/tasks.js'
 import { getProject, landingTargetFor, policyFor, reloadProjectIfPresent } from './projects.js'
 import { decideFinish, resolveFinishPolicy } from './finish.js'
 import { landingBaseFor, hasRemote, landTask } from './landing.js'
@@ -136,15 +136,22 @@ export async function resolveChecksOnTask(
   const lastSystem = [...msgs].reverse().find((m) => m.role === 'system' && /landing failed|checks failed/i.test(m.text))
   const failureDetail = lastSystem ? lastSystem.text : (task.holdReason ?? 'Project checks failed')
   const checks = project.config.check ?? []
+  // ⚠️ Said in full, because the shortcut is real: t347's agent reported *"focused daemon tests"*
+  // green and complete, and the landing's own run of `npm test` was red on a file it had not
+  // opened. The exact commands, run in full, are the bar — the same bar the landing applies.
   const checkStep =
     checks.length > 0
-      ? `Run every project check (${checks.map((check) => `\`${check}\``).join(', ')}) again after the fix. `
-      : 'Rerun the failing command after the fix. '
+      ? `Then run every project check in full, exactly as written (${checks.map((check) => `\`${check}\``).join(', ')}), ` +
+        'in this workspace, and do not report complete until each one exits 0 — a focused subset of the ' +
+        'tests is not a pass, because the landing reruns the full commands and will fail again on ' +
+        'anything you did not run. '
+      : 'Then rerun the failing command in full and do not report complete until it exits 0. '
 
   const instruction =
     `The landing failed because project verification checks failed on \`${branch}\`:\n\n` +
     `${failureDetail}\n\n` +
-    'Please inspect and fix the failing checks (e.g. typecheck, lint, or tests). ' +
+    'Start from the failure named above: find the failing test or check, run that one first, and fix ' +
+    'the cause (the test if the behaviour changed on purpose, the code if it did not). ' +
     'If two or more commits ahead of this task branch’s landing target all belong to this task, squash ' +
     'them into one coherent commit where safe; do not rewrite commits already on the landing target, ' +
     'force-push, or use a destructive reset. ' +
@@ -262,17 +269,20 @@ export async function resolveRetryOnTask(
     return { ok: false, reason: 'automatic resolve-and-retry was already attempted; review this failure' }
   }
 
-  const reason = task.holdReason ?? ''
-  const resolver =
-    /conflict|rebase/i.test(reason)
-      ? resolveConflictOnTask
-      : /checks? failed|verification failed/i.test(reason)
-        ? resolveChecksOnTask
-        : /uncommitted|cannot be asked after its turn ends|rescue|stash/i.test(reason)
-          ? resolveCommitOnTask
-          : /trunk moved.*branch is empty/i.test(reason)
-            ? resolveTrunkMovedOnTask
-            : null
+  // ⛔ **The same classifier the card uses, and nothing local.** This used to keep its own regexes,
+  // and the first of them was `/conflict|rebase/` — which matched *"the project checks failed after
+  // rebase"*, the reason every red check writes. The card said *Project checks failed*; this sent
+  // the agent the rebase instruction; the agent rebased (a no-op), reported complete, and the same
+  // test went red on the next landing. Three times each on t344 and t347 (2026-09-11), and the name
+  // of the failing test never reached the agent. One list, in `@shared/tasks`, read by both.
+  const resolvers: Record<ResolveRetryCause, (taskId: string) => Promise<{ ok: boolean; reason?: string }>> = {
+    conflicted: resolveConflictOnTask,
+    checksFailed: resolveChecksOnTask,
+    uncommitted: resolveCommitOnTask,
+    trunkMoved: resolveTrunkMovedOnTask
+  }
+  const cause = resolveRetryCauses(task)[0]
+  const resolver = cause ? resolvers[cause] : null
   if (!resolver) return { ok: false, reason: 'this landing failure needs human review' }
 
   if (automatic) {

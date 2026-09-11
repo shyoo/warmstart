@@ -114,6 +114,19 @@ so they are the ones with a bar. All of these must hold:
    real checks and the next two stopped at *"this project defines no check commands"* — a bar the
    work met, failed by a stale copy. `reloadProjectIfPresent` in
    [`projects.ts`](../src/daemon/projects.ts) is the reader; `projectpolicy.test.ts` pins it.
+   ⭐ **A red check is handed back clean and whole** (2026-09-11). The checks run with
+   `NO_COLOR=1`/`FORCE_COLOR=0` and their output is passed through `stripAnsi` regardless, because
+   t344 and t347 put vitest's escape codes verbatim into the thread (`←[31m←[1m FAIL`) and into the
+   instruction the agent was sent; the thread keeps the last **4,000** characters rather than 2,000,
+   which is what it takes for a runner's summary to still name the failing test. ⛔ **And the retry
+   that follows is routed by one classifier, `resolveRetryCauses` in `@shared/tasks`, read by the
+   card and by `resolveRetryOnTask` alike.** The daemon used to keep its own copy whose first rule
+   was `/conflict|rebase/` — matching *"the project checks failed after rebase"*, the very reason a
+   red check writes — so both of those tasks were told three times to rebase a branch whose rebase
+   was a no-op, reported complete each time, and hit the same red test on the next landing without
+   ever having been told its name. The check-fix instruction now also says the bar in full: the
+   named failure first, then every `check` command exactly as written and in full, because *"focused
+   daemon tests"* green is what t347 reported over a suite the landing found red.
 5. **The rebase onto the target applies.** If it does not, the task is not stopped — the agent is
    asked to resolve it, once. See [below](#when-the-branch-will-not-rebase).
 6. **The branch tip is not a rescue** — not a `wip:` commit the tool itself made of work an

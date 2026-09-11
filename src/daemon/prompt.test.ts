@@ -416,7 +416,7 @@ describe('run prompt persistence and task.get preview', () => {
     expect(lastHuman?.text).toContain('1 problem (1 error)')
     expect(lastHuman?.text).toContain(`warmstart/t${task.seq}-fix-issue`)
     expect(lastHuman?.text).toContain('squash them into one coherent commit where safe')
-    expect(lastHuman?.text).toContain('Rerun the failing command after the fix')
+    expect(lastHuman?.text).toContain('rerun the failing command in full')
   })
 
   it('gives a conflict retry the full rebase, squash, and verification sequence', async () => {

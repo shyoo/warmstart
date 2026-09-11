@@ -53,6 +53,7 @@ import {
   STATUS_TONE
 } from '../lib/taskview'
 import { errorMessage } from '@shared/errors.js'
+import { stripAnsi } from '@shared/ansi'
 import { useAction } from '../lib/useAction'
 import { TaskSettingPicker } from './TaskSettingPicker'
 import { CacheCost, Fact, ModelFact, SessionFact } from './thread/Facts'
@@ -1140,9 +1141,11 @@ function MessageImage({ attachment }: { attachment: Attachment }): React.JSX.Ele
  * whitespace either side of them, which is what carries the line breaks the daemon wrote.
  */
 function MessageText({ text }: { text: string }): React.JSX.Element {
+  // ⚠️ Stripped here as well as where the daemon writes: a thread written before 2026-09-11 holds
+  // check output with vitest's colour codes in it, and a person reading it now should not.
   return (
     <>
-      {codeSpans(text).map((span, i) =>
+      {codeSpans(stripAnsi(text)).map((span, i) =>
         span.code ? (
           <code className="msg-code" key={i}>
             {span.text}

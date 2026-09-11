@@ -341,6 +341,15 @@ describe('automatic resolve and retry', () => {
     expect(retried.status).toBe('ready')
     expect(retried.resolveRetryAskedAt).not.toBeNull()
     expect(tasks.messagesFor(task.id).filter((m) => /Automatically retrying once/.test(m.text))).toHaveLength(1)
+    // ⛔ **And it is the *checks* instruction that goes out, not the rebase one.** This test always
+    // used the real hold reason — "the project checks failed after rebase" — and never looked at
+    // what was sent, which is how `/conflict|rebase/` matched it for a fortnight: t344 and t347
+    // were each told three times to rebase a branch whose rebase was a no-op, while the test that
+    // was actually red was never named to them.
+    // ⚠️ The last human message: the first is the task's own prompt.
+    const sent = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)
+    expect(sent?.text ?? '').toMatch(/verification checks failed/)
+    expect(sent?.text ?? '').not.toMatch(/does not rebase cleanly/)
 
     // Recreate the same resting failure after that retry. The marker is durable, so a daemon tick
     // or restart cannot turn this into an unbounded sequence of billed recovery runs.

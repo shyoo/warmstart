@@ -956,6 +956,12 @@ describe('landing recovery actions and canRelandTask', () => {
       })
     ).toEqual(['conflicted', 'checksFailed'])
     expect(resolveRetryCauses({ holdReason: 'all clear' })).toEqual([])
+    // ⛔ "after rebase" is not a rebase conflict. The reason a red check writes names the rebase
+    // that preceded it, and the daemon's own copy of this rule matched `rebase` — so the agent was
+    // sent to resolve a conflict that did not exist (t344/t347). This is the one shared rule now.
+    expect(resolveRetryCauses({ holdReason: 'landing failed: the project checks failed after rebase' })).toEqual([
+      'checksFailed'
+    ])
   })
 
   it('does not offer canReland for conflicts, failing checks, or workspace uncommitted files', () => {

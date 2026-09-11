@@ -397,6 +397,38 @@ describe('landing without a remote', () => {
     expect(git(ws, 'log', '--oneline', '-1')).toContain('the agent did the work')
   })
 
+  it('hands back a failing check’s output without its colour codes, and names the failure', async () => {
+    // ⭐ t344/t347 (2026-09-11): vitest's escape codes reached the thread verbatim — `←[31m←[1m FAIL`
+    // in the chat — and the same bytes went to the agent inside the retry instruction. The check
+    // here colours its own output and is told not to, exactly as a real runner would be; the strip
+    // is for the ones that do not listen.
+    const branch = 'warmstart/t86-colour'
+    const { project, taskId, ws, root } = seedLocal(branch)
+    const red = 'process.stdout.write(\'\\x1b[31m\\x1b[1m FAIL \\x1b[22m\\x1b[39m the-red-test\\n\'); process.exit(1)'
+    writeFileSync(
+      join(root, '.warmstart', 'project.json'),
+      JSON.stringify({
+        schema_version: 1,
+        name: 'colour',
+        vcs: 'git',
+        check: [`node -e "${red}"`],
+        landing: { target: 'main' }
+      })
+    )
+    const reloaded = projects.reloadProject(project.id) ?? project
+
+    const result = await land(reloaded, taskId, ws, branch, 'commit-and-verify')
+
+    expect(result.ok).toBe(false)
+    expect(result.checkOutput ?? '').toContain('FAIL')
+    expect(result.checkOutput ?? '').toContain('the-red-test')
+    expect(result.checkOutput ?? '').not.toContain('')
+    // ⛔ And the thread copy — which is what `resolveChecksOnTask` sends the agent — is clean too.
+    const said = tasks.messagesFor(taskId).map((m) => m.text).join('\n')
+    expect(said).toContain('the-red-test')
+    expect(said).not.toContain('')
+  })
+
   it('lets the policy choose the strategy, not the project’s legacy field', () => {
     // ⛔ `makeRepo` writes `landing.strategy: 'auto-land'`. Before 2026-08-30 that field decided
     // what ran, so a project resolved to `pull-request` would still have had its trunk pushed.

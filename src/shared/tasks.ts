@@ -2815,3 +2815,39 @@ export interface FlowWorkspace {
   branch: string | null
   claimedAt: number | null
 }
+
+// ---------------------------------------------------------------------------- landing failures
+
+/**
+ * Why a landing stopped, read off the hold reason — one classifier for the card and the daemon.
+ *
+ * ⛔ **One rule in one place, because two copies drifted and the drift cost three billed runs.**
+ * The thread's *Resolve & retry* card matched `/conflict/` for a conflict while the daemon behind
+ * the button matched `/conflict|rebase/` — and the hold reason a red check writes is *"the project
+ * checks failed after rebase"*. So the card correctly said *Project checks failed* and the daemon
+ * sent the agent the **rebase** instruction, which was a no-op every time (t344 and t347,
+ * 2026-09-11: three retries each, the same test red on every landing, and the failing test's name
+ * was never in what the agent was told). Both sides now read this list, in this order.
+ *
+ * ⚠️ *Uncommitted* deliberately excludes "the trunk has uncommitted changes": that is the operator's
+ * own working tree in the way, not the agent's work, and an agent sent to commit on the task branch
+ * would be fixing something that is not broken.
+ */
+export type ResolveRetryCause = 'conflicted' | 'checksFailed' | 'uncommitted' | 'trunkMoved'
+
+export function resolveRetryCauses(task: { holdReason: string | null }): ResolveRetryCause[] {
+  const reason = task.holdReason ?? ''
+  const out: ResolveRetryCause[] = []
+  if (/conflict/i.test(reason)) out.push('conflicted')
+  if (/checks? failed|verification failed/i.test(reason)) out.push('checksFailed')
+  if (
+    !/the trunk has uncommitted/i.test(reason) &&
+    /workspace has uncommitted|file\(s\) are uncommitted|changes on .* are uncommitted|cannot be asked after its turn ends|rescue|stash/i.test(
+      reason
+    )
+  ) {
+    out.push('uncommitted')
+  }
+  if (/trunk moved.*branch is empty/i.test(reason)) out.push('trunkMoved')
+  return out
+}

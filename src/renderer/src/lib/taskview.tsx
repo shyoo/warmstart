@@ -1,6 +1,8 @@
 import {
   resolveModelChoice,
+  resolveRetryCauses,
   type Compaction,
+  type ResolveRetryCause,
   type ResolvedModelChoice,
   type Run,
   type Task
@@ -754,34 +756,27 @@ export function chronologicalTimeline(
   )
 }
 
-/** Whether the task stopped because of a merge or rebase conflict. */
-export function isConflictedTask(task: Pick<Task, 'holdReason'>): boolean {
-  return /conflict/i.test(task.holdReason ?? '')
-}
-
-/** Whether the task stopped because project verification checks failed. */
-export function isChecksFailedTask(task: Pick<Task, 'holdReason'>): boolean {
-  return /checks? failed|verification failed/i.test(task.holdReason ?? '')
-}
-
 /**
- * Whether the task stopped with uncommitted work on its workspace or branch.
+ * The four landing-failure predicates, each one cause of `resolveRetryCauses`.
  *
- * ⛔ Deliberately excludes "the trunk has uncommitted changes": that is a trunk blockage (the operator's
- * working tree is dirty), not uncommitted work by the agent, and dispatching an agent to commit on the
- * task branch would send it to fix something that is not broken.
+ * ⛔ Thin wrappers over the shared classifier, not regexes of their own: the daemon's *Resolve &
+ * retry* reads the same list, and a private copy here is how the card and the button came to
+ * disagree about the same hold reason (t344/t347). See `resolveRetryCauses` in `@shared/tasks`.
  */
-export function isUncommittedTask(task: Pick<Task, 'holdReason'>): boolean {
-  const reason = task.holdReason ?? ''
-  if (/the trunk has uncommitted/i.test(reason)) return false
-  return /workspace has uncommitted|file\(s\) are uncommitted|changes on .* are uncommitted|cannot be asked after its turn ends|rescue|stash/i.test(
-    reason
-  )
+export function isConflictedTask(task: Pick<Task, 'holdReason'>): boolean {
+  return resolveRetryCauses(task).includes('conflicted')
 }
 
-/** Whether the task tripped the trunk tripwire (the trunk moved during this run and this branch is empty). */
+export function isChecksFailedTask(task: Pick<Task, 'holdReason'>): boolean {
+  return resolveRetryCauses(task).includes('checksFailed')
+}
+
+export function isUncommittedTask(task: Pick<Task, 'holdReason'>): boolean {
+  return resolveRetryCauses(task).includes('uncommitted')
+}
+
 export function isTrunkMovedTask(task: Pick<Task, 'holdReason'>): boolean {
-  return /trunk moved.*branch is empty/i.test(task.holdReason ?? '')
+  return resolveRetryCauses(task).includes('trunkMoved')
 }
 
 /**
@@ -808,22 +803,12 @@ export function canRelandTask(task: Pick<Task, 'branch' | 'holdReason'>): boolea
   )
 }
 
-/** Every "Resolve & retry" cause matching this task, in the order they draw on the card. */
-export type ResolveRetryCause = 'conflicted' | 'checksFailed' | 'uncommitted' | 'trunkMoved'
-
 /**
  * Which explanations the single "Resolve & retry" button carries.
  *
  * ⛔ **One button, however many match.** All four causes dispatch the same `task.resolveRetry`
- * with only the task id — the daemon reads `holdReason` itself — so returning every match and
- * drawing one button per match asked the same question twice (t289). The card draws one button
- * and stacks every cause returned here beneath it.
+ * with only the task id — the daemon reads `holdReason` itself, through this same function — so
+ * returning every match and drawing one button per match asked the same question twice (t289).
+ * The card draws one button and stacks every cause returned here beneath it.
  */
-export function resolveRetryCauses(task: Pick<Task, 'holdReason'>): ResolveRetryCause[] {
-  const out: ResolveRetryCause[] = []
-  if (isConflictedTask(task)) out.push('conflicted')
-  if (isChecksFailedTask(task)) out.push('checksFailed')
-  if (isUncommittedTask(task)) out.push('uncommitted')
-  if (isTrunkMovedTask(task)) out.push('trunkMoved')
-  return out
-}
+export { resolveRetryCauses, type ResolveRetryCause }

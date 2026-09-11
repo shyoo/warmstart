@@ -26,6 +26,7 @@ import { log } from './log.js'
 import { git } from './git.js'
 import { errorMessage } from '@shared/errors.js'
 import { run } from './spawn.js'
+import { stripAnsi } from './stream.js'
 
 // ⛔ Re-exported, not redefined: every existing caller keeps one import site and one answer.
 export { landingBaseFor }
@@ -452,19 +453,27 @@ async function runChecks(
   const commands = policyFor(project).check
   let output = ''
   let passed = 0
+  // ⛔ **No colour, asked for twice.** A check's output is read by a person in the thread and by an
+  // agent in the retry instruction, and both got vitest's escape codes verbatim — `←[31m←[1m FAIL`
+  // in the chat, and on the way to the agent a sixth of the 2,000 characters it was allowed were
+  // colour bytes (t344/t347, 2026-09-11). `NO_COLOR`/`FORCE_COLOR=0` is the convention most tools
+  // honour, and `stripAnsi` catches the ones that do not. Nothing here reads a colour to decide
+  // anything; see `stripAnsi`.
+  const env = { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' }
   for (const command of commands) {
     try {
       const result = await run(command, {
         cwd,
+        env,
         shell: true,
         maxBuffer: 8 * 1024 * 1024,
         timeout: 30 * 60 * 1000
       } as never)
-      output += `$ ${command}\n${result.stdout}${result.stderr}\n`
+      output += `$ ${command}\n${stripAnsi(result.stdout)}${stripAnsi(result.stderr)}\n`
       passed += 1
     } catch (err) {
       const e = err as { stdout?: string; stderr?: string; message?: string }
-      output += `$ ${command}\n${e.stdout ?? ''}${e.stderr ?? ''}${e.message ?? ''}\n`
+      output += `$ ${command}\n${stripAnsi(e.stdout ?? '')}${stripAnsi(e.stderr ?? '')}${e.message ?? ''}\n`
       return { ok: false, output: output.slice(-8000), passed }
     }
   }
@@ -1497,7 +1506,10 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
             `${behind ? `t${behind.seq}` : 'another task'} and the wait ran out. Landing it again is ` +
             'all this needs.'
           : '') +
-        (result.checkOutput ? `\n\n${result.checkOutput.slice(-2000)}` : '')
+        // ⚠️ The tail, because that is where a test runner puts its summary — and this thread message
+        // is also what `resolveChecksOnTask` hands the agent, so it has to reach back far enough to
+        // name the failing test. 2,000 characters of coloured output did not (t344).
+        (result.checkOutput ? `\n\n${result.checkOutput.slice(-4000)}` : '')
     )
     setStatus(ctx.task.id, 'awaiting_human', {
       assignee: 'human',
