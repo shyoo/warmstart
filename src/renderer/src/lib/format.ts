@@ -50,17 +50,33 @@ export function duration(ms: number): string {
   return `${Math.floor(hours / 24)}d ${hours % 24}h`
 }
 
-/** A wall-clock moment, in the reader's own locale. Dates are only ever shown, never parsed back. */
-export function when(ts: number | null | undefined): string {
-  if (!ts) return '—'
+/**
+ * A wall-clock moment split into the two pieces it is made of.
+ *
+ * ⚠️ The pieces exist because the width of this string is locale-dependent and the task table sizes
+ * its date columns in pixels: a 24-hour locale writes `Sep 11 23:45` where a 12-hour one writes
+ * `Sep 11 11:45 PM`, which is wider than any column that fit the first. A caller that can wrap
+ * renders the parts on their own lines rather than overflowing into the next column (t376).
+ * `date` is empty for today, which is what makes the same-day form a bare time.
+ */
+export function whenParts(ts: number | null | undefined): { date: string; time: string } {
+  if (!ts) return { date: '', time: '—' }
   const date = new Date(ts)
   const today = new Date()
   const sameDay =
     date.getFullYear() === today.getFullYear() &&
     date.getMonth() === today.getMonth() &&
     date.getDate() === today.getDate()
-  const time = date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
-  return sameDay ? time : `${date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${time}`
+  return {
+    date: sameDay ? '' : date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }),
+    time: date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+  }
+}
+
+/** A wall-clock moment, in the reader's own locale. Dates are only ever shown, never parsed back. */
+export function when(ts: number | null | undefined): string {
+  const { date, time } = whenParts(ts)
+  return date ? `${date} ${time}` : time
 }
 
 /** A formatted time range (e.g. 01:43 PM – 01:50 PM or 01:43 PM – now). */

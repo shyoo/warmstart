@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Worker } from '@shared/protocol'
 import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
-import { cacheRemaining, countdown, money, quotaGap, quotaWindowDeltas, spendDeltas, timeRange, when } from './format'
+import { cacheRemaining, countdown, money, quotaGap, quotaWindowDeltas, spendDeltas, timeRange, when, whenParts } from './format'
 
 describe('countdown', () => {
   const NOW = Date.UTC(2026, 8, 2, 12, 0, 0)
@@ -377,6 +377,32 @@ describe('quotaFreshness', () => {
   it('treats a reading with no windows as stale, and no reading at all as stale', () => {
     expect(quotaFreshness({ sampledAt: Date.now(), windows: [] }, Date.now()).stale).toBe(true)
     expect(quotaFreshness(null, Date.now()).stale).toBe(true)
+  })
+})
+
+/**
+ * ⛔ The two halves have to survive separately, because the task table draws them as two atoms and
+ * folds between them rather than overflowing its fixed-width column into Status (t376).
+ */
+describe('whenParts', () => {
+  const earlier = new Date(2026, 7, 24, 13, 43, 0).getTime()
+
+  it('splits a past day into a date and a time that rejoin as `when`', () => {
+    const parts = whenParts(earlier)
+    expect(parts.date).not.toBe('')
+    expect(parts.time).not.toBe('')
+    expect(`${parts.date} ${parts.time}`).toBe(when(earlier))
+  })
+
+  it('leaves the date empty today, which is what makes the same-day form a bare time', () => {
+    const parts = whenParts(Date.now())
+    expect(parts.date).toBe('')
+    expect(parts.time).toBe(when(Date.now()))
+  })
+
+  it('reports a missing timestamp as a dash with no date', () => {
+    expect(whenParts(null)).toEqual({ date: '', time: '—' })
+    expect(whenParts(undefined)).toEqual({ date: '', time: '—' })
   })
 })
 

@@ -4274,6 +4274,66 @@ try {
   // The whole data directory goes in `finally`.
   void titleShown
 
+  section('the date columns stay inside their own columns')
+  // ⛔ Reported 2026-09-12 against t376: Created and Updated were drawn straight over Status. The
+  // columns are sized in pixels under `table-layout: fixed`, so an overflowing stamp does not widen
+  // anything — it paints on its neighbour. Two things are measured, because either alone passes on
+  // the wrong machine: that nothing overflows *here*, and that the widest stamp a 12-hour locale can
+  // produce would still fit, which is the case the pixel width was originally set too narrow for.
+  const stamps = JSON.parse(
+    await evaluate(`
+      JSON.stringify((() => {
+        const cells = [...document.querySelectorAll('.tbl--tasks tbody tr td.tbl-when')];
+        if (!cells.length) return { cells: 0 };
+        const overflowing = cells.filter(c => c.scrollWidth > c.clientWidth + 1).length;
+        // The stamp is built from spans so the cell has an honest place to fold; a bare string
+        // would break between the minutes and the meridiem.
+        const parts = cells.filter(c => c.querySelector('span')).length;
+        // Every drawn part must stop short of the Status cell on its own row.
+        let collisions = 0;
+        for (const row of document.querySelectorAll('.tbl--tasks tbody tr')) {
+          const status = row.querySelector('td .status');
+          if (!status) continue;
+          const edge = status.getBoundingClientRect().left;
+          for (const span of row.querySelectorAll('td.tbl-when span')) {
+            if (span.getBoundingClientRect().right > edge + 1) collisions++;
+          }
+        }
+        // What a 12-hour clock costs, measured in the cell's own font rather than guessed.
+        const host = cells.find(c => c.querySelector('span')) ?? cells[0];
+        const probe = document.createElement('span');
+        probe.style.whiteSpace = 'nowrap';
+        probe.textContent = '11:45 PM';
+        host.appendChild(probe);
+        const widest = probe.getBoundingClientRect().width;
+        probe.remove();
+        const style = getComputedStyle(host);
+        const room = host.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+        return { cells: cells.length, overflowing, parts, collisions, widest, room };
+      })())
+    `)
+  )
+  check(
+    'the stamps are drawn, and each as its own date and time parts',
+    stamps.cells > 0 && stamps.parts > 0,
+    JSON.stringify(stamps)
+  )
+  check(
+    '⛔ no date cell overflows its column',
+    stamps.overflowing === 0,
+    JSON.stringify({ cells: stamps.cells, overflowing: stamps.overflowing })
+  )
+  check(
+    '⛔ and nothing in one reaches the Status cell beside it',
+    stamps.collisions === 0,
+    JSON.stringify({ collisions: stamps.collisions })
+  )
+  check(
+    '⚠️ the column has room for `11:45 PM`, the widest single line a 12-hour locale draws',
+    stamps.room >= stamps.widest,
+    JSON.stringify({ room: stamps.room, widest: stamps.widest })
+  )
+
   section('settling a conversation from its thread')
   // ⭐ Reported 2026-09-07 against t280. The thread's own hold reason read *"use Finish, Stop or
   // Commit below"* and there was no Commit below: the conversation's workspace claim had been

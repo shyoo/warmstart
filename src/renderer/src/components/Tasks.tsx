@@ -4,7 +4,7 @@ import { TASK_VIEW_ORDER, TASK_VIEWS } from '@shared/tasks'
 import type { ModelOptions } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { showsLiveOutput } from '../lib/live'
-import { tokens, when } from '../lib/format'
+import { tokens, whenParts } from '../lib/format'
 import { Money, taskPriceTitle } from './Price'
 import {
   PAGE_SIZE_OPTIONS,
@@ -91,6 +91,25 @@ function SortHead({
         {on && <span aria-hidden>{asc ? ' ↑' : ' ↓'}</span>}
       </button>
     </th>
+  )
+}
+
+/**
+ * A wall-clock stamp that wraps between its date and its time, and never inside either.
+ *
+ * ⛔ Not `{when(ts)}`. A single string in a fixed-width column either overflows its cell — drawing
+ * over Status, which is how this arrived (t376) — or, once wrapping is allowed, breaks at whichever
+ * space comes first and splits `11:45` from `PM`. Two nowrap spans in a wrapping cell give the
+ * layout an honest place to fold, and today's stamp is still one line because its date is empty.
+ */
+function Stamp({ ts }: { ts: number | null | undefined }): React.JSX.Element {
+  const { date, time } = whenParts(ts)
+  return (
+    <>
+      {date && <span>{date}</span>}
+      {date && ' '}
+      <span>{time}</span>
+    </>
   )
 }
 
@@ -731,11 +750,17 @@ export function Tasks({
                         </span>
                       )}
                     </td>}
+                    {/* ⛔ The date and the time are two atoms, not one string. This table is
+                        `table-layout: fixed`, so a stamp wider than its column does not shrink the
+                        column — it draws straight over Status (t376, on a 12-hour locale, where
+                        `Sep 11 11:45 PM` is three characters wider than the 24-hour form the width
+                        was set against). Wrapped as parts, a narrow column costs a second line and
+                        never a collision, and neither half is ever broken mid-value. */}
                     {shown.has('created') && <td className="tbl-when dim" title={new Date(task.createdAt).toLocaleString()}>
-                      {when(task.createdAt)}
+                      <Stamp ts={task.createdAt} />
                     </td>}
                     {shown.has('updated') && <td className="tbl-when dim" title={new Date(task.updatedAt).toLocaleString()}>
-                      {when(task.updatedAt)}
+                      <Stamp ts={task.updatedAt} />
                     </td>}
                     {shown.has('status') && <td>
                       <span className={`status ${statusToneFor(task)}`}>

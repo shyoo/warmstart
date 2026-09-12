@@ -525,6 +525,17 @@ the facts needed to act stay visible before horizontal scrolling becomes necessa
 ellipsises inside Worker rather than widening the table. ⚠️ `taskLabelShort` bounds the payload (a
 title is the prompt and can be paragraphs), while CSS decides where its visible ellipsis belongs.
 
+⛔ **A fixed column budget means no cell may size itself to its own content, and a date is wider on
+some machines than others.** `Created` and `Updated` were drawn over `Status` on a 12-hour locale
+(t376): `Sep 11 11:45 PM` does not fit a width set against `Sep 11 23:45`, and under `table-layout:
+fixed` the overflow paints on the neighbour instead of widening anything. The stamp is therefore
+rendered as two nowrap spans — `whenParts` in `lib/format.ts`, `Stamp` in `Tasks.tsx` — inside a
+wrapping cell, so a narrow column costs a second line and never a collision, and neither the date nor
+`11:45 PM` is ever broken mid-value. Today's stamp has no date and stays one line. ⚠️ The L3 suite
+measures both halves of this: that nothing overflows or reaches Status as rendered, and that the cell
+still has room for the widest single line a 12-hour clock can draw, measured in the cell's own font
+rather than assumed from the machine running the test.
+
 ⛔ **Every column of the task table sorts, and two kinds of column sort in two different places.**
 `seq`, `title`, `status`, `quality`, `created` and `updated` are real columns: SQLite orders them and
 the pager slices the result. `from`, `worker`, `dep`, `took` and `price` are **derived on read** —

@@ -1787,9 +1787,23 @@ body {
   color: var(--color-text);
 }
 
+/* A date cell. Elsewhere the whole stamp is one unbreakable string, which is right for a table that
+   sizes its own columns to their content. */
 .tbl-when {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+}
+
+/* ⛔ The task table is `table-layout: fixed`, so a stamp wider than its column overflows and paints
+   over Status rather than widening anything (t376). Here the cell folds — but only between the
+   `<span>`s the cell is built from, so `Sep 11` and `11:45 PM` each stay whole. */
+.tbl--tasks .tbl-when {
+  white-space: normal;
+}
+
+.tbl--tasks .tbl-when > span {
+  display: inline-block;
+  white-space: nowrap;
 }
 
 .pager {
@@ -1909,8 +1923,10 @@ body {
 .tbl--tasks .tbl-col-took { width: 58px; }
 .tbl--tasks .tbl-col-price { width: 70px; }
 .tbl--tasks .tbl-col-quality { width: 58px; }
+/* ⚠️ Wide enough for `11:45 PM` — the widest a single line of a stamp gets — plus the cell's own
+   padding. 64px was set against a 24-hour clock and clipped everywhere else (t376). */
 .tbl--tasks .tbl-col-created,
-.tbl--tasks .tbl-col-updated { width: 64px; }
+.tbl--tasks .tbl-col-updated { width: 78px; }
 .tbl--tasks .tbl-col-status { width: 82px; }
 .tbl--tasks .tbl-col-action { width: 48px; }
 
