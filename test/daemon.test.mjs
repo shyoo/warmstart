@@ -604,40 +604,71 @@ try {
       constraints: pin
     })
     const agentSession = await spawnAgentSession()
-    seedAgentRun(agentTask.id, probeWorker.id, agentSession.id)
+    const agentRun = seedAgentRun(agentTask.id, probeWorker.id, agentSession.id)
 
-    const noted = await daemon.rpc('agent.handoff', { sessionId: agentSession.id, note: 'porch swept' })
-    check('handoff records the note on the thread', noted.ok === true)
-    const handoffThread = await daemon.rpc('task.get', { id: agentTask.id })
-    check(
-      'and the note is readable there, with its run beside it',
-      handoffThread.messages.some((m) => /Handoff recorded/.test(m.text)) && handoffThread.runs.length >= 1,
-      `${handoffThread.messages.length} messages, ${handoffThread.runs.length} runs`
-    )
-    const strayHandoff = await daemon.rpc('agent.handoff', { sessionId: 'no-such-session', note: 'x' })
-    const strayThread = await daemon.rpc('task.get', { id: agentTask.id })
-    check(
-      'handoff from a session on nothing succeeds and writes nothing rather than throwing',
-      strayHandoff.ok === true &&
-        strayThread.messages.filter((m) => /Handoff recorded/.test(m.text)).length === 1
-    )
+    // ⚠️ **The handoff trio needs the open run as well**, measured 2026-09-12 by forcing the run
+    // closed: `agent.handoff` still answers `ok`, writes **nothing**, and the two checks that read the
+    // thread back then fail - including the stray-handoff one, whose whole assertion is that exactly
+    // *one* note was recorded. It passed on both CI runners, so this is exposure the suite has not
+    // been bitten by yet rather than a failure being fixed; guarding it costs a skip on a host that
+    // could never have proven the claim anyway.
+    if (!runIsOpen(agentRun)) {
+      skip('handoff records the note on the thread', NO_OPEN_RUN)
+      skip('and the note is readable there, with its run beside it', NO_OPEN_RUN)
+      skip('handoff from a session on nothing succeeds and writes nothing rather than throwing', NO_OPEN_RUN)
+    } else {
+      const noted = await daemon.rpc('agent.handoff', { sessionId: agentSession.id, note: 'porch swept' })
+      check('handoff records the note on the thread', noted.ok === true)
+      const handoffThread = await daemon.rpc('task.get', { id: agentTask.id })
+      check(
+        'and the note is readable there, with its run beside it',
+        handoffThread.messages.some((m) => /Handoff recorded/.test(m.text)) && handoffThread.runs.length >= 1,
+        `${handoffThread.messages.length} messages, ${handoffThread.runs.length} runs`
+      )
+      const strayHandoff = await daemon.rpc('agent.handoff', { sessionId: 'no-such-session', note: 'x' })
+      const strayThread = await daemon.rpc('task.get', { id: agentTask.id })
+      check(
+        'handoff from a session on nothing succeeds and writes nothing rather than throwing',
+        strayHandoff.ok === true &&
+          strayThread.messages.filter((m) => /Handoff recorded/.test(m.text)).length === 1
+      )
+    }
 
-    const child = await daemon.rpc('agent.createTask', {
-      sessionId: agentSession.id,
-      title: 'sweep the porch',
-      prompt: 'broom, not leafblower'
-    })
-    check(
-      'an agent can file a follow-up and learns its number',
-      child.ok === true && typeof child.seq === 'number',
-      `seq=${child.seq}`
-    )
-    const noTitle = await daemon.rpc('agent.createTask', { sessionId: agentSession.id, title: '' })
-    check(
-      'an empty title is refused with the reason, not a throw',
-      noTitle.ok === false && /title/.test(noTitle.reason ?? ''),
-      noTitle.reason
-    )
+    // ⛔ **`agent.createTask` needs the open run too, and was missed when the others got the guard.**
+    // Measured 2026-09-12, CI run 34666855492: these two failed on `ubuntu-latest` while
+    // `windows-latest` and both local runs passed. The probe session had closed, so the handler
+    // answered *"this session is not working on a task"* — which the empty-title check reported as
+    // its own failure detail, naming the real cause in a line that read like a broken handler.
+    // ⚠️ The `handoff` checks above do **not** prove the run is open: `agent.handoff` answers `ok`
+    // for a session on nothing by design (the stray-handoff check two lines up pins exactly that),
+    // so this is the first check in the section that actually depends on it.
+    // ⚠️ Declared outside the guard because the section's **teardown** reads `child.seq` to cancel
+    // the follow-up it filed and delete its gate consult. A `const` inside the `else` left that
+    // teardown referencing a name that does not exist on exactly the hosts the guard is for, and the
+    // suite died with `ReferenceError: child is not defined` *after* the skips it was meant to make
+    // harmless — measured by forcing the run closed locally, which is the only way to reach it.
+    let child = null
+    if (!runIsOpen(agentRun)) {
+      skip('an agent can file a follow-up and learns its number', NO_OPEN_RUN)
+      skip('an empty title is refused with the reason, not a throw', NO_OPEN_RUN)
+    } else {
+      child = await daemon.rpc('agent.createTask', {
+        sessionId: agentSession.id,
+        title: 'sweep the porch',
+        prompt: 'broom, not leafblower'
+      })
+      check(
+        'an agent can file a follow-up and learns its number',
+        child.ok === true && typeof child.seq === 'number',
+        `seq=${child.seq}`
+      )
+      const noTitle = await daemon.rpc('agent.createTask', { sessionId: agentSession.id, title: '' })
+      check(
+        'an empty title is refused with the reason, not a throw',
+        noTitle.ok === false && /title/.test(noTitle.reason ?? ''),
+        noTitle.reason
+      )
+    }
     const noRun = await daemon.rpc('agent.createTask', { sessionId: 'no-such-session', title: 'x' })
     check(
       'filing from a session on nothing names the problem',
@@ -836,7 +867,7 @@ try {
     // ⛔ Not the finished one: cancelling a completed task is refused, and it holds nothing.
     const ownIds = new Set([agentTask.id, planTask.id])
     for (const t of listed.filter(
-      (t) => ownIds.has(t.id) || t.seq === child.seq || splitSeqs.some((s) => s === t.seq)
+      (t) => ownIds.has(t.id) || t.seq === child?.seq || splitSeqs.some((s) => s === t.seq)
     )) {
       await daemon.rpc('task.cancel', { id: t.id, restingState: 'cancelled' })
     }
@@ -845,7 +876,9 @@ try {
     // subject, so the controller section below starts from the empty queue it asserts from. This
     // is teardown of our own fixture, not of anyone else's state: the subject id is the child we
     // filed two screens up.
-    const filed = listed.find((t) => t.seq === child.seq)
+    // ⚠️ `child?.seq` - the follow-up is not filed at all when the guard above skipped, and
+    // `undefined` matches no row, so there is nothing to tidy.
+    const filed = listed.find((t) => t.seq === child?.seq)
     if (filed) {
       agentDb.prepare("delete from consults where subject_id = ? and kind = 'gate'").run(filed.id)
     }
