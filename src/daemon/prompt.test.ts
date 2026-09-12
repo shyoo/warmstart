@@ -199,6 +199,24 @@ describe('promptFor prompt construction', () => {
     expect(own).toContain('Run /commit and follow every one of its six steps.')
   })
 
+  /**
+   * ⛔ t393–t395, 2026-09-12. Every debate seat is `report-only`, and its seat prompt says *do not
+   * commit* — then the closing contract appended the same squash-and-rebase clauses as landing work,
+   * and on an MCP-less or one-shot adapter told it to *commit what you have*. Anything a seat commits
+   * can only become a loose end, so the contract must not ask for one on any adapter.
+   */
+  it('never tells a report-only task to commit, squash or rebase, on any adapter', () => {
+    for (const adapterId of ['claude-code', 'antigravity-cli', 'openai-compatible']) {
+      const task = tasks.createTask({ title: 'A seat', status: 'ready', finishPolicy: 'report-only' })
+      const prompt = promptText(task, adapterId, false, { markDelivered: false })
+      expect(prompt, adapterId).toContain('do not commit, and leave the branch and the working tree')
+      expect(prompt, adapterId).not.toContain('squash them')
+      expect(prompt, adapterId).not.toContain('commit what you have')
+      expect(prompt, adapterId).not.toContain('Commit everything you change')
+      expect(prompt, adapterId).not.toContain('rebase onto the latest')
+    }
+  })
+
   it('does not say that to a CLI that can be asked again', () => {
     // ⚠️ Narrow on purpose: a `conversation` adapter may still be reachable after its turn,
     // and whether Antigravity's print-mode process outlives one has not been measured.

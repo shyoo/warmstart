@@ -265,6 +265,34 @@ describe('task branches the repository still has a name for', () => {
     expect(found?.ahead).toBe(1)
   })
 
+  /**
+   * ⭐ t393–t395, 2026-09-12: three debate seats, each sitting exactly on local `main`, each listed
+   * under Loose ends as carrying 15 commits — because local `main` was 15 ahead of `origin/main` and
+   * the scan counted against the remote alone. What deleting the branch would lose is what counts.
+   */
+  it('does not count a trunk ahead of its remote as the branch’s own work', async () => {
+    const branch = 'warmstart/t393-seat'
+    const { project, root } = seed(branch)
+    git(root, 'switch', 'main')
+    git(root, 'update-ref', 'refs/remotes/origin/main', 'main')
+    writeFileSync(join(root, 'unpushed.txt'), 'the operator has not pushed this\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'unpushed trunk work')
+    git(root, 'branch', '-f', branch, 'main')
+
+    const found = (await worktrees.taskBranches(project, 'main')).find((b) => b.branch === branch)
+    expect(found?.ahead).toBe(0)
+    // ⛔ Watched the other way: the remote-only count is exactly the false reading the panel showed.
+    expect(git(root, 'rev-list', '--count', `origin/main..${branch}`)).toBe('1')
+
+    git(root, 'switch', branch)
+    writeFileSync(join(root, 'seat.txt'), 'a commit the seat really made\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'seat commit')
+    git(root, 'switch', 'main')
+    expect(await worktrees.commitsOnlyOn(root, branch, 'main')).toBe(1)
+  })
+
   it('names the worktree holding a branch, which is why deleting it would fail', async () => {
     // ⚠️ The trunk is itself a worktree, and it is standing on this branch right now.
     const branch = 'warmstart/t25-held'

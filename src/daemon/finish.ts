@@ -16,7 +16,7 @@ import { log } from './log.js'
 import { landingTargetFor, listProjects, policyFor } from './projects.js'
 import { listTasks, mandateAllows } from './tasks.js'
 import type { MergeReading } from './landing.js'
-import { ensurePool, taskBranches, workspaceState } from './worktrees.js'
+import { commitsOnlyOn, ensurePool, taskBranches, workspaceState } from './worktrees.js'
 import type { WorkspaceState } from './worktrees.js'
 import { settings } from './settings.js'
 export { projectFinishChoice, finishInstructionFor }
@@ -189,22 +189,59 @@ export function decideFinish({
   //     an empty branch is indistinguishable from an agent that committed in the trunk — so the
   //     only safe way to exempt a task that was never going to write a commit is for the operator
   //     to have said so *in advance*, which is what choosing this rung is. Ahead of step 1 as well,
-  //     because asking a report-only task to commit a stray file and then parking it at
-  //     `awaiting_human` when it does not is the same stall by a longer route. Whatever is loose
-  //     stays loose: `rescueDirt` carries it onto this task's own branch when the workspace is
-  //     released, exactly as it does today. Nothing is discarded and nothing is swept into a commit.
+  //     because asking a report-only task to *commit* a stray file is asking for the opposite of
+  //     what it is for.
+  //
+  // ⛔ **Done means the branch is as it started**, because this rung lands nothing and so anything
+  //     left behind can only ever become a loose end. Before 2026-09-12 a seat that committed or left
+  //     files was `done` anyway, and `rescueDirt` then turned its files into a `wip:` commit on a
+  //     branch nobody would land. So the agent that made the mess is asked, once, to put it back —
+  //     keeping anything worth keeping in its summary, which *is* the deliverable — and a second
+  //     report that still leaves something goes to a person with the work intact. The tool itself
+  //     discards nothing.
+  //
+  // ⚠️ `state.unlandedCommits` must be `commitsOnlyOn`'s count here, not `landedRef`'s: a report-only
+  //     branch is cut from the *local* target, so on a trunk ahead of its remote the `landedRef` count
+  //     is the trunk's own history. The caller owes that measurement (`landCompletion`).
   //
   // ⚠️ After the rebase guard, which outranks everything: a half-finished rebase is a broken tree
   //     however little the task was expected to leave behind.
   if (policy === 'report-only') {
+    if (state.unlandedCommits === 0 && loose === 0) {
+      return { kind: 'done', reason: 'this task reports on its thread; nothing was expected on the branch' }
+    }
+    const left = [
+      ...(state.unlandedCommits > 0 ? [`${state.unlandedCommits} commit(s)`] : []),
+      ...(loose > 0 ? [`${loose} uncommitted file(s)`] : [])
+    ].join(' and ')
+    const branch = state.branch ?? 'your branch'
+    if (task.finishAskedAt === null) {
+      const target = project ? landingTargetFor(task, project) : null
+      return {
+        kind: 'ask-agent',
+        reason: `this task reports on its thread but left ${left} on \`${branch}\``,
+        instruction:
+          `This task reports on its thread and lands nothing, so it must leave \`${branch}\` exactly as ` +
+          `it found it — but it holds ${left}. Anything left there only becomes a loose end.\n\n` +
+          '1. If any of it matters to your answer, put it in your summary now (a short excerpt or patch ' +
+          'is fine): the thread is the only thing anybody will read.\n' +
+          (loose > 0
+            ? '2. Undo your uncommitted changes and delete the files you created in this workspace.\n'
+            : '') +
+          (state.unlandedCommits > 0
+            ? `${loose > 0 ? '3' : '2'}. Take your own commits off the branch: ` +
+              `\`git reset --keep $(git merge-base HEAD ${target ?? '<landing target>'})\`. ` +
+              'Touch no commit that was already there.\n'
+            : '') +
+          '\nDo not commit, push, force-push or start new work. Then report the task complete again, ' +
+          'with your whole answer as the summary.'
+      }
+    }
     return {
-      kind: 'done',
+      kind: 'await-human',
       reason:
-        state.unlandedCommits > 0
-          ? `this task reports on its thread, and left ${state.unlandedCommits} commit(s) on ` +
-            `\`${state.branch}\` as well. The tool did not land them — this rung lands nothing.`
-          : 'this task reports on its thread; nothing was expected on the branch' +
-            (loose > 0 ? `, and ${loose} loose file(s) stay where they are` : '')
+        `this task reports on its thread but still leaves ${left} on \`${branch}\` in ${state.path} ` +
+        'after the agent was asked to put them back. Nothing was landed and nothing has been discarded.'
     }
   }
 
@@ -516,11 +553,17 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
       }
       // `looseEndsIn` is intentionally also used as a pure unit-tested description of a workspace.
       // Narrow the scan here, where task lifecycle evidence is available.
+      if (taskSeq === null || !closedTaskSeqs.has(taskSeq)) continue
+      // ⛔ A leftover is what deleting the branch would lose, so the count is `commitsOnlyOn`, the
+      // same measure as the branch loop below — not `landedRef`, which counts a trunk that is ahead
+      // of its remote as this task's work. A branch git cannot measure keeps the reading it had.
       const scopedState = {
         ...state,
-        stashes: 0
+        stashes: 0,
+        unlandedCommits: state.branch
+          ? await commitsOnlyOn(path, state.branch, policy.landingTarget).catch(() => state.unlandedCommits)
+          : state.unlandedCommits
       }
-      if (taskSeq === null || !closedTaskSeqs.has(taskSeq)) continue
       for (const end of looseEndsIn(project, scopedState)) {
         if (seen.has(end.id) || dismissed.has(end.id)) continue
         seen.add(end.id)

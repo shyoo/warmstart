@@ -10,7 +10,7 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Last full local validation on this branch (2026-09-12): `npm run typecheck`, `npm run lint`,
-`npm test` (**3,206 passed, 2 skipped** — up from 3,171; 35 new) and `npm run build` all passed.
+`npm test` (**3,210 passed, 2 skipped**) and `npm run build` all passed.
 The expected test warnings exercise refusal and recovery paths; they are not failures.
 
 ## Closed in this cleanup
@@ -39,6 +39,15 @@ The expected test warnings exercise refusal and recovery paths; they are not fai
 - **Debate seats see current code and stay in their role.** `report-only` work starts from the local
   landing target, and seat prompts treat the submitted text as a question. See
   [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §12.
+- **A report-only task (every debate seat) leaves nothing under Loose ends.** ⭐ Measured first:
+  t393–t395 made **no** commits — each branch sat on local `main` at `4619e6f`, which was 15 ahead of
+  `origin/main`, and the scan counted against the remote alone. Now `commitsOnlyOn`
+  ([`worktrees.ts`](src/daemon/worktrees.ts)) counts what deleting a branch would lose; a report-only
+  `done` requires a clean tree with no commit of its own and **retires the branch**; anything left is
+  asked back once, then `await-human` (⚠️ which holds a debate round — deliberate, see
+  [`docs/landing.md`](docs/landing.md)); and the closing prompt no longer tells such a task to commit,
+  squash or rebase. ⚠️ The scheduler wiring (measure + retire in `landCompletion`) has no L2 test —
+  no harness drives `completeTask` with a held git workspace; the decision and the measure are tested.
 - **The reported Luna `task_complete` defect is closed.** Codex has no per-session MCP registration
   (`mcp: false`), so the old universal seat wording was wrong.
 - **The t382 organizer capacity leak is closed.** A debate organizer winds down its run and session

@@ -292,34 +292,63 @@ describe('a task whose deliverable is the thread', () => {
   })
 
   /**
-   * ⛔ **Ahead of step 1 as well as step 3.** Asking a report-only task to commit a stray file and
-   * then parking it at `awaiting_human` when it does not is the same stall by a longer route.
-   * ⚠️ Whatever is loose stays loose — `rescueDirt` carries it onto this task's own branch when the
-   * workspace is released, exactly as it does today.
+   * ⛔ **Done means the branch is as it started.** This rung lands nothing, so a file or a commit
+   * left behind can only become a loose end — `rescueDirt` would turn the files into a `wip:` commit
+   * on a branch nobody lands. The agent that left them is asked once to put them back, and never to
+   * *commit* them, which is the opposite of what the rung is for.
    */
-  it('does not ask a report-only task to commit its loose files, and says they stay', () => {
+  it('asks a report-only task to put back its loose files, never to commit them', () => {
     const decision = finish.decideFinish({
       task: makeTask({ finishPolicy: 'report-only' }),
       project: null,
       state: clean({ unlandedCommits: 0, dirtyFiles: ['notes.md'], untrackedFiles: ['scratch.txt'] }),
       hasChecks: true
     })
-    expect(decision.kind).toBe('done')
-    expect('reason' in decision && decision.reason).toContain('2 loose file(s) stay where they are')
+    expect(decision.kind).toBe('ask-agent')
+    if (decision.kind !== 'ask-agent') return
+    expect(decision.reason).toContain('2 uncommitted file(s)')
+    expect(decision.instruction).toContain('Undo your uncommitted changes')
+    expect(decision.instruction).toContain('Do not commit')
+    expect(decision.instruction).not.toContain('git reset --keep')
   })
 
-  // ⚠️ A seat that committed something anyway is still done — this rung lands nothing, and it says
-  // so rather than quietly leaving the operator to discover the commits later.
-  it('lands nothing when the task committed anyway, and names what it left behind', () => {
+  it('asks a report-only task that committed anyway to take its own commits off the branch', () => {
     const decision = finish.decideFinish({
       task: makeTask({ finishPolicy: 'report-only' }),
       project: projectWith({ target: 'main', finish: 'commit-and-push' }),
       state: clean({ unlandedCommits: 2 }),
       hasChecks: true
     })
+    expect(decision.kind).toBe('ask-agent')
+    if (decision.kind !== 'ask-agent') return
+    expect(decision.reason).toContain('2 commit(s)')
+    expect(decision.instruction).toContain('put it in your summary')
+    expect(decision.instruction).toContain('git reset --keep $(git merge-base HEAD main)')
+  })
+
+  // ⛔ Asked once, exactly like step 1. A second report that still leaves something is handed to a
+  // person with the work intact — never `done`, which would put it under Loose ends, and never
+  // cleaned up by the tool.
+  it('hands a report-only task to a person when it still leaves something after being asked', () => {
+    const decision = finish.decideFinish({
+      task: makeTask({ finishPolicy: 'report-only', asked: true }),
+      project: null,
+      state: clean({ unlandedCommits: 1, untrackedFiles: ['scratch.txt'] }),
+      hasChecks: true
+    })
+    expect(decision.kind).toBe('await-human')
+    expect('reason' in decision && decision.reason).toContain('1 commit(s) and 1 uncommitted file(s)')
+    expect('reason' in decision && decision.reason).toContain('nothing has been discarded')
+  })
+
+  it('is done once the report-only task has put everything back', () => {
+    const decision = finish.decideFinish({
+      task: makeTask({ finishPolicy: 'report-only', asked: true }),
+      project: null,
+      state: clean({ unlandedCommits: 0 }),
+      hasChecks: true
+    })
     expect(decision.kind).toBe('done')
-    expect('reason' in decision && decision.reason).toContain('2 commit(s)')
-    expect('reason' in decision && decision.reason).toContain('this rung lands nothing')
   })
 })
 

@@ -48,12 +48,19 @@ And three that are **not rungs**:
 only because the operator said in advance that this task was never going to write a commit.** The
 guard (t17) is correct and stays: an empty branch is otherwise indistinguishable from an agent that
 committed in the trunk. The check sits **before** the uncommitted-work step as well as before the
-guard — asking a report-only task to commit a stray file and then parking it at `awaiting_human` when
-it does not is the same stall by a longer route — and **after** the rebase-in-progress guard, which
-outranks everything. ⚠️ Whatever is loose stays loose: `rescueDirt` carries it onto the task's own
-branch when the workspace is released, exactly as it does today. Nothing is discarded and nothing is
-swept into a commit. ⚠️ A task that committed anyway is still `done`, and the reason says so — **this
-rung lands nothing**.
+guard — a report-only task is never asked to *commit* — and **after** the rebase-in-progress guard,
+which outranks everything.
+
+⛔ **`done` means the branch is exactly as it started, and then the branch is retired.** This rung
+lands nothing, so a commit or a file left behind can only become a loose end (t393–t395, 2026-09-12).
+So: a clean tree with no commit of its own is `done`, and `landCompletion` deletes the branch through
+`finishWithoutLanding`. Anything left is `ask-agent` **once** — keep what matters in the summary, undo
+the edits, `git reset --keep` its own commits off — and still anything left on the second report is
+`await-human`, with the work intact. The tool discards nothing itself. ⚠️ "Its own" is
+`commitsOnlyOn` (commits on neither the local target nor `origin/<target>`), never `landedRef`: the
+branch is cut from the local target, so on a trunk ahead of its remote the `landedRef` count is the
+trunk's unpushed history. ⚠️ The closing contract in `prompt.ts` drops the squash, rebase and "commit
+what you have" clauses for this rung on every adapter.
 
 ⭐ **It is wider than the debate that motivated it.** Migration 51 added `non_gradable` because *"some
 tasks complete valid work with no commits"* and the only answer was an operator ticking a box
@@ -350,12 +357,13 @@ over — one spent 13.3M tokens re-deriving work that was in `git stash list` th
 Four kinds of work that exists and is going nowhere, listed on **Overview**:
 
 - **uncommitted** — files in a pooled workspace that no commit holds.
-- **not landed** — a branch carrying commits `origin/<target>` does not have, whose task has
-  finished. ⚠️ This is the one that is easiest to lose: nothing is dirty, nothing looks wrong, and the
-  work is simply never mentioned again.
+- **not landed** — a branch carrying commits that neither `<target>` nor `origin/<target>` has, whose
+  task has finished. ⚠️ This is the one that is easiest to lose: nothing is dirty, nothing looks wrong,
+  and the work is simply never mentioned again.
 - **stashed** — work the tool moved out of the way to free a workspace for the next task. Recover it
   with `git stash list` and `git stash show -p` in the workspace.
-- **branch left behind** — a task branch carrying nothing `origin/<target>` does not already have.
+- **branch left behind** — a task branch carrying nothing the local or remote target does not
+  already have.
   No work is at risk; the name is all that is left of a task that finished, or was cancelled before
   it wrote anything.
 
@@ -372,6 +380,11 @@ comes from reading a *pooled workspace* and reporting the branch that workspace 
 a branch at rest, which is exactly what a finished task leaves, was invisible to all of it.
 Measured: `t23` (finished 2026-08-29) and `t79` (cancelled 2026-08-31) were both still in this
 repository days later, both carrying zero commits, neither reported anywhere.
+
+⛔ **A row counts what deleting the branch would lose, not what has shipped** — `commitsOnlyOn`, not
+`landedRef`. Measured 2026-09-12: debate seats t393–t395 each sat exactly on local `main` with no
+commit of their own, and each was listed as carrying 15 unlanded commits, because local `main` was 15
+ahead of `origin/main`. A finish verdict still asks `landedRef`; only this panel changed question.
 
 ## Merging locally, and the trunk you are standing in
 
@@ -461,8 +474,8 @@ unlanded.
 
 ⭐ **Landing is `git push origin HEAD:<target>`.** The tool never moves your local branch — it has no
 business writing to a checkout you are standing in — so `origin/<target>` is the only ref that
-answers "did this work land?", and everything asks it: the safety bar, the loose-ends scan, and the
-message you get back. Your own trunk only catches up when you `git pull`.
+answers "did this work land?", and everything that asks that asks it: the safety bar and the message
+you get back. (The loose-ends scan asks a different question — see above.) Your own trunk only catches up when you `git pull`.
 
 ⚠️ **Which means the agent may have landed the work itself, and that is fine.** A project whose
 finishing instruction ends in a push — most `/commit` skills do — leaves a branch with nothing left

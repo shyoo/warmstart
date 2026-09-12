@@ -91,6 +91,7 @@ import {
 import {
   branchNameFor,
   claimWorkspace,
+  commitsOnlyOn,
   parkWorkspace,
   prepareWorkspace,
   releaseWorkspace,
@@ -3300,7 +3301,24 @@ async function landCompletion(
     // what it returns; nothing below decides anything for itself. See finish.ts for why the tool
     // never authors a commit here.
     const policy = policyFor(project)
-    const state = await workspaceState(held.workspace.path, landingTargetFor(task, project))
+    const finishPolicy = resolveFinishPolicy(task, project).policy
+    const measured = await workspaceState(held.workspace.path, landingTargetFor(task, project))
+    // ⛔ **A report-only branch is judged by what only it holds.** It is cut from the *local* target
+    // and lands nowhere, so `landedRef`'s count is the trunk's unpushed history, not this task's —
+    // t393–t395 each read as 15 commits with none of their own. `decideFinish` now refuses `done`
+    // on anything left, so this is the difference between a finished seat and a stalled one.
+    // ⚠️ A branch git cannot measure keeps the conservative reading.
+    const state =
+      finishPolicy === 'report-only' && measured.branch
+        ? {
+            ...measured,
+            unlandedCommits: await commitsOnlyOn(
+              held.workspace.path,
+              measured.branch,
+              landingTargetFor(task, project)
+            ).catch(() => measured.unlandedCommits)
+          }
+        : measured
     // ⛔ Read **before** anything lands. `landTask` fast-forwards the trunk itself on a project with
     // no remote, so a reading taken afterwards would report the tool's own push as the movement it
     // is looking for — a tripwire that fires on its own footsteps is worse than none.
@@ -3310,7 +3328,6 @@ async function landCompletion(
     // `awaiting_human` discovered inside `landTask` two branches later. See `readMergeability`.
     // ⛔ The *finish* policy, not the project policy beside it. It decides which ref the landing
     // will rebase onto, so the mergeability check has to be told it or it answers about another.
-    const finishPolicy = resolveFinishPolicy(task, project).policy
     const merge = await readMergeability(project, held.workspace.path, task.branch, finishPolicy, task)
     const decision = decideFinish({
       task,
@@ -3532,8 +3549,16 @@ async function landCompletion(
       // ⚠️ Narrowed by hand: the chain now opens on `landNow` rather than on a kind, so TypeScript
       //    cannot rule out the kinds that carry no reason. `relandTask` reads it the same way.
       const why = 'reason' in decision ? decision.reason : 'nothing to land'
+      // ⛔ **A report-only `done` retires its branch**, or every seat of every debate round leaves
+      // a name under Loose ends. `decideFinish` only says `done` on that rung once the branch holds
+      // nothing of its own and the tree is clean — the same licence `nothing-to-land` retires on.
+      const retired =
+        decision.kind === 'done' && finishPolicy === 'report-only'
+          ? await finishWithoutLanding(held.workspace.path, task.branch, landingTargetFor(task, project))
+          : null
+      const said = `${why}${retired?.note ?? ''}`
       addMessage(task.id, 'system', `Finished — ${oneLine(why)}`, null, [], {
-        ...(oneLine(why) === why ? {} : { detail: why })
+        ...(said === oneLine(why) ? {} : { detail: said })
       })
       setStatus(task.id, 'completed')
     }

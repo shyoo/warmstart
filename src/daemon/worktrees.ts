@@ -956,6 +956,30 @@ export async function landedRef(path: string, target: string): Promise<string> {
 }
 
 /**
+ * How many commits on `branch` exist nowhere else — on neither the local `target` nor `origin/<target>`.
+ *
+ * ⛔ **A different question from `landedRef`, and the loose-ends scan asks this one.** `landedRef`
+ * answers *has this work shipped*; a leftover branch asks *what would deleting it lose*. The two part
+ * company whenever the local trunk is ahead of its remote, which `commit-and-merge` makes routine and
+ * which every report-only branch inherits, because such a branch is cut from the *local* target
+ * (`landingbase.ts`). ⭐ Measured 2026-09-12: debate seats t393, t394 and t395 each sat exactly on
+ * local `main` at `4619e6f` — no commit of their own — while local `main` was 15 commits ahead of
+ * `origin/main`, so all three were listed under Loose ends as carrying 15 unlanded commits.
+ *
+ * ⚠️ Throws when neither ref resolves, so a caller's "could not measure" stays distinct from zero.
+ */
+export async function commitsOnlyOn(cwd: string, branch: string, target: string): Promise<number> {
+  const refs: string[] = []
+  for (const ref of [target, `origin/${target}`]) {
+    if (await gitOk(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) refs.push(ref)
+  }
+  if (refs.length === 0) throw new Error(`neither \`${target}\` nor \`origin/${target}\` resolves`)
+  const count = Number.parseInt(await git(cwd, ['rev-list', '--count', branch, '--not', ...refs]), 10)
+  if (!Number.isFinite(count)) throw new Error(`git could not count the commits on \`${branch}\``)
+  return count
+}
+
+/**
  * A task branch this repository still has a name for.
  *
  * ⛔ **Repository-wide, which is the whole point.** Everything else in the loose-ends scan reads a
@@ -1023,15 +1047,16 @@ export async function taskBranches(project: Project, target: string): Promise<Ta
   }
   if (names.length === 0) return []
 
-  const base = await landedRef(project.root, target).catch(() => target)
   const holders = await branchHolders(project.root)
   const found: TaskBranch[] = []
   for (const branch of names) {
     // ⚠️ `null` ahead-count is not zero. A branch git cannot measure is left alone by everything
     // downstream rather than being reported as safe to delete, so the failure is a `-1` nothing acts on.
+    // ⛔ Against the local target *and* its remote — see `commitsOnlyOn` for the three seats that
+    // were listed as carrying the trunk's own unpushed history.
     let ahead: number
     try {
-      ahead = Number.parseInt(await git(project.root, ['rev-list', '--count', `${base}..${branch}`]), 10)
+      ahead = await commitsOnlyOn(project.root, branch, target)
     } catch {
       ahead = -1
     }

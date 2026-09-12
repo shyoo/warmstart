@@ -615,10 +615,17 @@ export function promptFor(
   // Keep a task branch reviewable and cheap to rebase. This is conditional: a branch can legitimately
   // carry separate commits when it contains independently useful work, and the agent must never
   // rewrite anything that is already on the landing target.
-  const commitHygiene =
-    'When committing, if two or more commits ahead of this task branch’s landing target all belong ' +
-    'to this task, squash them into one coherent commit where safe. Do not rewrite commits already ' +
-    'on the landing target, force-push, or use a destructive reset.'
+  // ⛔ **Except where nothing lands.** A `report-only` task (every debate seat) was handed the same
+  //    squash, rebase and — on an MCP-less adapter — "commit what you have" clauses as work that
+  //    lands, directly contradicting the seat prompt's "do not commit". Anything such a task commits
+  //    can only become a loose end, and `decideFinish` now refuses to call it done until it is gone.
+  const reportsOnly = policy === 'report-only'
+  const commitHygiene = reportsOnly
+    ? 'This task reports on its thread and lands nothing: do not commit, and leave the branch and ' +
+      'the working tree exactly as you found them.'
+    : 'When committing, if two or more commits ahead of this task branch’s landing target all belong ' +
+      'to this task, squash them into one coherent commit where safe. Do not rewrite commits already ' +
+      'on the landing target, force-push, or use a destructive reset.'
 
   // ⛔ **Only where there is a branch and a target to be behind**, which is `vcs: 'git'` and nothing
   // else. A non-git project is a pool of one over its own directory (`policyFor`), so there is no
@@ -634,7 +641,7 @@ export function promptFor(
   // points at *the validation relevant to what you changed* rather than at a list somebody else runs.
   const toolRunsChecks = adapter(adapterId).info.capabilities.streamPrompts === 'once'
   const integration =
-    project?.vcs === 'git'
+    project?.vcs === 'git' && !reportsOnly
       ? integrationClause(
           landingTargetFor(task, project),
           checks.length > 0 && !toolRunsChecks,
@@ -728,7 +735,8 @@ export function promptFor(
       isOpenConversation(task)
         ? conversationInstruction(true)
         : checkLead +
-        'When the work is finished, commit what you have and end with a line beginning `TASK COMPLETE: ` ' +
+        (reportsOnly ? 'When the work is finished, end' : 'When the work is finished, commit what you have and end') +
+        ' with a line beginning `TASK COMPLETE: ` ' +
         'followed by a one-line summary of what changed. ' + commitHygiene +
         (integration ? ' ' + integration : '') +
         ' If you need a decision from a person, end your reply with a line beginning ' +
@@ -776,14 +784,16 @@ export function promptFor(
     // operator had written "Do not push" by hand precisely because the prompt would not say it.
     // Only the two policies that want a remote ask for one.
     const pushes = policy === 'commit-and-push' || policy === 'pull-request'
-    const plain =
-      'Commit everything you change' +
-      (task.branch ? ` on \`${task.branch}\`` : '') +
-      ' before your turn ends. ' +
-      commitHygiene + ' ' +
-      (pushes
-        ? 'Then push it — nothing will do that for you afterwards.'
-        : 'Do not push; the tool takes it from there. Nothing will ask you again.')
+    // ⚠️ And a task that lands nothing is not told to commit here either — see `reportsOnly`.
+    const plain = reportsOnly
+      ? commitHygiene + ' Nothing will ask you again.'
+      : 'Commit everything you change' +
+        (task.branch ? ` on \`${task.branch}\`` : '') +
+        ' before your turn ends. ' +
+        commitHygiene + ' ' +
+        (pushes
+          ? 'Then push it — nothing will do that for you afterwards.'
+          : 'Do not push; the tool takes it from there. Nothing will ask you again.')
     parts.push(
       'You get one turn and no follow-up, so finish the job in it. ' + (instruction ?? plain)
     )
