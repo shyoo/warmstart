@@ -5908,6 +5908,41 @@ select:focus-visible,
   overflow-x: auto;
 }
 
+/* ⚠️ The same two-row table Plan & Split draws, because it is the same shape: one row of settings
+   for the task itself and one for what it files. */
+.composer-bar--debate {
+  display: block;
+  padding: var(--sp-1) var(--sp-1) 0;
+  overflow-x: auto;
+}
+
+/* ⛔ Between the settings and the Send button, where the money is committed. A cost notice below
+   the fold is a cost notice nobody read. */
+.composer-notices {
+  margin: var(--sp-2) 0 0;
+  padding: 0 var(--sp-1);
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  max-width: 90ch;
+}
+
+.composer-notice {
+  font-size: var(--text-meta);
+  line-height: var(--leading-body);
+  color: var(--color-text-dim);
+  border-left: 2px solid var(--color-border);
+  padding-left: var(--sp-2);
+}
+
+/* ⚠️ A caution, never a refusal: every one of these is advice with its basis attached, and the
+   colour says "read this", not "you may not". */
+.composer-notice--caution {
+  border-left-color: var(--state-warn);
+  color: var(--color-text);
+}
+
 .composer-plan-table {
   border-collapse: collapse;
   border-spacing: 0;
@@ -6849,4 +6884,110 @@ select:focus-visible,
     padding-left: 0;
     padding-right: 0;
   }
+}
+
+/* ── The debate board ─────────────────────────────────────────────────────────────────────────
+   One column per seat, one row per round, the organizer between them. ⚠️ Columns rather than a
+   table: a position is a paragraph, and a table cell that has to hold one stops being a table. */
+.debate-board {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin: 0 0 var(--sp-3);
+  padding: var(--sp-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md, 6px);
+  background: var(--color-surface-raised, transparent);
+}
+
+.debate-board-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: var(--text-meta);
+  color: var(--color-text-dim);
+}
+
+.debate-board-verdict {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.debate-round {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.debate-round-label {
+  margin: 0;
+  font-size: var(--text-meta);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+/* ⚠️ Wraps rather than scrolling: five seats on a narrow window is five stacked positions, which
+   still reads. A horizontal scrollbar would hide whole arguments off the side of the page. */
+.debate-round-seats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  align-items: flex-start;
+}
+
+.debate-seat {
+  flex: 1 1 22ch;
+  min-width: 22ch;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm, 4px);
+}
+
+.debate-seat-head {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--text-meta);
+}
+
+.debate-seat-name {
+  font-weight: 600;
+}
+
+.debate-seat-who {
+  color: var(--color-text-faint);
+}
+
+/* ⛔ A report, never a penalty — so it is a note beside the name, not a badge on the argument. */
+.debate-seat-citations {
+  margin: 0;
+  font-size: var(--text-meta);
+  color: var(--state-warn);
+}
+
+.debate-seat-text {
+  font-size: var(--text-dense);
+  line-height: var(--leading-body);
+  overflow-wrap: anywhere;
+}
+
+.debate-organizer {
+  border-left: 2px solid var(--color-border);
+  padding-left: var(--sp-2);
+  font-size: var(--text-dense);
+  line-height: var(--leading-body);
+}
+
+.debate-organizer-label {
+  display: block;
+  font-size: var(--text-meta);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
 }

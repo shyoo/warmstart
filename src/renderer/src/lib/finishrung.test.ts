@@ -32,12 +32,17 @@ const inherited = (policy: FinishPolicy, source = 'project'): { policy: FinishPo
 })
 
 describe('which rungs each button offers', () => {
-  it('offers every rung under Commit except the two that are not commits', () => {
+  it('offers every rung under Commit except the three that are not commits', () => {
     // ⛔ Derived from the ladder rather than listed: three dropdowns each kept their own copy once,
     // and all three still offered a rung a week after it was renamed.
-    expect(COMMIT_RUNGS).toEqual(FINISH_ORDER.filter((p) => p !== 'await-human' && p !== 'custom'))
+    expect(COMMIT_RUNGS).toEqual(
+      FINISH_ORDER.filter((p) => p !== 'await-human' && p !== 'custom' && p !== 'report-only')
+    )
     expect(COMMIT_RUNGS).not.toContain('await-human')
     expect(COMMIT_RUNGS).not.toContain('custom')
+    // ⛔ The rung that says nothing was ever going to be committed is the one option under a button
+    // called Commit that is guaranteed to do nothing.
+    expect(COMMIT_RUNGS).not.toContain('report-only')
   })
 
   it('offers only rungs the tool itself acts on under Land', () => {

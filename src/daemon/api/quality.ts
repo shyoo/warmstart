@@ -9,6 +9,16 @@ import { cancelBatch, currentBatch, startBatch } from '../gradebatch.js'
 import { statisticsReport } from '../statistics.js'
 import { listSessions } from '../sessions.js'
 import { createTask, requireTask } from '../tasks.js'
+import {
+  agentPositionsFor,
+  citationReport,
+  openDebate,
+  organizerLinesFor,
+  seatsOf,
+  validateDebate
+} from '../debate.js'
+import { getProject } from '../projects.js'
+import { debatePreview } from '../debatecost.js'
 import { tick } from '../scheduler.js'
 import { controllerReport, drainConsults } from '../controller.js'
 import { chatHistory, clearChat, sendChat } from '../chat.js'
@@ -27,6 +37,7 @@ type QualityMethod =
   | 'routing.decisions' | 'routing.velocity' | 'routing.models' | 'quality.report' | 'statistics.report'
   | 'quality.ungraded' | 'quality.queue' | 'quality.batch.start' | 'quality.batch' | 'quality.batch.cancel'
   | 'scheduler.tick' | 'controller.report' | 'controller.drain' | 'task.plan' | 'task.estimate'
+  | 'task.debate' | 'task.debateState' | 'task.estimatePreview'
   | 'chat.history' | 'chat.send' | 'chat.clear'
 
 export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
@@ -171,6 +182,75 @@ export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
         assumed: estimate.assumed
       }
     },
+    /**
+     * File a Debate task and seat it in one call.
+     *
+     * ⛔ **Validated before anything is written.** `openDebate` is all-or-nothing, but a roster
+     * that was never going to pass would still have left a parent task with no seats sitting in
+     * the queue — a debate that dispatches an organizer with nothing to arbitrate.
+     *
+     * ⛔ **The operator's seat count is written into the mandate**, which is what `createTask`
+     * actually enforces. There is never a second, invisible cap — the Plan & Split lesson, where a
+     * split of six was refused with a message about a limit nobody had set.
+     */
+    'task.debate': (p) => {
+      const precheck = validateDebate({ seats: p.seats, rounds: p.rounds, exchange: p.exchange })
+      if (!precheck.ok) return { ok: false, reason: precheck.reason }
+      const task = createTask({
+        title: p.title,
+        kind: 'debate',
+        projectId: p.projectId ?? null,
+        ...(p.prompt ? { prompt: p.prompt } : {}),
+        ...(p.priority ? { priority: p.priority } : {}),
+        ...(p.finishPolicy ? { finishPolicy: p.finishPolicy } : {}),
+        ...(p.status ? { status: p.status } : {}),
+        ...(p.notBefore ? { notBefore: p.notBefore } : {}),
+        ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {}),
+        ...(p.dependsOn?.length ? { dependsOn: p.dependsOn } : {}),
+        ...(p.attachmentIds?.length ? { attachmentIds: p.attachmentIds } : {}),
+        mandate: { maxChildren: p.seats.length },
+        debate: { seats: p.seats, rounds: p.rounds, exchange: p.exchange, round: 1, verdict: null }
+      })
+      // ⚠️ A draft seats nothing. It dispatches nothing and holds nothing, so the seats are filed
+      // when the operator promotes it — `promoteDraft` is where that happens.
+      if (task.status === 'draft') return { ok: true, task }
+      const opened = openDebate(task.id, { kind: 'human' })
+      if (!opened.ok) return { ok: false, task, reason: opened.reason }
+      return { ok: true, task: requireTask(task.id), seatSeqs: opened.seats.map((s) => s.seq) }
+    },
+    /**
+     * The board.
+     *
+     * ⚠️ Every cell is agent output, so it travels as **text**. The renderer parses it with
+     * `lib/markdown.ts`'s closed subset and draws elements this codebase writes — no raw HTML.
+     */
+    'task.debateState': (p) => {
+      const task = requireTask(p.id)
+      if (!task.debate) return null
+      const project = task.projectId ? getProject(task.projectId) : null
+      const seats = seatsOf(task.id).map((seat) => {
+        const positions = agentPositionsFor(seat.id)
+        return {
+          taskId: seat.id,
+          seq: seat.seq,
+          status: seat.status,
+          workerId: seat.constraints.workerId ?? seat.assignee ?? null,
+          adapterId: (seat.constraints.workerId ? getWorker(seat.constraints.workerId) : null)?.adapterId ?? null,
+          model: seat.ranModel ?? seat.constraints.model ?? null,
+          rounds: positions.map((text, i) => ({
+            round: i + 1,
+            text,
+            citations: citationReport(text, project?.root ?? null)
+          }))
+        }
+      })
+      return { debate: task.debate, seats, organizer: organizerLinesFor(task.id) }
+    },
+    /**
+     * ⛔ The renderer does not compute money. Every figure comes back with its basis, and `null`
+     * rather than `$0.00` where nothing could be priced.
+     */
+    'task.estimatePreview': (p) => debatePreview(p),
     'chat.history': (p) => chatHistory(p?.threadId),
     'chat.send': (p) => sendChat(p.text, p.threadId),
     'chat.clear': (p) => {

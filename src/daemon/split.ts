@@ -4,6 +4,7 @@ import {
   admit,
   createTask,
   getTask,
+  isIntegrationParent,
   requireTask,
   setStatus
 } from './tasks.js'
@@ -61,8 +62,15 @@ export function validateSplit(
   parent: Task,
   pieces: SplitPiece[]
 ): { ok: true } | { ok: false; reason: string } {
-  if (parent.kind !== 'plan') {
-    return { ok: false, reason: `t${parent.seq} is not a Plan & Split task, so it cannot file a split` }
+  // ⛔ **A debate organizer may split too, and that is the verdict *Split the work*.** The topology
+  // is identical — pieces are cut from the parent's branch and merge back into it — which is why
+  // this asks `isIntegrationParent` rather than naming two kinds here and two more in
+  // `plannerBranchFor` and `createTask`. See that function.
+  if (!isIntegrationParent(parent)) {
+    return {
+      ok: false,
+      reason: `t${parent.seq} is not a Plan & Split or Debate task, so it cannot file a split`
+    }
   }
   if (!Array.isArray(pieces) || pieces.length < MIN_SPLIT_PIECES) {
     return {

@@ -1,12 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEBATE_VERDICTS,
+  DEBATE_VERDICT_DETAILS,
+  DEBATE_VERDICT_LABELS,
   FINISH_LABELS,
   FINISH_ORDER,
   FINISH_SHORT,
+  MAX_DEBATE_SEATS,
+  MIN_DEBATE_SEATS,
+  ROOT_MANDATE,
   SHARING_LABELS,
   SHARING_SHORT,
+  adapterSpread,
   policyLands,
-  policyVerifies
+  policyVerifies,
+  readDebateState
 } from './tasks.js'
 
 /**
@@ -78,5 +86,93 @@ describe('the rungs where the tool does the last part', () => {
     expect(policyLands('commit-and-verify')).toBe(false)
     expect(policyLands('pull-request')).toBe(true)
     expect(policyVerifies('pull-request')).toBe(false)
+  })
+})
+
+/**
+ * Debate's shared constants, and the one that has to agree with something else.
+ *
+ * ⛔ **One cap, not two.** The composer offers 2–5 seats and `createTask` enforces
+ * `ROOT_MANDATE.maxChildren`. A split of six was once refused with a message about a fan-out cap
+ * nobody had set, and the fix was to make the number on the control the number that is enforced —
+ * which only stays true while something checks the two are the same.
+ */
+describe('the debate roster’s bounds', () => {
+  it('caps seats at the mandate’s own fan-out limit', () => {
+    expect(MAX_DEBATE_SEATS).toBe(ROOT_MANDATE.maxChildren)
+    // ⚠️ Two, because a debate of one is an ordinary task and cheaper — it buys a round trip and a
+    // cold context and delivers no second opinion.
+    expect(MIN_DEBATE_SEATS).toBe(2)
+  })
+
+  it('names and explains all five verdicts, with nothing missing and nothing extra', () => {
+    expect(Object.keys(DEBATE_VERDICT_LABELS).sort()).toEqual([...DEBATE_VERDICTS].sort())
+    expect(Object.keys(DEBATE_VERDICT_DETAILS).sort()).toEqual([...DEBATE_VERDICTS].sort())
+    for (const verdict of DEBATE_VERDICTS) {
+      expect(DEBATE_VERDICT_LABELS[verdict].trim()).not.toBe('')
+      expect(DEBATE_VERDICT_DETAILS[verdict].trim()).not.toBe('')
+    }
+  })
+})
+
+/**
+ * ⛔ **Counted on the adapter, not the model name.** Published work finds cross-*family* pairs are
+ * what carry debate's gain; two Claude models are one family however different their ids look.
+ */
+describe('how many model families a roster spans', () => {
+  it('counts adapters, so two models of one CLI are one family', () => {
+    expect(adapterSpread(['claude-code', 'claude-code'])).toBe(1)
+    expect(adapterSpread(['claude-code', 'openai-compatible'])).toBe(2)
+  })
+
+  // ⚠️ An account this fleet has forgotten contributes nothing rather than a phantom family.
+  it('counts nothing for an account with no adapter', () => {
+    expect(adapterSpread([null, undefined, 'claude-code'])).toBe(1)
+    expect(adapterSpread([])).toBe(0)
+  })
+})
+
+/**
+ * ⚠️ **A malformed blob reads as *no debate*, never a throw** — the rule `parseChildDefaults`
+ * already keeps. This column is read on every task load, and a task that cannot be listed because
+ * its settings did not parse is a worse failure than a debate that has to be re-filed.
+ */
+describe('reading a debate blob written by any version of this tool', () => {
+  it('reads a whole one back', () => {
+    const state = readDebateState({
+      seats: [{ workerId: 'w-a', model: 'opus', effort: 'high' }, { workerId: 'w-b' }],
+      rounds: 3,
+      exchange: 'digest',
+      round: 2,
+      verdict: 'execute'
+    })
+    expect(state?.seats).toEqual([
+      { workerId: 'w-a', model: 'opus', effort: 'high' },
+      { workerId: 'w-b', model: null, effort: null }
+    ])
+    expect(state?.rounds).toBe(3)
+    expect(state?.exchange).toBe('digest')
+    expect(state?.round).toBe(2)
+    expect(state?.verdict).toBe('execute')
+  })
+
+  it('is null for anything with no usable seat in it', () => {
+    expect(readDebateState(null)).toBeNull()
+    expect(readDebateState('a string')).toBeNull()
+    expect(readDebateState([])).toBeNull()
+    expect(readDebateState({ seats: [] })).toBeNull()
+    expect(readDebateState({ seats: [{ workerId: '' }, { nope: 1 }] })).toBeNull()
+  })
+
+  // ⚠️ Clamped rather than rejected: a stored value from a build with different bounds is repaired
+  // to the nearest legal one, which is what the rest of the config readers here do.
+  it('clamps the rounds and falls back to the verbatim exchange', () => {
+    const state = readDebateState({ seats: [{ workerId: 'w-a' }], rounds: 40, exchange: 'nope' })
+    expect(state?.rounds).toBe(5)
+    expect(state?.exchange).toBe('full')
+    expect(state?.round).toBe(1)
+    // ⛔ An unrecognised verdict is *no verdict*, never a guessed one: a verdict decides what the
+    // organizer does next, and inventing one would act on a choice nobody made.
+    expect(readDebateState({ seats: [{ workerId: 'w-a' }], verdict: 'land' })?.verdict).toBeNull()
   })
 })

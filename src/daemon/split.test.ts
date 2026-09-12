@@ -82,11 +82,23 @@ describe('validateSplit', () => {
     expect(result.ok === false && result.reason).toMatch(/at least 2/)
   })
 
-  it('refuses a task that is not a plan task', () => {
+  it('refuses a task that is neither a plan nor a debate', () => {
     const work = tasks.createTask({ title: 'ordinary work' })
     const result = split.validateSplit(work, [piece('a'), piece('b')])
     expect(result.ok).toBe(false)
-    expect(result.ok === false && result.reason).toMatch(/not a Plan & Split task/)
+    expect(result.ok === false && result.reason).toMatch(/not a Plan & Split or Debate task/)
+  })
+
+  // ⛔ The verdict *Split the work* is the organizer calling `task_split`, so a debate parent has
+  // to be accepted here — and by `plannerBranchFor` and `createTask`, or its pieces would be cut
+  // from the trunk instead of from the organizer's branch.
+  it('accepts a debate organizer, because that is the verdict “Split the work”', () => {
+    const filed = tasks.createTask({ title: 'which cache do we use', kind: 'debate' })
+    // ⚠️ A branch, for the same reason a planner needs one: the pieces are cut from the parent's
+    // branch and merge back into it, which is what `isIntegrationParent` is naming.
+    db.db().prepare('update tasks set branch = ? where id = ?').run('warmstart/t9-which-cache', filed.id)
+    const result = split.validateSplit(tasks.requireTask(filed.id), [piece('a'), piece('b')])
+    expect(result.ok).toBe(true)
   })
 
   it('refuses an edge that does not point backwards, which is what makes a cycle impossible', () => {

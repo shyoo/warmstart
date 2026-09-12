@@ -82,6 +82,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     landingTarget: overrides.landingTarget ?? null,
     branchUnit: overrides.branchUnit ?? 1,
     childDefaults: overrides.childDefaults ?? null,
+    debate: overrides.debate ?? null,
     landedBaseSha: overrides.landedBaseSha ?? null,
     landedHeadSha: overrides.landedHeadSha ?? null,
     qualityReviewId: overrides.qualityReviewId ?? null,

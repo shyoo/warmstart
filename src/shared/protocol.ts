@@ -20,6 +20,10 @@ import type {
   ResolvedCompletionMode,
   CompletionModeChoice,
   Consult,
+  DebateExchange,
+  DebateSeat,
+  DebateState,
+  DebateVerdict,
   Objective,
   ObjectiveChoice,
   Priority,
@@ -46,6 +50,7 @@ import type {
   TaskCommit,
   TaskConstraints,
   TaskKind,
+  TaskStatus,
   TaskMessage,
   TaskPage,
   ProjectActivity,
@@ -2229,6 +2234,72 @@ export interface RpcMap {
     }
   }
 
+  /**
+   * File a Debate task, and open its seats in the same call.
+   *
+   * ⛔ **The seats are filed here, not by a first agent turn.** A debate's round 1 *is* the seats
+   * answering blind, so the organizer's first dispatch is already the arbitration turn — it is
+   * woken by the `settled` edges when every seat has answered, and costs nothing while it waits.
+   */
+  'task.debate': {
+    params: {
+      title: string
+      projectId?: string | null
+      prompt?: string
+      priority?: Priority
+      finishPolicy?: FinishPolicyChoice
+      constraints?: TaskConstraints
+      dependsOn?: string[]
+      attachmentIds?: string[]
+      status?: 'draft' | 'ready'
+      notBefore?: number | null
+      seats: DebateSeat[]
+      rounds: number
+      exchange: DebateExchange
+    }
+    result: { ok: boolean; task?: Task; seatSeqs?: number[]; reason?: string }
+  }
+  /** The board: every seat with its rounds, positions and unresolved citations. */
+  'task.debateState': {
+    params: { id: string }
+    result: {
+      debate: DebateState
+      seats: Array<{
+        taskId: string
+        seq: number
+        status: TaskStatus
+        workerId: string | null
+        adapterId: string | null
+        model: string | null
+        rounds: Array<{ round: number; text: string; citations: Array<{ path: string; exists: boolean }> }>
+      }>
+      /** The organizer's briefs and agreement, newest last, as they were written to the thread. */
+      organizer: Array<{ round: number; text: string }>
+    } | null
+  }
+  /**
+   * What a task that does not exist yet would cost.
+   *
+   * ⛔ **A preview, and the whole point is that it appears *before* anything is filed.**
+   * `task.estimate` takes a task id, which a composer showing a cost notice does not have. This
+   * reuses `complexityOf` and `estimateTask` unchanged; what is new is that it accepts a
+   * description instead of a row. ⛔ `null` money with `usdConfidence: 'none'` rather than `$0.00`
+   * where nothing behind it could be priced — the rule `task.estimate` already keeps.
+   */
+  'task.estimatePreview': {
+    params: {
+      title: string
+      projectId?: string | null
+      kind?: TaskKind
+      /** One entry per seat, so a heterogeneous roster is priced on the agents it actually names. */
+      seats?: DebateSeat[]
+      rounds?: number
+      /** The organizer's account, priced separately from the seats. */
+      organizerWorkerId?: string | null
+      organizerModel?: string | null
+    }
+    result: DebatePreview
+  }
   'chat.history': { params: { threadId?: string } | void; result: ChatMessage[] }
   /** Talk to the controller. Answers arrive as `chat.message` events, not in this result. */
   'chat.send': {
@@ -2289,6 +2360,31 @@ export interface RpcMap {
     result: { ok: boolean; reason?: string }
   }
   /**
+   * The debate organizer's only move, called once per round.
+   *
+   * ⛔ **One call, two shapes.** `continue` sends one brief per seat and puts the organizer back to
+   * sleep; `converged` raises the five-verdict card and **blocks until a person answers**, exactly
+   * as `agent.split` blocks on its approval. Anything that will not validate comes back as
+   * `reply` with `ok: false` and the reason — a missing dissent section, a request to go past the
+   * operator's round cap, a brief count that does not match the seats.
+   *
+   * ⚠️ `verdict` is present only on the converged path and only once a person has answered; the
+   * agent reads it out of `reply` as well, because that is the sentence it acts on.
+   */
+  'agent.debateRound': {
+    params: {
+      sessionId: string
+      continue?: boolean
+      briefs?: Array<{ seat: number; text: string }>
+      converged?: boolean
+      agreement?: string
+      dissent?: string
+      confidence?: string
+      unresolved?: string
+    }
+    result: { ok: boolean; reply: string; verdict?: DebateVerdict }
+  }
+  /**
    * Land a **conversation's** committed work, and carry on talking.
    *
    * ⛔ **Not a terminal contract, and the one worker RPC that ends nothing.** `agent.complete` and
@@ -2337,6 +2433,37 @@ export interface RpcMap {
 }
 
 /** A browser's `pushManager.subscribe()` result, as the phone app forwards it. */
+/**
+ * What a debate would cost, before one exists.
+ *
+ * ⛔ Every figure carries its basis, and money is `null` rather than `$0.00` where nothing behind
+ * it could be priced — `usdConfidence` is `none` in exactly that case. `multiple` is the honest
+ * headline: how many times the same question asked *once* this debate is.
+ */
+export interface DebatePreview {
+  /** What one seat's single turn is expected to cost. */
+  perSeatTokens: number
+  perSeatUsd: number | null
+  /** Seats × rounds + the organizer's turns. */
+  totalTokens: number
+  totalUsd: number | null
+  /** ⚠️ `null` when the single-run baseline itself could not be estimated. */
+  multiple: number | null
+  usdConfidence: 'none' | 'low' | 'medium' | 'high'
+  confidence: 'none' | 'low' | 'medium' | 'high'
+  basis: string
+  /** True when any figure rests on assumed cache multipliers. See `Estimate.assumed`. */
+  assumed: boolean
+  /** How many distinct **adapters** the roster spans. One is a same-family debate. */
+  adapterSpread: number
+  /**
+   * The seats that cannot run at the same time, because their accounts' `maxConcurrent` or the
+   * project's workspace pool will not have them. ⚠️ Said out loud, never silently corrected.
+   */
+  parallelSeats: number
+  seatCount: number
+}
+
 export interface RemotePushSubscription {
   endpoint: string
   /** The subscriber's public key, base64url. */

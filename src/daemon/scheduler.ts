@@ -63,6 +63,7 @@ import {
   startRun
 } from './tasks.js'
 import { taskCommitShas } from './taskcommits.js'
+import { openDebate, seatsOf } from './debate.js'
 import { enqueueConsult } from './controller.js'
 import {
   decomposeQuestion,
@@ -497,6 +498,40 @@ export async function tick(): Promise<TickResult> {
     // ⚠️ The controller consult survives as the fallback for the one case that still cannot be given
     // an agent turn — a plan task with **no project**, which has no workspace to read and nothing to
     // split work across. That is decision D1: replace the behaviour, keep the escape hatch.
+    // ⛔ **A debate needs a project, and there is no escape hatch for it.** Seats read a
+    // repository; a debate about nothing in particular has no seats worth paying for. The plan
+    // guard below routes to the controller consult instead, which works for a plan because a
+    // consult can still answer one JSON question — it cannot run a debate, which is N dispatched
+    // agent sessions arbitrated by a third. So this refuses with a reason rather than degrading.
+    if (task.kind === 'debate' && !task.projectId) {
+      const why =
+        'a debate needs a project: its seats read a repository, and nothing here can arbitrate one ' +
+        'without a workspace. Move this task into a project, or file it as a single task.'
+      skipped.push(`t${task.seq}: ${why}`)
+      setHoldReason(task.id, why)
+      continue
+    }
+
+    // ⛔ **A debate with no seats is seated here, not dispatched.** `task.debate` seats a debate the
+    // moment it is filed, but a debate filed as a **draft** has nothing to seat until somebody
+    // promotes it — and `promoteDraft` is a plain status change in `tasks.ts`, which cannot import
+    // this module's neighbour without closing a cycle. So the seating phase is a backstop on the
+    // tick, where `debatePhaseOf` already says it is: without it a promoted draft dispatches its
+    // organizer into an empty room and it arbitrates nothing.
+    //
+    // ⚠️ Idempotent by construction — `openDebate` refuses a parent that already has seats — so a
+    // debate seated at filing time never passes through here twice.
+    if (task.kind === 'debate' && task.debate && seatsOf(task.id).length === 0) {
+      const opened = openDebate(task.id, { kind: 'human' })
+      if (opened.ok) {
+        skipped.push(`t${task.seq}: seated ${opened.seats.length} debate seats; arbitrating when they settle`)
+      } else {
+        skipped.push(`t${task.seq}: ${opened.reason}`)
+        setHoldReason(task.id, opened.reason)
+      }
+      continue
+    }
+
     if (task.kind === 'plan' && !task.projectId) {
       if (askForPlan(task)) planned++
       else {

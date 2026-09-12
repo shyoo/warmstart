@@ -9,13 +9,20 @@ import {
   FINISH_LABELS,
   FINISH_ORDER,
   FINISH_SHORT,
+  MAX_DEBATE_ROUNDS,
+  MAX_DEBATE_SEATS,
+  MIN_DEBATE_ROUNDS,
+  MIN_DEBATE_SEATS,
   SHARING_LABELS,
   SHARING_SHORT,
   resolveModelChoice,
 } from '@shared/tasks'
+import type { DebateExchange, DebateSeat } from '@shared/tasks'
 import { resolveFinishPolicy, resolveSessionSharing } from '@shared/policy'
-import type { ModelOptions, Settings } from '@shared/protocol'
+import type { DebatePreview, ModelOptions, Settings } from '@shared/protocol'
+import type { ModelReportRow } from '@shared/routing'
 import { canWork } from '@shared/protocol'
+import { debateNotices } from '../lib/debatenotice'
 import { ImageChips, usePastedImages } from '../lib/pasteimages.js'
 import { rpc, type FleetEntry } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
@@ -80,7 +87,7 @@ const PRIORITY_OPTIONS: PillOption[] = [
 ]
 
 /**
- * ⚠️ Three. Multi-task belongs here next and is deliberately not listed yet: an option that files
+ * ⚠️ Four. Multi-task belongs here next and is deliberately not listed yet: an option that files
  * nothing is worse than a missing one, because somebody picks it and nothing happens.
  */
 const KIND_OPTIONS: PillOption[] = [
@@ -97,7 +104,41 @@ const KIND_OPTIONS: PillOption[] = [
     value: 'conversation',
     label: 'Conversation',
     hint: 'a thread you keep talking in — it stops after each turn and commits when you say so'
+  },
+  {
+    value: 'debate',
+    label: 'Debate',
+    hint: 'several agents answer independently, then argue it out under an organizer'
   }
+]
+
+/**
+ * ⛔ Starts at 2 and stops at 5, and both ends are the daemon's own. A debate of one is an ordinary
+ * task and cheaper; five is `ROOT_MANDATE.maxChildren`, which is what `createTask` enforces, so the
+ * number on the pill is the number that will be allowed.
+ */
+const SEAT_OPTIONS: PillOption[] = Array.from(
+  { length: MAX_DEBATE_SEATS - MIN_DEBATE_SEATS + 1 },
+  (_, i) => ({ value: String(MIN_DEBATE_SEATS + i), label: `${MIN_DEBATE_SEATS + i} seats` })
+)
+
+/** ⚠️ 1–3 is where the published gain lives; 4–5 sit behind the diminishing-return notice. */
+const ROUND_OPTIONS: PillOption[] = Array.from(
+  { length: MAX_DEBATE_ROUNDS - MIN_DEBATE_ROUNDS + 1 },
+  (_, i) => {
+    const n = MIN_DEBATE_ROUNDS + i
+    return {
+      value: String(n),
+      label: n === 1 ? '1 round' : `up to ${n} rounds`,
+      ...(n > 3 ? { hint: 'published gains flatten past about 3–4 rounds' } : {})
+    }
+  }
+)
+
+/** D4, the operator's pill. ⚠️ Data in `debate_json`, never a branch on a seat count. */
+const EXCHANGE_OPTIONS: PillOption[] = [
+  { value: 'full', label: 'Verbatim', hint: 'each seat reads every other position word for word' },
+  { value: 'digest', label: 'Organizer’s digest', hint: 'each seat reads only the brief written for it' }
 ]
 
 /**
@@ -133,7 +174,8 @@ const ATTACH_OPTIONS: PillOption[] = [
 const KIND_SHORT: Record<ComposerKind, string> = {
   task: 'Single Task',
   plan: 'Plan&Split',
-  conversation: 'Conversation'
+  conversation: 'Conversation',
+  debate: 'Debate'
 }
 
 /** `2026-09-02T14:30` — what `datetime-local` wants, in the operator's own timezone. */
@@ -175,6 +217,24 @@ function scheduleLabel(option: ScheduleOption, customTime: string): string {
     hour: 'numeric',
     minute: '2-digit'
   })}`
+}
+
+/**
+ * Grow or shrink a roster to `n` seats, keeping every seat somebody has already filled in.
+ *
+ * ⛔ **Ordered, and the order is load-bearing.** A roster is seat *1* is exactly this account, seat
+ * *2* is exactly that one — not a set the scheduler may choose from — so growing appends and
+ * shrinking drops from the end. Re-deriving the list would silently move a model somebody chose for
+ * one account onto another, and the debate would run as a different fleet than the one on screen.
+ */
+export function resizeRoster(seats: DebateSeat[], n: number): DebateSeat[] {
+  const want = Math.min(MAX_DEBATE_SEATS, Math.max(MIN_DEBATE_SEATS, n))
+  if (seats.length === want) return seats
+  if (seats.length > want) return seats.slice(0, want)
+  return [
+    ...seats,
+    ...Array.from({ length: want - seats.length }, () => ({ workerId: '', model: null, effort: null }))
+  ]
 }
 
 /**
@@ -249,6 +309,15 @@ export function NewTask({
   const [pieceWorkerIds, setPieceWorkerIds] = useState<string[]>([])
   const [pieceModels, setPieceModels] = useState<Record<string, string>>({})
   const [pieceEfforts, setPieceEfforts] = useState<Record<string, string>>({})
+  /**
+   * The roster, the round budget and the exchange rule, held as one so a seat change is one write.
+   *
+   * ⚠️ Seeded from `composerprefs` at first render like every other pill, and written back through
+   * `setPrefs` so the row a person tuned is the row they meet next time.
+   */
+  const [debatePrefs, setDebatePrefsState] = useState(() => readComposerPrefs().debate)
+  /** ⛔ From the daemon. The renderer does not compute money — see `task.estimatePreview`. */
+  const [preview, setPreview] = useState<DebatePreview | null>(null)
   const [scheduleOption, setScheduleOption] = useState<ScheduleOption>(restored.schedule)
   const [customTime, setCustomTime] = useState(restored.customTime)
   const [saving, setSaving] = useState<'draft' | 'ready' | null>(null)
@@ -277,6 +346,7 @@ export function NewTask({
    */
   const [options, setOptions] = useState<ModelOptions[]>([])
   const [settings, setSettings] = useState<Settings | null>(null)
+  const [modelFitness, setModelFitness] = useState<ModelReportRow[]>([])
   const { settings: uiSettings } = useUiSettings()
   // ⚠️ Every task in the fleet, not the page behind this form. A prerequisite is often the task you
   // filed a minute ago, and whether it happens to match the bucket the table is filtered to says
@@ -296,6 +366,16 @@ export function NewTask({
     void rpc('settings.get')
       .then(setSettings)
       .catch(() => setSettings(null))
+    /**
+     * ⛔ **For ordering the organizer picker, and for nothing else.** A judge's own failure mode is
+     * preferring what looks familiar to it, and the answer published work gives is to use the
+     * strongest judge available — so the Debate row sorts accounts by the fitness this fleet has
+     * already measured and says so. ⚠️ Advisory: `fitness` gates nothing here, exactly as it gates
+     * nothing in `objective.ts`, and a fleet with no measurements simply keeps its own order.
+     */
+    void rpc('routing.models')
+      .then((report) => setModelFitness(report.rows))
+      .catch(() => setModelFitness([]))
   }, [])
 
   /**
@@ -323,6 +403,12 @@ export function NewTask({
   const setPrefs = (next: ComposerPrefs): void => {
     setPrefsState(next)
     writeComposerPrefs(next)
+  }
+
+  /** ⚠️ The same rule one level down: the Debate row is remembered exactly like the pills above it. */
+  const setDebatePrefs = (next: ComposerPrefs['debate']): void => {
+    setDebatePrefsState(next)
+    setPrefs({ ...prefs, debate: next })
   }
 
   const selectedProject = projectId ? (projects.find((p) => p.id === projectId) ?? null) : null
@@ -425,10 +511,96 @@ export function NewTask({
    * always did on a conversation.
    */
   const isConversation = kind === 'conversation'
+  const isDebate = kind === 'debate'
+  /**
+   * ⛔ **The seats as they will actually be filed**, clamped to what the daemon accepts. The roster
+   * is an *ordered* list of exactly-one-(account, model, effort) pins, not a candidate set — so an
+   * entry naming an account this fleet no longer has is dropped rather than sent, and a roster left
+   * short of two seats cannot be filed at all.
+   */
+  const filedSeats: DebateSeat[] = debatePrefs.seats.map((seat) => ({
+    workerId: seat.workerId,
+    ...(seat.model ? { model: seat.model } : {}),
+    ...(seat.effort ? { effort: seat.effort } : {})
+  }))
+  const rosterComplete =
+    filedSeats.length >= MIN_DEBATE_SEATS &&
+    filedSeats.every((seat) => pinnable.some((w) => w.id === seat.workerId))
   const depTasks = dependsOn
     .map((id) => candidateTasks.find((t) => t.id === id))
     .filter((t): t is Task => !!t)
 
+
+  /**
+   * What this debate would cost, before it exists.
+   *
+   * ⛔ **Fetched, never computed here.** `task.estimatePreview` reuses `complexityOf` and
+   * `estimateTask` unchanged; the only new thing about it is that it accepts a description instead
+   * of a row, because the whole point of the cost notice is that it appears before anything is
+   * filed. ⚠️ A failed preview clears the notice rather than showing a stale one — a cost figure
+   * that belongs to a roster somebody has since changed is worse than no figure.
+   */
+  useEffect(() => {
+    if (!isDebate || !rosterComplete) {
+      setPreview(null)
+      return
+    }
+    let live = true
+    void rpc('task.estimatePreview', {
+      title: prompt.trim() || 'a debate',
+      projectId: projectId || null,
+      kind: 'debate',
+      seats: filedSeats,
+      rounds: debatePrefs.rounds,
+      organizerWorkerId: prefs.workerId || null,
+      organizerModel: model || null
+    })
+      .then((p) => {
+        if (live) setPreview(p)
+      })
+      .catch(() => {
+        if (live) setPreview(null)
+      })
+    return () => {
+      live = false
+    }
+    // ⚠️ On the roster rather than on every keystroke: the estimate is sized from the task's
+    // complexity band, which a word in the prompt does not move, and one RPC per character would be
+    // a request storm for a figure that would not change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDebate, rosterComplete, projectId, debatePrefs.rounds, JSON.stringify(filedSeats), prefs.workerId, model])
+
+  /**
+   * The Worker pill's options, and on a debate the order they are in.
+   *
+   * ⛔ **Sorted by the fitness this fleet has measured, and it says so — advisory, never a gate.**
+   * The organizer *judges*, and a judge is what makes a diverse roster pay off; published work also
+   * finds judges favour their own generations, which is why the hint names the adapter as well as
+   * the score. A weak organizer is not refused, and an unmeasured account is not demoted below a
+   * measured bad one — it keeps the fleet's own order, because `null` is unknown and not zero.
+   */
+  const bestFitnessFor = (workerId: string): number | null => {
+    const scores = modelFitness
+      .filter((r) => r.workerId === workerId && r.fitness !== null)
+      .map((r) => r.fitness as number)
+    return scores.length > 0 ? Math.max(...scores) : null
+  }
+  const organizerOptions: PillOption[] = [
+    { value: '', label: 'Auto Worker', hint: 'the scheduler picks' },
+    ...[...pinnable]
+      .sort((a, b) => (bestFitnessFor(b.id) ?? -1) - (bestFitnessFor(a.id) ?? -1))
+      .map((w) => {
+        const fitness = bestFitnessFor(w.id)
+        return {
+          value: w.id,
+          label: w.label,
+          hint:
+            fitness !== null
+              ? `fitness ${fitness.toFixed(2)} · ${w.adapterId}`
+              : `not measured yet · ${w.adapterId}`
+        }
+      })
+  ]
 
   const chooseWorker = (workerId: string): void => {
     // ⛔ The model is not cleared, it is *re-read for the account now pinned*. Clearing was right
@@ -517,6 +689,52 @@ export function NewTask({
             ...(pieceConstraints ? { pieceConstraints } : {})
           }
         })
+      } else if (isDebate) {
+        const notBefore = plannedStart(scheduleOption, customTime, readClock())
+        if (notBefore === 'invalid') {
+          onError('Pick a date and time for the scheduled send, or set the clock back to Send now')
+          setSaving(null)
+          return
+        }
+        /**
+         * ⛔ **One call files the task and seats it.** A debate's round 1 *is* the seats answering
+         * blind, so there is no first organizer turn that opens them — the organizer is woken by
+         * the `settled` edges once every seat has answered, and costs nothing while it waits.
+         *
+         * ⚠️ The daemon answers `{ ok: false, reason }` rather than throwing on a roster it will
+         * not take, so the refusal has to be read out of the result. A composer that treated a
+         * declined debate as a send would clear the prompt somebody has to retype.
+         */
+        const filed = await rpc('task.debate', {
+          title: prompt.trim(),
+          projectId: projectId || null,
+          ...(paste.ids.length > 0 ? { attachmentIds: paste.ids } : {}),
+          priority: prefs.priority,
+          finishPolicy: prefs.finishPolicy,
+          status: targetStatus,
+          ...(notBefore ? { notBefore } : {}),
+          ...(dependsOn.length > 0 ? { dependsOn } : {}),
+          seats: filedSeats,
+          rounds: debatePrefs.rounds,
+          exchange: debatePrefs.exchange,
+          // ⚠️ The organizer's own pin: a debate task is its organizer, so this is the ordinary
+          // Worker and Model answer rather than a second control saying the same thing.
+          ...(prefs.workerId || model || effort || modelPolicy === 'inherit'
+            ? {
+                constraints: {
+                  ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
+                  ...(model ? { model } : {}),
+                  ...(modelPolicy === 'inherit' && !model ? { modelPolicy: 'inherit' as const } : {}),
+                  ...(effort ? { effort } : {})
+                }
+              }
+            : {})
+        })
+        if (!filed.ok) {
+          onError(filed.reason ?? 'This debate could not be filed.')
+          setSaving(null)
+          return
+        }
       } else {
         const notBefore = plannedStart(scheduleOption, customTime, readClock())
         if (notBefore === 'invalid') {
@@ -579,7 +797,10 @@ export function NewTask({
   const armed = scheduleOption !== 'now'
   // ⛔ A send waits for an upload. Otherwise a click between selecting a file and its RPC completing
   // would create the task without the context the person just chose.
-  const canSend = !saving && !paste.busy && prompt.trim().length > 0 && !!projectId
+  // ⛔ And a debate additionally waits for a roster the daemon would accept. Sending a half-filled
+  // one would file an organizer with nothing to arbitrate — a task nothing can ever release.
+  const canSend =
+    !saving && !paste.busy && prompt.trim().length > 0 && !!projectId && (!isDebate || rosterComplete)
   const sendLabel =
     saving === 'ready'
       ? '…'
@@ -587,6 +808,8 @@ export function NewTask({
           ? 'Schedule'
           : isPlan
             ? 'Plan & Split'
+          : isDebate
+            ? 'Open Debate'
           : isConversation
             ? 'Start'
             : 'Send'
@@ -652,6 +875,8 @@ export function NewTask({
           placeholder={
             isPlan
               ? 'Describe the outcome. An agent plans it with you, then files and delegates the pieces.'
+              : isDebate
+              ? 'Ask the question. Every seat answers it independently first, then reads the others under an organizer.'
               : isConversation
                 ? 'Start the conversation. The agent answers and stops; you reply in the same thread, and commit when you are ready.'
                 : 'Describe the work as you would to a colleague. You can paste an image in here as well.'
@@ -762,8 +987,183 @@ export function NewTask({
         `Commit·Verify·Merge` `Auto` it is a status line you can click, and the dim ones are the
         answers nobody has chosen.
       */}
-      <div className={`composer-bar${isPlan ? ' composer-bar--plan' : ''}`} role="group" aria-label="Task settings">
-        {!isPlan ? (
+      <div
+        className={`composer-bar${isPlan ? ' composer-bar--plan' : ''}${isDebate ? ' composer-bar--debate' : ''}`}
+        role="group"
+        aria-label="Task settings"
+      >
+        {isDebate ? (
+          /*
+            ⛔ **Two rows, and the split is the feature.** The Organizer row is this task's own
+            settings — it *is* the organizer — and the Seats row is the roster, which is an ordered
+            list of exactly-one-(account, model, effort) pins rather than a set the scheduler may
+            pick from. Reusing the piece-worker control here would let three seats land on one
+            account and still be called a debate.
+          */
+          <table className="composer-plan-table">
+            <tbody>
+              <tr>
+                <td>
+                  <PillSelect
+                    ariaLabel="What this files"
+                    title="A debate seats several agents on one question, then arbitrates them."
+                    muted={false}
+                    value={kind}
+                    label={KIND_SHORT[kind]}
+                    options={KIND_OPTIONS}
+                    onChange={(v) => setPrefs({ ...prefs, kind: v as ComposerKind })}
+                  />
+                </td>
+                <th className="composer-plan-label">Organizer</th>
+                <td>
+                  <PillSelect
+                    ariaLabel="Priority"
+                    title="Priority orders the queue. It does not jump a task past its dependencies."
+                    muted={prefs.priority === 'P2'}
+                    value={prefs.priority}
+                    label={prefs.priority}
+                    options={PRIORITY_OPTIONS}
+                    onChange={(v) => setPrefs({ ...prefs, priority: v as ComposerPrefs['priority'] })}
+                  />
+                </td>
+                <td>
+                  <Pill
+                    ariaLabel="Wait for other tasks"
+                    title="This debate is held at blocked until every task named here has completed."
+                    muted={dependsOn.length === 0}
+                    label={
+                      dependsOn.length === 0
+                        ? 'Depends on'
+                        : dependsOn.length === 1
+                          ? `Depends on t${depTasks[0]?.seq ?? '?'}`
+                          : `Depends on [${dependsOn.length}] tasks`
+                    }
+                    menu={() => (
+                      <DependencyMenu
+                        all={candidateTasks}
+                        chosen={dependsOn}
+                        onChange={setDependsOn}
+                        projectNames={projectNames}
+                      />
+                    )}
+                  />
+                </td>
+                <td>
+                  <PillSelect
+                    ariaLabel="Finish policy"
+                    title={
+                      'What happens if you send this organizer on to do the work. A debate that ' +
+                      'stops at its agreement commits nothing whatever this says.'
+                    }
+                    muted={prefs.finishPolicy === 'inherit'}
+                    value={prefs.finishPolicy}
+                    label={
+                      prefs.finishPolicy === 'inherit'
+                        ? inheritedFinishShort
+                        : (FINISH_SHORT[prefs.finishPolicy] ?? prefs.finishPolicy)
+                    }
+                    options={[
+                      {
+                        value: 'inherit',
+                        label: `Inherit — ${inheritedFinishLong}`,
+                        hint: `from the ${inheritedFinish.source}, and follows it as it changes`
+                      },
+                      ...FINISH_ORDER.map((p) => ({ value: p, label: FINISH_LABELS[p] }))
+                    ]}
+                    onChange={(v) => setPrefs({ ...prefs, finishPolicy: v as FinishPolicyChoice })}
+                  />
+                </td>
+                <td>
+                  <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                    <PillSelect
+                      ariaLabel="Worker"
+                      align="right"
+                      title={
+                        'Who arbitrates. Sorted by the fitness this fleet has measured, and an ' +
+                        'organizer whose adapter is not the only one in the room is the stronger ' +
+                        'choice — both advisory, neither a gate.'
+                      }
+                      muted={!prefs.workerId}
+                      value={prefs.workerId}
+                      label={pinned?.label ?? 'Auto Worker'}
+                      options={organizerOptions}
+                      onChange={chooseWorker}
+                    />
+                    <PillSelect
+                      ariaLabel="Model"
+                      align="right"
+                      muted={!model}
+                      value={modelPillValue}
+                      label={modelPillLabel}
+                      options={modelPillOptions}
+                      onChange={chooseModel}
+                    />
+                    {efforts.length > 0 && (
+                      <PillSelect
+                        ariaLabel="Effort"
+                        align="right"
+                        muted={!effort}
+                        value={effort}
+                        label={effort ? (effortLabel(effort) ?? effort) : inheritedEffortLabel}
+                        options={[
+                          { value: '', label: `Inherit — ${inheritedEffortLabel}` },
+                          ...efforts.map((level) => ({ value: level, label: effortLabel(level) ?? level }))
+                        ]}
+                        onChange={chooseEffort}
+                      />
+                    )}
+                  </div>
+                </td>
+              </tr>
+              <tr>
+                <td></td>
+                <th className="composer-plan-label">Seats</th>
+                <td>
+                  <PillSelect
+                    ariaLabel="Seats"
+                    title="How many agents answer this question. Two to five — five is the fan-out cap this task is filed with, so the number here is the number that will be allowed."
+                    value={String(debatePrefs.seats.length)}
+                    label={`${debatePrefs.seats.length} seats`}
+                    options={SEAT_OPTIONS}
+                    onChange={(v) =>
+                      setDebatePrefs({ ...debatePrefs, seats: resizeRoster(debatePrefs.seats, Number(v)) })
+                    }
+                  />
+                </td>
+                <td>
+                  <PillSelect
+                    ariaLabel="Rounds"
+                    title="The round budget you authorise. The organizer may converge early — that only saves money — and may never ask for more."
+                    muted={debatePrefs.rounds === 3}
+                    value={String(debatePrefs.rounds)}
+                    label={debatePrefs.rounds === 1 ? '1 round' : `≤${debatePrefs.rounds} rounds`}
+                    options={ROUND_OPTIONS}
+                    onChange={(v) => setDebatePrefs({ ...debatePrefs, rounds: Number(v) })}
+                  />
+                </td>
+                <td>
+                  <PillSelect
+                    ariaLabel="Exchange"
+                    title="What each seat reads from round 2 on: every other position word for word, or only the brief the organizer wrote for it."
+                    muted={debatePrefs.exchange === 'full'}
+                    value={debatePrefs.exchange}
+                    label={debatePrefs.exchange === 'full' ? 'Verbatim' : 'Digest'}
+                    options={EXCHANGE_OPTIONS}
+                    onChange={(v) => setDebatePrefs({ ...debatePrefs, exchange: v as DebateExchange })}
+                  />
+                </td>
+                <td>
+                  <DebateRoster
+                    workers={pinnable}
+                    modelOptions={options}
+                    seats={debatePrefs.seats}
+                    onChange={(seats) => setDebatePrefs({ ...debatePrefs, seats })}
+                  />
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        ) : !isPlan ? (
           <>
             <PillSelect
               ariaLabel="What this files"
@@ -1156,13 +1556,41 @@ export function NewTask({
       </div>
 
 
+      {isDebate && (
+        /*
+          ⛔ **Every notice carries its basis**, which is the rule this codebase applies to a routing
+          score applied here to a piece of advice. None of them is a gate: not every operator has a
+          second provider, and a gate that cannot be satisfied on a one-account fleet is a feature
+          that cannot be used.
+        */
+        <ul className="composer-notices" aria-label="What this debate will cost and what to expect">
+          {rosterComplete && preview ? (
+            debateNotices(preview, debatePrefs.rounds).map((notice) => (
+              <li key={notice.id} className={`composer-notice composer-notice--${notice.tone}`}>
+                {notice.text}
+              </li>
+            ))
+          ) : (
+            <li className="composer-notice composer-notice--caution">
+              Name an account for every seat. A debate needs at least {MIN_DEBATE_SEATS} of them, and the
+              cost is only knowable once they are named.
+            </li>
+          )}
+        </ul>
+      )}
+
       <p className="composer-hint">
         {isPlan
           ? 'An agent plans this with you first — it reads the repository and asks what it needs to ' +
             'know. You approve the whole split before anything is filed. The pieces branch off this ' +
             'plan’s branch and merge back into it, and only the finished plan reaches the trunk.'
-          : 'Sent to the agent as written, after any handoff from an earlier run. These settings are ' +
-            'remembered for the next task; dimmed ones are inherited.'}
+          : isDebate
+            ? 'Each seat answers blind, in its own session — none of them can see another’s answer. The ' +
+              'organizer then reads all of them, may send each a brief for another round, and finally ' +
+              'reports an agreement with its dissent and asks you what happens next. Seats read and ' +
+              'argue; they never commit.'
+            : 'Sent to the agent as written, after any handoff from an earlier run. These settings are ' +
+              'remembered for the next task; dimmed ones are inherited.'}
       </p>
     </div>
   )
@@ -1389,6 +1817,134 @@ function WorkersPicker({
                       )}
                     </div>
                   )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    />
+  )
+}
+
+
+/**
+ * The roster: one row per seat, each pinned to exactly one (account, model, effort).
+ *
+ * ⛔ **Not `WorkersPicker`, and the difference is the whole of §4.3.** That control answers *which
+ * accounts may run a piece* — a closed list the scheduler picks from — and reusing it here would
+ * let three seats land on one account and still be called a debate. This one answers *who sits in
+ * seat 2*, which is a different question with a different shape.
+ *
+ * ⚠️ **A duplicate (account, model, effort) triple is allowed**, because a homogeneous debate is a
+ * thing a one-account operator may well want. It is what the heterogeneity notice under this row
+ * counts, and that notice is advice rather than a gate.
+ */
+function DebateRoster({
+  workers,
+  modelOptions,
+  seats,
+  onChange
+}: {
+  workers: Array<{
+    id: string
+    label: string
+    adapterId: string
+    defaultModel?: string | null
+    defaultEffort?: string | null
+  }>
+  modelOptions: ModelOptions[]
+  seats: DebateSeat[]
+  onChange: (seats: DebateSeat[]) => void
+}): React.JSX.Element {
+  const named = seats.filter((s) => s.workerId).length
+  const label = named === 0 ? 'Roster' : named < seats.length ? `Roster ${named}/${seats.length}` : 'Roster'
+
+  const set = (index: number, patch: Partial<DebateSeat>): void => {
+    onChange(seats.map((seat, i) => (i === index ? { ...seat, ...patch } : seat)))
+  }
+
+  return (
+    <Pill
+      ariaLabel="Debate roster"
+      title="Who sits in each seat. A seat is exactly one account, model and effort — not a list the scheduler chooses from."
+      align="right"
+      muted={named < seats.length}
+      label={label}
+      menu={() => (
+        <div className="workers-menu">
+          <div className="workers-menu-head">
+            <span className="workers-menu-title">Seats</span>
+          </div>
+          <div className="workers-menu-list">
+            {seats.map((seat, i) => {
+              const worker = workers.find((w) => w.id === seat.workerId) ?? null
+              const forAdapter = worker ? (modelOptions.find((o) => o.adapterId === worker.adapterId) ?? null) : null
+              const models = forAdapter?.models ?? []
+              const canEffort = forAdapter?.selectableEffort ?? false
+              const chosenModel = models.find((m) => m.id === (seat.model ?? ''))
+              const effortLevels = canEffort ? (chosenModel?.effortLevels ?? []) : []
+              return (
+                <div key={`seat-${i}`} className="workers-menu-item">
+                  <div className="workers-menu-worker-row">
+                    <div className="workers-menu-worker-info">
+                      <span className="workers-menu-worker-name">Seat {i + 1}</span>
+                    </div>
+                  </div>
+                  <div className="workers-menu-model-row">
+                    <select
+                      aria-label={`Account for seat ${i + 1}`}
+                      className="workers-menu-model-select"
+                      value={seat.workerId}
+                      onChange={(e) =>
+                        // ⚠️ The model and effort go with the account, never across it: an id
+                        // belongs to exactly one CLI, and keeping one would hand an adapter a model
+                        // it cannot start on.
+                        set(i, { workerId: e.target.value, model: null, effort: null })
+                      }
+                    >
+                      <option value="">Choose an account…</option>
+                      {workers.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.label}
+                        </option>
+                      ))}
+                    </select>
+                    {worker && (
+                      <select
+                        aria-label={`Model for seat ${i + 1}`}
+                        className="workers-menu-model-select"
+                        value={seat.model ?? ''}
+                        onChange={(e) => set(i, { model: e.target.value || null, effort: null })}
+                      >
+                        <option value="">
+                          CLI default (
+                          {worker.defaultModel ? (modelLabel(worker.defaultModel) ?? worker.defaultModel) : 'default'}
+                          )
+                        </option>
+                        {models.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {modelLabel(m.id) ?? m.id}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {effortLevels.length > 0 && (
+                      <select
+                        aria-label={`Effort for seat ${i + 1}`}
+                        className="workers-menu-model-select"
+                        value={seat.effort ?? ''}
+                        onChange={(e) => set(i, { effort: e.target.value || null })}
+                      >
+                        <option value="">Default effort</option>
+                        {effortLevels.map((l) => (
+                          <option key={l} value={l}>
+                            {effortLabel(l) ?? l}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
                 </div>
               )
             })}

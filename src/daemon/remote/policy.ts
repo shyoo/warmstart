@@ -119,7 +119,12 @@ export const REMOTE_METHODS = {
   'controller.report': 'deny',
   'controller.drain': 'deny',
   'task.plan': 'deny',
+  // ⚠️ Filing a debate commits N accounts to N runs before anybody sees a cost notice. The phone
+  // has a deliberately smaller API than the desktop; this is one of the things it does not do.
+  'task.debate': 'deny',
+  'task.debateState': 'read',
   'task.estimate': 'read',
+  'task.estimatePreview': 'read',
   'chat.history': 'deny',
   'chat.send': 'deny',
   'chat.clear': 'deny',
@@ -132,6 +137,7 @@ export const REMOTE_METHODS = {
   'agent.awaitHuman': 'deny',
   'agent.split': 'deny',
   'agent.depend': 'deny',
+  'agent.debateRound': 'deny',
   'agent.land': 'deny',
   'remote.status': 'deny',
   'remote.recheck': 'deny',
@@ -211,6 +217,9 @@ export const REMOTE_SCOPES = {
   'remote.pushKey': fleet,
   'remote.subscribe': fleet,
   'remote.unsubscribe': fleet,
+  // ⚠️ A preview of work that does not exist yet, so there is no task to scope it to. It reads
+  // nothing but the cost factors and the roster it was handed.
+  'task.estimatePreview': fleet,
   // ⚠️ Filtered, not refused: the phone asks for "everything I may see" and the server answers with
   // exactly that. `approval.list` and `question.list` take no project at all, so they are filtered
   // on the way out rather than gated on the way in.
@@ -228,6 +237,7 @@ export const REMOTE_SCOPES = {
   'task.pendingWork': byId,
   'task.deleteCheck': byId,
   'task.estimate': byId,
+  'task.debateState': byId,
   'task.update': byId,
   'task.message': byId,
   'task.cancel': byId,

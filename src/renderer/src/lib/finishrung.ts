@@ -15,9 +15,13 @@ import {
  * conversation is already doing — offering it under a button called Commit would be a button that
  * does nothing — and `custom` because it is an instruction the project wrote for its *own* finish,
  * which is a different question from what this one commit should do.
+ *
+ * ⛔ `report-only` for the first reason again, and more strongly: it is the rung that says *nothing
+ * was ever going to be committed*, so under a button called Commit it is the one option guaranteed
+ * to do nothing at all. Excluding it here is why it is safe for it to sit in `FINISH_ORDER`.
  */
 export const COMMIT_RUNGS: FinishPolicy[] = FINISH_ORDER.filter(
-  (policy) => policy !== 'await-human' && policy !== 'custom'
+  (policy) => policy !== 'await-human' && policy !== 'custom' && policy !== 'report-only'
 )
 
 /**

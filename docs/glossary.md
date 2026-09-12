@@ -134,6 +134,41 @@ question per tick, and never asks twice about the same task. ⚠️ Editing a ti
 label for text nobody asked for any more is worse than no label, because the board still looks
 authoritative.
 
+**Debate** — *a task whose product is a decision, not a commit.* Two to five **seats** answer the
+same question independently and blind; an **organizer** then reads all of them, may send each a brief
+for another round, and finally reports an agreement *with its dissent* and asks the operator which of
+five verdicts follows (execute · split · discuss · complete · stop). ⛔ **It is not a vote.**
+Published work finds a diverse roster dramatically outperforms a homogeneous one under a *judge* and
+gives **no** advantage under majority voting, so an organizer that counts throws away the only thing
+heterogeneity buys. See [`transient_docs/debate_mode_2026-09-12.md`](../transient_docs/debate_mode_2026-09-12.md)
+for the design of record and its citations.
+
+**Seat** — *one agent's chair at a debate: exactly one (account, model, effort).* Filed as a child
+`work` task, pinned through `constraints.workerId`/`model`/`effort`, `sessionSharing: 'off'`,
+`nonGradable: true`, mandate `['read']` and finish policy `report-only`. ⛔ **A roster is not a
+candidate set.** `ChildDefaults.workerIds` is a closed list the scheduler may pick *from*; reusing it
+would let three seats land on one account and still be called a debate. ⛔ **`sessionSharing: 'off'`
+is not an operator setting** — two seats on one account and model satisfy every gate in `sharing.ts`,
+so with sharing on the blind round would silently not be blind, with a cheaper bill that looks like a
+win. A duplicate (account, model, effort) triple is *allowed*: that is a homogeneous debate, which is
+what the composer's heterogeneity notice counts.
+
+**Organizer** — *the debate task itself, arbitrating its seats.* A dispatched agent with its own
+worktree and `ask_human` in its hand, not an unattended controller consult — it has to read the code
+the seats are arguing about, raise a question and wait, and be able to do the work afterwards. ⛔ **It
+may converge early and may never extend**: the round count is the budget the operator authorised, and
+*preference never widens authority* applied to money. ⛔ **A debate task's quality grade, if it ever
+lands commits, measures the organizer's *execution* turn. It is never a grade of the agreement** —
+nothing in this codebase scores an argument, and a number next to one would be read as though
+something did.
+
+**Citation report** — *the unresolved file paths in a seat's position.* Every `path/to/file.ext` a
+seat names is tested against the debate's own workspace and listed beside that seat's name in the
+organizer's prompt and on the board. ⛔ **A report, never a penalty**: it does not score the seat, does
+not exclude it and does not edit its words. It is one of the few things about an argument this tool
+can establish rather than believe — the same reasoning [`docs.test.ts`](../src/daemon/docs.test.ts)
+applies to a doc naming a file.
+
 **Prerequisite** — *an edge in the DAG somebody drew by hand.* `task_deps`, the cycle check and
 `admit()` have been in the daemon since M2, and the only way to put an edge in was to be an agent
 calling `task_create` with `depends_on`. ⭐ Since 2026-09-01 a person can too: the **Dep** pill under the New

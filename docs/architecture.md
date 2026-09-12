@@ -564,6 +564,7 @@ scripts/                ensure-electron, icons, build-win.ps1                   
 | `controller.ts` `judgment.ts` `chat.ts` | the consult queue, the five events, the one tooled session |
 | `finish.ts` `landing.ts` `worktrees.ts` `conflict` paths | → [`landing.md`](landing.md) |
 | `conversations.ts` `sharing.ts` | → [`sessions.md`](sessions.md) |
+| `split.ts` `debate.ts` `debatecost.ts` | the two fan-out shapes and their safety boundaries: `split.ts` files a Plan & Split atomically; `debate.ts` seats a debate, runs the round loop, checks citations and validates the agreement; `debatecost.ts` prices one before it exists. ⛔ Both boundaries live here rather than in the MCP tool for the same reason — expensive to get wrong, cheap to test against a temp database with no agent, no prompt and no UI in the way |
 | `approvals.ts` `questions.ts` | the two interrupt objects |
 | `resources.ts` | the broker: `exclusive`, `counted`, `rate_limited` |
 | `adapters/` | per-CLI integrations, capabilities as data → [`adapters.md`](adapters.md) |

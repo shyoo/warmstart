@@ -184,6 +184,30 @@ export function decideFinish({
     }
   }
 
+  // 0b. The task whose deliverable is the thread. ⛔ **Before step 1 and before step 3, and the
+  //     placement is the whole of it.** Step 3's empty-branch guard is correct and earned (t17) —
+  //     an empty branch is indistinguishable from an agent that committed in the trunk — so the
+  //     only safe way to exempt a task that was never going to write a commit is for the operator
+  //     to have said so *in advance*, which is what choosing this rung is. Ahead of step 1 as well,
+  //     because asking a report-only task to commit a stray file and then parking it at
+  //     `awaiting_human` when it does not is the same stall by a longer route. Whatever is loose
+  //     stays loose: `rescueDirt` carries it onto this task's own branch when the workspace is
+  //     released, exactly as it does today. Nothing is discarded and nothing is swept into a commit.
+  //
+  // ⚠️ After the rebase guard, which outranks everything: a half-finished rebase is a broken tree
+  //     however little the task was expected to leave behind.
+  if (policy === 'report-only') {
+    return {
+      kind: 'done',
+      reason:
+        state.unlandedCommits > 0
+          ? `this task reports on its thread, and left ${state.unlandedCommits} commit(s) on ` +
+            `\`${state.branch}\` as well. The tool did not land them — this rung lands nothing.`
+          : 'this task reports on its thread; nothing was expected on the branch' +
+            (loose > 0 ? `, and ${loose} loose file(s) stay where they are` : '')
+    }
+  }
+
   // 1. Work that is not committed. ⛔ The tool does not commit it — deciding what to stage, what to
   //    leave and what to test first is judgement that differs per project and per person, and a
   //    daemon applying a blocklist at the one moment nobody is watching is a worse version of it.

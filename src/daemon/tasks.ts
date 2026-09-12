@@ -2,10 +2,12 @@ import { randomUUID } from 'node:crypto'
 import {
   PRIORITY_ORDER,
   ROOT_MANDATE,
+  readDebateState,
   statusesForViews,
   viewForStatus,
   type Budget,
   type ChildDefaults,
+  type DebateState,
   type DependencyRequirement,
   type Mandate,
   type MandateOperation,
@@ -100,6 +102,7 @@ interface TaskRow {
   branch_unit: number | null
   landing_target: string | null
   child_defaults_json: string | null
+  debate_json: string | null
   landed_base_sha: string | null
   landed_head_sha: string | null
   quality_review_id: string | null
@@ -247,6 +250,7 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     branchUnit: r.branch_unit ?? 1,
     landingTarget: r.landing_target ?? null,
     childDefaults: parseChildDefaults(r.child_defaults_json),
+    debate: parseDebate(r.debate_json),
     landedBaseSha: r.landed_base_sha ?? null,
     landedHeadSha: r.landed_head_sha ?? null,
     qualityReviewId: r.quality_review_id ?? null,
@@ -280,6 +284,19 @@ function parseChildDefaults(json: string | null): ChildDefaults | null {
   try {
     const parsed = JSON.parse(json) as ChildDefaults | null
     return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * ⚠️ Unreadable reads as *no debate*, for the reason `parseChildDefaults` gives: this column is on
+ * every task load, and a row that will not parse must still list.
+ */
+function parseDebate(json: string | null): DebateState | null {
+  if (!json) return null
+  try {
+    return readDebateState(JSON.parse(json))
   } catch {
     return null
   }
@@ -584,6 +601,16 @@ export interface CreateTaskInput {
   landingTarget?: string | null
   /** What each piece of a Plan & Split inherits. Only a `plan` task carries one. */
   childDefaults?: ChildDefaults | null
+  /** The roster, rounds, exchange rule and verdict. Only a `debate` task carries one. */
+  debate?: DebateState | null
+  /**
+   * This task's work cannot be peer-reviewed, and that is known at the moment it is filed.
+   *
+   * ⛔ Set by `openDebate` on every seat. `resolveRange` needs commits to grade and a seat has
+   * none, so every seat would enter the review queue and fail out of it — which is exactly what
+   * migration 51's column exists to prevent, one step earlier than an operator ticking a box.
+   */
+  nonGradable?: boolean
   /**
    * The share of the parent's remaining budget this child gets, as `1/n`.
    *
@@ -604,19 +631,31 @@ export interface CreateTaskInput {
   attachmentIds?: string[]
 }
 
+/**
+ * A parent whose children are cut from **its** branch and merge back into it.
+ *
+ * ⛔ Two kinds, one rule. A Plan & Split planner integrates its pieces; a debate organizer that
+ * answers *Split the work* does exactly the same thing with exactly the same branch topology, and
+ * writing the second case as a separate `if` in `plannerBranchFor`, `createTask` and `validateSplit`
+ * is three chances for them to disagree about where a child is cut from. A base and a measurement
+ * that disagree is t22, and it reports success.
+ */
+export function isIntegrationParent(task: Pick<Task, 'kind'> | null | undefined): boolean {
+  return task?.kind === 'plan' || task?.kind === 'debate'
+}
+
 export function isSplitWork(task: Task): boolean {
   if (!task.parentTaskId) return false
-  const parent = getTask(task.parentTaskId)
-  return parent?.kind === 'plan'
+  return isIntegrationParent(getTask(task.parentTaskId))
 }
 
 export function plannerBranchFor(project: Project, task: Task): string | null {
-  if (task.kind === 'plan') {
+  if (isIntegrationParent(task)) {
     return task.branch ?? (project.vcs === 'git' ? branchNameFor(task.seq, task.title, task.branchUnit) : null)
   }
   if (task.parentTaskId) {
     const parent = getTask(task.parentTaskId)
-    if (parent?.kind === 'plan') {
+    if (isIntegrationParent(parent) && parent) {
       return parent.branch ?? (project.vcs === 'git' ? branchNameFor(parent.seq, parent.title, parent.branchUnit) : null)
     }
   }
@@ -672,7 +711,7 @@ export function createTask(input: CreateTaskInput): Task {
   const project = effectiveProjectId ? getProject(effectiveProjectId) : null
   const effectiveLandingTarget =
     input.landingTarget ??
-    (parent?.kind === 'plan'
+    (parent && isIntegrationParent(parent)
       ? (parent.branch ?? (project && project.vcs === 'git' ? branchNameFor(parent.seq, parent.title, parent.branchUnit) : null))
       : null)
 
@@ -682,8 +721,9 @@ export function createTask(input: CreateTaskInput): Task {
                           parent_task_id, lineage_depth, assignee_hint, mandate_json, budget_json,
                           not_before, deadline, requires_json, constraints_json, verification,
                           finish_policy, session_sharing, completion_mode, objective_json, auto_compact,
-                          preemptible, est_tokens, landing_target, child_defaults_json, created_at, updated_at)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+                          preemptible, est_tokens, landing_target, child_defaults_json, debate_json,
+                          non_gradable, created_at, updated_at)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -715,6 +755,8 @@ export function createTask(input: CreateTaskInput): Task {
       input.estTokens ?? null,
       effectiveLandingTarget,
       input.childDefaults ? JSON.stringify(input.childDefaults) : null,
+      input.debate ? JSON.stringify(input.debate) : null,
+      input.nonGradable ? 1 : 0,
       now,
       now
     )

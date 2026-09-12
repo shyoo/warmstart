@@ -35,13 +35,31 @@ decision rather than five.
 | **`commit-and-merge`** ⭐ default | ✔ | ✔ | ✔ | ✔ | |
 | `commit-and-push` | ✔ | ✔ | ✔ | ✔ | ✔ |
 
-And two that are **not rungs**:
+And three that are **not rungs**:
 
 | policy | what happens |
 |---|---|
 | `pull-request` | Push the *branch* and open a pull request. Never touches the trunk, so it is not "one more than push" — a different destination. |
 | `custom` | Send the agent this project's own finishing instructions and let it do the rest. The tool does not land afterwards — your policy owns that step. |
+| `report-only` | The deliverable is on the **thread**. Nothing is expected on the branch, so a clean branch with no commits completes rather than being handed back to a person. Not one thing more than `await-human` — strictly *less*. |
 | `inherit` | Take the answer from the tier below. Only valid on a project or a task. |
+
+⛔ **`report-only` is the one policy that exempts a task from the empty-branch guard, and it does so
+only because the operator said in advance that this task was never going to write a commit.** The
+guard (t17) is correct and stays: an empty branch is otherwise indistinguishable from an agent that
+committed in the trunk. The check sits **before** the uncommitted-work step as well as before the
+guard — asking a report-only task to commit a stray file and then parking it at `awaiting_human` when
+it does not is the same stall by a longer route — and **after** the rebase-in-progress guard, which
+outranks everything. ⚠️ Whatever is loose stays loose: `rescueDirt` carries it onto the task's own
+branch when the workspace is released, exactly as it does today. Nothing is discarded and nothing is
+swept into a commit. ⚠️ A task that committed anyway is still `done`, and the reason says so — **this
+rung lands nothing**.
+
+⭐ **It is wider than the debate that motivated it.** Migration 51 added `non_gradable` because *"some
+tasks complete valid work with no commits"* and the only answer was an operator ticking a box
+afterwards. A research task, a question, a review can now be filed as what it is. ⚠️ It is offered in
+the composer's finish menus and refused by the thread's **Commit** button, where it is the one option
+guaranteed to do nothing (`COMMIT_RUNGS`, `src/renderer/src/lib/finishrung.ts`).
 
 ⛔ **`commit-after-verified` cannot exist**, and was asked for. The daemon never authors a commit, so
 verification can only happen once there *is* one. `commit-and-verify` is the achievable shape: the
@@ -644,7 +662,7 @@ caller was reporting a queue as a failure.
 ```
 
 - `landing.finish` — `await-human` · `commit-only` · `commit-and-verify` · `commit-and-merge` ·
-  `commit-and-push` · `pull-request` · `custom` · `inherit`.
+  `commit-and-push` · `pull-request` · `custom` · `report-only` · `inherit`.
 - `landing.finishInstruction` — what `custom` sends the agent, and **read only under `custom`**.
   Set it beside any other `finish` and it is inert; the example above therefore omits it.
   ⛔ It is sent verbatim, so it is yours to keep honest. Naming a slash command binds the project

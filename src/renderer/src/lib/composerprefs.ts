@@ -1,6 +1,12 @@
 import {
+  MAX_DEBATE_ROUNDS,
+  MAX_DEBATE_SEATS,
+  MIN_DEBATE_ROUNDS,
+  MIN_DEBATE_SEATS,
   PRIORITY_ORDER,
   readFinishPolicy,
+  type DebateExchange,
+  type DebateSeat,
   type FinishPolicyChoice,
   type Priority,
   type SessionSharingChoice
@@ -32,12 +38,13 @@ const KEY = appKey('composer')
 /**
  * What the composer files, as far as the *shape* of the thing goes.
  *
- * ⚠️ Three. `plan` is the existing goal-decomposition path (`task.plan`) wearing its real name, and
+ * ⚠️ Four. `plan` is the existing goal-decomposition path (`task.plan`) wearing its real name,
  * `conversation` files an ordinary task of kind `conversation` — the same dispatch, with the
- * single-turn closing contract removed. Multi-task is still deliberately not stubbed in here: an
- * option that files nothing is worse than a missing one, because somebody picks it.
+ * single-turn closing contract removed — and `debate` files one through `task.debate`, which seats
+ * its roster in the same call. Multi-task is still deliberately not stubbed in here: an option that
+ * files nothing is worse than a missing one, because somebody picks it.
  */
-export type ComposerKind = 'task' | 'plan' | 'conversation'
+export type ComposerKind = 'task' | 'plan' | 'conversation' | 'debate'
 
 /** Model and effort, as last chosen for one account. Empty string means *whatever it inherits*. */
 export interface ModelChoice {
@@ -87,6 +94,30 @@ export interface ComposerPrefs {
    * ⚠️ Remembered on the same last-selected rule as the planner's row, and defaulted to inherit.
    */
   pieces: PiecePrefs
+  /** What the Debate row was left set to. ⚠️ Same last-selected rule as every row above it. */
+  debate: DebatePrefs
+}
+
+/**
+ * The roster, the round budget, the exchange rule and the organizer — what the Debate row was left
+ * set to.
+ *
+ * ⛔ **An ordered list of seats, not a set of candidate accounts.** `ChildDefaults.workerIds` is a
+ * closed list the scheduler may pick *from*; a debate needs seat *i* to be exactly one (account,
+ * model, effort), or three seats land on one account and it is still called a debate. A duplicate
+ * triple is allowed here for the same reason the daemon allows it — a homogeneous debate is a thing
+ * a one-account operator may want, and it is what the heterogeneity notice counts.
+ *
+ * ⚠️ **The organizer is not in here**, and that is deliberate: the organizer *is* the debate task,
+ * so it is pinned by the row's own Worker and Model pills — `prefs.workerId` and `byWorker` — like
+ * every other task this composer files. A second control setting the same field would be two places
+ * for one answer, which is the shape the planner row already avoids.
+ */
+export interface DebatePrefs {
+  seats: DebateSeat[]
+  /** ⛔ The operator's cap. Nothing raises it; the organizer may only converge early. */
+  rounds: number
+  exchange: DebateExchange
 }
 
 export interface PiecePrefs {
@@ -126,6 +157,44 @@ export const DEFAULT_COMPOSER_PREFS: ComposerPrefs = {
     workerId: '',
     byWorker: {},
     maxChildren: 5
+  },
+  debate: {
+    // ⚠️ Two empty seats rather than none: the row opens showing the smallest legal debate, so what
+    // a person meets is a roster to fill in rather than a control that says nothing can be filed.
+    seats: [
+      { workerId: '', model: null, effort: null },
+      { workerId: '', model: null, effort: null }
+    ],
+    // ⚠️ Three, which is where the published gain still lives. Rounds 4–5 are offered behind the
+    // diminishing-return notice rather than being the default anybody lands on by accident.
+    rounds: 3,
+    exchange: 'full'
+  }
+}
+
+/** ⚠️ Field by field, and clamped rather than rejected — the rule `readPieces` already keeps. */
+function readDebatePrefs(raw: unknown): DebatePrefs {
+  const d = DEFAULT_COMPOSER_PREFS.debate
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ...d, seats: d.seats.map((s) => ({ ...s })) }
+  const p = raw as Record<string, unknown>
+  const seats = Array.isArray(p.seats)
+    ? p.seats
+        .filter((s): s is Record<string, unknown> => !!s && typeof s === 'object')
+        .slice(0, MAX_DEBATE_SEATS)
+        .map((s) => ({
+          workerId: typeof s.workerId === 'string' ? s.workerId : '',
+          model: typeof s.model === 'string' && s.model ? s.model : null,
+          effort: typeof s.effort === 'string' && s.effort ? s.effort : null
+        }))
+    : []
+  // ⚠️ Topped up to the floor rather than reset: a stored roster of one is a setting from a build
+  // that allowed one, and the honest repair is the nearest legal value.
+  while (seats.length < MIN_DEBATE_SEATS) seats.push({ workerId: '', model: null, effort: null })
+  const rounds = typeof p.rounds === 'number' && Number.isFinite(p.rounds) ? Math.round(p.rounds) : d.rounds
+  return {
+    seats,
+    rounds: Math.min(MAX_DEBATE_ROUNDS, Math.max(MIN_DEBATE_ROUNDS, rounds)),
+    exchange: p.exchange === 'digest' ? 'digest' : 'full'
   }
 }
 
@@ -197,7 +266,7 @@ export function readComposerPrefs(): ComposerPrefs {
     return {
       priority: isPriority(p.priority) ? p.priority : DEFAULT_COMPOSER_PREFS.priority,
       kind:
-        p.kind === 'plan' || p.kind === 'task' || p.kind === 'conversation'
+        p.kind === 'plan' || p.kind === 'task' || p.kind === 'conversation' || p.kind === 'debate'
           ? p.kind
           : DEFAULT_COMPOSER_PREFS.kind,
       // ⚠️ Through `readFinishPolicy`, so a config written before `agent-lands` was renamed still
@@ -208,7 +277,8 @@ export function readComposerPrefs(): ComposerPrefs {
         : DEFAULT_COMPOSER_PREFS.sessionSharing,
       workerId: typeof p.workerId === 'string' ? p.workerId : '',
       byWorker: readByWorker(p.byWorker),
-      pieces: readPieces(p.pieces)
+      pieces: readPieces(p.pieces),
+      debate: readDebatePrefs(p.debate)
     }
   } catch {
     return { ...DEFAULT_COMPOSER_PREFS }

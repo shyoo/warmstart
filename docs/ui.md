@@ -367,7 +367,8 @@ sits above the shade's z-index and not merely above the page: underneath it, eve
 modal opened behind the dialog that owns it and read as clipped away (t354 → t356).
 
 ⛔ **The attachment picker lives inside the prompt it enriches, beside Save as Draft, Send and the
-schedule clock.** Those actions apply to all three kinds: Single Task, Plan & Split and Conversation.
+schedule clock.** Those actions apply to all four kinds: Single Task, Plan & Split, Conversation and
+Debate.
 In Plan & Split the composer draws two labelled rows of pills, and this is decision D5. The first is
 **Planner** — priority, dependencies, reuse, finish, worker, model and effort — which is what the
 *planning turn* runs as. The second is **Executor**, plus a fan-out pill, which is what every subtask
@@ -587,7 +588,54 @@ memory: `composerprefs` is how this operator files *every* task, the scratch is 
 the middle of.
 
 ⚠️ The first kind option is **Single Task**, not *Task*. Beside *Plan&Split*, which files several,
-plain “Task” read as the category rather than as one of three shapes.
+plain “Task” read as the category rather than as one of four shapes.
+
+### The Debate row, and the three notices under it
+
+⛔ **Two rows, like Plan & Split, and the split means the same thing.** The first is **Organizer** —
+priority, dependencies, finish, worker, model, effort — which is what the *arbitrating* turn runs as,
+because a debate task **is** its organizer. The second is **Seats**: a seat-count pill (2–5, which is
+also the fan-out cap the task is filed with, so the number on the pill is the number that will be
+allowed), a round-budget pill (1–5), an exchange pill (*Verbatim* or *Organizer's digest*, decision
+D4) and the **roster**.
+
+⛔ **The roster is not `WorkersPicker`**, and the difference is the whole feature. That control
+answers *which accounts may run a piece* — a closed list the scheduler picks from — and reusing it
+would let three seats land on one account and still be called a debate. The roster answers *who sits
+in seat 2*: an ordered list, one row per seat, each naming exactly one account, model and effort. A
+duplicate triple is allowed, because a homogeneous debate is a thing a one-account operator may want.
+⚠️ **Send is disabled until every seat names an account this fleet has** — filing a half-roster would
+leave an organizer blocked on seats that were never filed, which is a task nothing can ever release.
+
+⛔ **The organizer's account picker is sorted by the fitness this fleet has measured, and says so.**
+Published work finds a judge is what makes a diverse roster pay off, and that judges favour their own
+generations — so the hint names the adapter beside the score. ⚠️ Advisory, never a gate: a weak
+organizer is not refused, and an account with nothing measured keeps the fleet's own order, because
+`null` is unknown and not a zero.
+
+⛔ **Three notices sit between the settings and Send, and every one of them carries its basis**
+(`src/renderer/src/lib/debatenotice.ts`). *Heterogeneity* is counted on the **adapter**, so two Claude
+models read as one family. *Cost* comes from `task.estimatePreview` as a multiple of the same question
+asked once, with `n/a` — never `$0.00` — where nothing could be priced, plus a fourth notice when the
+fleet cannot run every seat at the same time (said out loud, never silently corrected). *Diminishing
+returns* names what the literature found past 3–4 seats and rounds, that **none of it was measured on
+this fleet**, and ⭐ the honest caveat: several published results find debate does not beat one strong
+agent at the same token budget. That sentence is on the screen where the money is committed, and it is
+the reason this feature can be trusted.
+
+### The debate board
+
+On the organizer's thread, above the messages: one column per seat, one row per round, the
+organizer's own words between rows, and the verdict in the header once one has been chosen. ⛔ Every
+cell is agent output, so it is **text** parsed by [`lib/markdown.ts`](../src/renderer/src/lib/markdown.ts)'s
+closed subset — no raw HTML, no `dangerouslySetInnerHTML`. A debate is the one screen in this app
+where several untrusted agents' words sit beside each other, which makes that rule more load-bearing
+here, not less. ⚠️ **Unresolved citations only**, beside the seat's name: a list of every path that
+did resolve is a wall of text saying nothing happened, which is how a report stops being read. It is
+a report, never a penalty.
+
+⚠️ The **verdict card** is an ordinary `choice` question (origin `debate`), so it appears on the
+Attention bar and is answerable from the phone, because `Question` already is.
 
 ⚠️ A subtask is marked in the task table with **➥**, not a `└`. A box-drawing corner claims to join the
 row above it, and this table is sorted by whatever column the operator picked — one click on Updated and

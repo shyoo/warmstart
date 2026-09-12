@@ -654,6 +654,83 @@ server.registerTool(
 )
 
 /**
+ * The debate organizer's only move, called once per round.
+ *
+ * ⛔ **One tool, and it is not free.** Changing tool definitions invalidates the whole prompt-cache
+ * prefix, and a session's MCP config is frozen for its lifetime, so **every** worker session on
+ * this install pays for this — not only debates. `docs/mcp.md` §2 says so by name, and
+ * `checkpoint`, `task_split` and `land_work` each paid it before. Same mitigation: registered for
+ * everyone, named in the prompt only for a debate organizer.
+ *
+ * ⛔ **Not three tools, and not a third tier.** A separate `debate_post` for seats buys nothing —
+ * a seat's position is already carried by `task_complete`'s summary, which is already written onto
+ * the thread — and a third tier would buy a third prompt-cache prefix on the install.
+ *
+ * ⛔ **The converged call BLOCKS until a person answers**, the way `task_split` blocks on its
+ * approval. An organizer told in its prompt to ask before acting can forget; an organizer whose
+ * tool call does not return until the operator has chosen cannot.
+ */
+server.registerTool(
+  'debate_round',
+  {
+    title: 'Arbitrate this round of the debate',
+    description:
+      'The debate organizer calls this ONCE per round, in one of two shapes. Either continue: ' +
+      'pass `continue: true` and one brief per seat, each naming the SPECIFIC disagreement that ' +
+      'seat must address — the seats are re-queued and you are stopped until they answer. Or ' +
+      'converge: pass `converged: true` with the agreement, the dissent, your confidence and what ' +
+      'is unresolved — this raises a card with five choices and BLOCKS until a person answers, and ' +
+      'the reply tells you what to do next. ⛔ An empty dissent is refused: if there genuinely was ' +
+      'no disagreement, say that in the dissent field and say what was never contested. You may ' +
+      'converge early; you may not ask for more rounds than the operator authorised.',
+    inputSchema: {
+      continue: z
+        .boolean()
+        .optional()
+        .describe('Open another round. Requires one brief per seat, and rounds remaining.'),
+      briefs: z
+        .array(
+          z.object({
+            seat: z.number().int().describe('The seat number, starting at 1, as labelled in your prompt.'),
+            text: z.string().describe('What this seat must address next. Name the specific disagreement.')
+          })
+        )
+        .optional()
+        .describe('One per seat, in any order. Required with `continue`.'),
+      converged: z.boolean().optional().describe('Report the agreement and ask the operator what happens next.'),
+      agreement: z.string().optional().describe('What to do, concretely enough to execute.'),
+      dissent: z
+        .string()
+        .optional()
+        .describe('Who disagreed, with what, on what grounds. ⛔ Never empty — see the description.'),
+      confidence: z.string().optional().describe('Your own confidence in this agreement, with the reason.'),
+      unresolved: z.string().optional().describe('What the debate did not settle, and what would settle it.')
+    }
+  },
+  async (args) => {
+    const sessionId = appEnv('SESSION_ID') ?? ''
+    try {
+      const result = await rpc('agent.debateRound', {
+        sessionId,
+        ...(args.continue === undefined ? {} : { continue: args.continue }),
+        ...(args.briefs ? { briefs: args.briefs } : {}),
+        ...(args.converged === undefined ? {} : { converged: args.converged }),
+        ...(args.agreement ? { agreement: args.agreement } : {}),
+        ...(args.dissent ? { dissent: args.dissent } : {}),
+        ...(args.confidence ? { confidence: args.confidence } : {}),
+        ...(args.unresolved ? { unresolved: args.unresolved } : {})
+      })
+      return {
+        content: [{ type: 'text' as const, text: result.reply }],
+        ...(result.ok ? {} : { isError: true })
+      }
+    } catch (err) {
+      return { content: [{ type: 'text' as const, text: String(err) }], isError: true }
+    }
+  }
+)
+
+/**
  * Add one edge between two pieces of this planner's own split.
  *
  * ⛔ Scoped to this task's own children, and the daemon enforces it rather than trusting the

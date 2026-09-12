@@ -24,6 +24,7 @@ function mockTask(over: Partial<Task> = {}): Task {
     landingTarget: null,
     branchUnit: 1,
     childDefaults: null,
+    debate: null,
     kind: 'work',
     landedBaseSha: null,
     landedHeadSha: null,

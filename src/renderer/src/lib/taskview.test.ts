@@ -1039,6 +1039,9 @@ describe('a plan task, as its own page describes it', () => {
     // turn — it rests instead of landing, and its finish policy is not the project's — and a header
     // that called it a Task would be telling somebody the opposite of what the buttons do.
     expect(kindLabel({ kind: 'conversation' })).toBe('Conversation')
+    // ⛔ And a debate's, for the same reason and more strongly: this page's task is the *organizer*
+    // of several other tasks, and calling it a Task hides every one of them.
+    expect(kindLabel({ kind: 'debate' })).toBe('Debate')
   })
 
   it('names every account the pieces may run on, with the model each was given', () => {

@@ -23,7 +23,7 @@ import { qualityReport } from './quality.js'
  *   1. Flag is off (`modelExploration: false`)
  *   2. Task pinned a model (`task.constraints.model` or `constraints.modelsByWorker`)
  *   3. Winner is warm, reopenable or sticky (switching models drops context, costing more than the sample)
- *   4. `task.kind === 'plan'`
+ *   4. `task.kind` is `plan` or `debate`
  *   5. Task complexity band is `high` (experiment on cheap work, not the task that matters)
  *   6. Worker offers only 1 routable model
  * - Prefer an alternative whose fitness is unmeasured (`fitnessFor().value === null`), falling back to uniform.
@@ -76,8 +76,11 @@ export function exploreRoute(options: ExploreOptions): ExploreResult {
     return { choice: winner, explored: false }
   }
 
-  // ⛔ Plan tasks are not experimental work.
-  if (task.kind === 'plan') {
+  // ⛔ Plan and debate tasks are not experimental work. ⚠️ A debate **seat** needs no clause here:
+  // its model is the operator's roster, pinned through `task.constraints.model`, and a pinned model
+  // already refuses exploration above. Swapping one would silently make a heterogeneous debate
+  // homogeneous — the one substitution this feature cannot survive.
+  if (task.kind === 'plan' || task.kind === 'debate') {
     return { choice: winner, explored: false }
   }
 

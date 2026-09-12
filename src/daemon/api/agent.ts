@@ -1,16 +1,68 @@
 /** The worker RPCs an agent reaches through MCP, and the only ones it can. */
-import { addMessage, createTask, getTask, messagesFor, runForSession, runsFor, setTaskHandoff } from '../tasks.js'
+import { addMessage, createTask, getTask, messagesFor, requireTask, runForSession, runsFor, setTaskHandoff } from '../tasks.js'
 import { landConversationWork } from '../conversationland.js'
 import { askQuestion } from '../questions.js'
 import { addSplitDependency, applySplit, validateSplit } from '../split.js'
-import { completeTask, endPlannerForSplit, parkForHuman } from '../scheduler.js'
+import {
+  becomeConversation,
+  nextRound,
+  recordVerdict,
+  renderAgreement,
+  seatsOf,
+  validateAgreement
+} from '../debate.js'
+import { cancelTask } from '../cancel.js'
+import { completeTask, continueTask, endPlannerForSplit, parkForHuman } from '../scheduler.js'
+import { updateTask } from '../tasks.js'
+import { DEBATE_VERDICT_DETAILS, DEBATE_VERDICT_LABELS, DEBATE_VERDICTS } from '@shared/tasks.js'
+import type { DebateVerdict } from '@shared/tasks.js'
+import { verdictInstruction } from '../prompt.js'
 import { errorMessage } from '@shared/errors.js'
 import type { Api, ApiContext } from './support.js'
 import { admitAgentTask } from './support.js'
 
 type AgentMethod =
   | 'agent.taskRead' | 'agent.complete' | 'agent.awaitHuman' | 'agent.createTask' | 'agent.split' | 'agent.depend'
-  | 'agent.handoff' | 'agent.land'
+  | 'agent.handoff' | 'agent.land' | 'agent.debateRound'
+
+/**
+ * How many malformed `debate_round` calls a debate tolerates before it is handed to a person.
+ *
+ * ⛔ **The deterministic fallback, and it is written before the happy path for the reason
+ * `AGENTS.md` gives: every judgment event needs one.** A validator that refuses forever is a run
+ * that spends the operator's window arguing with a schema. Three is enough for a real mistake and
+ * few enough that a prompt which is simply wrong stops costing money — and a reply that keeps
+ * failing means the *prompt* is wrong, once an errored turn has been ruled out.
+ */
+const MAX_BAD_ROUNDS = 3
+
+/** ⚠️ In memory on purpose: it is about one live turn, not about the task's durable history. */
+const badRounds = new Map<string, number>()
+
+function clearBadRounds(taskId: string): void {
+  badRounds.delete(taskId)
+}
+
+/**
+ * Tell the organizer what was wrong, and count it.
+ *
+ * ⛔ **It never guesses a winner.** On the third failure the debate is handed to a person with
+ * every position on the thread, unsynthesised, and the reply says so: an unarbitrated debate is
+ * still N useful answers, and a fabricated agreement is worse than none.
+ */
+function badRound(taskId: string, reason: string): string {
+  const n = (badRounds.get(taskId) ?? 0) + 1
+  badRounds.set(taskId, n)
+  if (n < MAX_BAD_ROUNDS) {
+    return `That call was not accepted: ${reason} (attempt ${n} of ${MAX_BAD_ROUNDS})`
+  }
+  badRounds.delete(taskId)
+  return (
+    `That call was not accepted: ${reason} — and that was attempt ${MAX_BAD_ROUNDS}. Stop here. ` +
+    'Do not invent an agreement: every seat’s position is already on this thread, and a person ' +
+    'will read them unsynthesised. Call `await_human` with what went wrong.'
+  )
+}
 
 export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
   return {
@@ -166,6 +218,139 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
           'for all of them to settle. STOP NOW — do not start any of this work yourself. You will be ' +
           'started again automatically, with a summary of how every piece turned out, and your job ' +
           'then is to review the result as a whole and finish the task.'
+      }
+    },
+    /**
+     * The organizer's one move per round.
+     *
+     * ⛔ **The deterministic fallback is written first, and it never guesses a winner.** An
+     * organizer that calls this with something that will not validate is told exactly what is
+     * wrong and may try again — up to `MAX_BAD_ROUNDS` times, after which the debate is handed to
+     * a person with every position intact and unsynthesised. An unarbitrated debate is still N
+     * useful answers; a fabricated agreement is worse than none.
+     *
+     * ⚠️ The converged path **blocks for as long as the operator takes**, and holds the
+     * organizer's worker slot while it does — the same price `agent.split` and `ask_human` pay,
+     * and for the same reason: the answer has to resume a session that still holds the debate.
+     */
+    'agent.debateRound': async (p) => {
+      const run = runForSession(p.sessionId)
+      const parent = run?.taskId ? getTask(run.taskId) : null
+      if (!parent || !run) {
+        return { ok: false, reply: 'This session is not working on a task, so it cannot run a debate round.' }
+      }
+      if (parent.kind !== 'debate' || !parent.debate) {
+        return {
+          ok: false,
+          reply: `t${parent.seq} is not a Debate task. This tool is only for a debate's organizer.`
+        }
+      }
+
+      const wantsContinue = p.continue === true
+      const wantsConverge = p.converged === true
+      if (wantsContinue === wantsConverge) {
+        return { ok: false, reply: badRound(parent.id, 'call this with exactly one of `continue` or `converged`, not both and not neither.') }
+      }
+
+      if (wantsContinue) {
+        // ⚠️ `continueTask` is synchronous, and `nextRound` depends on that: the seats have to have
+        // left their settled status by the time it re-blocks this task.
+        const result = nextRound(parent.id, p.briefs ?? [], (taskId) => {
+          continueTask(taskId)
+        })
+        if (!result.ok) return { ok: false, reply: badRound(parent.id, result.reason) }
+        clearBadRounds(parent.id)
+        // ⛔ The organizer's run is stopped at the durable transition to `blocked`, exactly as a
+        // planner's is after a split — not by trusting it to read the reply below and exit.
+        await endPlannerForSplit(p.sessionId)
+        const round = requireTask(parent.id).debate?.round ?? 0
+        return {
+          ok: true,
+          reply:
+            `Round ${round} is open: every seat has your brief and is answering it. STOP NOW — do ` +
+            'not do any of this work yourself. You will be started again automatically when every ' +
+            'seat has answered, with their positions in front of you.'
+        }
+      }
+
+      const checked = validateAgreement({
+        agreed: p.agreement ?? '',
+        dissent: p.dissent ?? '',
+        confidence: p.confidence ?? '',
+        unresolved: p.unresolved ?? ''
+      })
+      if (!checked.ok) return { ok: false, reply: badRound(parent.id, checked.reason) }
+      clearBadRounds(parent.id)
+
+      const agreement = renderAgreement(checked.agreement)
+      addMessage(parent.id, 'agent', agreement, run.id)
+
+      const resolution = await askQuestion({
+        sessionId: p.sessionId,
+        origin: 'debate',
+        kind: 'choice',
+        header: `t${parent.seq}: the debate has an answer — what now?`,
+        question:
+          `${seatsOf(parent.id).length} agents argued this out over ` +
+          `${parent.debate.round} round(s). The organizer reports:
+
+${agreement}
+
+` +
+          'Choose what happens next. Nothing is built and nothing is landed until you do.',
+        options: DEBATE_VERDICTS.map((v) => ({
+          id: v,
+          label: DEBATE_VERDICT_LABELS[v],
+          detail: DEBATE_VERDICT_DETAILS[v]
+        }))
+      })
+
+      const chosen = resolution.answer?.optionIds?.find((id): id is DebateVerdict =>
+        (DEBATE_VERDICTS as readonly string[]).includes(id)
+      )
+      if (resolution.status !== 'answered' || !chosen) {
+        return {
+          ok: false,
+          reply:
+            `Nobody answered, so nothing happens yet (${resolution.status}). Your agreement is on ` +
+            'the thread and the operator can still answer the card. Stop here rather than guessing ' +
+            'which of the five they would have picked.'
+        }
+      }
+
+      recordVerdict(parent.id, chosen)
+      const note = resolution.answer?.text?.trim()
+      addMessage(parent.id, 'system', `Verdict: ${DEBATE_VERDICT_LABELS[chosen]}`, run.id, [], {
+        detail: note ? `The operator added: ${note}` : DEBATE_VERDICT_DETAILS[chosen]
+      })
+
+      if (chosen === 'discuss') {
+        const became = becomeConversation(parent.id)
+        if (!became.ok) return { ok: false, reply: `The verdict could not be applied: ${became.reason}` }
+      }
+      if (chosen === 'complete') {
+        // ⛔ Without this the empty-branch guard hands a finished debate back to a person: the
+        // agreement is on the thread and there is nothing on the branch, which is precisely the
+        // shape `report-only` exists to describe.
+        updateTask(parent.id, { finishPolicy: 'report-only' })
+      }
+      if (chosen === 'stop') {
+        // ⛔ *Cancel is not delete.* Every position, every round and every run stays.
+        await cancelTask(parent.id, {
+          restingState: 'paused_user',
+          reason: 'the operator stopped the work after reading the debate’s agreement',
+          requestedBy: 'human'
+        })
+      }
+
+      return {
+        ok: true,
+        verdict: chosen,
+        reply:
+          `The operator chose: ${DEBATE_VERDICT_LABELS[chosen]}.` +
+          (note ? ` They said: ${note}` : '') +
+          `\n\n` +
+          verdictInstruction(chosen, '', '')
       }
     },
     'agent.depend': (p) => {

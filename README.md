@@ -71,6 +71,15 @@ worth and refuses to let it evaporate.
   participant — you, the controller, or an agent mid-run — can file work. When something needs a
   human decision it is assigned to you and the session holding the context is kept warm for your
   reply.
+- **Debate mode.** Ask one question and put two to five agents on it — each on the account, model and
+  effort you name, each answering **blind** in its own session. An *organizer* then reads every
+  position, may send each seat a brief for another round, and reports an agreement **with its
+  dissent**, after which you choose what happens: execute it, split it into pieces, keep asking
+  questions, mark it done, or stop. Every file path a seat cites is checked against the repository and
+  the ones that do not resolve are listed beside its name — a report, never a penalty. ⚠️ The composer
+  says what it will cost as a multiple of asking the question once, whether your roster spans more
+  than one model family, and — honestly — that several published results find debate does **not** beat
+  one strong agent at the same token budget.
 - **Isolated workspaces.** Each task gets its own git worktree from a pooled set, on a branch named
   after the task. Agents never work in the trunk.
 - **A live view.** The real agent TUI, not a reconstruction.

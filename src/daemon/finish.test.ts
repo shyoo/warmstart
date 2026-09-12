@@ -259,6 +259,70 @@ describe('landing work that is committed', () => {
   })
 })
 
+/**
+ * The rung whose deliverable is the **thread**.
+ *
+ * ⛔ **A finish policy that silently does nothing looks exactly like one that worked**, so the
+ * first assertion here is the empty-branch guard going red for the same state under the default
+ * policy. Without that, a `report-only` that was never wired up would pass this suite.
+ *
+ * ⛔ And it is not a rung: it does strictly *less* than `await-human`, which is why it sits at the
+ * end of `FINISH_ORDER` beside `pull-request` and `custom` rather than anywhere in the ladder.
+ */
+describe('a task whose deliverable is the thread', () => {
+  it('is handed to a person on an empty branch under any other policy — the guard, watched red', () => {
+    const decision = finish.decideFinish({
+      task: makeTask({ finishPolicy: 'commit-and-merge' }),
+      project: null,
+      state: clean({ unlandedCommits: 0 }),
+      hasChecks: true
+    })
+    expect(decision.kind).toBe('await-human')
+  })
+
+  it('completes on an empty branch under report-only, and says nothing was expected there', () => {
+    const decision = finish.decideFinish({
+      task: makeTask({ finishPolicy: 'report-only' }),
+      project: null,
+      state: clean({ unlandedCommits: 0 }),
+      hasChecks: true
+    })
+    expect(decision.kind).toBe('done')
+    expect('reason' in decision && decision.reason).toContain('nothing was expected on the branch')
+  })
+
+  /**
+   * ⛔ **Ahead of step 1 as well as step 3.** Asking a report-only task to commit a stray file and
+   * then parking it at `awaiting_human` when it does not is the same stall by a longer route.
+   * ⚠️ Whatever is loose stays loose — `rescueDirt` carries it onto this task's own branch when the
+   * workspace is released, exactly as it does today.
+   */
+  it('does not ask a report-only task to commit its loose files, and says they stay', () => {
+    const decision = finish.decideFinish({
+      task: makeTask({ finishPolicy: 'report-only' }),
+      project: null,
+      state: clean({ unlandedCommits: 0, dirtyFiles: ['notes.md'], untrackedFiles: ['scratch.txt'] }),
+      hasChecks: true
+    })
+    expect(decision.kind).toBe('done')
+    expect('reason' in decision && decision.reason).toContain('2 loose file(s) stay where they are')
+  })
+
+  // ⚠️ A seat that committed something anyway is still done — this rung lands nothing, and it says
+  // so rather than quietly leaving the operator to discover the commits later.
+  it('lands nothing when the task committed anyway, and names what it left behind', () => {
+    const decision = finish.decideFinish({
+      task: makeTask({ finishPolicy: 'report-only' }),
+      project: projectWith({ target: 'main', finish: 'commit-and-push' }),
+      state: clean({ unlandedCommits: 2 }),
+      hasChecks: true
+    })
+    expect(decision.kind).toBe('done')
+    expect('reason' in decision && decision.reason).toContain('2 commit(s)')
+    expect('reason' in decision && decision.reason).toContain('this rung lands nothing')
+  })
+})
+
 describe('a project with its own finish policy', () => {
   it('sends the project its own words, not the daemon’s', () => {
     const decision = finish.decideFinish({

@@ -461,6 +461,9 @@ export function modelFacts(input: {
 export function kindLabel(task: Pick<Task, 'kind'>): string {
   if (task.kind === 'plan') return 'Plan & Split'
   if (task.kind === 'conversation') return 'Conversation'
+  // ⚠️ The organizer's page, for the same reason: a debate files seats, waits on all of them,
+  // arbitrates and then asks a person what to do. None of that is visible from an ordinary header.
+  if (task.kind === 'debate') return 'Debate'
   return 'Task'
 }
 

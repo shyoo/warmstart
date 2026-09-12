@@ -264,6 +264,24 @@ it. Both look identical from the task list.
 already offers, and *close it*, which the cache clock owns — and a close button beside a live agent
 is an invitation to kill a run by tidying up.
 
+## ⛔ Debate seats are never shared, and it is not an operator setting
+
+The gates are *same project, same account, same model, same effort, clean, room to grow*. **Two seats
+of a homogeneous debate match every one of them.** So with session sharing on, seat 2 would be
+dispatched into the conversation seat 1 had just finished, read everything seat 1 argued, and the
+blind first round would silently not be blind — with no error anywhere, and a cheaper bill that looks
+like a win. That is the whole failure: it produces a *wrong answer* rather than an error.
+
+So `openDebate` ([`src/daemon/debate.ts`](../src/daemon/debate.ts)) files every seat with
+`sessionSharing: 'off'`, unconditionally, and there is no control that changes it. ⚠️ Sharing is
+`off` at every tier today, so this is inert on this install and would become a correctness bug the
+first time somebody turned it on — which is exactly when nobody would be looking for it.
+
+⚠️ **A seat's *own* session across rounds is a different mechanism and is exactly what we want.**
+`warmSessionFor` tries a task's own runs first, needs no permission and discloses nothing to anybody.
+Debate's cost is dominated by re-reading, so keeping each seat's own context between rounds at cache
+rates is the saving this feature is built on.
+
 ## Why it is built this way
 
 The gates above are mechanical — no scoring, no model judgement about whether two tasks are "related".

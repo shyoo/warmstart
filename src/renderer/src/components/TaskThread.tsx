@@ -62,6 +62,7 @@ import { TaskSettingPicker } from './TaskSettingPicker'
 import { CacheCost, Fact, ModelFact, SessionFact } from './thread/Facts'
 import { Decide, QuotaDecide, QuotaOverride } from './thread/Decide'
 import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
+import { DebateBoard } from './thread/DebateBoard'
 import { CompactionRow, ReviewRow, RunRow } from './thread/RunRow'
 import { Markdown } from './thread/Markdown'
 import {
@@ -418,6 +419,13 @@ function TaskDetail({
             </div>
           )}
 
+          {/* ⛔ **Above the thread, not inside it.** A debate's thread is N seats' worth of
+              messages on N other tasks; what belongs on the organizer's page is the board — one
+              column per seat, one row per round, the organizer's words between them, with each
+              seat's unresolved citations beside its name. ⚠️ Every cell is agent output and is
+              parsed as the closed markdown subset; nothing here renders raw HTML. */}
+          <DebateBoard task={task} />
+
           <Thread messages={messages} runs={runs} activity={activity} live={live} />
 
           {/* ⛔ Between the conversation and the box for replying, because that is what it is: the
@@ -559,7 +567,11 @@ function TaskDetail({
                   task.kind === 'plan'
                     ? 'An agent plans this with you, files the pieces for your approval, waits for ' +
                       'every one of them to settle, and comes back to review the result as a whole.'
-                    : 'One thread of work, dispatched to an agent.'
+                    : task.kind === 'debate'
+                      ? 'Several agents answer this question independently, then read each other ' +
+                        'under this task — the organizer — which arbitrates, reports an agreement ' +
+                        'with its dissent, and asks you what happens next.'
+                      : 'One thread of work, dispatched to an agent.'
                 }
               >
                 {kindLabel(task)}

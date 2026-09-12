@@ -1869,7 +1869,23 @@ const MIGRATIONS: Migration[] = [
     updated_at        integer not null
   );
   create index if not exists task_deliveries_pending
-    on task_deliveries(state, reconciled_at, observed_at);`
+    on task_deliveries(state, reconciled_at, observed_at);`,
+  // 68 - a debate keeps its roster, its round budget, its exchange rule and its verdict in one place.
+  //
+  // ⛔ One column rather than five, because they are read and written together and never
+  // separately: `openDebate` writes the whole blob, `nextRound` bumps one field inside it, and no
+  // query has ever needed to filter tasks by a debate's exchange rule. A malformed blob reads as
+  // *no debate* (`readDebateState`) rather than throwing, on the same rule `child_defaults_json`
+  // already keeps — a task that cannot be listed because its settings did not parse is worse than
+  // a debate that has to be re-filed.
+  //
+  // ⚠️ Guarded by `hasColumn` like migrations 28/31/32/35/39/43/63: `versionBefore` lets a test
+  // rewind `user_version` and reopen, replaying every migration after the one it wanted.
+  (conn) => {
+    if (!hasColumn(conn, 'tasks', 'debate_json')) {
+      conn.exec('alter table tasks add column debate_json text;')
+    }
+  }
 ]
 
 /**

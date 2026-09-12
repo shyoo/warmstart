@@ -90,6 +90,7 @@ describe('what the new-task composer was left set to', () => {
       finishPolicy: 'commit-only',
       sessionSharing: 'on',
       pieces: { ...DEFAULT_COMPOSER_PREFS.pieces },
+      debate: { ...DEFAULT_COMPOSER_PREFS.debate },
       workerId: 'w-claude',
       byWorker: { 'w-claude': { model: 'claude-opus-5', effort: 'high', policy: 'auto' } }
     })
@@ -194,6 +195,76 @@ describe('what the new-task composer was left set to', () => {
     stub({}, true)
     expect(readComposerPrefs()).toEqual(DEFAULT_COMPOSER_PREFS)
     expect(() => writeComposerPrefs(DEFAULT_COMPOSER_PREFS)).not.toThrow()
+  })
+
+  /**
+   * The Debate row, which remembers more than any other: a roster is an *ordered* list of seats,
+   * and losing its order would file seat 2's model against seat 1's account.
+   */
+  describe('the debate row', () => {
+    it('round-trips the roster, the rounds and the exchange rule', () => {
+      const store: Record<string, string> = {}
+      stub(store)
+      writeComposerPrefs({
+        ...DEFAULT_COMPOSER_PREFS,
+        kind: 'debate',
+        debate: {
+          seats: [
+            { workerId: 'w-claude', model: 'claude-opus-5', effort: 'high' },
+            { workerId: 'w-codex', model: 'gpt-5.6', effort: null }
+          ],
+          rounds: 2,
+          exchange: 'digest'
+        }
+      })
+      const back = readComposerPrefs()
+      expect(back.kind).toBe('debate')
+      expect(back.debate.seats).toEqual([
+        { workerId: 'w-claude', model: 'claude-opus-5', effort: 'high' },
+        { workerId: 'w-codex', model: 'gpt-5.6', effort: null }
+      ])
+      expect(back.debate.rounds).toBe(2)
+      expect(back.debate.exchange).toBe('digest')
+    })
+
+    // ⛔ The organizer is the debate task itself, pinned by the row's own Worker and Model pills.
+    // A second remembered slot for it would be two places holding one answer.
+    it('keeps no organizer of its own — that is the task’s own worker pin', () => {
+      expect(DEFAULT_COMPOSER_PREFS.debate).not.toHaveProperty('organizerWorkerId')
+    })
+
+    // ⚠️ Clamped and topped up rather than reset, the rule `readPieces` already keeps: a stored
+    // setting from a build with different bounds is repaired to the nearest legal value.
+    it('tops a short roster up to two seats and clamps the rounds into range', () => {
+      stub({
+        'warmstart.composer': JSON.stringify({
+          debate: { seats: [{ workerId: 'w-claude' }], rounds: 40, exchange: 'nonsense' }
+        })
+      })
+      const back = readComposerPrefs()
+      expect(back.debate.seats).toHaveLength(2)
+      expect(back.debate.seats[0]?.workerId).toBe('w-claude')
+      expect(back.debate.seats[1]?.workerId).toBe('')
+      expect(back.debate.rounds).toBe(5)
+      // ⚠️ Anything unreadable is `full`, which is what every debate filed before this field did.
+      expect(back.debate.exchange).toBe('full')
+    })
+
+    it('never keeps more seats than the daemon would accept', () => {
+      stub({
+        'warmstart.composer': JSON.stringify({
+          debate: { seats: Array.from({ length: 9 }, () => ({ workerId: 'w-claude' })) }
+        })
+      })
+      expect(readComposerPrefs().debate.seats).toHaveLength(5)
+    })
+
+    it('falls back to the whole default row when the stored one is not a record', () => {
+      stub({ 'warmstart.composer': JSON.stringify({ priority: 'P0', debate: 'nope' }) })
+      const back = readComposerPrefs()
+      expect(back.priority).toBe('P0')
+      expect(back.debate).toEqual(DEFAULT_COMPOSER_PREFS.debate)
+    })
   })
 
   it('ignores a stored shape that is not a record', () => {

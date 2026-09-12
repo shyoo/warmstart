@@ -621,7 +621,9 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       (task.constraints.modelsByWorker && best.worker && task.constraints.modelsByWorker[best.worker.id])
   )
   const eligibleWorkerCount = new Set(candidates.map((c) => c.worker?.id).filter(Boolean)).size
-  if (eligibleWorkerCount <= 1 || task.kind === 'plan') {
+  // ⚠️ A debate is as pinned as a plan: its organizer is a named account and model, so there is
+  // nothing for a routing consult to decide and it would spend a controller turn saying so.
+  if (eligibleWorkerCount <= 1 || task.kind === 'plan' || task.kind === 'debate') {
     return finalizeChoice(decided(best, isPinned ? 'pinned' : 'score'))
   }
   // ⚠️ For the *best* candidate, not the fleet. The floor asks "is this task big enough to be worth

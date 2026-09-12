@@ -203,7 +203,12 @@ export function complexityOf(task: Task, _now = Date.now()): Complexity {
   const needsCount = task.constraints?.needs?.length ?? 0
   const attachments = attachmentCountFor(task.id)
   const fanOut = dependentsOf(task.id).length
-  const isPlan = task.kind === 'plan'
+  // ⛔ **A debate organizer is plan-like and a seat is not.** The organizer reads a repository,
+  // arbitrates N positions and then may execute the agreement — the same reading-and-judgment shape
+  // this signal was written for. A seat is an ordinary child task and is sized from its own prompt
+  // like any other; it is not named here at all.
+  const isPlan = task.kind === 'plan' || task.kind === 'debate'
+  const planWord = task.kind === 'debate' ? 'debate' : 'plan'
 
   const needsValue = clamp01(needsCount / 3)
   const attachmentsValue = clamp01(attachments / 5)
@@ -272,8 +277,8 @@ export function complexityOf(task: Task, _now = Date.now()): Complexity {
       weight: weights.kind,
       contribution: kindValue * weights.kind,
       basis: isPlan
-        ? 'a plan task is a reading-and-judgment job'
-        : `task kind is '${task.kind}', not 'plan'`
+        ? `a ${planWord} task is a reading-and-judgment job`
+        : `task kind is '${task.kind}', which is neither 'plan' nor 'debate'`
     }
   ]
 
@@ -286,7 +291,7 @@ export function complexityOf(task: Task, _now = Date.now()): Complexity {
     const kind = signals[signals.length - 1]!
     kind.contribution += deficit
     kind.value = kind.weight > 0 ? kind.contribution / kind.weight : kind.value
-    kind.basis += `; floored to ${PLAN_FLOOR.toFixed(2)} because a plan task is never simple to route`
+    kind.basis += `; floored to ${PLAN_FLOOR.toFixed(2)} because a ${planWord} task is never simple to route`
     score = PLAN_FLOOR
   }
 

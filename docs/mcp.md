@@ -90,6 +90,7 @@ any of them — it runs the identical bar and hands the same reason back, verbat
 | `handoff` | leave a note for whoever continues; prepended to the next run's prompt |
 | `task_split` | file a whole Plan & Split at once — 2 to N pieces with dependency edges encoding every required execution or landing order; edge-free pieces may run in parallel. ⛔ Raises **one** approval and blocks on it; atomic |
 | `task_depend` | add one edge between two pieces of **this task's own** split. ⛔ never an arbitrary task in the fleet |
+| `debate_round` | ⛔ **a debate organizer's only move, called once per round.** Either `continue` with one brief per seat — the seats are re-queued and the organizer is stopped until they answer — or `converged` with the agreement, the dissent, the confidence and what is unresolved, which raises the five-verdict card and **blocks until a person answers**. ⛔ An empty dissent is refused |
 | `land_work` | ⛔ **conversations only.** Rebase, check and land what this conversation has committed, because the person asked. Refuses anything else. Ends nothing — the reply names the branch to keep working on |
 
 ⚠️ `task_read` changes every worker session's tool-definition prefix. Existing sessions retain their
@@ -167,6 +168,16 @@ session's MCP config is frozen for its lifetime and workers on one project get i
 That is a real, recurring cost, paid to avoid a third tier and the third prompt-cache prefix it would
 buy. `checkpoint` sets the precedent: registered for everyone, *named in the prompt* only where it
 applies.
+
+⛔ **`debate_round` blocks the same way, for the same reason, and it is one tool rather than three.**
+A separate `debate_post` for seats buys nothing — a seat's position is already carried by
+`task_complete`'s summary, which is already written onto the thread as an `agent` message — and a
+third *tier* would buy a third prompt-cache prefix on the install, which §2 warns about by name.
+⚠️ Its refusals are load-bearing: a missing dissent section, a brief count that does not match the
+seats, and a request for more rounds than the operator authorised each come back with the reason, and
+after three failures the debate is handed to a person with every position intact. ⛔ **It never
+guesses a winner** — an unarbitrated debate is still N useful answers, and a fabricated agreement is
+worse than none.
 
 ⚠️ **`land_work` pays exactly the same price, and it is worth saying out loud because it is used by
 one task kind.** Adding it changed the tool definitions, which invalidates **every** worker session's

@@ -288,8 +288,128 @@ export interface ProjectCreateResult {
  * turns, ends each turn back at `awaiting_human`, and commits only when a person presses the
  * button. It is not a different scheduler path — it is `work` with a different closing instruction
  * and a stickier route. See `isOpenConversation`.
+ *
+ * ⛔ A `debate` task is **arbitrated, not dispatched alone**. Two to five *seats* — child tasks, each
+ * pinned to exactly one (account, model, effort) — answer the same question blind and in parallel;
+ * the parent is an **organizer** that reads all of them, may send them each a brief for another
+ * round, and finally reports an agreement *with its dissent* and asks the operator what to do next.
+ * ⛔ **Its product is a decision, not a commit**, which is why its seats are filed `report-only`.
+ * See `transient_docs/debate_mode_2026-09-12.md`.
  */
-export type TaskKind = 'work' | 'plan' | 'conversation'
+export type TaskKind = 'work' | 'plan' | 'conversation' | 'debate'
+
+/**
+ * One seat at a debate: exactly one account, and optionally the model and effort it argues with.
+ *
+ * ⛔ **Not `ChildDefaults.workerIds`, which is a closed list the scheduler may pick *from*.** A
+ * debate needs seat *i* to be exactly one (account, model, effort) — reusing the candidate set would
+ * let the scheduler put three seats on one account and call it a debate. A duplicate triple is
+ * allowed, because a homogeneous debate is a thing an operator may want; it is what the composer's
+ * heterogeneity notice counts.
+ */
+export interface DebateSeat {
+  workerId: string
+  model?: string | null
+  effort?: string | null
+}
+
+/** What each seat reads in round 2 and after. ⚠️ Data in `debate_json`, never a branch on seat count. */
+export type DebateExchange = 'full' | 'digest'
+
+/** The operator's five answers to *what now*, raised as one `choice` question the tool blocks on. */
+export type DebateVerdict = 'execute' | 'split' | 'discuss' | 'complete' | 'stop'
+
+export const DEBATE_VERDICTS: DebateVerdict[] = ['execute', 'split', 'discuss', 'complete', 'stop']
+
+export const DEBATE_VERDICT_LABELS: Record<DebateVerdict, string> = {
+  execute: 'Execute as agreed',
+  split: 'Split the work',
+  discuss: 'Ask follow-up questions',
+  complete: 'Mark completed',
+  stop: 'Stop the work'
+}
+
+export const DEBATE_VERDICT_DETAILS: Record<DebateVerdict, string> = {
+  execute: 'the organizer does the work now, in the session that holds the whole debate',
+  split: 'the organizer files the pieces; they branch off this debate and merge back into it',
+  discuss: 'this becomes a conversation you keep talking in, in the organizer’s own warm session',
+  complete: 'the agreement is the result; nothing more is built',
+  stop: 'wind down and rest. Every position, round and run is kept'
+}
+
+/** ⛔ The cap, and the number the composer offers. Also `ROOT_MANDATE.maxChildren` — one cap, not two. */
+export const MIN_DEBATE_SEATS = 2
+export const MAX_DEBATE_SEATS = 5
+/** ⚠️ 1–3 is where the published gain lives; 4–5 are offered behind the diminishing-return notice. */
+export const MIN_DEBATE_ROUNDS = 1
+export const MAX_DEBATE_ROUNDS = 5
+
+/**
+ * The whole of a debate's state, in one column.
+ *
+ * ⛔ `rounds` is the **operator's cap** and nothing may raise it. The organizer may converge early —
+ * that only ever saves money — and a request for one more round is refused with the reason.
+ * *Preference never widens authority*, applied to a budget instead of to a mandate.
+ */
+export interface DebateState {
+  seats: DebateSeat[]
+  rounds: number
+  exchange: DebateExchange
+  /** Which round the seats are in now, 1-based. */
+  round: number
+  verdict: DebateVerdict | null
+}
+
+export function isDebateVerdict(v: unknown): v is DebateVerdict {
+  return typeof v === 'string' && (DEBATE_VERDICTS as readonly string[]).includes(v)
+}
+
+/**
+ * Read a debate blob written by any version of this tool.
+ *
+ * ⚠️ A malformed blob reads as *no debate*, never a throw — the rule `parseChildDefaults` already
+ * keeps. This column is read on every task load, and a task that cannot be listed because its
+ * settings did not parse is a worse failure than a debate that has to be re-filed.
+ */
+export function readDebateState(raw: unknown): DebateState | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const r = raw as Record<string, unknown>
+  const seats = Array.isArray(r.seats)
+    ? r.seats
+        .map((s): DebateSeat | null => {
+          if (!s || typeof s !== 'object') return null
+          const seat = s as Record<string, unknown>
+          if (typeof seat.workerId !== 'string' || !seat.workerId) return null
+          return {
+            workerId: seat.workerId,
+            model: typeof seat.model === 'string' && seat.model ? seat.model : null,
+            effort: typeof seat.effort === 'string' && seat.effort ? seat.effort : null
+          }
+        })
+        .filter((s): s is DebateSeat => s !== null)
+    : []
+  if (seats.length === 0) return null
+  const rounds = typeof r.rounds === 'number' && Number.isFinite(r.rounds) ? Math.round(r.rounds) : 1
+  const round = typeof r.round === 'number' && Number.isFinite(r.round) ? Math.round(r.round) : 1
+  return {
+    seats,
+    rounds: Math.min(MAX_DEBATE_ROUNDS, Math.max(MIN_DEBATE_ROUNDS, rounds)),
+    exchange: r.exchange === 'digest' ? 'digest' : 'full',
+    round: Math.max(1, round),
+    verdict: isDebateVerdict(r.verdict) ? r.verdict : null
+  }
+}
+
+/**
+ * How many distinct **adapters** a roster spans.
+ *
+ * ⛔ Counted on the adapter, not the model name: published work finds cross-*family* pairs are what
+ * carry debate's gain, and two Claude models are one family. The caller resolves worker → adapter,
+ * because this file cannot see the fleet.
+ */
+export function adapterSpread(adapterIds: Array<string | null | undefined>): number {
+  return new Set(adapterIds.filter((id): id is string => !!id)).size
+}
 
 /**
  * A conversation still running under the conversation contract.
@@ -844,6 +964,12 @@ export interface Task {
    */
   childDefaults: ChildDefaults | null
   /**
+   * The roster, the round budget, the exchange rule and the verdict — the whole of a debate.
+   *
+   * ⚠️ Null for every task that is not a `debate`, and for every row written before migration 68.
+   */
+  debate: DebateState | null
+  /**
    * When work first started on this task, and when the last attempt stopped.
    *
    * ⛔ Derived from the runs, not stored on the task, because they are facts about attempts and a
@@ -1384,7 +1510,7 @@ export type QuestionKind = 'text' | 'choice' | 'multi'
  * exists. `ask_human` is one the agent asked for deliberately. Worth keeping apart: the first says
  * something about the CLI, the second about the prompt.
  */
-export type QuestionOrigin = 'ask_human' | 'native_tool' | 'checkpoint' | 'task_split'
+export type QuestionOrigin = 'ask_human' | 'native_tool' | 'checkpoint' | 'task_split' | 'debate'
 
 export interface QuestionOption {
   id: string
@@ -2028,6 +2154,24 @@ export type FinishPolicy =
    * of that judgement applied with less context at the one moment nobody is watching.
    */
   | 'custom'
+  /**
+   * The deliverable is on the **thread**. Nothing is expected on the branch, so a clean branch with
+   * no commits completes rather than being handed back to a person.
+   *
+   * ⛔ **Not a rung, and it does strictly *less* than `await-human`** — hence its place at the end
+   * of `FINISH_ORDER` beside `pull-request` and `custom` rather than anywhere in the ladder.
+   * `decideFinish`'s empty-branch guard (t17) is correct and stays: a `work` task whose branch is
+   * empty is indistinguishable from one whose agent committed in the trunk. This policy is the
+   * operator saying, in advance, that this particular task was never going to write a commit.
+   *
+   * ⭐ **Wider than debate, which is only what motivated it.** Migration 51 added `non_gradable`
+   * because *"some tasks complete valid work with no commits"* and the only answer was ticking a box
+   * afterwards. A research task, a question, a review can now be filed as what it is.
+   *
+   * ⚠️ Anything uncommitted in the workspace is still carried onto the task's own branch by
+   * `rescueDirt`, exactly as today. Nothing is discarded and nothing is swept into a commit.
+   */
+  | 'report-only'
 
 /**
  * The same question at the project and task tiers, where "say nothing" is a real answer.
@@ -2095,7 +2239,10 @@ export const FINISH_ORDER: FinishPolicy[] = [
   'commit-and-merge',
   'commit-and-push',
   'pull-request',
-  'custom'
+  'custom',
+  // ⚠️ Last, and deliberately not a rung: it does strictly *less* than `await-human`. See the
+  // union member's own note.
+  'report-only'
 ]
 
 export const FINISH_LABELS: Record<FinishPolicy, string> = {
@@ -2105,7 +2252,8 @@ export const FINISH_LABELS: Record<FinishPolicy, string> = {
   'commit-and-merge': 'commit, verify and merge into main',
   'commit-and-push': 'commit, verify, merge and push',
   'pull-request': 'open a pull request',
-  'custom': 'this project’s own policy'
+  'custom': 'this project’s own policy',
+  'report-only': 'report on the thread; expect no commits'
 }
 
 /**
@@ -2123,7 +2271,8 @@ export const FINISH_SHORT: Record<FinishPolicy, string> = {
   'commit-and-merge': 'Commit·Verify·Merge',
   'commit-and-push': 'Commit·Verify·Merge·Push',
   'pull-request': 'Pull request',
-  'custom': 'Project policy'
+  'custom': 'Project policy',
+  'report-only': 'Report only'
 }
 
 /**

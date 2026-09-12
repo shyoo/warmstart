@@ -1,4 +1,4 @@
-import type { Attachment, Task } from '@shared/tasks.js'
+import type { Attachment, DebateVerdict, Task } from '@shared/tasks.js'
 import { isOpenConversation, policyVerifies } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { describeAttachment } from './attachments.js'
@@ -7,6 +7,13 @@ import { getProject, landingTargetFor } from './projects.js'
 import { coldStartBlock } from './orientation.js'
 import { markDelivered, messagesFor, runsFor } from './tasks.js'
 import { childrenOf as splitChildrenOf } from './split.js'
+import {
+  citationLine,
+  citationReport,
+  debatePhaseOf,
+  lastPositionOf,
+  seatsOf
+} from './debate.js'
 import { resolveFinishPolicy } from './finish.js'
 import { settings } from './settings.js'
 import { lastCompactionLandedAt } from './compaction.js'
@@ -22,6 +29,13 @@ export interface BuiltPrompt {
   text: string
   attachments: Attachment[]
 }
+
+/**
+ * ⚠️ A named constant rather than a literal, because these prompts are assembled through a shell
+ * heredoc as often as through an editor and a Windows path through one silently loses a backslash
+ * (`AGENTS.md`, *Things that will bite*). One `'\n'` written once is one place for that to go wrong.
+ */
+const NL = '\n'
 
 /**
  * What the agent is actually told, and what it is being handed along with it.
@@ -190,6 +204,121 @@ function resolutionInstruction(
       (integration ? ' ' + integration : '') +
       HAND_BACK_CLAUSE
   ].join('\n')
+}
+
+/**
+ * What the organizer is told when every seat has answered.
+ *
+ * ⛔ **Arbitrating, not competing, and not casting a vote.** Published work is unambiguous on this
+ * and it decides the whole shape: a diverse roster dramatically outperforms a homogeneous one under
+ * a *judge* and gives **no** advantage under majority voting. An organizer that counts throws away
+ * the only thing heterogeneity buys.
+ *
+ * ⛔ **Every position travels verbatim, labelled with the account and model that wrote it**, next to
+ * the citation report. Summarising them here would put a fourth model's paraphrase between the
+ * judge and the evidence.
+ *
+ * ⚠️ The one tool call is named with its two shapes, and the round budget is stated as a fact rather
+ * than as a request: the organizer may converge early and may never extend.
+ */
+function arbitrationInstruction(task: Task, projectRoot: string | null): string {
+  const seats = seatsOf(task.id)
+  const state = task.debate
+  const round = state?.round ?? 1
+  const rounds = state?.rounds ?? 1
+  const positions = seats
+    .map((seat, i) => {
+      const who = [seat.ranOn ? `account ${seat.ranOn}` : null, seat.ranModel ?? null]
+        .filter(Boolean)
+        .join(', ')
+      const position = lastPositionOf(seat) ?? `(no position — this seat ended ${seat.status}${seat.holdReason ? `: ${seat.holdReason}` : ''})`
+      const cites = citationLine(citationReport(position, projectRoot))
+      return [
+        `--- Seat ${i + 1} · t${seat.seq}${who ? ` · ${who}` : ''}`,
+        ...(cites ? [`⚠️ Citation check — ${cites}`] : []),
+        position
+      ].join(NL)
+    })
+    .join(NL + NL)
+
+  return [
+    `You are the ORGANIZER of a debate. Round ${round} of at most ${rounds} has just finished, and ` +
+      `${seats.length} agents have each answered this question independently:`,
+    '',
+    task.title,
+    '',
+    'Their positions, verbatim and unedited:',
+    '',
+    positions,
+    '',
+    '⚠️ The citation check is a report, never a penalty. A path that does not resolve is one of the ' +
+      'few things about an argument this tool can establish rather than believe; what to make of ' +
+      'it is yours to judge.',
+    '',
+    'You are arbitrating, not competing, and you are not casting a vote. Weigh the arguments on ' +
+      'their evidence, not on who made them or how confidently they were made. ⛔ Where the ' +
+      'positions agree because nobody examined the question, say so — agreement is not evidence.',
+    '',
+    'Then call the MCP tool `debate_round` ONCE, in one of its two shapes:',
+    round < rounds
+      ? '  • `{ continue: true, briefs: [...] }` — one brief per seat, each naming the SPECIFIC ' +
+        'disagreement that seat has to address next. Use this while there is a real disagreement ' +
+        'worth another round.'
+      : `  • continuing is not available: this debate was authorised for ${rounds} round(s) and ` +
+        'this was the last one. Converge.',
+    '  • `{ converged: true, agreement, dissent, confidence, unresolved }` — the four parts, and ' +
+      'a reply missing any of them is refused. ⛔ An empty dissent section is refused: if there ' +
+      'genuinely was none, say that in the dissent field and say what was never contested.',
+    '',
+    `You may converge early — that only ever saves money and needs no permission. You may not ask ` +
+      'for more rounds than the operator authorised; the tool will refuse and tell you why.',
+    '',
+    'Converging raises a card with five choices and BLOCKS until a person answers it. The answer ' +
+      'comes back in the tool result and tells you what to do next. Do not guess it, and do not ' +
+      'start any work before it arrives.'
+  ].join(NL)
+}
+
+/**
+ * What the organizer is told after the operator has answered the verdict card.
+ *
+ * ⛔ One paragraph per verdict, and only the one that was chosen — sent into the session that
+ * already holds the whole debate, which is the saving this feature is built on.
+ */
+export function verdictInstruction(verdict: DebateVerdict, checkLead: string, commitHygiene: string): string {
+  switch (verdict) {
+    case 'execute':
+      return (
+        'The operator chose EXECUTE AS AGREED. The agreement you just reported is the spec — build ' +
+        'it, here, in this session. Work to the end without stopping between phases. ' +
+        checkLead +
+        'When the work is finished, call `task_complete` with a one-line summary. ' +
+        commitHygiene
+      )
+    case 'split':
+      return (
+        'The operator chose SPLIT THE WORK. Call `task_split` ONCE with the whole plan: two or more ' +
+        'concrete pieces, each with a self-contained instruction an agent that has NOT read this ' +
+        'debate could carry out. The pieces branch off this task’s branch and merge back into it. ' +
+        'After it returns, STOP — you will be started again once every piece has settled.'
+      )
+    case 'discuss':
+      return (
+        'The operator chose ASK FOLLOW-UP QUESTIONS. This task is now a conversation: answer what ' +
+        'they ask, one turn at a time, and stop after each. You keep this session and everything ' +
+        'the debate put in it. Do not call `task_complete` on your own judgement.'
+      )
+    case 'complete':
+      return (
+        'The operator chose MARK COMPLETED. The agreement is the result; nothing more is to be ' +
+        'built. Call `task_complete` with the agreement as the summary.'
+      )
+    case 'stop':
+      return (
+        'The operator chose STOP THE WORK. Stop here. Do not start anything, and do not commit. ' +
+        'Every position, round and run is kept.'
+      )
+  }
 }
 
 /**
@@ -497,6 +626,9 @@ export function promptFor(
   // branching on a name is about adapters and objectives, which are *data*; what kind of thing a task
   // is is not.) Phase 1 delegates and stops; phase 2 reviews what came back and finishes.
   const planPhase = task.kind === 'plan' ? planPhaseOf(task) : null
+  // ⛔ Same rule, same reason: what kind of thing a task is is a domain fact, not a mode name. The
+  // organizer arbitrates on `arbitrating` and does the work the operator chose on `executing`.
+  const debatePhase = debatePhaseOf(task)
 
   if (adapter(adapterId).info.capabilities.mcp) {
     // ⚠️ This belongs only in the first prompt. `task_read` is a recovery route for recorded context,
@@ -529,6 +661,10 @@ export function promptFor(
       parts.push(planningInstruction(checkLead))
     } else if (planPhase === 'resolving') {
       parts.push(resolutionInstruction(task, checkLead, commitHygiene, integration))
+    } else if (debatePhase === 'arbitrating') {
+      parts.push(arbitrationInstruction(task, project?.root ?? null))
+    } else if (debatePhase === 'executing' && task.debate?.verdict) {
+      parts.push(verdictInstruction(task.debate.verdict, checkLead, commitHygiene))
     } else if (followUp) {
       // ⚠️ One sentence where the whole contract used to be. See `RESUMED_ANCHOR`.
       parts.push(resumedAnchor(false))
