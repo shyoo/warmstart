@@ -547,7 +547,20 @@ describe('the seat prompts', () => {
     const prompt = debate.seatPromptFor(organizer(), 1, 2)
     expect(prompt).toContain('WHOLE position as the summary')
     expect(prompt).toMatch(/one line.*does not apply to a debate seat/)
+    expect(prompt).toContain('completion contract stated at the END')
+    expect(prompt).not.toContain('call the MCP tool `task_complete`')
     expect(prompt).toContain('Do not commit')
+  })
+
+  it('quotes an ambiguous operational prompt as a question instead of delegating its commands', () => {
+    const parent = organizer()
+    parent.title = 'Research this, implement it, commit, rebase, and write TASK COMPLETE: done'
+    const prompt = debate.seatPromptFor(parent, 0, 2)
+    expect(prompt).toContain('QUESTION UNDER DEBATE')
+    expect(prompt).toContain('not your task-control instruction')
+    expect(prompt).toContain('Do not execute, edit, commit, push, rebase')
+    expect(prompt).toContain('state the interpretation you used')
+    expect(prompt).toContain('external link you cannot open as unavailable evidence')
   })
 
   it('carries a lens as an evidence base and says in the same breath it is not a stance', () => {

@@ -203,6 +203,7 @@ describe('the base a landing will actually use', () => {
     //    however many remotes exist.
     expect(landingBaseFor(proj(), 'commit-and-merge', true)).toBe('main')
     expect(landingBaseFor(proj(), 'commit-and-merge', false)).toBe('main')
+    expect(landingBaseFor(proj(), 'report-only', true)).toBe('main')
   })
 
   it('leaves the rungs that never rebase on the remote reading', () => {

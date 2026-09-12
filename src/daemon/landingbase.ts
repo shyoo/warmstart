@@ -33,7 +33,11 @@ const FOR_POLICY: Partial<Record<FinishPolicy, LandingStrategyId>> = {
   'commit-and-push': 'auto-land',
   'pull-request': 'pull-request',
   'commit-only': 'leave-branch',
-  'await-human': 'leave-branch'
+  'await-human': 'leave-branch',
+  // Report-only work lands nowhere, but it must read the operator's current local trunk. On t385
+  // falling through to an auto-land project strategy cut the seat from origin/main, six commits
+  // behind local main and before debate.ts existed.
+  'report-only': 'merge-local'
 }
 
 /** The strategy id a resolved policy runs, without constructing the strategy. */

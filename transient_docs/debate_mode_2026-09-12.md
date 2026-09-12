@@ -583,3 +583,21 @@ question (t382: Opus, Gemini, GPT) converged on **no**, and the organizer's agre
   labelling it (a three-arm run: labelled, confidence-only, blind); whether lenses help at all (the
   flip report on a lens-on/lens-off pair). One seat (`gpt-5.6-luna`) reported `task_complete` was not
   in its tool set in round 2 — a separate adapter-exposure defect, not yet run down.
+
+## 12. Amendment, t387 (2026-09-12) — the first run's control text and workspace
+
+The first run established that the raw question may itself contain implementation and finishing
+instructions. A seat is not a cheap implementation worker: `seatPromptFor` now puts the question
+behind an explicit **QUESTION UNDER DEBATE** boundary, tells the seat to state its interpretation of
+ambiguity, and refuses the quoted prompt authority to edit, commit, rebase or finish. This is the
+deterministic turn-zero framing; an extra paid organizer turn before any independent evidence exists
+is not added. The organizer still first spends tokens after the blind positions exist, where it has
+evidence to arbitrate rather than merely paraphrasing the operator.
+
+Measured from refs on 2026-09-12: all three seat branches were initially created from `origin/main`
+at `316aa33`; t383 and t384 moved to local `main` at `59bf185` only because they obeyed the quoted
+prompt's rebase instruction, while t385 correctly remained at `316aa33`, six commits before the
+debate implementation at `467c90e`. `report-only` now resolves its starting ref to the local landing
+target regardless of delivery strategy. The completion wording is capability-neutral too: Codex's
+adapter deliberately declares `mcp: false`, so a seat is told to use the completion contract at the
+end of its generated prompt instead of being told an MCP tool exists.
