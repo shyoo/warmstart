@@ -2197,6 +2197,21 @@ export interface RpcMap {
     params: { projectId: string; branch: string }
     result: { deleted: boolean; reason?: string }
   }
+  /**
+   * Delete the local name of a branch whose pull request GitHub reports merged.
+   *
+   * ⛔ Re-reads the PR, re-compares the local head with the merged head and re-asks about the
+   * worktree holding it; the operator's own checkout is never switched. `deleted: false` says why.
+   */
+  'looseend.cleanup': {
+    params: { projectId: string; branch: string }
+    result: { deleted: boolean; reason?: string }
+  }
+  /** Run the pull-request sweep now instead of waiting up to five minutes for it. */
+  'looseend.checkMerged': {
+    params: void
+    result: { ran: boolean; checked: number; cleanedUp: number; kept: number; failed: number }
+  }
   'log.tail': { params: { limit?: number; level?: LogLevel }; result: LogEntry[] }
   /** What is on disk, for the offline half. ⛔ Lists files; never returns their contents. */
   'log.files': { params: void; result: { directory: string; files: LogFile[] } }

@@ -1885,6 +1885,22 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'tasks', 'debate_json')) {
       conn.exec('alter table tasks add column debate_json text;')
     }
+  },
+  // 69 - a merged pull request whose local branch could not be retired says why, once.
+  //
+  // ⛔ `retire_blocked` is the sentence the reconciler last gave for keeping the branch. Before it,
+  // a refusal left nothing behind: t389's PR merged (2026-09-12) while the operator's own trunk had
+  // the branch checked out, `reconciled_at` stayed null, every five-minute sweep refused again in
+  // silence, and Loose ends offered **Land it** for work that had already landed.
+  //
+  // ⚠️ And a data repair: a row whose URL is not a pull request was never a delivery. t389's second
+  // landing recorded `…/issues/133` — lifted from the *command line* quoted in gh's "already exists"
+  // error — and `gh pr view` failed on it every sweep. Replay-safe: the delete is idempotent.
+  (conn) => {
+    if (!hasColumn(conn, 'task_deliveries', 'retire_blocked')) {
+      conn.exec('alter table task_deliveries add column retire_blocked text;')
+    }
+    conn.exec(`delete from task_deliveries where url not glob 'http*://*/pull/[0-9]*';`)
   }
 ]
 

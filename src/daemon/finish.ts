@@ -17,6 +17,7 @@ import { landingTargetFor, listProjects, policyFor } from './projects.js'
 import { listTasks, mandateAllows } from './tasks.js'
 import type { MergeReading } from './landing.js'
 import { commitsOnlyOn, ensurePool, taskBranches, workspaceState } from './worktrees.js'
+import { mergedDeliveryFor, type PullRequestDelivery } from './deliveries.js'
 import type { WorkspaceState } from './worktrees.js'
 import { settings } from './settings.js'
 export { projectFinishChoice, finishInstructionFor }
@@ -527,6 +528,16 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
         .filter((task) => task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled')
         .map((task) => task.seq)
     )
+    const branches = await taskBranches(project, policy.landingTarget)
+    // ⭐ **A branch GitHub merged, whose local name has not moved since.** A squash or rebase merge
+    // leaves every commit on it "ahead" of the trunk forever, so without this t389 (2026-09-12) read
+    // as *not landed* and was offered **Land it** after its PR had merged. Only an unchanged head
+    // qualifies: a commit added after the merge is real work the pull request never carried.
+    const merged = new Map<string, PullRequestDelivery>()
+    for (const branch of branches) {
+      const delivery = mergedDeliveryFor(project.id, branch.branch)
+      if (delivery && delivery.headSha.toLowerCase() === branch.head) merged.set(branch.branch, delivery)
+    }
     for (const path of members) {
       const state = await workspaceState(path, policy.landingTarget)
       const taskSeq = taskSeqFromBranch(state.branch)
@@ -560,9 +571,10 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
       const scopedState = {
         ...state,
         stashes: 0,
-        unlandedCommits: state.branch
-          ? await commitsOnlyOn(path, state.branch, policy.landingTarget).catch(() => state.unlandedCommits)
-          : state.unlandedCommits
+        // ⚠️ A merged branch's commits are reported once, as merged, by the branch loop below.
+        unlandedCommits: !state.branch || merged.has(state.branch)
+          ? 0
+          : await commitsOnlyOn(path, state.branch, policy.landingTarget).catch(() => state.unlandedCommits)
       }
       for (const end of looseEndsIn(project, scopedState)) {
         if (seen.has(end.id) || dismissed.has(end.id)) continue
@@ -577,16 +589,28 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
     // sitting in this repository for days, both fully contained in the trunk, neither reported
     // anywhere. `retireBranch` swallows every failure and returns `false`, and nothing retried; the
     // only trace either of them left was an *absent* sentence in a finish message.
-    for (const branch of await taskBranches(project, policy.landingTarget)) {
+    for (const branch of branches) {
       // ⚠️ `-1` is "git could not measure it", not "nothing on it". Neither reported nor retired.
       if (branch.ahead < 0 || branch.taskSeq === null || !closedTaskSeqs.has(branch.taskSeq)) continue
+      const pr = merged.get(branch.branch)
       const end: LooseEnd = {
         projectId: project.id,
         projectName: project.name,
         workspacePath: branch.heldBy ?? project.root,
         branch: branch.branch,
         taskSeq: branch.taskSeq,
-        ...(branch.ahead > 0
+        ...(pr
+          ? {
+              id: `merged:${branch.branch}`,
+              kind: 'merged' as const,
+              count: branch.ahead,
+              url: pr.url,
+              summary:
+                `${pr.url} merged as \`${(pr.mergeSha ?? '').slice(0, 8)}\` — only the local branch ` +
+                `\`${branch.branch}\` is left` +
+                (pr.retireBlocked ? `. Kept because ${pr.retireBlocked}` : '')
+            }
+          : branch.ahead > 0
           ? {
               id: `unlanded:${branch.branch}`,
               kind: 'unlanded' as const,

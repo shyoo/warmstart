@@ -10,7 +10,7 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Last full local validation on this branch (2026-09-12): `npm run typecheck`, `npm run lint`,
-`npm test` (**3,210 passed, 2 skipped**) and `npm run build` all passed.
+`npm test` (**3,223 passed, 2 skipped**) and `npm run build` all passed.
 The expected test warnings exercise refusal and recovery paths; they are not failures.
 
 ## Closed in this cleanup
@@ -39,6 +39,16 @@ The expected test warnings exercise refusal and recovery paths; they are not fai
 - **Debate seats see current code and stay in their role.** `report-only` work starts from the local
   landing target, and seat prompts treat the submitted text as a question. See
   [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §12.
+- **A squash-merged pull request no longer sits under Loose ends as "not landed".** ⭐ Measured on
+  t389 (2026-09-12): the sweep had already recorded PR #139 `merged`, but the operator's trunk
+  `C:\Dev\awardtracker` had the branch checked out, so retirement refused — silently, every five
+  minutes — while the panel offered **Land it**. Now: a new `merged` loose-end kind with **Clean up**
+  and a panel-wide **Check merged PRs**; an idle clean pool member is stepped off the branch, the
+  operator's checkout never is; the reason is kept (`task_deliveries.retire_blocked`, migration 69)
+  and said on the thread once. Same task: gh's "already exists" error quotes the command line, and
+  the first-URL rule recorded `…/issues/133` as a delivery — `pullRequestUrlIn` takes only the last
+  `/pull/<n>`, and migration 69 deletes such rows. ⚠️ The two panel buttons are covered by no UI test and
+  have not been driven in the packaged app; the daemon side is tested against real git.
 - **A report-only task (every debate seat) leaves nothing under Loose ends.** ⭐ Measured first:
   t393–t395 made **no** commits — each branch sat on local `main` at `4619e6f`, which was 15 ahead of
   `origin/main`, and the scan counted against the remote alone. Now `commitsOnlyOn`

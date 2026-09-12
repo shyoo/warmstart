@@ -2661,13 +2661,20 @@ export interface TaskDiffFile {
 export interface LooseEnd {
   /** Stable across scans, so a dismissal sticks to the thing dismissed. */
   id: string
-  kind: 'uncommitted' | 'unlanded' | 'stash' | 'stranded'
+  /**
+   * ⚠️ `merged` is a branch whose recorded pull request GitHub reports merged and whose local head
+   * is still the head it merged — a squash leaves its commits "ahead" forever, so without this kind
+   * it read as `unlanded` and was offered a landing it had already had.
+   */
+  kind: 'uncommitted' | 'unlanded' | 'stash' | 'stranded' | 'merged'
   projectId: string
   projectName: string
   workspacePath: string
   branch: string | null
-  /** Files for `uncommitted`, commits for `unlanded`, entries for `stash`, 0 for `stranded`. */
+  /** Files for `uncommitted`, commits for `unlanded` and `merged`, entries for `stash`, 0 for `stranded`. */
   count: number
+  /** The merged pull request, for `merged` only. */
+  url?: string
   /** The task this branch belongs to, when the name still parses to one. */
   taskSeq: number | null
   summary: string

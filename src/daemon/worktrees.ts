@@ -1001,6 +1001,11 @@ export interface TaskBranch {
   ahead: number
   /** The worktree holding it, if any. ⚠️ This is why `git branch -D` refuses, so it is read, not guessed. */
   heldBy: string | null
+  /**
+   * The commit the name points at, lower-case. ⭐ What a merged pull request is compared against: a
+   * squash leaves every commit "ahead", and only an unchanged head proves the name holds nothing new.
+   */
+  head: string
 }
 
 /** Which worktree, if any, has each branch checked out. */
@@ -1031,17 +1036,19 @@ async function branchHolders(root: string): Promise<Map<string, string>> {
  */
 export async function taskBranches(project: Project, target: string): Promise<TaskBranch[]> {
   if (project.vcs !== 'git') return []
-  let names: string[]
+  let names: Array<{ branch: string; head: string }>
   try {
     names = (
       await git(project.root, [
         'for-each-ref',
-        '--format=%(refname:short)',
+        '--format=%(objectname) %(refname:short)',
         'refs/heads/warmstart/'
       ])
     )
       .split(/\r?\n/)
-      .filter(Boolean)
+      .map((line) => /^([0-9a-f]+) (.+)$/i.exec(line.trim()))
+      .filter((m): m is RegExpExecArray => m !== null)
+      .map((m) => ({ head: (m[1] as string).toLowerCase(), branch: m[2] as string }))
   } catch {
     return []
   }
@@ -1049,7 +1056,7 @@ export async function taskBranches(project: Project, target: string): Promise<Ta
 
   const holders = await branchHolders(project.root)
   const found: TaskBranch[] = []
-  for (const branch of names) {
+  for (const { branch, head } of names) {
     // ⚠️ `null` ahead-count is not zero. A branch git cannot measure is left alone by everything
     // downstream rather than being reported as safe to delete, so the failure is a `-1` nothing acts on.
     // ⛔ Against the local target *and* its remote — see `commitsOnlyOn` for the three seats that
@@ -1064,7 +1071,8 @@ export async function taskBranches(project: Project, target: string): Promise<Ta
       branch,
       taskSeq: seqFromBranch(branch),
       ahead: Number.isFinite(ahead) ? ahead : -1,
-      heldBy: holders.get(branch) ?? null
+      heldBy: holders.get(branch) ?? null,
+      head
     })
   }
   return found

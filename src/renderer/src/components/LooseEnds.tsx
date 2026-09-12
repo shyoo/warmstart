@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { LooseEnd } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { errorMessage } from '@shared/errors.js'
+import { mergedSweepNote } from '../lib/looseends'
 
 // The overview unmounts while another page is open. Keep the last confirmed scan at module scope so
 // returning to it does not briefly erase the decisions the operator was just reading.
@@ -76,7 +77,24 @@ export function LooseEnds(): React.JSX.Element | null {
             discarded, and nothing on this page discards anything.
           </p>
         </div>
-        {loading && <span className="loose-ends-loading" role="status">Refreshing…</span>}
+        <div className="tbl-actions">
+          {loading && <span className="loose-ends-loading" role="status">Refreshing…</span>}
+          {/* ⭐ The pull-request sweep runs every five minutes on its own; this runs it now, so a PR
+              merged a moment ago is cleaned up — or its reason shown — without waiting. */}
+          <button
+            type="button"
+            className="btn"
+            disabled={busy !== null}
+            onClick={() =>
+              void act(async () => {
+                setBusy('check-merged')
+                return mergedSweepNote(await rpc('looseend.checkMerged'))
+              })
+            }
+          >
+            Check merged PRs
+          </button>
+        </div>
       </header>
 
       {note && <div className="notice">{note}</div>}
@@ -136,6 +154,27 @@ export function LooseEnds(): React.JSX.Element | null {
                   {/* ⛔ Only for a branch with nothing on it. The daemon checks that again before
                       it deletes anything — this panel may be minutes old, and a branch that gained a
                       commit in between must not be removed because a stale row said it was empty. */}
+                  {/* ⛔ Merged on GitHub, so there is nothing to land. The daemon re-reads the PR and
+                      the branch before deleting the name, and never switches a checkout of yours. */}
+                  {end.kind === 'merged' && end.branch !== null && (
+                    <button
+                      type="button"
+                      className="btn btn--ok"
+                      disabled={busy !== null}
+                      onClick={() =>
+                        void act(async () => {
+                          setBusy(end.id)
+                          const r = await rpc('looseend.cleanup', {
+                            projectId: end.projectId,
+                            branch: end.branch as string
+                          })
+                          return r.deleted ? `cleaned up ${end.branch}` : `kept it — ${r.reason}`
+                        })
+                      }
+                    >
+                      Clean up
+                    </button>
+                  )}
                   {end.kind === 'stranded' && end.branch !== null && (
                     <button
                       type="button"
@@ -198,7 +237,8 @@ const LABEL: Record<LooseEnd['kind'], string> = {
   uncommitted: 'uncommitted',
   unlanded: 'not landed',
   stash: 'stashed',
-  stranded: 'branch left behind'
+  stranded: 'branch left behind',
+  merged: 'merged, branch left'
 }
 
 /** ⚠️ Uncommitted is the loudest: it is the only one where a pooled slot is still being held. */
@@ -209,5 +249,7 @@ const TONE: Record<LooseEnd['kind'], string> = {
   // ⚠️ The quietest of the four, deliberately. Nothing is at risk — every commit on it is already in
   // the trunk — so it is a tidy-up, and colouring it like lost work would train the operator to
   // ignore the list.
-  stranded: 'state-idle'
+  stranded: 'state-idle',
+  // ⚠️ Quiet for the same reason: the work reached the trunk through its pull request.
+  merged: 'state-idle'
 }

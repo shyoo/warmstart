@@ -354,7 +354,7 @@ over — one spent 13.3M tokens re-deriving work that was in `git stash list` th
 
 ## Loose ends
 
-Four kinds of work that exists and is going nowhere, listed on **Overview**:
+Five kinds of work that exists and is going nowhere, listed on **Overview**:
 
 - **uncommitted** — files in a pooled workspace that no commit holds.
 - **not landed** — a branch carrying commits that neither `<target>` nor `origin/<target>` has, whose
@@ -366,8 +366,15 @@ Four kinds of work that exists and is going nowhere, listed on **Overview**:
   already have.
   No work is at risk; the name is all that is left of a task that finished, or was cancelled before
   it wrote anything.
+- **merged, branch left** — a branch whose recorded pull request GitHub reports merged, and whose
+  local tip is still the head it merged. A squash or rebase merge leaves every commit "ahead" of the
+  trunk, so before 2026-09-12 this read as *not landed* (t389). The row says why the sweep kept it,
+  when it did.
 
 Each offers **Land it** (branches with commits only), **Retire it** (branches left behind only),
+**Clean up** (merged branches only — the same re-checked retirement the pull-request sweep does, run
+now, with the reason back if it still refuses), a panel-wide **Check merged PRs** that runs the sweep
+without waiting five minutes,
 **Make a task** — which files a normal task to go and deal with it — and **Dismiss**, which only
 hides the row.
 
@@ -569,7 +576,10 @@ under the `pull-request` strategy pushes the branch and opens a GitHub pull requ
 Its headline states *"Pull request opened for `<sha>` into `<target>`: <url>"* and its detail reports
 *"Pushed to `origin/<branch>`."*, rather than claiming work merged onto trunk. If `gh pr create` fails
 because the pull request already exists on the remote, the error URL (or `gh pr view`) is recovered,
-the push is acknowledged, and the landing succeeds idempotently on retry.
+the push is acknowledged, and the landing succeeds idempotently on retry. ⛔ Only a `/pull/<n>` URL,
+and the **last** one (`pullRequestUrlIn`): that error quotes the whole `gh pr create` command line,
+title and body included, ahead of gh's own URL, and on t389 (2026-09-12) the first-URL rule recorded
+the issue the title named, `…/issues/133`, as the delivery. Migration 69 removed such rows.
 
 ⭐ **Opening finishes the coding run; delivery continues without an agent** (t375, 2026-09-12).
 Before success is reported, Warmstart persists the exact PR URL, target, branch and head SHA. A
@@ -581,10 +591,20 @@ for quality review, and says so on the thread; it never pulls or moves the opera
 
 ⛔ **An exact merged PR is authority to retire squash/rebase history.** An ordinary branch is still
 deleted only by ancestry. The PR exception applies only when the persisted URL reports merged, its
-base and head branch are unchanged, the local branch is checked out nowhere, and its tip is exactly
-the head SHA GitHub says it accepted. A later local commit, changed identity, missing merge commit or
-unfetched target keeps the branch and retries rather than guessing. This is why a squash-merged PR no
-longer remains forever as “commits the trunk does not have.” Design and alternatives are archived in
+base and head branch are unchanged, and its tip is exactly the head SHA GitHub says it accepted. A
+later local commit, changed identity, missing merge commit or unfetched target keeps the branch and
+retries rather than guessing. This is why a squash-merged PR no longer remains forever as “commits
+the trunk does not have.”
+
+⛔ **A worktree holding the branch is stepped off it only if it is an idle pool member** — unclaimed
+and clean, exactly what `parkWorkspace` would detach anyway (`holderVerdict`). A claimed member, a
+dirty one, and above all the operator's own checkout are never switched. ⭐ **And a refusal is said,
+once.** t389 (2026-09-12) merged while `C:\Dev\awardtracker` had its branch checked out; the refusal
+left no trace, so it was re-refused every five minutes and Loose ends offered to land it. Now the
+reason is kept in `task_deliveries.retire_blocked` and written to the thread only when it changes —
+*"`C:\Dev\awardtracker` has `warmstart/t389-…` checked out. Switch it to another branch there
+(`git switch main`), then clean up again"*. A merge is monotonic, so an unavailable `gh` does not stop
+a delivery already recorded as merged from being settled. Design and alternatives are archived in
 [`../transient_docs/pull_request_lifecycle_plan_2026-09-11.md`](../transient_docs/pull_request_lifecycle_plan_2026-09-11.md).
 
 ⭐ **A landing an operator asked for says so before it runs.** Pressing **Land** or **Retry landing**

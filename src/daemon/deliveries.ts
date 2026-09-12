@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import { realpathSync } from 'node:fs'
+import { dirname } from 'node:path'
+import type { Project } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
-import { getProject, landingTargetFor } from './projects.js'
+import { getProject, landingTargetFor, policyFor } from './projects.js'
 import { addMessage, getTask } from './tasks.js'
 import { git, tryGit } from './git.js'
 import { launchArgs, which } from './which.js'
@@ -9,6 +12,8 @@ import { errorMessage } from '@shared/errors.js'
 import { log } from './log.js'
 import { recordTaskCommits } from './taskcommits.js'
 import { taskBranches } from './worktrees.js'
+import { openClaims, workspacePoolId } from './resources.js'
+import { samePath } from './fspath.js'
 
 export type DeliveryState = 'open' | 'merged' | 'closed_unmerged'
 
@@ -25,6 +30,8 @@ export interface PullRequestDelivery {
   observedAt: number | null
   observationError: string | null
   reconciledAt: number | null
+  /** Why the merged PR's local branch was last kept, or `null`. See migration 69. */
+  retireBlocked: string | null
 }
 
 interface DeliveryRow {
@@ -40,6 +47,7 @@ interface DeliveryRow {
   observed_at: number | null
   observation_error: string | null
   reconciled_at: number | null
+  retire_blocked: string | null
 }
 
 interface GhPullRequest {
@@ -64,8 +72,22 @@ function toDelivery(r: DeliveryRow): PullRequestDelivery {
     mergeSha: r.merge_sha,
     observedAt: r.observed_at,
     observationError: r.observation_error,
-    reconciledAt: r.reconciled_at
+    reconciledAt: r.reconciled_at,
+    retireBlocked: r.retire_blocked ?? null
   }
+}
+
+/**
+ * The pull request URL in some text, or `undefined`.
+ *
+ * ⛔ **Only `/pull/<n>`, and the last one.** t389's second landing (2026-09-12) hit gh's "already
+ * exists" error, whose message quotes the whole `gh pr create --title … --body …` command line
+ * before gh's own URL — and the title named `…/issues/133`. The old "first `http…`" rule took it,
+ * recorded an issue as the delivery, and `gh pr view` failed on it every sweep thereafter.
+ */
+export function pullRequestUrlIn(text: string): string | undefined {
+  const found = text.match(/https?:\/\/[^\s)"'`<>]+\/pull\/\d+/gi)
+  return found?.[found.length - 1]
 }
 
 /** Persist the exact PR identity before the run that opened it is allowed to disappear. */
@@ -77,6 +99,9 @@ export function recordPullRequestDelivery(input: {
   branch: string
   headSha: string
 }): PullRequestDelivery {
+  if (pullRequestUrlIn(input.url) !== input.url) {
+    throw new Error(`\`${input.url}\` is not a pull request URL`)
+  }
   const now = Date.now()
   db().prepare(
     `insert into task_deliveries
@@ -86,7 +111,8 @@ export function recordPullRequestDelivery(input: {
      on conflict(url) do update set
        task_id = excluded.task_id, project_id = excluded.project_id,
        target = excluded.target, branch = excluded.branch, head_sha = excluded.head_sha,
-       state = 'open', observation_error = null, reconciled_at = null, updated_at = excluded.updated_at`
+       state = 'open', observation_error = null, reconciled_at = null, retire_blocked = null,
+       updated_at = excluded.updated_at`
   ).run(
     randomUUID(), input.taskId, input.projectId, input.url, input.target, input.branch,
     input.headSha.toLowerCase(), now, now
@@ -136,27 +162,113 @@ export function mergedHeadMayRetire(
   return heldBy === null && localHead?.toLowerCase() === acceptedHead.toLowerCase()
 }
 
-async function retireMergedBranch(delivery: PullRequestDelivery): Promise<boolean> {
-  const project = getProject(delivery.projectId)
-  if (!project || project.vcs !== 'git') return false
-  const branch = (await taskBranches(project, delivery.target)).find((b) => b.branch === delivery.branch)
-  if (!branch) return true
-  const localHead = (await tryGit(project.root, ['rev-parse', `refs/heads/${delivery.branch}`]))?.trim().toLowerCase()
-  // ⛔ This is the chosen squash/rebase exception to ancestry retirement: the exact persisted PR
-  // says it merged, and the local name still points at precisely the head GitHub accepted.
-  if (!mergedHeadMayRetire(localHead, delivery.headSha, branch.heldBy)) return false
-  await git(project.root, ['branch', '-D', delivery.branch])
-  log.info(`retired ${delivery.branch}: exact pull request ${delivery.url} merged at ${delivery.headSha}`)
-  return true
+/** What became of a merged pull request's local branch. `reason` is written for the operator. */
+export type RetireOutcome = { retired: true } | { retired: false; reason: string }
+
+/**
+ * Whether a worktree standing on a merged branch may be stepped off it.
+ *
+ * ⛔ **Only a pool member nobody has claimed, with nothing uncommitted.** An unclaimed member on a
+ * finished task's branch is exactly what `parkWorkspace` would detach anyway. Anything else is
+ * somebody's: a claim is a live or resting task, and every other worktree — the operator's own trunk
+ * above all, which is where t389's branch was — is a checkout this tool has no business switching.
+ */
+export function holderVerdict(input: {
+  branch: string
+  target: string
+  heldBy: string
+  poolMember: boolean
+  claimed: boolean
+  dirty: boolean
+}): { detach: true } | { detach: false; reason: string } {
+  if (!input.poolMember) {
+    return {
+      detach: false,
+      reason:
+        `\`${input.heldBy}\` has \`${input.branch}\` checked out. Switch it to another branch there ` +
+        `(\`git switch ${input.target}\`), then clean up again`
+    }
+  }
+  if (input.claimed) {
+    return { detach: false, reason: `a task is holding \`${input.heldBy}\`, which has \`${input.branch}\` checked out` }
+  }
+  if (input.dirty) {
+    return {
+      detach: false,
+      reason: `\`${input.heldBy}\` has \`${input.branch}\` checked out with uncommitted files in it`
+    }
+  }
+  return { detach: true }
 }
 
-async function reconcileMerged(delivery: PullRequestDelivery): Promise<boolean> {
+/**
+ * Delete the local name of a branch GitHub merged, when that loses nothing.
+ *
+ * ⛔ This is the chosen squash/rebase exception to ancestry retirement: the exact persisted PR says
+ * it merged, and the local name still points at precisely the head GitHub accepted. A branch that
+ * moved past that head holds commits the PR never had, and is kept.
+ */
+async function retireMergedBranch(delivery: PullRequestDelivery): Promise<RetireOutcome> {
   const project = getProject(delivery.projectId)
-  if (!project || !delivery.mergeSha) return false
+  if (!project || project.vcs !== 'git') {
+    return { retired: false, reason: 'the project is not a git project any more' }
+  }
+  const branch = (await taskBranches(project, delivery.target)).find((b) => b.branch === delivery.branch)
+  if (!branch) return { retired: true }
+  if (branch.head !== delivery.headSha.toLowerCase()) {
+    return {
+      retired: false,
+      reason:
+        `\`${delivery.branch}\` has moved on to \`${branch.head.slice(0, 8)}\` since GitHub merged ` +
+        `\`${delivery.headSha.slice(0, 8)}\`, so it holds work the pull request did not`
+    }
+  }
+  if (branch.heldBy) {
+    const verdict = await holderOf(project, delivery, branch.heldBy)
+    if (!verdict.detach) return { retired: false, reason: verdict.reason }
+    await git(branch.heldBy, ['switch', '--detach', branch.head])
+  }
+  await git(project.root, ['branch', '-D', delivery.branch])
+  log.info(`retired ${delivery.branch}: exact pull request ${delivery.url} merged at ${delivery.headSha}`)
+  return { retired: true }
+}
+
+async function holderOf(
+  project: Project,
+  delivery: PullRequestDelivery,
+  heldBy: string
+): Promise<ReturnType<typeof holderVerdict>> {
+  // ⚠️ Through the real path: `git worktree list` reports the long form, and a root configured through
+  // an 8.3 short name (`C:\Users\SUNGHW~1\…`, which is what `os.tmpdir()` returns) never compares equal.
+  const real = (p: string): string => {
+    try {
+      return realpathSync.native(p)
+    } catch {
+      return p
+    }
+  }
+  const poolMember = samePath(real(dirname(heldBy)), real(policyFor(project).workspaceRoot))
+  const claimed = openClaims(workspacePoolId(project.id)).some(
+    (claim) => typeof claim.member === 'string' && samePath(real(claim.member), real(heldBy))
+  )
+  const dirty = poolMember && !claimed ? Boolean(await tryGit(heldBy, ['status', '--porcelain'])) : false
+  return holderVerdict({ branch: delivery.branch, target: delivery.target, heldBy, poolMember, claimed, dirty })
+}
+
+async function reconcileMerged(delivery: PullRequestDelivery): Promise<RetireOutcome> {
+  const project = getProject(delivery.projectId)
+  if (!project || !delivery.mergeSha) {
+    return { retired: false, reason: 'GitHub has not named the merge commit' }
+  }
   await git(project.root, ['fetch', 'origin', delivery.target])
   const base = (await tryGit(project.root, ['merge-base', delivery.mergeSha, `origin/${delivery.target}`]))
     ?.trim().toLowerCase()
-  if (base !== delivery.mergeSha) return false
+  if (base !== delivery.mergeSha) {
+    return {
+      retired: false,
+      reason: `the merge commit \`${delivery.mergeSha.slice(0, 8)}\` is not on \`origin/${delivery.target}\` yet`
+    }
+  }
   recordTaskCommits(
     delivery.taskId,
     [{ sha: delivery.mergeSha, subject: `Pull request merge: ${delivery.url}` }],
@@ -166,53 +278,121 @@ async function reconcileMerged(delivery: PullRequestDelivery): Promise<boolean> 
   return retireMergedBranch(delivery)
 }
 
-async function observe(delivery: PullRequestDelivery): Promise<void> {
-  const resolved = which('gh')
-  if (!resolved) return
-  const call = launchArgs(resolved, [
-    'pr', 'view', delivery.url, '--json',
-    'state,baseRefName,headRefName,headRefOid,mergeCommit,mergedAt'
-  ])
+/**
+ * Close out a merged delivery: retire its branch, or say — once per distinct reason — why not.
+ *
+ * ⛔ **Said on the thread, and only when the reason changes.** Before migration 69 a refusal left no
+ * trace, so t389 was re-refused every five minutes in silence while Loose ends offered to land work
+ * that had already landed. A sentence repeated every sweep would be the same failure made loud.
+ */
+async function settleMerged(delivery: PullRequestDelivery): Promise<RetireOutcome> {
+  const outcome = await reconcileMerged(delivery)
   const now = Date.now()
-  try {
-    const { stdout } = await spawn.run(call.command, call.args, { maxBuffer: 1024 * 1024, timeout: 30_000 })
-    const fact = normalizePullRequest(JSON.parse(stdout) as GhPullRequest)
-    // Exact identity is monotonic: a changed base or head branch means this is no longer the
-    // delivery Warmstart opened, so retain the last good fact and surface the mismatch as an error.
-    if (fact.target !== delivery.target || fact.branch !== delivery.branch) {
-      throw new Error(`pull request identity changed from ${delivery.branch} -> ${delivery.target}`)
-    }
+  if (outcome.retired) {
     db().prepare(
-      `update task_deliveries set state = ?, head_sha = ?, merge_sha = ?, observed_at = ?,
-         observation_error = null, updated_at = ? where id = ?`
-    ).run(fact.state, fact.headSha, fact.mergeSha, now, now, delivery.id)
-    const current = { ...delivery, ...fact, observedAt: now, observationError: null }
-    if (fact.state === 'merged' && !delivery.reconciledAt && await reconcileMerged(current)) {
-      db().prepare('update task_deliveries set reconciled_at = ?, updated_at = ? where id = ?')
-        .run(now, now, delivery.id)
-      addMessage(
-        delivery.taskId,
-        'system',
-        `Pull request merged as \`${fact.mergeSha!.slice(0, 8)}\` into \`${delivery.target}\``,
-        null,
-        [],
-        { detail: `GitHub reports ${delivery.url} merged. The unchanged local branch was retired.` }
-      )
-    } else if (fact.state === 'closed_unmerged' && delivery.state !== 'closed_unmerged') {
-      addMessage(
-        delivery.taskId,
-        'system',
-        'Pull request closed without merging',
-        null,
-        [],
-        { detail: `${delivery.url} closed without reaching \`${delivery.target}\`; the branch was kept.` }
-      )
-    }
-  } catch (err) {
-    db().prepare(
-      'update task_deliveries set observed_at = ?, observation_error = ?, updated_at = ? where id = ?'
-    ).run(now, errorMessage(err), now, delivery.id)
+      'update task_deliveries set reconciled_at = ?, retire_blocked = null, updated_at = ? where id = ?'
+    ).run(now, now, delivery.id)
+    addMessage(
+      delivery.taskId,
+      'system',
+      `Pull request merged as \`${delivery.mergeSha!.slice(0, 8)}\` into \`${delivery.target}\``,
+      null,
+      [],
+      { detail: `GitHub reports ${delivery.url} merged. The unchanged local branch was retired.` }
+    )
+  } else if (outcome.reason !== delivery.retireBlocked) {
+    db().prepare('update task_deliveries set retire_blocked = ?, updated_at = ? where id = ?')
+      .run(outcome.reason, now, delivery.id)
+    addMessage(
+      delivery.taskId,
+      'system',
+      'Pull request merged — local branch kept',
+      null,
+      [],
+      {
+        detail:
+          `GitHub reports ${delivery.url} merged, but \`${delivery.branch}\` was not retired: ` +
+          `${outcome.reason}. It is checked again every five minutes, and **Clean up** under Loose ends ` +
+          'checks it now.'
+      }
+    )
   }
+  return outcome
+}
+
+async function observe(delivery: PullRequestDelivery): Promise<PullRequestDelivery> {
+  const resolved = which('gh')
+  const now = Date.now()
+  let current = delivery
+  if (resolved) {
+    const call = launchArgs(resolved, [
+      'pr', 'view', delivery.url, '--json',
+      'state,baseRefName,headRefName,headRefOid,mergeCommit,mergedAt'
+    ])
+    try {
+      const { stdout } = await spawn.run(call.command, call.args, { maxBuffer: 1024 * 1024, timeout: 30_000 })
+      const fact = normalizePullRequest(JSON.parse(stdout) as GhPullRequest)
+      // Exact identity is monotonic: a changed base or head branch means this is no longer the
+      // delivery Warmstart opened, so retain the last good fact and surface the mismatch as an error.
+      if (fact.target !== delivery.target || fact.branch !== delivery.branch) {
+        throw new Error(`pull request identity changed from ${delivery.branch} -> ${delivery.target}`)
+      }
+      db().prepare(
+        `update task_deliveries set state = ?, head_sha = ?, merge_sha = ?, observed_at = ?,
+           observation_error = null, updated_at = ? where id = ?`
+      ).run(fact.state, fact.headSha, fact.mergeSha, now, now, delivery.id)
+      current = { ...delivery, ...fact, observedAt: now, observationError: null }
+      if (fact.state === 'closed_unmerged' && delivery.state !== 'closed_unmerged') {
+        addMessage(
+          delivery.taskId,
+          'system',
+          'Pull request closed without merging',
+          null,
+          [],
+          { detail: `${delivery.url} closed without reaching \`${delivery.target}\`; the branch was kept.` }
+        )
+      }
+    } catch (err) {
+      db().prepare(
+        'update task_deliveries set observed_at = ?, observation_error = ?, updated_at = ? where id = ?'
+      ).run(now, errorMessage(err), now, delivery.id)
+      current = { ...delivery, observedAt: now, observationError: errorMessage(err) }
+    }
+  }
+  // ⚠️ Outside the observation, deliberately. A merge is monotonic — a merged PR stays merged — so a
+  // gh that is missing or failing today does not stop a branch GitHub already reported merged from
+  // being closed out on the fact already recorded.
+  if (current.state === 'merged' && !current.reconciledAt) {
+    try {
+      await settleMerged(current)
+    } catch (err) {
+      db().prepare('update task_deliveries set observation_error = ?, updated_at = ? where id = ?')
+        .run(errorMessage(err), Date.now(), delivery.id)
+    }
+  }
+  return deliveryById(delivery.id) ?? current
+}
+
+function deliveryById(id: string): PullRequestDelivery | null {
+  const found = row<DeliveryRow>(db().prepare('select * from task_deliveries where id = ?').get(id))
+  return found ? toDelivery(found) : null
+}
+
+/**
+ * The newest merged pull request recorded for this branch, if any.
+ *
+ * ⚠️ The newest *merged* one: a conversation may deliver the same branch name more than once, and a
+ * later open PR does not un-merge an earlier one. Whether the local name still matches that PR's head
+ * is the caller's question — only then is the branch nothing but a leftover.
+ */
+export function mergedDeliveryFor(projectId: string, branch: string): PullRequestDelivery | null {
+  const found = row<DeliveryRow>(
+    db().prepare(
+      `select * from task_deliveries where project_id = ? and branch = ? and state = 'merged'
+       order by coalesce(observed_at, created_at) desc limit 1`
+    ).get(projectId, branch)
+  )
+  return found ? toDelivery(found) : null
 }
 
 let reconciling = false
@@ -226,7 +406,7 @@ async function salvageAnnouncedDeliveries(): Promise<void> {
     ).all()
   )
   for (const message of announced) {
-    const url = /https:\/\/github\.com\/[^\s)]+\/pull\/\d+/i.exec(message.text)?.[0]
+    const url = pullRequestUrlIn(message.text)
     if (!url) continue
     const exists = db().prepare('select 1 from task_deliveries where url = ?').get(url)
     if (exists) continue
@@ -248,10 +428,21 @@ async function salvageAnnouncedDeliveries(): Promise<void> {
   }
 }
 
+/** What one sweep found, for the operator who asked for it by hand. */
+export interface DeliverySweep {
+  /** `false` when a sweep was already running and this call did nothing. */
+  ran: boolean
+  checked: number
+  cleanedUp: number
+  kept: number
+  failed: number
+}
+
 /** Zero-token, restart-safe observation of PRs that outlive their coding runs. */
-export async function reconcilePullRequestDeliveries(): Promise<void> {
-  if (reconciling) return
+export async function reconcilePullRequestDeliveries(): Promise<DeliverySweep> {
+  if (reconciling) return { ran: false, checked: 0, cleanedUp: 0, kept: 0, failed: 0 }
   reconciling = true
+  const sweep: DeliverySweep = { ran: true, checked: 0, cleanedUp: 0, kept: 0, failed: 0 }
   try {
     await salvageAnnouncedDeliveries()
     const pending = rows<DeliveryRow>(
@@ -261,8 +452,70 @@ export async function reconcilePullRequestDeliveries(): Promise<void> {
          order by coalesce(observed_at, 0) limit 20`
       ).all()
     ).map(toDelivery)
-    for (const delivery of pending) await observe(delivery)
+    for (const delivery of pending) {
+      const after = await observe(delivery)
+      sweep.checked += 1
+      if (after.observationError) sweep.failed += 1
+      else if (after.state === 'merged' && after.reconciledAt) sweep.cleanedUp += 1
+      else if (after.state === 'merged') sweep.kept += 1
+    }
+    return sweep
   } finally {
     reconciling = false
   }
+}
+
+/**
+ * The operator's **Clean up** on a merged branch under Loose ends.
+ *
+ * ⛔ **Re-derives the licence rather than trusting the row.** The panel may be minutes old: the PR is
+ * re-read from GitHub, the local head is compared with the merged head again, and the worktree
+ * holding the branch is asked about again. What this may do is exactly what the sweep may do — the
+ * click only makes it happen now and hands the reason back.
+ *
+ * ⚠️ `refresh: false` skips gh — for tests, which must not reach GitHub. The recorded merge still counts.
+ */
+export async function cleanUpMergedBranch(
+  projectId: string,
+  branch: string,
+  opts: { refresh?: boolean } = {}
+): Promise<{ deleted: boolean; reason?: string }> {
+  const recorded = rows<DeliveryRow>(
+    db().prepare(
+      `select * from task_deliveries where project_id = ? and branch = ?
+       order by coalesce(observed_at, created_at) desc`
+    ).all(projectId, branch)
+  ).map(toDelivery)
+  const delivery = recorded.find((d) => d.state === 'merged') ?? recorded[0]
+  if (!delivery) return { deleted: false, reason: `no pull request is recorded for \`${branch}\`` }
+  const project = getProject(projectId)
+  if (!project) return { deleted: false, reason: 'that project no longer exists' }
+
+  // ⚠️ A delivery already reconciled whose name came back (a person re-created it) is not re-settled:
+  // the refresh would skip it, so it falls through to the plain "still there" answer below.
+  let after: PullRequestDelivery
+  if (opts.refresh === false) {
+    if (delivery.state === 'merged' && !delivery.reconciledAt) {
+      try {
+        await settleMerged(delivery)
+      } catch (err) {
+        return { deleted: false, reason: errorMessage(err) }
+      }
+    }
+    after = deliveryById(delivery.id) ?? delivery
+  } else {
+    after = await observe(delivery)
+  }
+
+  if (after.state !== 'merged') {
+    return {
+      deleted: false,
+      reason: after.observationError
+        ? `could not read ${after.url} from GitHub: ${after.observationError}`
+        : `GitHub reports ${after.url} as ${after.state === 'open' ? 'still open' : 'closed without merging'}`
+    }
+  }
+  const stillThere = (await taskBranches(project, after.target)).some((b) => b.branch === branch)
+  if (!stillThere) return { deleted: true }
+  return { deleted: false, reason: after.retireBlocked ?? after.observationError ?? `\`${branch}\` was kept` }
 }

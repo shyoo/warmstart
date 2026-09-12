@@ -31,7 +31,7 @@ import * as spawn from './spawn.js'
 import { stripAnsi } from './stream.js'
 import { emit } from './events.js'
 import { beginLanding, endLanding, isTaskLanding } from './landingstate.js'
-import { recordPullRequestDelivery } from './deliveries.js'
+import { pullRequestUrlIn, recordPullRequestDelivery } from './deliveries.js'
 
 // ⛔ Re-exported, not redefined: every existing caller keeps one import site and one answer.
 export { landingBaseFor }
@@ -1389,12 +1389,14 @@ export const pullRequest: LandingStrategy = {
         })
 
         // `gh pr create` prints the URL and nothing else worth having.
-        prUrl = stdout.trim().split(/\s+/).find((line) => line.startsWith('http')) ?? undefined
+        prUrl = pullRequestUrlIn(stdout)
         log.info(`opened a pull request for t${ctx.task.seq}: ${prUrl ?? 'url not reported'}`)
       } catch (err) {
         const msg = errorMessage(err)
         if (/already exists/i.test(msg)) {
-          prUrl = /(https?:\/\/[^\s)]+)/.exec(msg)?.[1]
+          // ⛔ `pullRequestUrlIn`, not the first URL: this message quotes the `gh pr create` command
+          // line, title and body included, ahead of gh's own URL. t389 recorded `…/issues/133` here.
+          prUrl = pullRequestUrlIn(msg)
           if (!prUrl) {
             try {
               const viewCall = launchArgs(resolved, [
@@ -1411,7 +1413,7 @@ export const pullRequest: LandingStrategy = {
                 maxBuffer: 4 * 1024 * 1024,
                 timeout: 15_000
               })
-              prUrl = viewOut.trim().split(/\s+/).find((line) => line.startsWith('http')) ?? undefined
+              prUrl = pullRequestUrlIn(viewOut)
             } catch {
               // Ignore failure to query view
             }
@@ -1433,7 +1435,7 @@ export const pullRequest: LandingStrategy = {
           maxBuffer: 4 * 1024 * 1024,
           timeout: 15_000
         })
-        prUrl = viewOut.trim().split(/\s+/).find((line) => line.startsWith('http'))
+        prUrl = pullRequestUrlIn(viewOut)
       }
       if (!prUrl) throw new Error('GitHub opened the pull request but did not report its URL')
       recordPullRequestDelivery({

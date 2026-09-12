@@ -406,6 +406,117 @@ describe('task branches the repository still has a name for', () => {
 })
 
 /**
+ * A pull request merged on GitHub, and the local branch it leaves behind.
+ *
+ * ⛔ t389, 2026-09-12: the PR was squash-merged, so both of its commits stay "ahead" of the trunk
+ * forever and Loose ends offered **Land it**. The sweep already knew the PR had merged, but the
+ * operator's own trunk had the branch checked out, so `retireMergedBranch` refused — with no trace,
+ * every five minutes. What is pinned here: the row says *merged*, a refusal names the checkout once,
+ * **Clean up** succeeds the moment the checkout moves, and a commit added after the merge is kept.
+ *
+ * ⚠️ A real bare `origin`, because the reconcile fetches it and checks the merge commit is on it.
+ * GitHub itself is not reached: `refresh: false` settles on the recorded merge.
+ */
+describe('a branch whose pull request was squash-merged', () => {
+  let deliveries: typeof import('./deliveries.js')
+  beforeAll(async () => {
+    deliveries = await import('./deliveries.js')
+  })
+
+  const squashMerged = (label: string) => {
+    const { project, taskId, root } = seed('warmstart/temporary-pr-branch')
+    const task = tasks.requireTask(taskId)
+    const branch = `warmstart/t${task.seq}-${label}`
+    git(root, 'branch', '-m', branch)
+    const origin = join(dir, `origin-${label}.git`)
+    git(dir, 'init', '--bare', origin)
+    git(root, 'remote', 'add', 'origin', origin)
+    git(root, 'push', 'origin', 'main')
+    writeFileSync(join(root, 'feature.txt'), 'the change\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'the change')
+    writeFileSync(join(root, 'feature.txt'), 'the change, reviewed\n')
+    git(root, 'commit', '-am', 'review fixes')
+    const head = git(root, 'rev-parse', 'HEAD')
+    // What GitHub's "Squash and merge" leaves: one new commit on main, neither branch commit reachable.
+    git(root, 'switch', 'main')
+    git(root, 'merge', '--squash', branch)
+    git(root, 'commit', '-m', `t${task.seq} (#139)`)
+    const mergeSha = git(root, 'rev-parse', 'HEAD')
+    git(root, 'push', 'origin', 'main')
+    tasks.setStatus(task.id, 'completed')
+    const url = `https://github.com/example/${label}/pull/139`
+    const delivery = deliveries.recordPullRequestDelivery({
+      taskId, projectId: project.id, url, target: 'main', branch, headSha: head
+    })
+    db.db().prepare("update task_deliveries set state = 'merged', merge_sha = ? where id = ?").run(mergeSha, delivery.id)
+    return { project, taskId, root, branch, url }
+  }
+
+  const rowFor = async (projectId: string, branch: string) =>
+    (await finish.scanLooseEnds()).find((e) => e.projectId === projectId && e.branch === branch)
+
+  it(
+    'is listed as merged, refuses once while the trunk holds it, and cleans up once it does not',
+    async () => {
+      const { project, taskId, root, branch, url } = squashMerged('held-by-trunk')
+      git(root, 'switch', branch)
+
+      const row = await rowFor(project.id, branch)
+      expect(row?.kind).toBe('merged')
+      expect(row?.summary).toContain(url)
+      // ⛔ Watched red the other way: the ancestry count alone still calls this unlanded work.
+      expect(await worktrees.commitsOnlyOn(root, branch, 'main')).toBe(2)
+
+      const refused = await deliveries.cleanUpMergedBranch(project.id, branch, { refresh: false })
+      expect(refused.deleted).toBe(false)
+      expect(refused.reason).toContain('checked out')
+      expect(refused.reason).toContain('`git switch main`')
+      expect(git(root, 'branch', '--list', branch)).toContain(branch)
+      // ⛔ Said on the thread once, not once per sweep.
+      await deliveries.cleanUpMergedBranch(project.id, branch, { refresh: false })
+      expect(said(taskId).match(/local branch kept/g)?.length).toBe(1)
+      expect((await rowFor(project.id, branch))?.summary).toContain('Kept because')
+
+      git(root, 'switch', 'main')
+      expect(await deliveries.cleanUpMergedBranch(project.id, branch, { refresh: false })).toEqual({ deleted: true })
+      expect(git(root, 'branch', '--list', branch)).toBe('')
+      expect(said(taskId)).toContain('Pull request merged as')
+      expect(await rowFor(project.id, branch)).toBeUndefined()
+    },
+    60_000
+  )
+
+  it(
+    'keeps a branch that gained a commit after the merge, which is work the PR never had',
+    async () => {
+      const { project, root, branch } = squashMerged('moved-on')
+      git(root, 'switch', branch)
+      writeFileSync(join(root, 'later.txt'), 'after the merge\n')
+      git(root, 'add', '-A')
+      git(root, 'commit', '-m', 'after the merge')
+      git(root, 'switch', 'main')
+
+      const verdict = await deliveries.cleanUpMergedBranch(project.id, branch, { refresh: false })
+      expect(verdict.deleted).toBe(false)
+      expect(verdict.reason).toContain('has moved on')
+      expect((await rowFor(project.id, branch))?.kind).toBe('unlanded')
+    },
+    60_000
+  )
+
+  it('steps an idle workspace off the branch rather than refusing it', async () => {
+    const { project, root, branch } = squashMerged('idle-pool-member')
+    const member = join(projects.policyFor(project).workspaceRoot, 'ws7')
+    git(root, 'worktree', 'add', member, branch)
+
+    expect(await deliveries.cleanUpMergedBranch(project.id, branch, { refresh: false })).toEqual({ deleted: true })
+    expect(git(member, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD')
+    expect(git(root, 'branch', '--list', branch)).toBe('')
+  })
+})
+
+/**
  * Cancelling is not finishing, and until 2026-09-01 that meant it tidied nothing at all.
  *
  * ⛔ Branch retirement lives only on the **finish** path — `landTask`, and `decideFinish`'s
