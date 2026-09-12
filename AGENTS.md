@@ -181,7 +181,10 @@ definitions invalidates the whole prompt cache prefix.
 **Schema** — [`docs/data-model.md`](docs/data-model.md). Migrations are numbered, append-only and
 must be replay-safe; `versionBefore` matches on text, not number. **MCP** —
 [`docs/mcp.md`](docs/mcp.md): two tiers, and only the daemon writes `WARMSTART_TIER`.
-**Renderer** — [`docs/ui.md`](docs/ui.md): agent output is text, never markup.
+**Renderer** — [`docs/ui.md`](docs/ui.md): agent output is untrusted **text**. A thread message is
+parsed as a closed markdown subset by [`src/renderer/src/lib/markdown.ts`](src/renderer/src/lib/markdown.ts)
+and drawn as elements this codebase writes; ⛔ no raw HTML, no `dangerouslySetInnerHTML`, and a
+link's `href` is whitelisted at the parse. A person's own typed message is never reinterpreted.
 
 ## The one distinction to hold in your head
 

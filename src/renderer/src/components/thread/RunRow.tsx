@@ -94,6 +94,28 @@ export function RunRow({
             </span>
           </div>
         )}
+        {/* ⛔ **The one place this caveat is said now.** It used to buy a second *Worker assigned*
+            line in the thread on a continuation that changed nothing, which read as the task
+            changing hands (t369). It is a fact about this attempt, so it sits among this attempt's
+            facts. ⚠️ Drawn only when it is true: an ordinary run says nothing, because "verified"
+            is what every row would otherwise carry. */}
+        {run.quotaUnverified && (
+          <div className="side-run-fact">
+            <span className="side-run-key">quota:</span>
+            <span className="side-run-val">
+              <span
+                className="warn"
+                title={
+                  'This run was dispatched without a trustworthy reading of the account’s quota — ' +
+                  'the last one was stale, or the window had turned over. The work is unaffected; ' +
+                  'what is unknown is how much room the account had when it started.'
+                }
+              >
+                unverified
+              </span>
+            </span>
+          </div>
+        )}
         {run.startedWarm !== null && (
           <div className="side-run-fact">
             <span className="side-run-key">fresh:</span>

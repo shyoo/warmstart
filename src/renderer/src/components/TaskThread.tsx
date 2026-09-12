@@ -63,6 +63,7 @@ import { CacheCost, Fact, ModelFact, SessionFact } from './thread/Facts'
 import { Decide, QuotaDecide, QuotaOverride } from './thread/Decide'
 import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
 import { CompactionRow, ReviewRow, RunRow } from './thread/RunRow'
+import { Markdown } from './thread/Markdown'
 import {
   compactionChoice,
   completionChoice,
@@ -1153,13 +1154,23 @@ function MessageImage({ attachment }: { attachment: Attachment }): React.JSX.Ele
 }
 
 /**
- * One message's text, with the identifiers in it set as code.
+ * One message's text, set as what its author wrote.
  *
- * ⚠️ `.msg-text` is `white-space: pre-wrap`, so every run has to be emitted as a plain string — a
- * wrapper element around the plain runs would be harmless, but the fenced ones must not swallow the
- * whitespace either side of them, which is what carries the line breaks the daemon wrote.
+ * ⛔ **Two readings, and which one a message gets is decided by who wrote it.** An agent's reply and
+ * this codebase's own system lines are *authored in markdown* — a CLI's house style on one side,
+ * `**not pushed**` and `⚠️ …` on the other — and t369's thread printed both of them raw, asterisks
+ * and all (reported 2026-09-11). Those get `Markdown`. A **person's** typed message does not: they
+ * typed characters into a box, they can see exactly what they sent, and silently reinterpreting a
+ * `*` they meant literally is a change to somebody's own words. Theirs keeps the inline-code
+ * reading it has always had, which is the one thing a thread has always rendered.
+ *
+ * ⚠️ `.msg-text` is `white-space: pre-wrap`, so on the plain path every run has to be emitted as a
+ * plain string — a wrapper element around the plain runs would be harmless, but the fenced ones must
+ * not swallow the whitespace either side of them, which is what carries the line breaks the daemon
+ * wrote.
  */
-function MessageText({ text }: { text: string }): React.JSX.Element {
+function MessageText({ text, markdown = false }: { text: string; markdown?: boolean }): React.JSX.Element {
+  if (markdown) return <Markdown text={text} />
   // ⚠️ Stripped here as well as where the daemon writes: a thread written before 2026-09-11 holds
   // check output with vitest's colour codes in it, and a person reading it now should not.
   return (
@@ -1224,12 +1235,12 @@ function Thread({
                   />
                 </details>
               )}
-              {/* ⛔ The backticks were being printed. Every message this codebase writes names refs,
-                  branches, shas and files in them — *"Landed as `98f200ab` onto `main`"* — and until
-                  now the reader got the punctuation and none of the distinction it was there to
-                  make. ⚠️ Inline code only; see `lib/codespans.ts` for why this is not a markdown
-                  renderer and must not become one. */}
-              <MessageText text={m.text} />
+              {/* ⛔ The backticks were being printed, and then so was everything else. Every message
+                  this codebase writes names refs, branches, shas and files in them — *"Landed as
+                  `98f200ab` onto `main`"* — and an agent's reply is written in markdown throughout.
+                  ⚠️ Agent, controller and system text is read as markdown; a person's own is not.
+                  See `MessageText`. */}
+              <MessageText text={m.text} markdown={m.role !== 'human'} />
               {m.attachments.length > 0 && (
                 <span className="msg-images">
                   {m.attachments.map((a) =>
@@ -1252,7 +1263,7 @@ function Thread({
                 {runForMsg?.prompt && promptMessageId(messages, runForMsg.id) === m.id && (
                   <PromptChip prompt={runForMsg.prompt} />
                 )}
-                {m.detail && <details className="msg-detail"><summary title="Show details">ⓘ</summary><div><MessageText text={m.detail} /></div></details>}
+                {m.detail && <details className="msg-detail"><summary title="Show details">ⓘ</summary><div><MessageText text={m.detail} markdown /></div></details>}
               </div>
             </div>
           </div>

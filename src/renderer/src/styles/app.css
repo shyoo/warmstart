@@ -4722,6 +4722,119 @@ select:focus-visible,
   color: var(--color-text);
 }
 
+/* ---- markdown inside a message ----------------------------------------
+
+   ⛔ **Tighter than a document, because it is a chat bubble.** A default stylesheet's paragraph and
+   heading margins put a blank line's worth of air around every block, which in a 400px-wide bubble
+   turns a four-line answer into a page of whitespace. Blocks are separated by one small step, the
+   first and last touch the bubble's own padding, and headings step down by weight and size rather
+   than by the outsized ratios a document uses.
+
+   ⚠️ `pre-wrap` on paragraphs and list items, not on the wrapper: an agent that wrote three short
+   lines meant three lines (see `markdownBlocks`), while the gap *between* blocks is the layout's to
+   decide and must not double up with a newline the parser already consumed. */
+.md {
+  white-space: normal;
+  word-break: break-word;
+}
+
+.md > * + * { margin-top: var(--sp-2); }
+.md > :first-child { margin-top: 0; }
+
+.md-p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.md-h {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-text);
+}
+
+.md-h1 { font-size: 1.2em; }
+.md-h2 { font-size: 1.12em; }
+.md-h3 { font-size: 1.05em; }
+.md-h4, .md-h5, .md-h6 { font-size: 1em; }
+
+/* A heading is the one place extra air earns its keep: it opens a section, so it needs to sit
+   closer to what follows it than to what came before. */
+.md > .md-h + * { margin-top: var(--sp-1); }
+.md > * + .md-h { margin-top: var(--sp-3); }
+
+.md-list {
+  margin: 0;
+  padding-left: 1.35em;
+}
+
+.md-item {
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.md-item + .md-item { margin-top: 2px; }
+
+/* ⚠️ Indentation only. The parser keeps list items flat and records how far each one was indented,
+   so a nested bullet reads as nested without the renderer inventing a list that was never parsed. */
+.md-depth1 { margin-left: 1.1em; }
+.md-depth2 { margin-left: 2.2em; }
+.md-depth3 { margin-left: 3.3em; }
+
+/* ⚠️ `--color-border-strong`, not `--color-border`: a bubble already sits on `--color-surface-2`,
+   and the ordinary border is within a couple of values of it — drawn in that colour the mark
+   disappears and the quote reads as an indented paragraph. Measured by drawing it (2026-09-11). */
+.md-quote {
+  margin: 0;
+  padding: 2px 0 2px var(--sp-2);
+  border-left: 2px solid var(--color-border-strong);
+  color: var(--color-text-faint);
+  white-space: pre-wrap;
+}
+
+.md-code {
+  margin: 0;
+  padding: var(--sp-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  line-height: 1.45;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+/* The fence's language, where it named one: set in the corner rather than in the code, so it cannot
+   be mistaken for a line of the block. */
+.md-code[data-lang]::before {
+  content: attr(data-lang);
+  display: block;
+  margin-bottom: 4px;
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+}
+
+.md-rule {
+  /* A rule is a *separator*, so it needs more air than the step between two paragraphs — drawn on
+     the same 8px step it reads as a line that belongs to the block under it. */
+  margin: var(--sp-1) 0;
+  border: 0;
+  border-top: 1px solid var(--color-border-strong);
+}
+
+.md > * + .md-rule,
+.md > .md-rule + * { margin-top: var(--sp-3); }
+
+/* ⚠️ Underlined on hover only: a bubble of prose with four permanently underlined runs in it reads
+   as a form. The pointer and the colour already say it is a link. */
+.md-link {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.md-link:hover { text-decoration: underline; }
+
 .msg-prompt-box {
   margin-top: var(--sp-2);
 }

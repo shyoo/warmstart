@@ -1257,7 +1257,7 @@ async function reviveAndCompact(session: Session, decision: ClockDecision): Prom
 
   setTimeout(() => {
     try {
-      sendPrompt(session.id, '/compact')
+      sendPrompt(session.id, '/compact', [], { housekeeping: true })
     } catch (err) {
       log.warn(`could not send /compact to the revived ${session.id.slice(0, 8)}:`, err)
       done('the /compact could not be sent - closing the conversation again', false)
@@ -1282,7 +1282,9 @@ async function executeMove(session: Session, decision: ClockDecision): Promise<v
     case 'keepalive':
       // The cheapest possible turn: a read of the whole prefix, which refreshes the TTL, plus a
       // one-word completion. ⛔ It must not invite tool use - that would turn 0.1·C into real work.
-      sendPrompt(session.id, KEEPALIVE_PROMPT)
+      // ⚠️ `housekeeping`: this is the daemon speaking, not the agent waking itself up, and
+      // `resumeIdleConversation` must not bill the reply as a turn of the task's own.
+      sendPrompt(session.id, KEEPALIVE_PROMPT, [], { housekeeping: true })
       log.info(
         `keepalive on ${session.id.slice(0, 8)}: ${decision.reason} (~${decision.estimatedCost} tokens)`
       )
@@ -1293,7 +1295,7 @@ async function executeMove(session: Session, decision: ClockDecision): Promise<v
       // this way on the stream transport is **inferred from the CLI's slash-command handling and not
       // yet measured** - see HANDOFF R6. If it turns out not to be, the fallback is handoff + close,
       // which is already implemented below.
-      sendPrompt(session.id, '/compact')
+      sendPrompt(session.id, '/compact', [], { housekeeping: true })
       // ⛔ Written down *before* it is known to have worked, and that is the point: a request that
       // was never honoured is the finding, and a ledger that only recorded successes could not
       // report it. `landedAt` stays null until a boundary record arrives.
@@ -1327,7 +1329,7 @@ async function executeMove(session: Session, decision: ClockDecision): Promise<v
     }
 
     case 'handoff_close': {
-      sendPrompt(session.id, WRAP_UP_PROMPT)
+      sendPrompt(session.id, WRAP_UP_PROMPT, [], { housekeeping: true })
       // Give the wrap-up a turn to land before the prefix lapses; the handoff tool writes it.
       setTimeout(() => {
         const run = runForSession(session.id)

@@ -276,6 +276,29 @@ export async function trunkTargetSha(project: Project, target: string): Promise<
 }
 
 /**
+ * Does this branch exist in the repository at all?
+ *
+ * ⛔ **A measurement, and the one that tells *"I could not look"* apart from *"there is nothing
+ * there"*.** `pendingWorkFor` answers *"could not read this task's workspace"* whenever no pool
+ * member has the branch checked out — which is right while the branch still exists somewhere else,
+ * and flatly wrong the moment it does not. A branch that is not in `refs/heads` holds no
+ * uncommitted files and no unlanded commits, because it holds nothing: there is no tree to read and
+ * no reading to fail. Reported as zero work, not as a failed look.
+ *
+ * ⚠️ Read in the trunk, which is where refs live: a worktree shares them, so either would answer,
+ * and the trunk is the one that always exists.
+ */
+export async function branchExists(project: Project, branch: string): Promise<boolean> {
+  if (project.vcs !== 'git') return false
+  try {
+    await git(project.root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * The commits the trunk's target gained between two readings, newest first.
  *
  * ⚠️ Subjects only, and capped. This goes into a message a person reads; forty commit lines in a

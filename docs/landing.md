@@ -492,6 +492,19 @@ means grading five other tasks' commits as t124's. `resolveRange` therefore asks
 first and only falls back to the range; where the recorded commits are not exactly what `base..head`
 contains, the diff is taken as one `<sha>^!` patch per commit instead.
 
+⛔ **A landing's range is not the same question as a task's authorship, and conflating them graded
+other people's work.** Landing is measured against `origin/<target>` — that is the invariant, and it
+is right, because a landing that only moved a local branch has not landed. But on a machine whose
+local trunk is *ahead* of the remote, the push carries every earlier task's commits too, and
+`origin/main..HEAD` names all of them: measured on t369 (2026-09-11), one landing recorded **23**
+commits for a task that wrote **one**. `attributionBase` in `landing.ts` therefore reads
+`refs/heads/<target>` **before** the rebase and starts the range there when that commit is both
+downstream of the pushed base and an ancestor of what landed — the two conditions that make it a
+provably tighter floor rather than a guess. Fail either and the base the landing already had is used,
+because a narrower range nobody can prove is worse than a generous one. `claimedByAnotherTask` is the
+backstop beneath it, dropping a commit some other task already recorded as its own — never the tip,
+which a landing must always record for itself.
+
 ⛔ **The message says what the landing did, one clause per fact it actually knows.** For most of
 this tool's life it said *"Landed as a166a6a onto main."* and nothing else — while the landing had
 just rebased the branch onto the trunk, run every check the project declares and waited for them,
@@ -507,7 +520,27 @@ verified rather than a smaller amount of it.
 reads it back off the thread. The sha and the target are now fenced as code (the thread renders
 inline code spans; see `lib/codespans.ts`), and that parser was taught both spellings in the same
 change: a wording change it did not know about would have stopped it recovering commits **silently**,
-since salvage reports what it recognised and has no way to report what it did not.
+since salvage reports what it recognised and has no way to report what it did not. ⚠️ A clause may be
+*appended* to the headline — `LANDED_AS` matches a prefix and the salvage query is a `like 'Landed
+as %'` — but nothing may go in front of the sha or between it and the target.
+
+⭐ **And where the work went is on the headline, not behind the expander** (t369, 2026-09-11). *"Landed
+as `5ebb3b42` onto `main`"* left an operator who had asked for commit·verify·merge·**push** unable to
+tell whether the push had happened — `main` is both the local branch and the name of the thing on the
+remote, and the one clause that distinguished them was inside a ⓘ nobody opens. A landing that pushed
+now reads *"…onto `main` and pushed to `origin/main`"*; one that only moved the local branch reads
+*"…onto `main` — local only, **not pushed**"*, because that is the case where the operator's own
+checkout is ahead of the remote and nothing else will tell them. A strategy that cannot know says
+neither.
+
+⭐ **A landing an operator asked for says so before it runs.** Pressing **Land** or **Retry landing**
+writes a `landing.started` line — *"Landing `warmstart/t369.2-…` — commit, verify, merge and push…"* —
+and only then fetches, rebases, runs the project's checks and pushes. Until t369 the only feedback for
+minutes of work was the buttons going grey and a status in a pane the operator had to scroll away from
+the conversation to reach. ⚠️ It is written to the **thread**, not flashed: a landing that takes four
+minutes and then fails leaves two rows that read in order, and the first is the timestamp that says how
+long the failure took to arrive. ⚠️ It is written after the cheap refusals, so a rung that cannot land
+does not produce a landing that started and vanished.
 
 ⭐ **Everything that landed before any of this existed was recovered from its own thread.** The
 *"Landed as `<sha>` onto `<target>`"* message above outlives the branch, the workspace and the
@@ -535,10 +568,11 @@ follows it here is its `detail`, behind the expander:
 > t26 (…) is landing now; landing is serialised per project so rebases cannot race for the trunk.
 > This task is queued behind it and now depends on it, and will land by itself.
 >
-> **Landed as `a41f9c2` onto `main`**
+> **Landed as `a41f9c2` onto `main` — local only, not pushed**
 > Verified first: 4 project checks passed on the rebased branch, before anything moved.
-> Fast-forwarded your local `main` — **not pushed**. `warmstart/t27-…` held nothing `main` does
-> not now have, so it was deleted. It queued behind t26 and landed once that finished.
+> Your local `main` was fast-forwarded and is now ahead of the remote. `warmstart/t27-…` held
+> nothing `main` does not now have, so it was deleted. It queued behind t26 and landed once that
+> finished.
 
 ⛔ **Every system line on a thread is one short sentence, and what it used to say is its `detail`.**
 Nothing is dropped: a red check reads *"Not landed: the project checks failed after rebase"*, with

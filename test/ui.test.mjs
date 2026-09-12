@@ -4074,13 +4074,13 @@ try {
   section('identifiers in a thread message read as identifiers')
   // ⛔ Every message this codebase writes names refs, branches, shas and files in backticks —
   // *"Landed as `98f200ab` onto `main`"* — and the thread printed the backticks. The reader got the
-  // punctuation and none of the distinction it was there to make. ⚠️ Inline code only; this is not
-  // a markdown renderer and `lib/codespans.ts` says why it must not become one.
+  // punctuation and none of the distinction it was there to make. ⚠️ A **person's** own message is
+  // still read this way and only this way — see `MessageText` and `lib/markdown.ts`.
   await evaluate(`
     (async () => {
       const id = await window.agentyard.rpc('task.page', { limit: 100 })
         .then(p => p.tasks.find(t => t.title === 'ui dependent task')?.id);
-      await window.agentyard.rpc('task.message', { id, text: 'Landed as \`98f200ab\` onto \`main\`.' });
+      await window.agentyard.rpc('task.message', { id, text: 'Landed as \`98f200ab\` onto \`main\`. literally **two** asterisks' });
       return id;
     })()
   `)
@@ -4093,7 +4093,12 @@ try {
         if (codes.length === 0) return null;
         const said = [...document.querySelectorAll('.thread--task .msg-text')]
           .map(t => t.innerText).join(' ');
-        return { codes, backticks: said.includes('\`') };
+        return {
+          codes,
+          backticks: said.includes('\`'),
+          asterisks: said.includes('**two**'),
+          markdownInMine: document.querySelectorAll('.msg--human .md').length
+        };
       })())
     `)
     fenced = got === 'null' || got == null ? null : JSON.parse(got)
@@ -4108,6 +4113,15 @@ try {
   check(
     '⛔ and the fences themselves are gone, not printed as punctuation',
     fenced.backticks === false,
+    JSON.stringify(fenced)
+  )
+  // ⛔ **A person's own message is not reinterpreted, and this is the half that protects it.** Agent,
+  // controller and system text is read as markdown since t369 — `lib/markdown.ts` — but somebody who
+  // typed `**` into the box typed two asterisks, can see exactly what they sent, and must get them
+  // back. `task.message` writes a `human` row, which is the only role this suite can author.
+  check(
+    '⛔ a person’s own asterisks come back as asterisks, not as bold',
+    fenced.asterisks === true && fenced.markdownInMine === 0,
     JSON.stringify(fenced)
   )
 

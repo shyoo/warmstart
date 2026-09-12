@@ -44,6 +44,7 @@ import {
   finishRun,
   getTask,
   listTasks,
+  lastRunForSession,
   markDelivered,
   messagesFor,
   runForSession,
@@ -108,6 +109,7 @@ import {
   getSession,
   hasOpenRun,
   invalidateSessionContext,
+  isHousekeepingTurn,
   lastRequestEvidenceAt,
   markClockMove,
   noteCurrentBranch,
@@ -161,6 +163,7 @@ import { lastSpend } from './spend.js'
 import { settings } from './settings.js'
 import { overrunFactor } from './estimator.js'
 import type { Objective } from '@shared/tasks.js'
+import { isOpenConversation } from '@shared/tasks.js'
 import {
   DEFAULT_OBJECTIVE,
   policy,
@@ -1791,8 +1794,14 @@ export type WorkerSwitchReason = 'reassigned by you' | 'quota' | 'previous worke
  * that used to be the message — the controller's rationale, the workspace, the branch, cold or
  * resumed, the quota caveat — travels in `detail`, expandable and never in the way.
  *
- * ⚠️ The one exception to the quiet continuation is a run dispatched on an untrusted quota reading:
- * that caveat is the kind of thing a person wants beside the run it applies to.
+ * ⛔ **And there is no exception for an untrusted quota reading.** There used to be: a continuation
+ * on the *same* account re-announced itself whenever `quotaUnverified` was set, on the argument that
+ * the caveat wants to sit beside the run it applies to. It does — but a thread is a conversation,
+ * and *Worker assigned: ClaudeSecond (claude-opus-5)* printed in the middle of one, under a reply the
+ * operator had just typed, reads as the task changing hands when nothing changed at all (t369,
+ * reported 2026-09-11: two announcements in one thread, the second of them only because the quota
+ * reading was stale). The caveat is a fact about the *run*, so it is shown on the run —
+ * `RunRow` draws a `quota: unverified` fact off `run.quotaUnverified` — and the thread stays quiet.
  *
  * ⛔ The switch reason is *read off the decision*, not inferred from the thread. `choice.refusals`
  * is the gate that turned the previous account away, written by the same pass that chose this one;
@@ -1819,10 +1828,7 @@ export function announceWorker(
     assigned()
     return
   }
-  if (previous.workerId === worker.id) {
-    if (run.quotaUnverified) assigned()
-    return
-  }
+  if (previous.workerId === worker.id) return
   const previousWorker = getWorker(previous.workerId)
   const refused = choice.refusals?.find((r) => r.workerId === previous.workerId) ?? null
   const contended = choice.scored?.some((c) => c.workerId === previous.workerId) ?? false
@@ -4098,6 +4104,93 @@ export function reconcileTasks(): number {
 
   if (stuck.length) log.warn(`recovered ${stuck.length} task(s) interrupted by a restart`)
   return stuck.length
+}
+
+/**
+ * A resting conversation whose agent has started speaking again, on its own.
+ *
+ * ⭐ **t369, reported 2026-09-11.** The operator asked what the next step was; the agent answered
+ * *"I'll report back when CI completes"*, its turn ended, and the task went to `awaiting_human`. CI
+ * finished eight minutes later, the CLI's own background-task machinery handed the result back to
+ * the agent, and it worked for several more minutes — visibly, in the session pane, and **nowhere
+ * else**. `runForSession` finds only an *open* run, so every one of those assistant messages was
+ * dropped on the floor in `onStream`: no peephole, no thread message, no metering, and a task still
+ * reading *your turn* while its agent was mid-sentence.
+ *
+ * ⛔ **The answer is a run, because that is what work is here.** AGENTS.md: *work is visible, gated
+ * and billed only as a run*. Attributing the output to the closed run would bill a turn that had
+ * already been paid for and reopen a record that is supposed to be final; carrying it as loose
+ * activity beside a resting task would make it visible and leave it unbilled and unrecorded. Opening
+ * a run puts it back on the one path that already handles all of it — `noteActivity` finds the run,
+ * `creditStreamTurn` finds the run, and `onStreamResult` ends it through `endConversationTurn`,
+ * which writes the agent's words into the thread and rests the task again.
+ *
+ * ⛔ **It is not a dispatch and asks no dispatch question.** There is no quota gate, no scoring and
+ * no eligibility check, because there is nothing to decide: the agent is *already talking*, on an
+ * account that is already spending, in a session this task already holds. Refusing here would not
+ * save a token; it would only lose the record of tokens being spent.
+ *
+ * ⚠️ **Four conditions, and each one is a way this could be wrong.** The conversation must still be
+ * open (a finished task's session saying something more is not new work on it); the task must be
+ * resting rather than running (a live run is the ordinary case and is already handled); the daemon
+ * must not be the one who spoke (`isHousekeepingTurn` — a keepalive's reply is our turn, not the
+ * task's); and the session lease must be free, because a conversation another task has borrowed is
+ * that task's to answer for.
+ */
+export const RESUME_QUIET_MS = 5000
+
+export function resumeIdleConversation(session: Session): Run | null {
+  if (sessionEnded(session.state)) return null
+  if (isHousekeepingTurn(session.id)) return null
+  if (runForSession(session.id)) return null
+
+  const last = lastRunForSession(session.id)
+  const task = last?.taskId ? getTask(last.taskId) : null
+  if (!task || !isOpenConversation(task)) return null
+  if (task.status !== 'awaiting_human') return null
+  // ⚠️ **A quiet period, because the last word of a turn can arrive after the record that ended
+  // it.** `onStreamResult` closes the run on the vendor's `result`, and a trailing `assistant_text`
+  // milliseconds later is the tail of the turn that just ended, not a new one — opening a run for it
+  // would leave an empty run sitting open until a watchdog noticed. An agent woken by its own
+  // background tooling comes back seconds to minutes later, never in the same breath. ⚠️ The
+  // threshold is chosen to sit between those two, not measured against a distribution of either.
+  if (last?.endedAt && Date.now() - last.endedAt < RESUME_QUIET_MS) return null
+
+  const worker = getWorker(session.workerId)
+  if (!worker) return null
+  if (!acquireSessionLease(session.id, task.id)) return null
+
+  const project = task.projectId ? getProject(task.projectId) : null
+  const run = startRun({
+    taskId: task.id,
+    workerId: worker.id,
+    sessionId: session.id,
+    projectId: task.projectId,
+    quotaUnverified: false,
+    costModelId: adapter(worker.adapterId).info.policy.costModelId,
+    // The session never closed and nobody rebuilt its prefix, which is the warmest a run gets.
+    startedWarm: true,
+    trunkShaBefore: null,
+    // ⛔ No prompt, and the null is the record: nothing was sent into this session. A `prompt` here
+    // would invent a turn's instructions, and the thread's `📋` chip would offer words nobody wrote.
+    prompt: null,
+    objective: resolveObjective(project?.config?.objective, task.objective, settings().objective)
+  })
+  setRunQuota(run.id, 'before', runQuota(worker.id))
+  clearActivity(task.id)
+  setStatus(task.id, 'running', { assignee: worker.id })
+  addMessage(task.id, 'system', 'The agent picked this up again by itself', run.id, [], {
+    event: 'conversation.resumed',
+    detail:
+      'Nobody prompted this turn. The agent’s own tooling woke it — a command it left running in ' +
+      'the background finished, most often — and it started speaking again in the session it was ' +
+      'already resting in. It is metered as an ordinary turn, and the task goes back to waiting on ' +
+      'you when it ends.'
+  })
+  log.info(
+    `t${task.seq}: ${worker.label} resumed its conversation unprompted (run ${run.id.slice(0, 8)})`
+  )
+  return run
 }
 
 export function sessionOf(taskId: string): Session | null {

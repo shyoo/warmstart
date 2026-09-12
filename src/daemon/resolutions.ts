@@ -4,6 +4,7 @@ import { getProject, landingTargetFor, policyFor, reloadProjectIfPresent } from 
 import { decideFinish, resolveFinishPolicy } from './finish.js'
 import { landingBaseFor, hasRemote, landTask } from './landing.js'
 import {
+  branchExists,
   branchNameFor,
   claimWorkspace,
   parkWorkspace,
@@ -352,6 +353,17 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
         ? await workspaceOnBranch(project, branch, target)
         : null
   if (!state) {
+    // ⛔ **A branch that does not exist is a reading, not a failed one** (t369, reported
+    // 2026-09-11). A conversation that has just landed had its branch retired and its workspace
+    // released, and the next numbered branch is not cut in any tree until the next turn needs one —
+    // so every landing was immediately followed by *"⚠️ Could not read this task's workspace"*,
+    // a warning about a tree that had been released precisely because there was nothing left in it.
+    // Nothing is on a branch that is not there: no uncommitted files, no unlanded commits, and no
+    // measurement outstanding. Answered as `supported`, which draws no warning and no Commit or
+    // Land button, because there is nothing for either of them to do.
+    if (branch && !(await branchExists(project, branch))) {
+      return { ...none, supported: true, branch, unclaimed: true }
+    }
     return {
       ...none,
       branch,
@@ -514,6 +526,47 @@ function agentCanLand(taskId: string): boolean {
  * first completion meets, so a dirty tree is refused with the ordinary reason rather than landed
  * because somebody pressed a button.
  */
+/**
+ * Say in the thread that a landing has started, before it starts.
+ *
+ * ⛔ **The feedback a person pressing Land was given was that the buttons went grey** (t369,
+ * reported 2026-09-11). A landing fetches, rebases, runs every check the project declares and then
+ * pushes — minutes, on this repository — and for all of it the thread was silent while the only
+ * indication anything was happening sat in the ledger on the other side of the pane, above the
+ * fold. The operator has to scroll away from the conversation to find out that the button they just
+ * pressed did something.
+ *
+ * ⛔ **It is written to the thread, not flashed at the person, because it is a real event.** A
+ * landing that takes four minutes and then fails leaves two rows that read in order — *landing
+ * under this rung* then *this is why it did not* — and the first of them is the timestamp that says
+ * how long the failure took to arrive. A transient toast would have said the same thing and then
+ * destroyed it.
+ *
+ * ⚠️ It deliberately does **not** start with *Landed as* — `salvageLandedCommits` matches thread
+ * rows on those opening words and a started-landing row carries no sha to salvage.
+ */
+function announceLandingStarted(
+  task: { id: string; seq: number; branch: string | null },
+  policy: FinishPolicy,
+  what = 'Landing'
+): void {
+  addMessage(
+    task.id,
+    'system',
+    `${what} ${task.branch ? `\`${task.branch}\`` : 'this branch'} — ${FINISH_LABELS[policy]}…`,
+    null,
+    [],
+    {
+      event: 'landing.started',
+      detail:
+        'The tool fetches the landing target, rebases this branch onto it, runs the project’s ' +
+        'check commands where this rung asks for them, and only then merges or pushes. Nothing ' +
+        'moves until every step passes; a refusal leaves the branch exactly where it is and says ' +
+        'why in the next line.'
+    }
+  )
+}
+
 export async function landConversation(
   taskId: string,
   policy: FinishPolicy
@@ -531,6 +584,7 @@ export async function landConversation(
     return { ok: false, reason: 'this task is already running; wait for the turn to end' }
   }
   log.info(`t${task.seq}: landing this conversation as ${policy} at the operator's request`)
+  announceLandingStarted(task, policy)
   const result = await landConversationWork(task.id, { rung: policy })
   if (!result.ok) {
     // ⚠️ Kept on the task as well as returned, for the reason `relandTask` gives: the renderer
@@ -581,6 +635,11 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
   const retained = workspaceHeldBy(project, task.id)
   const workspace = retained ?? (await claimWorkspace(project, `reland:${task.id}`))
   if (!workspace) return didNotLand('every workspace is busy; try again in a moment')
+
+  // ⚠️ Here rather than at the top of the function: the checks above refuse in milliseconds and
+  // write their own line, and two rows for one press that never reached git would read as a landing
+  // that started and vanished. From this point on the work is genuinely slow.
+  announceLandingStarted(task, resolveFinishPolicy(task, project).policy, 'Retrying the landing of')
 
   try {
     const prepared = await prepareWorkspace(project, workspace, task.branch, task)

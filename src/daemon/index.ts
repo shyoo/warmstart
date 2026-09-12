@@ -22,6 +22,7 @@ import { reconcileClaims } from './resources.js'
 import {
   probeDemand,
   reconcileTasks,
+  resumeIdleConversation,
   startScheduler,
   stopScheduler
 } from './scheduler.js'
@@ -195,7 +196,13 @@ async function main(): Promise<void> {
       // claude-code is a whole message; one off muse is a handful of tokens. Treating either as the
       // other wrecks the pane — see `AdapterCapabilities.outputFraming`.
       if (event.kind === 'assistant_text') {
-        const run = runForSession(session.id)
+        // ⛔ **A session may speak when no run is open, and the words are not noise.** A resting
+        // conversation whose agent wakes itself up — a background command it left running comes
+        // back — used to have every one of those messages dropped here, because `runForSession`
+        // finds open runs only. `resumeIdleConversation` opens the run that makes the turn visible,
+        // billable and closable; it returns null for every case where that would be wrong. See it
+        // for the four of them.
+        const run = runForSession(session.id) ?? resumeIdleConversation(session)
         if (run?.taskId) {
           const framing = hasAdapter(session.adapterId)
             ? adapter(session.adapterId).info.capabilities.outputFraming

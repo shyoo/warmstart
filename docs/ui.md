@@ -143,14 +143,26 @@ line. ⛔ Neither reaches a warm session — see [`sessions.md`](sessions.md) �
 too, because a setting whose effect is *sometimes* is one an operator will otherwise test by watching
 a follow-up and conclude is broken.
 
-⛔ **A thread message renders as a chat bubble and renders inline code spans, and nothing else of markdown.** Human bubbles sit right; agent, controller and darker system bubbles sit left, with no role column (`lib/threadbubble.ts`). Under each bubble a meta line carries the time, a `📋 1,475` `PromptChip` on the last answer of the run that prompt produced (`promptMessageId`; on the live bubble until there is one) which opens the prompt in a dialog, and ⓘ for a system line's `detail`. Intermediate activity is a `⚙ n steps` chip. ⛔ No full-width *"Prompt sent for run …"* rows, anywhere in the thread. Every message this
+⛔ **A thread message renders as a chat bubble, and who wrote it decides how its text is read.** Human bubbles sit right; agent, controller and darker system bubbles sit left, with no role column (`lib/threadbubble.ts`). Under each bubble a meta line carries the time, a `📋 1,475` `PromptChip` on the last answer of the run that prompt produced (`promptMessageId`; on the live bubble until there is one) which opens the prompt in a dialog, and ⓘ for a system line's `detail`. Intermediate activity is a `⚙ n steps` chip. ⛔ No full-width *"Prompt sent for run …"* rows, anywhere in the thread. Every message this
 codebase writes names refs, branches, shas and files in backticks — *"Landed as `98f200ab` onto
 `main`"* — and `{m.text}` printed the backticks, which is the worst of both readings: punctuation to
 ignore, and no distinction between `main` the branch and main the adjective. `lib/codespans.ts`
-splits the text and `.msg-code` sets the fenced runs in the mono face. ⚠️ Headings, links and
-emphasis are deliberately **not** rendered: those are a different feature with a different risk — an
-agent's own prose reaching this path — and nothing here needs them. A span never crosses a newline,
-so the worst an unmatched backtick can do is print itself.
+splits the text and `.msg-code` sets the fenced runs in the mono face. A span never crosses a
+newline, so the worst an unmatched backtick can do is print itself.
+
+⭐ **And an agent's, a controller's and this codebase's own lines are read as markdown, while a
+person's are not** (t369, 2026-09-11). The risk that kept markdown out — *an agent's own prose
+reaching this path* — arrived anyway when conversations did: an agent's reply is written by a CLI
+whose house style is markdown, and the thread printed `**So the order is:**` and `## Yes — macOS`
+as literal asterisks and hashes down the page. `lib/markdown.ts` parses a **closed** subset —
+headings, fenced code, lists, quotes, rules, and inline code/strong/em/strike/link — and
+`thread/Markdown.tsx` draws it with elements written in that file. ⛔ No raw HTML, no
+`dangerouslySetInnerHTML`, and the only attribute a message can reach is a link's `href`, which is
+whitelisted to `http`/`https`/`mailto` **at the parse** so an unsafe scheme is never a link at all.
+Links carry `target="_blank"` and are caught by `setWindowOpenHandler`, which denies the navigation
+and hands the URL to the real browser. ⚠️ A construct the parser does not know renders as the
+characters the agent wrote. ⚠️ A **person's** message keeps the inline-code-only reading: they typed
+those characters into a box and reinterpreting a `*` they meant literally changes their own words.
 
 ⛔ **The thread's timeline is ordered on when each entry *finished*, not when it started**
 (`byEndThenStart` in `lib/taskview.tsx`). Runs, compactions and reviews nest rather than queue — a

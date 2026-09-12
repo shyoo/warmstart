@@ -20,7 +20,7 @@ import {
   recordLandedRange,
   setStatus
 } from './tasks.js'
-import { landedCommits, recordTaskCommits } from './taskcommits.js'
+import { claimedByAnotherTask, landedCommits, recordTaskCommits } from './taskcommits.js'
 import { landedRef, parkOtherHolders, parkPooledHolders, rescueAtTip } from './worktrees.js'
 import { launchArgs, which } from './which.js'
 import { log } from './log.js'
@@ -971,6 +971,40 @@ async function isAncestorOf(cwd: string, ancestor: string, descendant: string): 
 }
 
 /**
+ * Where **this task's** work starts, which is not always where the landing's range starts.
+ *
+ * ⛔ **Landing is measured against `origin/<target>` and attribution must not be** (t369, reported
+ * 2026-09-11). The measurement is right: `landedRef` asks what the *remote* has, because a landing
+ * that only moved a local branch has not landed. But the range `origin/main..HEAD` is *everything
+ * the push put on the remote*, and on a machine whose local trunk is ahead of origin that includes
+ * every earlier task's commits the branch is sitting on top of. Measured that day: one landing
+ * recorded **23** commits for a task that wrote **1**, and twenty-two of them were other tasks'.
+ * They are all real commits and the push really did put them there — they are simply not this
+ * task's work, and `task_commits` is read as *"where did this task's work go"* and fed to the
+ * quality reviewer as the diff to grade.
+ *
+ * ⛔ So attribution starts from the **local** target as it stood before the rebase, when that commit
+ * is both downstream of the pushed base and an ancestor of what landed — the two conditions that
+ * make it a tighter honest floor rather than a guess. Fail either and the answer is the base the
+ * landing already had, because a narrower range nobody can prove is worse than a wide one that is
+ * merely generous.
+ *
+ * ⚠️ `mergeLocal` needs none of this: its base *is* the local target, so the two agree and this
+ * returns it unchanged.
+ */
+async function attributionBase(
+  cwd: string,
+  base: string | null,
+  localTargetBefore: string | null,
+  head: string
+): Promise<string | null> {
+  if (!base || !localTargetBefore || base === localTargetBefore) return base
+  if (!(await isAncestorOf(cwd, base, localTargetBefore))) return base
+  if (!(await isAncestorOf(cwd, localTargetBefore, head))) return base
+  return localTargetBefore
+}
+
+/**
  * Why the trunk cannot take a fast-forward right now, or null.
  *
  * ⚠️ Read-only. Three questions, and each one is a state the operator created deliberately: a dirty
@@ -1186,6 +1220,10 @@ export const autoLand: LandingStrategy = {
       // ⚠️ With the task, so a branch whose target is not the project's trunk is rebased onto the
       // target it will actually be merged into.
       const base = landingBaseFor(ctx.project, ctx.policy, remote, ctx.task)
+      // ⚠️ Read **before** the rebase, because the rebase is what makes it unrecoverable: after it,
+      // `refs/heads/<target>` and `origin/<target>` have the same relationship to HEAD and nothing
+      // remembers which commits the branch was already carrying. See `attributionBase`.
+      const localTargetBefore = await revParse(ctx.workspacePath, `refs/heads/${target}`)
 
       try {
         await git(ctx.workspacePath, ['rebase', base])
@@ -1214,7 +1252,12 @@ export const autoLand: LandingStrategy = {
       const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
       // ⛔ After the rebase, for the reason `mergeLocal` states: `retireBranch` below is about to
       // make this range unrecoverable any other way.
-      const baseSha = await revParse(ctx.workspacePath, base)
+      const baseSha = await attributionBase(
+        ctx.workspacePath,
+        await revParse(ctx.workspacePath, base),
+        localTargetBefore,
+        commit
+      )
 
       if (remote) {
         await git(ctx.workspacePath, ['push', 'origin', `HEAD:${target}`])
@@ -1573,7 +1616,17 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
  * ⛔ **The headline keeps its exact shape**, sha then `onto` then target: `taskcommits.ts` reads it
  * back off the thread to salvage the commits of every task that landed before `task_commits`
  * existed, matching on the message's opening words. The backticks are new and that parser was
- * taught both spellings in the same change.
+ * taught both spellings in the same change. ⚠️ A clause may be *appended* to it — `LANDED_AS`
+ * matches a prefix and the salvage query is a `like 'Landed as %'` — but nothing may go in front of
+ * the sha or between it and the target.
+ *
+ * ⭐ **And where the work went is part of the headline, not behind the expander** (t369, reported
+ * 2026-09-11). *"Landed as `5ebb3b42` onto `main`"* left an operator who had asked for
+ * commit·verify·merge·**push** unable to tell whether the push had happened: `main` is both the
+ * local branch and the name of the thing on the remote, and the one clause that distinguished them
+ * was folded inside a ⓘ nobody opens. A landing that pushed says so on the line; one that only
+ * moved the local branch says *that* on the line, because it is the case where the operator's own
+ * checkout is now ahead of the remote and nothing else will tell them.
  *
  * ⚠️ Pure and exported for the tests. Composing prose inside `landTask` is what let the old sentence
  * go five months without anybody being able to assert what it says.
@@ -1590,7 +1643,15 @@ export function landedMessage(
   target: string,
   behind: { seq: number } | null
 ): LandedMessage {
-  const headline = `Landed as \`${result.commit?.slice(0, 8)}\` onto \`${target}\``
+  // ⚠️ `undefined` says nothing, and says it on the line as well as in the detail: a strategy that
+  // cannot know whether it pushed must not claim either answer. See `LandingResult.pushed`.
+  const where =
+    result.pushed === true
+      ? ` and pushed to \`origin/${target}\``
+      : result.pushed === false
+        ? ` — local only, **not pushed**`
+        : ''
+  const headline = `Landed as \`${result.commit?.slice(0, 8)}\` onto \`${target}\`${where}`
   const parts: string[] = []
 
   if (result.commitsLanded && result.commitsLanded > 1) {
@@ -1608,12 +1669,10 @@ export function landedMessage(
     )
   }
 
-  if (result.pushed === true) {
-    parts.push(`Pushed to \`origin/${target}\`.`)
-  } else if (result.pushed === false) {
-    // ⚠️ Said out loud, because the operator's own checkout is now ahead of the remote and nothing
-    // else will tell them. `merge-local` is the default policy here.
-    parts.push(`Fast-forwarded your local \`${target}\` — **not pushed**.`)
+  // ⚠️ Not repeated here: the push is on the headline now, which is where somebody looking for it
+  // was looking. What the detail adds is the half the headline cannot say in four words.
+  if (result.pushed === false) {
+    parts.push(`Your local \`${target}\` was fast-forwarded and is now ahead of the remote.`)
   }
 
   if (result.branchDeleted === true && result.branch) {
@@ -1648,7 +1707,23 @@ async function recordLandedCommits(
   if (!result.commit) return null
   const target = landingTargetFor(ctx.task, ctx.project)
   try {
-    const commits = await landedCommits(ctx.project.root, result.base ?? null, result.commit)
+    const enumerated = await landedCommits(ctx.project.root, result.base ?? null, result.commit)
+    // ⛔ **The backstop under `attributionBase`.** That narrows the range where it can prove a
+    // narrower one; this drops what is left over that another task has already been recorded as
+    // landing. Both are needed: the first cannot help a landing with no local trunk ahead of the
+    // remote, and the second cannot help commits no task ever recorded. ⚠️ The *tip* is never
+    // dropped — a landing that reports a commit must record the commit it reports, and a tip some
+    // other task also claims is a genuine double-landing worth seeing in both threads.
+    const claimed = claimedByAnotherTask(ctx.task.id, enumerated.map((c) => c.sha))
+    const commits = enumerated.filter(
+      (c) => !claimed.has(c.sha.toLowerCase()) || c.sha.toLowerCase() === result.commit?.toLowerCase()
+    )
+    if (commits.length < enumerated.length) {
+      log.info(
+        `t${ctx.task.seq} landed ${enumerated.length} commit(s), ${enumerated.length - commits.length} ` +
+          'of which another task had already recorded as its own; those are not attributed here'
+      )
+    }
     // ⚠️ The tip alone when the enumeration came back empty. A landing whose recorded base is not
     // an ancestor of its head produces no log output, and one commit recorded beats none.
     recordTaskCommits(ctx.task.id, commits.length > 0 ? commits : [{ sha: result.commit }], target)

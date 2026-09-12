@@ -1832,6 +1832,23 @@ const MIGRATIONS: Migration[] = [
   (conn) => {
     conn.exec(`${TASK_QUALITY_RECOMPUTE_SQL}
        where exists (select 1 from manual_reviews m where m.task_id = tasks.id)`)
+  },
+  // 66 - a task's commits are listed in the order the trunk carries them, not by author date.
+  //
+  // ⛔ **Author date is not trunk order, and a rebase is what separates them.** `task_commits` was
+  // read back `order by authored_at`, on the reasoning that a rebase rewrites every sha and
+  // preserves every author date — true, and not the same as preserving their sequence. Measured on
+  // this fleet 2026-09-11: `e2b23ce` was authored at 15:41 and committed at 22:43 after a branch
+  // sat open for seven hours, so the trunk carries it *after* `a591e0e` (authored 22:25) while the
+  // pane drew it three rows earlier. `position` is the index `git log --reverse base..head` gave it
+  // at the moment it landed, which is the order the target actually holds.
+  //
+  // ⚠️ Null on every row written before this, and `taskCommits` falls back to the author date for
+  // those — the old ordering, unchanged, for the landings nobody can re-enumerate.
+  (conn) => {
+    if (!hasColumn(conn, 'task_commits', 'position')) {
+      conn.exec('alter table task_commits add column position integer;')
+    }
   }
 ]
 

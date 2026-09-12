@@ -609,6 +609,23 @@ describe('a conversation whose workspace went back to the pool', () => {
     // ⚠️ And the branch is still named, so the card can say which one it went looking for.
     expect(answer.branch).toContain('parked-off')
   })
+
+  it('reports nothing rather than a failed look once the branch itself is gone', async () => {
+    // ⭐ **t369, 2026-09-11.** Every landing was followed by *"⚠️ Could not read this task's
+    //    workspace"*, because a landing retires the branch and releases the tree — so the card went
+    //    looking for a branch that no longer existed and reported the absence as an instrument
+    //    failure. Nothing is on a branch that is not there, and that is a reading, not a failure.
+    const { taskId, branch, workspace } = await abandonedOn('landed-and-retired', () => {})
+    git(workspace, 'switch', '--detach', 'main')
+    git(workspace, 'branch', '-D', branch)
+
+    const answer = await resolutions.pendingWorkFor(taskId)
+    expect(answer.supported).toBe(true)
+    expect(answer.reason).toBe('')
+    expect(answer.hasDiff).toBe(false)
+    expect(answer.unlandedCommits).toBe(0)
+    expect(answer.branch).toBe(branch)
+  })
 })
 
 /** Landing a conversation from the thread — the half of settling it that costs no turn. */
@@ -631,5 +648,33 @@ describe('what the Land button does', () => {
     const answer = await resolutions.landConversation(task.id, 'commit-and-merge')
     expect(answer.ok).toBe(false)
     expect(answer.reason).toContain('already running')
+  })
+
+  it('says in the thread that it is landing, before it starts, and then why it did not', async () => {
+    // ⭐ **t369, 2026-09-11.** The only feedback a person pressing Land got was the buttons going
+    //    grey, while a fetch, a rebase and the whole check suite ran — minutes, with the status
+    //    that explained it in a pane they had to scroll away from the conversation to reach.
+    const task = tasks.createTask({ title: 'Say so first', kind: 'conversation', status: 'ready' })
+    tasks.setStatus(task.id, 'awaiting_human', { branch: 'warmstart/t1-say-so-first' })
+
+    const answer = await resolutions.landConversation(task.id, 'commit-and-merge')
+    expect(answer.ok).toBe(false)
+
+    const said = tasks.messagesFor(task.id).filter((m) => m.role === 'system')
+    expect(said[0]?.event).toBe('landing.started')
+    expect(said[0]?.text).toContain('warmstart/t1-say-so-first')
+    // ⛔ Never *Landed as …* — `salvageLandedCommits` matches thread rows on those opening words
+    //    and this one names no sha.
+    expect(said[0]?.text.startsWith('Landed as')).toBe(false)
+    // ⚠️ And the refusal follows it, so the two read in the order they happened.
+    expect(said[said.length - 1]?.event).toBe('landing.failed')
+  })
+
+  it('refuses before it says anything, when the refusal costs nothing', async () => {
+    // ⚠️ A rung that cannot land is decided in microseconds; a *landing under way* line for it
+    //    would read as a landing that started and vanished.
+    const task = tasks.createTask({ title: 'No line for this', kind: 'conversation', status: 'ready' })
+    await resolutions.landConversation(task.id, 'commit-only')
+    expect(tasks.messagesFor(task.id).some((m) => m.event === 'landing.started')).toBe(false)
   })
 })

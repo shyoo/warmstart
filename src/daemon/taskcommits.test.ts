@@ -179,7 +179,7 @@ describe('salvaging landed commits from the thread', () => {
       'main',
       null
     )
-    expect(said.headline).toBe(`Landed as \`${landed.slice(0, 8)}\` onto \`main\``)
+    expect(said.headline).toContain(`Landed as \`${landed.slice(0, 8)}\` onto \`main\``)
     expect(said.detail).toContain('2 project checks passed')
     expect(said.detail).not.toContain('Landed as')
 
@@ -294,5 +294,53 @@ describe('reading commits back', () => {
     expect(map.get(a)?.map((c) => c.sha)).toEqual(['a'.repeat(40)])
     expect(map.get(b)?.map((c) => c.sha)).toEqual(['b'.repeat(40)])
     expect(map.has('no-such-task')).toBe(false)
+  })
+
+  it('keeps the order the landing enumerated, not the order the commits were authored', () => {
+    // ⭐ t369, 2026-09-11. A branch left open across another task's landing is committed after
+    //    commits it was authored before, so the trunk's order and the author dates disagree — and
+    //    the pane drew a history the repository does not have. `git log --reverse` is the record.
+    const project = makeProject()
+    const task = landedTask(project.id, [])
+    commits.recordTaskCommits(
+      task,
+      [
+        { sha: '1'.repeat(40), authoredAt: 3_000_000, subject: 'landed first' },
+        { sha: '2'.repeat(40), authoredAt: 1_000_000, subject: 'authored long before, landed second' },
+        { sha: '3'.repeat(40), authoredAt: 2_000_000, subject: 'landed third' }
+      ],
+      'main'
+    )
+    expect(commits.taskCommits(task).map((c) => c.subject)).toEqual([
+      'landed first',
+      'authored long before, landed second',
+      'landed third'
+    ])
+  })
+
+  it('orders two landings by their work, so a salvaged one does not jump to the end', () => {
+    // ⚠️ Salvage stamps `recorded_at` with today's clock for a landing that happened months ago, so
+    //    recording time cannot order the groups. The earliest author date inside each one can.
+    const project = makeProject()
+    const task = landedTask(project.id, [])
+    commits.recordTaskCommits(task, [{ sha: '9'.repeat(40), authoredAt: 9_000_000 }], 'main')
+    commits.recordTaskCommits(task, [{ sha: '4'.repeat(40), authoredAt: 4_000_000 }], 'main', 'salvage')
+    expect(commits.taskCommits(task).map((c) => c.sha.slice(0, 1))).toEqual(['4', '9'])
+  })
+
+  it('names the commits another task has already recorded as its own', () => {
+    // ⛔ The backstop under `attributionBase`: a landing measured against `origin/main` from a local
+    //    trunk that is ahead of it pushes every earlier task's commits too, and they are not this
+    //    task's work. Measured on t369: 23 recorded, 1 written by the task.
+    const project = makeProject()
+    const mine = landedTask(project.id, [])
+    const theirs = landedTask(project.id, [])
+    commits.recordTaskCommits(theirs, [{ sha: 'c'.repeat(40) }], 'main')
+
+    const claimed = commits.claimedByAnotherTask(mine, ['C'.repeat(40), 'd'.repeat(40)])
+    expect([...claimed]).toEqual(['c'.repeat(40)])
+    // ⚠️ A task never counts its own rows as somebody else's.
+    expect([...commits.claimedByAnotherTask(theirs, ['c'.repeat(40)])]).toEqual([])
+    expect([...commits.claimedByAnotherTask(mine, [])]).toEqual([])
   })
 })

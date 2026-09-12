@@ -42,7 +42,33 @@ interface CommitRow {
   target: string | null
   recorded_at: number
   source: string
+  /** Where this commit sat in the range its landing enumerated. Null on rows older than v66. */
+  position: number | null
 }
+
+/**
+ * ⛔ **The order the target carries them in, which is the order the landing enumerated.**
+ *
+ * The `recorded_at` of a landing groups its commits; `position` is the index `git log --reverse
+ * base..head` gave each one inside that group. ⚠️ The author date is the tie-break and no longer the
+ * key: it agrees with trunk order right up until a branch sits open across another task's landing,
+ * at which point it silently disagrees and the pane draws a history nobody's repository has
+ * (measured on t369, 2026-09-11 — `e2b23ce`, authored seven hours before it was committed, drew
+ * three rows above the commit the trunk puts before it). Rows written before `position` existed
+ * keep the old ordering exactly, because `coalesce` falls through to it for them.
+ *
+ * ⚠️ **Landings are ordered by their oldest commit, not by when they were recorded.** Landing is
+ * serialised per project and always moves the target forward, so recording time would order the
+ * groups correctly — except for `salvage`, which recovers an old landing and stamps it with today's
+ * clock. The group key is the earliest author date inside the group, which is a fact about the work
+ * rather than about when anybody wrote it down.
+ */
+const GROUP_KEY =
+  `(select min(coalesce(g.authored_at, g.recorded_at)) from task_commits g
+      where g.task_id = task_commits.task_id and g.recorded_at = task_commits.recorded_at)`
+const COMMIT_ORDER =
+  `order by ${GROUP_KEY}, recorded_at, coalesce(position, 1 << 30), ` +
+  'coalesce(authored_at, recorded_at), sha'
 
 function toCommit(r: CommitRow): TaskCommit {
   return {
@@ -58,17 +84,12 @@ function toCommit(r: CommitRow): TaskCommit {
 /**
  * Oldest first, which is the order they were written and the order a reviewer reads them in.
  *
- * ⚠️ Ordered by author date with `recorded_at` as the tie-break, never by SHA: a rebase rewrites
- * every SHA and preserves every author date, and these rows are read *after* the rebase.
+ * ⚠️ Never by SHA: a rebase rewrites every one of them, and these rows are read *after* the rebase.
+ * See `COMMIT_ORDER` for what replaced the author date and why.
  */
 export function taskCommits(taskId: string): TaskCommit[] {
   return rows<CommitRow>(
-    db()
-      .prepare(
-        `select * from task_commits where task_id = ?
-          order by coalesce(authored_at, recorded_at), recorded_at, sha`
-      )
-      .all(taskId)
+    db().prepare(`select * from task_commits where task_id = ? ${COMMIT_ORDER}`).all(taskId)
   ).map(toCommit)
 }
 
@@ -85,7 +106,7 @@ export function commitsForTasks(taskIds: string[]): Map<string, TaskCommit[]> {
     db()
       .prepare(
         `select * from task_commits where task_id in (${marks})
-          order by task_id, coalesce(authored_at, recorded_at), recorded_at, sha`
+          ${COMMIT_ORDER.replace('order by ', 'order by task_id, ')}`
       )
       .all(...taskIds)
   )) {
@@ -118,12 +139,15 @@ export function recordTaskCommits(
   if (full.length === 0) return 0
   const stmt = db().prepare(
     `insert or ignore into task_commits
-       (task_id, sha, subject, authored_at, target, recorded_at, source)
-     values (?, ?, ?, ?, ?, ?, ?)`
+       (task_id, sha, subject, authored_at, target, recorded_at, source, position)
+     values (?, ?, ?, ?, ?, ?, ?, ?)`
   )
   const now = Date.now()
   let written = 0
-  for (const c of full) {
+  // ⚠️ The caller's own order is the record: `landedCommits` enumerates `--reverse`, so index 0 is
+  // the oldest commit the target gained. Salvage passes one commit at a time and every row it writes
+  // is position 0, which is true — it is the only commit that landing can name.
+  for (const [position, c] of full.entries()) {
     const res = stmt.run(
       taskId,
       c.sha.toLowerCase(),
@@ -131,11 +155,40 @@ export function recordTaskCommits(
       c.authoredAt ?? null,
       target,
       now,
-      source
+      source,
+      position
     )
     written += Number(res.changes ?? 0)
   }
   return written
+}
+
+/**
+ * Which of these commits some **other** task has already claimed.
+ *
+ * ⛔ **A commit belongs to the task that landed it, and only one task landed it.** A landing is
+ * measured against `origin/<target>` (AGENTS.md, `landedRef`), so a branch rebased onto a *local*
+ * trunk that is ahead of the remote pushes every commit that trunk was carrying — and the range
+ * `origin/main..HEAD` names all of them. Measured on t369, 2026-09-11: one landing recorded **23**
+ * commits, of which **1** was that task's work and the other 22 were the backlog of unpushed
+ * landings it happened to be sitting on top of. `attributionBase` in `landing.ts` is the first half
+ * of the answer; this is the backstop for the commits it cannot narrow away, and for the salvage
+ * path, which has no base to narrow with.
+ *
+ * ⚠️ First claim wins, and it is never re-attributed: a task that already has the row keeps it, and
+ * this only ever declines to write a *second* owner for the same sha. Over-attributing produces a
+ * quality grade of somebody else's diff that is indistinguishable from a real one.
+ */
+export function claimedByAnotherTask(taskId: string, shas: string[]): Set<string> {
+  if (shas.length === 0) return new Set()
+  const marks = shas.map(() => '?').join(', ')
+  return new Set(
+    rows<{ sha: string }>(
+      db()
+        .prepare(`select distinct sha from task_commits where task_id <> ? and sha in (${marks})`)
+        .all(taskId, ...shas.map((s) => s.toLowerCase()))
+    ).map((r) => r.sha)
+  )
 }
 
 // ⚠️ Nothing deletes these rows by hand: `task_commits.task_id` is `on delete cascade` and

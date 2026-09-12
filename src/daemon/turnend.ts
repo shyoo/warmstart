@@ -6,7 +6,7 @@ import { voidApprovalsForSession } from './approvals.js'
 import { fileParkedQuestion, parkQuestionsForSession } from './questions.js'
 import { compactionsForTask } from './compaction.js'
 import { creditRunListUsd, getTask, runForSession, runsFor } from './tasks.js'
-import { backscroll, closeSession } from './sessions.js'
+import { backscroll, clearHousekeepingPrompt, closeSession } from './sessions.js'
 import { stripAnsi } from './stream.js'
 import { log } from './log.js'
 import {
@@ -234,6 +234,12 @@ export async function onStreamResult(
   // ever offered, and each of the branches that follow ends the run — so crediting it anywhere else
   // in this function means losing it on whichever path the turn actually took.
   creditRunListUsd(session.id, result.costUsd ?? null)
+  // ⛔ **Here, and before every early return, for the same reason.** The mark says *the daemon spoke
+  // last into this idle session*, and its whole job is to keep `resumeIdleConversation` from billing
+  // the reply as the task's own turn. That turn has now ended, so the mark has done its work — and a
+  // mark left behind would silence the next genuine unprompted resume, which is the failure this is
+  // all for. See `sendPrompt`'s `housekeeping` option.
+  clearHousekeepingPrompt(session.id)
   const mcpLess = Boolean(session.adapterId && !adapter(session.adapterId).info.capabilities.mcp)
   // An MCP-less adapter cannot call task_complete, so its prompt gives it two deliberately exact
   // terminal contracts. Antigravity can occasionally report ERROR after it has already returned a

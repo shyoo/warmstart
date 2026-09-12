@@ -444,7 +444,7 @@ describe('the worker line a run writes to the thread', () => {
     expect(system(task.id)[0]?.event).toBe('worker.assigned')
   })
 
-  it('… unless the run went out on an untrusted quota reading, which still earns a short line', () => {
+  it('… and an untrusted quota reading no longer buys a second line either (t369)', () => {
     const first = createReadyWorker('First')
     const task = tasks.createTask({ title: 'Worker timeline' })
     const initial = runOn(task.id, first.id)
@@ -454,10 +454,13 @@ describe('the worker line a run writes to the thread', () => {
     const unverified = runOn(task.id, first.id, { quotaUnverified: true })
     scheduler.announceWorker(task, first, 'sonnet', unverified, 'Quota reading was not trustworthy; this run is marked unverified.')
 
+    // ⛔ Still one line, the first one. The caveat rides `run.quotaUnverified`, which the run row
+    // draws — see `RunRow`. Repeating *Worker assigned* mid-conversation said the task had changed
+    // hands when it had not.
     const lines = system(task.id)
-    expect(lines).toHaveLength(2)
-    expect(lines[1]).toMatchObject({ event: 'worker.assigned', text: 'Worker assigned: First (sonnet)', runId: unverified.id })
-    expect(lines[1]?.detail).toContain('not trustworthy')
+    expect(lines).toHaveLength(1)
+    expect(lines[0]?.runId).toBe(initial.id)
+    expect(unverified.quotaUnverified).toBe(true)
   })
 
   it('a worker change writes exactly one worker.switched, with the reason in a few words', () => {

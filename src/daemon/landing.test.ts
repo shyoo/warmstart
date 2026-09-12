@@ -26,6 +26,7 @@ let db: typeof import('./db.js')
 let projects: typeof import('./projects.js')
 let tasks: typeof import('./tasks.js')
 let landing: typeof import('./landing.js')
+let commits: typeof import('./taskcommits.js')
 let resources: typeof import('./resources.js')
 /** `landing.landQueue` and its shipped values, bound after the dynamic import. */
 let landingQueue: { waitMs: number; pollMs: number }
@@ -80,6 +81,7 @@ beforeAll(async () => {
   projects = await import('./projects.js')
   tasks = await import('./tasks.js')
   landing = await import('./landing.js')
+  commits = await import('./taskcommits.js')
   resources = await import('./resources.js')
   landingQueue = landing.landQueue
   queueDefaults = { ...landingQueue }
@@ -444,6 +446,71 @@ describe('landing without a remote', () => {
     // tidying up behind an instruction the agent was given.
     expect(landing.strategyFor(project, 'custom').id).toBe('auto-land')
   })
+})
+
+/**
+ * Which commits a landing says are **this task's**.
+ *
+ * ⭐ **t369, 2026-09-11.** The operator opened a finished conversation and found 23 commits under
+ * *commits in this task*, of which the task had written one. They were all real and the push really
+ * did put them on the remote — they were the twenty-two earlier landings sitting unpushed on the
+ * operator's local `main`, which the branch had been rebased on top of. `task_commits` is read as
+ * *"where did this task's work go"* and fed to the quality reviewer as the diff to grade, so a
+ * generous range is not a cosmetic problem.
+ *
+ * ⚠️ A real remote, because the whole shape is *the local trunk is ahead of `origin`* and there is
+ * no way to build that without one.
+ */
+describe('attributing a landing to the task that made it', () => {
+  it('records the branch’s own commits, not the backlog the local trunk was carrying', async () => {
+    seq += 1
+    const root = makeRepo(`attrib${seq}`)
+    const remote = join(dir, `attrib-remote${seq}.git`)
+    git(dir, 'init', '--bare', '--initial-branch=main', remote)
+    git(root, 'remote', 'add', 'origin', remote)
+    git(root, 'push', '-u', 'origin', 'main')
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({
+      title: `attribution ${seq}`,
+      projectId: project.id,
+      createdBy: { kind: 'human' }
+    })
+
+    // ⛔ Two earlier tasks' commits, landed onto the *local* trunk and never pushed. This is the
+    //    ordinary state of this repository between pushes, not a contrivance.
+    for (const name of ['earlier-a', 'earlier-b']) {
+      writeFileSync(join(root, `${name}.txt`), `${name}\n`)
+      git(root, 'add', '-A')
+      git(root, 'commit', '-m', `somebody else's work: ${name}`)
+    }
+    const backlog = git(root, 'rev-parse', 'main')
+    expect(git(root, 'rev-list', '--count', 'origin/main..main')).toBe('2')
+
+    const branch = `warmstart/t${seq}-attribution`
+    const ws = join(dir, `attrib${seq}-ws`)
+    git(root, 'worktree', 'add', '-b', branch, ws, 'main')
+    writeFileSync(join(ws, 'mine.txt'), 'the one commit this task wrote\n')
+    git(ws, 'add', '-A')
+    git(ws, 'commit', '-m', 'the work this task did')
+    const mine = git(ws, 'rev-parse', 'HEAD')
+
+    const result = await landing.landTask({
+      project,
+      task: tasks.requireTask(task.id),
+      workspacePath: ws,
+      branch,
+      policy: 'commit-and-push'
+    })
+
+    expect(result.ok, result.reason).toBe(true)
+    expect(result.pushed).toBe(true)
+    // ⛔ The push carried all three — that is what landing against `origin/main` means, and it is
+    //    correct. The *attribution* is the one commit the branch added.
+    expect(git(root, 'rev-list', '--count', `${backlog}..origin/main`)).toBe('1')
+    const recorded = commits.taskCommits(task.id)
+    expect(recorded.map((c) => c.sha)).toEqual([mine])
+    expect(recorded.map((c) => c.subject)).toEqual(['the work this task did'])
+  }, 30_000)
 })
 
 describe('a task that produced no commits', () => {
@@ -1183,6 +1250,13 @@ describe('what a landing tells the operator it did', () => {
     //    existed by matching this opening. Reword it and 200 tasks quietly stop being reviewable.
     const said = landing.landedMessage(base, 'main', null)
     expect(said.headline).toBe('Landed as `98f200ab` onto `main`')
+    // ⚠️ And a landing that *did* push says so on the line, without disturbing that opening.
+    expect(landing.landedMessage({ ...base, pushed: true }, 'main', null).headline).toBe(
+      'Landed as `98f200ab` onto `main` and pushed to `origin/main`'
+    )
+    expect(landing.landedMessage({ ...base, pushed: false }, 'main', null).headline).toContain(
+      '**not pushed**'
+    )
     // ⛔ And the detail never repeats it: one thread row must not carry two headlines for
     //    `salvageLandedCommits` to count twice.
     expect(said.detail).not.toContain('Landed as')
@@ -1198,7 +1272,9 @@ describe('what a landing tells the operator it did', () => {
       null
     )
     expect(said).toContain('4 project checks passed')
-    expect(said).toContain('**not pushed**')
+    // ⛔ The push itself is on the headline now; what the detail adds is the consequence.
+    expect(said).toContain('ahead of the remote')
+    expect(said).not.toContain('**not pushed**')
     expect(said).toContain('`warmstart/t239-thing` held nothing `main` does not now have')
   })
 
@@ -1221,9 +1297,17 @@ describe('what a landing tells the operator it did', () => {
     expect(said).toContain('was kept')
   })
 
-  it('names the remote when the work was pushed, and only then', () => {
-    expect(detailOf({ ...base, pushed: true }, 'main', null)).toContain('`origin/main`')
-    expect(detailOf(base, 'main', null)).not.toContain('origin/')
+  it('names the remote on the headline when the work was pushed, and only then', () => {
+    // ⭐ On the *line*, not behind the ⓘ: an operator who asked for commit·verify·merge·push could
+    //    not tell from *"Landed as `x` onto `main`"* whether the push had happened (t369).
+    const pushed = landing.landedMessage({ ...base, pushed: true }, 'main', null)
+    expect(pushed.headline).toContain('`origin/main`')
+    expect(pushed.detail).not.toContain('origin/')
+    // ⚠️ A strategy that cannot say either way says neither, in both places.
+    const silent = landing.landedMessage(base, 'main', null)
+    expect(silent.headline).not.toContain('origin/')
+    expect(silent.detail).not.toContain('origin/')
+    expect(silent.headline).not.toContain('pushed')
   })
 
   it('counts the commits only when there is more than one to count', () => {

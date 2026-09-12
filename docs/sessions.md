@@ -150,6 +150,29 @@ Coming back is the same move in the other direction. ⛔ **A worktree holding un
 moved** — the borrower starts a fresh conversation instead. Stashing to make room would take work that
 is visible under **Loose ends** and hide it inside a stash you would have to know to look for.
 
+## When the agent comes back on its own
+
+⭐ **A resting conversation can start speaking again without anybody prompting it** (t369,
+2026-09-11). An agent that leaves a command running in the background — a CI watch, a long build —
+ends its turn, and its own CLI hands it the result minutes later and re-invokes it. The task is at
+`awaiting_human` by then and its run is closed, so `runForSession` finds nothing and every assistant
+message was dropped on the floor: no peephole, no thread line, no metering, and a task reading *your
+turn* with its agent mid-sentence.
+
+⛔ **The answer is a run**, because that is what work is here: `resumeIdleConversation` in
+`scheduler.ts` opens one on the first assistant message, which puts the turn back on the path that
+already handles all of it — the peephole finds the run, the metering finds the run, and the ordinary
+turn end closes it and writes the agent's words into the thread. The task goes to `running`, a
+`conversation.resumed` line marks the boundary, and it rests again when the turn ends.
+
+⛔ **It is not a dispatch and asks no dispatch question** — no quota gate, no scoring, no eligibility.
+The agent is already talking on an account that is already spending; refusing would not save a token,
+only the record of one. ⚠️ Four refusals, each a way this would be wrong: the conversation must still
+be open, the task must be resting rather than running, the **daemon** must not be the one who spoke
+(a cache-clock keepalive's reply is our turn, not the task's — `sendPrompt`'s `housekeeping` option),
+and the last run must have ended more than five seconds ago, because the tail of a turn can arrive
+after the record that ended it.
+
 ## What a returning agent is told, and what it is not
 
 A run into a session **that has already heard this task** is sent the new message and nothing else. No

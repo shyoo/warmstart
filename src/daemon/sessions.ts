@@ -1099,6 +1099,39 @@ export function inlineImagesFor(adapterId: string, attachments: Attachment[]): A
 }
 
 /**
+ * Sessions the daemon has spoken into with nobody's run open — a `/compact`, a keepalive, a wrap-up
+ * nudge.
+ *
+ * ⛔ **Kept so that an answer to one of those is not mistaken for the agent resuming on its own.**
+ * `resumeIdleConversation` opens a run whenever a resting conversation starts talking again, which
+ * is exactly right when the agent woke itself up and exactly wrong when *we* woke it: a cache-clock
+ * keepalive would otherwise bill a run, flip the task to `running` and put a *the agent picked this
+ * up again* line in the thread, every time the clock ticked.
+ *
+ * ⚠️ Set and cleared by `sendPrompt` itself, from its `housekeeping` option, so the mark cannot
+ * outlive the prompt that set it: the next ordinary prompt into the session takes it off again. The
+ * turn end clears it too, for a session that is never prompted again.
+ */
+const housekeeping = new Set<string>()
+
+/**
+ * ⚠️ Exported for the suite that pins the refusal, and used by `sendPrompt` itself. Production code
+ * sets this through `sendPrompt`'s `housekeeping` option — a mark set anywhere else is a mark
+ * nothing clears.
+ */
+export function markHousekeepingPrompt(sessionId: string): void {
+  housekeeping.add(sessionId)
+}
+
+export function isHousekeepingTurn(sessionId: string): boolean {
+  return housekeeping.has(sessionId)
+}
+
+export function clearHousekeepingPrompt(sessionId: string): void {
+  housekeeping.delete(sessionId)
+}
+
+/**
  * Send a user message, in whatever shape this session's transport expects.
  *
  * ⚠️ This is why unattended work runs on `stream`, not `pty`. Two independent reasons, both measured:
@@ -1112,9 +1145,20 @@ export function inlineImagesFor(adapterId: string, attachments: Attachment[]): A
  * meant its prompt began with the literal characters `{"type":"user"` — and the envelope was the
  * lesser half of the bug. See `AdapterCapabilities.streamPrompts`.
  */
-export function sendPrompt(id: string, text: string, attachments: Attachment[] = []): void {
+export function sendPrompt(
+  id: string,
+  text: string,
+  attachments: Attachment[] = [],
+  opts: { housekeeping?: boolean } = {}
+): void {
   const entry = live.get(id)
   if (!entry) throw new Error(`session '${id}' is not live`)
+  // ⛔ **Set *and* cleared here, so the mark cannot outlive the prompt that set it.** An earlier
+  // version had the cache clock set it and the turn end clear it, which meant one dropped `result`
+  // left a session permanently unable to report an unprompted resume. Every prompt says which kind
+  // it is, the default is the honest one, and the last one to be sent wins.
+  if (opts.housekeeping) markHousekeepingPrompt(id)
+  else housekeeping.delete(id)
   if (entry.session.transport === 'stream') {
     const ad = adapter(entry.session.adapterId)
     const once = ad.info.capabilities.streamPrompts === 'once'

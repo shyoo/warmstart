@@ -576,6 +576,21 @@ export type MessageEvent =
   | 'worker.assigned'
   | 'worker.switched'
   | 'conversation.joined'
+  /**
+   * A resting conversation whose agent started speaking again without being prompted.
+   *
+   * ⚠️ Rare and worth a line: the turn is real work, on a task that read *your turn* a moment ago.
+   * See `resumeIdleConversation`.
+   */
+  | 'conversation.resumed'
+  /**
+   * A landing an operator asked for, said *before* it runs.
+   *
+   * ⚠️ It is the one event here that describes something still happening, and it is written to the
+   * thread anyway: a rebase, the project's checks and a push take minutes, and the only feedback a
+   * person pressing Land used to get was the buttons going grey (t369). See `announceLandingStarted`.
+   */
+  | 'landing.started'
   /** *Landed as `sha` onto `target`* — the headline `salvageLandedCommits` reads back. */
   | 'landing.landed'
   | 'landing.failed'
@@ -2335,6 +2350,11 @@ export function finishInstructionFor(project: Project | null | undefined): strin
  * — while the thing it would discard is invisible from every record the task keeps. So the answer
  * has to be read out of git at the moment somebody is about to press the button, and it has to be
  * able to say *I could not look* as a distinct answer from *there is nothing there*.
+ *
+ * ⛔ **And the distinction cuts both ways.** A branch that is not in `refs/heads` is *there is
+ * nothing there* — nothing can be uncommitted on a branch that does not exist — and answering *I
+ * could not look* for it put a warning under every conversation the moment it landed, about a tree
+ * released precisely because it was empty (t369). See `branchExists` and `pendingWorkFor`.
  *
  * ⚠️ Counts rather than file lists. The card says "4 files"; it does not need their names, and
  * shipping a hundred paths through the RPC to render one number is the kind of surplus that ends up
