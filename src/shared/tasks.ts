@@ -1001,7 +1001,7 @@ export interface TaskCommit {
    * task's own *"Landed as …"* thread message afterwards. The difference is worth keeping: a
    * salvaged row names the tip of a landing and cannot name a second commit under the same one.
    */
-  source: 'landing' | 'salvage'
+  source: 'landing' | 'salvage' | 'pull-request'
 }
 
 export interface TaskConstraints {

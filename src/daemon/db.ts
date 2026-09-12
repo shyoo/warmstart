@@ -1849,7 +1849,27 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'task_commits', 'position')) {
       conn.exec('alter table task_commits add column position integer;')
     }
-  }
+  },
+  // 67 - a pull request outlives the run that opened it and must be reconciled by exact identity.
+  `create table if not exists task_deliveries (
+    id                text primary key,
+    task_id           text not null references tasks(id) on delete cascade,
+    project_id        text not null references projects(id) on delete cascade,
+    provider          text not null,
+    url               text not null unique,
+    target            text not null,
+    branch            text not null,
+    head_sha          text not null,
+    state             text not null default 'open',
+    merge_sha         text,
+    observed_at       integer,
+    observation_error text,
+    reconciled_at     integer,
+    created_at        integer not null,
+    updated_at        integer not null
+  );
+  create index if not exists task_deliveries_pending
+    on task_deliveries(state, reconciled_at, observed_at);`
 ]
 
 /**

@@ -31,6 +31,7 @@ import * as spawn from './spawn.js'
 import { stripAnsi } from './stream.js'
 import { emit } from './events.js'
 import { beginLanding, endLanding, isTaskLanding } from './landingstate.js'
+import { recordPullRequestDelivery } from './deliveries.js'
 
 // ⛔ Re-exported, not redefined: every existing caller keeps one import site and one answer.
 export { landingBaseFor }
@@ -1420,6 +1421,29 @@ export const pullRequest: LandingStrategy = {
           throw err
         }
       }
+
+      // A PR is not a fire-and-forget URL. Persist its exact identity before this coding run is
+      // allowed to finish; the zero-token reconciler owns the days between opening and merge.
+      if (!prUrl) {
+        const viewCall = launchArgs(resolved, [
+          'pr', 'view', ctx.branch, '--json', 'url', '--jq', '.url'
+        ])
+        const { stdout: viewOut } = await spawn.run(viewCall.command, viewCall.args, {
+          cwd: ctx.workspacePath,
+          maxBuffer: 4 * 1024 * 1024,
+          timeout: 15_000
+        })
+        prUrl = viewOut.trim().split(/\s+/).find((line) => line.startsWith('http'))
+      }
+      if (!prUrl) throw new Error('GitHub opened the pull request but did not report its URL')
+      recordPullRequestDelivery({
+        taskId: ctx.task.id,
+        projectId: ctx.project.id,
+        url: prUrl,
+        target: landingTargetFor(ctx.task, ctx.project),
+        branch: ctx.branch,
+        headSha: commit
+      })
 
       return {
         strategy: 'pull-request',

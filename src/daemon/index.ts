@@ -46,6 +46,7 @@ import { onShutdownRequest } from './lifecycle.js'
 import { noteActivity } from './activity.js'
 import { onSettingChange } from './settings.js'
 import { paths } from './paths.js'
+import { reconcilePullRequestDeliveries } from './deliveries.js'
 
 /**
  * orchestratord.
@@ -94,6 +95,15 @@ async function main(): Promise<void> {
   prunePending()
   const attachmentSweep = setInterval(() => prunePending(), 24 * 60 * 60 * 1000)
   attachmentSweep.unref()
+  void reconcilePullRequestDeliveries().catch((err) =>
+    log.warn(`could not reconcile pull requests: ${String(err)}`)
+  )
+  const deliverySweep = setInterval(() => {
+    void reconcilePullRequestDeliveries().catch((err) =>
+      log.warn(`could not reconcile pull requests: ${String(err)}`)
+    )
+  }, 5 * 60 * 1000)
+  deliverySweep.unref()
 
   const token = randomBytes(32).toString('hex')
   const server: DaemonServer = await startServer(token, { version: VERSION, startedAt })
@@ -282,6 +292,7 @@ async function main(): Promise<void> {
     poller.stop()
     stopScheduler()
     stopController()
+    clearInterval(deliverySweep)
     for (const t of tailers.values()) t.stop()
     shutdownAll()
     void Promise.all([server.close(), remote.close()]).finally(() => {

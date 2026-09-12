@@ -540,6 +540,22 @@ Its headline states *"Pull request opened for `<sha>` into `<target>`: <url>"* a
 because the pull request already exists on the remote, the error URL (or `gh pr view`) is recovered,
 the push is acknowledged, and the landing succeeds idempotently on retry.
 
+⭐ **Opening finishes the coding run; delivery continues without an agent** (t375, 2026-09-12).
+Before success is reported, Warmstart persists the exact PR URL, target, branch and head SHA. A
+zero-token five-minute reconciler asks `gh pr view <url>` for that identity, survives restarts, and
+records an observation error and age instead of treating an unavailable GitHub as success. An open
+PR keeps neither a task nor a session running. Closed without merge keeps the branch and says so on
+the thread. Merged first fetches `origin/<target>`, proves GitHub's merge commit is there, records it
+for quality review, and says so on the thread; it never pulls or moves the operator's local trunk.
+
+⛔ **An exact merged PR is authority to retire squash/rebase history.** An ordinary branch is still
+deleted only by ancestry. The PR exception applies only when the persisted URL reports merged, its
+base and head branch are unchanged, the local branch is checked out nowhere, and its tip is exactly
+the head SHA GitHub says it accepted. A later local commit, changed identity, missing merge commit or
+unfetched target keeps the branch and retries rather than guessing. This is why a squash-merged PR no
+longer remains forever as “commits the trunk does not have.” Design and alternatives are archived in
+[`../transient_docs/pull_request_lifecycle_plan_2026-09-11.md`](../transient_docs/pull_request_lifecycle_plan_2026-09-11.md).
+
 ⭐ **A landing an operator asked for says so before it runs.** Pressing **Land** or **Retry landing**
 writes a `landing.started` line — *"Landing `warmstart/t369.2-…` — commit, verify, merge and push…"* —
 and only then fetches, rebases, runs the project's checks and pushes. Until t369 the only feedback for

@@ -77,7 +77,7 @@ function toCommit(r: CommitRow): TaskCommit {
     authoredAt: r.authored_at ?? null,
     target: r.target ?? null,
     recordedAt: r.recorded_at,
-    source: r.source === 'salvage' ? 'salvage' : 'landing'
+    source: r.source === 'salvage' ? 'salvage' : r.source === 'pull-request' ? 'pull-request' : 'landing'
   }
 }
 
@@ -133,7 +133,7 @@ export function recordTaskCommits(
   taskId: string,
   commits: RecordedCommit[],
   target: string | null,
-  source: 'landing' | 'salvage' = 'landing'
+  source: 'landing' | 'salvage' | 'pull-request' = 'landing'
 ): number {
   const full = commits.filter((c) => /^[0-9a-f]{40}$/i.test(c.sha))
   if (full.length === 0) return 0

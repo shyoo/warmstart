@@ -28,6 +28,7 @@ let tasks: typeof import('./tasks.js')
 let landing: typeof import('./landing.js')
 let commits: typeof import('./taskcommits.js')
 let resources: typeof import('./resources.js')
+let deliveries: typeof import('./deliveries.js')
 /** `landing.landQueue` and its shipped values, bound after the dynamic import. */
 let landingQueue: { waitMs: number; pollMs: number }
 let queueDefaults: { waitMs: number; pollMs: number }
@@ -83,6 +84,7 @@ beforeAll(async () => {
   landing = await import('./landing.js')
   commits = await import('./taskcommits.js')
   resources = await import('./resources.js')
+  deliveries = await import('./deliveries.js')
   landingQueue = landing.landQueue
   queueDefaults = { ...landingQueue }
   db.openDb(join(dir, 'landing.db'))
@@ -1420,6 +1422,9 @@ describe('pull-request landing strategy', () => {
     expect(result.pushed).toBe(true)
     expect(result.prUrl).toBe('https://github.com/shyoo/awardtracker/pull/138')
     expect(result.branch).toBe(branch)
+    expect(deliveries.deliveriesForTask(task.id)).toMatchObject([
+      { url: result.prUrl, branch, headSha: result.commit, state: 'open' }
+    ])
   })
 
   it('detects existing pull request on gh pr create failure and succeeds with prUrl', async () => {
@@ -1506,5 +1511,53 @@ describe('pull-request landing strategy', () => {
     expect(result.strategy).toBe('pull-request')
     expect(result.reason).toContain('network connection timed out')
     expect(result.reason).toContain('may already be pushed')
+  })
+
+  it('reconciles a squash merge and retires only the unchanged, unheld branch', async () => {
+    const branch = 'warmstart/t375-squash-merged'
+    const { task, root, ws } = seedRepoWithRemote(branch)
+    const headSha = git(ws, 'rev-parse', 'HEAD')
+    const url = 'https://github.com/shyoo/awardtracker/pull/375'
+    tasks.setTaskBranch(task.id, branch, 1)
+    tasks.addMessage(
+      task.id,
+      'system',
+      `Pull request opened for \`${headSha.slice(0, 8)}\` into \`main\`: ${url}`
+    )
+
+    git(root, 'worktree', 'remove', ws)
+    git(root, 'merge', '--squash', branch)
+    git(root, 'commit', '-m', 'squash merged task')
+    const mergeSha = git(root, 'rev-parse', 'HEAD')
+    git(root, 'push', 'origin', 'main')
+
+    const spawn = await import('./spawn.js')
+    const realRun = spawn.run
+    vi.spyOn(spawn, 'run').mockImplementation((async (cmd: unknown, ...rest: unknown[]) => {
+      if (isGhCall(cmd, rest[0])) {
+        return {
+          stdout: JSON.stringify({
+            state: 'MERGED',
+            baseRefName: 'main',
+            headRefName: branch,
+            headRefOid: headSha,
+            mergedAt: new Date().toISOString(),
+            mergeCommit: { oid: mergeSha }
+          }),
+          stderr: ''
+        }
+      }
+      return (realRun as (...args: unknown[]) => unknown)(cmd, ...rest)
+    }) as never)
+
+    await deliveries.reconcilePullRequestDeliveries()
+
+    expect(git(root, 'branch', '--list', branch)).toBe('')
+    const [delivery] = deliveries.deliveriesForTask(task.id)
+    expect(delivery).toMatchObject({ state: 'merged', mergeSha, headSha })
+    expect(typeof delivery?.reconciledAt).toBe('number')
+    expect(commits.taskCommits(task.id)).toMatchObject([
+      { sha: mergeSha, target: 'main', source: 'pull-request' }
+    ])
   })
 })
