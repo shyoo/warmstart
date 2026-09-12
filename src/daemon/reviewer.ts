@@ -451,7 +451,11 @@ export async function reviewEligibility(taskId: string): Promise<{
  * real so that `creditTurn` meters its tokens by the one path that meters runs and the thread
  * numbers it `#N Quality Review` by the one timeline that numbers them.
  */
-export async function requestReview(taskId: string, workerId?: string | null): Promise<
+export async function requestReview(
+  taskId: string,
+  workerId?: string | null,
+  onReviewerChosen?: (reviewer: { adapterId: string; model: string | null }) => void
+): Promise<
   { ok: true; review: QualityReview } | { ok: false; reason: string }
 > {
   const task = getTask(taskId)
@@ -469,6 +473,7 @@ export async function requestReview(taskId: string, workerId?: string | null): P
   const choice = pickReviewer(task, workerId)
   if (!choice.worker) return { ok: false, reason: choice.reason }
   const worker = choice.worker
+  onReviewerChosen?.({ adapterId: worker.adapterId, model: gradingModel(worker) })
   claimedReviewers.add(worker.id)
   try {
     const range = await resolveRange(

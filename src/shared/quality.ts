@@ -211,6 +211,10 @@ export interface BatchEntry {
   taskId: string
   seq: number
   title: string
+  /** Who did the work being judged: the last non-failed work run. */
+  subjectAdapter: string | null
+  /** The recorded model of the work being judged. Never inferred from a current default. */
+  subjectModel: string | null
   state: 'queued' | 'grading' | 'graded' | 'skipped'
   composite: number | null
   /** The adapter that graded it, where one did. */

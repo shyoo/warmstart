@@ -80,6 +80,8 @@ export async function startBatch(
       taskId: c.taskId,
       seq: c.seq,
       title: c.title,
+      subjectAdapter: c.adapterId,
+      subjectModel: c.model,
       state: 'queued' as const,
       composite: null,
       reviewer: null,
@@ -216,7 +218,12 @@ async function grade(entry: BatchEntry): Promise<void> {
     // the fleet-width first wave then lost the race and were skipped as "already reviewing".
     // `requestReview` still resolves the range before it spawns, so an unreviewable task costs no
     // process or turn.
-    const outcome = await requestReview(entry.taskId)
+    const outcome = await requestReview(entry.taskId, undefined, (reviewer) => {
+      // The batch is the live view: publish the selected judge before its turn finishes so its
+      // model can be compared with the work model while the row says `grading`.
+      entry.reviewer = reviewer.adapterId
+      entry.reviewerModel = reviewer.model
+    })
     if (!outcome.ok) {
       entry.state = 'skipped'
       entry.reason = outcome.reason

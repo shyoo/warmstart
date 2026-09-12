@@ -322,8 +322,9 @@ eligible review agent* with every candidate and its reason on hover, and a batch
 ⛔ **Every agent on the quality pages is named by its *model*, never by its adapter id alone.**
 (`lib/agentname.ts`, `components/AgentLabel.tsx`.) `openai-compatible` is a transport, not a judge:
 it is Codex CLI on one account and whatever a local endpoint is serving on another, and *graded by
-openai-compatible* names neither. So *Work by*, *Graded by*, the batch's *Reviewer* column and the
-*Graded on* table on Routing Model › Quality all lead with the model and put the adapter's own label
+openai-compatible* names neither. So *Work by*, *Graded by*, the batch's paired *Work by* and
+*Grader* columns, and the *Graded on* table on Routing Model › Quality all lead with the model and
+put the adapter's own label
 beside it — *GPT 5.6 Terra · Codex CLI* — and the scored table there groups models under the agent's
 label for the same reason. ⚠️ The labels come from the adapters
 themselves (`ReviewQueuePage.adapterLabels`), not from a vendor table in the renderer that would go

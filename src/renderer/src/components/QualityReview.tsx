@@ -407,9 +407,10 @@ function BatchProgress({
           <thead>
             <tr>
               <th>Task</th>
+              <th>Work by</th>
               <th>State</th>
               <th className="tbl-num">Score</th>
-              <th>Reviewer</th>
+              <th>Grader</th>
               <th>What happened</th>
             </tr>
           </thead>
@@ -421,6 +422,7 @@ function BatchProgress({
                     <span className="tbl-strong">t{entry.seq}</span> {entry.title}
                   </button>
                 </td>
+                <Agent adapterId={entry.subjectAdapter} model={entry.subjectModel} labels={labels} />
                 <td className={entry.state === 'skipped' ? 'warn' : 'dim'}>{entry.state}</td>
                 <td className="tbl-num num">
                   {entry.composite === null ? '—' : entry.composite.toFixed(1)}

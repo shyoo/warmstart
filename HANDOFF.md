@@ -9,7 +9,9 @@ subsystem; dated design and incident history belongs in `transient_docs/`, not h
 
 Last full local validation on this branch (2026-09-12): `npm run typecheck`, `npm run lint`,
 `npm test` (**3,171 passed, 2 skipped**) and `npm run build` all passed. The expected test warnings
-exercise refusal and recovery paths; they are not failures.
+exercise refusal and recovery paths; they are not failures. The Quality Review batch table now keeps
+the recorded work model and publishes its selected grader model as soon as grading starts, so live
+rows can compare both sides of a review.
 
 ## Closed in this cleanup
 
