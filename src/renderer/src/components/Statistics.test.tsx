@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { PriceStatRow } from '@shared/statistics.js'
-import { graphLabel, labelColumn, priceRowsForGraph } from './Statistics.js'
+import type { PriceStatRow, StatisticsReport } from '@shared/statistics.js'
+import { graphLabel, labelColumn, measuredModelPoints, priceRowsForGraph } from './Statistics.js'
 
 function row(key: string, basis: PriceStatRow['basis']): PriceStatRow {
   return {
@@ -58,5 +58,73 @@ describe('labelColumn', () => {
     expect(column.maxChars).toBeGreaterThanOrEqual(long.length)
     expect(column.width).toBeGreaterThan(250)
     expect(column.width).toBeLessThanOrEqual(360)
+  })
+})
+
+describe('measuredModelPoints', () => {
+  function distribution(average: number, samples = 1) {
+    return { samples, average, p50: average, p99: average, p100: average }
+  }
+
+  function report(priceRows: PriceStatRow[]): StatisticsReport {
+    const velocityRow = {
+      key: 'claude-code/claude-sonnet-5',
+      level: 'model' as const,
+      label: 'claude-sonnet-5',
+      adapterId: 'claude-code',
+      model: 'claude-sonnet-5',
+      effort: null,
+      distribution: distribution(5)
+    }
+    const agentRow = { ...velocityRow, key: 'claude-code', level: 'agent' as const, label: 'Claude Code', model: null }
+    const qualityRow = {
+      key: 'claude-code/claude-sonnet-5',
+      level: 'model' as const,
+      label: 'claude-sonnet-5',
+      adapterId: 'claude-code',
+      model: 'claude-sonnet-5',
+      effort: null,
+      prior: null,
+      priorBasis: null,
+      cleanComposite: null,
+      clean: 0,
+      samples: 0,
+      fitness: null,
+      fitnessBasis: null,
+      tasks: 1,
+      distribution: distribution(8)
+    }
+    return {
+      generatedAt: 0,
+      sampleLimit: null,
+      window: 'all',
+      price: { rows: priceRows, tasks: 1, unpriced: 0, estimated: false },
+      velocity: { rows: [agentRow, velocityRow], tasks: 1, untimed: 0 },
+      quality: { rows: [qualityRow], totalReviews: 0, ungraded: 1, rubricVersion: 'v1' }
+    }
+  }
+
+  it('folds a model billed both ways into one point when nothing is excluded', () => {
+    const rows = [row('claude-sonnet-5', 'subscription'), row('claude-sonnet-5', 'api')]
+    rows[0]!.distribution = distribution(2)
+    rows[1]!.distribution = distribution(10)
+    const points = measuredModelPoints(report(rows))
+    expect(points).toHaveLength(1)
+    expect(points[0]!.cost).toBe(6) // average of the two basis rows folded together
+    expect(points[0]!.adapterId).toBe('claude-code')
+  })
+
+  it('drops API-rate and mixed price rows when excludeApiMixed is set', () => {
+    const rows = [row('claude-sonnet-5', 'subscription'), row('claude-sonnet-5', 'api')]
+    rows[0]!.distribution = distribution(2)
+    rows[1]!.distribution = distribution(10)
+    const points = measuredModelPoints(report(rows), true)
+    expect(points).toHaveLength(1)
+    expect(points[0]!.cost).toBe(2) // only the subscription row counted
+  })
+
+  it('drops a model out of the comparison entirely when its only price row is excluded', () => {
+    const points = measuredModelPoints(report([row('claude-sonnet-5', 'mixed')]), true)
+    expect(points).toHaveLength(0)
   })
 })

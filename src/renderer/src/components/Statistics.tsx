@@ -13,6 +13,7 @@ import { duration, money, when } from '../lib/format'
 import { effortLabel, modelLabel } from '../lib/modelname'
 import { readStatisticsWindow, writeStatisticsWindow } from '../lib/prefs'
 import { errorMessage } from '@shared/errors.js'
+import { AgentIcon } from './AgentIcon'
 
 /**
  * Analytics › Statistics.
@@ -554,16 +555,34 @@ function StatGraph({
   )
 }
 
-type ModelPoint = { key: string; label: string; cost: number; velocity: number; quality: number }
+type ModelPoint = {
+  key: string
+  label: string
+  adapterId: string
+  cost: number
+  velocity: number
+  quality: number
+}
 
-/** Only models with measured values on every axis enter this comparison. */
-function measuredModelPoints(report: StatisticsReport): ModelPoint[] {
+/**
+ * Only models with measured values on every axis enter this comparison.
+ *
+ * `excludeApiMixed` drops price rows billed at an API rate or mixed basis, so the cost axis folds
+ * only amortised subscription dollars — the two kinds of dollar are not interchangeable (see the
+ * price tab's own note), and a bubble is one point that cannot say which basis it is in.
+ */
+export function measuredModelPoints(report: StatisticsReport, excludeApiMixed = false): ModelPoint[] {
   type PartialPoint = { adapterId: string; model: string; cost?: number; velocity?: number; quality?: number }
   const points = new Map<string, PartialPoint>()
-  const add = (rows: Array<StatRow & { basis?: PriceBasis }>, axis: 'cost' | 'velocity' | 'quality'): void => {
+  const add = (
+    rows: Array<StatRow & { basis?: PriceBasis }>,
+    axis: 'cost' | 'velocity' | 'quality',
+    skip?: (row: StatRow & { basis?: PriceBasis }) => boolean
+  ): void => {
     const grouped = new Map<string, { total: number; samples: number }>()
     for (const row of rows) {
       if (row.level !== 'model' || !row.model || row.distribution.average === null) continue
+      if (skip?.(row)) continue
       const key = `${row.adapterId}/${row.model}`
       const current = grouped.get(key) ?? { total: 0, samples: 0 }
       current.total += row.distribution.average * row.distribution.samples
@@ -577,7 +596,7 @@ function measuredModelPoints(report: StatisticsReport): ModelPoint[] {
     }
   }
   // Price can have one row per billing basis. Fold those measured rows back together for one point.
-  add(report.price.rows, 'cost')
+  add(report.price.rows, 'cost', excludeApiMixed ? (row) => row.basis !== 'subscription' : undefined)
   add(report.velocity.rows, 'velocity')
   add(report.quality.rows, 'quality')
   const agents = new Map(report.velocity.rows.filter((r) => r.level === 'agent').map((r) => [r.adapterId, r.label]))
@@ -586,6 +605,7 @@ function measuredModelPoints(report: StatisticsReport): ModelPoint[] {
     .map(([key, p]) => ({
       key,
       label: `${agents.get(p.adapterId) ?? p.adapterId} · ${modelLabel(p.model) ?? p.model}`,
+      adapterId: p.adapterId,
       cost: p.cost!, velocity: p.velocity!, quality: p.quality!
     }))
     .sort((a, b) => a.label.localeCompare(b.label))
@@ -593,11 +613,15 @@ function measuredModelPoints(report: StatisticsReport): ModelPoint[] {
 
 /** A compact dependency-free 3D scatter plot. Drag it to inspect the model trade-offs. */
 function ThreeAxisPlot({ report }: { report: StatisticsReport }): React.JSX.Element | null {
-  const points = measuredModelPoints(report)
+  const [excludeApiMixed, setExcludeApiMixed] = useState(false)
+  // ⛔ The gate on whether this section exists at all reads the unfiltered set: hiding the whole
+  // plot (and its own toggle) the moment the filter empties it would leave no way back to "off".
+  const everPoints = measuredModelPoints(report)
+  const points = measuredModelPoints(report, excludeApiMixed)
   const [view, setView] = useState({ yaw: -0.7, pitch: 0.5 })
   const drag = useRef<{ x: number; y: number } | null>(null)
   const [hovered, setHovered] = useState<string | null>(null)
-  if (points.length === 0) return null
+  if (everPoints.length === 0) return null
   const maxCost = Math.max(...points.map((p) => p.cost), 0.01)
   const maxVelocity = Math.max(...points.map((p) => p.velocity), 1)
   const project = (x: number, y: number, z: number) => {
@@ -613,17 +637,45 @@ function ThreeAxisPlot({ report }: { report: StatisticsReport }): React.JSX.Elem
   ]
   const projected = points.map((point) => ({ point, at: project(point.quality / 10, 1 - point.cost / maxCost, 1 - point.velocity / maxVelocity) })).sort((a, b) => a.at.depth - b.at.depth)
   const active = projected.find((p) => p.point.key === hovered)?.point
+  const iconSize = 16
   return <section className="three-axis-plot" aria-label="Cost, quality and velocity model comparison">
-    <div className="three-axis-plot-head"><div><h3>Measured model trade-offs</h3><p>Drag to rotate. Farther from the origin is more favourable on every measured axis.</p></div>{active && <div className="three-axis-tooltip"><strong>{active.label}</strong><span>{money(active.cost)} · {active.quality.toFixed(1)} / 10 · {duration(active.velocity)}</span></div>}</div>
-    <svg className="three-axis-svg" viewBox="0 0 500 280" role="img"
-      onPointerDown={(e) => { drag.current = { x: e.clientX, y: e.clientY }; e.currentTarget.setPointerCapture(e.pointerId) }}
-      onPointerMove={(e) => { if (!drag.current) return; const dx = e.clientX - drag.current.x, dy = e.clientY - drag.current.y; drag.current = { x: e.clientX, y: e.clientY }; setView((v) => ({ yaw: v.yaw + dx / 180, pitch: Math.max(-1.2, Math.min(1.2, v.pitch + dy / 180)) })) }}
-      onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }}>
-      {axes.map((axis) => <g key={axis.label}><line x1={origin.x} y1={origin.y} x2={axis.end.x} y2={axis.end.y} className="three-axis-line" /><text x={axis.end.x} y={axis.end.y - 8} className="three-axis-label">{axis.label}</text><text x={origin.x} y={origin.y + 15} className="three-axis-low">{axis.low}</text></g>)}
-      <circle cx={origin.x} cy={origin.y} r="4" className="three-axis-origin" />
-      {projected.map(({ point, at }) => <g key={point.key} onPointerEnter={() => setHovered(point.key)} onPointerLeave={() => setHovered(null)}><circle cx={at.x} cy={at.y} r={hovered === point.key ? 8 : 6} className="three-axis-point" /><title>{`${point.label}\nCost ${money(point.cost)} · Quality ${point.quality.toFixed(1)} / 10 · Active time ${duration(point.velocity)}`}</title></g>)}
-    </svg>
-    <p className="dim">{points.length} model{points.length === 1 ? '' : 's'} with all three measurements. Cost and active time are reversed so $0 and fastest are the favourable ends.</p>
+    <div className="three-axis-plot-head">
+      <div>
+        <h3>Measured model trade-offs</h3>
+        <p>Drag to rotate. Farther from the origin is more favourable on every measured axis. Each mark is the icon of the agent that ran it.</p>
+      </div>
+      <label className="three-axis-filter" title="When on, the cost axis folds only amortised subscription dollars — API-rate and mixed-basis tasks are left out rather than averaged in as though they were the same kind of dollar.">
+        <input type="checkbox" checked={excludeApiMixed} onChange={(e) => setExcludeApiMixed(e.target.checked)} />
+        Exclude API rate &amp; mixed
+      </label>
+      {active && <div className="three-axis-tooltip"><strong>{active.label}</strong><span>{money(active.cost)} · {active.quality.toFixed(1)} / 10 · {duration(active.velocity)}</span></div>}
+    </div>
+    {points.length === 0 ? (
+      <p className="notice">No model has a subscription-only price under this filter. Uncheck it to see every measured model again.</p>
+    ) : (
+      <>
+        <svg className="three-axis-svg" viewBox="0 0 500 280" role="img"
+          onPointerDown={(e) => { drag.current = { x: e.clientX, y: e.clientY }; e.currentTarget.setPointerCapture(e.pointerId) }}
+          onPointerMove={(e) => { if (!drag.current) return; const dx = e.clientX - drag.current.x, dy = e.clientY - drag.current.y; drag.current = { x: e.clientX, y: e.clientY }; setView((v) => ({ yaw: v.yaw + dx / 180, pitch: Math.max(-1.2, Math.min(1.2, v.pitch + dy / 180)) })) }}
+          onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }}>
+          {axes.map((axis) => <g key={axis.label}><line x1={origin.x} y1={origin.y} x2={axis.end.x} y2={axis.end.y} className="three-axis-line" /><text x={axis.end.x} y={axis.end.y - 8} className="three-axis-label">{axis.label}</text><text x={origin.x} y={origin.y + 15} className="three-axis-low">{axis.low}</text></g>)}
+          <circle cx={origin.x} cy={origin.y} r="4" className="three-axis-origin" />
+          {projected.map(({ point, at }) => {
+            const r = (hovered === point.key ? iconSize + 4 : iconSize) / 2
+            return (
+              <g key={point.key} onPointerEnter={() => setHovered(point.key)} onPointerLeave={() => setHovered(null)}>
+                <circle cx={at.x} cy={at.y} r={r + 3} className="three-axis-point-halo" />
+                <g transform={`translate(${at.x - r}, ${at.y - r})`}>
+                  <AgentIcon adapterId={point.adapterId} size={r * 2} title={point.label} />
+                </g>
+                <title>{`${point.label}\nCost ${money(point.cost)} · Quality ${point.quality.toFixed(1)} / 10 · Active time ${duration(point.velocity)}`}</title>
+              </g>
+            )
+          })}
+        </svg>
+        <p className="dim">{points.length} model{points.length === 1 ? '' : 's'} with all three measurements. Cost and active time are reversed so $0 and fastest are the favourable ends.</p>
+      </>
+    )}
   </section>
 }
 

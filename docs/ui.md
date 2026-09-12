@@ -204,6 +204,13 @@ reversed before projection. Dragging the SVG rotates the view. This is a compari
 input, and the tabular distributions remain the authoritative evidence behind every point. Model
 rows group the stable display identity, so dated Claude ids such as `claude-haiku-4-5-20251001` fold
 into the same *Haiku 4.5* row; missing model ids remain in the agent total but have no phantom child.
+Each point draws the agent's own `AgentIcon` rather than a plain dot, so the Claude, Antigravity and
+Codex marks are told apart at a glance without reading the tooltip. An **Exclude API rate & mixed**
+checkbox in the head (`measuredModelPoints(report, excludeApiMixed)`) drops price rows billed outside
+the flat subscription fee from the cost axis only — the same two-kinds-of-dollar distinction the price
+tab already makes — and a model left with no subscription-only price simply drops out of the plot
+rather than being priced from the wrong dollars; the section itself keeps showing (with the checkbox
+still reachable) as long as *something* measured has ever qualified unfiltered.
 
 ⛔ **The chart names the harness as well as the model, and the table does not have to.** Its bars are
 model rows, which in a table are indented under the agent row that owns them; a chart has no such

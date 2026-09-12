@@ -6411,7 +6411,9 @@ select:focus-visible,
 .three-axis-label { fill: var(--color-text); font-size: 12px; font-weight: 600; }
 .three-axis-low { fill: var(--color-text-faint); font-size: 10px; }
 .three-axis-origin { fill: var(--color-text-faint); }
-.three-axis-point { fill: var(--color-accent); stroke: var(--color-bg); stroke-width: 2; cursor: pointer; }
+.three-axis-point-halo { fill: var(--color-bg); stroke: var(--color-border-strong); stroke-width: 1; cursor: pointer; }
+.three-axis-filter { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-meta); color: var(--color-text-dim); white-space: nowrap; cursor: pointer; }
+.three-axis-filter input { cursor: pointer; }
 @media (max-width: 700px) { .three-axis-plot-head { display: block; } .three-axis-tooltip { margin-top: var(--sp-2); } }
 
 /* ---- the routing model, as a paper ------------------------------------- */
