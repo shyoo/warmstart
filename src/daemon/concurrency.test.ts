@@ -382,6 +382,29 @@ describe('a planner blocked on its own pieces', () => {
     expect(residency.retainedReservations(worker.id, [])).toBe(0)
   })
 
+  it('⛔ stops the active clock and frees the slot when a debate organizer continues to next round', async () => {
+    const worker = add(1)
+    const deb = tasks.createTask({ title: 'debate the problem', kind: 'debate' })
+    const run = tasks.startRun({
+      taskId: deb.id,
+      workerId: worker.id,
+      sessionId: 'organizer-still-live',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.setStatus(deb.id, 'running', { assignee: worker.id })
+
+    tasks.setStatus(deb.id, 'blocked', { holdReason: 'waiting on 3 debate seats answering round 2' })
+    await scheduler.endPlannerForSplit('organizer-still-live')
+
+    const ended = tasks.requireRun(run.id)
+    expect(ended.endedAt).not.toBeNull()
+    expect(ended.outcome).toBe('blocked')
+    expect(ended.note).toMatch(/sent briefs for the next round/)
+    expect(residency.retainedReservations(worker.id, [])).toBe(0)
+  })
+
   it('⛔ holds no slot, so the pieces it waits for can be dispatched', () => {
     const worker = add(1)
     const plan = tasks.createTask({ title: 'plan the work', kind: 'plan' })

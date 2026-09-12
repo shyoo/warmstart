@@ -5,7 +5,7 @@ import { adapter } from './adapters/index.js'
 import { voidApprovalsForSession } from './approvals.js'
 import { fileParkedQuestion, parkQuestionsForSession } from './questions.js'
 import { compactionsForTask } from './compaction.js'
-import { creditRunListUsd, getTask, runForSession, runsFor } from './tasks.js'
+import { creditRunListUsd, getTask, isIntegrationParent, runForSession, runsFor } from './tasks.js'
 import { backscroll, clearHousekeepingPrompt, closeSession } from './sessions.js'
 import { stripAnsi } from './stream.js'
 import { log } from './log.js'
@@ -178,17 +178,21 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
     //    the process — so its run ended for the best possible reason. Recording `failed` here would
     //    put a red run on every successful Plan & Split and feed the estimator a fault that never
     //    happened.
-    const parkedOnItsOwnPlan = run.taskId ? getTask(run.taskId)?.status === 'blocked' : false
+    const runTask = run.taskId ? getTask(run.taskId) : null
+    const parkedOnIntegration = runTask?.status === 'blocked' && isIntegrationParent(runTask)
     await endUnfinishedRun(
       session,
       run,
-      parkedOnItsOwnPlan
-        ? 'The agent filed its plan as subtasks and stopped, as instructed. This task waits for ' +
-          'them and comes back by itself.'
+      parkedOnIntegration
+        ? runTask?.kind === 'debate'
+          ? (runTask.debate?.verdict
+              ? 'The debate organizer filed its plan as subtasks and stopped, as instructed. This task waits for them and comes back by itself.'
+              : 'The debate organizer sent briefs for the next round and stopped, as instructed. This task waits for them and comes back by itself.')
+          : 'The agent filed its plan as subtasks and stopped, as instructed. This task waits for them and comes back by itself.'
         : why,
       // ⛔ Not a failure. The agent did the work it was asked for up to the point where it needed
       // an answer, and an unanswered question is not a fault of the run.
-      waiting || parked > 0 || clockCompaction || parkedOnItsOwnPlan ? 'blocked' : 'failed'
+      waiting || parked > 0 || clockCompaction || parkedOnIntegration ? 'blocked' : 'failed'
     )
   }
   // ⛔ Run or no run, and after the run either way. This is the moment the workspace goes back,

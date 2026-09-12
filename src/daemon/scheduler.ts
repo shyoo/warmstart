@@ -45,6 +45,7 @@ import {
   addMessage,
   finishRun,
   getTask,
+  isIntegrationParent,
   listTasks,
   lastRunForSession,
   markDelivered,
@@ -3815,12 +3816,16 @@ export async function endPlannerForSplit(sessionId: string): Promise<void> {
   if (!run?.taskId) return
 
   const task = getTask(run.taskId)
-  // ⛔ Narrow to the state `applySplit` has just written.  A task can be blocked for ordinary
+  // ⛔ Narrow to the state `applySplit` or `nextRound` has just written. A task can be blocked for ordinary
   // dependencies too, and that is not authority to stop its agent.
-  if (task?.kind !== 'plan' || task.status !== 'blocked') return
+  if (!isIntegrationParent(task) || task?.status !== 'blocked') return
 
   const why =
-    'The planner filed its plan as subtasks and stopped. This task waits for them and comes back by itself.'
+    task.kind === 'debate'
+      ? (task.debate?.verdict
+          ? 'The debate organizer filed its plan as subtasks and stopped. This task waits for them and comes back by itself.'
+          : 'The debate organizer sent briefs for the next round and stopped. This task waits for them and comes back by itself.')
+      : 'The planner filed its plan as subtasks and stopped. This task waits for them and comes back by itself.'
   finishRun(run.id, 'blocked', why)
   void captureQuotaAfter(requireRun(run.id))
   await releaseFor(run.id, task.id, task.projectId)
