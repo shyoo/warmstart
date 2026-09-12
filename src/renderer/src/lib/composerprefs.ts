@@ -184,7 +184,8 @@ function readDebatePrefs(raw: unknown): DebatePrefs {
         .map((s) => ({
           workerId: typeof s.workerId === 'string' ? s.workerId : '',
           model: typeof s.model === 'string' && s.model ? s.model : null,
-          effort: typeof s.effort === 'string' && s.effort ? s.effort : null
+          effort: typeof s.effort === 'string' && s.effort ? s.effort : null,
+          ...(typeof s.lens === 'string' && s.lens.trim() ? { lens: s.lens } : {})
         }))
     : []
   // ⚠️ Topped up to the floor rather than reset: a stored roster of one is a setting from a build

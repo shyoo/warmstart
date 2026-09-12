@@ -6070,6 +6070,14 @@ select:focus-visible,
   color: var(--color-text);
 }
 
+/* A one-line basis under the list, in the same voice as the composer's notices. */
+.workers-menu-note {
+  padding: 4px 8px 0;
+  font-size: var(--text-meta);
+  line-height: var(--leading-tight);
+  color: var(--color-text-dim);
+}
+
 /* ---- pill ---- */
 
 .pill-wrap {

@@ -556,3 +556,30 @@ then went the other way.
 - **Re-debating.** An organizer that wants a fresh round after convergence files a new debate.
 - **Cross-project debate.** Seats inherit the parent's project, and the mandate says so.
 - **A debate with no project** (§4.10). Refused with a reason, not silently degraded.
+
+---
+
+## 11. Amendment, t382 (2026-09-12) — sycophancy, and why no seat is told to disagree
+
+The operator asked whether seats should be *instructed to disagree*. A three-seat debate on that
+question (t382: Opus, Gemini, GPT) converged on **no**, and the organizer's agreement was executed:
+
+- **Measured on t382 itself:** two of three seats, in both rounds, obeyed `task_complete`'s
+  *"One line: what was done"* over §5.6's *"your position as the summary"* — three paid runs, one
+  arbitrable position. Fix at the source (the seat prompt now says the summary IS the whole
+  position, against the tool's hint — a tool-definition change would invalidate the prompt cache
+  install-wide) and a net after it (`landCompletion` appends a report-only run's closing prose).
+- **The lever is at the flip, not the stance.** The literature in §2 already costs competitive
+  framing at 15pp; newer work finds an assigned dissenting role degrades accuracy the same way,
+  moderate disagreement beats maximal, and sycophancy's damage is a position adopted on a peer's
+  confidence rather than on evidence. So: `roundBriefFor` quotes the seat its own prior position and
+  falsification condition back and asks for a per-peer **change ledger** with the evidence behind
+  every change; `flipReport` says, deterministically, whether a round cites anything an earlier
+  round did not; the organizer's roster shows each seat's **stated confidence** as text; and
+  `validateAgreement` refuses a dissent short enough to be "none".
+- **Lenses, gated.** `DebateSeat.lens` is an evidence base, never a stance, offered by the composer
+  only at `adapterSpread === 1`.
+- **Still unmeasured, and what would measure it:** whether anonymising the organizer's roster beats
+  labelling it (a three-arm run: labelled, confidence-only, blind); whether lenses help at all (the
+  flip report on a lens-on/lens-off pair). One seat (`gpt-5.6-luna`) reported `task_complete` was not
+  in its tool set in round 2 — a separate adapter-exposure defect, not yet run down.

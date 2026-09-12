@@ -8,11 +8,15 @@ import { coldStartBlock } from './orientation.js'
 import { markDelivered, messagesFor, runsFor } from './tasks.js'
 import { childrenOf as splitChildrenOf } from './split.js'
 import {
+  agentPositionsFor,
   citationLine,
   citationReport,
   debatePhaseOf,
+  flipLine,
+  flipReport,
   lastPositionOf,
-  seatsOf
+  seatsOf,
+  statedConfidence
 } from './debate.js'
 import { resolveFinishPolicy } from './finish.js'
 import { settings } from './settings.js'
@@ -218,6 +222,13 @@ function resolutionInstruction(
  * the citation report. Summarising them here would put a fourth model's paraphrase between the
  * judge and the evidence.
  *
+ * ⭐ **Three reports beside each name, and all three are reports rather than penalties**: the
+ * citation check (paths that do not resolve), the flip report (from round 2, whether this round
+ * cites anything an earlier round did not — the evidence side of a change of position, which is
+ * the half of sycophancy a deterministic check can see), and the confidence the seat itself
+ * stated, as it stated it. The organizer is told what each can and cannot establish. See
+ * `flipReport` for the published work behind the second.
+ *
  * ⚠️ The one tool call is named with its two shapes, and the round budget is stated as a fact rather
  * than as a request: the organizer may converge early and may never extend.
  */
@@ -233,9 +244,12 @@ function arbitrationInstruction(task: Task, projectRoot: string | null): string 
         .join(', ')
       const position = lastPositionOf(seat) ?? `(no position — this seat ended ${seat.status}${seat.holdReason ? `: ${seat.holdReason}` : ''})`
       const cites = citationLine(citationReport(position, projectRoot))
+      const flip = flipLine(flipReport(agentPositionsFor(seat.id), projectRoot))
+      const confidence = statedConfidence(position)
       return [
-        `--- Seat ${i + 1} · t${seat.seq}${who ? ` · ${who}` : ''}`,
+        `--- Seat ${i + 1} · t${seat.seq}${who ? ` · ${who}` : ''} · stated confidence: ${confidence ?? 'none stated'}`,
         ...(cites ? [`⚠️ Citation check — ${cites}`] : []),
+        ...(flip ? [`⚠️ Flip report — ${flip}`] : []),
         position
       ].join(NL)
     })
@@ -251,13 +265,20 @@ function arbitrationInstruction(task: Task, projectRoot: string | null): string 
     '',
     positions,
     '',
-    '⚠️ The citation check is a report, never a penalty. A path that does not resolve is one of the ' +
-      'few things about an argument this tool can establish rather than believe; what to make of ' +
-      'it is yours to judge.',
+    '⚠️ The citation check and the flip report are reports, never penalties. A path that does not ' +
+      'resolve is one of the few things about an argument this tool can establish rather than ' +
+      'believe. The flip report says whether a seat cited anything this round that it had not ' +
+      'cited before — a position that moved while citing nothing new moved on words alone, which ' +
+      'is what sycophancy looks like from outside; a position that held while the evidence went ' +
+      'against it is the other failure and the report cannot see it. The stated confidence is the ' +
+      'seat’s own words, not a measurement. What to make of each is yours to judge.',
     '',
     'You are arbitrating, not competing, and you are not casting a vote. Weigh the arguments on ' +
       'their evidence, not on who made them or how confidently they were made. ⛔ Where the ' +
-      'positions agree because nobody examined the question, say so — agreement is not evidence.',
+      'positions agree because nobody examined the question, say so — agreement is not evidence. ' +
+      '⛔ Where a seat changed its position, look for the evidence it names for the change; a seat ' +
+      'conceding is not evidence that it was wrong, and the dissent you report has to say what ' +
+      'withdrew each dissent that was withdrawn.',
     '',
     'Then call the MCP tool `debate_round` ONCE, in one of its two shapes:',
     round < rounds

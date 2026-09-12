@@ -151,7 +151,11 @@ would let three seats land on one account and still be called a debate. ⛔ **`s
 is not an operator setting** — two seats on one account and model satisfy every gate in `sharing.ts`,
 so with sharing on the blind round would silently not be blind, with a cheaper bill that looks like a
 win. A duplicate (account, model, effort) triple is *allowed*: that is a homogeneous debate, which is
-what the composer's heterogeneity notice counts.
+what the composer's heterogeneity notice counts. ⭐ A seat may carry a **lens** — an evidence base it
+is asked to examine first, *never a stance to hold*. Offered by the composer only on a one-family
+roster (`adapterSpread === 1`), where prompt-level diversity is the only diversity left; published
+work finds an *assigned position* degrades accuracy, and a lens is not one. ⛔ **No seat is ever
+told to disagree**, for the same reason no seat is told to win (t382).
 
 **Organizer** — *the debate task itself, arbitrating its seats.* A dispatched agent with its own
 worktree and `ask_human` in its hand, not an unattended controller consult — it has to read the code
@@ -168,6 +172,17 @@ organizer's prompt and on the board. ⛔ **A report, never a penalty**: it does 
 not exclude it and does not edit its words. It is one of the few things about an argument this tool
 can establish rather than believe — the same reasoning [`docs.test.ts`](../src/daemon/docs.test.ts)
 applies to a doc naming a file.
+
+**Flip report** — *whether a seat's latest round cites any path no earlier round of its cited.*
+Published work on sycophancy in debate finds the damage at the *flip* — a position adopted because
+a peer sounded confident, not because evidence arrived — and finds expressed disagreement decaying
+round by round for that reason. Whether a seat changed its mind is not readable from prose; whether
+it cited anything new **is**, and `flipReport` in [`src/daemon/debate.ts`](../src/daemon/debate.ts)
+says so beside the citation report from round 2 on, with the seat's own **stated confidence** as it
+stated it (text, never a number). ⛔ **A report, never a penalty**, like the citation check. The
+seat's half of the same answer is the **change ledger** the round brief asks for: per peer,
+AGREE / DISAGREE / NOT REFUTED BUT UNCONVINCED, the evidence behind every change, and whether its
+own round-1 falsification condition — quoted back to it verbatim — was met.
 
 **Prerequisite** — *an edge in the DAG somebody drew by hand.* `task_deps`, the cycle check and
 `admit()` have been in the daemon since M2, and the only way to put an edge in was to be an agent

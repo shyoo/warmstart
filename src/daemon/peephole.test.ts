@@ -3,9 +3,13 @@ import { adapters } from './adapters/index.js'
 import {
   activityFor,
   clearActivity,
+  closingProse,
   consumeRunActivity,
   noteActivity,
+  proseOf,
+  REPORT_PROSE_CHARS,
   runActivityFor,
+  withClosingProse,
   type OutputFraming
 } from './activity.js'
 import { setEventSink } from './events.js'
@@ -306,5 +310,53 @@ describe('the two framings do not leak into one another', () => {
     noteActivity('t-mix-blank', '   ', undefined, 'delta')
     noteActivity('t-mix-blank', 'the only thing said', undefined, 'message')
     expect(activityFor('t-mix-blank').map((l) => l.text)).toEqual(['the only thing said'])
+  })
+})
+
+
+/**
+ * ⭐ What a report-only run said on the way to reporting complete, kept because its deliverable is
+ * the thread and `task_complete` describes its summary as one line (t382: two of three debate seats
+ * obeyed the tool over the prompt in both rounds, and their positions arrived as a sentence).
+ */
+describe('the closing prose of a report-only run', () => {
+  it('is the prose and never a tool or status announcement', () => {
+    const entries = ['[Tool: read_file]', 'Reading the scheduler.', '[run: npm test]', 'I hold X.', '[search: "admit"]'].map(
+      (text) => ({ text })
+    )
+    expect(proseOf(entries)).toEqual(['Reading the scheduler.', 'I hold X.'])
+  })
+
+  it('keeps the last whole lines that fit the budget, oldest first', () => {
+    const entries = ['one', 'two two', 'three three three', 'four'].map((text) => ({ text }))
+    expect(closingProse(entries, 100)).toBe('one\ntwo two\nthree three three\nfour')
+    expect(closingProse(entries, 25)).toBe('three three three\nfour')
+    // ⚠️ A single line longer than the budget is still kept whole: the net never returns nothing
+    // when something was said.
+    expect(closingProse(entries, 3)).toBe('four')
+    expect(closingProse([], REPORT_PROSE_CHARS)).toBe('')
+  })
+
+  it('reads the run tail a message-framed adapter fills, which is what the completion path consults', () => {
+    clearActivity('t-report')
+    noteActivity('t-report', 'Let me read the scheduler.', 'r-report', 'message')
+    noteActivity('t-report', 'Position: admit from the tick.\n\nConfidence: 0.7', 'r-report', 'message')
+    expect(closingProse(runActivityFor('r-report'), REPORT_PROSE_CHARS)).toBe(
+      'Let me read the scheduler.\nPosition: admit from the tick.\nConfidence: 0.7'
+    )
+    consumeRunActivity('r-report')
+  })
+
+  /**
+   * ⛔ Appended, never replacing: the summary is the agent's own choice of words and stays first —
+   * and a seat that put its whole position in the summary is not read twice.
+   */
+  it('follows the summary with the prose, minus every line the summary already holds', () => {
+    expect(withClosingProse('Did the thing.', 'Reading.\nPosition: X.')).toBe('Did the thing.\n\nReading.\nPosition: X.')
+    expect(withClosingProse('Position: X.\nBecause Y.', 'Reading.\nPosition: X.\nBecause Y.')).toBe(
+      'Position: X.\nBecause Y.\n\nReading.'
+    )
+    expect(withClosingProse('Position: X.', 'Position: X.')).toBe('Position: X.')
+    expect(withClosingProse('Position: X.', '')).toBe('Position: X.')
   })
 })

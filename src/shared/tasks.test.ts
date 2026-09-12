@@ -147,13 +147,21 @@ describe('reading a debate blob written by any version of this tool', () => {
       verdict: 'execute'
     })
     expect(state?.seats).toEqual([
-      { workerId: 'w-a', model: 'opus', effort: 'high' },
-      { workerId: 'w-b', model: null, effort: null }
+      { workerId: 'w-a', model: 'opus', effort: 'high', lens: null },
+      { workerId: 'w-b', model: null, effort: null, lens: null }
     ])
     expect(state?.rounds).toBe(3)
     expect(state?.exchange).toBe('digest')
     expect(state?.round).toBe(2)
     expect(state?.verdict).toBe('execute')
+  })
+
+  // ⚠️ A lens is an evidence base the prompt reads; dropped here it would be silently ignored.
+  it('keeps a seat’s lens, trimmed, and reads a blank one as none', () => {
+    const state = readDebateState({
+      seats: [{ workerId: 'w-a', lens: '  the admission path ' }, { workerId: 'w-b', lens: '   ' }, { workerId: 'w-c', lens: 7 }]
+    })
+    expect(state?.seats.map((s) => s.lens)).toEqual(['the admission path', null, null])
   })
 
   it('is null for anything with no usable seat in it', () => {

@@ -149,7 +149,15 @@ import {
   type ShareIntent
 } from './sharing.js'
 import { stripAnsi } from './stream.js'
-import { activityFor, clearActivity } from './activity.js'
+import {
+  activityFor,
+  clearActivity,
+  closingProse,
+  proseOf,
+  REPORT_PROSE_CHARS,
+  runActivityFor,
+  withClosingProse
+} from './activity.js'
 import { log } from './log.js'
 import { clockTime, oneLine, shortDuration } from './threadline.js'
 import { RESTART_REAP_NOTE } from './activetime.js'
@@ -3252,24 +3260,20 @@ async function landCompletion(
 
   let effectiveSummary = (summary ?? '').trim()
   if (!effectiveSummary || effectiveSummary === 'Completed') {
-    const recentActivity = activityFor(task.id)
-    const proseLines = recentActivity
-      .map((a) => a.text)
-      .filter(
-        (t) =>
-          t &&
-          !t.startsWith('[Tool:') &&
-          !t.startsWith('[run:') &&
-          !t.startsWith('[search:') &&
-          !t.startsWith('[find:') &&
-          !t.startsWith('[list:') &&
-          !t.startsWith('[fetch:')
-      )
+    const proseLines = proseOf(activityFor(task.id))
     if (proseLines.length > 0) {
       effectiveSummary = proseLines.slice(-3).join('\n')
     } else {
       effectiveSummary = 'Completed'
     }
+  } else if (task.finishPolicy === 'report-only') {
+    // ⭐ **A report-only task's deliverable is the thread, so what it said on the way is kept.**
+    //    `task_complete` describes its summary as *one line*, and a debate seat that obeys the tool
+    //    over its prompt leaves a sentence where its whole position should be — t382 (2026-09-12)
+    //    paid for three seats per round and could arbitrate one. Appended, never replacing: the
+    //    summary is the agent's own choice of words and stays first. The run's tail, not the
+    //    task's — it holds five times as many lines, and the position is the last thing said.
+    effectiveSummary = withClosingProse(effectiveSummary, closingProse(runActivityFor(run.id), REPORT_PROSE_CHARS))
   }
 
   const existing = messagesFor(task.id).filter((m) => m.runId === run.id && m.role === 'agent')
@@ -3620,19 +3624,7 @@ export async function endConversationTurn(
 
   let effectiveAnswer = (resultText ?? '').trim()
   if (!effectiveAnswer) {
-    const recentActivity = activityFor(task.id)
-    const proseLines = recentActivity
-      .map((a) => a.text)
-      .filter(
-        (t) =>
-          t &&
-          !t.startsWith('[Tool:') &&
-          !t.startsWith('[run:') &&
-          !t.startsWith('[search:') &&
-          !t.startsWith('[find:') &&
-          !t.startsWith('[list:') &&
-          !t.startsWith('[fetch:')
-      )
+    const proseLines = proseOf(activityFor(task.id))
     if (proseLines.length > 0) {
       effectiveAnswer = proseLines.slice(-3).join('\n')
     } else {

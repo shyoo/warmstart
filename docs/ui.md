@@ -606,6 +606,11 @@ in seat 2*: an ordered list, one row per seat, each naming exactly one account, 
 duplicate triple is allowed, because a homogeneous debate is a thing a one-account operator may want.
 ⚠️ **Send is disabled until every seat names an account this fleet has** — filing a half-roster would
 leave an organizer blocked on seats that were never filed, which is a task nothing can ever release.
+⭐ When the preview reports **one model family** in every seat (`adapterSpread === 1`), each seat
+row gains a **Lens** field — an evidence base that seat examines first, never a position to hold —
+because prompt-level diversity is the only diversity left to buy there. With two families in the
+room the field is not shown and a lens typed earlier is not sent: the roster already bought its
+diversity, and an assigned role would re-introduce the penalty published work measures for one.
 
 ⛔ **The organizer's account picker is sorted by the fitness this fleet has measured, and says so.**
 Published work finds a judge is what makes a diverse roster pay off, and that judges favour their own

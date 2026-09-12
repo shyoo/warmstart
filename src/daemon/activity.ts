@@ -310,6 +310,75 @@ export function activityFor(taskId: string): Array<{ text: string; ts: number }>
   return snapshot(tails.get(taskId))
 }
 
+/**
+ * The prose in a tail: every line that is not an adapter's tool or status announcement.
+ *
+ * ⚠️ The prefixes are the ones `antigravity-cli` writes and the `[run: …]` line the stream shim
+ * writes; claude-code narrates no tool use into the peephole at all, so on it every line is prose.
+ * This is the one list, shared by the completion paths that fall back to the peephole when an
+ * agent reported nothing.
+ */
+export function proseOf(entries: Array<{ text: string }>): string[] {
+  return entries
+    .map((e) => e.text)
+    .filter(
+      (t) =>
+        t &&
+        !t.startsWith('[Tool:') &&
+        !t.startsWith('[run:') &&
+        !t.startsWith('[search:') &&
+        !t.startsWith('[find:') &&
+        !t.startsWith('[list:') &&
+        !t.startsWith('[fetch:')
+    )
+}
+
+/**
+ * The last `maxChars` of prose in a tail, in whole lines, oldest first.
+ *
+ * ⭐ What a `report-only` task said on the way to reporting complete — its deliverable is the
+ * thread, and `task_complete`'s summary is described to the agent as *one line*, so the position a
+ * debate seat spent a run building was arriving on its thread as a sentence (t382, 2026-09-12: two
+ * of three seats, both rounds). ⚠️ **Best effort, and lossy by construction**: the peephole keeps
+ * `RUN_KEEP` lines of `MAX_LINE` characters each, so a paragraph longer than that arrives cut with
+ * an ellipsis. The prompt asking for the whole position in the summary is the fix; this is the net.
+ */
+export function closingProse(entries: Array<{ text: string }>, maxChars: number): string {
+  const lines = proseOf(entries)
+  const kept: string[] = []
+  let size = 0
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i] ?? ''
+    if (kept.length > 0 && size + line.length + 1 > maxChars) break
+    kept.unshift(line)
+    size += line.length + 1
+  }
+  return kept.join('\n').trim()
+}
+
+/**
+ * How much of a report-only run's closing prose is kept on its thread.
+ *
+ * ⚠️ Sized for a position, not a transcript: under `exchange: 'full'` every seat's row travels
+ * verbatim into every other seat's brief and into the organizer's prompt, so this is paid N² times
+ * a round. Twelve thousand characters is about three pages, which is more than any round-one
+ * position in t382 ran to and less than a run's whole narration.
+ */
+export const REPORT_PROSE_CHARS = 12_000
+
+/**
+ * The summary an agent reported, followed by the prose it said on the way — minus every line the
+ * summary already contains, so a seat that put its whole position in the summary is not read twice.
+ */
+export function withClosingProse(summary: string, prose: string): string {
+  const fresh = prose
+    .split('\n')
+    .filter((line) => line.trim() && !summary.includes(line.trim()))
+    .join('\n')
+    .trim()
+  return fresh ? `${summary}\n\n${fresh}` : summary
+}
+
 export function runActivityFor(runId: string): Array<{ text: string; ts: number }> {
   return snapshot(runTails.get(runId))
 }

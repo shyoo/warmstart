@@ -498,4 +498,220 @@ describe('the agreement', () => {
     const rendered = debate.renderAgreement(full)
     for (const part of Object.values(full)) expect(rendered).toContain(part)
   })
+
+  /**
+   * ⛔ "None" is the empty dissent wearing a word, and it is how the refusal above was being
+   * passed. The floor is the length below which the field says nothing; it is not a quality bar.
+   */
+  it('refuses a dissent that fits in a breath, and asks for the evidence that withdrew each one', () => {
+    for (const short of ['none', 'N/A', 'all agreed', 'no dissent.']) {
+      const checked = debate.validateAgreement({ ...full, dissent: short })
+      expect(checked.ok).toBe(false)
+      expect(checked.ok === false && checked.reason).toMatch(/not a dissent/)
+      expect(checked.ok === false && checked.reason).toMatch(/evidence that withdrew it/)
+    }
+    expect(debate.MIN_DISSENT_CHARS).toBeLessThan(
+      'there was none; the seats never contested the tick backstop'.length
+    )
+  })
+})
+
+/**
+ * ⛔ **Neither prompt asks a seat to win, and neither asks it to disagree.** Published work
+ * measures competitive framing costing up to 15 points and finds an assigned dissenting role
+ * degrades accuracy the same way; the lever against sycophancy is at the *flip* — what evidence a
+ * seat names when it changes its mind — which is what the round brief asks for. These are the
+ * first assertions either prompt has had (t382, 2026-09-12): until then a prompt edit here was
+ * checked by nothing.
+ */
+describe('the seat prompts', () => {
+  const NEVER = [/\bwin\b/i, /\bopponent(?!s\b)/i, /must disagree/i, /take the opposite/i, /devil/i]
+
+  it('asks for a position, a checkable falsification condition and a confidence line — never for a fight', () => {
+    const parent = organizer()
+    const prompt = debate.seatPromptFor(parent, 0, 2)
+    expect(prompt).toContain('you are seat 1')
+    expect(prompt).toContain(parent.title)
+    expect(prompt).toContain('what would have to be true for you to be wrong')
+    expect(prompt).toContain('`Confidence: …`')
+    expect(prompt).toContain('quoted back to you in every later round')
+    for (const pattern of NEVER) expect(prompt).not.toMatch(pattern)
+  })
+
+  /**
+   * ⛔ `task_complete` describes its summary as *one line*, and two of three seats obeyed the tool
+   * over the prompt in both rounds of t382. The prompt now says, against the tool, that the
+   * summary is the whole position.
+   */
+  it('says the summary is the WHOLE position, against the tool’s own one-line hint', () => {
+    const prompt = debate.seatPromptFor(organizer(), 1, 2)
+    expect(prompt).toContain('WHOLE position as the summary')
+    expect(prompt).toMatch(/one line.*does not apply to a debate seat/)
+    expect(prompt).toContain('Do not commit')
+  })
+
+  it('carries a lens as an evidence base and says in the same breath it is not a stance', () => {
+    const lensed = organizer({
+      seats: [{ ...ROSTER[0]!, lens: 'the scheduler tick and every caller of admit()' }, ROSTER[1]!]
+    })
+    const one = debate.seatPromptFor(lensed, 0, 2)
+    expect(one).toContain('Your lens: the scheduler tick and every caller of admit()')
+    expect(one).toContain('NOT a position to hold')
+    expect(one).toContain('including the answer you would guess the other seats reach')
+    const two = debate.seatPromptFor(lensed, 1, 2)
+    expect(two).not.toContain('Your lens')
+    expect(debate.seatPromptFor(organizer(), 0, 2)).not.toContain('Your lens')
+  })
+})
+
+describe('the round brief', () => {
+  function opened(overrides: Parameters<typeof organizer>[0] = {}): { parent: Task; seats: Task[] } {
+    const parent = organizer(overrides)
+    expect(debate.openDebate(parent.id, HUMAN).ok).toBe(true)
+    const seats = debate.seatsOf(parent.id)
+    answers(seats[0]!, 'Seat one: admit from the tick. Wrong if setStatus already re-admits. Confidence: 0.7')
+    answers(seats[1]!, 'Seat two: admit from setStatus. See src/daemon/scheduler.ts.')
+    return { parent: tasks.requireTask(parent.id), seats }
+  }
+
+  /**
+   * ⭐ Round 1 elicits a falsification condition; until t382 nothing asked whether it had happened,
+   * so the check only looked like it was happening. The seat now gets its own words back and is
+   * asked what became of them.
+   */
+  it('quotes the seat its OWN prior position and asks whether its falsification condition was met', () => {
+    const { parent, seats } = opened()
+    const brief = debate.roundBriefFor(parent, seats, 0, 'address the seven settle paths', 2)
+    expect(brief).toContain('Your own position from the previous round, verbatim')
+    expect(brief).toContain('Wrong if setStatus already re-admits')
+    expect(brief).toContain('Your falsification condition')
+    expect(brief).toContain('Has it happened?')
+    // ⚠️ Under `full` the other position still travels, and after the seat’s own.
+    expect(brief.indexOf('Wrong if setStatus')).toBeLessThan(brief.indexOf('Seat two: admit from setStatus'))
+  })
+
+  /**
+   * ⛔ The ledger is where the flip gets its evidence named, and "they argued it better" is named
+   * as a non-reason because it is the one every flip gives. Digging in is named as the other
+   * failure in the same breath, so the brief cannot be read as a licence to hold out.
+   */
+  it('asks for a per-peer change ledger with the evidence behind every change, and names the non-reasons', () => {
+    const { parent, seats } = opened()
+    const brief = debate.roundBriefFor(parent, seats, 1, 'address the write cost', 2)
+    expect(brief).toContain('AGREE / DISAGREE / NOT REFUTED BUT UNCONVINCED')
+    expect(brief).toContain('the specific new evidence that changed it')
+    expect(brief).toContain('"Seat N argued it better"')
+    expect(brief).toContain('are not evidence')
+    expect(brief).toContain('Do not converge for the sake of converging')
+    expect(brief).toContain('do not dig in for the sake of digging in')
+    expect(brief).toContain('WHOLE position as the summary')
+    expect(brief).toContain('`Confidence: …`')
+    expect(brief).not.toMatch(/must disagree/i)
+  })
+
+  it('reminds a lensed seat of its lens, and says nothing of one to a seat without', () => {
+    const { parent, seats } = opened({
+      seats: [{ ...ROSTER[0]!, lens: 'the admission path' }, ROSTER[1]!]
+    })
+    expect(debate.roundBriefFor(parent, seats, 0, 'b', 2)).toContain('Your lens: the admission path')
+    expect(debate.roundBriefFor(parent, seats, 1, 'b', 2)).not.toContain('Your lens')
+  })
+
+  it('starts from the question when the seat recorded no position last round', () => {
+    const parent = organizer()
+    expect(debate.openDebate(parent.id, HUMAN).ok).toBe(true)
+    const seats = debate.seatsOf(parent.id)
+    expect(debate.roundBriefFor(parent, seats, 0, 'b', 2)).toContain('no position recorded — this round starts from the question')
+  })
+})
+
+/**
+ * ⭐ **The evidence side of a flip is the half a deterministic check can see.** Whether a seat
+ * changed its mind is not readable from prose; whether it cited anything new is. A report beside
+ * the citation report, and like it ⛔ never a penalty.
+ */
+describe('the flip report', () => {
+  let repo: string
+
+  beforeAll(() => {
+    repo = mkdtempSync(join(tmpdir(), 'agentyard-flip-'))
+    mkdirSync(join(repo, 'src', 'daemon'), { recursive: true })
+    writeFileSync(join(repo, 'src', 'daemon', 'tasks.ts'), '// real\n')
+  })
+
+  afterAll(() => {
+    try {
+      rmSync(repo, { recursive: true, force: true })
+    } catch {
+      // Held handle on Windows.
+    }
+  })
+
+  it('is nothing on round 1, where there is nothing to have flipped from', () => {
+    expect(debate.flipReport(['I hold X, see src/daemon/tasks.ts'], repo)).toBeNull()
+    expect(debate.flipLine(null)).toBeNull()
+  })
+
+  it('says when a round cites nothing an earlier round did not — a change here rests on words alone', () => {
+    const report = debate.flipReport(
+      ['I hold X, see src/daemon/tasks.ts', 'I now hold Y, and src/daemon/tasks.ts still applies'],
+      repo
+    )
+    expect(report).toEqual({ newPaths: [], repeated: 1 })
+    expect(debate.flipLine(report)).toMatch(/cites no path it had not cited in an earlier round \(1 repeated\)/)
+    expect(debate.flipLine(report)).toContain('rests on words alone')
+
+    const bare = debate.flipReport(['I hold X.', 'I now hold Y because seat 2 was persuasive.'], repo)
+    expect(debate.flipLine(bare)).toContain('(and no path at all)')
+  })
+
+  it('lists what a round newly cites, marking what does not resolve, and counts nothing twice', () => {
+    const report = debate.flipReport(
+      ['I hold X, see src/daemon/tasks.ts', 'Y: src/daemon/tasks.ts, src/daemon/scheduler.ts and src/daemon/tasks.ts again'],
+      repo
+    )
+    expect(report?.newPaths).toEqual([{ path: 'src/daemon/scheduler.ts', exists: false }])
+    expect(report?.repeated).toBe(1)
+    expect(debate.flipLine(report)).toBe(
+      'newly cites 1 path(s) no earlier round cited: src/daemon/scheduler.ts (does not resolve)'
+    )
+  })
+
+  it('compares against every earlier round, not only the last one', () => {
+    const report = debate.flipReport(
+      ['see src/daemon/tasks.ts', 'see nothing', 'see src/daemon/tasks.ts'],
+      repo
+    )
+    expect(report?.newPaths).toEqual([])
+  })
+})
+
+/**
+ * ⚠️ Text, never a number: `0.85/0.8/0.75`, `~0.8`, `78%` and `high` are all things seats wrote in
+ * t382, and turning any of them into a figure would be this tool believing something it cannot
+ * establish.
+ */
+describe('the stated confidence', () => {
+  it('prefers the `Confidence:` line the prompt asks for, as written', () => {
+    expect(debate.statedConfidence('I hold X.\nConfidence: 0.78 that forced disagreement is wrong\nMore.')).toBe(
+      '0.78 that forced disagreement is wrong'
+    )
+    expect(debate.statedConfidence('**Confidence**: high — both seats cite the same paths')).toBe(
+      'high — both seats cite the same paths'
+    )
+  })
+
+  it('falls back to the first sentence that mentions confidence, capped so it stays a label', () => {
+    expect(debate.statedConfidence('Position. Confidence ~0.8 / 0.7 / 0.6; wrong if the link carries numbers.')).toBe(
+      'Confidence ~0.8 / 0.7 / 0.6; wrong if the link carries numbers.'
+    )
+    expect(debate.statedConfidence('I am fairly confident (80%) in this.')).toBe('confident (80%) in this.')
+    const long = debate.statedConfidence('Confidence: ' + 'x'.repeat(200))
+    expect(long?.length).toBe(81)
+    expect(long?.endsWith('…')).toBe(true)
+  })
+
+  it('is null when nothing was stated, so the label says so rather than inventing one', () => {
+    expect(debate.statedConfidence('I hold X, see src/daemon/tasks.ts.')).toBeNull()
+  })
 })

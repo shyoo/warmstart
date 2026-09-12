@@ -35,6 +35,7 @@ let questions: typeof import('./questions.js')
 let approvals: typeof import('./approvals.js')
 let transcript: typeof import('./transcript.js')
 let compaction: typeof import('./compaction.js')
+let activity: typeof import('./activity.js')
 
 const ORG_DISABLED =
   'Your organization has disabled Claude subscription access for Claude Code. ' +
@@ -103,6 +104,7 @@ function seedRunningTask(
     lastRequestStartedAt?: number
     startedWarm?: boolean
     contextTokens?: number
+    finishPolicy?: Task['finishPolicy']
   } = {}
 ) {
   seq += 1
@@ -114,7 +116,11 @@ function seedRunningTask(
     label: `w${seq}`,
     enabled: false
   })
-  const task = tasks.createTask({ title: `t${seq}`, createdBy: { kind: 'human' } })
+  const task = tasks.createTask({
+    title: `t${seq}`,
+    createdBy: { kind: 'human' },
+    ...(options.finishPolicy ? { finishPolicy: options.finishPolicy } : {})
+  })
   const session = seedSession(`5e551011-0000-4000-8000-00000000000${seq}`, worker.id, {
     adapterId,
     lastRequestStartedAt: options.lastRequestStartedAt
@@ -162,6 +168,7 @@ beforeAll(async () => {
   approvals = await import('./approvals.js')
   transcript = await import('./transcript.js')
   compaction = await import('./compaction.js')
+  activity = await import('./activity.js')
   db.openDb(join(dir, 'runfail.db'))
 })
 
@@ -439,6 +446,47 @@ describe('a completion that is still landing when the process exits', () => {
     const { run, session } = seedRunningTask({ metered: 500 })
     await turnend.onSessionExit(session, 0)
     expect(tasks.requireRun(run.id).outcome).toBe('failed')
+  })
+})
+
+/**
+ * ⭐ A report-only task's deliverable is its thread, and `task_complete` describes its summary as
+ * *one line* — so a debate seat that obeyed the tool over its prompt left a sentence where its
+ * position should be (t382, 2026-09-12: two of three seats, both rounds). What the run said on the
+ * way is now kept beside the summary; for every other policy the summary stays what it was.
+ */
+describe('a report-only completion keeps what the run said', () => {
+  const said = (taskId: string): string =>
+    tasks
+      .messagesFor(taskId)
+      .filter((m) => m.role === 'agent')
+      .map((m) => m.text)
+      .join('\n---\n')
+
+  it('appends the run’s prose after the summary, minus what the summary already holds', async () => {
+    const { task, session, run } = seedRunningTask({ metered: 500, finishPolicy: 'report-only' })
+    activity.noteActivity(task.id, 'Let me read the scheduler.', run.id, 'message')
+    activity.noteActivity(task.id, 'Position: admit from the tick, because setStatus already re-admits.\nConfidence: 0.7', run.id, 'message')
+    await scheduler.completeTask(session.id, 'Delivered a position on admission.')
+    expect(said(task.id)).toBe(
+      'Delivered a position on admission.\n\n' +
+        'Let me read the scheduler.\nPosition: admit from the tick, because setStatus already re-admits.\nConfidence: 0.7'
+    )
+    expect(tasks.getTask(task.id)?.status).toBe('completed')
+  })
+
+  it('leaves a summary that was already the whole position alone', async () => {
+    const { task, session, run } = seedRunningTask({ metered: 500, finishPolicy: 'report-only' })
+    activity.noteActivity(task.id, 'Position: admit from the tick.', run.id, 'message')
+    await scheduler.completeTask(session.id, 'Position: admit from the tick.')
+    expect(said(task.id)).toBe('Position: admit from the tick.')
+  })
+
+  it('changes nothing for a task under any other policy', async () => {
+    const { task, session, run } = seedRunningTask({ metered: 500 })
+    activity.noteActivity(task.id, 'Narration that stays in the peephole.', run.id, 'message')
+    await scheduler.completeTask(session.id, 'did the thing')
+    expect(said(task.id)).toBe('did the thing')
   })
 })
 

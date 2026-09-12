@@ -518,11 +518,25 @@ export function NewTask({
    * entry naming an account this fleet no longer has is dropped rather than sent, and a roster left
    * short of two seats cannot be filed at all.
    */
+  /**
+   * ⭐ **A lens is offered only on a one-family roster, and filed only when offered.** Published
+   * work finds the gain of debate comes from different model families; when the roster has one,
+   * an evidence base per seat is the only diversity left to buy, and it is bought as *what to
+   * examine*, never *what to hold* (`seatPromptFor`). With two families in the room the roster has
+   * already bought its diversity and an assigned role would re-introduce the role-variance penalty
+   * the same work measures — so the field is not shown, and a lens typed before a second family
+   * was added is not sent. Counted on the adapter by the daemon (`DebatePreview.adapterSpread`),
+   * which is the only place an account resolves to one.
+   */
+  const lensesOffered = preview?.adapterSpread === 1
   const filedSeats: DebateSeat[] = debatePrefs.seats.map((seat) => ({
     workerId: seat.workerId,
     ...(seat.model ? { model: seat.model } : {}),
-    ...(seat.effort ? { effort: seat.effort } : {})
+    ...(seat.effort ? { effort: seat.effort } : {}),
+    ...(lensesOffered && seat.lens?.trim() ? { lens: seat.lens.trim() } : {})
   }))
+  /** The roster without its lenses: what the cost preview is keyed on, since a lens prices nothing. */
+  const pinsKey = JSON.stringify(filedSeats.map(({ workerId, model, effort }) => [workerId, model, effort]))
   const rosterComplete =
     filedSeats.length >= MIN_DEBATE_SEATS &&
     filedSeats.every((seat) => pinnable.some((w) => w.id === seat.workerId))
@@ -550,7 +564,7 @@ export function NewTask({
       title: prompt.trim() || 'a debate',
       projectId: projectId || null,
       kind: 'debate',
-      seats: filedSeats,
+      seats: filedSeats.map(({ workerId, model, effort }) => ({ workerId, model, effort })),
       rounds: debatePrefs.rounds,
       organizerWorkerId: prefs.workerId || null,
       organizerModel: model || null
@@ -566,9 +580,10 @@ export function NewTask({
     }
     // ⚠️ On the roster rather than on every keystroke: the estimate is sized from the task's
     // complexity band, which a word in the prompt does not move, and one RPC per character would be
-    // a request storm for a figure that would not change.
+    // a request storm for a figure that would not change. And keyed without the lens: it prices
+    // nothing, and its keystrokes would refetch the figure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDebate, rosterComplete, projectId, debatePrefs.rounds, JSON.stringify(filedSeats), prefs.workerId, model])
+  }, [isDebate, rosterComplete, projectId, debatePrefs.rounds, pinsKey, prefs.workerId, model])
 
   /**
    * The Worker pill's options, and on a debate the order they are in.
@@ -1157,6 +1172,7 @@ export function NewTask({
                     workers={pinnable}
                     modelOptions={options}
                     seats={debatePrefs.seats}
+                    lensesOffered={lensesOffered}
                     onChange={(seats) => setDebatePrefs({ ...debatePrefs, seats })}
                   />
                 </td>
@@ -1844,6 +1860,7 @@ function DebateRoster({
   workers,
   modelOptions,
   seats,
+  lensesOffered,
   onChange
 }: {
   workers: Array<{
@@ -1855,6 +1872,8 @@ function DebateRoster({
   }>
   modelOptions: ModelOptions[]
   seats: DebateSeat[]
+  /** ⚠️ True only on a one-family roster; see `lensesOffered` in the composer. */
+  lensesOffered: boolean
   onChange: (seats: DebateSeat[]) => void
 }): React.JSX.Element {
   const named = seats.filter((s) => s.workerId).length
@@ -1945,10 +1964,29 @@ function DebateRoster({
                       </select>
                     )}
                   </div>
+                  {lensesOffered && worker && (
+                    <div className="workers-menu-model-row">
+                      <input
+                        aria-label={`Lens for seat ${i + 1}`}
+                        className="workers-menu-model-select"
+                        type="text"
+                        placeholder="Lens: what this seat examines first (optional)"
+                        title="An evidence base, never a stance: what this seat is asked to read first and most carefully. It may still reach the answer every other seat reaches. Offered because every seat here is one model family."
+                        value={seat.lens ?? ''}
+                        onChange={(e) => set(i, { lens: e.target.value || null })}
+                      />
+                    </div>
+                  )}
                 </div>
               )
             })}
           </div>
+          {lensesOffered && (
+            <div className="workers-menu-note">
+              One model family in every seat, so a lens per seat is the diversity left to buy: an
+              evidence base to examine first, never a position to hold.
+            </div>
+          )}
         </div>
       )}
     />

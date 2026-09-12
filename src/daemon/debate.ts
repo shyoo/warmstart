@@ -435,6 +435,71 @@ export function citationLine(citations: Citation[]): string | null {
   return `does not resolve in this repository: ${missing.join(', ')}`
 }
 
+// ---------------------------------------------------------------------------- the flip report
+
+export interface FlipReport {
+  /** Paths this round cites that no earlier round of the same seat cited. */
+  newPaths: Citation[]
+  /** How many of this round's citations an earlier round had already made. */
+  repeated: number
+}
+
+/**
+ * ⭐ **The evidence side of a change of position — the half of a flip this tool can establish.**
+ *
+ * Published work on sycophancy in multi-agent debate finds the damage at the *flip*: a seat that
+ * adopts a peer's answer because the peer sounded confident, or because *"they argued it better"*,
+ * rather than because evidence arrived — and finds expressed disagreement decaying round by round
+ * for exactly that reason. Whether a seat changed its mind is not something a deterministic check
+ * can read out of prose. Whether it cited anything it had not cited before **is**: a position
+ * that moved while citing no new path moved on words alone. That is reported here, per seat, per
+ * round, beside the citation report — and like the citation report it is ⛔ **a report, never a
+ * penalty**. A seat may have changed its mind for a reason it did not footnote; what to make of
+ * it is the organizer's judgement, and the change ledger `roundBriefFor` asks for is where the
+ * seat gets to say.
+ *
+ * ⚠️ Null on round 1, where there is nothing to have flipped from.
+ */
+export function flipReport(positions: string[], workspaceRoot: string | null): FlipReport | null {
+  if (positions.length < 2) return null
+  const before = new Set(
+    positions.slice(0, -1).flatMap((p) => citationReport(p, workspaceRoot).map((c) => c.path))
+  )
+  const now = citationReport(positions[positions.length - 1] ?? '', workspaceRoot)
+  const newPaths = now.filter((c) => !before.has(c.path))
+  return { newPaths, repeated: now.length - newPaths.length }
+}
+
+/** The flip report as the line that goes next to a seat's name, or null where there is none. */
+export function flipLine(report: FlipReport | null): string | null {
+  if (!report) return null
+  if (report.newPaths.length === 0) {
+    return (
+      'this round cites no path it had not cited in an earlier round' +
+      (report.repeated > 0 ? ` (${report.repeated} repeated)` : ' (and no path at all)') +
+      ' — a change of position here rests on words alone'
+    )
+  }
+  const listed = report.newPaths.map((c) => (c.exists ? c.path : `${c.path} (does not resolve)`)).join(', ')
+  return `newly cites ${report.newPaths.length} path(s) no earlier round cited: ${listed}`
+}
+
+/**
+ * The confidence a seat stated, as it stated it.
+ *
+ * ⚠️ Text, never a number: seats write `0.85/0.8/0.75`, `~0.8`, `78%` and `high`, and turning any
+ * of those into a figure would be this tool believing something it cannot establish. The prompt
+ * asks for a `Confidence: …` line and that line is preferred; failing one, the first sentence that
+ * mentions confidence is taken, capped so it stays a label.
+ */
+export function statedConfidence(text: string): string | null {
+  const line = /^[ \t>*_`#-]*confidence[*_`]*\s*[:：]\s*(\S[^\n]*)$/im.exec(text)?.[1]
+  const said = line ?? /confiden(?:ce|t)[^\n]*/i.exec(text)?.[0]
+  if (!said) return null
+  const trimmed = said.trim()
+  return trimmed.length > 80 ? `${trimmed.slice(0, 80)}…` : trimmed
+}
+
 // ---------------------------------------------------------------------------- the agreement
 
 export interface Agreement {
@@ -443,6 +508,13 @@ export interface Agreement {
   confidence: string
   unresolved: string
 }
+
+/**
+ * ⚠️ Shorter than "there was none; the seats never contested X" can be written. It is not a
+ * quality bar — nothing here scores an argument — it is the length below which the field is an
+ * emptiness with letters in it.
+ */
+export const MIN_DISSENT_CHARS = 40
 
 /**
  * ⛔ **Four parts, and a reply missing any of them is refused with the reason.**
@@ -471,6 +543,19 @@ export function validateAgreement(input: Partial<Agreement>): { ok: true; agreem
         'the dissent section is empty, and it may never be. Say who disagreed, with what, and on ' +
         'what grounds. If there genuinely was no disagreement, say that here and say what was ' +
         'never contested — an agreement nobody examined is not evidence.'
+    }
+  }
+  // ⛔ A dissent that fits in a breath is the empty one wearing a word. "None", "N/A" and "all
+  //    agreed" are what the refusal above exists to refuse, and they are how it was being passed.
+  //    Whether the dissent *names its evidence* cannot be checked here; that it says something can.
+  if (dissent.length < MIN_DISSENT_CHARS) {
+    return {
+      ok: false,
+      reason:
+        `the dissent section is ${dissent.length} characters, which is not a dissent. Name each seat ` +
+        'that disagreed, what it held, and on what grounds; for every dissent that was withdrawn ' +
+        'during the debate, name the evidence that withdrew it — a seat conceding is not evidence. ' +
+        'If nothing was ever contested, say what was never contested and why that is not agreement.'
     }
   }
   if (!confidence) {
@@ -599,14 +684,64 @@ export function organizerLinesFor(parentTaskId: string): Array<{ round: number; 
 // ---------------------------------------------------------------------------- seat prompts
 
 /**
+ * The seat's lens, when the roster gave it one.
+ *
+ * ⛔ **An evidence base, never a stance.** Published work finds an *assigned* position — a devil's
+ * advocate, a seat told to disagree — degrades accuracy, and that moderate disagreement beats
+ * maximal; what it does not find harmful is seats that examined different evidence. So a lens says
+ * what to read first and most carefully, and says in the same breath that the seat may reach the
+ * answer every other seat reaches. ⚠️ The composer offers lenses only when every seat is one model
+ * family (`adapterSpread === 1`), where prompt-level diversity is the only diversity available;
+ * with two families in the room the roster already bought it. The daemon does not refuse a lens on
+ * a mixed roster — a notice is not a gate — it simply never offers one.
+ */
+function lensParagraph(lens: string | null | undefined): string[] {
+  const text = lens?.trim()
+  if (!text) return []
+  return [
+    `Your lens: ${text}`,
+    '',
+    'That is the evidence you are asked to examine first and most carefully — it is NOT a position ' +
+      'to hold. Reach whatever answer that evidence supports, including the answer you would guess ' +
+      'the other seats reach.',
+    ''
+  ]
+}
+
+/**
+ * How a seat is asked to close its turn.
+ *
+ * ⛔ **The summary IS the position, and the prompt says so against the tool's own hint.**
+ * `task_complete` describes its summary as *"One line: what was done"*, and on t382 (2026-09-12)
+ * two of three seats obeyed the tool over the prompt in both rounds, so the organizer received
+ * three paid runs and one arbitrable position. The peephole net in `landCompletion` recovers what
+ * it can after the fact; the sentence below is what stops the loss at the source.
+ */
+const SEAT_CLOSING =
+  '⛔ Then call the MCP tool `task_complete` with your WHOLE position as the summary — every ' +
+  'paragraph of it, not a one-line report. The tool’s "one line" hint does not apply to a debate ' +
+  'seat: the summary is the only part of what you write that the organizer and the other seats ' +
+  'are guaranteed to read. Do not commit, and do not change anything: this task exists to produce ' +
+  'an argument, not a diff.'
+
+/**
  * What a seat is told on round 1.
  *
  * ⛔ **The prompt must never ask an agent to win.** Published work measures *competitive* framing
  * degrading results by up to 15 percentage points, while collaborative truth-seeking framing with
  * evidence verification beat single-agent self-consistency at a matched token budget. "Debate" is
  * the operator's word for the feature; what the seat is asked for is the most defensible answer.
+ *
+ * ⛔ **And it must never ask an agent to disagree.** Sycophancy is real — strict conformity to a
+ * peer's answer, vacuous peer reasoning adopted as evidence, disagreement that decays round by
+ * round — but the published lever is at the moment a seat *changes* its position, not the stance
+ * it opens with: a forced-dissent rule degrades accuracy the same way a forced win does, and it
+ * would hollow out the `dissent` field `validateAgreement` rests on. So this prompt asks for a
+ * position, a falsification condition and a confidence, and `roundBriefFor` asks what became of
+ * each. t382 (2026-09-12) is where that was decided.
  */
 export function seatPromptFor(parent: Task, index: number, total: number): string {
+  const lens = parent.debate?.seats[index]?.lens
   return [
     `You are one of ${total} agents answering this question independently (you are seat ${index + 1}).`,
     '',
@@ -615,16 +750,18 @@ export function seatPromptFor(parent: Task, index: number, total: number): strin
     'The others cannot see your answer and you cannot see theirs. That is deliberate, and an answer ' +
       'that hedges towards what you imagine they will say is worth nothing.',
     '',
+    ...lensParagraph(lens),
     'Read enough of the repository to be concrete — real paths, real functions. State: the answer ' +
-      'you would defend, the reasoning behind it, what would have to be true for you to be wrong, ' +
-      'and how confident you are.',
+      'you would defend, the reasoning behind it, what would have to be true for you to be wrong ' +
+      '(a specific, checkable condition — a path, a line, a command and its output — not a mood), ' +
+      'and how confident you are, on its own line as `Confidence: …`. That condition is quoted ' +
+      'back to you in every later round and you are asked whether it was met.',
     '',
     '⛔ Cite real paths. Every `path/to/file.ts` you name is checked against this repository before ' +
       'anybody reads your position, and a citation that does not resolve is reported next to your ' +
       'name. It is a report, not a penalty — but a fabricated path is the cheapest lie to catch.',
     '',
-    'Then call the MCP tool `task_complete` with your position as the summary. Do not commit, and ' +
-      'do not change anything: this task exists to produce an argument, not a diff.'
+    SEAT_CLOSING
   ].join('\n')
 }
 
@@ -634,6 +771,15 @@ export function seatPromptFor(parent: Task, index: number, total: number): strin
  * ⛔ **Colleagues, not opponents**, for the reason above. And ⚠️ **do not converge for the sake of
  * converging**: consensus-seeking debaters neglect critical disagreements in order to agree, so an
  * unresolved disagreement recorded honestly is worth more than an agreement nobody believes.
+ *
+ * ⭐ **The seat's own prior position is quoted back, and the seat is asked what became of it.**
+ * Round 1 elicits *what would have to be true for you to be wrong*; until t382 nothing ever asked
+ * whether it happened, so the check only looked like it was happening. Published work on sycophancy
+ * finds the damage at the *flip* — a position changed because a peer sounded confident, not because
+ * evidence arrived — and the deterministic half of the answer is `flipReport`; this is the half the
+ * seat is asked to write: a ledger, per peer, of what it accepted, what it rejected and what it
+ * could not refute but does not believe, each with the evidence. *"They argued it better"* is named
+ * as a non-reason, because it is the one every flip gives.
  *
  * ⚠️ Under `exchange: 'full'` every other seat's position travels verbatim; under `'digest'` the
  * organizer's brief travels alone. That is **data** in `debate_json`, never a branch on seat count.
@@ -646,6 +792,16 @@ export function roundBriefFor(
   round: number
 ): string {
   const parts: string[] = [`Round ${round} of this debate. The organizer's brief for you:`, '', brief]
+  const self = seats[index]
+  const own = self ? lastPositionOf(self) : null
+  parts.push(
+    '',
+    'Your own position from the previous round, verbatim — the one you are revising:',
+    '',
+    own ?? '(no position recorded — this round starts from the question itself)'
+  )
+  const lens = lensParagraph(parent.debate?.seats[index]?.lens)
+  if (lens.length > 0) parts.push('', ...lens.slice(0, -1))
   if (parent.debate?.exchange === 'full') {
     const others = seats
       .map((seat, i) => ({ seat, i }))
@@ -661,11 +817,22 @@ export function roundBriefFor(
       'and say why — changing your mind on evidence is the most valuable thing you can do here. ' +
       'Where you were right and they disagree, say what evidence would settle it.',
     '',
-    '⚠️ Do not converge for the sake of converging: an unresolved disagreement recorded honestly is ' +
-      'worth more than an agreement nobody believes.',
+    '⛔ Before your revised position, write a change ledger, and keep it short:',
+    '  • Your falsification condition — the thing you said would have to be true for you to be ' +
+      'wrong. Has it happened? Quote the path, line or command output that met it or failed it.',
+    '  • For each other seat, one of: AGREE / DISAGREE / NOT REFUTED BUT UNCONVINCED — and for ' +
+      'every position you change, the specific new evidence that changed it. "Seat N argued it ' +
+      'better", "Seat N seemed confident" and "the organizer leaned that way" are not evidence; ' +
+      'a path, a line, a test, a measurement or a document is.',
+    '  • What you retract, if anything, and what you now hold that you did not before.',
     '',
-    'Answer with your revised position and call `task_complete` with it as the summary. Do not ' +
-      'commit and do not change anything.'
+    '⚠️ Do not converge for the sake of converging: an unresolved disagreement recorded honestly is ' +
+      'worth more than an agreement nobody believes. And do not dig in for the sake of digging in: ' +
+      'a position kept against evidence is worth exactly as little.',
+    '',
+    'Answer with the ledger and your revised position, with your confidence on its own line as ' +
+      '`Confidence: …`. ' +
+      SEAT_CLOSING
   )
   return parts.join('\n')
 }

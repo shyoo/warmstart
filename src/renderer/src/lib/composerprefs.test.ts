@@ -227,6 +227,27 @@ describe('what the new-task composer was left set to', () => {
       expect(back.debate.exchange).toBe('digest')
     })
 
+    // ⚠️ A lens is remembered with its seat; the composer decides at filing whether it is offered.
+    it('remembers a seat’s lens and forgets a blank one', () => {
+      const store: Record<string, string> = {}
+      stub(store)
+      writeComposerPrefs({
+        ...DEFAULT_COMPOSER_PREFS,
+        kind: 'debate',
+        debate: {
+          seats: [
+            { workerId: 'w-claude', model: null, effort: null, lens: 'the admission path' },
+            { workerId: 'w-claude', model: null, effort: null, lens: '   ' }
+          ],
+          rounds: 3,
+          exchange: 'full'
+        }
+      })
+      const back = readComposerPrefs()
+      expect(back.debate.seats[0]?.lens).toBe('the admission path')
+      expect(back.debate.seats[1]).not.toHaveProperty('lens')
+    })
+
     // ⛔ The organizer is the debate task itself, pinned by the row's own Worker and Model pills.
     // A second remembered slot for it would be two places holding one answer.
     it('keeps no organizer of its own — that is the task’s own worker pin', () => {

@@ -311,6 +311,12 @@ export interface DebateSeat {
   workerId: string
   model?: string | null
   effort?: string | null
+  /**
+   * An evidence base this seat is asked to examine first — never a stance to hold. Offered by the
+   * composer only when the roster is one model family (`adapterSpread === 1`), where prompt-level
+   * diversity is the only diversity there is; see `seatPromptFor`.
+   */
+  lens?: string | null
 }
 
 /** What each seat reads in round 2 and after. ⚠️ Data in `debate_json`, never a branch on seat count. */
@@ -383,7 +389,8 @@ export function readDebateState(raw: unknown): DebateState | null {
           return {
             workerId: seat.workerId,
             model: typeof seat.model === 'string' && seat.model ? seat.model : null,
-            effort: typeof seat.effort === 'string' && seat.effort ? seat.effort : null
+            effort: typeof seat.effort === 'string' && seat.effort ? seat.effort : null,
+            lens: typeof seat.lens === 'string' && seat.lens.trim() ? seat.lens.trim() : null
           }
         })
         .filter((s): s is DebateSeat => s !== null)
