@@ -129,11 +129,28 @@ jobs:
       - name: List what will be published
         run: ls -la staging
 
-      # ⭐ The honest substitute for a Windows code-signing certificate. This ties every binary to the
-      # exact workflow run and commit that produced it, verifiable by anyone with:
-      #     gh attestation verify <file> --repo ${{ github.repository }}
-      # Free, and it is the same "here is the basis" discipline the cost model applies to numbers.
+      # ⛔ **Attestation needs a public repository, and that is a launch-sequencing fact, not a detail.**
+      # Measured 2026-09-12 on the first run of this workflow (34667784414): the build succeeded and
+      # this step failed with GitHub's own words — *"Failed to persist attestation: Feature not
+      # available for user-owned private repositories. To enable this feature, please make this
+      # repository public."* ⭐ So §4.1's first mitigation for shipping Windows **unsigned** — the
+      # "strongest honest substitute for a code-signing cert" — is not independent of going public:
+      # until the repo is public there is no attestation to offer, only checksums.
+      - name: Can this repository attest?
+        id: attestable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          visibility=$(gh repo view "${{ github.repository }}" --json visibility -q .visibility)
+          echo "visibility=$visibility" >> "$GITHUB_OUTPUT"
+          if [ "$visibility" = "PUBLIC" ]; then echo 'ok=true' >> "$GITHUB_OUTPUT"; else echo 'ok=false' >> "$GITHUB_OUTPUT"; fi
+          echo "repository is $visibility"
+
+      # ⚠️ Skipped rather than tolerated. `continue-on-error` here would let a *genuine* attestation
+      # failure on a public repo pass as though the binaries were attested, and the notes below decide
+      # what to claim from this step's outcome.
       - name: Attest build provenance
+        if: steps.attestable.outputs.ok == 'true'
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: 'staging/*'
@@ -142,17 +159,37 @@ jobs:
         working-directory: staging
         run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
 
+      # ⛔ **The notes claim an attestation only when one was actually made.** A release that says its
+      # binaries carry signed provenance when the step was skipped is the download-page version of a
+      # landing that landed nothing: the same invariant, that every belief carries its basis.
       - name: Write the release notes
+        env:
+          ATTESTED: ${{ steps.attestable.outputs.ok }}
         run: |
           cat > notes.md <<NOTES
           ## Verify your download
 
-          Every artifact is checksummed in \`SHA256SUMS.txt\` and carries a signed build attestation
-          tying it to the commit and workflow run that produced it:
+          Every artifact is checksummed in \`SHA256SUMS.txt\`.
+          NOTES
+          if [ "$ATTESTED" = 'true' ]; then
+            cat >> notes.md <<NOTES
+
+          Each one also carries a signed build attestation tying it to the commit and workflow run that
+          produced it:
 
           \`\`\`bash
           gh attestation verify <file> --repo ${{ github.repository }}
           \`\`\`
+          NOTES
+          else
+            cat >> notes.md <<NOTES
+
+          > ⚠️ **These binaries are not attested.** Build provenance attestation is unavailable on a
+          > private repository, so the checksums above are the only verification offered for this
+          > build. Releases published after this repository goes public carry attestations as well.
+          NOTES
+          fi
+          cat >> notes.md <<NOTES
 
           ## Windows
 
