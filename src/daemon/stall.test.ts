@@ -10,6 +10,8 @@ import {
   parsePosixProcesses,
   parseWindowsProcesses,
   sampleProcessTree,
+  stallConfirmed,
+  STALL_CONFIRM_AFTER_MS,
   type ProcessRow,
   type TreeSample
 } from './stall.js'
@@ -90,6 +92,52 @@ describe('deciding that a silent run is stuck', () => {
     expect(looksStuck(before, after)).toBe(true)
     expect(looksStuck(before, after, { minCpuSeconds: 0.1 })).toBe(false)
     expect(looksStuck(before, after, { minGapMs: 10 * 60_000 })).toBe(false)
+  })
+})
+
+/**
+ * The second verdict — the one the task is parked on.
+ *
+ * ⛔ **Measured, t366 on 2026-09-11.** `agy` backgrounded an `npx tsx -e …` at `WaitMsBeforeAsync:
+ * 5000`, the agent said *"I will check the details once it finishes"*, and then waited on a child that
+ * wrote 0 bytes for **32 minutes** until the operator cancelled. A first verdict had already said so;
+ * nothing read it. ⭐ The owner's call (same day) is that a second flat reading a stall window later
+ * parks the task, so the bar below is the first verdict's arithmetic given twelve more minutes of
+ * rope rather than a new and cleverer test.
+ */
+describe('confirming a stall that has already been reported', () => {
+  it('⭐ confirms the tree that did nothing for the whole window after the report', () => {
+    const reported = sample(0, 0.08)
+    expect(stallConfirmed(reported, sample(STALL_CONFIRM_AFTER_MS, 0.09))).toBe(true)
+  })
+
+  it('⛔ will not confirm before the window is up, so a run is never parked on one reading twice', () => {
+    // The watchdog ticks every 10s and the first verdict needs only 60s of gap. Reusing that here
+    // would park a run twelve minutes after it went quiet, which is the decision that was rejected.
+    const reported = sample(0, 0.08)
+    expect(stallConfirmed(reported, sample(60_000, 0.08))).toBe(false)
+    expect(stallConfirmed(reported, sample(11 * 60_000, 0.08))).toBe(false)
+  })
+
+  it('⚠️ clears a tree that moved at all since the report', () => {
+    // A second of CPU is all it takes. The bar is met by doing nothing whatsoever.
+    const reported = sample(0, 10)
+    expect(stallConfirmed(reported, sample(STALL_CONFIRM_AFTER_MS, 11.5))).toBe(false)
+    expect(stallConfirmed(reported, sample(STALL_CONFIRM_AFTER_MS, 10.5))).toBe(true)
+  })
+
+  it('never confirms a tree that has gone, and takes its thresholds from the caller', () => {
+    const reported = sample(0, 5)
+    // Zero processes is the agent having exited - a different problem with a different owner.
+    expect(stallConfirmed(reported, { at: STALL_CONFIRM_AFTER_MS, cpuSeconds: 0, processes: [] })).toBe(false)
+    const flat = sample(STALL_CONFIRM_AFTER_MS, 5)
+    expect(stallConfirmed(reported, flat)).toBe(true)
+    expect(stallConfirmed(reported, flat, { minGapMs: 30 * 60_000 })).toBe(false)
+    // ⚠️ And the CPU bar is the caller's too: 3s of drift over twelve minutes counts as working by
+    //    default, and as flat where the caller asks for five.
+    const drifted = sample(STALL_CONFIRM_AFTER_MS, 8)
+    expect(stallConfirmed(reported, drifted)).toBe(false)
+    expect(stallConfirmed(reported, drifted, { minCpuSeconds: 5 })).toBe(true)
   })
 })
 

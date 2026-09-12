@@ -14,12 +14,15 @@ import { run } from './spawn.js'
  * never come burns none. Silence plus a flat CPU total over a whole tree is a different claim from
  * silence alone, and it is one that can be checked.
  *
- * ⛔ **Nothing here kills anything, and nothing here changes a task's status.** The verdict is a
- * report: an operator gets told which processes are involved and what they have not been doing, and
- * decides. ⚠️ A run genuinely blocked on the network — a slow API call, a stalled download — also
- * burns no CPU, so this signal is good enough to *ask* a person and nowhere near good enough to act
- * on. The run's own state machine is left strictly alone, which is also why a false positive here
- * cannot corrupt a run that was fine all along.
+ * ⛔ **Nothing in this file kills anything or changes a task's status.** It reads process tables and
+ * does arithmetic; every consequence is the scheduler's. ⚠️ A run genuinely blocked on the network —
+ * a slow API call, a stalled download — also burns no CPU, which is why one verdict is only ever
+ * reported.
+ *
+ * ⭐ **Two verdicts are a different claim, and the owner's call (2026-09-11) is to act on them.** The
+ * first stuck reading is reported and nothing else; if the tree is *still* flat a whole stall window
+ * later, `runWatchdogs` parks the task for a person (`stallConfirmed`). Nothing is killed even then —
+ * parking closes the run as `blocked` and lands, commits and discards nothing.
  */
 
 export interface ProcessRow {
@@ -64,6 +67,42 @@ export function looksStuck(
   if (current.at - previous.at < minGapMs) return false
   if (current.cpuSeconds < previous.cpuSeconds) return false
   return current.cpuSeconds - previous.cpuSeconds < minCpuSeconds
+}
+
+/**
+ * How long after a reported stall the second reading is taken.
+ *
+ * ⚠️ A whole stall window, not the 60s `MIN_SAMPLE_GAP_MS` the first verdict needs. The two readings
+ * are doing different jobs: the first has to be confident enough to *mention*, the second to *act*,
+ * and the cheapest way to buy that confidence is time. A tool call that was going to come back has
+ * twenty-four minutes of total silence to do it in.
+ */
+export const STALL_CONFIRM_AFTER_MS = 12 * 60 * 1000
+
+/**
+ * The second reading, and the one something happens on.
+ *
+ * ⛔ **The same arithmetic as the first verdict, deliberately.** There is no cleverer test available:
+ * what makes this one strong enough to act on is that the tree was already flat for a stall window
+ * when it was reported, has had `STALL_CONFIRM_AFTER_MS` to move since, and still has not. ⚠️ The
+ * baseline must be the *reported* sample rather than the newest one, or a run sampled every minute
+ * would be compared against a minute of its own silence and confirmed far too early.
+ *
+ * ⭐ A tree that used even a second of CPU in that window is not confirmed, and the entry starts over
+ * from the new sample: the bar is met by doing nothing at all, which is what t366's hung `agy` did
+ * for thirty-two minutes and what a compiling test suite never does.
+ */
+export function stallConfirmed(
+  reported: TreeSample,
+  current: TreeSample,
+  opts: { minGapMs?: number; minCpuSeconds?: number } = {}
+): boolean {
+  // ⚠️ Spelled out rather than spread: an `opts` carrying an explicit `undefined` would otherwise
+  // fall all the way back to the 60s first-verdict gap, which is the one value this must not use.
+  return looksStuck(reported, current, {
+    minGapMs: opts.minGapMs ?? STALL_CONFIRM_AFTER_MS,
+    minCpuSeconds: opts.minCpuSeconds ?? MIN_PROGRESS_CPU_SECONDS
+  })
 }
 
 /**

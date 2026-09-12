@@ -128,7 +128,9 @@ import {
   looksStuck,
   quietSince,
   sampleProcessTree,
+  stallConfirmed,
   MIN_SAMPLE_GAP_MS,
+  STALL_CONFIRM_AFTER_MS,
   type TreeSample
 } from './stall.js'
 import { decideFinish, resolveFinishPolicy, type TrunkReading } from './finish.js'
@@ -2173,8 +2175,8 @@ const FINISH_REPLY_AFTER_MS = 3 * 60 * 1000
  *
  * ⚠️ Deliberately not a stall check. It does not ask whether the process is burning CPU, because it
  * is not deciding whether to accuse anybody of being stuck — it is deciding whether to go and read
- * the workspace, which is safe to do to a healthy run and is the whole reason this may act where
- * `reportStall` may not.
+ * the workspace, which is safe to do to a healthy run and is the whole reason this may act on one
+ * reading where a stall needs two.
  */
 export function finishReplyOverdue(askedAt: number, quietSince: number, now = Date.now()): boolean {
   return now - askedAt > FINISH_REPLY_AFTER_MS && now - quietSince > FINISH_REPLY_AFTER_MS
@@ -2494,7 +2496,7 @@ async function runWatchdogs(): Promise<void> {
       continue
     }
 
-    // 3. A stall. ⛔ Reported, never killed - and since 2026-08-29 it can say *why* it thinks so.
+    // 3. A stall. ⛔ Reported once and never killed; parked if a second reading confirms it.
     // ⚠️ `quietSince`, not the request clock alone: on a resumed conversation that clock belongs to
     // the previous run and is hours old, which is how t105 was accused of 947 minutes of silence
     // ninety seconds after it was dispatched.
@@ -2513,7 +2515,7 @@ async function runWatchdogs(): Promise<void> {
       lastActivityAt: lastRequestEvidenceAt(session.id)
     })
     if (!compacting && Date.now() - lastTurn > STALL_AFTER_MS) {
-      await reportStall(task, session, lastTurn)
+      await judgeStall(task, session, lastTurn)
     }
   }
 }
@@ -2528,16 +2530,23 @@ async function runWatchdogs(): Promise<void> {
 const stallWatch = new Map<string, { lastTurn: number; sample: TreeSample | null; reported: boolean }>()
 
 /**
- * Say whether a silent run is stuck or merely slow, once, with the evidence.
+ * Say whether a silent run is stuck or merely slow, with the evidence, and hand it over if it says so
+ * twice.
  *
- * ⛔ **Nothing is stopped and no status is changed.** The signal is good enough to ask a person and
- * not good enough to act on: a run blocked on a slow network call burns no CPU either. Leaving the
- * run's state machine strictly alone is what makes a false positive cost a message rather than a
- * task. ⚠️ The operator's own move — read the tree, decide, kill it — is the one this cannot make
- * for them, and `AGENTS.md` has said since M2 that nothing kills a process it cannot prove is its
- * own.
+ * ⛔ **Nothing is ever killed here.** `AGENTS.md` has said since M2 that the fleet does not kill a
+ * process it cannot prove is its own, and reading a flat CPU total is not that proof. The operator's
+ * own move — read the tree, stop the thing that is holding it — stays theirs.
+ *
+ * ⭐ **The first verdict is a message; the second parks the task** (owner's decision, 2026-09-11,
+ * after t366 sat `running` for 32 minutes on a tool call `agy` had backgrounded and then waited on
+ * forever). One reading is good enough to ask a person and not good enough to act on, because a run
+ * blocked on a slow network call burns no CPU either — but a tree that was flat for a stall window,
+ * was told so, and is still flat `STALL_CONFIRM_AFTER_MS` later has had twenty-four minutes to come
+ * back and has not. ⚠️ What the second verdict buys is bounded deliberately: `parkForHuman` closes the
+ * run as `blocked` and the task rests at `awaiting_human` — nothing is landed, committed, discarded or
+ * graded, and the work is exactly as the agent left it. A false positive costs one reply.
  */
-async function reportStall(task: Task, session: Session, lastTurn: number): Promise<void> {
+async function judgeStall(task: Task, session: Session, lastTurn: number): Promise<void> {
   const minutes = Math.round((Date.now() - lastTurn) / 60000)
   if (!session.pid) {
     log.warn(`t${task.seq} has had no turn for ${minutes}m (no pid recorded, so nothing to measure)`)
@@ -2548,7 +2557,10 @@ async function reportStall(task: Task, session: Session, lastTurn: number): Prom
   // A turn since the last look means the run was working; whatever came before describes a
   // different silence and must not be compared against this one.
   const history = previous && previous.lastTurn === lastTurn ? previous : null
-  if (history?.reported) return
+  if (history?.reported && history.sample) {
+    await confirmStall(task, session, lastTurn, history.sample, minutes)
+    return
+  }
   if (history?.sample && Date.now() - history.sample.at < MIN_SAMPLE_GAP_MS) return
 
   const sample = await sampleProcessTree(session.pid)
@@ -2584,8 +2596,70 @@ async function reportStall(task: Task, session: Session, lastTurn: number): Prom
       `${describeTree(sample)}\n\n` +
       '⚠️ Nothing has been stopped — this is a report, and a run blocked on a slow network call ' +
       'looks the same. If it is stuck, stop the process above that is holding it and this task ' +
-      'will carry on; the fleet will not kill a process it cannot prove is its own.'
+      'will carry on; the fleet will not kill a process it cannot prove is its own. ' +
+      `If the tree is still flat in ${Math.round(STALL_CONFIRM_AFTER_MS / 60000)} minutes the task ` +
+      'will be handed to you rather than left running — still without stopping anything.'
   })
+}
+
+/**
+ * The second reading of a tree that has already been reported, and the hand-over.
+ *
+ * ⛔ **The baseline is the sample the report was written from**, which is what makes this a second
+ * verdict rather than the first one taken again: the run is being asked what it has done since a
+ * person was told it looked stuck.
+ *
+ * ⚠️ An unreadable tree leaves the baseline in place and decides nothing, for the reason the first
+ * verdict has always given — not being able to measure is not evidence. ⭐ And a tree that *has*
+ * moved replaces the baseline, so the clock starts again: a run that burns a second of CPU every ten
+ * minutes is odd, but it is not this.
+ */
+async function confirmStall(
+  task: Task,
+  session: Session,
+  lastTurn: number,
+  reported: TreeSample,
+  minutes: number
+): Promise<void> {
+  if (!session.pid) return
+  if (Date.now() - reported.at < STALL_CONFIRM_AFTER_MS) return
+  const sample = await sampleProcessTree(session.pid)
+  if (!sample) return
+  if (!stallConfirmed(reported, sample)) {
+    stallWatch.set(session.id, { lastTurn, sample, reported: true })
+    log.info(
+      `t${task.seq} still has had no turn for ${minutes}m, but its tree has used ` +
+        `${(sample.cpuSeconds - reported.cpuSeconds).toFixed(1)}s of CPU since the report - not parking it`
+    )
+    return
+  }
+
+  const overMinutes = Math.round((sample.at - reported.at) / 60_000)
+  const gained = sample.cpuSeconds - reported.cpuSeconds
+  const headline =
+    `t${task.seq} is confirmed stuck: no turn for ${minutes}m, and the ${sample.processes.length} ` +
+    `process(es) under it have used ${gained.toFixed(1)}s of CPU in the ${overMinutes}m since it was ` +
+    'reported'
+  log.warn(`${headline} - handing it to a person`)
+  // ⛔ The evidence as its own line, before the hand-over, because `parkForHuman` writes the reason
+  //    and a process table is not a reason. Same shape as the report above, so the two read as one
+  //    thread: what was seen, and then what was decided.
+  addMessage(task.id, 'system', `Confirmed stuck: no turn for ${minutes}m, twice measured`, null, [], {
+    detail: `${headline}. Work burns CPU; a wait on something that will never arrive does not.\n\n${describeTree(sample)}`
+  })
+  // ⚠️ Keyed state dropped: the next run on this session is a different silence, and a baseline from
+  //    this one would accuse it of inheriting the stall.
+  stallWatch.delete(session.id)
+  await parkForHuman(
+    session.id,
+    `It has had no turn for ${minutes} minutes and its process tree has used ${gained.toFixed(1)}s of ` +
+      `CPU in the ${overMinutes} minutes since that was first reported, so it is stuck rather than ` +
+      'slow. Nothing has been landed, committed, discarded or stopped — the work is exactly as the ' +
+      'agent left it, and the processes are still running, because the fleet will not kill a process ' +
+      'it cannot prove is its own. If the one named in the report above is still holding it, stop that ' +
+      'first: replying here starts a new run, and a reply into a session that is genuinely hung goes ' +
+      'nowhere.'
+  )
 }
 
 /**

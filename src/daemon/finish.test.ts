@@ -738,9 +738,9 @@ describe('an agent that was asked to finish and did not answer', () => {
   })
 
   it('waits far less than a stall does, because it accuses nobody', () => {
-    // ⛔ `reportStall` waits 12 minutes and then only speaks. This re-reads the tree and asks
-    //    `decideFinish` again, which is safe to do to a healthy run — so it is allowed to be
-    //    quicker, and is allowed to act at all.
+    // ⛔ A stall waits 12 minutes, then only speaks, and needs a second flat reading 12 minutes
+    //    after that before anything happens. This re-reads the tree and asks `decideFinish` again,
+    //    which is safe to do to a healthy run — so it is allowed to be quicker.
     expect(scheduler.finishReplyOverdue(now - 4 * MIN, now - 4 * MIN, now)).toBe(true)
   })
 })

@@ -155,6 +155,19 @@ silence roughly two minutes old. The same blindness reached `finishReplyOverdue`
 rather than reports: an agent asked to commit answers in one long turn, and a commit taking longer than
 `FINISH_REPLY_AFTER_MS` would have been decided out from under an agent that was doing it.
 
+⭐ **A stall is reported once and acted on twice** (owner's decision, 2026-09-11). The first stuck
+verdict — twelve minutes without a turn, and a process tree that gained under a CPU-second between two
+samples at least a minute apart — writes a thread line and changes nothing, because a run blocked on a
+slow network call looks identical. `STALL_CONFIRM_AFTER_MS` (12 min) later, `confirmStall` samples the
+tree again **against the sample the report was written from**; if it is still flat, the task is handed
+over through the same `parkForHuman` a turn that ended without reporting goes through: the run closes
+as `blocked`, the task rests at `awaiting_human` carrying the evidence, and nothing is landed,
+committed, discarded or graded. ⛔ **Still nothing is killed** — the hung processes are left running,
+because the fleet does not kill a process it cannot prove is its own, so the thread line names the one
+holding it and says to stop that before replying. A tree that moved at all replaces the baseline and
+the confirmation clock starts over, so the cost of a false positive is one reply, and the cost of being
+right is that t366 stops sitting `running` for 32 minutes.
+
 ### The controller loop
 
 `controller.ts` drains a queue of `consults`. Five judgment events (`judgment.ts`): routing,
