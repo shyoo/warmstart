@@ -294,6 +294,24 @@ describe('task.overrideQuota', () => {
     expect(result.task.quotaPreemptWarning).toBeNull()
   })
 
+  it('changes a live compact-capable warning to handoff without overriding quota', async () => {
+    const worker = seedWorker('ClaudeThird')
+    const task = pinnedTask(worker.id, ADAPTER)
+    tasks.setStatus(task.id, 'running', { assignee: worker.id })
+    tasks.setQuotaPreemptWarning(task.id, {
+      trigger: 'window',
+      reason: 'Claude 5h resets soon',
+      preemptAt: Date.now() + 60_000,
+      resumeAt: Date.now() + RESET_IN_MS,
+      action: 'compact',
+      canCompact: true
+    })
+
+    const result = await handlers()['task.overrideQuota']({ id: task.id, preemptionAction: 'handoff' })
+    expect(result.task.quotaPreemptWarning?.action).toBe('handoff')
+    expect(result.task.quotaOverrideUntil).toBeNull()
+  })
+
   it('says so plainly when the grant changes nothing right now', async () => {
     const worker = seedWorker('ClaudeThird')
     seedQuota(worker.id, 5)

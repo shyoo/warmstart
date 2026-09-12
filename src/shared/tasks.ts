@@ -927,6 +927,10 @@ export interface Task {
     reason: string
     preemptAt: number
     resumeAt: number
+    /** The capability-derived action that will run when the countdown expires. */
+    action?: 'compact' | 'handoff'
+    /** True when the live adapter can compact, so the operator may choose either safe action. */
+    canCompact?: boolean
   } | null
   branch: string | null
   /**

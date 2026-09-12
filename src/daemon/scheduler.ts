@@ -1,4 +1,6 @@
 import { sessionEnded } from '@shared/protocol.js'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import type {
   Attachment,
   Project,
@@ -179,6 +181,7 @@ import {
   type ResumeCompaction
 } from './cacheclock.js'
 import {
+  COMPACTION_GRACE_MS,
   compactionInFlight,
   lastCompactionLandedAt,
   noteCompactionAsked,
@@ -2262,16 +2265,19 @@ async function warnBeforeQuotaPreempt(
 
   const existing = current.quotaPreemptWarning
   if (!existing || existing.trigger !== trigger) {
+    const protocol = adapter(session.adapterId).info.policy.wrapUpProtocol
+    const canCompact = protocol === 'compact'
+    const action = canCompact ? 'compact' : 'handoff'
     const preemptAt = trigger === 'window'
       ? Math.min(now + QUOTA_PREEMPT_WARNING_MS, resumeAt)
       : now + QUOTA_PREEMPT_WARNING_MS
     const graceSeconds = Math.max(0, Math.ceil((preemptAt - now) / 1000))
-    setQuotaPreemptWarning(task.id, { trigger, reason, preemptAt, resumeAt })
+    setQuotaPreemptWarning(task.id, { trigger, reason, preemptAt, resumeAt, action, canCompact })
     addMessage(task.id, 'system', `Quota preemption in ${graceSeconds}s unless overridden`, null, [], {
       event: 'quota.preempted',
       detail:
-        `Quota preemption warning: ${reason}. Automatic preemption in ` +
-        `${graceSeconds} seconds unless a person overrides it.`
+        `Quota preemption warning: ${reason}. Automatic ${action} in ` +
+        `${graceSeconds} seconds unless a person changes or overrides it.`
     })
     log.warn(
       `t${task.seq} will be preempted for quota in ${graceSeconds}s ` +
@@ -2290,7 +2296,7 @@ async function warnBeforeQuotaPreempt(
 
   setQuotaPreemptWarning(task.id, null)
   log.warn(`t${task.seq} preempted after its quota override window elapsed (${reason})`)
-  await preempt(task, session, resumeAt, reason)
+  await preempt(task, session, resumeAt, reason, warning.action)
   return true
 }
 
@@ -2756,7 +2762,8 @@ async function preempt(
   task: Task,
   session: Session,
   resumeAt: number,
-  because: string
+  because: string,
+  requestedAction?: 'compact' | 'handoff'
 ): Promise<void> {
   const run = runsFor(task.id).find((r) => !r.endedAt)
   // ⛔ Claimed before anything is sent, and never re-entered. A second wrap-up prompt is not a
@@ -2767,20 +2774,43 @@ async function preempt(
   }
 
   const info = adapter(session.adapterId).info
+  const automaticAction = info.policy.wrapUpProtocol === 'compact' ? 'compact' : 'handoff'
+  const action = requestedAction === 'compact' && info.policy.wrapUpProtocol !== 'compact'
+    ? 'handoff'
+    : (requestedAction ?? automaticAction)
   const minutes = Math.max(1, Math.round((resumeAt - Date.now()) / 60000))
   const budgetLine = info.policy.needsExplicitBudget
     ? `You have roughly ${minutes} minute(s) of window left and no more. `
     : ''
 
-  try {
-    sendPrompt(
-      session.id,
-      `${budgetLine}Wrap up now. Commit anything that compiles on this branch, then call the ` +
-        '`handoff` tool with what you were doing, what is done, and the next step. ' +
-        'Do not start new work.'
-    )
-  } catch (err) {
-    log.warn(`could not send the wrap-up for t${task.seq}:`, err)
+  if (action === 'compact') {
+    try {
+      sendPrompt(session.id, '/compact', [], { housekeeping: true })
+      noteCompactionAsked({
+        sessionId: session.id,
+        taskId: task.id,
+        reason: `quota preemption: ${because}`,
+        preTokens: session.contextTokens
+      })
+      markClockMove(session.id, 'compact', session.tokensSinceCompact)
+    } catch (err) {
+      log.warn(`could not send the preemption compaction for t${task.seq}:`, err)
+    }
+  } else {
+    const handoffFile = existsSync(join(session.cwd, 'HANDOFF.md'))
+    try {
+      sendPrompt(
+        session.id,
+        `${budgetLine}Wrap up now. Commit anything that safely compiles on this branch. ` +
+          (handoffFile
+            ? 'Update HANDOFF.md with what is done, what remains, validation status, and the next step. '
+            : '') +
+          'Then call the `handoff` tool with what you were doing, what is done, validation status, and the next step. ' +
+          'Do not start new work.'
+      )
+    } catch (err) {
+      log.warn(`could not send the wrap-up for t${task.seq}:`, err)
+    }
   }
 
   // ⛔ The evidence, not just the verdict. A run wrapped up for being at the top of its window while
@@ -2800,17 +2830,17 @@ async function preempt(
     task.id,
     'system',
     because === 'runaway'
-      ? 'Preempted: well past its estimate'
-      : `Preempted for quota — resumes ${clockTime(resumeAt)}`,
+      ? `Preempted: ${action === 'compact' ? 'compacting' : 'wrapping up'} — well past its estimate`
+      : `Preempted for quota — ${action === 'compact' ? 'compacting' : 'wrapping up'}, resumes ${clockTime(resumeAt)}`,
     null,
     [],
     {
       event: 'quota.preempted',
       detail:
         because === 'runaway'
-          ? 'This run was well past its estimate and was stopped rather than left spending.'
-          : `Preempted before the quota window closes (${because}). Resuming automatically after the ` +
-            `reset, expected ${new Date(resumeAt).toISOString()}.${shownLine}`
+          ? `This run was well past its estimate and is ${action === 'compact' ? 'compacting' : 'writing a handoff'} before it stops.`
+          : `Preempting before the quota window closes (${because}) by ${action === 'compact' ? 'compacting the conversation' : 'committing and writing a handoff'}. Resuming automatically after the ` +
+             `reset, expected ${new Date(resumeAt).toISOString()}.${shownLine}`
     }
   )
   // ⭐ Go and make the displayed number true. The probe itself is the poller's job and its gates
@@ -2819,8 +2849,16 @@ async function preempt(
     requestUrgentProbe(run?.workerId ?? session.workerId, `a run was preempted here (${because})`)
   }
 
-  // Give the wrap-up a turn to land, then park the task so it resumes itself.
-  setTimeout(() => {
+  // Give the selected protocol time to land, then park the task so it resumes itself. Compaction
+  // closes as soon as its boundary arrives; handoff has no structured completion event, so it uses
+  // the existing bounded grace period.
+  let settled = false
+  let stopWaiting = (): void => {}
+  const park = (landed: boolean): void => {
+    if (settled) return
+    settled = true
+    stopWaiting()
+    clearTimeout(timer)
     void (async () => {
       try {
         // ⚠️ Two minutes is a long time in a fleet. The run may have ended on its own - the agent
@@ -2828,6 +2866,16 @@ async function preempt(
         // since moved on would close a session somebody else's run is now holding.
         const current = run ? runsFor(task.id).find((r) => r.id === run.id) : null
         if (run && (!current || current.endedAt)) return
+        if (action === 'compact' && !landed) {
+          clearClockMove(session.id)
+          addMessage(task.id, 'system', 'Compaction did not land before the wrap-up deadline', null, [], {
+            event: 'compaction',
+            detail: 'The task is still paused safely and the compaction request remains recorded as unlanded.'
+          })
+        }
+        if (action === 'handoff' && !requireTask(task.id).handoffNote) {
+          setTaskHandoff(task.id, 'Preemption closed the session before the agent recorded a handoff. Inspect the branch and workspace before continuing.')
+        }
         if (run) finishRun(run.id, 'preempted', because)
         db()
           .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
@@ -2847,7 +2895,10 @@ async function preempt(
         if (run) preempting.delete(run.id)
       }
     })()
-  }, WRAP_UP_GRACE_MS)
+  }
+  const waitMs = action === 'compact' ? COMPACTION_GRACE_MS : WRAP_UP_GRACE_MS
+  const timer = setTimeout(() => park(false), waitMs)
+  if (action === 'compact') stopWaiting = onCompactionLanded(session.id, () => park(true))
 }
 
 

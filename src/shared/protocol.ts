@@ -1841,7 +1841,7 @@ export interface RpcMap {
    * reading as though it had unstuck something.
    */
   'task.overrideQuota': {
-    params: { id: string; until?: number | null }
+    params: { id: string; until?: number | null; preemptionAction?: 'compact' | 'handoff' }
     result: { task: Task; until: number | null; applies: boolean; reason: string }
   }
   /**

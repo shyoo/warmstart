@@ -34,7 +34,7 @@ const ESTIMATE = 100_000
 let seq = 0
 
 /** A session row written straight to the store: no CLI is installed in a unit test and none is needed. */
-function seedSession(workerId: string): string {
+function seedSession(workerId: string, adapterId = 'openai-compatible'): string {
   seq += 1
   const id = `5e551011-0000-4000-8000-${String(seq).padStart(12, '0')}`
   db.db()
@@ -43,7 +43,7 @@ function seedSession(workerId: string): string {
                              tokens_since_compact)
        values (?,?,?,?,?,?,?,?,0)`
     )
-    .run(id, workerId, 'openai-compatible', 'stream', dir, 'live', 'work', Date.now())
+    .run(id, workerId, adapterId, 'stream', dir, 'live', 'work', Date.now())
   return id
 }
 
@@ -51,9 +51,9 @@ function seedSession(workerId: string): string {
  * ⚠️ `enabled: false` on every worker here. Nothing in this file should dispatch, and `tick()` — which
  * these tests call directly — is the thing that dispatches.
  */
-function seedWorker(): string {
+function seedWorker(adapterId = 'openai-compatible'): string {
   seq += 1
-  return workers.createWorker({ adapterId: 'openai-compatible', label: `w${seq}`, enabled: false }).id
+  return workers.createWorker({ adapterId, label: `w${seq}`, enabled: false }).id
 }
 
 /** History, so `overrunFactor` has something to divide by. Without it a run cannot be a runaway. */
@@ -74,9 +74,9 @@ function seedHistory(): void {
 }
 
 /** A live run that has already spent well past `RUNAWAY_FACTOR` times the estimate above. */
-function seedRunawayTask(spend = ESTIMATE * 4) {
-  const workerId = seedWorker()
-  const sessionId = seedSession(workerId)
+function seedRunawayTask(spend = ESTIMATE * 4, adapterId = 'openai-compatible') {
+  const workerId = seedWorker(adapterId)
+  const sessionId = seedSession(workerId, adapterId)
   const task = tasks.createTask({ title: 'a run that will not stop', createdBy: { kind: 'human' } })
   const run = tasks.startRun({
     taskId: task.id,
@@ -250,6 +250,8 @@ describe('the switches that gate all of this', () => {
     await scheduler.tick()
     const warning = tasks.requireTask(task.id).quotaPreemptWarning
     expect(warning?.trigger).toBe('window')
+    expect(warning?.action).toBe('handoff')
+    expect(warning?.canCompact).toBe(false)
     expect(warning?.preemptAt).toBe(Date.now() + scheduler.QUOTA_PREEMPT_WARNING_MS)
     expect(wrapUpsOn(task.id)).toBe(0)
 
@@ -266,6 +268,17 @@ describe('the switches that gate all of this', () => {
     // carries it and resumes itself. Nobody has to come back and press anything.
     expect(tasks.getTask(task.id)?.status).toBe('paused_quota')
     expect(tasks.getTask(task.id)?.notBefore).not.toBeNull()
+  })
+
+  it('defaults a compact-capable worker to compact while still offering handoff', async () => {
+    const { task, run } = seedRunawayTask(0, 'claude-code')
+    seedClosingWindow(tasks.requireRun(run.id).workerId)
+
+    await scheduler.tick()
+
+    const warning = tasks.requireTask(task.id).quotaPreemptWarning
+    expect(warning?.action).toBe('compact')
+    expect(warning?.canCompact).toBe(true)
   })
 
   it('lets a person override during the warning without losing the running session', async () => {

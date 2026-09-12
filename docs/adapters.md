@@ -323,6 +323,11 @@ behaviour falls out of it:
 - **`manualCompact: false`** → cache-clock moves 4 and 5 are unavailable, and `wrapUpProtocol` is
   `handoff`. M5 also found the hole this left: a reserve breach on a no-compact adapter used to fall
   through and do *nothing* — the one case the reserve exists to catch. It now hands off and closes.
+- **`wrapUpProtocol`** → quota preemption uses the adapter's declared safe exit: `compact` sends
+  `/compact`, records the ask and waits up to five minutes for a boundary; `handoff` asks the agent
+  to commit safe work, update `HANDOFF.md` when present, and record the structured handoff before a
+  two-minute deadline. The operator may choose handoff instead during the warning, but cannot choose
+  a compaction the adapter does not support.
 - **`canPriceCache(): false`** → the clock declines to spend on keepalive or compaction at all,
   rather than acting on an invented number. Google bills cache *storage per token-hour*; OpenAI
   caches server-side with no client-controlled TTL. Neither is a lever of the shape the clock pulls.

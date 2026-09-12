@@ -111,6 +111,16 @@ export function QuotaDecide({
     }
   }
 
+  const handlePreemptionAction = async (action: 'compact' | 'handoff') => {
+    setBusy(true)
+    try {
+      await rpc('task.overrideQuota', { id: task.id, preemptionAction: action })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const handleReassign = async () => {
     setBusy(true)
     try {
@@ -154,7 +164,7 @@ export function QuotaDecide({
           {live
             ? `Overridden for ${duration((task.quotaOverrideUntil ?? 0) - now)}`
             : warning
-              ? `Preempts in ${duration(Math.max(0, warning.preemptAt - now))}: ${warning.reason}`
+              ? `${warning.action === 'compact' ? 'Compacts' : 'Hands off'} in ${duration(Math.max(0, warning.preemptAt - now))}: ${warning.reason}`
               : holdLine(task, now) || task.holdReason || 'Account is past quota watermark'}
         </span>
       </div>
@@ -177,6 +187,31 @@ export function QuotaDecide({
         </div>
       ) : (
         <>
+          {warning?.canCompact && (
+            <div className="decide-option">
+              <button
+                type="button"
+                className={warning.action === 'compact' ? 'btn btn--primary' : 'btn'}
+                disabled={busy || warning.action === 'compact'}
+                onClick={() => void handlePreemptionAction('compact')}
+              >
+                Compact & pause
+              </button>{' '}
+              <button
+                type="button"
+                className={warning.action === 'handoff' ? 'btn btn--primary' : 'btn'}
+                disabled={busy || warning.action === 'handoff'}
+                onClick={() => void handlePreemptionAction('handoff')}
+              >
+                Hand off & pause
+              </button>
+              <span className="decide-what">
+                <strong>Choose the wrap-up.</strong> Compact preserves this conversation for its next run;
+                handoff commits safe work and prepares another agent to continue. The highlighted action
+                happens when the countdown expires.
+              </span>
+            </div>
+          )}
           <div className="decide-option">
             <button
               type="button"
@@ -984,6 +1019,16 @@ export function QuotaOverride({
     }
   }
 
+  const choose = async (action: 'compact' | 'handoff'): Promise<void> => {
+    setBusy(true)
+    try {
+      await rpc('task.overrideQuota', { id: task.id, preemptionAction: action })
+      if (onChanged) await onChanged()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <Fact label="quota gate">
       {live ? (
@@ -996,9 +1041,30 @@ export function QuotaOverride({
       ) : (
         <>
           {warning && (
-            <span className="quota-countdown">
-              Preempts in {duration(Math.max(0, warning.preemptAt - now))}: {warning.reason}.{' '}
-            </span>
+            <>
+              <span className="quota-countdown">
+                {warning.action === 'compact' ? 'Compacts' : 'Hands off'} in{' '}
+                {duration(Math.max(0, warning.preemptAt - now))}: {warning.reason}.{' '}
+              </span>
+              {warning.canCompact && (
+                <>
+                  <button
+                    className={warning.action === 'compact' ? 'btn btn--active' : 'btn'}
+                    disabled={busy || warning.action === 'compact'}
+                    onClick={() => void choose('compact')}
+                  >
+                    Compact & pause
+                  </button>{' '}
+                  <button
+                    className={warning.action === 'handoff' ? 'btn btn--active' : 'btn'}
+                    disabled={busy || warning.action === 'handoff'}
+                    onClick={() => void choose('handoff')}
+                  >
+                    Hand off & pause
+                  </button>{' '}
+                </>
+              )}
+            </>
           )}
           <button
             className="btn btn--warn"

@@ -9,7 +9,7 @@ import { lastQuota, windowExpired } from '../quota.js'
 import { getSession } from '../sessions.js'
 import { getProject, policyFor, requireProject } from '../projects.js'
 import { retireStrandedBranch } from '../worktrees.js'
-import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, setHoldReason, setQuotaOverride, runsFor, setTaskStatsExcluded, updateTask } from '../tasks.js'
+import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, setHoldReason, setQuotaOverride, setQuotaPreemptWarning, runsFor, setTaskStatsExcluded, updateTask } from '../tasks.js'
 import { taskCommits } from '../taskcommits.js'
 import { cancelTask, deleteBlockers, deleteTask, restoreTask, resumeTask } from '../cancel.js'
 import { addRule, answerApproval, listRules, openApprovals, removeRule, requestApproval } from '../approvals.js'
@@ -414,6 +414,23 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
      */
     'task.overrideQuota': (p) => {
       const before = requireTask(p.id)
+      if (p.preemptionAction) {
+        const warning = before.quotaPreemptWarning
+        if (!warning || before.status !== 'running') {
+          throw new Error('this task has no live preemption decision')
+        }
+        if (p.preemptionAction === 'compact' && !warning.canCompact) {
+          throw new Error('this worker cannot compact its conversation')
+        }
+        const task = setQuotaPreemptWarning(p.id, { ...warning, action: p.preemptionAction })
+        log.info(`t${task.seq}: preemption action changed by hand to ${p.preemptionAction}`)
+        return {
+          task,
+          until: warning.resumeAt,
+          applies: true,
+          reason: `will ${p.preemptionAction} when the preemption countdown expires`
+        }
+      }
       if ('until' in p && p.until === null) {
         return {
           task: setQuotaOverride(p.id, null),
