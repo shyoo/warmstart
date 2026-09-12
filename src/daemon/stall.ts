@@ -78,6 +78,26 @@ export function looksStuck(
  * ⭐ A landed compaction counts as a turn, because it is one: the boundary is proof the session did
  * the expensive work it was asked to do, whatever the request clock says.
  *
+ * ⛔ **And a turn that has not ended yet is still a turn.** `lastRequestStartedAt` is written when a
+ * turn *ends*, so on an adapter that takes one prompt and then works — `streamPrompts: 'once'`, and
+ * the stream-metered ones in general — it does not move for the whole of a long agentic turn, however
+ * many model calls that turn makes. The clock the fleet already keeps for exactly this,
+ * `lastActivityAt` (`lastRequestEvidenceAt`, stamped by every mid-turn stream record and read by
+ * `touchCacheClock`), is the missing input: without it this function dates the silence from the run's
+ * dispatch and the number it hands a report is not the silence, it is the run's age.
+ *
+ * ⚠️ **Measured, t366 on 2026-09-11.** An `antigravity-cli` run worked for twelve minutes — 60 steps
+ * and nine model responses in its conversation — and recorded **no turn at all**, because `agy`
+ * reports usage per model call into an accumulator and only writes a turn on its terminal `result`.
+ * The watchdog therefore announced *"no turn for 12m"* about a run that was working (its CPU check,
+ * which is the half that does not depend on this clock, said so and held the report back), and when
+ * the agent really did hang minutes later it announced *"no turn for 13m"* for a silence that was
+ * about two minutes old. Both numbers came from this function having nothing newer than the dispatch
+ * to read.
+ *
+ * ⚠️ In memory, so a daemon restart loses it and this falls back to the durable clock. That is the
+ * safe direction: the floor is gone, not wrong.
+ *
  * ⚠️ The floors only ever move the start of the silence *forward*, so this cannot hide a genuine
  * stall - a run that has been open and quiet for twenty minutes still reads as twenty minutes.
  */
@@ -90,11 +110,17 @@ export function quietSince(inputs: {
   runStartedAt?: number | null
   /** When this session last finished compacting, if ever. */
   compactionLandedAt?: number | null
+  /**
+   * The newest mid-turn evidence that a model request was under way, or null where there is none —
+   * a PTY session, a session this daemon did not start, or a turn that has produced nothing yet.
+   */
+  lastActivityAt?: number | null
 }): number {
   return Math.max(
     inputs.lastRequestStartedAt ?? inputs.sessionStartedAt,
     inputs.runStartedAt ?? 0,
-    inputs.compactionLandedAt ?? 0
+    inputs.compactionLandedAt ?? 0,
+    inputs.lastActivityAt ?? 0
   )
 }
 

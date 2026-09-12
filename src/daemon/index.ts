@@ -40,7 +40,7 @@ import {
 } from './transcript.js'
 import { log, onLog } from './log.js'
 import { setEventSink } from './events.js'
-import { forgetStreamUsage, noteStepUsage, takeTurnUsage } from './streamusage.js'
+import { forgetStreamUsage, noteStepUsage, takeTurnUsage, takeUnfinishedTurn } from './streamusage.js'
 import { onShutdownRequest } from './lifecycle.js'
 import { noteActivity } from './activity.js'
 import { onSettingChange } from './settings.js'
@@ -213,6 +213,17 @@ async function main(): Promise<void> {
     },
     onExit(sessionId, exitCode) {
       const finished = getSession(sessionId)
+      // ⛔ **Before the run is closed, because a closed run takes no credit.** A session stopped
+      // mid-turn has per-call usage sitting in the accumulator that no terminal record will ever come
+      // to collect, and `forgetStreamUsage` below used to throw it away: t366 (2026-09-11) spent 47
+      // minutes and nine model responses on `antigravity-cli` and its run reads `0 in / 0 out`, priced
+      // *"no reading"*. ⚠️ `onSessionExit` calls `finishRun`, and `creditTurn` only finds an **open**
+      // run, so this has to go first. It cannot double-count: the accumulator is empty unless the
+      // turn was cut off. See `takeUnfinishedTurn`.
+      const cutOff = finished ? takeUnfinishedTurn(sessionId) : null
+      if (finished && cutOff) {
+        creditStreamTurn(finished, cutOff.usage, cutOff.contextTokens ?? undefined)
+      }
       if (finished) void onSessionExit(finished, exitCode)
       // One last pass: the final turn is often written after the process is already gone.
       const tailer = tailers.get(sessionId)

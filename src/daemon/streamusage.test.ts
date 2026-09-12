@@ -8,7 +8,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { StreamUsage } from './stream.js'
-import { forgetStreamUsage, noteStepUsage, takeTurnUsage } from './streamusage.js'
+import { forgetStreamUsage, noteStepUsage, takeTurnUsage, takeUnfinishedTurn } from './streamusage.js'
 
 const SESSION = 'aaaaaaaa-0000-4000-8000-00000000beef'
 
@@ -80,6 +80,35 @@ describe('the accumulator does not leak between turns or sessions', () => {
     noteStepUsage(SESSION, usage(1_234))
     forgetStreamUsage(SESSION)
     expect(takeTurnUsage(SESSION, usage(42)).usage.input).toBe(42)
+  })
+
+  /**
+   * ⛔ **t366, 2026-09-11.** A 47-minute `antigravity-cli` run with nine model responses in its
+   * conversation was stopped mid-turn, so no terminal record ever arrived and `forgetStreamUsage`
+   * dropped the whole accumulator: the run reads `0 in / 0 out / 0 cached` and prices as *no reading*.
+   * ⚠️ What it spent was known all along — the per-call records had already been counted.
+   */
+  it('⭐ hands back what a turn had already spent when it was cut off', () => {
+    noteStepUsage(SESSION, usage(14_687, 181, 90_000))
+    noteStepUsage(SESSION, usage(14_947, 125, 120_000))
+    const cutOff = takeUnfinishedTurn(SESSION)
+    expect(cutOff?.usage.input).toBe(29_634)
+    expect(cutOff?.usage.output).toBe(306)
+    expect(cutOff?.usage.cacheRead).toBe(210_000)
+    // The window was as full as the last call made it, exactly as for a turn that finished.
+    expect(cutOff?.contextTokens).toBe(134_947)
+  })
+
+  it('⛔ has nothing to hand back once a terminal record has taken it, so nothing is billed twice', () => {
+    noteStepUsage(SESSION, usage(1_000))
+    expect(takeTurnUsage(SESSION, usage(1_000)).usage.input).toBe(1_000)
+    expect(takeUnfinishedTurn(SESSION)).toBeNull()
+  })
+
+  it('⚠️ answers null rather than zeroes for a run that never reported a call', () => {
+    // A session that exited before its first model call, and every adapter that reports usage only
+    // in its terminal record: there is nothing to credit and nothing to say.
+    expect(takeUnfinishedTurn(SESSION)).toBeNull()
   })
 
   it('keeps one session’s calls out of another’s turn', () => {

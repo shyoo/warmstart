@@ -108,6 +108,7 @@ import {
   getSession,
   hasOpenRun,
   invalidateSessionContext,
+  lastRequestEvidenceAt,
   markClockMove,
   noteCurrentBranch,
   reopenable,
@@ -2306,7 +2307,17 @@ async function runWatchdogs(): Promise<void> {
     // never discarded, never swept into a commit nobody wrote. And it cannot loop, because
     // `finish_asked_at` is set by now, so the second decision is never `ask-agent` again.
     if (task.finishAskedAt !== null && !compacting) {
-      if (finishReplyOverdue(task.finishAskedAt, session.lastRequestStartedAt ?? session.startedAt)) {
+      // ⛔ The same blindness as the stall clock below, and here it decides rather than reports: an
+      // agent asked to commit answers with *one long turn*, and on an adapter that writes no turn
+      // until that turn ends `lastRequestStartedAt` cannot say a call is in flight. A commit that
+      // takes longer than three minutes would be decided out from under an agent that was doing it.
+      // `lastRequestEvidenceAt` is the mid-turn half of the same question.
+      const quietForFinish = quietSince({
+        lastRequestStartedAt: session.lastRequestStartedAt,
+        sessionStartedAt: session.startedAt,
+        lastActivityAt: lastRequestEvidenceAt(session.id)
+      })
+      if (finishReplyOverdue(task.finishAskedAt, quietForFinish)) {
         log.warn(
           `t${task.seq} was asked to finish ${Math.round((Date.now() - task.finishAskedAt) / 60000)}m ` +
             'ago and has not reported since; deciding it from the workspace instead'
@@ -2338,7 +2349,11 @@ async function runWatchdogs(): Promise<void> {
         lastRequestStartedAt: session.lastRequestStartedAt,
         sessionStartedAt: session.startedAt,
         runStartedAt: run.startedAt,
-        compactionLandedAt: lastCompactionLandedAt(session.id)
+        compactionLandedAt: lastCompactionLandedAt(session.id),
+        // ⚠️ Here it can only ever delay the hand-over, and that is the correct direction: the record
+        // that proved the turn ended is excluded from this clock (`NO_REQUEST_EVIDENCE`), so anything
+        // it does see arrived *after* that — a session that has started talking again.
+        lastActivityAt: lastRequestEvidenceAt(session.id)
       })
       if (idleTurnOverdue(idle.at, quiet)) {
         const minutes = Math.round((Date.now() - idle.at) / 60000)
@@ -2483,11 +2498,19 @@ async function runWatchdogs(): Promise<void> {
     // ⚠️ `quietSince`, not the request clock alone: on a resumed conversation that clock belongs to
     // the previous run and is hours old, which is how t105 was accused of 947 minutes of silence
     // ninety seconds after it was dispatched.
+    //
+    // ⛔ **And `lastRequestEvidenceAt`, because a turn that has not ended has written no clock.** On
+    // an adapter that takes one prompt and then works, `lastRequestStartedAt` does not move until the
+    // turn is over, so this read the run's age and called it silence — t366, 2026-09-11: *"no turn for
+    // 12m"* about a run with nine model responses behind it, and then *"no turn for 13m"* for a
+    // silence two minutes old. The CPU half of the verdict is what kept the first of those from being
+    // reported; this is the half that makes the number true.
     const lastTurn = quietSince({
       lastRequestStartedAt: session.lastRequestStartedAt,
       sessionStartedAt: session.startedAt,
       runStartedAt: run.startedAt,
-      compactionLandedAt: lastCompactionLandedAt(session.id)
+      compactionLandedAt: lastCompactionLandedAt(session.id),
+      lastActivityAt: lastRequestEvidenceAt(session.id)
     })
     if (!compacting && Date.now() - lastTurn > STALL_AFTER_MS) {
       await reportStall(task, session, lastTurn)

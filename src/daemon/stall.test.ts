@@ -377,4 +377,43 @@ describe('where the stall clock starts', () => {
     expect(quiet).toBe(lastRequest)
     expect(now - quiet).toBeGreaterThan(12 * 60_000)
   })
+
+  /**
+   * ⛔ **t366, 2026-09-11, and it is the same class of error as t105: arithmetic on the wrong
+   * premise.** An `antigravity-cli` run worked for twelve minutes — 60 steps and nine model responses
+   * in its conversation db — and recorded **no turn**, because `agy` reports usage per model call into
+   * `streamusage.ts`'s accumulator and only writes a turn on its terminal `result`. So
+   * `lastRequestStartedAt` was null for the whole of it, this function fell through to the run's
+   * dispatch, and the watchdog announced *"no turn for 12m"* about a run that was working and then
+   * *"no turn for 13m"* about a silence two minutes old. ⚠️ `lastActivityAt` is the clock the cache
+   * already trusted for the identical reason (t224, `touchCacheClock`); it was simply never read here.
+   */
+  it('⭐ counts a mid-turn model call as a turn, because a turn that has not ended is still one', () => {
+    const call = now - 90_000
+    const quiet = quietSince({
+      // Twelve minutes in, with no turn ever recorded: exactly t366's reading.
+      lastRequestStartedAt: null,
+      sessionStartedAt: now - 12 * 60_000,
+      runStartedAt: now - 12 * 60_000,
+      lastActivityAt: call
+    })
+    expect(quiet).toBe(call)
+    expect(now - quiet).toBeLessThan(12 * 60_000)
+  })
+
+  it('ignores mid-turn evidence that is absent or older than the turn clock', () => {
+    const lastRequest = now - 20 * 60_000
+    // Null is what a PTY session, or the far side of a daemon restart, hands over.
+    expect(
+      quietSince({ lastRequestStartedAt: lastRequest, sessionStartedAt: now - 60 * 60_000, lastActivityAt: null })
+    ).toBe(lastRequest)
+    // ⛔ And it is a floor, never an override: stale evidence cannot un-silence a quiet run.
+    expect(
+      quietSince({
+        lastRequestStartedAt: lastRequest,
+        sessionStartedAt: now - 60 * 60_000,
+        lastActivityAt: now - 50 * 60_000
+      })
+    ).toBe(lastRequest)
+  })
 })

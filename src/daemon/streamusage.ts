@@ -93,6 +93,30 @@ export function takeTurnUsage(sessionId: string, final: StreamUsage): TurnUsage 
   return { usage: acc.total, contextTokens: acc.lastContext }
 }
 
+/**
+ * What a run that never reached its terminal record had already spent, or null if nothing.
+ *
+ * ⛔ **A turn that was cut off still cost what its calls cost.** `takeTurnUsage` is reached from the
+ * terminal `usage` record, so a run stopped mid-turn — cancelled, preempted, or killed by a person
+ * who decided it was stuck — used to hand its whole accumulator to `forgetStreamUsage` and bill
+ * nothing. ⚠️ Measured on t366, 2026-09-11: 47 minutes on `antigravity-cli`, nine model responses in
+ * the conversation, and the run reads `0 in / 0 out / 0 cached` with its price *"no reading"*. Zero is
+ * not what it cost, and a fleet that prices its own history cannot learn from a row that says so.
+ *
+ * ⛔ **It cannot double-count, by construction.** The accumulator exists only while no terminal
+ * record has consumed it, and consuming it here deletes it too. A run that ended normally has nothing
+ * left for this to find, which is why it returns null rather than zeroes.
+ *
+ * ⚠️ `contextTokens` is the last call's prompt size, exactly as in a completed turn: the window was
+ * that full when the process went away, whatever the turn went on to do.
+ */
+export function takeUnfinishedTurn(sessionId: string): TurnUsage | null {
+  const acc = perSession.get(sessionId)
+  if (!acc || acc.calls === 0) return null
+  perSession.delete(sessionId)
+  return { usage: acc.total, contextTokens: acc.lastContext }
+}
+
 /** Drop a session's part-built run. Called when the process exits without a terminal record. */
 export function forgetStreamUsage(sessionId: string): void {
   perSession.delete(sessionId)

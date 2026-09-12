@@ -132,6 +132,29 @@ runCacheClock()         after dispatch, so a session just chosen counts as move 
 ⚠️ The tick logs only when its conclusion *changes*. A loop running every ten seconds forever would
 otherwise push a day of real events out of the buffer inside six hours.
 
+### What the watchdogs read as silence
+
+⛔ **Every watchdog that judges a quiet run goes through `quietSince` (`stall.ts`), and the clock it
+used to read only ticks when a turn *ends*.** `last_request_started_at` is written by `recordTurn` /
+`creditStreamTurn`, so on an adapter that takes one prompt and then works for as long as the task
+needs — `streamPrompts: 'once'`, and stream-metered ones generally — it does not move for the whole of
+a long agentic turn. `quietSince` therefore fell through to its floors and dated the silence from the
+run's dispatch: the number in the report was the run's **age**, not its silence.
+
+⭐ **The missing input was a clock the fleet already kept.** `lastActivityAt`
+(`lastRequestEvidenceAt`, stamped by every mid-turn stream record that is not `init` / `usage` /
+`result`) is what `touchCacheClock` has read since t224 for the identical reason. `quietSince` now
+takes it as one more floor, so it can only ever move the start of the silence *forward* — a genuinely
+quiet run still reads as quiet. ⚠️ In memory: across a daemon restart the floor is absent, not wrong.
+
+⚠️ **Measured on t366, 2026-09-11**, an `antigravity-cli` run: 60 steps and nine model responses in
+its conversation, **no turn recorded at all** (`agy` writes one only on its terminal `result`), so the
+stall watchdog announced *"no turn for 12m"* about a run that was working — its CPU check, the half
+that does not read this clock, is what held the report back — and then *"no turn for 13m"* about a
+silence roughly two minutes old. The same blindness reached `finishReplyOverdue`, where it **decides**
+rather than reports: an agent asked to commit answers in one long turn, and a commit taking longer than
+`FINISH_REPLY_AFTER_MS` would have been decided out from under an agent that was doing it.
+
 ### The controller loop
 
 `controller.ts` drains a queue of `consults`. Five judgment events (`judgment.ts`): routing,
