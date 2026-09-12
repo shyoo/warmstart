@@ -162,15 +162,19 @@ export function Controller(_props: { now: number }): React.JSX.Element {
           ) : (
             messages.map((m) => (
               <div key={m.id} className={`msg msg--${m.role} msg--${bubbleSide(m.role)}`}>
-                <div className="msg-bubble">
-                  <span className="msg-text">{m.text}</span>
-                  {/* The same clock the task thread carries: a conversation held across a working
-                      day cannot be read without one. */}
+                <div className="msg-body">
+                  <div className="msg-bubble">
+                    <span className="msg-text">{m.text}</span>
+                  </div>
+                  {/* The same clock the task thread carries, under the bubble as it is there: a
+                      conversation held across a working day cannot be read without one. */}
                   <span className="msg-meta">
-                    {m.role === 'controller' && m.workerLabel ? m.workerLabel : ''}
                     <span className="msg-when" title={new Date(m.ts).toLocaleString()}>
                       {when(m.ts)}
                     </span>
+                    {m.role === 'controller' && m.workerLabel ? (
+                      <span className="dim">{m.workerLabel}</span>
+                    ) : null}
                   </span>
                 </div>
               </div>

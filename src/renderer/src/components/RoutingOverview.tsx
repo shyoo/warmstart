@@ -124,7 +124,7 @@ export function RoutingOverview(): React.JSX.Element {
           that did the morning&rsquo;s work is at 78 % of its five-hour window and 61 % of its
           seven-day one; the second Claude account reset an hour ago; the Codex account has plenty of
           headroom but has never touched this repository. Two tasks are waiting: a rename across four
-          files, and a schema migration that has to land tonight. The operator now has to answer, for
+          files, and a schema migration that has to land tonight. The developer now has to answer, for
           each of them, a series of questions that nothing on any vendor&rsquo;s dashboard answers
           directly:
         </p>
@@ -137,7 +137,7 @@ export function RoutingOverview(): React.JSX.Element {
           <li>
             <strong>Which model, at which effort?</strong> The rename does not need the dearest model
             and the migration might; but the price gap between two models on the same subscription is
-            not a number the operator was ever shown, and a benchmark that ranks them was measured on
+            not a number the developer was ever shown, and a benchmark that ranks them was measured on
             somebody else&rsquo;s code.
           </li>
           <li>
@@ -154,7 +154,7 @@ export function RoutingOverview(): React.JSX.Element {
             conversation alive costs about 30k tokens an hour; compacting it costs about 58k once and
             1.2k an hour after; letting it lapse and resuming costs 600k. Compaction overtakes
             keepalive at roughly two hours of expected idleness (<em>docs/cost-model.md</em> §3) — but
-            the operator does not know when the next task will arrive, and the quota to pay for the
+            the developer does not know when the next task will arrive, and the quota to pay for the
             compaction has to be there when it does.
           </li>
           <li>
@@ -166,10 +166,10 @@ export function RoutingOverview(): React.JSX.Element {
         <p className="panel-sub">
           None of these questions is hard in isolation. What makes them hard is that they recur on
           every task, that the answer to each depends on the others, that the inputs change by the
-          minute, and that the person answering them is trying to do something else. An operator who
+          minute, and that the person answering them is trying to do something else. A developer who
           answers them by hand answers them late, from stale numbers, and with a rule of thumb that
           was right last week. The routing model exists so that they are answered every ten seconds,
-          from the current numbers, for no tokens, and so that the operator can go back to the work.
+          from the current numbers, for no tokens, and so that the developer can go back to the work.
         </p>
       </section>
 

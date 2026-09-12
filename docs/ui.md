@@ -143,7 +143,7 @@ line. ⛔ Neither reaches a warm session — see [`sessions.md`](sessions.md) �
 too, because a setting whose effect is *sometimes* is one an operator will otherwise test by watching
 a follow-up and conclude is broken.
 
-⛔ **A thread message renders as a chat bubble, and who wrote it decides how its text is read.** Human bubbles sit right; agent, controller and darker system bubbles sit left, with no role column (`lib/threadbubble.ts`). Under each bubble a meta line carries the time, a `📋 1,475` `PromptChip` on the last answer of the run that prompt produced (`promptMessageId`; on the live bubble until there is one) which opens the prompt in a dialog, and ⓘ for a system line's `detail`. Intermediate activity is a `⚙ n steps` chip. ⛔ No full-width *"Prompt sent for run …"* rows, anywhere in the thread. Every message this
+⛔ **A thread message renders as a chat bubble, and who wrote it decides how its text is read.** Human bubbles sit right; agent, controller and darker system bubbles sit left, with no role column (`lib/threadbubble.ts`). Under each bubble — outside it, on the bubble's own side (`.msg-body` stacks the two; t374 took the clock out of the bubble, t378 put it back beneath) — a meta line carries the time, a `📋 1,475` `PromptChip` on the last answer of the run that prompt produced (`promptMessageId`; on the live bubble until there is one) which opens the prompt in a dialog, and ⓘ for a system line's `detail`. Intermediate activity is a `⚙ n steps` chip. ⛔ No full-width *"Prompt sent for run …"* rows, anywhere in the thread. Every message this
 codebase writes names refs, branches, shas and files in backticks — *"Landed as `98f200ab` onto
 `main`"* — and `{m.text}` printed the backticks, which is the worst of both readings: punctuation to
 ignore, and no distinction between `main` the branch and main the adjective. `lib/codespans.ts`
@@ -231,7 +231,15 @@ invites a glance where a paper invites checking: a title (*Routing Model v1.0*, 
 in `@shared/routing.ts`), an abstract, a contents strip, and five numbered sections — §1 the
 introduction, motivation and the model itself, §2–§4 one per axis, §5 models — in a single measured
 serif column with captioned, booktabs-ruled tables and the arithmetic typeset by **KaTeX**
-(`components/Math.tsx`: `<M>` inline, `<Eq>` display with a caller-set number). ⛔ **Only program
+(`components/Math.tsx`: `<M>` inline, `<Eq>` display with a caller-set number). ⭐ **The setting
+(t378):** the face is `--font-serif` in `tokens.css` — Sitka Text on Windows, Iowan Old Style on
+macOS, system fonts only, ordered by width because a wide serif reads better on a screen than a book
+face (Georgia is kept out of the front of the stack for its old-style figures); the ink is
+`--color-paper-ink`, one step below `--color-text` on the dark theme, so a column of serif does not
+glare; the measure is 80ch (764px on Windows, up from 570px). Tables are content-width and centred
+in the column, every column but the first centred (the Statistics convention) and a prose column
+(`.tbl-wide`) left; and each section ends in a **Previous / Next** pager (`.paper-pager`) that
+turns to the neighbouring section from its top. ⛔ **Only program
 constants reach KaTeX** — TeX literals in components, or `WEIGHT_FORMULAS` run through `lib/tex.ts` —
 never agent output or operator text; `trust` is off. ⛔ **Table 1 is not typed twice.** The weight
 formulas, their signs and the balanced column come from `WEIGHT_FORMULAS`, `WEIGHT_SIGNS` and

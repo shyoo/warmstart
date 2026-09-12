@@ -756,14 +756,37 @@ try {
     'a reply box above the thing it replies to is not a chat'
   )
 
-  // A thread is read as a conversation rather than a log. Its order is the order of the exchange;
-  // clocks inside every bubble pull the eye away from the actual words.
-  check(
-    'message bubbles do not carry timestamps',
+  // ⛔ On every message, and under the bubble rather than inside it. A thread with no clock cannot
+  // say whether the agent replied to something or was already saying it — and on a task that ran
+  // across two days it cannot even say which day (t374 took it out of the bubble and, by mistake,
+  // out of the thread; t378 put it back below). Read off geometry: the stamp's top at or below the
+  // bubble's bottom, not merely a different parent.
+  const clocks = JSON.parse(
     await evaluate(`(() => {
       const msgs = [...document.querySelectorAll('.thread--task .msg')].filter(m => !m.classList.contains('msg--live'));
-      return msgs.length > 0 && msgs.every(m => !m.querySelector('.msg-when'));
+      // ⛔ length > 0 is half the assertion. Without it this passes on a thread with no messages,
+      // which is exactly how it was first written and exactly what it did.
+      const stamped = msgs.filter(m => (m.querySelector('.msg-when')?.innerText ?? '').trim().length > 0);
+      const below = msgs.filter(m => {
+        const when = m.querySelector('.msg-when');
+        const bubble = m.querySelector('.msg-bubble');
+        return when && bubble && !bubble.contains(when) && when.getBoundingClientRect().top >= bubble.getBoundingClientRect().bottom - 1;
+      });
+      // And on the bubble's own side: flush with its right edge under a person's bubble, with its
+      // left edge under everyone else's.
+      const aligned = msgs.filter(m => {
+        const w = m.querySelector('.msg-when')?.getBoundingClientRect();
+        const b = m.querySelector('.msg-bubble')?.getBoundingClientRect();
+        if (!w || !b) return false;
+        return m.classList.contains('msg--right') ? Math.abs(w.right - b.right) <= 6 : Math.abs(w.left - b.left) <= 6;
+      });
+      return JSON.stringify({ msgs: msgs.length, stamped: stamped.length, below: below.length, aligned: aligned.length });
     })()`)
+  )
+  check(
+    'every message says when it was said, under its bubble and on its side',
+    clocks.msgs > 0 && clocks.stamped === clocks.msgs && clocks.below === clocks.msgs && clocks.aligned === clocks.msgs,
+    JSON.stringify(clocks)
   )
 
   // ⛔ A chat, not a log: what the person said sits on the right, everything else on the left. Read
@@ -2158,6 +2181,90 @@ try {
     'an unmeasured cost renders n/a, never $0.00',
     /n\/a/i.test(modelsPanel),
     'nothing on this install has ever priced a run'
+  )
+
+  section('routing model > the paper as a whole')
+  // ⛔ Every table is centred in the column — read off geometry, because a `margin: 0 auto` that a
+  // `width: 100%` elsewhere overrides looks identical to a selector. A table wider than the column
+  // used to run off its right edge (Table 12 by 52px at 76ch, 2026-09-12); that is the failure
+  // mode this reads for, so a table is also required to sit inside the column.
+  const paperTables = JSON.parse(
+    await evaluate(`(() => {
+      const paper = document.querySelector('.paper');
+      if (!paper) return JSON.stringify({ n: 0 });
+      const p = paper.getBoundingClientRect();
+      const tables = [...paper.querySelectorAll('table')].map(t => {
+        const b = t.getBoundingClientRect();
+        // Measured against the table's own container, which for a two-up pair is a grid cell.
+        const c = t.parentElement.getBoundingClientRect();
+        return { left: Math.round(b.left - c.left), right: Math.round(c.right - b.right), inside: b.left >= p.left - 1 && b.right <= p.right + 1 };
+      });
+      return JSON.stringify({ n: tables.length, tables, ok: tables.every(t => Math.abs(t.left - t.right) <= 2 && t.inside) });
+    })()`)
+  )
+  check(
+    'every table in the paper is centred in its column and inside it',
+    paperTables.n > 0 && paperTables.ok,
+    JSON.stringify(paperTables)
+  )
+  check(
+    'a numeric column is centred under its head',
+    await evaluate(`(() => {
+      const cells = [...document.querySelectorAll('.paper .tbl--paper td.tbl-num')];
+      return cells.length > 0 && cells.every(td => getComputedStyle(td).textAlign === 'center');
+    })()`)
+  )
+  // The pager at the foot of a section: the last section has only Previous, the first only Next,
+  // and turning the page lands on the top of the next section rather than at its foot.
+  const pagerOnLast = await evaluate(
+    `[...document.querySelectorAll('.paper-pager-link')].map(b => b.innerText.replace(/\\s+/g, ' ').trim())`
+  )
+  check(
+    'the last section offers Previous and not Next',
+    pagerOnLast.length === 1 && /^Previous §4 The velocity axis$/.test(pagerOnLast[0]),
+    pagerOnLast.join(' | ')
+  )
+  await evaluate(`document.querySelector('.paper-pager-link--previous').click()`)
+  await wait(800)
+  const turned = JSON.parse(
+    await evaluate(`(() => {
+      const active = document.querySelector('.paper-contents .tab--active')?.innerText.trim();
+      const links = [...document.querySelectorAll('.paper-pager-link')].map(b => b.innerText.replace(/\\s+/g, ' ').trim());
+      const heading = [...document.querySelectorAll('.paper .doc-section h3')][0];
+      const r = heading?.getBoundingClientRect();
+      return JSON.stringify({ active, links, headingTop: r ? Math.round(r.top) : null, viewport: window.innerHeight });
+    })()`)
+  )
+  check(
+    'Previous turns to §4 and shows it from the top, with both links at its foot',
+    turned.active === 'Velocity' &&
+      turned.links.length === 2 &&
+      /^Previous §3 The cost axis$/.test(turned.links[0]) &&
+      /^Next §5 Choosing a model, not only an account$/.test(turned.links[1]) &&
+      turned.headingTop !== null &&
+      turned.headingTop >= 0 &&
+      turned.headingTop < turned.viewport,
+    JSON.stringify(turned)
+  )
+  await evaluate(
+    `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Overview').click()`
+  )
+  await wait(800)
+  const pagerOnFirst = await evaluate(
+    `[...document.querySelectorAll('.paper-pager-link')].map(b => b.innerText.replace(/\\s+/g, ' ').trim())`
+  )
+  check(
+    'the first section offers Next and not Previous',
+    pagerOnFirst.length === 1 && /^Next §2 The quality axis$/.test(pagerOnFirst[0]),
+    pagerOnFirst.join(' | ')
+  )
+  const motivation = await evaluate(
+    `[...document.querySelectorAll('.paper .doc-section')].find(s => /1\\.1 Motivation/.test(s.querySelector('h3')?.innerText ?? ''))?.innerText ?? ''`
+  )
+  check(
+    '1.1 Motivation is addressed to a developer, not an operator',
+    /developer/.test(motivation) && !/operator/.test(motivation),
+    motivation.slice(0, 200)
   )
 
   section('statistics')

@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { ROUTING_MODEL_VERSION } from '@shared/routing'
 import { CostModel } from './CostModel'
 import { ModelsModel } from './ModelsModel'
@@ -55,6 +56,19 @@ export function RoutingModel({
   /** ⛔ Grading is commissioned from one place now. The Quality section explains and links. */
   onOpenQualityReview: () => void
 }): React.JSX.Element {
+  const contents = useRef<HTMLElement>(null)
+  const index = ROUTING_TABS.findIndex((t) => t.id === tab)
+  const previous = index > 0 ? ROUTING_TABS[index - 1] : null
+  const next = index >= 0 && index < ROUTING_TABS.length - 1 ? ROUTING_TABS[index + 1] : null
+  /**
+   * The pager at the foot of a section is read after scrolling to the bottom of it, so the section
+   * it opens must be shown from its top: scroll back to the contents strip, where the section
+   * heading follows. ⚠️ Not to the title — the reader is turning a page, not reopening the paper.
+   */
+  const turnTo = (id: RoutingTab): void => {
+    setTab(id)
+    contents.current?.scrollIntoView({ block: 'start' })
+  }
   return (
     <div className="panel paper">
       <header className="paper-head">
@@ -87,7 +101,7 @@ export function RoutingModel({
         </p>
       </section>
 
-      <nav className="tabs paper-contents" aria-label="Contents">
+      <nav className="tabs paper-contents" aria-label="Contents" ref={contents}>
         {ROUTING_TABS.map((t) => (
           <button
             key={t.id}
@@ -111,6 +125,41 @@ export function RoutingModel({
       ) : (
         <ModelsModel />
       )}
+
+      {/* ⛔ Previous/next at the foot of every section, because the contents strip is at the top
+          and a section is several screens long. Each link names the section it turns to, numbered
+          as the contents strip numbers it; the class is not `.tab`, so the UI suite's tab lookup
+          by label still finds exactly one button per section. */}
+      <nav className="paper-pager" aria-label="Previous and next section">
+        {previous ? (
+          <button
+            className="paper-pager-link paper-pager-link--previous"
+            onClick={() => turnTo(previous.id)}
+            title={previous.section}
+          >
+            <span className="paper-pager-label">Previous</span>
+            <span className="paper-pager-target">
+              <span className="paper-pager-number">§{index}</span> {previous.section}
+            </span>
+          </button>
+        ) : (
+          <span />
+        )}
+        {next ? (
+          <button
+            className="paper-pager-link paper-pager-link--next"
+            onClick={() => turnTo(next.id)}
+            title={next.section}
+          >
+            <span className="paper-pager-label">Next</span>
+            <span className="paper-pager-target">
+              <span className="paper-pager-number">§{index + 2}</span> {next.section}
+            </span>
+          </button>
+        ) : (
+          <span />
+        )}
+      </nav>
     </div>
   )
 }

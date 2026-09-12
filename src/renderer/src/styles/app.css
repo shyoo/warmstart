@@ -4642,18 +4642,16 @@ select:focus-visible,
   margin-bottom: var(--sp-3);
 }
 
-/* ⚠️ Beside the role, not in a column of its own. A third grid track would take width from the one
-   part of this anybody reads, to show something they only look at when they are asking a question
-   about ordering. */
+/* Under the bubble, in the meta line, not inside it: a clock inside every bubble made prose read
+   as a log (t374), and a thread with no clock cannot say which day a task ran on (t378). Bare time
+   for today, dated otherwise; the full stamp is the title. */
 .msg-when {
-  display: block;
-  margin-top: 2px;
   font-size: var(--text-meta);
   text-transform: none;
   letter-spacing: 0;
   color: var(--color-text-faint);
-  opacity: 0.75;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* Live message shown in the thread while an agent or controller is active. */
@@ -4690,10 +4688,16 @@ select:focus-visible,
 }
 
 .msg--right { justify-content: flex-end; }
-.msg-bubble { max-width: min(82%, 760px); padding: var(--sp-2) var(--sp-3); border-radius: 12px; background: var(--color-bubble-agent); }
+/* The body is the bubble and its meta line stacked, hugging one side; the bubble itself is only as
+   wide as its words, so the meta line can sit under the bubble rather than under the row. */
+.msg-body { display: flex; flex-direction: column; align-items: flex-start; max-width: min(82%, 760px); min-width: 0; }
+.msg--right .msg-body { align-items: flex-end; }
+.msg-bubble { max-width: 100%; padding: var(--sp-2) var(--sp-3); border-radius: 12px; background: var(--color-bubble-agent); }
 .msg--right .msg-bubble { background: var(--color-bubble-human); }
 .msg--system .msg-bubble { background: var(--color-bubble-system); color: var(--color-text-dim); }
-.msg-meta { display: flex; align-items: center; gap: var(--sp-1); margin-top: 3px; min-height: 14px; }
+.msg-meta { display: flex; align-items: center; gap: var(--sp-2); margin-top: 3px; min-height: 14px; padding: 0 var(--sp-1); }
+/* The clock reads at the outer edge: first on the left, last on the right. */
+.msg--right .msg-when { order: 1; }
 .msg-detail, .msg-chip-disclosure { font-size: var(--text-meta); color: var(--color-text-faint); }
 .msg-detail > div { margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px solid var(--color-border); white-space: pre-wrap; color: var(--color-text); }
 .msg-chip-disclosure { margin: 0 0 var(--sp-1); }
@@ -6393,7 +6397,7 @@ select:focus-visible,
 
 /* Statistics is analytical writing, like the Routing Model, but remains compact to scan. */
 .statistics-paper {
-  font-family: Charter, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Cambria, Georgia, "Times New Roman", serif;
+  font-family: var(--font-serif);
 }
 .statistics-paper .panel-head h2, .statistics-paper .doc-section h3, .statistics-paper .stat-tbl th { font-family: inherit; }
 .statistics-paper .stat-tbl { border-top: 2px solid var(--color-border-strong); border-bottom: 2px solid var(--color-border-strong); }
@@ -6427,25 +6431,34 @@ select:focus-visible,
  * one-accent palette are untouched everywhere else; the paper's own sizes are local custom
  * properties for the same reason.
  *
- * ⚠️ The serif stack is system fonts only — Charter (macOS), Palatino Linotype and Cambria
- * (Windows), then Georgia — nothing is vendored. KaTeX ships its own fonts and they are bundled by
+ * ⚠️ The serif stack is `--font-serif` in tokens.css — system fonts only, Sitka Text on Windows and
+ * Iowan Old Style on macOS, nothing vendored. KaTeX ships its own fonts and they are bundled by
  * Vite from its CSS, so a formula looks the same on every platform even where the prose does not.
+ *
+ * ⚠️ The ink is `--color-paper-ink`, a step below `--color-text` on the dark theme: a screen of
+ * near-white serif at 15px glares where a line of UI label does not. Every rule in this block
+ * that colours prose or draws a table rule uses it, so the page is one tone.
+ *
+ * ⚠️ The measure is 80ch, and a `ch` is now a Sitka zero, so the column went from 570px to 764px
+ * on Windows (measured 2026-09-12): wider than a printed column, because the page carries
+ * six-column tables and display equations that at 76ch of Palatino overflowed the column on one
+ * side (Table 12 by 52px, Eq. 10 behind a scrollbar).
  */
 .paper {
-  --paper-font: Charter, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Cambria, Georgia,
-    "Times New Roman", serif;
+  --paper-font: var(--font-serif);
+  --paper-ink: var(--color-paper-ink);
   --paper-text: 15px;
   --paper-small: 13px;
   --paper-h3: 17px;
   --paper-title: 28px;
-  --paper-measure: 76ch;
+  --paper-measure: 80ch;
   max-width: var(--paper-measure);
   margin: 0 auto;
   padding: var(--sp-4) var(--sp-3) var(--sp-6);
   font-family: var(--paper-font);
   font-size: var(--paper-text);
   line-height: 1.6;
-  color: var(--color-text);
+  color: var(--paper-ink);
 }
 
 .paper-head {
@@ -6466,7 +6479,7 @@ select:focus-visible,
   font-size: 17px;
   font-style: italic;
   margin: 0 0 var(--sp-3);
-  color: var(--color-text);
+  color: var(--paper-ink);
 }
 
 .paper-byline {
@@ -6531,13 +6544,13 @@ select:focus-visible,
 }
 
 .paper-contents .tab--active {
-  color: var(--color-text);
+  color: var(--paper-ink);
   font-weight: 700;
-  border-bottom: 2px solid var(--color-text);
+  border-bottom: 2px solid var(--paper-ink);
 }
 
 .paper-contents .tab--active::before {
-  color: var(--color-text);
+  color: var(--paper-ink);
 }
 
 .paper .stack {
@@ -6554,7 +6567,7 @@ select:focus-visible,
   font-weight: 700;
   letter-spacing: 0;
   text-transform: none;
-  color: var(--color-text);
+  color: var(--paper-ink);
   margin: var(--sp-4) 0 var(--sp-3);
 }
 
@@ -6568,7 +6581,7 @@ select:focus-visible,
 /* Body prose. `.panel-sub` is the app's dim subtitle; in a paper it is a paragraph. */
 .paper .panel-sub {
   font-size: inherit;
-  color: var(--color-text);
+  color: var(--paper-ink);
   max-width: none;
   margin: 0 0 var(--sp-3);
 }
@@ -6584,7 +6597,7 @@ select:focus-visible,
   font-family: var(--paper-font);
   font-size: inherit;
   line-height: 1.55;
-  color: var(--color-text);
+  color: var(--paper-ink);
   padding-left: var(--sp-5);
 }
 
@@ -6612,7 +6625,12 @@ select:focus-visible,
   display: flex;
   align-items: center;
   margin: var(--sp-2) 0 var(--sp-3);
+  /* A formula wider than the column scrolls sideways; the vertical axis is padded rather than
+     scrollable, because `overflow-x: auto` alone made a tall fraction grow a scrollbar at its
+     right (Eq. 6 and 10, 2026-09-12). */
+  padding: var(--sp-1) 0;
   overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .eq-body {
@@ -6650,17 +6668,34 @@ select:focus-visible,
 .tbl--paper {
   font-family: var(--paper-font);
   font-size: var(--paper-small);
-  border-top: 1.5px solid var(--color-text);
-  border-bottom: 1.5px solid var(--color-text);
-  margin: 0 0 var(--sp-4);
+  border-top: 1.5px solid var(--paper-ink);
+  border-bottom: 1.5px solid var(--paper-ink);
+  /* Content-width and centred in the column, as a paper's table is; a wide one fills the column
+     and wraps rather than running past its edge. */
+  width: auto;
+  max-width: 100%;
+  margin: 0 auto var(--sp-4);
   caption-side: top;
+}
+
+/* Every column but the first is centred — the first is the row's name and reads down the left
+   like a list; the rest are numbers, signs and short terms that line up under a centred head. A
+   prose column (`.tbl-wide`) stays ragged-right, because centred sentences do not read. */
+.tbl--paper th:not(:first-child),
+.tbl--paper td:not(:first-child) {
+  text-align: center;
+}
+
+.tbl--paper th.tbl-wide,
+.tbl--paper td.tbl-wide {
+  text-align: left;
 }
 
 .tbl--paper caption {
   text-align: left;
   font-size: var(--paper-small);
   line-height: 1.45;
-  color: var(--color-text);
+  color: var(--paper-ink);
   padding: 0 0 var(--sp-2);
 }
 
@@ -6670,8 +6705,8 @@ select:focus-visible,
   font-weight: 700;
   letter-spacing: 0;
   text-transform: none;
-  color: var(--color-text);
-  border-bottom: 1px solid var(--color-text);
+  color: var(--paper-ink);
+  border-bottom: 1px solid var(--paper-ink);
   padding: var(--sp-1) var(--sp-2);
   vertical-align: bottom;
 }
@@ -6709,7 +6744,7 @@ select:focus-visible,
 }
 
 .tbl--paper .tbl-total td {
-  border-top: 1px solid var(--color-text);
+  border-top: 1px solid var(--paper-ink);
 }
 
 /* A row that opens the derivation beneath a decision keeps its own rule so the detail reads as
@@ -6750,6 +6785,62 @@ select:focus-visible,
 
 .paper .tag {
   font-family: var(--font-ui);
+}
+
+/* The foot of a section: previous on the left, next on the right, ruled off from the prose the
+   way the contents strip is ruled off from the abstract. Two cells always, so a lone *Next* on
+   §1 still sits at the right. */
+.paper-pager {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-4);
+  border-top: 1px solid var(--color-border-strong);
+  margin-top: var(--sp-5);
+  padding-top: var(--sp-3);
+}
+
+.paper-pager-link {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--sp-2) 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+  font-family: var(--paper-font);
+  font-size: var(--paper-text);
+  line-height: 1.35;
+  text-align: left;
+  color: var(--paper-ink);
+  cursor: pointer;
+}
+
+.paper-pager-link--next {
+  text-align: right;
+  align-items: flex-end;
+}
+
+.paper-pager-link:hover .paper-pager-target {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.paper-pager-label {
+  font-size: var(--paper-small);
+  color: var(--color-text-dim);
+}
+
+.paper-pager-link--previous .paper-pager-label::before {
+  content: "\2190\00a0";
+}
+
+.paper-pager-link--next .paper-pager-label::after {
+  content: "\00a0\2192";
+}
+
+.paper-pager-number {
+  color: var(--color-text-faint);
 }
 
 @media (max-width: 900px) {

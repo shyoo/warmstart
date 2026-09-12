@@ -1224,6 +1224,10 @@ function Thread({
               m.role === 'system'))
         return (
           <div key={m.id} className={`msg msg--${m.role} msg--${bubbleSide(m.role)}`}>
+            {/* ⛔ The bubble holds the words and nothing else; its clock, prompt chip and detail
+                sit in the meta line *under* it, on the same side (t374 took the clock out of the
+                bubble; t378 put it back below, which is where it was meant to go). */}
+            <div className="msg-body">
             <div className="msg-bubble">
               <div className="msg-text">
               {isTargetMsgForRunActivity && (
@@ -1255,17 +1259,18 @@ function Thread({
                 </span>
               )}
               </div>
-              {/* Prompt and detail belong below a bubble; its clock does not. The thread's order is
-                  already the conversation's order, and a timestamp inside every bubble makes prose
-                  look like a log. */}
-              {(runForMsg?.prompt && promptMessageId(messages, runForMsg.id) === m.id) || m.detail ? (
-                <div className="msg-meta">
-                {runForMsg?.prompt && promptMessageId(messages, runForMsg.id) === m.id && (
-                  <PromptChip prompt={runForMsg.prompt} />
-                )}
-                {m.detail && <details className="msg-detail"><summary title="Show details">ⓘ</summary><div><MessageText text={m.detail} markdown /></div></details>}
-                </div>
-              ) : null}
+            </div>
+            {/* The meta line under the bubble: when it was said (bare time today, dated otherwise,
+                the full stamp on hover), the prompt that produced it as a `📋 1,475` chip (on the
+                run's last answer — see `promptMessageId`), and ⓘ for the detail a short system
+                line keeps behind it. */}
+            <div className="msg-meta">
+              <span className="msg-when" title={new Date(m.ts).toLocaleString()}>{when(m.ts)}</span>
+              {runForMsg?.prompt && promptMessageId(messages, runForMsg.id) === m.id && (
+                <PromptChip prompt={runForMsg.prompt} />
+              )}
+              {m.detail && <details className="msg-detail"><summary title="Show details">ⓘ</summary><div><MessageText text={m.detail} markdown /></div></details>}
+            </div>
             </div>
           </div>
         )
@@ -1273,6 +1278,7 @@ function Thread({
 
       {showLive && (
         <div className="msg msg--agent msg--left msg--live">
+          <div className="msg-body">
           <div className="msg-bubble">
             <span className="msg-text">
               {activity.length === 0 ? (
@@ -1288,13 +1294,14 @@ function Thread({
                   where a reader looks to see whether more is coming. */}
               <Working />
             </span>
-            {/* ⚠️ The running turn's prompt has nowhere else to go until the agent answers: a warm
-                continuation on the same worker writes no system line to hang it on. */}
-            {liveRun?.prompt && promptMessageId(messages, liveRun.id) === null && (
-              <div className="msg-meta">
-                <PromptChip prompt={liveRun.prompt} />
-              </div>
-            )}
+          </div>
+          {/* ⚠️ The running turn's prompt has nowhere else to go until the agent answers: a warm
+              continuation on the same worker writes no system line to hang it on. */}
+          {liveRun?.prompt && promptMessageId(messages, liveRun.id) === null && (
+            <div className="msg-meta">
+              <PromptChip prompt={liveRun.prompt} />
+            </div>
+          )}
           </div>
         </div>
       )}

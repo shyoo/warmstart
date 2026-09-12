@@ -22,6 +22,13 @@
   --font-ui: Inter, "Inter var", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
     "Segoe UI", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+  /* The reading face for the two analytical pages (Routing Model, Statistics). System serifs only,
+     nothing vendored, and ordered by width: a wide, large-x-height serif reads better on a screen
+     than a book face. Sitka Text (Windows 8.1+) and Iowan Old Style (macOS) are each ~10% wider
+     than Palatino at the same size, measured 2026-09-12 in the built app; Georgia is excluded from
+     the front of the stack because its old-style figures misalign in a table of numbers. */
+  --font-serif: "Sitka Text", "Iowan Old Style", Charter, "Palatino Linotype", "Book Antiqua",
+    Cambria, Georgia, "Times New Roman", serif;
 
   /* Five sizes. Not six. */
   --text-meta: 11px;   /* labels, units, secondary counts */
@@ -58,6 +65,10 @@
   --color-text: #e6e8ec;
   --color-text-dim: #9aa1ad;
   --color-text-faint: #6b7280;
+  /* A page of serif prose read for minutes: a step down from --color-text so a full column of it
+     does not glare on the dark background, still well clear of --color-text-dim. Light themes read
+     the ordinary text colour. */
+  --color-paper-ink: #cfd3da;
 
   --color-accent: #7aa2f7;
   --color-accent-dim: #3d5a94;
@@ -92,6 +103,7 @@
     --color-text: #171a1f;
     --color-text-dim: #5c636e;
     --color-text-faint: #8b929d;
+    --color-paper-ink: #171a1f;
 
     --color-accent: #3b6ee0;
     --color-bubble-human: #dce8ff;
@@ -119,6 +131,7 @@
   --color-text: #171a1f;
   --color-text-dim: #5c636e;
   --color-text-faint: #8b929d;
+  --color-paper-ink: #171a1f;
   --color-accent: #3b6ee0;
   --color-bubble-human: #dce8ff;
   --color-bubble-agent: #f0f3f7;
