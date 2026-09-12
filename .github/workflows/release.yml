@@ -189,16 +189,40 @@ jobs:
           > build. Releases published after this repository goes public carry attestations as well.
           NOTES
           fi
-          cat >> notes.md <<NOTES
+          # ⛔ **A platform gets a section only when its installer is in the release.** Found 2026-09-12
+          # by reading what run 34668187579 actually published: a `platforms=windows` build carried
+          # *"macOS — Apple Silicon and Intel builds are both provided"* over a release containing one
+          # `.exe`. Same fault as the attestation claim, one line further down the same file — the
+          # notes are written from what the build was *meant* to produce rather than from what is
+          # there. A tag build hides it, because a tag builds both.
+          if ls staging/*.exe >/dev/null 2>&1; then
+            cat >> notes.md <<NOTES
 
           ## Windows
 
           Builds are **unsigned**, so SmartScreen will warn: *More info* → *Run anyway*. Verify the
           checksum above if you would rather not take it on trust.
+          NOTES
+          fi
+          if ls staging/*.dmg >/dev/null 2>&1; then
+            cat >> notes.md <<NOTES
 
           ## macOS
 
           Apple Silicon and Intel builds are both provided.
+          NOTES
+          fi
+          # ⚠️ Tested separately: `ls a b` exits non-zero when *either* operand is missing, so one
+          # `ls` over both globs reported no Linux build while an AppImage sat in staging (measured).
+          if ls staging/*.AppImage >/dev/null 2>&1 || ls staging/*.deb >/dev/null 2>&1; then
+            cat >> notes.md <<NOTES
+
+          ## Linux
+
+          ⚠️ Built, and **never run against a real agent CLI**. Unsupported.
+          NOTES
+          fi
+          cat >> notes.md <<NOTES
 
           > **Pre-alpha.** Expect rough edges, and please report them.
           NOTES
