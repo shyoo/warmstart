@@ -190,3 +190,56 @@ describe('the worker paths recorded before the rename', () => {
     expect(got.w2).toBe(join(sandbox, 'chosen-by-hand'))
   })
 })
+
+/**
+ * The one line that names the store.
+ *
+ * ⛔ 2026-09-10 cost a day to "is the fleet gone". An agent running inside the Claude desktop app
+ * measured `%APPDATA%\warmstart` and read a *container's* copy of it: every measurement correct, all
+ * of them about a different file from the one the operator's daemon had open, and each one
+ * contradicting a populated fleet the operator could see on screen. Nothing in the log named the path
+ * the daemon opened, so the evidence could not distinguish the two. ⚠️ The answer is not a better
+ * measurement — it is the daemon stating its own premise, once, where the account of the night is
+ * already kept.
+ */
+describe('the database the daemon opened', () => {
+  it('names the file and what was in it, so two copies of the fleet can be told apart', async () => {
+    const dir = join(sandbox, 'data')
+    mkdirSync(dir, { recursive: true })
+    const path = join(dir, 'warmstart.db')
+
+    // Written, closed, and opened again: the counts have to come out of the file, which a line
+    // logged over a freshly migrated database would report as zero either way.
+    const first = await import('./db.js')
+    first.openDb(path)
+    first
+      .db()
+      .prepare(
+        `insert into projects (id, name, root, vcs, config_json, config_path, created_at)
+         values (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run('p1', 'one', join(sandbox, 'one'), 'git', '{"schema_version":1}', null, 1)
+    first.closeDb()
+
+    vi.resetModules()
+    const db = await import('./db.js')
+    const { recentLog } = await import('./log.js')
+    db.openDb(path)
+    db.closeDb()
+
+    const line = recentLog(200, 'info')
+      .map((e) => e.message)
+      .find((m) => m.startsWith(`opened ${path}`))
+    expect(line).toBeDefined()
+    // ⛔ Non-empty, not merely present. A count stuck at zero reads identically to a missing input,
+    // which is the exact confusion this line exists to end.
+    expect(line).toMatch(/1 project\(s\)/)
+    expect(line).toMatch(/\d+ worker\(s\)/)
+    expect(line).toMatch(/\d+ task\(s\)/)
+    expect(line).toMatch(/\d+ run\(s\)/)
+    // The size is there to tell a 37MB fleet from an empty file, so it has to be a real reading.
+    const size = /\((\d+) KB\)/.exec(line ?? '')
+    expect(size).not.toBeNull()
+    expect(Number(size?.[1])).toBeGreaterThan(0)
+  })
+})

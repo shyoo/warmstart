@@ -229,6 +229,16 @@ file inside is matched against *every* old name, since a migration that failed p
 `agentyard.db` inside a `multi_agent_controller` directory. `repointIsolationRoots()` likewise loops
 every legacy root, so an install that skipped a release is still carried.
 
+⭐ **`openDb` logs which file it opened and what was in it** — path, size, and the worker, project,
+task and run counts, one `info` line per open (`describeDb` in `db.ts`). ⛔ **This is the line that
+settles "is the fleet gone".** 2026-09-10 cost a day to that question: an agent running inside the
+Claude desktop app measured `%APPDATA%\warmstart` and was reading a *container's* private copy of it,
+so every measurement was correct, all of them were about a different file from the one the operator's
+daemon had open, and each one contradicted a populated fleet visible on screen. Nothing in the log
+named a path, so the evidence could not tell the two files apart. ⚠️ The size is the main file only —
+writes land in the `-wal` sidecar first — so it is for telling two databases apart, not for
+accounting. `paths.test.ts` pins the line.
+
 ### Environment variables
 
 ⚠️ **Every variable below is read through `appEnv()` (`src/shared/env.ts`), which falls back to the

@@ -148,6 +148,14 @@ so they are the ones with a bar. All of these must hold:
    real checks and the next two stopped at *"this project defines no check commands"* — a bar the
    work met, failed by a stale copy. `reloadProjectIfPresent` in
    [`projects.ts`](../src/daemon/projects.ts) is the reader; `projectpolicy.test.ts` pins it.
+   ⭐ **And the pre-rename `.multi_agent_controller/project.json` is read again** (2026-09-11). It is
+   the one thing the rename could not migrate, because it is a *tracked file in your own repository*
+   and moving it is not the tool's to do — so `projectConfigPath` tries the new spelling, then the
+   old, and only ever **writes** the new one. ⛔ The write path is the half that bites: an edit seeds
+   from whichever file was read and promotes it, because starting from a bare `{schema_version: 1}`
+   just because the *new* path was absent would drop every key the read had reported to the UI a
+   moment earlier. The old file is left exactly as it was, and `writeStarterConfig` will not shadow
+   it.
    ⭐ **A red check is handed back clean and whole** (2026-09-11). The checks run with
    `NO_COLOR=1`/`FORCE_COLOR=0` and their output is passed through `stripAnsi` regardless, because
    t344 and t347 put vitest's escape codes verbatim into the thread (`←[31m←[1m FAIL`) and into the

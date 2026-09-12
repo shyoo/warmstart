@@ -216,3 +216,84 @@ describe('reading a project’s config at the moment it is used', () => {
     expect(projects.reloadProjectIfPresent('no-such-project')).toBeNull()
   })
 })
+
+/**
+ * The pre-rename `.multi_agent_controller/project.json`, which is **read and never written**.
+ *
+ * ⛔ The file is tracked in the *user's own repository*, so unlike the data directory, the worker
+ * rows and the environment variables, the rename could not migrate it — and a config that goes
+ * unread does not present as a missing file. t338 (2026-09-10) landed three runs against real checks
+ * and then stopped at "this project defines no check commands"; `awardtracker` was recovered by
+ * renaming its directory by hand. The fallback was removed the same day on the grounds that this is
+ * the only install, and these checks are what makes restoring it safe.
+ *
+ * ⚠️ **The write path is the half that bites.** Reading the old file is two lines; the regression is
+ * an *edit* afterwards, which writes the new path and would start from a bare `{schema_version: 1}`
+ * if it only looked there — dropping every key the read had just reported to the UI.
+ */
+describe('a project configured by a pre-rename build', () => {
+  const legacyProject = (config: Partial<ProjectConfig>): Project => {
+    seq += 1
+    const root = join(dir, `legacy${seq}`)
+    mkdirSync(join(root, '.multi_agent_controller'), { recursive: true })
+    writeFileSync(
+      join(root, '.multi_agent_controller', 'project.json'),
+      JSON.stringify({ schema_version: 1, name: `legacy${seq}`, ...config }, null, 2)
+    )
+    return projects.addProject({ root })
+  }
+
+  it('is read from the old path, and says which file it read', () => {
+    const project = legacyProject({ check: ['npm test'] })
+    expect(project.configPath).toBe(join(project.root, '.multi_agent_controller', 'project.json'))
+    expect(projects.policyFor(project).check).toEqual(['npm test'])
+  })
+
+  it('prefers the new path when a repository carries both', () => {
+    const project = legacyProject({ check: ['the old one'] })
+    mkdirSync(join(project.root, '.warmstart'), { recursive: true })
+    writeFileSync(
+      join(project.root, '.warmstart', 'project.json'),
+      JSON.stringify({ schema_version: 1, check: ['the new one'] }, null, 2)
+    )
+    const reloaded = projects.reloadProject(project.id)
+    expect(reloaded.configPath).toBe(join(project.root, '.warmstart', 'project.json'))
+    expect(projects.policyFor(reloaded).check).toEqual(['the new one'])
+  })
+
+  // ⛔ The regression the fallback would otherwise introduce: an edit through the UI writing a fresh
+  // file over the top of a config it had just displayed.
+  it('keeps every key it was not asked about when an edit promotes it', () => {
+    const project = legacyProject({
+      check: ['npm test', 'npm run build'],
+      objective: 'cheap',
+      // A key this tool has never heard of. It survives on the new path or the promotion is lossy.
+      somethingOnlyTheUserKnows: 'keep me'
+    } as Partial<ProjectConfig>)
+
+    const updated = projects.setProjectPolicy(project.id, { landingTarget: 'release' })
+
+    expect(updated.configPath).toBe(join(project.root, '.warmstart', 'project.json'))
+    const written = configOnDisk(updated)
+    expect(written.check).toEqual(['npm test', 'npm run build'])
+    expect(written.objective).toBe('cheap')
+    expect(written.somethingOnlyTheUserKnows).toBe('keep me')
+    expect((written.landing as { target: string }).target).toBe('release')
+    expect(projects.policyFor(updated).check).toEqual(['npm test', 'npm run build'])
+
+    // ⛔ And the old file is left exactly as it was. It is tracked in a repository that is not ours,
+    // so promotion copies forward and never moves or rewrites.
+    const old = JSON.parse(
+      readFileSync(join(project.root, '.multi_agent_controller', 'project.json'), 'utf8')
+    ) as Record<string, unknown>
+    expect(old.landing).toBeUndefined()
+    expect(old.check).toEqual(['npm test', 'npm run build'])
+  })
+
+  it('is not shadowed by a starter config', () => {
+    const project = legacyProject({ check: ['npm test'] })
+    const path = projects.writeStarterConfig(project.id)
+    expect(path).toBe(join(project.root, '.multi_agent_controller', 'project.json'))
+    expect(projects.policyFor(projects.reloadProject(project.id)).check).toEqual(['npm test'])
+  })
+})

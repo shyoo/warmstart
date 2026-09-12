@@ -27,6 +27,37 @@ import { errorMessage } from '@shared/errors.js'
 
 export const PROJECT_CONFIG_RELATIVE = join('.warmstart', 'project.json')
 
+/**
+ * The pre-rename spelling, **read and never written**.
+ *
+ * ⛔ This file lives in the *user's own repository*, which is the one place the rename could not
+ * reach: `paths.ts` migrated the data directory and `repointIsolationRoots` moved the rows, but a
+ * config committed by a pre-rename build is somebody else's tracked file and moving it is not ours
+ * to do. So the old path is read indefinitely, and only the new one is ever written.
+ *
+ * ⚠️ A project whose config went unread does not look like a missing file; it looks like the
+ * scheduler misbehaving. t338 (2026-09-10) landed three runs against real checks and then stopped at
+ * *"this project defines no check commands"*, and `awardtracker` was only recovered by renaming its
+ * directory by hand.
+ */
+const LEGACY_PROJECT_CONFIG_RELATIVE = join('.multi_agent_controller', 'project.json')
+
+/**
+ * The committed config file, newest spelling first, or `null` when there is none - which is normal
+ * and not an error.
+ *
+ * ⛔ **The only place that knows there are two spellings.** Reading, editing and writing a starter
+ * each have to agree on which file is authoritative, and three copies of that precedence drifted
+ * into three answers the first time round.
+ */
+function projectConfigPath(root: string): string | null {
+  for (const relative of [PROJECT_CONFIG_RELATIVE, LEGACY_PROJECT_CONFIG_RELATIVE]) {
+    const path = join(root, relative)
+    if (existsSync(path)) return path
+  }
+  return null
+}
+
 const DEFAULTS = {
   poolSize: 3,
   landingStrategy: 'auto-land' as const,
@@ -76,17 +107,12 @@ export function requireProject(id: string): Project {
 }
 
 /**
- * Read `.warmstart/project.json` if it is there, or the pre-rename `.warmstart` one.
+ * Read `.warmstart/project.json` if it is there, or the pre-rename one.
  * A missing file is normal, not an error.
  */
 export function readProjectConfig(root: string): { config: ProjectConfig; path: string | null } {
-  // ⚠️ **The pre-rename `.multi_agent_controller/project.json` is no longer read** (2026-09-10). That
-  // fallback existed for repositories this tool must not rewrite on their owners' behalf, and there
-  // are none — the tool is unpublished and this is the only install. ⛔ Reinstate it before the first
-  // outside user rather than after: a project whose policy silently reverts to defaults reads as the
-  // scheduler misbehaving, not as a missing file, which is exactly how t338 presented.
-  const path = join(root, PROJECT_CONFIG_RELATIVE)
-  if (!existsSync(path)) return { config: { schema_version: 1 }, path: null }
+  const path = projectConfigPath(root)
+  if (!path) return { config: { schema_version: 1 }, path: null }
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as ProjectConfig
     return { config: { ...parsed, schema_version: parsed.schema_version ?? 1 }, path }
@@ -182,10 +208,17 @@ export function archiveProject(id: string): Project {
  */
 export function writeStarterConfig(id: string): string {
   const project = requireProject(id)
+  // ⛔ An existing config is never clobbered, **including a pre-rename one**. A starter written over
+  // the top of it would not overwrite the old file, but it would shadow it - `projectConfigPath`
+  // prefers the new path - so the project would silently fall back to starter defaults. Returning the
+  // old path is also the honest answer to "which file configures this project": that one, until
+  // something edits it, at which point `editProjectConfig` promotes it.
+  const existing = projectConfigPath(project.root)
+  if (existing) return existing
+
   const dir = join(project.root, '.warmstart')
   mkdirSync(dir, { recursive: true })
   const path = join(dir, 'project.json')
-  if (existsSync(path)) return path
 
   const starter: ProjectConfig = {
     schema_version: 1,
@@ -250,21 +283,32 @@ function editProjectConfig(
   const dir = join(project.root, '.warmstart')
   const path = join(dir, 'project.json')
 
+  // ⛔ Seeded from whichever file `readProjectConfig` would have read, which may be the pre-rename
+  // one, and then written to the new path - read old, write new, never write old. Starting from a
+  // bare `{schema_version: 1}` because the *new* path is absent would drop every key a pre-rename
+  // config had, and the read would have just reported those keys to the UI: the operator would watch
+  // the tool forget a setting it was displaying a moment earlier. The old file is left where it is,
+  // because it is tracked in a repository that is not ours.
+  const source = projectConfigPath(project.root)
+
   let config: ProjectConfig
-  if (existsSync(path)) {
+  if (source) {
     try {
-      config = JSON.parse(readFileSync(path, 'utf8')) as ProjectConfig
+      config = JSON.parse(readFileSync(source, 'utf8')) as ProjectConfig
     } catch (err) {
       throw new Error(
-        `${path} is not valid JSON, so this will not overwrite it: ` +
+        `${source} is not valid JSON, so this will not overwrite it: ` +
           (errorMessage(err)),
         { cause: err }
       )
     }
+    if (source !== path) {
+      log.info(`project ${project.name}: promoting ${source} to ${path}; the old file is now ignored`)
+    }
   } else {
-    mkdirSync(dir, { recursive: true })
     config = { schema_version: 1, name: project.name, vcs: project.vcs }
   }
+  mkdirSync(dir, { recursive: true })
 
   mutate(config, project)
   writeFileSync(path, `${JSON.stringify(config, null, 2)}

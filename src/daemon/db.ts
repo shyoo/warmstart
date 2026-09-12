@@ -1,4 +1,5 @@
 import { DatabaseSync } from 'node:sqlite'
+import { statSync } from 'node:fs'
 import { dataDir, ensureDir, legacyDataDirs, paths } from './paths.js'
 import { dirname, join, sep } from 'node:path'
 import { log } from './log.js'
@@ -1882,7 +1883,38 @@ export function openDb(path = paths.db): DatabaseSync {
   migrate(db)
   handle = db
   repointIsolationRoots(db)
+  describeDb(db, path)
   return db
+}
+
+/**
+ * Say which file this is and what was in it, once, at open.
+ *
+ * ⛔ **The one line that settles "is the fleet gone".** 2026-09-10 cost a day to the question of
+ * which database the running daemon had opened: an agent measuring `%APPDATA%\warmstart` from inside
+ * the Claude desktop app was reading a *container's* copy of it, every measurement correct and every
+ * one about the wrong file, while the operator looked at a populated fleet and was told it was empty.
+ * Nothing in the log named the path, so there was no way to tell the two apart from the evidence.
+ * The fix is not a better measurement, it is the daemon stating its own premise.
+ *
+ * ⚠️ `size` is the main file only. Writes land in the `-wal` sidecar first, so a busy database can
+ * report a smaller number here than its bytes on disk - this is for telling two files apart, not for
+ * accounting. An unreadable stat is reported as `size unknown` rather than throwing: a log line may
+ * never be the reason a daemon fails to open its store.
+ */
+function describeDb(conn: DatabaseSync, path: string): void {
+  const count = (table: string): number =>
+    (conn.prepare(`select count(*) as n from ${table}`).get() as { n: number }).n
+  let size = 'unknown'
+  try {
+    size = `${Math.round(statSync(path).size / 1024)} KB`
+  } catch {
+    // Reported as unknown below.
+  }
+  log.info(
+    `opened ${path} (${size}): ${count('workers')} worker(s), ${count('projects')} project(s), ` +
+      `${count('tasks')} task(s), ${count('runs')} run(s)`
+  )
 }
 
 /**
