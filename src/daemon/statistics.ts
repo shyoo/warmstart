@@ -59,6 +59,19 @@ function limitFor(window: StatisticsWindow): number | null {
 /** The absent rung of a key, written the same way `pace.ts` writes it. */
 const NO_MODEL = '?'
 
+/**
+ * The model identity Statistics groups on.
+ *
+ * Claude records both a stable name and a dated build name for the same model.  The renderer has
+ * always deliberately hidden that date in `modelLabel`; grouping by the unnormalised id therefore
+ * made two indistinguishable "Haiku 4.5" rows.  Keep the aggregation identity in step with that
+ * display rule, before the tree is made, so every statistic and chart uses the same evidence.
+ */
+export function statisticsModelId(model: string | null): string | null {
+  if (!model || model === NO_MODEL || model === '<synthetic>') return null
+  return (model.trim().split('/').pop() ?? '').replace(/-\d{8}$/, '') || null
+}
+
 // ---------------------------------------------------------------------------- the pure arithmetic
 
 /**
@@ -205,7 +218,7 @@ export function samples(now = Date.now(), window: StatisticsWindow = 'recent'): 
     out.push({
       taskId: id,
       adapterId: credit.adapterId,
-      model: credit.model,
+      model: statisticsModelId(credit.model),
       effort: credit.sessionId ? (efforts.get(credit.sessionId) ?? null) : null,
       usd,
       subscriptionUsd: subscription,
@@ -275,7 +288,7 @@ export function modelPowerScore(modelId: string): number {
 
   // 4. Tier keyword adjustments on baseModel
   if (baseModel.includes('opus')) score += 900
-  else if (baseModel.includes('pro') || baseModel.includes('ultra')) score += 800
+  else if (baseModel.includes('pro') || baseModel.includes('ultra') || baseModel.includes('sol')) score += 800
   else if (baseModel.includes('plus') || baseModel.includes('terra')) score += 700
   else if (baseModel.includes('sonnet')) score += 600
   else if (baseModel.includes('flash')) score += 500
@@ -333,7 +346,10 @@ function tree<T extends Sample, R>(
 
     const byModel = new Map<string, T[]>()
     for (const s of agentGroup) {
-      const k = s.model ?? NO_MODEL
+      // A missing model is still part of its agent's total, but it is not a model a reader can
+      // compare or choose.  Do not manufacture a `?` / "model not recorded" child row for it.
+      if (!s.model) continue
+      const k = s.model
       const list = byModel.get(k) ?? []
       list.push(s)
       byModel.set(k, list)

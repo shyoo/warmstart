@@ -1255,16 +1255,17 @@ function Thread({
                 </span>
               )}
               </div>
-              {/* ⛔ The meta line under the bubble: when, the prompt that produced it as a `📋 1,475`
-                  chip (on the run's last answer — see `promptMessageId`), and ⓘ for the detail a
-                  short system line keeps behind it. */}
-              <div className="msg-meta">
-                <span className="msg-when" title={new Date(m.ts).toLocaleString()}>{when(m.ts)}</span>
+              {/* Prompt and detail belong below a bubble; its clock does not. The thread's order is
+                  already the conversation's order, and a timestamp inside every bubble makes prose
+                  look like a log. */}
+              {(runForMsg?.prompt && promptMessageId(messages, runForMsg.id) === m.id) || m.detail ? (
+                <div className="msg-meta">
                 {runForMsg?.prompt && promptMessageId(messages, runForMsg.id) === m.id && (
                   <PromptChip prompt={runForMsg.prompt} />
                 )}
                 {m.detail && <details className="msg-detail"><summary title="Show details">ⓘ</summary><div><MessageText text={m.detail} markdown /></div></details>}
-              </div>
+                </div>
+              ) : null}
             </div>
           </div>
         )

@@ -196,6 +196,15 @@ composites (`QualityStatRow.distribution`, whose `average` *is* `cleanComposite`
 clean has graded has an empty distribution and no bar — an ungraded model has no distribution, not
 a short one.
 
+⭐ **Statistics also has one interactive three-axis view** (`Statistics.tsx`), above its three tabs:
+it plots only an adapter/model pair with measured price, active time and clean quality evidence, so a
+missing value is never drawn as a deliberate coordinate. The origin is least favourable; the three
+axes run outward to quality 10, $0 cost, and fastest active time — price and time are consequently
+reversed before projection. Dragging the SVG rotates the view. This is a comparison aid, not routing
+input, and the tabular distributions remain the authoritative evidence behind every point. Model
+rows group the stable display identity, so dated Claude ids such as `claude-haiku-4-5-20251001` fold
+into the same *Haiku 4.5* row; missing model ids remain in the agent total but have no phantom child.
+
 ⛔ **The chart names the harness as well as the model, and the table does not have to.** Its bars are
 model rows, which in a table are indented under the agent row that owns them; a chart has no such
 parent, and `claude-sonnet-4-6` is served both by Claude Code and by Antigravity out of different

@@ -608,7 +608,12 @@ export function NewTask({
           title="The project this task belongs to. It supplies the workspace, branch and project policy. Preselected from the project you were looking at, and always changeable."
           muted={!projectId}
           value={projectId}
-          label={projectId ? (projectNames.get(projectId) ?? projectId) : 'Choose project'}
+          label={
+            <>
+              {projectId ? (projectNames.get(projectId) ?? projectId) : 'Choose project'}
+              <span className="project-picker-caret" aria-hidden="true"> ▼</span>
+            </>
+          }
           options={[
             {
               value: '',

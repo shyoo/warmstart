@@ -756,15 +756,13 @@ try {
     'a reply box above the thing it replies to is not a chat'
   )
 
-  // ⛔ On every message. A thread with no clock cannot say whether the agent replied to something or
-  // was already saying it — and on a task that ran across two days it cannot even say which day.
+  // A thread is read as a conversation rather than a log. Its order is the order of the exchange;
+  // clocks inside every bubble pull the eye away from the actual words.
   check(
-    'every message says when it was said',
+    'message bubbles do not carry timestamps',
     await evaluate(`(() => {
       const msgs = [...document.querySelectorAll('.thread--task .msg')].filter(m => !m.classList.contains('msg--live'));
-      // ⛔ length > 0 is half the assertion. Without it this passes on a thread with no messages,
-      // which is exactly how it was first written and exactly what it did.
-      return msgs.length > 0 && msgs.every(m => (m.querySelector('.msg-when')?.innerText ?? '').trim().length > 0);
+      return msgs.length > 0 && msgs.every(m => !m.querySelector('.msg-when'));
     })()`)
   )
 

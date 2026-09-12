@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type {
   Distribution,
   PriceBasis,
@@ -171,7 +171,10 @@ function thin(samples: number): boolean {
  * comparison meaningful, so keep only rows the requested chart explicitly names.
  */
 export function priceRowsForGraph(rows: PriceStatRow[], bases: PriceBasis[]): PriceStatRow[] {
-  return rows.filter((row) => bases.includes(row.basis))
+  // Agent rows are label context, never graph data when model rows exist. Keep them even when their
+  // aggregate basis is mixed so `graphLabel` can still say “Claude Code · Opus 5” for a model row
+  // in the subscription-only chart.
+  return rows.filter((row) => row.level === 'agent' || bases.includes(row.basis))
 }
 
 const GRAPH_TITLE: Record<'price' | 'velocity' | 'quality', string> = {
@@ -551,6 +554,79 @@ function StatGraph({
   )
 }
 
+type ModelPoint = { key: string; label: string; cost: number; velocity: number; quality: number }
+
+/** Only models with measured values on every axis enter this comparison. */
+function measuredModelPoints(report: StatisticsReport): ModelPoint[] {
+  type PartialPoint = { adapterId: string; model: string; cost?: number; velocity?: number; quality?: number }
+  const points = new Map<string, PartialPoint>()
+  const add = (rows: Array<StatRow & { basis?: PriceBasis }>, axis: 'cost' | 'velocity' | 'quality'): void => {
+    const grouped = new Map<string, { total: number; samples: number }>()
+    for (const row of rows) {
+      if (row.level !== 'model' || !row.model || row.distribution.average === null) continue
+      const key = `${row.adapterId}/${row.model}`
+      const current = grouped.get(key) ?? { total: 0, samples: 0 }
+      current.total += row.distribution.average * row.distribution.samples
+      current.samples += row.distribution.samples
+      grouped.set(key, current)
+      if (!points.has(key)) points.set(key, { adapterId: row.adapterId, model: row.model })
+    }
+    for (const [key, value] of grouped) {
+      const point = points.get(key)
+      if (point && value.samples > 0) point[axis] = value.total / value.samples
+    }
+  }
+  // Price can have one row per billing basis. Fold those measured rows back together for one point.
+  add(report.price.rows, 'cost')
+  add(report.velocity.rows, 'velocity')
+  add(report.quality.rows, 'quality')
+  const agents = new Map(report.velocity.rows.filter((r) => r.level === 'agent').map((r) => [r.adapterId, r.label]))
+  return [...points.entries()]
+    .filter(([, p]) => p.cost !== undefined && p.velocity !== undefined && p.quality !== undefined)
+    .map(([key, p]) => ({
+      key,
+      label: `${agents.get(p.adapterId) ?? p.adapterId} · ${modelLabel(p.model) ?? p.model}`,
+      cost: p.cost!, velocity: p.velocity!, quality: p.quality!
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+}
+
+/** A compact dependency-free 3D scatter plot. Drag it to inspect the model trade-offs. */
+function ThreeAxisPlot({ report }: { report: StatisticsReport }): React.JSX.Element | null {
+  const points = measuredModelPoints(report)
+  const [view, setView] = useState({ yaw: -0.7, pitch: 0.5 })
+  const drag = useRef<{ x: number; y: number } | null>(null)
+  const [hovered, setHovered] = useState<string | null>(null)
+  if (points.length === 0) return null
+  const maxCost = Math.max(...points.map((p) => p.cost), 0.01)
+  const maxVelocity = Math.max(...points.map((p) => p.velocity), 1)
+  const project = (x: number, y: number, z: number) => {
+    const cy = Math.cos(view.yaw), sy = Math.sin(view.yaw), cp = Math.cos(view.pitch), sp = Math.sin(view.pitch)
+    const rx = x * cy - y * sy, rz = x * sy + y * cy, ry = z * cp - rz * sp
+    return { x: 210 + rx * 132, y: 178 - ry * 112, depth: z * sp + rz * cp }
+  }
+  const origin = project(0, 0, 0)
+  const axes = [
+    { end: project(1, 0, 0), label: 'Quality · 10.0', low: '0' },
+    { end: project(0, 1, 0), label: 'Cost · $0', low: money(maxCost) },
+    { end: project(0, 0, 1), label: 'Velocity · fastest', low: duration(maxVelocity) }
+  ]
+  const projected = points.map((point) => ({ point, at: project(point.quality / 10, 1 - point.cost / maxCost, 1 - point.velocity / maxVelocity) })).sort((a, b) => a.at.depth - b.at.depth)
+  const active = projected.find((p) => p.point.key === hovered)?.point
+  return <section className="three-axis-plot" aria-label="Cost, quality and velocity model comparison">
+    <div className="three-axis-plot-head"><div><h3>Measured model trade-offs</h3><p>Drag to rotate. Farther from the origin is more favourable on every measured axis.</p></div>{active && <div className="three-axis-tooltip"><strong>{active.label}</strong><span>{money(active.cost)} · {active.quality.toFixed(1)} / 10 · {duration(active.velocity)}</span></div>}</div>
+    <svg className="three-axis-svg" viewBox="0 0 500 280" role="img"
+      onPointerDown={(e) => { drag.current = { x: e.clientX, y: e.clientY }; e.currentTarget.setPointerCapture(e.pointerId) }}
+      onPointerMove={(e) => { if (!drag.current) return; const dx = e.clientX - drag.current.x, dy = e.clientY - drag.current.y; drag.current = { x: e.clientX, y: e.clientY }; setView((v) => ({ yaw: v.yaw + dx / 180, pitch: Math.max(-1.2, Math.min(1.2, v.pitch + dy / 180)) })) }}
+      onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }}>
+      {axes.map((axis) => <g key={axis.label}><line x1={origin.x} y1={origin.y} x2={axis.end.x} y2={axis.end.y} className="three-axis-line" /><text x={axis.end.x} y={axis.end.y - 8} className="three-axis-label">{axis.label}</text><text x={origin.x} y={origin.y + 15} className="three-axis-low">{axis.low}</text></g>)}
+      <circle cx={origin.x} cy={origin.y} r="4" className="three-axis-origin" />
+      {projected.map(({ point, at }) => <g key={point.key} onPointerEnter={() => setHovered(point.key)} onPointerLeave={() => setHovered(null)}><circle cx={at.x} cy={at.y} r={hovered === point.key ? 8 : 6} className="three-axis-point" /><title>{`${point.label}\nCost ${money(point.cost)} · Quality ${point.quality.toFixed(1)} / 10 · Active time ${duration(point.velocity)}`}</title></g>)}
+    </svg>
+    <p className="dim">{points.length} model{points.length === 1 ? '' : 's'} with all three measurements. Cost and active time are reversed so $0 and fastest are the favourable ends.</p>
+  </section>
+}
+
 function DistributionTable({
   rows,
   unit,
@@ -647,7 +723,7 @@ export function Statistics({
   })
 
   return (
-    <div className="panel">
+    <div className="panel statistics-paper">
       <header className="panel-head">
         <div>
           <h2>Statistics</h2>
@@ -689,6 +765,8 @@ export function Statistics({
           </button>
         ))}
       </div>
+
+      {report && <ThreeAxisPlot report={report} />}
 
       {error ? (
         <div className="alert">{error}</div>

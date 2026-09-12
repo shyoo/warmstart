@@ -536,9 +536,29 @@ describe('ordering by power in statistics tree', () => {
     ])
   })
 
+  it('puts Codex Sol above Terra', () => {
+    expect(['gpt-5.6-terra', 'gpt-5.6-sol'].sort(stats.compareModelPower)).toEqual([
+      'gpt-5.6-sol',
+      'gpt-5.6-terra'
+    ])
+  })
+
   it('orders efforts from highest to lowest', () => {
     const efforts = ['low', 'max', 'medium', 'high', 'xhigh', 'min']
     const sorted = [...efforts].sort(stats.compareEffortPower)
     expect(sorted).toEqual(['max', 'xhigh', 'high', 'medium', 'low', 'min'])
+  })
+
+  it('merges dated Claude model ids and omits an unrecorded model rung', () => {
+    finishedTask({ adapter: 'claude-code', model: 'claude-haiku-4-5-20251001', activeMs: MIN })
+    finishedTask({ adapter: 'claude-code', model: 'claude-haiku-4-5', activeMs: 2 * MIN })
+    finishedTask({ adapter: 'claude-code', model: null, activeMs: 3 * MIN })
+
+    const rows = stats.statisticsReport().velocity.rows
+    const models = rows.filter((row) => row.level === 'model')
+    expect(models).toHaveLength(1)
+    expect(models[0]?.label).toBe('claude-haiku-4-5')
+    expect(models[0]?.distribution.samples).toBe(2)
+    expect(rows.find((row) => row.level === 'agent')?.distribution.samples).toBe(3)
   })
 })
