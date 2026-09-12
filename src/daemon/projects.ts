@@ -4,7 +4,7 @@ import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { canonicalPath, samePath } from './fspath.js'
 import { proposeChecks } from './projectstack.js'
 import { execFileSync } from 'node:child_process'
-import type { LandingStrategyId, Project, ProjectConfig, Task, Vcs } from '@shared/tasks.js'
+import type { LandingStrategyId, Project, ProjectConfig, Task, UnattendedAuthority, Vcs } from '@shared/tasks.js'
 import type { ProjectPolicyPatch } from '@shared/tasks.js'
 import { readFinishPolicy } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
@@ -386,6 +386,16 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
     if (patch.prepare !== undefined) {
       config.prepare = patch.prepare.map((c) => c.trim()).filter(Boolean)
     }
+    if (patch.unattendedAuthority !== undefined) {
+      if (!['full-user', 'sandboxed-only'].includes(patch.unattendedAuthority)) {
+        throw new Error(`not an unattended authority: ${String(patch.unattendedAuthority)}`)
+      }
+      // ⛔ Written either way, including `full-user`. This is the one setting where the *absence* of
+      // a key and the permissive value mean the same thing to the resolver but very different
+      // things to a reader: an absent key is a project nobody was ever asked about, and a written
+      // `full-user` is somebody's decision. Both run the same; only one of them is informed.
+      config.permission = { ...config.permission, unattended: patch.unattendedAuthority }
+    }
     if (patch.promptOrientation !== undefined) {
       if (!['auto', 'off'].includes(patch.promptOrientation)) {
         throw new Error(`not an orientation choice: ${String(patch.promptOrientation)}`)
@@ -468,6 +478,11 @@ export interface ProjectPolicy {
   landingTarget: string
   allowRules: string[]
   denyRules: string[]
+  /**
+   * How much authority unattended work may have here. ⛔ An absent key resolves to `full-user`,
+   * which is what this project did before the setting existed — see `ProjectConfig.permission`.
+   */
+  unattendedAuthority: UnattendedAuthority
   env: Record<string, string | number>
 }
 
@@ -519,6 +534,7 @@ export function policyFor(project: Project): ProjectPolicy {
     landingTarget: c.landing?.target ?? DEFAULTS.landingTarget,
     allowRules: c.permission?.allow ?? [],
     denyRules: c.permission?.deny ?? [],
+    unattendedAuthority: c.permission?.unattended ?? 'full-user',
     env: c.env ?? {}
   }
 }

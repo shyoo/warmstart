@@ -61,6 +61,7 @@ import { useAction } from '../lib/useAction'
 import { TaskSettingPicker } from './TaskSettingPicker'
 import { CacheCost, Fact, ModelFact, SessionFact } from './thread/Facts'
 import { Decide, QuotaDecide, QuotaOverride } from './thread/Decide'
+import { DiffPanel } from './thread/DiffPanel'
 import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
 import { DebateBoard } from './thread/DebateBoard'
 import { CompactionRow, ReviewRow, RunRow } from './thread/RunRow'
@@ -505,6 +506,12 @@ function TaskDetail({
               "a decision is wanted from you" are the same kind of thing — finish it, park it, or say
               what you want next — and two of them living in a column of read-only facts made the
               third look like the only one. */}
+          {/* ⛔ Above the decision, not beside it: the card asks whether to land, and until this
+              existed the only answer available on this screen was a boolean. A person had to leave
+              the app and run git to see what pressing Land would move. */}
+          {task.status === 'awaiting_human' && task.branch && (
+            <DiffPanel taskId={task.id} updatedAt={task.updatedAt} />
+          )}
           {task.status === 'awaiting_human' && (
             <Decide
               task={task}

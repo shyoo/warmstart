@@ -15,7 +15,7 @@ not preferences. Read this before touching any code.
 
 ```
 ┌──────────────────────────────┐
-│ Electron main  src/main      │  window host + tray + the ONLY client that holds the daemon token
+│ Electron main  src/main      │  window host + tray + OS notifications + the ONLY daemon client
 │  └ preload  src/preload      │  contextBridge → window.agentyard (sandbox: true, CommonJS)
 │      └ renderer src/renderer │  React 19 UI. No port, no token, displays untrusted agent output
 └──────────────┬───────────────┘
@@ -354,6 +354,12 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
 
 ### Security boundaries
 
+- ⛔ **An OS notification is split across the boundary on purpose.** The renderer decides *when* one
+  is warranted, because it already holds the fleet state and paying main to subscribe a second time
+  would be a second answer to the same question; main decides *whether it can be shown*
+  (`Notification.isSupported()`) and owns the window a click raises. ⚠️ Title and body are **text**
+  on every platform — `Notification` takes strings — and a task title is something a person or an
+  agent wrote, so this is one more place the untrusted-text rule applies.
 - ⛔ **The renderer never holds the daemon token.** It calls main over IPC; main is orchestratord's
   only client. The renderer displays untrusted agent output and does not get a credential to a
   service that can spawn processes.

@@ -172,6 +172,10 @@ const info: AdapterInfo = {
     // sandbox is the only remaining boundary, and the agent works in a pooled worktree that is meant
     // to be writable and nothing else.
     defaultPermissionMode: 'workspace-write',
+    // ⚠️ The one adapter with a real boundary — and `grants.ts` widens it to reach the shared
+    // `.git`, which is wider than one task. A boundary that is not the whole user account is
+    // still the distinction a project is choosing between.
+    headlessAuthority: 'sandboxed',
     interruptSequence: '\x1b',
     costModelId: 'openai.codex.2026-08',
     wrapUpProtocol: 'handoff',

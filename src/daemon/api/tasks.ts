@@ -11,6 +11,7 @@ import { getProject, policyFor, requireProject } from '../projects.js'
 import { retireStrandedBranch } from '../worktrees.js'
 import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, setHoldReason, setQuotaOverride, setQuotaPreemptWarning, runsFor, setTaskStatsExcluded, updateTask } from '../tasks.js'
 import { taskCommits } from '../taskcommits.js'
+import { diffFileFor, diffSummaryFor } from '../taskdiff.js'
 import { cancelTask, deleteBlockers, deleteTask, restoreTask, resumeTask } from '../cancel.js'
 import { addRule, answerApproval, listRules, openApprovals, removeRule, requestApproval } from '../approvals.js'
 import { answerQuestion, askQuestion, openQuestions, questionsForTask, voidQuestionsForTask } from '../questions.js'
@@ -36,6 +37,7 @@ import { checkConstraints, dependenciesFor } from './support.js'
 type TaskMethod =
   | 'task.list' | 'task.page' | 'task.get' | 'project.activity' | 'task.create' | 'attachment.create' | 'attachment.folder'
   | 'attachment.read' | 'task.update' | 'task.setFinishPolicy' | 'task.pendingWork'
+  | 'task.diffSummary' | 'task.diffFile'
   | 'task.commitConversation' | 'task.landConversation' | 'task.setSessionSharing'
   | 'task.setCompletionMode' | 'task.setAutoCompact' | 'task.setStatsExcluded' | 'task.setObjective'
   | 'task.setModel' | 'task.setWorker' | 'task.setPriority' | 'task.land' | 'task.resolveConflict'
@@ -233,6 +235,8 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
      * ⚠️ Runs git, and only when asked. See the note in protocol.ts for why it is not on `task.get`.
      */
     'task.pendingWork': (p) => pendingWorkFor(p.id),
+    'task.diffSummary': (p) => diffSummaryFor(p.id),
+    'task.diffFile': (p) => diffFileFor(p.id, p.path),
     /** ⛔ One call, because the rung it writes decides both the landing and the next turn's prompt. */
     'task.commitConversation': (p) => commitConversation(p.id, p.finishPolicy),
     /** ⛔ The clean-tree half of the same decision: no turn, the tool lands it. See `landConversation`. */

@@ -1,6 +1,6 @@
 import { sessionEnded } from '@shared/protocol'
-import { useCallback, useEffect, useState } from 'react'
-import type { Project, ResourceAvailability, Task } from '@shared/tasks'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { Project, ResourceAvailability, Task, TaskStatus } from '@shared/tasks'
 import {
   fleetCounts,
   rpc,
@@ -42,6 +42,7 @@ import { Statistics, type StatisticsTab } from './components/Statistics'
 import { QualityReview } from './components/QualityReview'
 import { ProjectDot, projectWorkState } from './lib/taskview'
 import { useUiSettings } from './lib/uisettings'
+import { notifiableTransition, worthTracking } from './lib/notify'
 
 /**
  * The shell.
@@ -197,6 +198,43 @@ export function App(): React.JSX.Element {
       void refreshProjects()
     }
   })
+
+  /**
+   * Come and get the person when a task wants them, finishes, or fails.
+   *
+   * ⛔ **The state lives in a ref, because a notification is a side effect and not a render.** The
+   * previous status of every live task is what makes this a *transition* rather than a state — see
+   * `lib/notify.ts` — and holding it in React state would redraw the whole app on every scheduler
+   * tick to change nothing anybody can see.
+   */
+  const lastStatus = useRef(new Map<string, TaskStatus>())
+  useDaemonEvents((event) => {
+    if (event.type !== 'task.changed') return
+    const task = event.task
+    const seen = lastStatus.current
+    const note = notifiableTransition(seen.get(task.id), task)
+    if (worthTracking(task.status)) seen.set(task.id, task.status)
+    else seen.delete(task.id)
+    if (!note) return
+    // ⚠️ Fire and forget. Main answers `false` when the platform cannot show one, and there is
+    // nothing useful to do about that except not care.
+    void window.agentyard.notify({ title: note.title, body: note.body, taskId: note.taskId })
+  })
+
+  /** Clicking a notification opens the task it was about. */
+  useEffect(
+    () =>
+      window.agentyard.onNotificationActivate((taskId) => {
+        const task = tasks.find((t) => t.id === taskId)
+        if (!task) return
+        setRoute(
+          task.projectId
+            ? { kind: 'project', id: task.projectId, tab: 'thread', taskId }
+            : { kind: 'unassigned', taskId }
+        )
+      }),
+    [tasks, setRoute]
+  )
 
   /**
    * ⛔ Re-reads the data, never reloads the window. A reload would drop every open terminal's

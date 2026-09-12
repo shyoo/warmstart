@@ -63,6 +63,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Flow` | project lifecycle map: 6-column kanban flow with ticket ↔ workspace ↔ worker bindings and read-only grading runs |
 | `FleetStrip` `Workers` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions; one two-column settings card per worker |
 | `Tasks` `TaskThread` `thread/*` `Dependencies` | the board, one task's thread, and prerequisite edges |
+| `thread/DiffPanel` | the change a task would land, at the `awaiting_human` gate: a file list with counts, one patch per expand. ⛔ Every line is a **text node** in `<pre>` and the only thing derived from its content is a CSS class from the first character (`lib/diffline.ts`) — no markdown, no highlighter, no linkified paths |
 | `TaskSettingPicker` | ⛔ **one component, seven uses** — the thread's finish, conversation, completion, compaction, objective, worker and priority settings |
 | `NewTask` `NewTaskModal` `Pill` | one shell-owned composer modal: the project and the prompt first, the rest as a row of **pills** under it; a project in view is selected but can always be changed |
 | `Attention` `Questions` | the approvals/questions/quota-gate bar — one keystroke above the operator's work |
@@ -665,6 +666,8 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 | `taskview.tsx` `threadview.ts` `fleetcard.ts` `fleetcounts.ts` | derived view state |
 | `format.ts` `modelname.ts` `agenticon.ts` | display formatting |
 | `live.ts` | `showsLiveOutput(status)` — which statuses get a peephole |
+| `diffline.ts` | `patchLineKind(line)` — how a patch line is classified for display, from its **first character and nothing else** |
+| `notify.ts` | `notifiableTransition(before, task)` — when a task's movement is worth an OS notification. ⛔ A *transition*, never a state: first sight is always silent |
 | `menuposition.ts` | where a pill's portalled menu goes: flip above, clamp to the window, never clip |
 | `newproject.ts` | the add-project wizard's step blockers, its creation plan, and the template signature |
 | `prefs.ts` | saved views, fleet collapse and density, page size, **which page of the list you were reading** (localStorage) |
@@ -672,6 +675,13 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 | `pasteimages.tsx` | paste-to-attach; downscales to 1568px and uploads one image per call |
 | `composerprefs.ts` | what the composer was last set to — ⛔ **last-selected beats inherited**, and model/effort are keyed **per account** |
 | `composerscratch.ts` | what is still half-written in the composer — ⛔ a **scratch, not a draft**: no task row is filed |
+
+**Notifications are a window preference too**, for the same reason: `notifications` lives in
+`ui-settings.json`, the renderer decides *when* (it already holds the fleet state) and main decides
+*whether it can* (`Notification.isSupported()`) and owns the window a click raises. ⛔ Only three
+transitions fire one — `awaiting_human`, `completed`, `failed` — and only as a change, because
+attaching to a daemon that has been working while the app was closed would otherwise fire one per
+resting task.
 
 ⚠️ `UiSettings` is **separate from fleet `Settings`** on purpose. Those live in the daemon's database
 and change what the *scheduler* does; these are read by the main process and change what the *window*

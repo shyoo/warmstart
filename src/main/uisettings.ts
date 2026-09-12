@@ -39,7 +39,11 @@ export function readUiSettings(): UiSettings {
       theme:
         parsed.theme === 'system' || parsed.theme === 'light' || parsed.theme === 'dark'
           ? parsed.theme
-          : DEFAULT_UI_SETTINGS.theme
+          : DEFAULT_UI_SETTINGS.theme,
+      notifications:
+        typeof parsed.notifications === 'boolean'
+          ? parsed.notifications
+          : DEFAULT_UI_SETTINGS.notifications
     }
   } catch {
     return { ...DEFAULT_UI_SETTINGS }

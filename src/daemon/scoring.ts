@@ -189,6 +189,16 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
   const switches = settings()
   const project = task.projectId ? getProject(task.projectId) : undefined
   const objective = resolveObjective(project?.config?.objective, task.objective, switches.objective)
+  /**
+   * Does this project refuse to run unattended work at full user authority?
+   *
+   * ⛔ Read once per decision, like every other project fact here, so every candidate in one field
+   * is judged against the same snapshot. ⚠️ A task with no project cannot express the preference and
+   * is not gated by it — there is no repository whose owner could have chosen.
+   */
+  const unattendedNeedsSandbox = project
+    ? policyFor(project).unattendedAuthority === 'sandboxed-only'
+    : false
   const w = weights(objective)
   // ⛔ Once per decision, not once per candidate. See `scoreCandidate`'s `pace` parameter.
   const pace = paceFactors()
@@ -282,6 +292,32 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     if (missing.length) {
       // ⚠️ Standing: an adapter does not grow a capability while a task waits for it.
       refuse(worker, 'account', `${worker.label} lacks ${missing.join(', ')}`, true)
+      continue
+    }
+
+    /**
+     * ⛔ **The project's containment choice, enforced as a refusal rather than as a downgrade.**
+     * A project set to `sandboxed-only` will not hand unattended work to an adapter that runs with
+     * the operator's full authority — and the honest outcome is that the task *holds*, visibly,
+     * with this sentence on its row. Running it on that adapter "but sandboxed" is the other
+     * option, and it is the t250 stall: a headless CLI that cannot ask turns every command into a
+     * denial and burns a window discovering it.
+     *
+     * ⚠️ Standing, because an adapter does not acquire a sandbox while a task waits — a person
+     * either changes the project setting or signs in an account that has one. The refusal names the
+     * setting, because the task is unrunnable until somebody decides one way or the other.
+     *
+     * ⛔ Asks `headlessAuthority`, never an adapter name. A project names a property it needs; which
+     * adapters have it is theirs to declare.
+     */
+    if (unattendedNeedsSandbox && info.policy.headlessAuthority !== 'sandboxed') {
+      refuse(
+        worker,
+        'account',
+        `${worker.label} runs unattended work with full user authority, and this project is set to ` +
+          'sandboxed adapters only',
+        true
+      )
       continue
     }
 

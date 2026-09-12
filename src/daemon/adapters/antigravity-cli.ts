@@ -217,6 +217,9 @@ const info: AdapterInfo = {
     // ⛔ Headless print mode has no TUI prompt: `accept-edits` auto-denies commands (git, tests, etc.)
     // and causes immediate CANCELED turns. Work runs in an isolated pooled worktree governed by mandate.
     defaultPermissionMode: 'dangerously-skip-permissions',
+    // ⛔ The flag says it. Full authority of the OS user, bounded by the mandate and the
+    // landing gate and by nothing the operating system enforces.
+    headlessAuthority: 'full-user',
     interruptSequence: '\x1b',
     costModelId: 'google.antigravity.2026-08',
     // ⛔ Falls out of manualCompact: false. Preemption writes a handoff instead of compacting.

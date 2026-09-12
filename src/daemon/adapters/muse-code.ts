@@ -133,6 +133,9 @@ const info: AdapterInfo = {
     // command; the same call this project already made for antigravity and claude-code, quarantined
     // inside an isolated pooled worktree and gated by the mandate and the landing checks.
     headlessPermissionMode: 'never',
+    // ⛔ `never` here means never *ask*, not never act — the same call as claude-code and
+    // antigravity above, and it carries the same authority.
+    headlessAuthority: 'full-user',
     interruptSequence: '\x1b',
     costModelId: 'meta.muse.2026-09',
     // No `/compact` to send, so a run that has to wrap up says so in words.

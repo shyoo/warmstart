@@ -71,10 +71,41 @@ export interface ProjectConfig {
      */
     seed?: string
   }
-  permission?: { mode?: string; allow?: string[]; deny?: string[] }
+  permission?: {
+    mode?: string
+    allow?: string[]
+    deny?: string[]
+    /**
+     * How much authority **unattended** work may have in this project.
+     *
+     * ⛔ **The absent key means `full-user`**, which is what every project did before this
+     * existed. Defaulting an existing project to the safer value would change what a running
+     * fleet is allowed to do underneath its operator, which is worse than the disclosure — so
+     * the add-project wizard *asks*, and only a project that was asked carries an answer.
+     *
+     * ⚠️ `sandboxed-only` is enforced as an **eligibility gate**, not as a downgrade: a task
+     * that only a bypassing adapter could run holds, visibly, rather than being run sandboxed
+     * into the stall t250 measured. See `docs/adapters.md` and the README's Security model.
+     */
+    unattended?: UnattendedAuthority
+  }
   env?: Record<string, string | number>
   resources?: Array<{ ref: string }>
   mandate?: Partial<Mandate>
+}
+
+/**
+ * How much authority unattended work may have in a project.
+ *
+ * ⛔ **A choice about this repository and this machine, not about an adapter.** `sandboxed-only`
+ * says *only dispatch work here to a CLI that enforces a boundary*; which CLIs those are is the
+ * adapters' own declaration (`AdapterPolicy.headlessAuthority`), so a project never names one.
+ */
+export type UnattendedAuthority = 'full-user' | 'sandboxed-only'
+
+export const UNATTENDED_AUTHORITY_LABELS: Record<UnattendedAuthority, string> = {
+  'full-user': 'Full user authority',
+  'sandboxed-only': 'Sandboxed adapters only'
 }
 
 /** Whether a cold prompt names this project's orientation docs. See `ProjectConfig.prompt`. */
@@ -107,6 +138,11 @@ export interface ProjectPolicyPatch {
    * then derives its own sibling rather than inheriting somebody else's.
    */
   workspaceRoot?: string
+  /**
+   * See `ProjectConfig.permission.unattended`. ⚠️ Unlike the other optional keys here, setting this
+   * to its permissive value still **writes** it: an absent key means nobody was asked.
+   */
+  unattendedAuthority?: UnattendedAuthority
   /** See `ProjectConfig.prompt.orientation`. */
   promptOrientation?: OrientationChoice
   /**
@@ -2541,6 +2577,71 @@ export interface PendingWork {
   unlandedCommits: number
   /** Is there **uncommitted** work here? The one question the Commit button and the Finish warning ask. */
   hasDiff: boolean
+}
+
+/** One changed file in a task's diff. Counts always; contents only on request. */
+export interface TaskDiffFileEntry {
+  path: string
+  added: number
+  removed: number
+  /** Counted as changed, never inlined — there is nothing here a person can read. */
+  binary: boolean
+  /** A lockfile or a build output: listed with its counts, never inlined. */
+  generated: boolean
+}
+
+/**
+ * What this task's branch would put on the trunk, as a file list.
+ *
+ * ⛔ **The committed change and the uncommitted tree are two different answers, and this carries
+ * both because only one of them lands.** `files` is what pressing Land moves. `uncommittedFiles` is
+ * what is sitting in the workspace *not* going anywhere — the thing the Finish warning already
+ * exists for — and showing them merged would tell somebody a file was about to land when it was
+ * about to be left behind.
+ *
+ * ⚠️ Shaped like `PendingWork` on purpose: `ok` plus a `reason`, with neutral values rather than a
+ * union, because "I could not resolve a range" is a sentence the panel shows rather than an absence
+ * it hides.
+ */
+export interface TaskDiffSummary {
+  ok: boolean
+  /** Why there is no diff to show. `''` when `ok`. */
+  reason: string
+  base: string | null
+  head: string | null
+  /** Which rung of `resolveRange` answered — the vocabulary is `review.ts`'s, not a second one. */
+  from: 'commits' | 'landed' | 'branch' | null
+  /**
+   * How many commits are being shown separately rather than as one range.
+   *
+   * ⚠️ `> 1` means this task landed more than once and other tasks' work fell between its commits.
+   * The panel says so, for the same reason the grader's prompt does.
+   */
+  separateCommits: number
+  files: TaskDiffFileEntry[]
+  insertions: number
+  deletions: number
+  /** The file list hit its cap. There are more changed files than are listed. */
+  filesTruncated: boolean
+  /** Uncommitted and untracked files in the workspace. ⛔ These do **not** land. */
+  uncommittedFiles: number
+  /** Commits on the branch the landing target does not have. */
+  unlandedCommits: number
+  /** Could the workspace be read at all? `false` means the two counts above are unknown, not zero. */
+  workspaceReadable: boolean
+}
+
+/** One file's patch text, capped. */
+export interface TaskDiffFile {
+  ok: boolean
+  reason: string
+  path: string
+  /** ⛔ Untrusted text. Rendered as text nodes, never as markup. See `docs/ui.md`. */
+  patch: string
+  /** The patch was cut at a line boundary because it exceeded the cap. */
+  truncated: boolean
+  /** The full size before any cut, so the panel can say "showing X of Y". */
+  bytes: number
 }
 
 /**

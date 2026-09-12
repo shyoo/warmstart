@@ -71,6 +71,25 @@ export const DIFF_BUDGET_CHARS = 120_000
 /** Listed with their line counts, never inlined: nothing here is a judgment about the work. */
 const GENERATED = /(^|\/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|dist|out|release|node_modules)(\/|$)/
 
+/**
+ * Is this a file we count but never show the contents of?
+ *
+ * ⛔ Exported so the human's diff panel and the grader agree on what "shown" means. Two copies of
+ * this regex would let the reviewer read a lockfile the grader never saw, and the score would be
+ * about a different change from the one on screen.
+ */
+export function isGeneratedPath(path: string): boolean {
+  return GENERATED.test(path)
+}
+
+/** One file's line counts within a set of diff specs. */
+export interface DiffFileEntry {
+  path: string
+  added: number
+  removed: number
+  binary: boolean
+}
+
 export type RangeResolution =
   | {
       ok: true
@@ -265,7 +284,7 @@ async function resolves(cwd: string, ref: string): Promise<string | null> {
  * spelling for *this commit against its parent*, so the per-commit form grades what was recorded
  * and nothing adjacent to it.
  */
-async function diffSpecs(
+export async function diffSpecs(
   cwd: string,
   base: string,
   head: string,
@@ -277,6 +296,67 @@ async function diffSpecs(
   const contained = new Set(inRange.split(/\r?\n/).filter((l) => l.trim().length > 0))
   const sameSet = contained.size === commits.length && commits.every((sha) => contained.has(sha))
   return sameSet ? [range] : commits.map((sha) => `${sha}^!`)
+}
+
+/**
+ * The changed files and their line counts, summed across every spec.
+ *
+ * ⛔ **`-z`, because a path is bytes and `\t` is one of them.** Without it git *munges* pathnames:
+ * anything with a tab, a quote or a non-ASCII byte comes back C-quoted and wrapped in `"`, and the
+ * plain `split('\t')` this replaced then read a quoted path as the path — so the file list showed a
+ * name no `git diff -- <path>` would ever match, and its patch came back empty. Under `-z` the path
+ * is everything after the second tab up to the NUL, verbatim.
+ *
+ * ⚠️ A rename is the one record with a *different* shape: git writes the counts, an empty field,
+ * then the old and new paths as two more NUL-terminated fields. The new path is the one that exists
+ * to be read, so it is the one kept.
+ */
+export async function numstatEntries(cwd: string, specs: string[]): Promise<DiffFileEntry[]> {
+  const byPath = new Map<string, DiffFileEntry>()
+  for (const spec of specs) {
+    const out = await git(cwd, ['diff', '--numstat', '-z', spec])
+    const fields = out.split('\0')
+    for (let i = 0; i < fields.length; i += 1) {
+      const match = /^(\d+|-)\t(\d+|-)\t([\s\S]*)$/.exec(fields[i] ?? '')
+      if (!match) continue
+      const [, addedRaw, removedRaw, inline] = match
+      let path = inline ?? ''
+      // An empty inline path means a rename: the old and new names are the next two fields.
+      if (path.length === 0) {
+        path = fields[i + 2] ?? ''
+        i += 2
+      }
+      if (path.length === 0) continue
+      const prior = byPath.get(path)
+      byPath.set(path, {
+        path,
+        // `-` is git's way of saying binary. Counted as changed, never inlined.
+        added: (prior?.added ?? 0) + (addedRaw === '-' ? 0 : Number.parseInt(addedRaw ?? '0', 10) || 0),
+        removed:
+          (prior?.removed ?? 0) + (removedRaw === '-' ? 0 : Number.parseInt(removedRaw ?? '0', 10) || 0),
+        binary: (prior?.binary ?? false) || addedRaw === '-'
+      })
+    }
+  }
+  return [...byPath.values()]
+}
+
+/**
+ * One file's patch text across every spec, concatenated.
+ *
+ * ⛔ **`:(literal)` on the pathspec, and the failure it prevents is *over*-matching.** A bare
+ * pathspec is a glob, and git also matches it literally — so a name containing glob characters
+ * usually still finds itself, which is why this looks unnecessary. ⭐ Measured 2026-09-12 on a
+ * scratch repo: `git diff --numstat -- '*.tsx'` returned **both** `a.tsx` and `b.tsx`, while
+ * `:(literal)*.tsx` returned nothing. A file genuinely named `*.tsx` or `src/[id].tsx` is the
+ * caller asking for one file and being handed several files' patches concatenated — content from
+ * files the reviewer did not open, under the heading of the one they did.
+ */
+export async function patchFor(cwd: string, specs: string[], path: string): Promise<string> {
+  const parts = await Promise.all(
+    specs.map((spec) => tryGit(cwd, ['diff', spec, '--', `:(literal)${path}`]))
+  )
+  return parts.filter((p): p is string => !!p && p.trim().length > 0).join('\n')
 }
 
 /**
@@ -292,27 +372,7 @@ export async function collectDiff(
   commits?: string[]
 ): Promise<ReviewDiff> {
   const specs = await diffSpecs(cwd, base, head, commits)
-  const entriesByPath = new Map<
-    string,
-    { path: string; added: number; removed: number; binary: boolean }
-  >()
-  for (const spec of specs) {
-    const numstat = await git(cwd, ['diff', '--numstat', spec])
-    for (const line of numstat.split(/\r?\n/).filter((l) => l.trim().length > 0)) {
-      const [added, removed, ...rest] = line.split('\t')
-      const path = rest.join('\t')
-      const prior = entriesByPath.get(path)
-      entriesByPath.set(path, {
-        path,
-        // `-` is git's way of saying binary. Counted as changed, never inlined.
-        added: (prior?.added ?? 0) + (added === '-' ? 0 : Number.parseInt(added ?? '0', 10) || 0),
-        removed:
-          (prior?.removed ?? 0) + (removed === '-' ? 0 : Number.parseInt(removed ?? '0', 10) || 0),
-        binary: (prior?.binary ?? false) || added === '-'
-      })
-    }
-  }
-  const entries = [...entriesByPath.values()]
+  const entries = await numstatEntries(cwd, specs)
 
   const insertions = entries.reduce((n, e) => n + e.added, 0)
   const deletions = entries.reduce((n, e) => n + e.removed, 0)
@@ -332,7 +392,7 @@ export async function collectDiff(
   let used = stat.length
 
   for (const entry of ordered) {
-    if (entry.binary || GENERATED.test(entry.path)) {
+    if (entry.binary || isGeneratedPath(entry.path)) {
       omitted.push(`${entry.path} | +${entry.added}/-${entry.removed} (generated or binary, not shown)`)
       continue
     }
@@ -340,11 +400,7 @@ export async function collectDiff(
       omitted.push(`${entry.path} | +${entry.added}/-${entry.removed} (not shown)`)
       continue
     }
-    const hunks = (
-      await Promise.all(specs.map((spec) => tryGit(cwd, ['diff', spec, '--', entry.path])))
-    )
-      .filter((h): h is string => !!h && h.trim().length > 0)
-      .join('\n')
+    const hunks = await patchFor(cwd, specs, entry.path)
     if (used + hunks.length > DIFF_BUDGET_CHARS && parts.length > 1) {
       omitted.push(`${entry.path} | +${entry.added}/-${entry.removed} (not shown)`)
       continue

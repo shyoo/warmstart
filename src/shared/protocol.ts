@@ -35,6 +35,8 @@ import type {
   ProjectPolicyPatch,
   WorkspaceRootReport,
   PendingWork,
+  TaskDiffFile,
+  TaskDiffSummary,
   Question,
   QuestionKind,
   QuestionOption,
@@ -1161,6 +1163,21 @@ export interface AdapterPolicy {
    * a consult or a review passes its own mode and is never touched by this.
    */
   headlessPermissionMode?: string | null
+  /**
+   * How much authority unattended work on this adapter actually has.
+   *
+   * ⛔ **A capability, not a branch on a mode name.** The question a project needs answered is *can
+   * this thing do anything my user can do*, and the answer is not derivable from the mode string —
+   * `bypassPermissions`, `--dangerously-skip-permissions` and `--sandbox danger-full-access` are
+   * three spellings of the same authority, and a reader that pattern-matched on them would be wrong
+   * the first time a vendor renamed one. Each adapter states its own answer, conservatively.
+   *
+   * ⚠️ `'sandboxed'` is a claim about a boundary the *CLI* enforces, and it is not absolute:
+   * Codex's `workspace-write` is real but is widened by `grants.ts` to reach the shared `.git`. It
+   * means *there is a boundary and it is not your whole user account*, which is the distinction a
+   * project is choosing between.
+   */
+  headlessAuthority: 'sandboxed' | 'full-user'
   /** What "stop what you are doing" is, as bytes. ESC for a TUI; adapters may differ. */
   interruptSequence: string
   costModelId: string
@@ -1799,6 +1816,25 @@ export interface RpcMap {
    * comes to rest and after each of its own actions, and never on a timer.
    */
   'task.pendingWork': { params: { id: string }; result: PendingWork }
+  /**
+   * The changed files this task's branch would put on the trunk.
+   *
+   * ⛔ **The landing decision is about bytes, and until this existed no screen showed them.** The
+   * thread knew one diff fact — `PendingWork.hasDiff`, a boolean about the *uncommitted* tree — so
+   * a person at an `awaiting_human` gate had to leave the app and run git to decide whether to
+   * press Land. This is the same change `resolveRange` hands the grader, read for a person.
+   *
+   * ⚠️ Runs git, like `task.pendingWork`, and is asked when the panel opens rather than on a timer.
+   */
+  'task.diffSummary': { params: { id: string }; result: TaskDiffSummary }
+  /**
+   * One file's patch text.
+   *
+   * ⛔ **One file at a time, never the whole change at once**, and the path must be one
+   * `task.diffSummary` listed — the renderer does not get to name a file on disk. The patch is
+   * untrusted text: `docs/ui.md` governs how it is drawn, and it is never markup.
+   */
+  'task.diffFile': { params: { id: string; path: string }; result: TaskDiffFile }
   /**
    * Ask this conversation's agent to commit, on the rung the operator picked.
    *

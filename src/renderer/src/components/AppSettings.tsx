@@ -36,6 +36,7 @@ export function AppSettings(): React.JSX.Element {
   }
 
   const tray = settings.tray
+  const notifications = settings.notifications
   const enterBehavior = settings.enterBehavior
   const theme = settings.theme
 
@@ -104,6 +105,35 @@ export function AppSettings(): React.JSX.Element {
               on={tray}
               busy={saving}
               onToggle={() => void save({ tray: !tray })}
+            />
+          }
+        />
+
+        {/* ⚠️ Stated in terms of the promise it keeps. "File a task and walk away" is only true if
+            something comes and gets you, and with the tray on the window is usually not in front
+            of anybody. */}
+        <SettingRow
+          title="Notify me when a task needs me"
+          description={
+            notifications ? (
+              <>
+                An OS notification when a task <strong>wants your decision</strong>, finishes, or
+                fails. Clicking it opens that task. Nothing else raises one — a task moving through
+                the scheduler is not news.
+              </>
+            ) : (
+              <>
+                No notifications. A task waiting on your decision will sit there until you look at
+                the Attention bar, which you only see when this window is in front of you.
+              </>
+            )
+          }
+          control={
+            <SettingSwitch
+              label="Notify me when a task needs me"
+              on={notifications}
+              busy={saving}
+              onToggle={() => void save({ notifications: !notifications })}
             />
           }
         />

@@ -3,30 +3,46 @@
 ## Current state — 2026-09-12
 
 Warmstart M0–M6 is implemented. The current branch contains debate mode, quota-aware scheduling,
-pooled worktrees, model-aware routing, quality review, remote access, packaging, and the completed
-Warmstart rename. The maintained reference in [`docs/`](docs/README.md) is the authority on each
-subsystem; dated design and incident history belongs in `transient_docs/`, not here.
+pooled worktrees, model-aware routing, quality review, remote access, packaging, the completed
+Warmstart rename, and the three pre-public blockers a three-seat debate on t392 converged on:
+**in-app diff review**, an **honest security model with a per-project containment setting**, and
+**desktop notifications**. The maintained reference in [`docs/`](docs/README.md) is the authority on
+each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Last full local validation on this branch (2026-09-12): `npm run typecheck`, `npm run lint`,
-`npm test` (**3,171 passed, 2 skipped**) and `npm run build` all passed. The expected test warnings
-exercise refusal and recovery paths; they are not failures. The Quality Review batch table now keeps
-the recorded work model and publishes its selected grader model as soon as grading starts, so live
-rows can compare both sides of a review.
+`npm test` (**3,206 passed, 2 skipped** — up from 3,171; 35 new) and `npm run build` all passed.
+The expected test warnings exercise refusal and recovery paths; they are not failures.
 
 ## Closed in this cleanup
 
-- **Debate seats now see current code and stay in their role.** t383–t385 were all initially cut
-  from `origin/main` at `316aa33`; t385 therefore correctly found no debate implementation, since
-  `debate.ts` arrived at `467c90e`. `report-only` work now starts from the local landing target, and
-  seat prompts treat the submitted text as a question rather than instructions to edit, commit,
-  rebase or finish. See [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md)
-  §12.
-- **The reported Luna `task_complete` defect is closed.** Codex deliberately has no per-session MCP
-  registration (`mcp: false`), so the old universal seat wording was wrong. Seats now follow the
-  completion contract actually present in their generated prompt. Model exploration did not choose
-  Luna: debate seats are roster-pinned and exploration rejects pinned tasks.
-- **The t382 organizer capacity leak is closed.** A debate organizer now winds down its run and
-  session after sending round briefs or splitting work, just like a Plan & Split planner.
+- **The thread shows the change before you land it.** `task.diffSummary` and `task.diffFile`
+  ([`src/daemon/taskdiff.ts`](src/daemon/taskdiff.ts)) read the *same* commits the grader reads —
+  `resolveRange` picks them, and `collectDiff` was split into `numstatEntries`/`patchFor` so both
+  callers see one file set. `thread/DiffPanel.tsx` draws it at the `awaiting_human` gate. ⛔ Two
+  measured git facts are pinned in [`taskdiff.test.ts`](src/daemon/taskdiff.test.ts): `--numstat`
+  without `-z` returns non-ASCII paths **C-quoted** (`"cafÃ©.txt"`), and a bare pathspec
+  **over**-matches — `-- '*.tsx'` returned two files where `:(literal)*.tsx` returned none.
+  ⚠️ The `rangeCache` stale-head trap reported during the debate **is not real**: rung 3 returns the
+  branch answer without ever calling `rangeCache.set`, so a moving branch is re-resolved every time.
+  The test pins that rather than the reasoning.
+- **The security model is written down, and the permissive default is now a choice.**
+  `permissionModeFor` ([`src/daemon/sessions.ts:720`](src/daemon/sessions.ts)) puts unattended work
+  on `bypassPermissions` (claude-code) and `--dangerously-skip-permissions` (antigravity) — full OS
+  user authority, no approvals raised. Adapters now declare `policy.headlessAuthority`, projects
+  carry `permission.unattended`, and a `sandboxed-only` project **refuses** a bypassing candidate in
+  `scoring.ts` rather than downgrading it into the t250 stall. README has a **Security model**
+  section; the two lines that read as a security promise (*Isolated workspaces*, *Approvals, not
+  interruptions*) now say what they actually mean.
+- **OS notifications.** Three transitions only — `awaiting_human`, `completed`, `failed` — and only
+  as a *change*, so attaching to a daemon that worked while the app was closed stays silent.
+  `lib/notify.ts` holds the rule; main owns `Notification` and the window a click raises.
+- **Debate seats see current code and stay in their role.** `report-only` work starts from the local
+  landing target, and seat prompts treat the submitted text as a question. See
+  [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §12.
+- **The reported Luna `task_complete` defect is closed.** Codex has no per-session MCP registration
+  (`mcp: false`), so the old universal seat wording was wrong.
+- **The t382 organizer capacity leak is closed.** A debate organizer winds down its run and session
+  after sending round briefs or splitting work.
 
 ## Remaining work — ordered by payoff
 
@@ -43,22 +59,37 @@ a unit test.
    [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §7.
 3. **Run human-in-the-loop, `commit-and-merge`, and cross-task reuse with a real agent.** The code
    and L1–L3 checks exist, but this has not been demonstrated in flight.
-4. **Run on macOS with a real CLI; this is the launch gate.** Verify detached daemon startup without
+4. **Run on macOS with a real CLI; this is the launch gate — and now the last one.** The other
+   three pre-public blockers (diff review, security model, notifications) landed above; this and
+   item 5 are what is left between here and a public release. Verify detached daemon startup without
    system Node, `node-pty` under hardened runtime, Application Support isolation, Antigravity's
    Keychain interaction, and Gatekeeper. The signed arm64 release cannot be called ready before it.
 5. **Execute the signing/release pipeline.** macOS signing and notarisation are decided; required
    secrets are not configured and `.github/workflows/release.yml` has never run. Windows is
    intentionally unsigned initially. Release notes must tell upgraders to uninstall the old app,
    because the `appId` changed.
-6. **Give Antigravity a real per-worker isolation root.** It currently shares `~/.gemini`; changing
+6. **Record one clean single-account first run.** Install the packaged app on a clean profile, add
+   one account, add one project, file a task, review its diff, land it, and write down what
+   happened. ⛔ A demonstration, not a feature, and the purest form of the pre-public question —
+   items 1–3 mean the basic loop has never been shown end to end against a real agent. Now
+   unblocked: there is finally something to look at at the gate.
+7. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the
+   generic declarative adapter cannot meter, gets no MCP tools and cannot reap orphans); CI watch
+   after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an
+   update-available check that keeps `publish: null`; backup/export of the data directory (no such
+   path exists today — task history, transcripts and cost evidence are one lost laptop from gone);
+   and a clone-per-worker or container backend, which is the only thing that properly closes both
+   the host-authority gap and the shared common-`.git` grant. ⚠️ Deliberately **not** on this list:
+   GitHub/Linear/Slack intake, agent-to-agent messaging, kanban, voice, cross-machine sync.
+8. **Give Antigravity a real per-worker isolation root.** It currently shares `~/.gemini`; changing
    `HOME` must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
-7. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data;
+9. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data;
    compare small and large quality-review models on the same five tasks; verify the Claude credits
    gauge against one real invoice; and decide whether preempted runs should contribute to estimates.
-8. **Increase thread UI coverage where behaviour changes.** The add-project wizard, project settings,
+10. **Increase thread UI coverage where behaviour changes.** The add-project wizard, project settings,
    conversations, session TUI, routing pages and selected thread rows are exercised; most thread
    interactions remain hand-tested. Extract pure decisions into `src/renderer/src/lib/` first.
-9. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines
+11. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines
    against a ~1,500 target. Existing seams import back from it, so no extracted module may read a
    scheduler binding at module evaluation time.
 

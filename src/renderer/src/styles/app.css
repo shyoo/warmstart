@@ -6999,3 +6999,142 @@ select:focus-visible,
   text-transform: uppercase;
   color: var(--color-text-faint);
 }
+
+/* ---------------------------------------------------------------- the diff panel
+
+   ⛔ The add/delete colours are the only place in this app where a colour is chosen from the
+   *content* of agent output. They come from the first character of a line and nothing else — see
+   `patchLineClass` in `thread/DiffPanel.tsx`, which is deliberately the whole of the parse. */
+
+.diff-panel {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  margin: var(--sp-3) 0;
+  background: var(--color-surface);
+}
+
+.diff-panel-summary {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+  user-select: none;
+}
+
+.diff-panel-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-dim);
+}
+
+.diff-panel-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+  margin-left: auto;
+}
+
+.diff-panel-body {
+  padding: 0 var(--sp-3) var(--sp-2);
+}
+
+.diff-file {
+  border-top: 1px solid var(--color-border);
+}
+
+.diff-file-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-1) 0;
+  background: none;
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--text-dense);
+}
+
+.diff-file-head:disabled {
+  cursor: default;
+  color: var(--color-text-faint);
+}
+
+.diff-file-caret {
+  color: var(--color-text-faint);
+  width: 1em;
+  flex: none;
+}
+
+/* ⚠️ `anywhere`, because a path is whatever an agent named a file and can be arbitrarily long. */
+.diff-file-path {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.diff-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-faint);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--sp-1);
+  flex: none;
+}
+
+.diff-counts {
+  display: flex;
+  gap: var(--sp-1);
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  flex: none;
+}
+
+.diff-counts-add { color: var(--state-ok); }
+.diff-counts-del { color: var(--state-danger); }
+.diff-counts-none { color: var(--color-text-faint); }
+
+.diff-file-body {
+  padding-bottom: var(--sp-2);
+}
+
+.diff-patch {
+  margin: 0;
+  padding: var(--sp-2);
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--text-dense);
+  line-height: var(--leading-tight);
+  overflow-x: auto;
+  /* ⚠️ `pre`, not `pre-wrap`: a wrapped patch line silently changes where a change appears to be. */
+  white-space: pre;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.diff-line { display: block; }
+.diff-line--add { color: var(--state-ok); }
+.diff-line--del { color: var(--state-danger); }
+.diff-line--hunk { color: var(--color-accent); }
+.diff-line--meta { color: var(--color-text-faint); }
+
+.diff-warn {
+  color: var(--state-warn);
+  font-size: var(--text-meta);
+  margin: var(--sp-2) 0;
+}
+
+.diff-note,
+.diff-refusal {
+  color: var(--color-text-dim);
+  font-size: var(--text-meta);
+  margin: var(--sp-2) 0;
+}

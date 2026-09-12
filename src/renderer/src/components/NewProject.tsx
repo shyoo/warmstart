@@ -7,6 +7,8 @@ import {
   FINISH_LABELS,
   FINISH_ORDER,
   SHARING_LABELS,
+  UNATTENDED_AUTHORITY_LABELS,
+  type UnattendedAuthority,
   verificationWarning,
   type CompletionModeChoice,
   type FinishPolicyChoice,
@@ -144,6 +146,9 @@ export function NewProject({
       finish: inspection.config?.landing?.finish ?? current.finish,
       sessionShare: inspection.config?.session?.share ?? current.sessionShare,
       completion: inspection.config?.session?.completion ?? current.completion,
+      // ⚠️ A committed answer is a decision somebody already made about this repository; the
+      // wizard's safer opening value is only for a project that has never been asked.
+      unattendedAuthority: inspection.config?.permission?.unattended ?? current.unattendedAuthority,
       poolSize: inspection.config?.workspaces?.poolSize ?? current.poolSize,
       // ⚠️ What the repo already declared beats what the manifests suggest. A committed check list is
       // a decision; a proposal is a guess about a project nobody has run.
@@ -224,6 +229,7 @@ export function NewProject({
           landingTarget: draft.landingTarget.trim(),
           sessionShare: draft.sessionShare,
           completion: draft.completion,
+          unattendedAuthority: draft.unattendedAuthority,
           poolSize: draft.poolSize
         },
         checks: checksFromText(draft.checksText),
@@ -682,6 +688,32 @@ function SetupStep({
                 ]}
                 ariaLabel="Project completion mode"
                 onChange={(val) => patch({ completion: val as CompletionModeChoice })}
+              />
+            }
+          />
+          {/* ⛔ The ask. This is the one moment a person is in front of a project that has never
+              been asked, and the permissive option is described by the authority it grants rather
+              than by the convenience it buys. */}
+          <SettingRow
+            title="Unattended authority"
+            description={
+              draft.unattendedAuthority === 'sandboxed-only'
+                ? 'Only adapters that sandbox unattended work may be given tasks here (today: Codex). A task no sandboxed account can take will hold rather than run.'
+                : '⛔ Any adapter. Unattended Claude Code and Antigravity work runs with permission checks bypassed, as your OS user — it can read and write anything you can, including ~/.ssh.'
+            }
+            control={
+              <SettingButtonSelect
+                className="finish-picker setting-row-control-select"
+                value={draft.unattendedAuthority}
+                options={[
+                  {
+                    value: 'sandboxed-only',
+                    label: UNATTENDED_AUTHORITY_LABELS['sandboxed-only']
+                  },
+                  { value: 'full-user', label: UNATTENDED_AUTHORITY_LABELS['full-user'] }
+                ]}
+                ariaLabel="Unattended authority"
+                onChange={(val) => patch({ unattendedAuthority: val as UnattendedAuthority })}
               />
             }
           />

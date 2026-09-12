@@ -81,7 +81,9 @@ worth and refuses to let it evaporate.
   than one model family, and — honestly — that several published results find debate does **not** beat
   one strong agent at the same token budget.
 - **Isolated workspaces.** Each task gets its own git worktree from a pooled set, on a branch named
-  after the task. Agents never work in the trunk.
+  after the task. Agents never work in the trunk. ⛔ This is *organisation*, not a security boundary
+  — read **[Security model](#security-model)** before you run this on a machine that has anything on
+  it.
 - **A live view.** The real agent TUI, not a reconstruction.
 - **Answer it from your phone.** Turn on remote access and pair a phone by scanning a QR code: it
   shows quota and everything waiting on you, answers questions and approvals, overrides a quota gate,
@@ -107,6 +109,8 @@ You need **one**. Having several is the point — see *Multiple accounts* below.
 
 - Windows is tested. ⚠️ macOS and Linux are written for and **have never been run**; the packaging
   targets exist and the platform branches are there, but nobody has started the app on either.
+  macOS is the next platform to be brought up and is a release gate. **Linux is unsupported** — not
+  "broken", simply never started, with nobody committed to fixing it if it is not.
 
 ## What works today
 
@@ -135,6 +139,9 @@ You need **one**. Having several is the point — see *Multiple accounts* below.
 - **Approvals, not interruptions.** When an agent needs permission, the request arrives as a
   structured event, is answered by your project's rules where possible, and otherwise appears as a
   one-keystroke strip above your work. *Always* turns it into a rule so the next one answers itself.
+  ⛔ **This describes an agent that asks.** Unattended work on Claude Code and Antigravity runs with
+  permission checks *bypassed* and raises no approvals at all — see
+  **[Security model](#security-model)**, which is the honest version of this bullet.
 - **Cancel without losing anything.** Cancelling stops the work, asks the agent to commit what
   compiles and write a handoff, releases the workspace, and rests the task — it never deletes.
   Deleting is separate, and never removes the record of what a run cost.
@@ -229,6 +236,69 @@ npm run dist         # installers for the current platform
 ⚠️ Builds are **unsigned**. Windows SmartScreen will warn; macOS Gatekeeper will refuse until you
 clear it by hand. That is the honest state of a pre-alpha rather than something worked around —
 signing is a certificate and a release process, not a config line.
+
+## Security model
+
+⛔ **Read this before pointing Warmstart at a repository on a machine that has anything else on it.**
+What follows is not a warning about a theoretical risk; it is what the code does today.
+
+**Unattended work on Claude Code and Antigravity runs with permission checks turned off, as your OS
+user.** When the scheduler dispatches a task, `permissionModeFor`
+([`src/daemon/sessions.ts`](src/daemon/sessions.ts)) substitutes the adapter's headless permission
+mode for whatever the CLI would otherwise do:
+
+| Adapter | Unattended mode | What bounds it |
+|---|---|---|
+| **Claude Code** | `bypassPermissions` | ⛔ Nothing at the OS level. Your user's full authority. |
+| **Antigravity** | `--dangerously-skip-permissions` | ⛔ Nothing at the OS level. Your user's full authority. |
+| **Codex** | `--sandbox workspace-write` | A real sandbox, widened to reach the shared `.git` |
+
+This is not an oversight, and turning it off is not the fix: measured on t250, a headless Claude
+session with permissions left on produced nine approval prompts in one hour for `git log` and `npm
+test`, two of which timed out into a denial with nobody watching. A CLI that cannot ask cannot be
+made to ask. The choice is between an agent that can finish and an agent that is contained, and
+Warmstart currently chooses *finish* for two of its three adapters.
+
+**So a dispatched Claude or Antigravity task can read and write anything your user can** — other
+workers' isolation roots, `~/.ssh`, your whole home directory — and reach the network. The worktree
+is where it is *pointed*, not a wall around it.
+
+**What does bound it:**
+
+- **The mandate** (`mandate.allowed`) — what a task may do to the *fleet*: file work, land, push.
+  ⛔ It is not an OS permission and does not restrain a shell command.
+- **The landing gate** — the project's check commands plus, on `await-human`, your own decision with
+  the diff in front of you. Warmstart never writes a commit for an agent.
+- **Credential separation** — each account gets its own isolation root; the tool never reads, copies
+  or proxies a credential, and a spawned CLI gets `spawnEnv()`, which prefix-denies `CLAUDE*` and
+  `ANTHROPIC_*` rather than a copy of your environment.
+- ⚠️ **Codex's sandbox is widened on purpose.** A pooled worktree keeps its git metadata in the
+  trunk, so committing needs the *common* `.git` — which holds every branch's refs and every task's
+  objects. A Codex worker could therefore rewrite refs belonging to another task. There is no
+  narrower grant; the real fix is a clone per worker, which is an architecture change and is not
+  done. See [`src/daemon/adapters/grants.ts`](src/daemon/adapters/grants.ts).
+
+**Treat any text that reaches a task as code you are about to run.** A prompt injection in a pasted
+issue, a phone-filed task, or a repository an agent has read can turn into arbitrary commands with
+no reviewer in front of them. Today Warmstart ingests nothing automatically — there is no GitHub,
+Linear or Slack intake — so every task starts with something you or your agent typed. That is a
+smaller attack surface, not an absent one.
+
+**The per-project setting.** The add-project wizard asks how much authority unattended work may have
+in that project, and it is changeable later in **Project → Settings**:
+
+- **Sandboxed only** — dispatch only to adapters whose unattended mode is a real sandbox (today:
+  Codex). A task that can only be run by a bypassing adapter **holds** rather than running: a hold
+  you can see is the honest outcome, and silently running it sandboxed would reproduce the t250
+  stall.
+- **Full user authority** — today's behaviour, on every adapter. Appropriate for a repository you
+  would hand to a contractor on a machine you would hand them too.
+
+⚠️ Projects created before this setting existed keep **full user authority**, because changing what
+a running fleet is allowed to do underneath it is worse than the disclosure.
+
+**Reporting something.** This is a single-developer pre-alpha with no security contact and no
+advisory process. Open a public issue; do not expect a coordinated disclosure.
 
 [`docs/development.md`](docs/development.md) has the full script list, the `scripts/build-win.ps1`
 pipeline and the platform failures that look like something else;

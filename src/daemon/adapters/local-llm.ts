@@ -78,6 +78,9 @@ const info: AdapterInfo = {
   },
   policy: {
     defaultPermissionMode: 'default',
+    // ⚠️ Conservative because it is unverified: nothing here has been shown to enforce a
+    // boundary, and the cheap direction for this question is to assume there is none.
+    headlessAuthority: 'full-user',
     interruptSequence: '\x1b',
     costModelId: 'local.llm.2026-09',
     // No compaction, so preemption falls back to the handoff protocol.

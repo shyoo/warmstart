@@ -57,6 +57,12 @@ export const REMOTE_METHODS = {
   'task.cancel': 'write',
   'task.resume': 'write',
   'task.pendingWork': 'read',
+  // ⛔ Off the phone deliberately, and not because reading a diff there would be wrong. The remote
+  // surface is deliberately narrow, a patch is unbounded text on the one client with no window to
+  // put it in, and widening it is a decision to take on its own evidence rather than as a side
+  // effect of building the desktop panel. See `docs/remote.md`.
+  'task.diffSummary': 'deny',
+  'task.diffFile': 'deny',
   'task.commitConversation': 'deny',
   'task.landConversation': 'deny',
   'task.overrideQuota': 'write',

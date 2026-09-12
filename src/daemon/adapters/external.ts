@@ -106,6 +106,11 @@ function policyFrom(file: ExternalAdapterFile): AdapterInfo['policy'] {
   const declared = file.policy ?? {}
   return {
     defaultPermissionMode: declared.defaultPermissionMode ?? '',
+    // ⛔ Never declarable from the JSON file, and always `full-user`. A sandbox is a claim that
+    // has to be measured against a real CLI, and this adapter exists precisely for CLIs nobody
+    // here has run. Letting a hand-written file assert its own containment would make the
+    // project setting mean whatever the file said it meant.
+    headlessAuthority: 'full-user',
     interruptSequence: declared.interruptSequence ?? '\x1b',
     costModelId: file.cost_model_id,
     // With no compaction declared, the only wrap-up available is a handoff.

@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   dialog,
   Menu,
+  Notification,
   Tray,
   ipcMain,
   nativeImage,
@@ -11,7 +12,7 @@ import {
 } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { IPC, type AppInfo, type DaemonUiStatus, type UiSettings } from '@shared/ipc.js'
+import { IPC, type AppInfo, type DaemonUiStatus, type NotifyRequest, type UiSettings } from '@shared/ipc.js'
 import type { DaemonEvent, RpcMethod } from '@shared/protocol.js'
 import { DaemonClient, daemonScriptPath, type DaemonStatus } from './daemon.js'
 import { DEFAULT_UI_SETTINGS, readUiSettings, writeUiSettings } from './uisettings.js'
@@ -320,6 +321,28 @@ void app.whenReady().then(() => {
     // indistinguishable from one that did not work.
     applyTraySetting()
     return uiSettings
+  })
+
+  /**
+   * Raise an OS notification, and open the task when it is clicked.
+   *
+   * ⛔ **Text only, and every field is treated as text.** The title and body can contain a task
+   * title, which is something a person or an agent wrote. Electron's `Notification` takes strings
+   * and renders them as strings on all three platforms — there is no markup path here and there
+   * must not become one.
+   *
+   * ⚠️ `isSupported()` is a real answer, not a formality: a Linux session with no notification
+   * daemon returns false, and reporting that back is what lets the renderer stop trying.
+   */
+  ipcMain.handle(IPC.notify, (_event, request: NotifyRequest): boolean => {
+    if (!uiSettings.notifications || !Notification.isSupported()) return false
+    const note = new Notification({ title: request.title, body: request.body })
+    note.on('click', () => {
+      showWindow()
+      broadcast(IPC.notificationActivate, request.taskId)
+    })
+    note.show()
+    return true
   })
 
   ipcMain.handle(IPC.pickFolders, async (): Promise<string[]> => {

@@ -97,6 +97,9 @@ const info: AdapterInfo = {
     // quarantined inside an isolated pooled worktree, gated by the mandate and by the landing
     // checks, on a branch nobody has to keep.
     headlessPermissionMode: 'bypassPermissions',
+    // ⛔ There is no OS boundary here at all: a dispatched task runs with this user's full
+    // authority. Stated so a project can refuse it, not as an aspiration to fix it in place.
+    headlessAuthority: 'full-user',
     // ESC is the CLI's own interrupt. ⛔ Not a process kill: a killed agent leaves its work
     // uncommitted and its claims held, which is the expensive half of a cancel.
     interruptSequence: '\x1b',

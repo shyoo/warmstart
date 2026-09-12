@@ -4613,6 +4613,83 @@ try {
     /Land/.test(landLabels) && !/Commit/.test(landLabels),
     landLabels
   )
+  // ------------------------------------------------------------------ the diff at the gate
+  // ⛔ **The check this panel exists for.** Before it, the only diff fact this screen had was the
+  // boolean `pending.hasDiff`, so a person deciding whether to press Land had to leave the app and
+  // run git. ⚠️ Asserted against a *non-empty* file list: an empty `.diff-file` set would pass every
+  // "it did not crash" check while showing nobody anything.
+  section('the diff a person reads before pressing Land')
+  let diffFiles = '[]'
+  await waitFor(async () => {
+    diffFiles = await evaluate(
+      `JSON.stringify([...document.querySelectorAll('.diff-panel .diff-file-path')].map(e => e.textContent.trim()))`
+    )
+    return JSON.parse(diffFiles).length > 0
+  }, 'the diff panel to list the committed file')
+  check(
+    'the panel lists the file the conversation actually committed',
+    JSON.parse(diffFiles).includes('edited.txt'),
+    diffFiles
+  )
+  const diffHead = await evaluate(
+    `document.querySelector('.diff-panel .diff-panel-meta')?.innerText.replace(/\\s+/g, ' ').trim() ?? ''`
+  )
+  check(
+    'and its header counts the files and the lines, so the size is visible unopened',
+    /1 file/.test(diffHead) && /\+1/.test(diffHead),
+    diffHead
+  )
+  // Expand it: the patch is fetched one file at a time, on demand.
+  // ⚠️ The panel opens itself when there is a change to read; force it open anyway so this check
+  // does not quietly depend on that default.
+  await evaluate(`document.querySelector('.diff-panel')?.setAttribute('open', '')`)
+  await wait(200)
+  await evaluate(
+    `[...document.querySelectorAll('.diff-panel .diff-file-head')].find(b => b.textContent.includes('edited.txt'))?.click()`
+  )
+  let diffPatch = '{}'
+  await waitFor(async () => {
+    diffPatch = await evaluate(`JSON.stringify({
+      lines: [...document.querySelectorAll('.diff-panel .diff-patch .diff-line')].length,
+      added: [...document.querySelectorAll('.diff-panel .diff-line--add')].map(e => e.textContent.trim()),
+      meta: [...document.querySelectorAll('.diff-panel .diff-line--meta')].map(e => e.textContent.trim()),
+      html: document.querySelector('.diff-panel .diff-patch')?.innerHTML ?? ''
+    })`)
+    return JSON.parse(diffPatch).lines > 0
+  }, 'the patch text for the expanded file')
+  const diffShown = JSON.parse(diffPatch)
+  check(
+    'expanding a file shows its added line, which is the content that will land',
+    diffShown.added.some((l) => l.includes('not committed yet')),
+    JSON.stringify(diffShown.added)
+  )
+  // ⛔ `+++ b/edited.txt` starts with the add character without being an addition. A version that
+  // checked `+` before `+++` paints two header lines green and red at the top of every file.
+  check(
+    '⛔ the `+++` and `---` headers are drawn as metadata, not as an add and a delete',
+    diffShown.meta.some((l) => l.startsWith('+++')) && diffShown.meta.some((l) => l.startsWith('---')),
+    JSON.stringify(diffShown.meta)
+  )
+  // ⛔ The untrusted-text invariant, checked on the rendered DOM rather than on the source. Every
+  // line is a `<span>` this codebase wrote around a text node; nothing in a patch may become markup.
+  // ⚠️ The boundary is an explicit "followed by a non-letter" class rather than a
+  // backslash-b: a backslash-b in this literal was silently turned into a backspace byte by a
+  // shell heredoc once already, and the broken form matched its own correct output. A check
+  // that fails green is worse than no check.
+  const strayTag = /<(?!\/?(?:span|pre)[^a-z])[a-z]/i.exec(diffShown.html)
+  check(
+    '⛔ the patch is drawn as text nodes only — no tags a patch could have introduced',
+    strayTag === null && diffShown.lines > 0,
+    JSON.stringify({
+      lines: diffShown.lines,
+      // The *offending* text, not the first 160 characters: a truncated passing prefix says
+      // nothing about why this failed.
+      stray: strayTag
+        ? diffShown.html.slice(Math.max(0, strayTag.index - 40), strayTag.index + 40)
+        : null
+    })
+  )
+
   // ⭐ t283: the card says which landing strategy the button will use, and it is the project's
   // answer rather than the bottom rung of the ladder. `ui project` inherits the fleet default.
   const landTitle = await evaluate(
