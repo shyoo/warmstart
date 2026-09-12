@@ -242,58 +242,62 @@ export async function onStreamResult(
   clearHousekeepingPrompt(session.id)
   const mcpLess = Boolean(session.adapterId && !adapter(session.adapterId).info.capabilities.mcp)
   // An MCP-less adapter cannot call task_complete, so its prompt gives it two deliberately exact
-  // terminal contracts. Antigravity can occasionally report ERROR after it has already returned a
-  // complete response (t163, 2026-09-03, `context canceled`); its status is not allowed to erase
-  // the explicit completion signal, but a plausible-sounding paragraph still is not one.
-  const completion = mcpLess ? taskCompletionIn(result.text) : null
+  // terminal contracts. Codex streams its prose as `assistant_text` and emits a bare `turn.completed`
+  // with `text: null`, so inspect the session's backscroll when `result.text` carries no terminal contract.
+  const sessionText = stripAnsi(backscroll(session.id)).trim() || null
+  const effectiveText = result.text?.trim() ? result.text : sessionText
+  const terminal = mcpLess ? (lastTerminalContract(result.text) ?? lastTerminalContract(sessionText)) : null
+  const completion = terminal?.completion ?? null
+  const asked = terminal?.asked ?? null
+
   // ⚠️ Read once, above the branches, because a conversation's turn ends on *every* clean path
   // through them and each one used to be able to answer "which task is this" differently.
   const openRun = runForSession(session.id)
   const runTask = openRun?.taskId ? getTask(openRun.taskId) : null
 
+  // ⛔ An adapter with no MCP has no `ask_human`, so the only channel left is the prompt
+  // contract it was given: end with `NEEDS DECISION:` and stop. A run that did is **not**
+  // complete, and completing it would file an unanswered question as finished work.
+  //
+  // ⚠️ This is a contract, not prose parsing. The agent was told this exact prefix and the
+  // match is anchored to a line start - nothing here reads intent out of generated text, which
+  // is the inference this project refuses to make.
+  if (asked) {
+    const run = runForSession(session.id)
+    if (run) {
+      // ⛔ **Filed as a real question, not only quoted into `hold_reason`.** The card, the
+      // options and the box the answer is typed into are all written against a `Question` row,
+      // and until this existed an MCP-less agent's question produced no row - so the operator
+      // got a sentence on the task and no way to reply to it (t63, 2026-08-30, antigravity).
+      //
+      // ⚠️ Before the run is wound up, so the thread reads in the order it happened: the
+      // question, then what became of the run that asked it.
+      fileParkedQuestion({
+        sessionId: session.id,
+        origin: 'ask_human',
+        kind: asked.kind,
+        question: asked.question,
+        ...(asked.options.length > 0 ? { options: asked.options } : {})
+      })
+      await endUnfinishedRun(
+        session,
+        run,
+        `The agent stopped to ask you something: "${asked.question.slice(0, 400)}"`,
+        'blocked'
+      )
+      closeSession(session.id)
+      return
+    }
+  }
+
   if (!result.isError) {
     if (mcpLess) {
-      // ⛔ An adapter with no MCP has no `ask_human`, so the only channel left is the prompt
-      // contract it was given: end with `NEEDS DECISION:` and stop. A run that did is **not**
-      // complete, and completing it would file an unanswered question as finished work.
-      //
-      // ⚠️ This is a contract, not prose parsing. The agent was told this exact prefix and the
-      // match is anchored to a line start - nothing here reads intent out of generated text, which
-      // is the inference this project refuses to make.
-      const asked = needsDecisionIn(result.text)
-      if (asked) {
-        const run = runForSession(session.id)
-        if (run) {
-          // ⛔ **Filed as a real question, not only quoted into `hold_reason`.** The card, the
-          // options and the box the answer is typed into are all written against a `Question` row,
-          // and until this existed an MCP-less agent's question produced no row - so the operator
-          // got a sentence on the task and no way to reply to it (t63, 2026-08-30, antigravity).
-          //
-          // ⚠️ Before the run is wound up, so the thread reads in the order it happened: the
-          // question, then what became of the run that asked it.
-          fileParkedQuestion({
-            sessionId: session.id,
-            origin: 'ask_human',
-            kind: asked.kind,
-            question: asked.question,
-            ...(asked.options.length > 0 ? { options: asked.options } : {})
-          })
-          await endUnfinishedRun(
-            session,
-            run,
-            `The agent stopped to ask you something: "${asked.question.slice(0, 400)}"`,
-            'blocked'
-          )
-          closeSession(session.id)
-          return
-        }
-      }
       // ⛔ Ahead of the completion below, because on this adapter a conversation that has not been
       // asked to finish has no way to say "I am done" and must never be read as having said it. An
       // explicit `TASK COMPLETE:` line is still honoured — that is the operator's contract with the
       // agent, and an agent that writes it has been told to.
       if (isOpenConversation(runTask) && !completion) {
-        if (openRun && runTask) await endConversationTurn(session, openRun, runTask, result.text)
+        if (openRun && runTask) await endConversationTurn(session, openRun, runTask, effectiveText)
         return
       }
       await completeTask(session.id, completion ?? (result.text?.trim() || 'Completed'))
@@ -302,14 +306,14 @@ export async function onStreamResult(
     // ⛔ The turn that has just ended on an MCP adapter, which nothing else closes. See
     // `endConversationTurn` for why the run ends here and the session does not.
     if (isOpenConversation(runTask) && openRun && runTask && !openRun.outcome) {
-      await endConversationTurn(session, openRun, runTask, result.text)
+      await endConversationTurn(session, openRun, runTask, effectiveText)
       return
     }
     // ⛔ **A work run whose turn ended without a completion signal is not left to be noticed.** The
     // run stays open here — that is still the contract, and `task_complete` is still the only thing
     // that may claim the work is done — but the *fact* that the agent went idle is now written down,
     // and `runWatchdogs` reads it. See `noteIdleTurn`.
-    if (openRun && runTask && !openRun.outcome) noteIdleTurn(session, openRun, result.text)
+    if (openRun && runTask && !openRun.outcome) noteIdleTurn(session, openRun, effectiveText)
     return
   }
   if (completion) {
@@ -358,7 +362,7 @@ export function needsDecisionIn(
 ): { question: string; options: QuestionOption[]; kind: QuestionKind } | null {
   if (!text) return null
   const lines = stripAnsi(text).split(/\r?\n/)
-  const at = lines.findIndex((line) => /^[ \t>*-]*NEEDS DECISION:/i.test(line))
+  const at = lines.findLastIndex((line) => /^[ \t>*-]*NEEDS DECISION:/i.test(line))
   if (at === -1) return null
   const rawQuestion = (/^[ \t>*-]*NEEDS DECISION:[ \t]*(.*)$/i.exec(lines[at] ?? '')?.[1] ?? '').trim()
   if (!rawQuestion) return null
@@ -389,11 +393,35 @@ export function needsDecisionIn(
 /** The completion contract for adapters that cannot call the MCP task_complete tool. */
 export function taskCompletionIn(text: string | null): string | null {
   if (!text) return null
-  const line = stripAnsi(text)
-    .split(/\r?\n/)
-    .find((value) => /^[ \t>*-]*TASK COMPLETE:[ \t]*\S/i.test(value))
+  const lines = stripAnsi(text).split(/\r?\n/)
+  const line = lines.findLast((value) => /^[ \t>*-]*TASK COMPLETE:[ \t]*\S/i.test(value))
   if (!line) return null
   return (/^[ \t>*-]*TASK COMPLETE:[ \t]*(.*)$/i.exec(line)?.[1] ?? '').trim() || null
+}
+
+/**
+ * Return the terminal contract that appeared latest in the text: whichever of `TASK COMPLETE:`
+ * or `NEEDS DECISION:` was written last by the agent.
+ */
+export function lastTerminalContract(text: string | null): {
+  completion: string | null
+  asked: { question: string; options: QuestionOption[]; kind: QuestionKind } | null
+} | null {
+  if (!text) return null
+  const lines = stripAnsi(text).split(/\r?\n/)
+  const decisionIdx = lines.findLastIndex((line) => /^[ \t>*-]*NEEDS DECISION:/i.test(line))
+  const completeIdx = lines.findLastIndex((line) => /^[ \t>*-]*TASK COMPLETE:[ \t]*\S/i.test(line))
+  if (decisionIdx === -1 && completeIdx === -1) return null
+  if (decisionIdx > completeIdx) {
+    const asked = needsDecisionIn(text)
+    if (asked) return { completion: null, asked }
+    if (completeIdx !== -1) return { completion: taskCompletionIn(text), asked: null }
+    return null
+  }
+  const completion = taskCompletionIn(text)
+  if (completion) return { completion, asked: null }
+  if (decisionIdx !== -1) return { completion: null, asked: needsDecisionIn(text) }
+  return null
 }
 
 export const OVERLOAD_RETRY_MS = 60_000

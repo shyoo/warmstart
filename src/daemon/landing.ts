@@ -27,7 +27,7 @@ import { log } from './log.js'
 import { git } from './git.js'
 import { errorMessage } from '@shared/errors.js'
 import { oneLine } from './threadline.js'
-import { run } from './spawn.js'
+import * as spawn from './spawn.js'
 import { stripAnsi } from './stream.js'
 import { emit } from './events.js'
 import { beginLanding, endLanding, isTaskLanding } from './landingstate.js'
@@ -481,7 +481,7 @@ async function runChecks(
   const env = { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' }
   for (const command of commands) {
     try {
-      const result = await run(command, {
+      const result = await spawn.run(command, {
         cwd,
         env,
         shell: true,
@@ -1379,21 +1379,55 @@ export const pullRequest: LandingStrategy = {
         '--body',
         body
       ])
-      const { stdout } = await run(call.command, call.args, {
-        cwd: ctx.workspacePath,
-        maxBuffer: 4 * 1024 * 1024,
-        timeout: 120_000
-      })
+      let prUrl: string | undefined
+      try {
+        const { stdout } = await spawn.run(call.command, call.args, {
+          cwd: ctx.workspacePath,
+          maxBuffer: 4 * 1024 * 1024,
+          timeout: 120_000
+        })
 
-      // `gh pr create` prints the URL and nothing else worth having.
-      const prUrl = stdout.trim().split(/\s+/).find((line) => line.startsWith('http')) ?? undefined
-      log.info(`opened a pull request for t${ctx.task.seq}: ${prUrl ?? 'url not reported'}`)
+        // `gh pr create` prints the URL and nothing else worth having.
+        prUrl = stdout.trim().split(/\s+/).find((line) => line.startsWith('http')) ?? undefined
+        log.info(`opened a pull request for t${ctx.task.seq}: ${prUrl ?? 'url not reported'}`)
+      } catch (err) {
+        const msg = errorMessage(err)
+        if (/already exists/i.test(msg)) {
+          prUrl = /(https?:\/\/[^\s)]+)/.exec(msg)?.[1]
+          if (!prUrl) {
+            try {
+              const viewCall = launchArgs(resolved, [
+                'pr',
+                'view',
+                ctx.branch,
+                '--json',
+                'url',
+                '--jq',
+                '.url'
+              ])
+              const { stdout: viewOut } = await spawn.run(viewCall.command, viewCall.args, {
+                cwd: ctx.workspacePath,
+                maxBuffer: 4 * 1024 * 1024,
+                timeout: 15_000
+              })
+              prUrl = viewOut.trim().split(/\s+/).find((line) => line.startsWith('http')) ?? undefined
+            } catch {
+              // Ignore failure to query view
+            }
+          }
+          log.info(`pull request already exists for t${ctx.task.seq}: ${prUrl ?? 'url not found'}`)
+        } else {
+          throw err
+        }
+      }
+
       return {
         strategy: 'pull-request',
         ok: true,
         commit,
         ...(baseSha ? { base: baseSha } : {}),
         branch: ctx.branch,
+        pushed: true,
         ...(prUrl ? { prUrl } : {})
       }
     } catch (err) {
@@ -1643,6 +1677,27 @@ export function landedMessage(
   target: string,
   behind: { seq: number } | null
 ): LandedMessage {
+  if (result.strategy === 'pull-request') {
+    const prPart = result.prUrl ? `: ${result.prUrl}` : ''
+    const headline = `Pull request opened for \`${result.commit?.slice(0, 8)}\` into \`${target}\`${prPart}`
+    const parts: string[] = []
+
+    if (result.commitsLanded && result.commitsLanded > 1) {
+      parts.push(`${result.commitsLanded} commits, tipped by that one.`)
+    }
+
+    if (result.branch) {
+      parts.push(`Pushed to \`origin/${result.branch}\`.`)
+    }
+
+    if (result.prUrl && !headline.includes(result.prUrl)) {
+      parts.push(`Pull request: ${result.prUrl}`)
+    }
+
+    if (behind) parts.push(`It queued behind t${behind.seq} and landed once that finished.`)
+    return { headline, detail: parts.join(' ') }
+  }
+
   // ⚠️ `undefined` says nothing, and says it on the line as well as in the detail: a strategy that
   // cannot know whether it pushed must not claim either answer. See `LandingResult.pushed`.
   const where =

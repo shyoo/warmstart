@@ -533,6 +533,13 @@ now reads *"…onto `main` and pushed to `origin/main`"*; one that only moved th
 checkout is ahead of the remote and nothing else will tell them. A strategy that cannot know says
 neither.
 
+⭐ **`pull-request` landing announces the PR and recovers on retry** (t373, 2026-09-12). A task landing
+under the `pull-request` strategy pushes the branch and opens a GitHub pull request via `gh pr create`.
+Its headline states *"Pull request opened for `<sha>` into `<target>`: <url>"* and its detail reports
+*"Pushed to `origin/<branch>`."*, rather than claiming work merged onto trunk. If `gh pr create` fails
+because the pull request already exists on the remote, the error URL (or `gh pr view`) is recovered,
+the push is acknowledged, and the landing succeeds idempotently on retry.
+
 ⭐ **A landing an operator asked for says so before it runs.** Pressing **Land** or **Retry landing**
 writes a `landing.started` line — *"Landing `warmstart/t369.2-…` — commit, verify, merge and push…"* —
 and only then fetches, rebases, runs the project's checks and pushes. Until t369 the only feedback for

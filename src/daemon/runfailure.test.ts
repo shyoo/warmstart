@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Session, Worker } from '@shared/protocol.js'
 import type { Task } from '@shared/tasks.js'
 import { messageBody } from './threadline.js'
@@ -167,6 +167,10 @@ beforeAll(async () => {
 
 beforeEach(() => {
   db.db().exec('delete from runs; delete from sessions; delete from task_messages; delete from tasks')
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 afterAll(() => {
@@ -750,6 +754,69 @@ describe('a result that is not an error', () => {
     expect(tasks.requireRun(run.id).outcome).toBe('completed')
     expect(tasks.getTask(task.id)?.status).toBe('completed')
     expect(tasks.messagesFor(task.id).some((m) => m.text === 'fixed the session context gauge')).toBe(true)
+  })
+
+  it('determines the last terminal contract from text when both or neither appear', () => {
+    expect(turnend.lastTerminalContract(null)).toBeNull()
+    expect(turnend.lastTerminalContract('Just some ordinary progress updates.')).toBeNull()
+
+    const decisionFirst = turnend.lastTerminalContract(
+      'NEEDS DECISION: Should we use A or B?\n- A — option A\n- B — option B\n\nWait, never mind.\nTASK COMPLETE: went with option A directly'
+    )
+    expect(decisionFirst?.completion).toBe('went with option A directly')
+    expect(decisionFirst?.asked).toBeNull()
+
+    const completionFirst = turnend.lastTerminalContract(
+      'TASK COMPLETE: initial implementation\n\nActually, before landing:\nNEEDS DECISION: Should we enable feature flags?\n- Yes — turn on\n- No — keep off'
+    )
+    expect(completionFirst?.completion).toBeNull()
+    expect(completionFirst?.asked?.question).toBe('Should we enable feature flags?')
+    expect(completionFirst?.asked?.options).toHaveLength(2)
+  })
+
+  it('parks question when an MCP-less session streams NEEDS DECISION into backscroll with result.text null (Codex)', async () => {
+    const { run, task, session } = seedRunningTask({ adapterId: 'openai-compatible', metered: 500 })
+    vi.spyOn(sessions, 'backscroll').mockReturnValue(
+      'Commit: `822178f docs: add troubleshooting guidance`\n' +
+        'Validation: `git diff --check` passed.\n' +
+        'NEEDS DECISION: Please provide network access so I can fetch/rebase if needed and push the branch.\n' +
+        '- Allow access — grant network\n' +
+        '- Deny access — land locally'
+    )
+
+    // Codex turn.completed arrives with result.text: null
+    await turnend.onStreamResult(session, {
+      isError: false,
+      text: null,
+      terminalReason: 'turn.completed'
+    })
+
+    const taskNow = tasks.getTask(task.id)
+    expect(taskNow?.status).toBe('awaiting_human')
+    expect(tasks.requireRun(run.id).outcome).toBe('blocked')
+    const [filed] = questions.questionsForTask(task.id)
+    expect(filed).toBeDefined()
+    expect(filed?.question).toBe('Please provide network access so I can fetch/rebase if needed and push the branch.')
+    expect(filed?.options).toHaveLength(2)
+    expect(filed?.options[0]?.label).toBe('Allow access')
+  })
+
+  it('completes task when an MCP-less session streams TASK COMPLETE into backscroll with result.text null', async () => {
+    const { run, task, session } = seedRunningTask({ adapterId: 'openai-compatible', metered: 500 })
+    vi.spyOn(sessions, 'backscroll').mockReturnValue(
+      'Changes committed cleanly.\nTASK COMPLETE: docs: added troubleshooting section'
+    )
+
+    await turnend.onStreamResult(session, {
+      isError: false,
+      text: null,
+      terminalReason: 'turn.completed'
+    })
+
+    const taskNow = tasks.getTask(task.id)
+    expect(taskNow?.status).toBe('completed')
+    expect(tasks.requireRun(run.id).outcome).toBe('completed')
+    expect(tasks.messagesFor(task.id).some((m) => m.text === 'docs: added troubleshooting section')).toBe(true)
   })
 })
 

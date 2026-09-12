@@ -2,8 +2,8 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
-import type { FinishPolicy, Project } from '@shared/tasks.js'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import type { FinishPolicy, LandingResult, Project } from '@shared/tasks.js'
 import { messageBody } from './threadline.js'
 
 /**
@@ -1318,5 +1318,193 @@ describe('what a landing tells the operator it did', () => {
 
   it('still says it queued, which is the only evidence the land queue ran', () => {
     expect(detailOf(base, 'main', { seq: 26 })).toContain('queued behind t26')
+  })
+
+  it('formats pull-request headline with URL and pushed detail', () => {
+    const prResult: LandingResult = {
+      strategy: 'pull-request',
+      ok: true,
+      commit: '822178fc94768bd9',
+      branch: 'warmstart/t372-issue-132',
+      pushed: true,
+      prUrl: 'https://github.com/shyoo/awardtracker/pull/138'
+    }
+    const msg = landing.landedMessage(prResult, 'main', null)
+    expect(msg.headline).toBe(
+      'Pull request opened for `822178fc` into `main`: https://github.com/shyoo/awardtracker/pull/138'
+    )
+    expect(msg.detail).toContain('Pushed to `origin/warmstart/t372-issue-132`.')
+  })
+
+  it('formats pull-request headline cleanly without URL when URL is not reported', () => {
+    const prResult: LandingResult = {
+      strategy: 'pull-request',
+      ok: true,
+      commit: '822178fc94768bd9',
+      branch: 'warmstart/t372-issue-132',
+      pushed: true
+    }
+    const msg = landing.landedMessage(prResult, 'main', null)
+    expect(msg.headline).toBe('Pull request opened for `822178fc` into `main`')
+    expect(msg.detail).toContain('Pushed to `origin/warmstart/t372-issue-132`.')
+  })
+})
+
+describe('pull-request landing strategy', () => {
+  let undoGh: () => void
+  beforeAll(async () => {
+    const { stubCliPath } = await import('./testkit.js')
+    undoGh = stubCliPath('gh')
+  })
+  afterAll(() => {
+    undoGh()
+  })
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  function isGhCall(cmd: unknown, args: unknown): boolean {
+    if (cmd === 'git') return false
+    if (typeof cmd === 'string' && /gh(\.exe)?$/i.test(cmd)) return true
+    if (Array.isArray(args) && args.includes('pr')) return true
+    return false
+  }
+
+  function seedRepoWithRemote(branch: string) {
+    seq += 1
+    const root = makeRepo(`pr-root${seq}`)
+    const remote = join(dir, `pr-remote${seq}.git`)
+    git(dir, 'init', '--bare', remote)
+    git(root, 'remote', 'add', 'origin', remote)
+    git(root, 'push', '-u', 'origin', 'main')
+
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({
+      title: `pr task ${seq}`,
+      projectId: project.id,
+      createdBy: { kind: 'human' }
+    })
+    const ws = join(dir, `pr-ws${seq}`)
+    git(root, 'worktree', 'add', '-b', branch, ws, 'main')
+    writeFileSync(join(ws, 'file.txt'), 'pr work\n')
+    git(ws, 'add', '-A')
+    git(ws, 'commit', '-m', 'work on pr')
+    return { project, task, root, ws, branch }
+  }
+
+  it('opens a pull request when gh pr create succeeds', async () => {
+    const branch = 'warmstart/t372-open-pr'
+    const { project, task, ws } = seedRepoWithRemote(branch)
+    const spawn = await import('./spawn.js')
+    const realRun = spawn.run
+    vi.spyOn(spawn, 'run').mockImplementation((async (cmd: unknown, ...rest: unknown[]) => {
+      if (isGhCall(cmd, rest[0])) {
+        return {
+          stdout: 'https://github.com/shyoo/awardtracker/pull/138\n',
+          stderr: ''
+        }
+      }
+      return (realRun as (...args: unknown[]) => unknown)(cmd, ...rest)
+    }) as never)
+
+    const result = await landing.pullRequest.land({
+      project,
+      task,
+      workspacePath: ws,
+      branch,
+      policy: 'pull-request'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.strategy).toBe('pull-request')
+    expect(result.pushed).toBe(true)
+    expect(result.prUrl).toBe('https://github.com/shyoo/awardtracker/pull/138')
+    expect(result.branch).toBe(branch)
+  })
+
+  it('detects existing pull request on gh pr create failure and succeeds with prUrl', async () => {
+    const branch = 'warmstart/t372-existing-pr'
+    const { project, task, ws } = seedRepoWithRemote(branch)
+    const spawn = await import('./spawn.js')
+    const realRun = spawn.run
+    const existingError = new Error(
+      'Command failed: gh.EXE pr create ... a pull request for branch "warmstart/t372-existing-pr" into branch "main" already exists:\nhttps://github.com/shyoo/awardtracker/pull/138\n'
+    )
+    vi.spyOn(spawn, 'run').mockImplementation((async (cmd: unknown, ...rest: unknown[]) => {
+      if (isGhCall(cmd, rest[0])) {
+        throw existingError
+      }
+      return (realRun as (...args: unknown[]) => unknown)(cmd, ...rest)
+    }) as never)
+
+    const result = await landing.pullRequest.land({
+      project,
+      task,
+      workspacePath: ws,
+      branch,
+      policy: 'pull-request'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.strategy).toBe('pull-request')
+    expect(result.pushed).toBe(true)
+    expect(result.prUrl).toBe('https://github.com/shyoo/awardtracker/pull/138')
+    expect(result.branch).toBe(branch)
+  })
+
+  it('falls back to gh pr view when error says already exists without embedded URL', async () => {
+    const branch = 'warmstart/t372-view-fallback'
+    const { project, task, ws } = seedRepoWithRemote(branch)
+    const spawn = await import('./spawn.js')
+    const realRun = spawn.run
+    let ghCalls = 0
+    vi.spyOn(spawn, 'run').mockImplementation((async (cmd: unknown, ...rest: unknown[]) => {
+      if (isGhCall(cmd, rest[0])) {
+        ghCalls++
+        if (ghCalls === 1) {
+          throw new Error('a pull request for branch already exists')
+        }
+        return { stdout: 'https://github.com/shyoo/awardtracker/pull/139\n', stderr: '' }
+      }
+      return (realRun as (...args: unknown[]) => unknown)(cmd, ...rest)
+    }) as never)
+
+    const result = await landing.pullRequest.land({
+      project,
+      task,
+      workspacePath: ws,
+      branch,
+      policy: 'pull-request'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.strategy).toBe('pull-request')
+    expect(result.prUrl).toBe('https://github.com/shyoo/awardtracker/pull/139')
+  })
+
+  it('returns ok: false when gh pr create fails with an unrelated error', async () => {
+    const branch = 'warmstart/t372-err'
+    const { project, task, ws } = seedRepoWithRemote(branch)
+    const spawn = await import('./spawn.js')
+    const realRun = spawn.run
+    vi.spyOn(spawn, 'run').mockImplementation((async (cmd: unknown, ...rest: unknown[]) => {
+      if (isGhCall(cmd, rest[0])) {
+        throw new Error('network connection timed out')
+      }
+      return (realRun as (...args: unknown[]) => unknown)(cmd, ...rest)
+    }) as never)
+
+    const result = await landing.pullRequest.land({
+      project,
+      task,
+      workspacePath: ws,
+      branch,
+      policy: 'pull-request'
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.strategy).toBe('pull-request')
+    expect(result.reason).toContain('network connection timed out')
+    expect(result.reason).toContain('may already be pushed')
   })
 })
