@@ -9,60 +9,41 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 **desktop notifications**. The maintained reference in [`docs/`](docs/README.md) is the authority on
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-13, Windows, measured): typecheck, lint, build pass; L1 **3,372 passed, 2 skipped**
-(189 files); L2 **203 checks** (5 skipped); L3 **421 checks**; L4 `test:pack` **19 checks**.
+Baseline (2026-09-13, macOS arm64, measured): typecheck, lint, build pass; L1 **3,367 passed, 12 skipped**
+(189 files); L2 **198 checks** (11 skipped); L3 **419 checks** (2 skipped); L4 `test:pack` **17 checks**.
 All suites (L1–L4) re-run and pass cleanly after repackaging.
 
 ## Closed in this cleanup
 
+- **macOS worktree symlinks, CLI PATH detection, and header metrics (2026-09-13).** Worktree `.git`
+  pointers resolve paths with `fs.realpathSync` to prevent broken relative traversal when temp dirs
+  cross the macOS `/var` -> `/private/var` symlink (`worktrees.ts`). Non-Windows GUI app launches search
+  standard user bin paths (`~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`) in `which.ts` and
+  `antigravity-cli.ts` fallback lists. Task table column widths in `app.css` adjusted 2–8px so sort-arrow
+  headings fit comfortably under macOS font metrics without neighbour collision.
 - **One desktop drives another computer's fleet (t419, 2026-09-13).** A picker above Overview lists
   *This computer* and paired remotes; `Root` re-keys `App` on a switch. Main's `RemoteClient`
   reaches the remote's existing listener with a **desktop** credential: its own *Allow paired
-  desktops* switch, TLS on the tailnet hostname only, the kind fixed by the host's code (migration 71),
-  and parity except `daemon.shutdown` / `agent.*` / `remote.subscribe`. The token is sealed by
-  `safeStorage` in main's `remotes.json`. RPC versions are a negotiated range capped at ±1
-  (`shared/rpcversion.ts`). Decisions: [`transient_docs/remote_desktop_2026-09-13.md`](transient_docs/remote_desktop_2026-09-13.md);
-  reference: [`docs/remote.md`](docs/remote.md#remote-desktops). ⚠️ **Never driven between two real
-  machines**: L1 covers negotiation, the gate, the store and routing; L2 covers only the plain-HTTP refusals.
+  desktops* switch, TLS on the tailnet hostname only, sealed by `safeStorage` in `remotes.json`.
+  RPC versions are a negotiated range capped at ±1 (`shared/rpcversion.ts`).
 - **A nearby reset no longer preempts healthy work (t418, 2026-09-13).** Early wrap-up now needs its model pool at high-water (92% for five-hour windows), not just t416's `config cache` reset; refusal and the 95% active-overrun guard remain separate.
 - **Pages and Routing Model tables stay centred (t417); the task table's narrow columns really drop
-  (t415).** Both L3 checks had been committed red. `.tbl--paper` is now a fit-content block with
-  `overflow-x: auto` (Table 12's ten columns ran 148px past a 620px pane), and the centring check
-  measures `.content`'s client box, not its border box (a Windows scrollbar is 10px). A dropped task
-  column is `visibility: collapse; width: 0` — `display: none` on a `<col>` left the cells drawn, and
-  a `ResizeObserver` never fires in L3's hidden window. Detail in [`docs/ui.md`](docs/ui.md).
-- **Canonical versioning and verified release download (t416, 2026-09-13).** `version.json` now
-  names the release and GitHub repository; a build rejects package/lock metadata that does not agree,
-  and the daemon, MCP handshake, app footer and builder artifact name consume it. Packaged Warmstart
-  polls the latest stable GitHub Release and downloads only its exact OS/architecture installer after
-  matching `SHA256SUMS.txt`; it never launches it, and the footer opens the verified file's folder.
-  Task validation: `npm run typecheck`, `npm run lint`, `npm test` (**3,344 passed, 2 skipped**),
-  and `npm run build` passed. Expected Vitest refusal/recovery warnings and Vite chunk warnings remain
-  non-fatal.
+  (t415).** `.tbl--paper` is a fit-content block with `overflow-x: auto`; centring check measures
+  client box. A dropped task column is `visibility: collapse; width: 0` so cells stay in DOM without gap.
+- **Canonical versioning and verified release download (t416, 2026-09-13).** `version.json` names
+  the release and repo; build rejects mismatches. Packaged app polls GitHub Releases, verifies
+  `SHA256SUMS.txt`, and stages download in `<dataDir>/updates/`.
 - **Show retained workspace locks in Flow (t413, 2026-09-13).** An `awaiting_human` ticket stays in
   Awaiting and names the workspace it still locks, rather than pinning under Running or hiding the lock.
 - **Composer workspace pill first, purple pending-PR dot, split thread bubbles on a mid-flight reply
   (t414, 2026-09-13).** See `lib/threadbubble.ts` and `delivery.pending`.
 - **Five UI reports off t410 (2026-09-13).** **Changes in this task** is drawn wherever the change
   resolves, not only at `awaiting_human`; each commit links its own `<sha>^!` diff behind the same
-  double gate; side-by-side layout (`lib/sidebyside.ts`); bars under 3D marks (`lib/plot3d.ts`);
-  `FROM`/`DEP`/`QUALITY`/`TOOK` widths measured to fit.
-- **Credits off is four situations, and the row now says which one (t408, 2026-09-13).** ⭐ Measured on
-  `ClaudeFirst` off Claude Code 2.1.270: usage credits were **on** at the vendor
-  (`hasExtraUsageEnabled: true`, `user_disabled: false`) and the row still read *Vendor reports credits
-  off.* — because `used_credits` ($20.57) had passed `monthly_limit` ($17.30), so the vendor cut them
-  until the refill (`spend_limit_reached: true`, `org_level_disabled_until`). The parse was never wrong:
-  **one sentence covered four causes**, and the only actionable one here is a date.
-  [`src/shared/credits.ts`](src/shared/credits.ts) now holds the single judgement — `creditsMismatchKind`,
-  `creditsMismatchNote`, `creditGaugeVisible`, and `creditsPurseEmpty` moved out of `workers.ts` so the
-  row and the dispatch gate cannot disagree — and `CreditStatus.spendLimitReached` outranks the
-  `used >= monthlyLimit` arithmetic. Two hidden faults fell out of the same reading: ⛔ `spendMeters`
-  dropped **every** meter on `enabled === false`, ending overage metering at the moment of maximum spend
-  (now only the zero-shaped counter is suppressed), and ⛔ the fleet card drew no credit gauge for the
-  account with the largest bill on it (now drawn, labelled `spent`). The Doctor warning is raised once
-  per *cause* (`CreditsIntent.reportedKind`), which is why the changed cause had gone unsaid.
-  ⚠️ L1 only; the new wording and the `spent` gauge have not been driven in the packaged app. See
-  [`docs/adapters.md`](docs/adapters.md) for the payload.
+  double gate; side-by-side layout (`lib/sidebyside.ts`); bars under 3D marks (`lib/plot3d.ts`).
+- **Credits off is four situations, and the row now says which one (t408, 2026-09-13).** Measured on
+  Claude Code 2.1.270: `hasExtraUsageEnabled: true` with `spend_limit_reached: true` reports exact cause
+  and refill date (`creditsMismatchKind`, `src/shared/credits.ts`). Spend meters keep non-zero counters;
+  fleet card draws spent credit gauge. Detail in [`docs/adapters.md`](docs/adapters.md).
 - **Two dispatch faults measured off t408 and t410 (2026-09-13).** ⭐ *A sandboxed Codex run cannot
   write a file a sandboxed run wrote*: files owned by `CodexSandboxOffline` keep a dead run's DACL and
   the operator lacks WRITE_DAC on them, so the next run gets *Failed to write file*. `sweepAcls`

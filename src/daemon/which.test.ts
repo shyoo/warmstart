@@ -1,5 +1,8 @@
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { formatCmdInvocation, quoteCmdArg, unwrapForPty } from './which.js'
+import { formatCmdInvocation, quoteCmdArg, spawnEnv, unwrapForPty, which } from './which.js'
 
 describe('quoteCmdArg', () => {
   it('quotes empty string as double quotes', () => {
@@ -89,5 +92,48 @@ describe('unwrapForPty', () => {
       command: 'cmd.exe',
       args: ['/d', '/c', 'echo agentyard-pty-probe']
     })
+  })
+})
+
+describe('which', () => {
+  it('returns absolute path if file exists', () => {
+    expect(which(process.execPath)).toBe(process.execPath)
+  })
+
+  it('returns null for non-existent commands', () => {
+    expect(which('nonexistent_binary_xyz_12345')).toBeNull()
+  })
+
+  it('searches standard Unix bin directories even if PATH is minimal', () => {
+    if (process.platform === 'win32') return
+    const origPath = process.env.PATH
+    try {
+      process.env.PATH = '/usr/bin:/bin'
+      const agyPath = join(homedir(), '.local', 'bin', 'agy')
+      if (existsSync(agyPath)) {
+        expect(which('agy')).toBe(agyPath)
+      }
+    } finally {
+      process.env.PATH = origPath
+    }
+  })
+})
+
+describe('spawnEnv', () => {
+  it('strips CLAUDE and ANTHROPIC prefixed variables', () => {
+    const origClaude = process.env.CLAUDE_TEST_VAR
+    const origAnthropic = process.env.ANTHROPIC_API_KEY
+    try {
+      process.env.CLAUDE_TEST_VAR = 'strip_me'
+      process.env.ANTHROPIC_API_KEY = 'strip_me_too'
+      const env = spawnEnv()
+      expect(env.CLAUDE_TEST_VAR).toBeUndefined()
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+    } finally {
+      if (origClaude !== undefined) process.env.CLAUDE_TEST_VAR = origClaude
+      else delete process.env.CLAUDE_TEST_VAR
+      if (origAnthropic !== undefined) process.env.ANTHROPIC_API_KEY = origAnthropic
+      else delete process.env.ANTHROPIC_API_KEY
+    }
   })
 })

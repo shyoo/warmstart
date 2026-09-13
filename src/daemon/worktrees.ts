@@ -1,4 +1,4 @@
-import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, statSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { FinishPolicy, Project, ResourceClaim, Task, WorkspaceMode } from '@shared/tasks.js'
 import { resolveFinishPolicy } from '@shared/policy.js'
@@ -623,7 +623,14 @@ export async function ensureWorktreePointer(project: Project, workspacePath: str
     log.warn(`repaired the .git pointer of ${workspacePath}, which read ${broken}`)
   }
   if (!isAbsolute(pointer.target)) return
-  const rel = relative(workspacePath, pointer.resolved)
+  let rel: string
+  try {
+    const realWorkspace = realpathSync(workspacePath)
+    const realResolved = realpathSync(pointer.resolved)
+    rel = relative(realWorkspace, realResolved)
+  } catch {
+    rel = relative(workspacePath, pointer.resolved)
+  }
   if (isAbsolute(rel)) return
   try {
     overwriteInPlace(pointer.file, `gitdir: ${rel.split(sep).join('/')}\n`)

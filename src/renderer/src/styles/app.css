@@ -2067,20 +2067,20 @@ body {
    `UPDATED ↓` had exactly 0px spare. The widths below are the measured need plus the 16px of
    padding plus a few pixels of margin, and the suite re-measures every one of them on each run. */
 .tbl--tasks .tbl-col-seq { width: 44px; }
-.tbl--tasks .tbl-col-from { width: 64px; }
+.tbl--tasks .tbl-col-from { width: 68px; }
 .tbl--tasks .tbl-col-worker { width: 92px; }
-.tbl--tasks .tbl-col-dep { width: 54px; }
+.tbl--tasks .tbl-col-dep { width: 56px; }
 .tbl--tasks .tbl-col-took { width: 68px; }
 .tbl--tasks .tbl-col-price { width: 70px; }
-.tbl--tasks .tbl-col-quality { width: 80px; }
+.tbl--tasks .tbl-col-quality { width: 88px; }
 /* ⚠️ Wide enough for `11:45 PM` — the widest a single line of a stamp gets — plus the cell's own
    padding. 64px was set against a 24-hour clock and clipped everywhere else (t376). */
 .tbl--tasks .tbl-col-created,
-.tbl--tasks .tbl-col-updated { width: 82px; }
+.tbl--tasks .tbl-col-updated { width: 90px; }
 .tbl--tasks .tbl-col-status { width: 82px; }
-/* ⚠️ 64px for the word *ACTION* (measured need 44), where the single icon button in the cells wanted
+/* ⚠️ 68px for the word *ACTION* (measured need 48 on macOS), where the single icon button in the cells wanted
    only 48. The heading is the wider of the two facts, so it is the one that sets the column. */
-.tbl--tasks .tbl-col-action { width: 64px; }
+.tbl--tasks .tbl-col-action { width: 68px; }
 
 /* Un-sized in fixed layout means title gets every remaining pixel. */
 .tbl--tasks .tbl-title-cell,
