@@ -586,13 +586,17 @@ try {
       return !!row && row.ended_at === null
     }
     const NO_OPEN_RUN = 'the probe session closed before this check — no open run for agent.* to find'
+    const AGENT_PROBE_ARGV =
+      process.platform === 'win32'
+        ? ['/d', '/c', 'pause']
+        : ['-c', 'sleep 60']
     const spawnAgentSession = () =>
       daemon.rpc('session.spawn', {
         workerId: probeWorker.id,
         cwd: tmpdir(),
         transport: 'pty',
         purpose: 'login',
-        argv: PROBE_ARGV,
+        argv: AGENT_PROBE_ARGV,
         cols: 80,
         rows: 24
       })

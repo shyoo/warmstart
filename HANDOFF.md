@@ -15,6 +15,13 @@ The expected test warnings exercise refusal and recovery paths; they are not fai
 
 ## Closed in this cleanup
 
+- **macOS build script and test parity.** [`scripts/build-mac.sh`](scripts/build-mac.sh) delivers parity with
+  [`scripts/build-win.ps1`](scripts/build-win.ps1) (content-addressed step cache in `.build-cache/`, process
+  safety checks, `--restart`, `--quick`, `--installer`, `--skip-tests`, `--fresh`, `--stop-daemon`, `--stop-agents`).
+  Fixed probe lifetime race in [`test/daemon.test.mjs`](test/daemon.test.mjs) (`AGENT_PROBE_ARGV` keeps probe open
+  until explicit close), table centring overflow under macOS serif fonts in [`src/renderer/src/styles/app.css`](src/renderer/src/styles/app.css)
+  (`--paper-measure: max(80ch, 780px)`), and child process reaping / architecture detection in
+  [`test/lib/harness.mjs`](test/lib/harness.mjs) and [`test/pack.test.mjs`](test/pack.test.mjs).
 - **The thread shows the change before you land it.** `task.diffSummary` and `task.diffFile`
   ([`src/daemon/taskdiff.ts`](src/daemon/taskdiff.ts)) read the *same* commits the grader reads —
   `resolveRange` picks them, and `collectDiff` was split into `numstatEntries`/`patchFor` so both
@@ -80,9 +87,12 @@ a unit test.
    and L1–L3 checks exist, but this has not been demonstrated in flight.
 4. **Run on macOS with a real CLI; this is the launch gate — and now the last one.** The other
    three pre-public blockers (diff review, security model, notifications) landed above; this and
-   item 5 are what is left between here and a public release. Verify detached daemon startup without
-   system Node, `node-pty` under hardened runtime, Application Support isolation, Antigravity's
-   Keychain interaction, and Gatekeeper. The signed arm64 release cannot be called ready before it.
+   item 5 are what is left between here and a public release. Local build (`scripts/build-mac.sh`),
+   packaged execution, and all test suites (L1–L4) pass cleanly on macOS arm64. Packaged app execution
+   and daemon startup are verified locally, but more thorough testing driving real agent tasks in flight
+   is needed later. Still to verify in flight: detached daemon startup without system Node under hardened
+   runtime, Application Support isolation, Antigravity's Keychain interaction, and Gatekeeper. The signed
+   arm64 release cannot be called ready before it.
 5. **Execute the signing/release pipeline.** macOS signing and notarisation are decided; required
    secrets are not configured and `.github/workflows/release.yml` has never run. Windows is
    intentionally unsigned initially. Release notes must tell upgraders to uninstall the old app,
