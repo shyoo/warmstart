@@ -2208,6 +2208,34 @@ try {
     paperTables.n > 0 && paperTables.ok,
     JSON.stringify(paperTables)
   )
+  // ⚠️ The document can be narrower than its preferred reading measure when the sidebar is open.
+  // Constrain the real scroll surface rather than changing the browser viewport: the assertion is
+  // about the page column and its tables sharing a centre line, not about a platform window size.
+  const narrowPaper = JSON.parse(
+    await evaluate(`(() => {
+      const content = document.querySelector('.content');
+      const paper = document.querySelector('.paper');
+      if (!content || !paper) return JSON.stringify({ ok: false, why: 'paper missing' });
+      const prior = content.getAttribute('style');
+      content.style.width = '620px';
+      content.style.flex = '0 0 620px';
+      const c = content.getBoundingClientRect();
+      const p = paper.getBoundingClientRect();
+      const tables = [...paper.querySelectorAll('table')].map(t => t.getBoundingClientRect());
+      if (prior === null) content.removeAttribute('style'); else content.setAttribute('style', prior);
+      return JSON.stringify({
+        ok: Math.abs((p.left + p.right) / 2 - (c.left + c.right) / 2) <= 1 &&
+          tables.every(t => t.left >= p.left - 1 && t.right <= p.right + 1),
+        paper: { left: Math.round(p.left - c.left), right: Math.round(c.right - p.right) },
+        tables: tables.map(t => ({ left: Math.round(t.left - p.left), right: Math.round(p.right - t.right) }))
+      });
+    })()`)
+  )
+  check(
+    'a narrowed routing-model page and every table in it remain centred and unclipped',
+    narrowPaper.ok,
+    JSON.stringify(narrowPaper)
+  )
   check(
     'a numeric column is centred under its head',
     await evaluate(`(() => {
@@ -2283,6 +2311,28 @@ try {
   )
   const pricePanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
   check('the statistics view renders', pricePanel.includes('Statistics'))
+  const centredStatsPage = JSON.parse(
+    await evaluate(`(() => {
+      const content = document.querySelector('.content');
+      const page = document.querySelector('.statistics-paper');
+      if (!content || !page) return JSON.stringify({ ok: false, why: 'statistics page missing' });
+      const prior = content.getAttribute('style');
+      content.style.width = '1400px';
+      content.style.flex = '0 0 1400px';
+      const c = content.getBoundingClientRect();
+      const p = page.getBoundingClientRect();
+      if (prior === null) content.removeAttribute('style'); else content.setAttribute('style', prior);
+      return JSON.stringify({
+        ok: Math.abs((p.left + p.right) / 2 - (c.left + c.right) / 2) <= 1,
+        left: Math.round(p.left - c.left), right: Math.round(c.right - p.right)
+      });
+    })()`)
+  )
+  check(
+    'a page column remains centred when the content pane is wider than its measure',
+    centredStatsPage.ok,
+    JSON.stringify(centredStatsPage)
+  )
   check(
     '⛔ it says out loud that it is not the number the router reads',
     /not.*the number the router reads/i.test(pricePanel) && /shrunk/i.test(pricePanel),

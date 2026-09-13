@@ -15,6 +15,10 @@ Expected test warnings exercise refusal and recovery paths; they are not failure
 
 ## Closed in this cleanup
 
+- **Pages and Routing Model tables stay centred (t417, 2026-09-13).** Pages now centre their
+  measured column; the paper makes its width explicit, keeping prose and tables on that same line
+  as the pane contracts. L3 verifies both a wide Statistics pane and every Routing Model table in a
+  620px scroll surface.
 - **Canonical versioning and verified release download (t416, 2026-09-13).** `version.json` now
   names the release and GitHub repository; a build rejects package/lock metadata that does not agree,
   and the daemon, MCP handshake, app footer and builder artifact name consume it. Packaged Warmstart

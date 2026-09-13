@@ -1311,7 +1311,11 @@ body {
 /* ---- panels ------------------------------------------------------------ */
 
 .panel {
+  /* A page is a column, not a left-aligned block. This keeps its prose and a wider table on the
+     same centre line, and lets `.content` supply the horizontal scroll area when a pane is narrow. */
+  width: 100%;
   max-width: 1100px;
+  margin-inline: auto;
 }
 
 /*
@@ -6658,6 +6662,10 @@ select:focus-visible,
   --paper-h3: 17px;
   --paper-title: 28px;
   --paper-measure: max(80ch, 780px);
+  /* A paper is centred as one surface, including the tables it contains. `max-width` alone leaves
+     an auto-sized block at the start edge when its parent narrows; an explicit used width lets the
+     parent keep the prose and its wider tables on the same centre line. */
+  width: min(100%, var(--paper-measure));
   max-width: var(--paper-measure);
   margin: 0 auto;
   padding: var(--sp-4) var(--sp-3) var(--sp-6);
