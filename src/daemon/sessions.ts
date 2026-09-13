@@ -886,12 +886,15 @@ export function spawnSession(opts: SpawnOptions): Session {
   const cwd =
     opts.cwd && opts.cwd !== '.' ? opts.cwd : projectless ? ensureDir(paths.scratch) : homedir()
 
+  // ⛔ The isolation root must exist before any adapter tries to create files under it (e.g.,
+  // trustDirectory for Muse's workspace-trust pre-answer).
+  ensureDir(worker.isolationRoot)
+
   // ⛔ Only ever the scratch directory, and only for a session with no project. See the constant.
   if (projectless && AUTO_TRUST_SCRATCH && cwd === paths.scratch) {
     adapter(worker.adapterId).trustDirectory?.(worker.isolationRoot, cwd)
   }
   if (!existsSync(cwd)) throw new Error(`working directory does not exist: ${cwd}`)
-  ensureDir(worker.isolationRoot)
 
   const ad = adapter(worker.adapterId)
   // Minted here, before the process exists, so the transcript path is known before the file is.
