@@ -89,6 +89,14 @@ export function DebateBoard({ task }: { task: Task }): React.JSX.Element | null 
                     )}
                     {position ? (
                       <div className="debate-seat-text">
+                        <table className="debate-position-meta" aria-label={`Seat ${i + 1} response details`}>
+                          <tbody>
+                            <tr>
+                              <th scope="row">Confidence</th>
+                              <td>{position.confidence ?? 'Not stated'}</td>
+                            </tr>
+                          </tbody>
+                        </table>
                         <Markdown text={position.text} />
                       </div>
                     ) : (

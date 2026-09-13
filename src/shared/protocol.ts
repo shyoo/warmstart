@@ -2322,7 +2322,13 @@ export interface RpcMap {
         workerId: string | null
         adapterId: string | null
         model: string | null
-        rounds: Array<{ round: number; text: string; citations: Array<{ path: string; exists: boolean }> }>
+        rounds: Array<{
+          round: number
+          text: string
+          /** The seat's own words, or null when it did not state confidence. */
+          confidence: string | null
+          citations: Array<{ path: string; exists: boolean }>
+        }>
       }>
       /** The organizer's briefs and agreement, newest last, as they were written to the thread. */
       organizer: Array<{ round: number; text: string }>

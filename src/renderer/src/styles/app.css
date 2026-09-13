@@ -6984,6 +6984,31 @@ select:focus-visible,
   overflow-wrap: anywhere;
 }
 
+/* The seat's own structured-at-read-time facts lead its response. Colour distinguishes metadata
+   from argument; it never assigns a quality colour to an agent's self-reported confidence. */
+.debate-position-meta {
+  width: 100%;
+  margin: 0 0 var(--sp-2);
+  border-collapse: collapse;
+  border-left: 2px solid var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 7%, var(--color-surface));
+  font-size: var(--text-meta);
+}
+
+.debate-position-meta th,
+.debate-position-meta td {
+  padding: var(--sp-1) var(--sp-2);
+  text-align: left;
+  vertical-align: top;
+}
+
+.debate-position-meta th {
+  width: 1%;
+  color: var(--color-accent);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .debate-organizer {
   border-left: 2px solid var(--color-border);
   padding-left: var(--sp-2);

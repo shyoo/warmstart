@@ -637,7 +637,10 @@ organizer's own words between rows, and the verdict in the header once one has b
 cell is agent output, so it is **text** parsed by [`lib/markdown.ts`](../src/renderer/src/lib/markdown.ts)'s
 closed subset — no raw HTML, no `dangerouslySetInnerHTML`. A debate is the one screen in this app
 where several untrusted agents' words sit beside each other, which makes that rule more load-bearing
-here, not less. ⚠️ **Unresolved citations only**, beside the seat's name: a list of every path that
+here, not less. Each position begins with a compact metadata table containing the confidence the
+seat stated in its prose, or **Not stated** — it remains text rather than being normalised into a
+number the system cannot justify, and its accent colour distinguishes metadata rather than grading
+the claim. ⚠️ **Unresolved citations only**, beside the seat's name: a list of every path that
 did resolve is a wall of text saying nothing happened, which is how a report stops being read. It is
 a report, never a penalty.
 

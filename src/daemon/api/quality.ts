@@ -15,6 +15,7 @@ import {
   openDebate,
   organizerLinesFor,
   seatsOf,
+  statedConfidence,
   validateDebate
 } from '../debate.js'
 import { getProject } from '../projects.js'
@@ -240,6 +241,7 @@ export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
           rounds: positions.map((text, i) => ({
             round: i + 1,
             text,
+            confidence: statedConfidence(text),
             citations: citationReport(text, project?.root ?? null)
           }))
         }
