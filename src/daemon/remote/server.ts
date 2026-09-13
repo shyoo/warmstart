@@ -74,12 +74,21 @@ export function startRemoteServer(ctx: ApiContext): { close(): Promise<void>; br
   })
   setRemoteListenerRefresh(() => refresh(true))
   void refresh()
+  // ⚠️ Tailscale may not be running when the daemon starts: a reboot brings the app up before
+  // the Tailscale service. Poll every 60s and re-probe when remote access is enabled but the
+  // listener never came up. Once `live` is set the poll is a no-op until the listener drops.
+  const TAILSCALE_POLL_MS = 60_000
+  const pollTimer = setInterval(() => {
+    if (!remoteListening() || live) return
+    log.info('tailscale poll: remote access is enabled but the listener is not up — re-probing')
+    void refresh()
+  }, TAILSCALE_POLL_MS)
   // ⛔ Notifications are gated on the *setting*, not on `live`. A phone that is asleep on another
   // network has no event socket — waking it is the whole point — so a listener that happens to be
   // rebinding must not silently swallow the one alert the operator was waiting for.
   const push = createPushDispatcher({ enabled: () => remoteConfig().enabled, visible: remotelyVisible })
   return {
-    async close() { off(); if (live) await live.close(); live = null; setRemoteListenerInfo(null); setRemoteListenerRefresh(null) },
+    async close() { clearInterval(pollTimer); off(); if (live) await live.close(); live = null; setRemoteListenerInfo(null); setRemoteListenerRefresh(null) },
     broadcast(event) { live?.broadcast(event); push.deliver(event) }
   }
 }

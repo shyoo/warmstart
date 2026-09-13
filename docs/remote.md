@@ -79,8 +79,10 @@ The fix belongs in what the phone does with a slow path, not in trying to make e
 
 Success looks like an `https://…ts.net:<port>` address on the desktop screen and the phone in the
 paired-device list. It is private to the tailnet, not a public internet address: the phone must also
-be connected to Tailscale and signed into that tailnet. If the address is missing, finish step 2 and
-press **Re-check Tailscale**, which runs a new local probe rather than showing the prior result. If
+be connected to Tailscale and signed into that tailnet. If the address is missing, finish step 2 —
+the daemon re-probes Tailscale every 60 seconds while remote access is on but the listener is not yet
+up, so enabling Tailscale after a reboot brings the listener up within a minute without intervention.
+**Re-check Tailscale** forces an immediate probe rather than waiting for the next poll. If
 Tailscale's local service or certificate request refuses the probe, the screen shows its error. On
 Windows, `local-tailscaled.sock` / `\\.\pipe\…\Tailscale\tailscaled: Access is denied` is a local
 Tailscale service problem, not an HTTPS setting or tailnet-policy refusal: update Tailscale and make

@@ -15,6 +15,13 @@ All suites (L1–L4) re-run and pass cleanly after repackaging.
 
 ## Closed in this cleanup
 
+- **Remote listener auto-retries Tailscale every 60s (2026-09-13).** A reboot starts the app before
+  the Tailscale service; the one-shot probe saw no Tailscale and the listener stayed down until the
+  operator clicked *Re-check Tailscale*. A 60-second `setInterval` in `startRemoteServer`
+  ([`src/daemon/remote/server.ts`](src/daemon/remote/server.ts)) now re-probes when
+  `remoteListening()` is true and `live` is null. The poll is a no-op once the listener is up, and
+  `clearInterval` runs on `close()`. Validation: `npm run typecheck`, `npm run lint`, `npm test`,
+  `npm run build` passed.
 - **macOS worktree symlinks, CLI PATH detection, and header metrics (2026-09-13).** Worktree `.git`
   pointers resolve paths with `fs.realpathSync` to prevent broken relative traversal when temp dirs
   cross the macOS `/var` -> `/private/var` symlink (`worktrees.ts`). Non-Windows GUI app launches search
