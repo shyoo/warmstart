@@ -371,16 +371,25 @@ Five kinds of work that exists and is going nowhere, listed on **Overview**:
   trunk, so before 2026-09-12 this read as *not landed* (t389). The row says why the sweep kept it,
   when it did.
 
-Each offers **Land it** (branches with commits only), **Retire it** (branches left behind only),
-**Clean up** (merged branches only — the same re-checked retirement the pull-request sweep does, run
-now, with the reason back if it still refuses), a panel-wide **Check merged PRs** that runs the sweep
-without waiting five minutes,
+Each offers **Land it** (branches with commits only), **Delete it** (branches with commits only, the
+same row as **Land it**), **Retire it** (branches left behind only), **Clean up** (merged branches
+only — the same re-checked retirement the pull-request sweep does, run now, with the reason back if
+it still refuses), a panel-wide **Check merged PRs** that runs the sweep without waiting five minutes,
 **Make a task** — which files a normal task to go and deal with it — and **Dismiss**, which only
 hides the row.
 
-⛔ Nothing here deletes work. **Retire it** deletes a *name*, and the daemon re-derives the proof
-that the branch carries nothing before it does — the panel may be minutes old, and a branch that has
-gained a commit since it was scanned comes back refused, with the reason.
+⛔ **Delete it is the one button on this panel that discards work, and it does so on purpose.**
+Everything else here either does nothing destructive or re-derives its own proof that nothing is
+being lost before it acts. **Delete it** is the opposite case: the operator is looking at a branch
+with real commits and saying, explicitly and after a confirmation prompt, that they are not needed.
+It still refuses a branch a worktree holds, exactly as **Retire it** does — a checked-out branch is
+somebody working, and the daemon does not switch a checkout to get at it — but it does not require
+`ahead === 0` the way **Retire it** does, because the whole point is to remove commits the trunk does
+not have.
+
+⛔ Everything else here leaves work intact. **Retire it** deletes a *name*, and the daemon re-derives
+the proof that the branch carries nothing before it does — the panel may be minutes old, and a branch
+that has gained a commit since it was scanned comes back refused, with the reason.
 
 ⛔ **The branch scan is repository-wide, and until 2026-09-01 it was not.** Every other row here
 comes from reading a *pooled workspace* and reporting the branch that workspace has checked out — so

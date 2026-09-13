@@ -119,7 +119,9 @@ measurement behind it, in [`docs/architecture.md`](docs/architecture.md) §4. Th
 - **Landing is measured against `origin/<target>`** by `landedRef()` in
   [`src/daemon/worktrees.ts`](src/daemon/worktrees.ts), and a landing that landed nothing must not
   say it landed. A clean workspace is not evidence the work was done. The tool never writes a commit
-  and never destroys work; what it declines to land surfaces under **Loose ends**.
+  and never destroys work on its own; what it declines to land surfaces under **Loose ends**, where
+  **Delete it** is the one exception — a branch with real commits, discarded only on an explicit,
+  confirmed operator click.
 - **A quality review never grades its own author, and no path writes a score that could not name its
   reviewer.** Excluded by *adapter*, not by account — one Claude grading another Claude is Claude
   grading Claude. No eligible peer means no review; there is no self-graded variant. ⛔ The score

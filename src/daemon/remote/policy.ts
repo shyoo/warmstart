@@ -118,6 +118,7 @@ export const REMOTE_METHODS = {
   'looseend.dismiss': 'deny',
   'looseend.reclaim': 'deny',
   'looseend.retire': 'deny',
+  'looseend.delete': 'deny',
   'looseend.cleanup': 'deny',
   'looseend.checkMerged': 'deny',
   'log.tail': 'deny',

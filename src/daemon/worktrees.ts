@@ -1242,6 +1242,37 @@ export async function retireStrandedBranch(
   }
 }
 
+/**
+ * Delete a task branch that carries real commits, because the operator decided it is not needed.
+ *
+ * ⛔ **Unlike `retireStrandedBranch`, this does not require `ahead === 0`.** That function proves the
+ * branch is disposable; this one is reached only from an explicit operator click that already knows
+ * the branch carries work and wants it gone anyway — the destructive counterpart to **Land it** on
+ * the same row, never something the daemon reaches for on its own.
+ *
+ * ⚠️ Still refuses a branch a worktree holds, for the same reason `retireStrandedBranch` does: a
+ * checked-out branch is somebody working, and `git branch -D` cannot touch it without switching a
+ * checkout that is not this tool's to switch.
+ */
+export async function deleteUnlandedBranch(
+  project: Project,
+  branch: string,
+  target: string
+): Promise<{ deleted: boolean; reason?: string }> {
+  const state = (await taskBranches(project, target)).find((b) => b.branch === branch)
+  if (!state) return { deleted: false, reason: `there is no branch called \`${branch}\`` }
+  if (state.heldBy) {
+    return { deleted: false, reason: `\`${branch}\` is checked out in ${state.heldBy}` }
+  }
+  try {
+    await git(project.root, ['branch', '-D', branch])
+    log.info(`deleted ${branch} at the operator's request, discarding ${state.ahead} commit(s)`)
+    return { deleted: true }
+  } catch (err) {
+    return { deleted: false, reason: errorMessage(err) }
+  }
+}
+
 /** Is there anything here worth a person's attention? */
 export function holdsWork(state: WorkspaceState): boolean {
   return (

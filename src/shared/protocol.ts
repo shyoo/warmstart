@@ -2219,6 +2219,17 @@ export interface RpcMap {
     params: { projectId: string; branch: string }
     result: { deleted: boolean; reason?: string }
   }
+  /**
+   * Delete a task branch that carries real commits, because the operator decided it is not needed.
+   *
+   * ⛔ Unlike `looseend.retire`, this does not require the branch to be disposable first — it is the
+   * explicit, destructive counterpart to **Land it** on the same row. The daemon still refuses a
+   * branch a worktree holds; `deleted: false` says why.
+   */
+  'looseend.delete': {
+    params: { projectId: string; branch: string }
+    result: { deleted: boolean; reason?: string }
+  }
   /** Run the pull-request sweep now instead of waiting up to five minutes for it. */
   'looseend.checkMerged': {
     params: void

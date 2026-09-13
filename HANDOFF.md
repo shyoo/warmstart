@@ -10,11 +10,16 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Last full local validation on this branch (2026-09-12): `npm run typecheck`, `npm run lint`,
-`npm test` (**3,251 passed, 12 skipped**), and `npm run build` all passed.
+`npm test` (**3,264 passed, 2 skipped**), and `npm run build` all passed.
 Expected test warnings exercise refusal and recovery paths; they are not failures.
 
 ## Closed in this cleanup
 
+- **Loose ends offers an explicit Delete it, for a branch the operator has decided is not needed.**
+  `deleteUnlandedBranch` ([`worktrees.ts`](src/daemon/worktrees.ts)) is `retireStrandedBranch`'s
+  destructive sibling — it skips the `ahead === 0` proof that function enforces, since the point is
+  discarding real commits, but keeps the same refusal when a worktree holds the branch. It is the
+  one button on that panel `docs/landing.md` and `AGENTS.md` no longer describe as non-destructive.
 - **Trunk mode: a task can work in the project checkout itself** (t401). t400 had an agent pull
   `main` and resolve a conflict by way of a task branch, which confused it and left a branch to clean
   up. `workspaceMode` (`worktree` | `trunk`, migration 70) resolves task → project → `worktree`; the

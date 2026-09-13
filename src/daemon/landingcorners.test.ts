@@ -354,6 +354,45 @@ describe('task branches the repository still has a name for', () => {
     expect(verdict.reason).toContain('no branch')
   })
 
+  /**
+   * ⭐ **Delete it** — the explicit, operator-confirmed counterpart to `retireStrandedBranch`. It is
+   * reached only from a click that already knows the branch carries real work and wants it gone
+   * anyway, so unlike `retireStrandedBranch` it does not require `ahead === 0`.
+   */
+  it('deletes a branch that carries real commits, when the operator says to', async () => {
+    const branch = 'warmstart/t31-not-needed'
+    const { project, root } = seed(branch)
+    git(root, 'switch', branch)
+    writeFileSync(join(root, 'abandoned.txt'), 'work nobody wants anymore\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'abandoned work')
+    git(root, 'switch', 'main')
+
+    expect(await worktrees.deleteUnlandedBranch(project, branch, 'main')).toEqual({ deleted: true })
+    expect(git(root, 'branch', '--list', branch)).toBe('')
+  })
+
+  it('still refuses to delete a branch a worktree is standing on', async () => {
+    const branch = 'warmstart/t32-checked-out'
+    const { project, root } = seed(branch)
+
+    const verdict = await worktrees.deleteUnlandedBranch(project, branch, 'main')
+    expect(verdict.deleted).toBe(false)
+    expect(verdict.reason).toContain('checked out in')
+    expect(git(root, 'branch', '--list', branch)).toContain(branch)
+  })
+
+  it('says so plainly when asked to delete a branch that is not there', async () => {
+    const { project } = seed('warmstart/t33-present')
+    const verdict = await worktrees.deleteUnlandedBranch(
+      project,
+      'warmstart/t34-never-existed',
+      'main'
+    )
+    expect(verdict.deleted).toBe(false)
+    expect(verdict.reason).toContain('no branch')
+  })
+
   it('reports a branch whose name no longer parses to a task, rather than hiding it', async () => {
     // ⚠️ `taskSeq: null` is not a reason to hide it. A branch nobody can trace back to a task is
     // *more* interesting than one that can be traced, not less.

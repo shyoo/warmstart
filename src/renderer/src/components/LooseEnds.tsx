@@ -23,7 +23,10 @@ let previousEnds: LooseEnd[] | null = null
  * invisible, which is indistinguishable from loss to the person who wanted the work. t5's commit
  * `ea05929` sat on its branch for a day before anybody found it.
  *
- * ⛔ Nothing here destroys anything. Land it, file a task to deal with it, or say you already know.
+ * ⛔ Nothing here destroys anything **automatically**. Land it, file a task to deal with it, or say
+ * you already know — and, for a branch with commits, say plainly that it is not needed: **Delete it**
+ * is the one button on this panel that discards work, and it exists only because the operator
+ * clicking it is a decision, not a scan the daemon made on its own.
  */
 export function LooseEnds(): React.JSX.Element | null {
   const [ends, setEnds] = useState<LooseEnd[] | null>(previousEnds)
@@ -74,7 +77,8 @@ export function LooseEnds(): React.JSX.Element | null {
           <p className="panel-sub">
             Work that exists and is going nowhere: files an agent never committed, branches that
             finished but never landed, and stashes taken to free a workspace. Nothing here has been
-            discarded, and nothing on this page discards anything.
+            discarded, and nothing on this page discards anything unless you press Delete it and
+            say so.
           </p>
         </div>
         <div className="tbl-actions">
@@ -149,6 +153,36 @@ export function LooseEnds(): React.JSX.Element | null {
                       }
                     >
                       Land it
+                    </button>
+                  )}
+                  {/* ⛔ The one destructive button on this panel. Only for a branch that carries real
+                      commits — there is nothing to discard about an empty one, and that case is
+                      already `stranded`'s "Retire it". Confirmed, because unlike everything else here
+                      it does throw work away, on purpose, because the operator said it is not needed. */}
+                  {end.kind === 'unlanded' && end.branch !== null && (
+                    <button
+                      type="button"
+                      className="btn btn--danger"
+                      disabled={busy !== null}
+                      onClick={() =>
+                        void act(async () => {
+                          if (
+                            !confirm(
+                              `Delete \`${end.branch}\`? This discards ${end.count} commit(s) that ` +
+                                'the trunk does not have. This cannot be undone.'
+                            )
+                          )
+                            return null
+                          setBusy(end.id)
+                          const r = await rpc('looseend.delete', {
+                            projectId: end.projectId,
+                            branch: end.branch as string
+                          })
+                          return r.deleted ? `deleted ${end.branch}` : `kept it — ${r.reason}`
+                        })
+                      }
+                    >
+                      Delete it
                     </button>
                   )}
                   {/* ⛔ Only for a branch with nothing on it. The daemon checks that again before

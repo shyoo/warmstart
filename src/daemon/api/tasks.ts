@@ -9,7 +9,7 @@ import { getWorker, listWorkers, requireWorker } from '../workers.js'
 import { lastQuota, windowExpired } from '../quota.js'
 import { getSession } from '../sessions.js'
 import { getProject, policyFor, requireProject } from '../projects.js'
-import { retireStrandedBranch } from '../worktrees.js'
+import { deleteUnlandedBranch, retireStrandedBranch } from '../worktrees.js'
 import { cleanUpMergedBranch, reconcilePullRequestDeliveries } from '../deliveries.js'
 import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, setHoldReason, setQuotaOverride, setQuotaPreemptWarning, runsFor, setTaskStatsExcluded, setWorkspaceMode, updateTask } from '../tasks.js'
 import { taskCommits } from '../taskcommits.js'
@@ -48,8 +48,8 @@ type TaskMethod =
   | 'task.restore' | 'task.promote' | 'task.addDependency' | 'task.removeDependency' | 'approval.list'
   | 'approval.request' | 'approval.answer' | 'approval.rules' | 'approval.addRule' | 'approval.removeRule'
   | 'question.ask' | 'question.list' | 'question.forTask' | 'question.answer' | 'resource.list'
-  | 'conversation.list' | 'looseend.list' | 'looseend.retire' | 'looseend.dismiss' | 'looseend.reclaim'
-  | 'looseend.cleanup' | 'looseend.checkMerged'
+  | 'conversation.list' | 'looseend.list' | 'looseend.retire' | 'looseend.delete' | 'looseend.dismiss'
+  | 'looseend.reclaim' | 'looseend.cleanup' | 'looseend.checkMerged'
 
 /** Apply a next-run worker/model choice without sending a generic “Continue” turn first. */
 function reassignForResolveRetry(
@@ -610,6 +610,10 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
     'looseend.retire': async (p) => {
       const project = requireProject(p.projectId)
       return retireStrandedBranch(project, p.branch, policyFor(project).landingTarget)
+    },
+    'looseend.delete': async (p) => {
+      const project = requireProject(p.projectId)
+      return deleteUnlandedBranch(project, p.branch, policyFor(project).landingTarget)
     },
     'looseend.cleanup': async (p) => {
       requireProject(p.projectId)
