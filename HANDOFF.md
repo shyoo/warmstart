@@ -15,10 +15,12 @@ The expected test warnings exercise refusal and recovery paths; they are not fai
 
 ## Closed in this cleanup
 
+<<<<<<< HEAD
 - **The abandoned t397.2 worktree was reclaimed without losing work.** On 2026-09-12,
   `warmstart/t397.2-t389-was-completed-with-making-pull-requ` resolved to `f522c5e`, the same
   commit as `origin/main`; it had no branch-only diff or commits, no stash entry, and a reflog
   containing only its creation. There was therefore nothing to land or discard.
+=======
 - **macOS build script and test parity.** [`scripts/build-mac.sh`](scripts/build-mac.sh) delivers parity with
   [`scripts/build-win.ps1`](scripts/build-win.ps1) (content-addressed step cache in `.build-cache/`, process
   safety checks, `--restart`, `--quick`, `--installer`, `--skip-tests`, `--fresh`, `--stop-daemon`, `--stop-agents`).
@@ -26,6 +28,7 @@ The expected test warnings exercise refusal and recovery paths; they are not fai
   until explicit close), table centring overflow under macOS serif fonts in [`src/renderer/src/styles/app.css`](src/renderer/src/styles/app.css)
   (`--paper-measure: max(80ch, 780px)`), and child process reaping / architecture detection in
   [`test/lib/harness.mjs`](test/lib/harness.mjs) and [`test/pack.test.mjs`](test/pack.test.mjs).
+>>>>>>> f31c61040800c0577becfa07b3312b0765236406
 - **The thread shows the change before you land it.** `task.diffSummary` and `task.diffFile`
   ([`src/daemon/taskdiff.ts`](src/daemon/taskdiff.ts)) read the *same* commits the grader reads —
   `resolveRange` picks them, and `collectDiff` was split into `numstatEntries`/`patchFor` so both
