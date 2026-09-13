@@ -34,6 +34,8 @@ let workers: typeof import('./workers.js')
 let reserve: typeof import('./reserve.js')
 let shared: typeof import('@shared/tasks.js')
 
+import { forceInstalled } from './testkit.js'
+
 const NOW = 1_700_000_000_000
 const HOUR = 60 * 60 * 1000
 const OBJECTIVE = { cost: 0.34, velocity: 0.33, quality: 0.33 }
@@ -41,8 +43,10 @@ const SESSION_ID = 'ac000000-0000-4000-8000-000000000001'
 
 let workerId: string
 let reserveWorkerId: string
+let undoInstalled: (() => void) | undefined
 
 beforeAll(async () => {
+  undoInstalled = await forceInstalled('claude-code')
   // ⛔ A temp data directory, never the real one. This opens a database and writes to it.
   dir = mkdtempSync(join(tmpdir(), 'agentyard-taskcompact-'))
   process.env.WARMSTART_DATA_DIR = dir
@@ -63,6 +67,7 @@ beforeAll(async () => {
 })
 
 afterAll(() => {
+  undoInstalled?.()
   db.closeDb?.()
   rmSync(dir, { recursive: true, force: true })
 })

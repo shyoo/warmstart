@@ -21,6 +21,8 @@ import type { Session } from '@shared/protocol.js'
  * parked on a five-hour window does not come back inside it.
  */
 
+import { forceInstalled } from './testkit.js'
+
 let dir: string
 let clock: typeof import('./cacheclock.js')
 let db: typeof import('./db.js')
@@ -28,8 +30,10 @@ let settings: typeof import('./settings.js')
 let tasks: typeof import('./tasks.js')
 let workers: typeof import('./workers.js')
 let sessions: typeof import('./sessions.js')
+let undoInstalled: (() => void) | undefined
 
 beforeAll(async () => {
+  undoInstalled = await forceInstalled('claude-code')
   // ⛔ A temp data directory, never the real one. This opens a database and writes to it.
   dir = mkdtempSync(join(tmpdir(), 'agentyard-revive-'))
   process.env.WARMSTART_DATA_DIR = dir
@@ -49,6 +53,7 @@ beforeAll(async () => {
 })
 
 afterAll(() => {
+  undoInstalled?.()
   db.closeDb?.()
   rmSync(dir, { recursive: true, force: true })
 })

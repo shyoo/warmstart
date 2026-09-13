@@ -148,7 +148,7 @@ if [[ "$FRESH" -eq 1 && -d "$CACHE_DIR" ]]; then
 fi
 mkdir -p "$CACHE_DIR"
 
-CACHE_HELPER="$REPO/scripts/.cache-helper.cjs"
+CACHE_HELPER="$CACHE_DIR/cache-helper.cjs"
 cat << 'HELPER_EOF' > "$CACHE_HELPER"
 const fs = require('node:fs');
 const path = require('node:path');

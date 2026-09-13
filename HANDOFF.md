@@ -9,12 +9,9 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 **desktop notifications**. The maintained reference in [`docs/`](docs/README.md) is the authority on
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Last full local validation before t405 (2026-09-12): `npm run typecheck`, `npm run lint`,
-`npm test` (**3,260 passed, 2 skipped**) and `npm run build` all passed. This task's local validation
-(2026-09-12): `npm run typecheck`, `npm run lint`, `npm run build`, `preemption.test.ts` (**36 passed**),
-and `docs.test.ts` (**6 passed**) passed. The sandbox's 30-second wrapper ended the full `npm test`
-before its result; the landing tool must run it. Expected test warnings exercise refusal and recovery
-paths; they are not failures.
+Last full local validation on this branch (2026-09-12): `npm run typecheck`, `npm run lint`,
+`npm test` (**3,251 passed, 12 skipped**), and `npm run build` all passed.
+Expected test warnings exercise refusal and recovery paths; they are not failures.
 
 ## Closed in this cleanup
 
@@ -42,7 +39,10 @@ paths; they are not failures.
   compactions back off after `MAX_MOVE_ATTEMPTS` instead of looping indefinitely on cleared attempts.
   Preemption wrap-up in [`src/daemon/scheduler.ts`](src/daemon/scheduler.ts) falls back to handoff when
   the vendor is refusing turns, the window is exhausted without credits, or compaction is disabled, and
-  an unlanded preemption compaction preserves the clock move record.
+  an unlanded preemption compaction preserves the clock move record. Suites stub `claude-code` presence
+  via `forceInstalled` in [`revivecompact.test.ts`](src/daemon/revivecompact.test.ts) and
+  [`taskcompact.test.ts`](src/daemon/taskcompact.test.ts) so tests evaluate compaction logic without
+  requiring vendor CLIs on disk.
 - **A running Antigravity model cannot inherit another model pool's preemption.** The watchdog now
   reads the session's actual model and `windowResetsAt` prefers its stored pool boundary over an
   unqualified worker record, so a low-use Gemini run does not offer **Override preemption** because
