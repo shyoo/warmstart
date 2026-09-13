@@ -587,6 +587,12 @@ now reads *"…onto `main` and pushed to `origin/main`"*; one that only moved th
 checkout is ahead of the remote and nothing else will tell them. A strategy that cannot know says
 neither.
 
+⚠️ **The local-only wording is a fact about that landing, not a prediction of the repository forever.**
+If an operator later pushes the trunk, Warmstart fetches `origin` at startup and every five minutes;
+once it proves the named commit is an ancestor of `origin/<target>`, it adds *“Later observed: … is
+now on `origin/<target>`”* beneath the original message. The historical line remains intact: the
+follow-up must not claim Warmstart made that later push.
+
 ⭐ **`pull-request` landing announces the PR and recovers on retry** (t373, 2026-09-12). A task landing
 under the `pull-request` strategy pushes the branch and opens a GitHub pull request via `gh pr create`.
 Its headline states *"Pull request opened for `<sha>` into `<target>`: <url>"* and its detail reports

@@ -15,6 +15,10 @@ All suites (L1–L4) re-run and pass cleanly after repackaging.
 
 ## Closed in this cleanup
 
+- **Later pushes reconcile with an earlier local landing (t421, 2026-09-13).** A landing message
+  remains an honest record of what its own strategy did. When `origin/<target>` later contains its
+  commit, startup and a five-minute sweep fetch first and add a separate *Later observed* thread row;
+  they never rewrite history or claim the tool made the operator's push.
 - **One desktop drives another computer's fleet (t419, 2026-09-13).** A picker above Overview lists
   *This computer* and paired remotes; `Root` re-keys `App` on a switch. Main's `RemoteClient`
   reaches the remote's existing listener with a **desktop** credential: its own *Allow paired

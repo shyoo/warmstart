@@ -771,6 +771,8 @@ export type MessageEvent =
   | 'landing.started'
   /** *Landed as `sha` onto `target`* — the headline `salvageLandedCommits` reads back. */
   | 'landing.landed'
+  /** A later fetch proved a local-only landing has subsequently reached its remote target. */
+  | 'landing.pushed-later'
   | 'landing.failed'
   /** A finish verdict that stopped short of landing; the resolve buttons read the last of these. */
   | 'finish.held'

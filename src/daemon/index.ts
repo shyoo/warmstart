@@ -30,6 +30,7 @@ import { noteTurnStatus, onSessionExit, onStreamResult } from './turnend.js'
 import { reconcileConsults, startController, stopController } from './controller.js'
 import { reconcileReviews } from './reviewer.js'
 import { salvageLandedCommits } from './taskcommits.js'
+import { reconcilePushedLandings } from './pushreconcile.js'
 import { creditTurn, runForSession } from './tasks.js'
 import { recordRateLimit } from './quota.js'
 import {
@@ -124,6 +125,18 @@ async function main(): Promise<void> {
   void salvageLandedCommits().catch((err) =>
     log.warn(`could not salvage landed commits: ${String(err)}`)
   )
+
+  // A local landing may be pushed later by the operator.  Reconcile that distinct observation in
+  // the background: it does network I/O and therefore must never delay the endpoint or scheduler.
+  void reconcilePushedLandings().catch((err) =>
+    log.warn(`could not reconcile later landing pushes: ${String(err)}`)
+  )
+  const pushedLandingSweep = setInterval(() => {
+    void reconcilePushedLandings().catch((err) =>
+      log.warn(`could not reconcile later landing pushes: ${String(err)}`)
+    )
+  }, 5 * 60 * 1000)
+  pushedLandingSweep.unref()
 
   publishEndpoint({ pid: process.pid, port: server.port, token, version: APP_VERSION, startedAt })
 
