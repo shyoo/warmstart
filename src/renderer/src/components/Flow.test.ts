@@ -52,6 +52,7 @@ function mockTask(over: Partial<Task> = {}): Task {
     finishPolicy: 'inherit',
     sessionSharing: 'inherit',
     completionMode: 'inherit',
+    workspaceMode: 'inherit',
     objective: 'inherit',
     autoCompact: 'inherit',
     finishAskedAt: null,
@@ -85,6 +86,7 @@ function mockWorkspace(over: Partial<FlowWorkspace> = {}): FlowWorkspace {
   return {
     path: 'C:/ws/ws1',
     label: 'ws1',
+    kind: 'worktree',
     inPool: true,
     holding: null,
     taskId: null,
@@ -209,6 +211,32 @@ describe('workspace bindings in the Running lane', () => {
 })
 
 describe('computeWorkspaceRows', () => {
+  it('never draws a worktree task heading into the trunk, nor a trunk task into a worktree (t401)', () => {
+    const trunkRow = mockWorkspace({ path: 'C:/proj', label: 'main', kind: 'trunk', defaultMode: 'worktree', workerId: null, workerLabel: null })
+    const ws1 = mockWorkspace({ workerId: null, workerLabel: null })
+    const worktreeTask = mockTask({ id: 't-1', seq: 1, status: 'assigned', workspaceMode: 'inherit' })
+    const trunkTask = mockTask({ id: 't-2', seq: 2, status: 'assigned', workspaceMode: 'trunk' })
+
+    const rows = computeWorkspaceRows([trunkRow, ws1], new Map(), [worktreeTask, trunkTask], [])
+    expect(rows[0]!.inboundTask?.id).toBe('t-2')
+    expect(rows[1]!.inboundTask?.id).toBe('t-1')
+
+    // ⚠️ `inherit` follows the project default the trunk row carries.
+    const trunkDefault = { ...trunkRow, defaultMode: 'trunk' as const }
+    const again = computeWorkspaceRows([trunkDefault, ws1], new Map(), [worktreeTask], [])
+    expect(again[0]!.inboundTask?.id).toBe('t-1')
+    expect(again[1]!.inboundTask).toBeNull()
+  })
+
+  it('keeps a trunk held by a resting task drawn as held, not free', () => {
+    const resting = mockTask({ id: 't-9', seq: 9, status: 'awaiting_human' })
+    const trunkRow = mockWorkspace({ path: 'C:/proj', label: 'main', kind: 'trunk', taskId: 't-9', taskSeq: 9, holding: 'task' })
+    const rows = computeWorkspaceRows([trunkRow], new Map([['t-9', resting]]), [], [])
+    expect(rows[0]!.ws.holding).toBe('task')
+    expect(rows[0]!.ws.taskSeq).toBe(9)
+    expect(rows[0]!.activeTask).toBeNull()
+  })
+
   it('prevents a single task from occupying multiple workspaces (Bug 1)', () => {
     // When t168 was dispatched, ws1 and ws2 both had claims for t168.
     // computeWorkspaceRows must bind t168 to only ONE workspace row, leaving the other free.
@@ -329,7 +357,7 @@ describe('computeWorkspaceRows', () => {
 
 describe('bindingLine description helper', () => {
   it('formats releasing, landing, holding, working in and free states correctly', () => {
-    const base = { path: 'C:/ws/ws3', label: 'ws3', workerLabel: 'CodexFirst', workerId: 'w-1', inPool: true, adapterId: 'codex', sessionId: null, branch: null, claimedAt: null }
+    const base = { path: 'C:/ws/ws3', label: 'ws3', kind: 'worktree' as const, workerLabel: 'CodexFirst', workerId: 'w-1', inPool: true, adapterId: 'codex', sessionId: null, branch: null, claimedAt: null }
     expect(bindingLine({ ...base, taskId: 't-1', taskSeq: 204, taskTitle: null, taskStatus: 'running', holding: 'releasing' }))
       .toBe('t204 releasing ws3 / CodexFirst')
     expect(bindingLine({ ...base, taskId: 't-1', taskSeq: 204, taskTitle: null, taskStatus: 'running', holding: 'landing' }))

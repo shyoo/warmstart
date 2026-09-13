@@ -1,12 +1,21 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import type { FinishPolicy, Project, Task } from '@shared/tasks.js'
+import type { FinishPolicy, Project, ResourceClaim, Task, WorkspaceMode } from '@shared/tasks.js'
 import { resolveFinishPolicy } from '@shared/policy.js'
 import { landingBaseFor } from './landingbase.js'
 import { landingTargetFor, policyFor } from './projects.js'
 import { settings } from './settings.js'
-import { availability, claim, openClaims, release, upsertResource, workspacePoolId } from './resources.js'
+import {
+  availability,
+  claim,
+  openClaims,
+  release,
+  trunkResourceId,
+  upsertResource,
+  workspacePoolId
+} from './resources.js'
+import { samePath } from './fspath.js'
 import { log } from './log.js'
 import { git } from './git.js'
 import { errorMessage } from '@shared/errors.js'
@@ -30,7 +39,10 @@ import { appEnvName } from '@shared/env.js'
  *  - ⛔ **The branch is named after the task, never the workspace** - `warmstart/t12-fix-dialog`, not
  *    `agent/ws2-…`. Which workspace a task happened to land in is an implementation detail that must
  *    never reach history, and re-running the task later in a different workspace yields the same name.
- *  - ⛔ **Agents never work in the trunk.** The branch is created *inside* the claimed worktree.
+ *  - ⛔ **A worktree task never works in the trunk.** The branch is created *inside* the claimed
+ *    worktree. A task whose workspace mode is `trunk` is the one exception, and it gets the trunk
+ *    through its own single-member resource (`claimTrunk`), never through the pool — so nothing
+ *    that parks, stashes or switches a pool member can ever reach the operator's checkout.
  *
  * A non-git project is a pool of one over its own directory, so nothing downstream needs a special
  * case for "no repo".
@@ -40,6 +52,8 @@ export interface Workspace {
   claimId: string
   path: string
   index: number
+  /** ⚠️ Absent means `worktree`, which is every workspace that existed before trunk mode. */
+  kind?: WorkspaceMode
 }
 
 
@@ -169,10 +183,103 @@ export async function claimWorkspace(
  * session; claiming a second member would both exceed the pool and lose the branch the task owns.
  */
 export function workspaceHeldBy(project: Project, holder: string): Workspace | null {
+  const trunk = openClaims(trunkResourceId(project.id)).find((claim) => claim.holder === holder)
+  if (trunk) return { claimId: trunk.id, path: trunk.member ?? project.root, index: 0, kind: 'trunk' }
   const held = openClaims(workspacePoolId(project.id)).find((claim) => claim.holder === holder)
   if (!held?.member) return null
   const index = Number.parseInt(held.member.replace(/^.*ws/, ''), 10)
   return { claimId: held.id, path: held.member, index: Number.isFinite(index) ? index : 1 }
+}
+
+// ---------------------------------------------------------------------------- the trunk lease
+
+/**
+ * Declare the project's checkout as a resource of one. Idempotent, and cheap: a row upsert.
+ *
+ * ⚠️ Declared for every git project, whatever its mode, because the *landing* side asks it too: a
+ * worktree landing into the trunk must wait while a trunk task holds it (`trunkHolder`).
+ */
+export function ensureTrunk(project: Project): void {
+  upsertResource({
+    id: trunkResourceId(project.id),
+    projectId: project.id,
+    kind: 'counted',
+    label: `${project.name} trunk`,
+    capacity: 1,
+    members: [project.root],
+    meta: { vcs: project.vcs }
+  })
+}
+
+/**
+ * Take the trunk for a trunk-mode task, or null when somebody already has it.
+ *
+ * ⛔ **One holder, ever.** Two agents editing one working tree cannot be isolated by anything short
+ * of git, and git cannot help inside a single checkout — so the second trunk task holds, visibly,
+ * exactly as a task waiting for a pool member does.
+ */
+export function claimTrunk(project: Project, holder: string): Workspace | null {
+  ensureTrunk(project)
+  const taken = claim(trunkResourceId(project.id), holder, 1)
+  if (!taken) return null
+  return { claimId: taken.id, path: taken.member ?? project.root, index: 0, kind: 'trunk' }
+}
+
+/** Whoever holds the trunk right now, if anybody. ⚠️ A read; never declares the resource. */
+export function trunkHolder(project: Project): ResourceClaim | null {
+  return openClaims(trunkResourceId(project.id))[0] ?? null
+}
+
+/** What the trunk checkout is in the middle of, if anything. */
+export type TrunkOperation = 'merge' | 'rebase' | 'cherry-pick' | 'revert'
+
+export interface TrunkSurvey {
+  /** The branch checked out, or null on a detached HEAD or an unreadable repository. */
+  branch: string | null
+  dirtyFiles: string[]
+  untrackedFiles: string[]
+  operation: TrunkOperation | null
+  /** Conflicted paths, when an operation stopped on them. */
+  conflicted: string[]
+}
+
+/**
+ * What a trunk task is about to walk into.
+ *
+ * ⛔ **Measured and said, never tidied.** A trunk task is dispatched onto whatever the checkout holds
+ * (decided 2026-09-12: pulling main and resolving the conflict *is* the job that motivated the mode),
+ * so the prompt names every one of these, and the finish subtracts the files that were already here.
+ * ⚠️ Never throws: an unreadable reading is an empty one, and the agent is still told the branch.
+ */
+export async function surveyTrunk(project: Project): Promise<TrunkSurvey> {
+  const survey: TrunkSurvey = { branch: null, dirtyFiles: [], untrackedFiles: [], operation: null, conflicted: [] }
+  if (project.vcs !== 'git') return survey
+  const state = await workspaceState(project.root, policyFor(project).landingTarget)
+  survey.branch = state.branch
+  survey.dirtyFiles = state.dirtyFiles
+  survey.untrackedFiles = state.untrackedFiles
+  const marker = async (name: string): Promise<boolean> => {
+    try {
+      const path = await git(project.root, ['rev-parse', '--git-path', name])
+      return existsSync(resolve(project.root, path))
+    } catch {
+      return false
+    }
+  }
+  if ((await marker('rebase-merge')) || (await marker('rebase-apply'))) survey.operation = 'rebase'
+  else if (await marker('MERGE_HEAD')) survey.operation = 'merge'
+  else if (await marker('CHERRY_PICK_HEAD')) survey.operation = 'cherry-pick'
+  else if (await marker('REVERT_HEAD')) survey.operation = 'revert'
+  if (survey.operation) {
+    try {
+      survey.conflicted = (await git(project.root, ['diff', '--name-only', '--diff-filter=U']))
+        .split(/\r?\n/)
+        .filter(Boolean)
+    } catch {
+      // No conflicted paths to name.
+    }
+  }
+  return survey
 }
 
 export function releaseWorkspace(claimId: string): void {
@@ -862,6 +969,11 @@ function normalise(p: string): string {
  */
 export async function parkWorkspace(project: Project, path: string): Promise<Rescue | null> {
   if (project.vcs !== 'git') return null
+  // ⛔ **Never the trunk.** Parking aborts a rebase, stashes and detaches — three things that must
+  // never happen to the operator's checkout, and a trunk task's claim reaches the same release paths
+  // a pool member's does. Checked here, at the one function that does the damage, rather than
+  // trusted to every caller.
+  if (samePath(path, project.root)) return null
   try {
     const base = await trunkBaseRef(project)
     // ⛔ Blind, and deliberately first. `git switch` **refuses** while a rebase is in progress, so a

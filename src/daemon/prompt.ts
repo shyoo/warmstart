@@ -1,5 +1,5 @@
 import type { Attachment, DebateVerdict, Task } from '@shared/tasks.js'
-import { isOpenConversation, policyVerifies } from '@shared/tasks.js'
+import { isOpenConversation, policyVerifies, resolveWorkspaceMode } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { describeAttachment } from './attachments.js'
 import { adapter } from './adapters/index.js'
@@ -155,6 +155,20 @@ const HAND_BACK_CLAUSE =
  * MCP-less agent has no `task_complete` and naming it would name a channel it has not got (see the
  * note in `promptFor`).
  */
+/**
+ * The trunk's version of `integrationClause`: there is nothing to rebase, but a merge or rebase left
+ * in progress, or a change left uncommitted, blocks whoever uses this checkout next — and the finish
+ * (`decideTrunkFinish`) will ask about both.
+ */
+function trunkIntegrationClause(mcpLess: boolean): string {
+  const declare = mcpLess ? 'write the `TASK COMPLETE: ` line' : 'call `task_complete`'
+  return (
+    `Immediately before you ${declare}, make sure no merge, rebase or cherry-pick is left in progress in ` +
+    'the trunk and that every change of yours is committed. Do not push unless your task says to — the ' +
+    "finish policy decides that, and verifies the trunk first."
+  )
+}
+
 function integrationClause(target: string, hasChecks: boolean, mcpLess: boolean): string {
   const declare = mcpLess ? 'write the `TASK COMPLETE: ` line' : 'call `task_complete`'
   return (
@@ -620,7 +634,17 @@ export function promptFor(
   //    lands, directly contradicting the seat prompt's "do not commit". Anything such a task commits
   //    can only become a loose end, and `decideFinish` now refuses to call it done until it is gone.
   const reportsOnly = policy === 'report-only'
-  const commitHygiene = reportsOnly
+  // ⛔ **A trunk task has no branch, so the branch clauses are the wrong instructions.** Squashing
+  // "commits ahead of this task branch's landing target" and rebasing onto it would, in the trunk, be
+  // rewriting the target itself. `trunkArrivalNotice` says where it is; this says how to finish there.
+  const inTrunk = project !== null && resolveWorkspaceMode(task, project).mode === 'trunk'
+  const commitHygiene = inTrunk
+    ? reportsOnly
+      ? 'This task reports on its thread and changes nothing: do not commit, and leave the trunk exactly as you found it.'
+      : `You are committing directly on \`${landingTargetFor(task, project)}\` in the trunk. Commit only your own ` +
+        'changes, never files that were already uncommitted when you arrived. Do not rewrite or squash existing ' +
+        'commits, force-push, stash, switch branches or reset.'
+    : reportsOnly
     ? 'This task reports on its thread and lands nothing: do not commit, and leave the branch and ' +
       'the working tree exactly as you found them.'
     : 'When committing, if two or more commits ahead of this task branch’s landing target all belong ' +
@@ -641,7 +665,9 @@ export function promptFor(
   // points at *the validation relevant to what you changed* rather than at a list somebody else runs.
   const toolRunsChecks = adapter(adapterId).info.capabilities.streamPrompts === 'once'
   const integration =
-    project?.vcs === 'git' && !reportsOnly
+    project?.vcs === 'git' && !reportsOnly && inTrunk
+      ? trunkIntegrationClause(!adapter(adapterId).info.capabilities.mcp)
+      : project?.vcs === 'git' && !reportsOnly
       ? integrationClause(
           landingTargetFor(task, project),
           checks.length > 0 && !toolRunsChecks,

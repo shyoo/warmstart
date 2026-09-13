@@ -9,12 +9,15 @@ import {
   DEFAULT_FINISH_INSTRUCTION,
   finishInstructionFor,
   projectFinishChoice,
+  resolveWorkspaceMode,
+  trunkPolicyConflict,
 } from '@shared/tasks.js'
 import { resolveFinishPolicy as sharedResolveFinishPolicy } from '@shared/policy.js'
 import { db, rows } from './db.js'
 import { log } from './log.js'
 import { landingTargetFor, listProjects, policyFor } from './projects.js'
-import { listTasks, mandateAllows } from './tasks.js'
+import { listTasks, mandateAllows, runsFor } from './tasks.js'
+import { openClaims, trunkResourceId } from './resources.js'
 import type { MergeReading } from './landing.js'
 import { commitsOnlyOn, ensurePool, taskBranches, workspaceState } from './worktrees.js'
 import { mergedDeliveryFor, type PullRequestDelivery } from './deliveries.js'
@@ -385,6 +388,161 @@ export function decideFinish({
   return landOrResolve(task, state, merge)
 }
 
+export interface TrunkFinishInputs {
+  task: Task
+  project: Project
+  /** The resolved rung. */
+  policy: FinishPolicy
+  /** `custom`'s instruction, when that is the rung. */
+  instruction: string | null
+  target: string
+  /** What the checkout holds now. */
+  survey: {
+    branch: string | null
+    dirtyFiles: string[]
+    untrackedFiles: string[]
+    operation: string | null
+    conflicted: string[]
+  }
+  /** Files already uncommitted when the run started — the operator's, not the agent's. */
+  dirtyBefore: string[]
+  /**
+   * How many commits reached the target during this run that no other task is recorded as
+   * landing. ⚠️ `null` is *could not measure* (no baseline), which is read as "something may have
+   * been committed" rather than as nothing.
+   */
+  commitsThisRun: number | null
+  hasChecks: boolean
+}
+
+/**
+ * What to do with a **trunk** task whose agent has said it is finished.
+ *
+ * ⛔ **A different ladder, because half of the usual one has already happened.** The commits are on
+ * the local target the moment they are made; there is no branch to be empty, no rebase to conflict
+ * and no merge left to do. What is left to decide is whether the checkout was left in a state
+ * somebody else can use, whether the checks agree, and whether to push.
+ *
+ * ⛔ **No trunk tripwire.** The tripwire exists to catch an agent that worked in the trunk instead of
+ * its branch; a trunk task working in the trunk is the mode doing what it says.
+ *
+ * ⚠️ Pure, like `decideFinish`, and every ask is once — `finishAskedAt` is the same guard.
+ */
+export function decideTrunkFinish(input: TrunkFinishInputs): FinishDecision {
+  const { task, policy, target, survey } = input
+  const before = new Set(input.dirtyBefore)
+  const mine = [...survey.dirtyFiles, ...survey.untrackedFiles].filter((f) => !before.has(f))
+  const asked = task.finishAskedAt !== null
+
+  // 0. An operation left half done blocks everybody who uses this checkout next.
+  if (survey.operation) {
+    const conflicted = survey.conflicted.length ? ` (${survey.conflicted.slice(0, 10).join(', ')} still conflicted)` : ''
+    const reason = `a ${survey.operation} is still in progress in the trunk${conflicted}`
+    if (!asked) {
+      return {
+        kind: 'ask-agent',
+        reason,
+        instruction:
+          `A ${survey.operation} is still in progress in the trunk${conflicted}. Finish it — resolve, ` +
+          '`git add`, and continue — or, if it was not yours to finish, say so in your summary. Do not ' +
+          'abort it and do not reset. Then report the task complete again.'
+      }
+    }
+    return { kind: 'await-human', reason: `${reason} after the agent was asked to finish it. Nothing was undone.` }
+  }
+
+  // 1. Off the target. Commits made on another branch in the operator's checkout are not this mode.
+  if (survey.branch !== target) {
+    return {
+      kind: 'await-human',
+      reason:
+        `the trunk is on ${survey.branch ? `\`${survey.branch}\`` : 'a detached HEAD'} rather than ` +
+        `\`${target}\` — a trunk task commits on \`${target}\` itself. Nothing was moved.`
+    }
+  }
+
+  // 2. The thread is the deliverable. ⚠️ Commits already on `main` are not taken back by this tool
+  //    or asked to be: removing commits from a shared trunk is a person's decision.
+  if (policy === 'report-only') {
+    if ((input.commitsThisRun ?? 0) > 0) {
+      return {
+        kind: 'await-human',
+        reason: `this task reports on its thread, but ${input.commitsThisRun} commit(s) reached \`${target}\` during its run`
+      }
+    }
+    if (mine.length > 0) {
+      if (!asked) {
+        return {
+          kind: 'ask-agent',
+          reason: `this task reports on its thread but left ${mine.length} file(s) changed in the trunk`,
+          instruction:
+            `This task reports on its thread and changes nothing, but ${mine.length} file(s) you changed are ` +
+            `uncommitted in the trunk: ${mine.slice(0, 10).join(', ')}. Put anything that matters in your ` +
+            'summary, then undo exactly those changes — no others. Do not commit. Then report complete again.'
+        }
+      }
+      return { kind: 'await-human', reason: `${mine.length} file(s) are still changed in the trunk. Nothing was discarded.` }
+    }
+    return { kind: 'done', reason: 'this task reports on its thread and left the trunk as it found it' }
+  }
+
+  // 3. The agent's own uncommitted work.
+  if (mine.length > 0) {
+    if (!asked) {
+      return {
+        kind: 'ask-agent',
+        reason: `${mine.length} file(s) you changed are uncommitted in the trunk`,
+        instruction:
+          policy === 'custom' && input.instruction
+            ? input.instruction
+            : `You have ${mine.length} uncommitted file(s) in the trunk: ${mine.slice(0, 10).join(', ')}. ` +
+              `Commit them on \`${target}\`` +
+              (before.size > 0 ? ' — and only them: the files that were already uncommitted when you arrived are not yours' : '') +
+              '. Do not rewrite commits, force-push or reset. Then report the task complete again. Do not start new work.'
+      }
+    }
+    return {
+      kind: 'await-human',
+      reason: `${mine.length} file(s) are still uncommitted in the trunk after the agent was asked to commit them. Nothing was discarded.`
+    }
+  }
+
+  if (policy === 'custom') {
+    if (!asked) {
+      return { kind: 'ask-agent', instruction: input.instruction ?? DEFAULT_FINISH_INSTRUCTION, reason: 'this project defines its own finish policy' }
+    }
+    return { kind: 'done', reason: "this project's finish policy ran in the trunk" }
+  }
+
+  // 4. Nothing committed. ⭐ Ordinary here — a trunk task that answered a question, or found the
+  //    work already done, has nothing to verify. No tripwire: see the header.
+  if (input.commitsThisRun === 0) {
+    return { kind: 'done', reason: `no commits reached \`${target}\` during this run, and the trunk is as it was` }
+  }
+
+  if (policy === 'await-human') {
+    return { kind: 'await-human', reason: `the commits are on your local \`${target}\`, unverified, and this task waits for you` }
+  }
+  if (policy === 'commit-only') {
+    return { kind: 'done', reason: `committed on \`${target}\` in the trunk, not verified` }
+  }
+  const conflict = trunkPolicyConflict(policy)
+  if (conflict) return { kind: 'await-human', reason: conflict }
+  if (policy === 'commit-and-push') {
+    if (!mandateAllows(task, 'land')) return { kind: 'await-human', reason: 'this task has no authority to push' }
+    if (!input.hasChecks) {
+      return {
+        kind: 'await-human',
+        reason:
+          'this project defines no check commands, so nothing proves the work builds and it was not pushed. ' +
+          'Add a `check` array to its project.json to let a trunk task push unattended.'
+      }
+    }
+  }
+  // `commit-and-verify`, `commit-and-merge` and `commit-and-push`: verify in place, push if asked.
+  return { kind: 'land' }
+}
+
 /**
  * Land, unless the branch will not rebase — in which case ask the agent once.
  *
@@ -499,6 +657,33 @@ export function looseEndsIn(
     })
   }
   return ends
+}
+
+async function trunkLooseEnd(project: Project, target: string): Promise<LooseEnd | null> {
+  if (openClaims(trunkResourceId(project.id)).length > 0) return null
+  const last = listTasks({ projectId: project.id })
+    .filter((t) => t.workspaceMode !== 'worktree' && resolveWorkspaceMode(t, project).mode === 'trunk')
+    .map((t) => ({ task: t, run: runsFor(t.id).filter((r) => r.kind === 'work').at(-1) }))
+    .filter((x): x is { task: Task; run: NonNullable<typeof x.run> } => !!x.run)
+    .sort((a, b) => b.run.startedAt - a.run.startedAt)[0]
+  if (!last || (last.task.status !== 'cancelled' && last.task.status !== 'failed')) return null
+  const state = await workspaceState(project.root, target)
+  const before = new Set(last.run.trunkDirtyBefore ?? [])
+  const left = [...state.dirtyFiles, ...state.untrackedFiles].filter((f) => !before.has(f))
+  if (left.length === 0) return null
+  return {
+    id: `trunk:${project.id}:t${last.task.seq}`,
+    kind: 'uncommitted',
+    projectId: project.id,
+    projectName: project.name,
+    workspacePath: project.root,
+    branch: state.branch,
+    taskSeq: last.task.seq,
+    count: left.length,
+    summary:
+      `${left.length} file(s) t${last.task.seq} left uncommitted in the trunk when it ${last.task.status === 'cancelled' ? 'was cancelled' : 'failed'}: ` +
+      `${left.slice(0, 5).join(', ')}${left.length > 5 ? ', …' : ''}`
+  }
 }
 
 /** Scan every pool member of every project. ⚠️ Reads git only; it never writes and never cleans. */
@@ -629,6 +814,17 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
       if (seen.has(end.id) || dismissed.has(end.id)) continue
       seen.add(end.id)
       found.push(end)
+    }
+
+    // ⭐ **The trunk, after a trunk task stopped without finishing.** Its files are never stashed or
+    // committed for it (decided 2026-09-12), so a cancelled or failed one can leave edits in the
+    // operator's checkout that no worktree scan would ever see. ⚠️ Only files that were not already
+    // there when its run started, and only while nobody holds the trunk — otherwise this would report
+    // the operator's own editing, or a live task's, as litter.
+    const trunkEnd = await trunkLooseEnd(project, policy.landingTarget)
+    if (trunkEnd && !seen.has(trunkEnd.id) && !dismissed.has(trunkEnd.id)) {
+      seen.add(trunkEnd.id)
+      found.push(trunkEnd)
     }
   }
   return found

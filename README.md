@@ -81,7 +81,9 @@ worth and refuses to let it evaporate.
   than one model family, and — honestly — that several published results find debate does **not** beat
   one strong agent at the same token budget.
 - **Isolated workspaces.** Each task gets its own git worktree from a pooled set, on a branch named
-  after the task. Agents never work in the trunk. ⛔ This is *organisation*, not a security boundary
+  after the task. A task can instead be filed into the **trunk** — the project checkout itself — for
+  work that *is* trunk work, like pulling and resolving a conflict; one runs at a time, and worktree
+  landings queue until it is done. ⛔ This is *organisation*, not a security boundary
   — read **[Security model](#security-model)** before you run this on a machine that has anything on
   it.
 - **A live view.** The real agent TUI, not a reconstruction.

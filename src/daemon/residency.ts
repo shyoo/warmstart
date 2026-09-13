@@ -126,9 +126,14 @@ export function leastValuableResident(candidates: Session[], now = Date.now()): 
  * none has lapsed does this fall back to the longest idle, and that case is a genuine cost: it is
  * the pool being too small for the work, and the log says so in those words.
  */
-export function evictableResidents(projectId: string): Session[] {
+export function evictableResidents(projectId: string, kind?: 'worktree' | 'trunk'): Session[] {
   return [...workspaces.entries()]
     .filter(([sessionId, held]) => held.projectId === projectId && !hasOpenRun(sessionId))
+    // ⚠️ Closing a conversation in the trunk frees no pool member and the reverse, so an eviction is
+    // asked for the kind of tree it is meant to free. Absent asks about both, for the gate's
+    // "is anything reclaimable at all".
+    .filter(([, held]) => !kind || (held.workspace.kind ?? 'worktree') === kind)
+
     .map(([sessionId]) => getSession(sessionId))
     .filter((s): s is Session => s !== null)
 }

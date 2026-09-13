@@ -1,7 +1,7 @@
 import { canWork } from '@shared/protocol.js'
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import type { Objective, Project, Task } from '@shared/tasks.js'
-import { windowHighWater, WINDOW_HIGH_WATER } from '@shared/tasks.js'
+import { resolveWorkspaceMode, windowHighWater, WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { WEIGHT_SIGNS } from '@shared/routing.js'
 import { adapter } from './adapters/index.js'
 import { paceFactors, paceFor, paceValue, type PaceFactors } from './pace.js'
@@ -26,7 +26,7 @@ import { complexityOf } from './complexity.js'
 import { exploreRoute } from './exploration.js'
 import { accountRefusal } from './eligibility.js'
 import { getProject, policyFor } from './projects.js'
-import { addMessage, quotaOverridden } from './tasks.js'
+import { addMessage, getTask, quotaOverridden } from './tasks.js'
 import { enqueueConsult, hasPendingConsult, latestAnswer } from './controller.js'
 import {
   routeDetail,
@@ -34,7 +34,7 @@ import {
   type RouteCandidate
 } from './judgment.js'
 import { sessionsForWorker } from './sessions.js'
-import { availability, workspacePoolId } from './resources.js'
+import { availability, openClaims, trunkResourceId, workspacePoolId } from './resources.js'
 import { workspaceHeldBy } from './worktrees.js'
 import { log } from './log.js'
 import { settings } from './settings.js'
@@ -1399,6 +1399,17 @@ function hasEverWorked(workerId: string): boolean {
 export function poolPressure(task: Task): string | null {
   const project = task.projectId ? getProject(task.projectId) : null
   if (!project) return null
+  // ⭐ A trunk task asks the trunk, not the pool: a free worktree is no use to it, and a full pool
+  // is no reason to hold it. Same three ways through — its own lease, a warm session, an evictable
+  // resident — for the same reasons.
+  if (resolveWorkspaceMode(task, project).mode === 'trunk') {
+    const holder = openClaims(trunkResourceId(project.id))[0]
+    if (!holder || holder.holder === task.id) return null
+    if (warmSessionFor(task)) return null
+    if (evictableResidents(project.id, 'trunk').length > 0) return null
+    const owner = getTask(holder.holder)
+    return `the trunk of ${project.name} is in use${owner ? ` by t${owner.seq}` : ''}`
+  }
   const state = availability(workspacePoolId(project.id))
   if (!state) return null
 
@@ -1421,7 +1432,8 @@ export function poolPressure(task: Task): string | null {
   if (workspaceHeldBy(project, task.id)) return null
   if (state.free > 0) return null
   if (warmSessionFor(task)) return null
-  if (evictableResidents(project.id).length > 0) return null
+  if (evictableResidents(project.id, 'worktree').length > 0) return null
+
   const capacity = state.resource.capacity
   return `all ${capacity} workspace(s) in ${project.name} are busy` + poolIsNarrow(project, capacity)
 }

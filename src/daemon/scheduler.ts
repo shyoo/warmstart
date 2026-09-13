@@ -36,7 +36,15 @@ import {
   recordDispatchFailure,
   spendingCreditsOn
 } from './workers.js'
-import { getProject, landingTargetFor, policyFor, reloadProject, reloadProjectIfPresent } from './projects.js'
+import {
+  getProject,
+  landingTargetFor,
+  listProjects,
+  policyFor,
+  reloadProject,
+  reloadProjectIfPresent
+} from './projects.js'
+
 import {
   admitBlocked,
   admitScheduled,
@@ -65,7 +73,7 @@ import {
   setStatus,
   startRun
 } from './tasks.js'
-import { taskCommitShas } from './taskcommits.js'
+import { claimedByAnotherTask, landedCommits, recordTaskCommits, taskCommitShas } from './taskcommits.js'
 import { openDebate, seatsOf } from './debate.js'
 import { enqueueConsult } from './controller.js'
 import {
@@ -85,12 +93,17 @@ import {
   reassignClaim,
   release,
   releaseAllFor,
+  trunkResourceId,
   upsertResource,
   workspacePoolId
 } from './resources.js'
 import {
   branchNameFor,
+  claimTrunk,
   claimWorkspace,
+  surveyTrunk,
+  trunkHolder,
+  type TrunkSurvey,
   commitsOnlyOn,
   parkWorkspace,
   prepareWorkspace,
@@ -140,7 +153,7 @@ import {
   STALL_CONFIRM_AFTER_MS,
   type TreeSample
 } from './stall.js'
-import { decideFinish, resolveFinishPolicy, type TrunkReading } from './finish.js'
+import { decideFinish, decideTrunkFinish, resolveFinishPolicy, type TrunkReading } from './finish.js'
 import {
   mismatch,
   rank,
@@ -160,6 +173,7 @@ import {
   withClosingProse
 } from './activity.js'
 import { log } from './log.js'
+import { git } from './git.js'
 import { clockTime, oneLine, shortDuration } from './threadline.js'
 import { RESTART_REAP_NOTE } from './activetime.js'
 import { db } from './db.js'
@@ -176,7 +190,7 @@ import { lastSpend } from './spend.js'
 import { settings } from './settings.js'
 import { overrunFactor } from './estimator.js'
 import type { Objective } from '@shared/tasks.js'
-import { isOpenConversation } from '@shared/tasks.js'
+import { isOpenConversation, resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
 import {
   DEFAULT_OBJECTIVE,
   policy,
@@ -218,7 +232,7 @@ import {
   MAX_OVERLOAD_ATTEMPTS,
   overloadFailureRetry
 } from './turnend.js'
-import { resolveRetryOnTask } from './resolutions.js'
+import { resolveRetryOnTask, retryQueuedLandings } from './resolutions.js'
 
 /**
  * The scheduler.
@@ -477,7 +491,13 @@ export async function tick(): Promise<TickResult> {
   // ⚠️ And a clock is not the only way that hold ends. `quotaReleaseFor` is what lets a *measured*
   // reading beat the estimate the park was made on — see it for the failure that made it necessary.
   resumeQuotaPaused(quotaReleaseFor)
+  // ⛔ The two halves of trunk mode's holds, each ended by something on this clock: a lease whose
+  // task has settled goes back, and a landing that queued for the trunk is re-attempted once the
+  // trunk is free. Both zero tokens.
+  sweepTrunkLeases()
+  await retryQueuedLandings()
   escalateStale()
+
   // ⛔ Free: writes at most one consult row and returns. Nothing below waits on it, and nothing it
   // does changes what this tick dispatches.
   askForTitle()
@@ -1030,6 +1050,8 @@ export interface WorkerChoice {
  * task's own session is not.
  */
 export function warmSessionFor(task: Task, workerId?: string): Session | null {
+  const project = task.projectId ? getProject(task.projectId) : null
+  const trunkWanted = project !== null && resolveWorkspaceMode(task, project).mode === 'trunk'
   const idle = (session: Session | null): Session | null => {
     if (!session || sessionEnded(session.state)) return null
     // ⛔ Asked per worker, because a conversation belongs to exactly one account and the answer
@@ -1049,6 +1071,10 @@ export function warmSessionFor(task: Task, workerId?: string): Session | null {
     // to continue, and handing it a second prompt is a write into a pipe that closed when the first
     // one went out. Reuse here would report a saving that does not exist and deliver nothing.
     if (adapter(session.adapterId).info.capabilities.streamPrompts === 'once') return null
+    // ⛔ **A conversation is in one kind of tree, and a task wants one kind.** A trunk task continued
+    // in a worktree session would commit to a branch nobody lands; a worktree task continued in the
+    // trunk would put its branch's work on the operator's checkout.
+    if (project && project.vcs === 'git' && samePath(session.cwd, project.root) !== trunkWanted) return null
     // A session with an open run is busy; only an idle one can take work.
     return hasOpenRun(session.id) ? null : session
   }
@@ -1100,8 +1126,11 @@ function borrowCandidates(task: Task, workerId?: string): { offerable: Session[]
 
   const offerable: Session[] = []
   const full: Session[] = []
+  const mode = project ? resolveWorkspaceMode(task, project).mode : 'worktree'
   for (const [sessionId, held] of workspaces) {
     if (held.projectId !== task.projectId) continue
+    // ⛔ Only a conversation in the kind of tree this task works in. See `warmSessionFor`.
+    if ((held.workspace.kind ?? 'worktree') !== mode) continue
     const session = getSession(sessionId)
     if (!session || sessionEnded(session.state)) continue
     if (workerId && session.workerId !== workerId) continue
@@ -1521,7 +1550,36 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   const lent = lendableConversations(task, worker.id)
   const priorCwd = past.find((s) => s.workerId === worker.id)?.cwd ?? lent[0]?.cwd
 
-  if (project) {
+  // ⭐ Where this task works, decided once. A trunk task takes the project's single trunk lease and
+  // runs in the checkout itself; everything below that prepares a pooled worktree is skipped for it.
+  const trunkMode = project !== null && resolveWorkspaceMode(task, project).mode === 'trunk'
+  let trunkSurvey: TrunkSurvey | null = null
+
+  if (project && trunkMode) {
+    for (const s of past) {
+      if (sessionEnded(s.state)) await releaseWorkspaceOf(s.id)
+    }
+    // ⛔ Refused before anything is claimed: this combination can only arrive by a project's policy
+    // changing under a task, and guessing a different finish would be worse than saying so.
+    const conflict = trunkPolicyConflict(resolveFinishPolicy(task, project).policy)
+    if (conflict) throw new Error(`cannot run t${task.seq} in the trunk: ${conflict}`)
+    workspace ??= workspaceHeldBy(project, task.id)
+    if (workspace && workspace.kind !== 'trunk') {
+      releaseWorkspace(workspace.claimId)
+      workspace = null
+    }
+    workspace ??= claimTrunk(project, task.id)
+    if (!workspace && (await evictResident(project, 'trunk'))) workspace = claimTrunk(project, task.id)
+    // ⚠️ `Contended`: another trunk task has the checkout, which is a hold, never a failure.
+    if (!workspace) {
+      const holder = trunkHolder(project)
+      throw new Contended(
+        `the trunk of ${project.name} is held by ${holder ? holderLabel(holder.holder) : 'another task'}`,
+        trunkResourceId(project.id)
+      )
+    }
+    trunkSurvey = await surveyTrunk(project)
+  } else if (project) {
     // ⛔ A task cannot occupy two independent workspaces. If an ended session of this task still holds
     // a workspace claim, release it before claiming so the slot is free and can be reused.
     for (const s of past) {
@@ -1540,7 +1598,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     // against it — and the cache clock's `let_expire` move leaves such a session alone indefinitely.
     // Without this, one parked task would cost a slot until somebody restarted the daemon.
     if (!workspace) {
-      if (await evictResident(project)) workspace = await claimWorkspace(project, task.id, priorCwd)
+      if (await evictResident(project, 'worktree')) workspace = await claimWorkspace(project, task.id, priorCwd)
     }
     // ⚠️ `Contended`, not `Error`: the pool is busy, not broken, and the tick puts this task back in
     // the queue rather than failing it. See `Contended` in resources.ts for what that cost on
@@ -1639,6 +1697,8 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
       }
     )
   }
+  const trunkNotice =
+    trunkSurvey && project ? trunkArrivalNotice(trunkSurvey, landingTargetFor(task, project)) : null
   const rescueNotice = rescued
     ? `⚠️ The tip of \`${branch}\` is commit ${rescued.sha.slice(0, 8)}, holding ${rescued.files} ` +
       'file(s) an interrupted earlier run left uncommitted. This tool made that commit, not you: ' +
@@ -1678,7 +1738,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // conversation that was about to be compacted anyway.
   const resumeCompaction = revive ? compactOnResume(revive, settings()) : null
   const prompt = promptFor(task, worker.adapterId, revive !== null && !borrowed, {
-    branchNotice: [borrowNotice, branchNotice, rescueNotice].filter(Boolean).join('\n\n') || null,
+    branchNotice: [borrowNotice, branchNotice, rescueNotice, trunkNotice].filter(Boolean).join('\n\n') || null,
     markDelivered: true,
     // ⚠️ Either compaction counts: the one about to happen, and any that already landed in this
     // conversation since this task last spoke in it.
@@ -1742,6 +1802,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     startedWarm: revive !== null,
     // ⭐ The tripwire's first half. See `decideFinish`'s `trunk-moved` branch for what it is for.
     trunkShaBefore: project ? await trunkTargetSha(project, landingTargetFor(task, project)) : null,
+    ...(trunkSurvey ? { trunkDirtyBefore: [...trunkSurvey.dirtyFiles, ...trunkSurvey.untrackedFiles] } : {}),
     prompt: promptText,
     objective: resolveObjective(project?.config?.objective, task.objective, settings().objective)
   })
@@ -1965,9 +2026,24 @@ async function dispatchIntoWarmSession(
   // no tree, and re-claiming its own directory is exactly right there.
   const project = task.projectId ? getProject(task.projectId) : null
   let reclaimed: Workspace | null = null
-  if (project && !workspaces.has(session.id)) {
+  // ⛔ Same answer as the cold path: a trunk task continues only in a conversation sitting in the
+  // trunk (`warmSessionFor` guarantees that), and re-takes the trunk lease rather than a pool member.
+  const trunkMode = project !== null && resolveWorkspaceMode(task, project).mode === 'trunk'
+  if (project && trunkMode && !workspaces.has(session.id)) {
+    reclaimed = workspaceHeldBy(project, task.id) ?? claimTrunk(project, task.id)
+    if (!reclaimed || reclaimed.kind !== 'trunk') {
+      if (reclaimed) releaseWorkspace(reclaimed.claimId)
+      const holder = trunkHolder(project)
+      throw new Contended(
+        `the trunk of ${project.name} is held by ${holder ? holderLabel(holder.holder) : 'another task'}`,
+        trunkResourceId(project.id)
+      )
+    }
+    reassignClaim(reclaimed.claimId, session.id)
+    workspaces.set(session.id, { workspace: reclaimed, projectId: project.id })
+  } else if (project && !workspaces.has(session.id)) {
     reclaimed = await claimWorkspace(project, task.id, session.cwd)
-    if (!reclaimed && (await evictResident(project))) {
+    if (!reclaimed && (await evictResident(project, 'worktree'))) {
       reclaimed = await claimWorkspace(project, task.id, session.cwd)
     }
     if (!reclaimed) {
@@ -1999,8 +2075,9 @@ async function dispatchIntoWarmSession(
   // conversation and ran in t11's worktree on t11's branch. It only read files, so nothing was mixed
   // — but a borrower that committed would have put its work on somebody else's branch, which is the
   // exact failure phase 2's switch-and-tell exists to prevent.
-  const branch =
-    task.branch ?? (project && project.vcs === 'git' ? branchNameFor(task.seq, task.title, task.branchUnit) : null)
+  const branch = trunkMode
+    ? null
+    : (task.branch ?? (project && project.vcs === 'git' ? branchNameFor(task.seq, task.title, task.branchUnit) : null))
 
   // Whose conversation this was, read **before** the switch moves the tree off their branch.
   const previousOccupant = session.currentBranch ? taskOnBranch(session.currentBranch) : null
@@ -3313,7 +3390,74 @@ async function landCompletion(
       `branch=${task.branch ?? 'none'} project=${project?.name ?? 'none'}/${project?.vcs ?? '-'}`
   )
 
-  if (project && held && task.branch && project.vcs === 'git') {
+  if (project && held && held.workspace.kind === 'trunk' && project.vcs === 'git') {
+    // ⭐ **A trunk task's finish.** Its own ladder (`decideTrunkFinish`): there is no branch to read,
+    // so everything below that measures one is skipped, and the acts are the same four — ask once,
+    // hand to a person, verify-and-maybe-push, or done.
+    const resolved = resolveFinishPolicy(task, project)
+    const target = landingTargetFor(task, project)
+    const survey = await surveyTrunk(project)
+    const decision = decideTrunkFinish({
+      task,
+      project,
+      policy: resolved.policy,
+      instruction: resolved.instruction,
+      target,
+      survey,
+      dirtyBefore: run.trunkDirtyBefore ?? [],
+      commitsThisRun: await trunkCommitsOfRun(project, task, run.trunkShaBefore),
+      hasChecks: policyFor(project).check.length > 0
+    })
+    log.info(`t${task.seq} trunk finish: ${decision.kind} (${resolved.policy})`)
+
+    if (decision.kind === 'ask-agent') {
+      const finishing = getSession(sessionId)
+      const oneShot =
+        finishing !== null && adapter(finishing.adapterId).info.capabilities.streamPrompts === 'once'
+      if (!oneShot) {
+        markFinishAsked(task.id)
+        addMessage(task.id, 'system', `Asked the agent to finish: ${oneLine(decision.reason)}`, null, [], {
+          detail: decision.instruction
+        })
+        try {
+          sendPrompt(sessionId, decision.instruction)
+          return
+        } catch (err) {
+          log.warn(`could not send the trunk finish instruction for t${task.seq}:`, err)
+        }
+      }
+      addMessage(task.id, 'system', `Not finished: ${oneLine(decision.reason)} — over to you`, null, [], {
+        event: 'finish.held',
+        detail: `${decision.reason}. The agent could not be asked, so this is over to you; the trunk was left exactly as it is.`
+      })
+      setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
+    } else if (decision.kind === 'land') {
+      const result = await landTask({
+        project,
+        task,
+        workspacePath: project.root,
+        branch: target,
+        policy: resolved.policy,
+        trunkBase: run.trunkShaBefore
+      })
+      if (result.ok) setStatus(task.id, 'completed')
+      else if (!result.trunkBusy) automaticRetry = true
+    } else if (decision.kind === 'await-human') {
+      // ⭐ Recorded now, not at a landing that may never come: the diff at the gate and the quality
+      // review both read `task_commits`, and a trunk task has no branch to fall back to.
+      await recordTrunkRunCommits(project, task, run.trunkShaBefore, target)
+      addMessage(task.id, 'system', `Finished, not verified: ${oneLine(decision.reason)}`, null, [], {
+        event: 'finish.held',
+        detail: decision.reason
+      })
+      setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
+    } else {
+      await recordTrunkRunCommits(project, task, run.trunkShaBefore, target)
+      const why = 'reason' in decision ? decision.reason : 'finished in the trunk'
+      addMessage(task.id, 'system', `Finished — ${oneLine(why)}`, null, [], {})
+      setStatus(task.id, 'completed')
+    }
+  } else if (project && held && task.branch && project.vcs === 'git') {
     // ⛔ One decision function, asked once, with the workspace read once. Everything below acts on
     // what it returns; nothing below decides anything for itself. See finish.ts for why the tool
     // never authors a commit here.
@@ -3515,7 +3659,7 @@ async function landCompletion(
         policy: resolveFinishPolicy(task, project).policy
       })
       if (result.ok) setStatus(task.id, 'completed')
-      else automaticRetry = true
+      else if (!result.trunkBusy) automaticRetry = true
     } else if (decision.kind === 'await-human') {
       addMessage(task.id, 'system', `Finished, not landed: ${oneLine(decision.reason)}`, null, [], {
         event: 'finish.held',
@@ -3963,6 +4107,21 @@ export async function releaseWorkspaceOf(sessionId: string, retainForTaskId: str
       releaseAllFor(sessionId)
       return
     }
+    // ⛔ **A trunk lease outlives the conversation while its task is only resting.** Decided
+    // 2026-09-12: a paused, preempted or questioning trunk task keeps the checkout, because its
+    // uncommitted files are sitting in it and the resume has to find them there — and nothing may
+    // land over them meanwhile. It goes back to the task, exactly as a pool member does for
+    // `awaiting_human`; a task that settles gives it up in `sweepTrunkLeases`.
+    if (held.workspace.kind === 'trunk') {
+      const owner = taskOfSession(sessionId)
+      if (owner && !TERMINAL_STATUSES.has(owner.status)) {
+        reassignClaim(held.workspace.claimId, owner.id)
+      } else {
+        releaseWorkspace(held.workspace.claimId)
+      }
+      releaseAllFor(sessionId)
+      return
+    }
     const project = held.projectId ? getProject(held.projectId) : null
     if (project) announceRescue(await parkWorkspace(project, held.workspace.path))
     releaseWorkspace(held.workspace.claimId)
@@ -3973,7 +4132,7 @@ export async function releaseWorkspaceOf(sessionId: string, retainForTaskId: str
   // Fallback: If not in the in-memory map, clean up any open workspace claims held in the database.
   const open = claimsForHolder(sessionId)
   for (const c of open) {
-    if (retainForTaskId && c.resourceId.startsWith('workspace:')) {
+    if (retainForTaskId && (c.resourceId.startsWith('workspace:') || c.resourceId.startsWith('trunk:'))) {
       reassignClaim(c.id, retainForTaskId)
     } else {
       release(c.id)
@@ -4125,9 +4284,123 @@ function taskOnBranch(branch: string): Task | null {
 }
 
 
-async function evictResident(project: { id: string; name: string }): Promise<boolean> {
+/**
+ * How many commits reached the target during a trunk run that no other task is recorded as landing.
+ *
+ * ⚠️ The subtraction is the whole point: a worktree landing can fast-forward the trunk between two
+ * of this run's turns (once it is free), and those commits are somebody else's. `null` when there is
+ * no baseline to count from.
+ */
+async function trunkCommitsOfRun(project: Project, task: Task, before: string | null): Promise<number | null> {
+  if (!before) return null
+  try {
+    const out = await git(project.root, ['rev-list', `${before}..HEAD`])
+    const shas = out.split(/\s+/).filter(Boolean)
+    const claimed = claimedByAnotherTask(task.id, shas)
+    return shas.filter((sha) => !claimed.has(sha.toLowerCase())).length
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Write a trunk run's own commits into `task_commits`, when no landing will.
+ *
+ * ⚠️ Same subtraction as `trunkCommitsOfRun`, and never throws: a finish must not fail because a
+ * `git log` afterwards did not run.
+ */
+async function recordTrunkRunCommits(project: Project, task: Task, before: string | null, target: string): Promise<void> {
+  if (!before) return
+  try {
+    const head = await git(project.root, ['rev-parse', 'HEAD'])
+    const enumerated = await landedCommits(project.root, before, head)
+    const claimed = claimedByAnotherTask(task.id, enumerated.map((c) => c.sha))
+    const mine = enumerated.filter((c) => !claimed.has(c.sha.toLowerCase()))
+    if (mine.length > 0) recordTaskCommits(task.id, mine, target)
+  } catch (err) {
+    log.warn(`could not record t${task.seq}'s trunk commits: ${String(err)}`)
+  }
+}
+
+/** The task whose conversation this is: the open run's, else the last one's. */
+function taskOfSession(sessionId: string): Task | null {
+  const run = runForSession(sessionId) ?? lastRunForSession(sessionId)
+  return run?.taskId ? getTask(run.taskId) : null
+}
+
+/** `t402` for a task or a session working on one, for a sentence a person reads. */
+function holderLabel(holder: string): string {
+  const id = holder.startsWith('reland:') ? holder.slice('reland:'.length) : holder
+  const task = getTask(id) ?? taskOfSession(id)
+  return task ? `t${task.seq}` : 'another task'
+}
+
+/**
+ * What a trunk task is told about the checkout it has just been given.
+ *
+ * ⛔ **Said, never tidied** (decided 2026-09-12). The tool does not stash, commit or abort anything
+ * in the operator's checkout to make room; it names what is there so the agent can work around it —
+ * or, for a merge in progress, recognise that finishing it may be the job.
+ */
+export function trunkArrivalNotice(survey: TrunkSurvey, target: string): string {
+  const lines: string[] = [
+    `⚠️ You are working **directly in this project's trunk checkout**, not in a worktree. There is no ` +
+      `task branch: commit on \`${target}\` itself. Do not create, switch or delete branches, do not ` +
+      'stash, and do not reset — other people and other agents rely on this checkout.'
+  ]
+  if (survey.branch !== target) {
+    lines.push(
+      `⚠️ The checkout is on ${survey.branch ? `\`${survey.branch}\`` : 'a detached HEAD'}, not ` +
+        `\`${target}\`. Do not commit there; if your task does not say otherwise, stop and ask.`
+    )
+  }
+  if (survey.operation) {
+    lines.push(
+      `⚠️ A ${survey.operation} is in progress here` +
+        (survey.conflicted.length ? `, with conflicts in ${survey.conflicted.slice(0, 10).join(', ')}` : '') +
+        '. Finish it (resolve, `git add`, continue) only if that is what your task asks for; never abort it.'
+    )
+  }
+  const loose = [...survey.dirtyFiles, ...survey.untrackedFiles]
+  if (loose.length > 0) {
+    lines.push(
+      `⚠️ ${loose.length} file(s) were already uncommitted when you arrived and are not yours: ` +
+        `${loose.slice(0, 10).join(', ')}${loose.length > 10 ? ', …' : ''}. Leave them as they are and ` +
+        'do not include them in your commits unless your task is about them.'
+    )
+  }
+  return lines.join('\n\n')
+}
+
+/**
+ * Give back a trunk lease whose holder is no longer going anywhere.
+ *
+ * ⛔ **The thing that ends the hold** (AGENTS.md: every held status needs one). A lease moves to its
+ * task when the conversation ends and the task is only resting; this frees it once that task has
+ * settled — cancelled, completed, failed — or the holder names nothing that exists any more.
+ * Zero tokens, one query per project with a lease.
+ */
+export function sweepTrunkLeases(): number {
+  let freed = 0
+  for (const project of listProjects()) {
+    for (const c of openClaims(trunkResourceId(project.id))) {
+      if (workspaces.has(c.holder)) continue
+      const task = getTask(c.holder.startsWith('reland:') ? c.holder.slice('reland:'.length) : c.holder)
+      const session = task ? null : getSession(c.holder)
+      const alive = task ? !TERMINAL_STATUSES.has(task.status) : session !== null && !sessionEnded(session.state)
+      if (alive) continue
+      release(c.id)
+      freed += 1
+      log.info(`released the trunk lease of ${project.name} held by ${task ? `t${task.seq}` : c.holder.slice(0, 8)}`)
+    }
+  }
+  return freed
+}
+
+async function evictResident(project: { id: string; name: string }, kind: 'worktree' | 'trunk'): Promise<boolean> {
   const now = Date.now()
-  const victim = leastValuableResident(evictableResidents(project.id), now)
+  const victim = leastValuableResident(evictableResidents(project.id, kind), now)
+
   if (!victim) return false
   const cold = cacheHasLapsed(victim, now)
   log.info(

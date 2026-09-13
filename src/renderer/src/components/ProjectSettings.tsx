@@ -23,6 +23,9 @@ import {
   type ResourceAvailability,
   type SessionSharingChoice,
   UNATTENDED_AUTHORITY_LABELS,
+  WORKSPACE_MODE_LABELS,
+  projectWorkspaceModeChoice,
+  type WorkspaceMode,
   type UnattendedAuthority
 } from '@shared/tasks'
 import { projectOrientationChoice, resolveCompletionMode, resolveFinishPolicy, resolveSessionSharing } from '@shared/policy'
@@ -418,6 +421,42 @@ function PolicyPanel({
             />
           }
         />
+
+        {project.vcs === 'git' && (
+          <SettingRow
+            title="Default workspace"
+            description={
+              projectWorkspaceModeChoice(project) === 'trunk' ? (
+                <>
+                  New tasks work <strong>in the project checkout itself</strong> and commit straight
+                  onto <code>{project.config.landing?.target ?? 'main'}</code>. One trunk task runs at a
+                  time; worktree landings into the trunk queue until it is free. A task can still be
+                  filed into a worktree.
+                </>
+              ) : (
+                <>
+                  New tasks work in a pooled worktree on a branch of their own, and the finish policy
+                  lands it. A task can still be filed into the trunk for trunk work, like pulling and
+                  resolving a conflict.
+                </>
+              )
+            }
+            control={
+              <SettingButtonSelect
+                className="finish-picker setting-row-control-select"
+                value={projectWorkspaceModeChoice(project)}
+                options={[
+                  { value: 'worktree', label: WORKSPACE_MODE_LABELS.worktree },
+                  { value: 'trunk', label: WORKSPACE_MODE_LABELS.trunk }
+                ]}
+                disabled={busy}
+                ariaLabel="Default workspace mode"
+                title="Where a task filed into this project works unless it says otherwise."
+                onChange={(val) => apply({ workspaceMode: val as WorkspaceMode })}
+              />
+            }
+          />
+        )}
 
         <SettingRow
           title="Workspace pool"

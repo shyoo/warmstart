@@ -54,7 +54,7 @@ export type StatusTone = 'active' | 'human' | 'warning' | 'success' | 'danger' |
 export function statusTone(status: string): StatusTone {
   if (status === 'running' || status === 'assigned' || status === 'cancelling' || status === 'landing') return 'active'
   if (status === 'awaiting_human') return 'human'
-  if (status === 'blocked' || status === 'paused_quota' || status === 'scheduled') return 'warning'
+  if (status === 'blocked' || status === 'paused_quota' || status === 'landing_queued' || status === 'scheduled') return 'warning'
   if (status === 'completed') return 'success'
   if (status === 'failed' || status === 'cancelled') return 'danger'
   return 'idle'

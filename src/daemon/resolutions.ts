@@ -1,8 +1,9 @@
 import type { FinishPolicy, PendingWork, ResolveRetryCause } from '@shared/tasks.js'
-import { FINISH_LABELS, policyLands, policyVerifies, resolveRetryCauses } from '@shared/tasks.js'
+import { FINISH_LABELS, policyLands, policyVerifies, resolveRetryCauses, resolveWorkspaceMode } from '@shared/tasks.js'
+import type { Project, Task } from '@shared/tasks.js'
 import { getProject, landingTargetFor, policyFor, reloadProjectIfPresent } from './projects.js'
 import { decideFinish, resolveFinishPolicy } from './finish.js'
-import { landingBaseFor, hasRemote, landTask } from './landing.js'
+import { landingBaseFor, hasRemote, landTask, trunkNotReady, trunkOccupiedBy } from './landing.js'
 import {
   branchExists,
   branchNameFor,
@@ -19,6 +20,7 @@ import {
   addMessage,
   finishRun,
   getTask,
+  listTasks,
   markResolveRetryAsked,
   messagesFor,
   runsFor,
@@ -620,6 +622,10 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
     return { ok: false, reason }
   }
 
+  {
+    const home = task.projectId ? reloadProjectIfPresent(task.projectId) : null
+    if (home && resolveWorkspaceMode(task, home).mode === 'trunk') return relandTrunkTask(task, home, didNotLand)
+  }
   if (!task.branch) return didNotLand('this task has no branch')
   if (/trunk moved.*branch is empty/i.test(task.holdReason ?? '')) {
     return didNotLand('the branch carries no commits; use Mark done if the work in trunk is finished, or Resolve & retry to rebase')
@@ -680,6 +686,9 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
         if (open.sessionId) releaseAllFor(open.sessionId)
       }
     }
+    // ⚠️ A trunk that is only busy has already said so and queued the task; a second line would
+    // repeat it on every tick the trunk stays busy.
+    if (!result.ok && result.trunkBusy) return { ok: false, reason: result.reason ?? 'the trunk is busy' }
     if (!result.ok) return didNotLand(result.reason ?? 'landing did not complete', result.checkOutput)
     return { ok: true, ...(result.reason ? { reason: result.reason } : {}) }
   } finally {
@@ -688,4 +697,82 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
     await parkWorkspace(project, workspace.path)
     releaseWorkspace(workspace.claimId)
   }
+}
+
+/**
+ * Land a **trunk** task again: verify in the trunk, push if the rung pushes.
+ *
+ * ⛔ The same bar a first completion gets, minus what does not exist in the trunk — no branch, no
+ * rebase. Its commits are already on the target, so a retry can only ever verify them or push them.
+ */
+async function relandTrunkTask(
+  task: Task,
+  project: Project,
+  didNotLand: (reason: string, checkOutput?: string) => { ok: false; reason: string }
+): Promise<{ ok: boolean; reason?: string }> {
+  const policy = resolveFinishPolicy(task, project).policy
+  if (policy !== 'commit-and-verify' && policy !== 'commit-and-merge' && policy !== 'commit-and-push') {
+    return didNotLand(`${FINISH_LABELS[policy]} neither verifies nor pushes a trunk task`)
+  }
+  const occupied = trunkOccupiedBy(project, task.id)
+  if (occupied) return didNotLand(`${occupied}; try again when it has finished`)
+  announceLandingStarted(task, policy, 'Retrying the landing of')
+  const base = runsFor(task.id).filter((r) => r.kind === 'work').at(-1)?.trunkShaBefore ?? null
+  const result = await landTask({
+    project,
+    task,
+    workspacePath: project.root,
+    branch: landingTargetFor(task, project),
+    policy,
+    trunkBase: base
+  })
+  if (!result.ok) return didNotLand(result.reason ?? 'landing did not complete', result.checkOutput)
+  setStatus(task.id, 'completed')
+  const open = runsFor(task.id).find((r) => !r.endedAt)
+  if (open) {
+    finishRun(open.id, 'completed', 'landed by hand while the run was still open')
+    await releaseFor(open.id, task.id, project.id)
+    if (open.sessionId) releaseAllFor(open.sessionId)
+  }
+  return { ok: true }
+}
+
+/** Landings already under way, so a slow check run is not started a second time by the next tick. */
+const queuedInFlight = new Set<string>()
+
+/**
+ * Re-attempt every landing that queued for the trunk, once the trunk is free.
+ *
+ * ⛔ **The thing that ends the `landing_queued` hold.** Asked on the tick, zero tokens: two cheap
+ * readings — the trunk lease and `git status` in the checkout — decide whether trying is worth it,
+ * and only then does the (slow) landing run, in the background, so the tick is never held up by a
+ * project's checks. A landing that fails for any reason other than the trunk being busy rests at
+ * `awaiting_human` exactly as a first landing would, with Resolve & retry for a conflict.
+ */
+export async function retryQueuedLandings(): Promise<number> {
+  let started = 0
+  for (const task of listTasks().filter((t) => t.status === 'landing_queued')) {
+    if (queuedInFlight.has(task.id)) continue
+    const project = task.projectId ? getProject(task.projectId) : null
+    if (!project) {
+      setStatus(task.id, 'awaiting_human', {
+        assignee: 'human',
+        holdReason: 'this task was queued to land, but its project is no longer registered'
+      })
+      continue
+    }
+    const busy =
+      trunkOccupiedBy(project, task.id) ?? (await trunkNotReady(project.root, landingTargetFor(task, project)))
+    if (busy) {
+      setHoldReason(task.id, `the trunk is not ready to receive this: ${busy}. It will land by itself once the trunk is free.`)
+      continue
+    }
+    queuedInFlight.add(task.id)
+    started += 1
+    log.info(`t${task.seq}: the trunk is free — landing the queued branch`)
+    void relandTask(task.id)
+      .catch((err) => log.warn(`queued landing of t${task.seq} failed:`, err))
+      .finally(() => queuedInFlight.delete(task.id))
+  }
+  return started
 }

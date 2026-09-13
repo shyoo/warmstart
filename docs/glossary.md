@@ -82,8 +82,10 @@ disk. The derived default is written as *no key at all*, so a clone in a differe
 derives its own. `defaultWorkspaceRoot` and `relativeWorkspaceRoot` in `daemon/projects.ts` are the
 only two definitions of either half.
 
-**Trunk** — the project's main checkout. Used for integration and landing. ⛔ **Agents never work
-here.** The task branch is created inside the claimed worktree, never in the trunk.
+**Trunk** — the project's main checkout. Used for integration and landing. ⛔ **A worktree task never
+works here** — its branch is created inside the claimed worktree. A **trunk task** (workspace mode
+`trunk`) is the one exception: it holds the project's single **trunk lease**, works on the landing
+target directly, and has no task branch. See [`landing.md`](landing.md#working-in-the-trunk).
 
 **Landing** — moving a finished task's branch onto the trunk: rebase, run the project's checks,
 `git push origin HEAD:<target>`. ⛔ **A push, never a local ref move** — so `origin/<target>` is what

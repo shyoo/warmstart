@@ -1,5 +1,6 @@
 /** Tasks and everything hanging off one - approvals, questions, attachments, loose ends. */
-import { resolveAutoCompact, windowHighWater } from '@shared/tasks.js'
+import { resolveAutoCompact, resolveWorkspaceMode, trunkPolicyConflict, windowHighWater } from '@shared/tasks.js'
+import type { Task, WorkspaceModeChoice } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { adapter } from '../adapters/index.js'
 import { manualReviewsForTask, reviewsForTask } from '../review.js'
@@ -10,7 +11,7 @@ import { getSession } from '../sessions.js'
 import { getProject, policyFor, requireProject } from '../projects.js'
 import { retireStrandedBranch } from '../worktrees.js'
 import { cleanUpMergedBranch, reconcilePullRequestDeliveries } from '../deliveries.js'
-import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, setHoldReason, setQuotaOverride, setQuotaPreemptWarning, runsFor, setTaskStatsExcluded, updateTask } from '../tasks.js'
+import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, setHoldReason, setQuotaOverride, setQuotaPreemptWarning, runsFor, setTaskStatsExcluded, setWorkspaceMode, updateTask } from '../tasks.js'
 import { taskCommits } from '../taskcommits.js'
 import { diffFileFor, diffSummaryFor } from '../taskdiff.js'
 import { cancelTask, deleteBlockers, deleteTask, restoreTask, resumeTask } from '../cancel.js'
@@ -40,7 +41,7 @@ type TaskMethod =
   | 'attachment.read' | 'task.update' | 'task.setFinishPolicy' | 'task.pendingWork'
   | 'task.diffSummary' | 'task.diffFile'
   | 'task.commitConversation' | 'task.landConversation' | 'task.setSessionSharing'
-  | 'task.setCompletionMode' | 'task.setAutoCompact' | 'task.setStatsExcluded' | 'task.setObjective'
+  | 'task.setCompletionMode' | 'task.setWorkspaceMode' | 'task.setAutoCompact' | 'task.setStatsExcluded' | 'task.setObjective'
   | 'task.setModel' | 'task.setWorker' | 'task.setPriority' | 'task.land' | 'task.resolveConflict'
   | 'task.resolveRetry' | 'task.resolveChecks' | 'task.resolveCommit' | 'task.message' | 'task.cancel'
   | 'task.resume' | 'task.overrideQuota' | 'task.resolve' | 'task.deleteCheck' | 'task.delete'
@@ -80,6 +81,16 @@ function reassignForResolveRetry(
   if (!constraints.modelPolicy) delete constraints.modelPolicy
   delete constraints.workerIds
   updateTask(id, { constraints, assigneeHint: worker.id })
+}
+
+function setWorkspaceModeChecked(id: string, mode: WorkspaceModeChoice): Task {
+  const task = requireTask(id)
+  const project = task.projectId ? getProject(task.projectId) : null
+  if (project && resolveWorkspaceMode({ workspaceMode: mode }, project).mode === 'trunk' && task.kind !== 'conversation') {
+    const conflict = trunkPolicyConflict(resolveFinishPolicy(task, project).policy)
+    if (conflict) throw new Error(`t${task.seq} cannot work in the trunk: ${conflict}`)
+  }
+  return setWorkspaceMode(id, mode)
 }
 
 export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
@@ -149,6 +160,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         inheritedFinish: resolveFinishPolicy(null, project),
         inheritedSharing: resolveSessionSharing(null, project),
         inheritedCompletion: resolveCompletionMode(null, project, settings().completionMode),
+        inheritedWorkspaceMode: resolveWorkspaceMode(null, project).mode,
         inheritedAutoCompact: resolveAutoCompact(null, settings().autoCompact),
         /**
          * ⛔ **Whether compaction is a thing this task's agent can be asked for at all**, which is a
@@ -169,11 +181,21 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         previewPrompt
       }
     },
-    'task.create': (p) =>
-      createTask({
+    'task.create': (p) => {
+      // ⛔ Refused at the door, where the person choosing can still choose differently. A trunk task
+      // that could only open a pull request would otherwise be held at every dispatch for ever.
+      const project = p.projectId ? getProject(p.projectId) : null
+      if (project && p.workspaceMode && resolveWorkspaceMode({ workspaceMode: p.workspaceMode }, project).mode === 'trunk') {
+        const policy =
+          p.finishPolicy && p.finishPolicy !== 'inherit' ? p.finishPolicy : resolveFinishPolicy(null, project).policy
+        const conflict = p.kind === 'conversation' ? null : trunkPolicyConflict(policy)
+        if (conflict) throw new Error(`cannot file this in the trunk: ${conflict}`)
+      }
+      return createTask({
         ...p,
         ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {})
-      }),
+      })
+    },
     /**
      * One pasted image, onto disk.
      *
@@ -199,12 +221,15 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       return { attachment, dataBase64: bytes.toString('base64') }
     },
     'task.update': (p) => {
-      const { id, ...patch } = p
+      const { id, workspaceMode, ...patch } = p
       if (patch.constraints) {
         patch.constraints = checkConstraints(patch.constraints)
       }
+      if (workspaceMode !== undefined) setWorkspaceModeChecked(id, workspaceMode)
       return updateTask(id, patch)
     },
+    /** ⛔ Refused once the task has run, and refused into the trunk beside a pull-request rung. */
+    'task.setWorkspaceMode': (p) => setWorkspaceModeChecked(p.id, p.workspaceMode),
     /**
      * Set a task's finish policy, and act on it if the task is already sitting on finished work.
      *
@@ -215,6 +240,12 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
      */
     'task.setFinishPolicy': async (p) => {
       const before = requireTask(p.id)
+      const home = before.projectId ? getProject(before.projectId) : null
+      const inTrunk = home !== null && resolveWorkspaceMode(before, home).mode === 'trunk'
+      if (inTrunk && home) {
+        const conflict = trunkPolicyConflict(resolveFinishPolicy({ ...before, finishPolicy: p.finishPolicy }, home).policy)
+        if (conflict) throw new Error(`t${before.seq} works in the trunk: ${conflict}`)
+      }
       const task = updateTask(p.id, { finishPolicy: p.finishPolicy })
       // ⚠️ Every rung that moves the work somewhere, not just the one that pushes. Choosing
       // `commit-and-merge` on a parked task is as much a decision to land it as `commit-and-push` is.
@@ -222,7 +253,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         p.finishPolicy === 'commit-and-merge' ||
         p.finishPolicy === 'commit-and-push' ||
         p.finishPolicy === 'pull-request'
-      if (!wantsLanding || before.status !== 'awaiting_human' || !task.branch) {
+      if (!wantsLanding || before.status !== 'awaiting_human' || (!task.branch && !inTrunk)) {
         return { task, landed: false }
       }
       const result = await relandTask(p.id)

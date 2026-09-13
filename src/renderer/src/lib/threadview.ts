@@ -13,7 +13,8 @@ import {
   type ResolvedFinishPolicy,
   type ResolvedSessionSharing,
   type Run,
-  type Task
+  type Task,
+  type WorkspaceMode
 } from '@shared/tasks'
 import { duration } from './format'
 import type { FleetEntry } from './daemon'
@@ -118,6 +119,17 @@ export function completionChoice(
       { value: 'checkpointed', label: 'check in at each phase' }
     ]
   )
+}
+
+/**
+ * Where this task's agent works. ⚠️ Two tiers and a default — see `resolveWorkspaceMode` — so the
+ * inherited label is the project's answer, and `worktree` when the project has none.
+ */
+export function workspaceChoice(task: Task, inherited: WorkspaceMode | undefined): SettingChoice {
+  return tieredChoice(task.workspaceMode, inherited === 'trunk' ? 'trunk' : 'worktree', [
+    { value: 'worktree', label: 'worktree (own branch)' },
+    { value: 'trunk', label: 'trunk (project checkout)' }
+  ])
 }
 
 /** Whether the cache clock may spend a `/compact` on this task's conversation. */

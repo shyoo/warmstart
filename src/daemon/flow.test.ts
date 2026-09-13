@@ -22,6 +22,7 @@ let dir: string
 let db: typeof import('./db.js')
 let resources: typeof import('./resources.js')
 let projects: typeof import('./projects.js')
+let worktrees: typeof import('./worktrees.js')
 let tasks: typeof import('./tasks.js')
 let workers: typeof import('./workers.js')
 let flow: typeof import('./flow.js')
@@ -54,6 +55,7 @@ beforeAll(async () => {
   tasks = await import('./tasks.js')
   workers = await import('./workers.js')
   flow = await import('./flow.js')
+  worktrees = await import('./worktrees.js')
   db.openDb(join(dir, 'flow.db'))
 
   const root = mkdtempSync(join(tmpdir(), 'agentyard-flow-project-'))
@@ -183,8 +185,10 @@ describe('the ticket ↔ workspace ↔ worker binding the Flow board draws', () 
   })
 
   it('lists every free member, so the width of the pool is readable', () => {
+    // ⭐ The trunk first, labelled with its landing target, then the pool in member order.
     const rows = flow.flowWorkspaces(projectId)
-    expect(rows.map((r) => r.label)).toEqual(['ws1', 'ws2', 'ws3'])
+    expect(rows.map((r) => r.label)).toEqual(['main', 'ws1', 'ws2', 'ws3'])
+    expect(rows.map((r) => r.kind)).toEqual(['trunk', 'worktree', 'worktree', 'worktree'])
     expect(rows.every((r) => r.holding === null && r.taskId === null)).toBe(true)
     expect(rows.every((r) => r.inPool)).toBe(true)
   })
@@ -208,7 +212,7 @@ describe('the ticket ↔ workspace ↔ worker binding the Flow board draws', () 
     declarePool([WS1, WS2])
 
     const rows = flow.flowWorkspaces(projectId)
-    expect(rows.map((r) => r.label)).toEqual(['ws1', 'ws2', 'ws3'])
+    expect(rows.map((r) => r.label)).toEqual(['main', 'ws1', 'ws2', 'ws3'])
     const stale = rows.find((r) => r.label === 'ws3')!
     expect(stale.inPool).toBe(false)
     expect(stale.taskSeq).toBe(tasks.requireTask(taskId).seq)
@@ -362,5 +366,33 @@ describe('the ticket ↔ workspace ↔ worker binding the Flow board draws', () 
     const ws1Row = rows.find((r) => r.label === 'ws1')!
     expect(ws1Row.holding).toBeNull()
     expect(ws1Row.taskId).toBeNull()
+  })
+
+  it('draws the trunk as a row, and names the trunk task holding it', () => {
+    const taskId = file('pull main and resolve the conflict')
+    const project = projects.requireProject(projectId)
+    expect(worktrees.claimTrunk(project, taskId)).not.toBeNull()
+
+    const trunk = flow.flowWorkspaces(projectId)[0]!
+    expect(trunk.kind).toBe('trunk')
+    expect(trunk.label).toBe('main')
+    expect(trunk.holding).toBe('task')
+    expect(trunk.taskSeq).toBe(tasks.requireTask(taskId).seq)
+    // ⛔ The pool rows are untouched by a trunk claim: the two are separate resources.
+    expect(flow.flowWorkspaces(projectId).slice(1).every((r) => r.taskId === null)).toBe(true)
+  })
+
+  it('carries the project default on the trunk row, so an inherit task can be placed', () => {
+    expect(flow.flowWorkspaces(projectId)[0]!.defaultMode).toBe('worktree')
+    projects.setProjectPolicy(projectId, { workspaceMode: 'trunk' })
+    expect(flow.flowWorkspaces(projectId)[0]!.defaultMode).toBe('trunk')
+    projects.setProjectPolicy(projectId, { workspaceMode: 'worktree' })
+  })
+
+  it('draws only the trunk for a git project whose pool has never been built', () => {
+    const root = mkdtempSync(join(tmpdir(), 'agentyard-flow-trunkonly-'))
+    execFileSync('git', ['init', root], { stdio: 'ignore' })
+    const other = projects.addProject({ root, name: 'fresh repo' })
+    expect(flow.flowWorkspaces(other.id).map((r) => r.kind)).toEqual(['trunk'])
   })
 })

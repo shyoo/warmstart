@@ -5,6 +5,7 @@ import type { FleetEntry } from './daemon'
 import {
   compactionChoice,
   completionChoice,
+  workspaceChoice,
   finishChoice,
   inheritedLabel,
   objectiveChoice,
@@ -35,6 +36,7 @@ const task = (over: Partial<Task> = {}): Task =>
     finishPolicy: 'inherit',
     sessionSharing: 'inherit',
     completionMode: 'inherit',
+    workspaceMode: 'inherit',
     autoCompact: 'inherit',
     objective: null,
     ranOn: null,
@@ -199,5 +201,15 @@ describe('priority', () => {
     const choice = priorityChoice(task({ priority: 'P0' }))
     expect(choice.value).toBe('P0')
     expect(choice.options.map((o) => o.value)).toEqual(['P0', 'P1', 'P2', 'P3'])
+  })
+})
+
+describe('where a task works, as the pane offers it', () => {
+  it('names the project default on inherit and offers both modes', () => {
+    const task = { workspaceMode: 'inherit' } as Parameters<typeof workspaceChoice>[0]
+    expect(workspaceChoice(task, 'trunk').displayLabel).toBe('trunk')
+    expect(workspaceChoice(task, undefined).displayLabel).toBe('worktree')
+    expect(workspaceChoice(task, 'worktree').options.map((o) => o.value)).toEqual(['inherit', 'worktree', 'trunk'])
+    expect(workspaceChoice({ ...task, workspaceMode: 'trunk' }, 'worktree').displayLabel).toBeUndefined()
   })
 })

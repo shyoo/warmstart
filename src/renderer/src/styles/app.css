@@ -1291,7 +1291,7 @@ body {
 .flow-ticket:focus-visible { background: color-mix(in srgb, var(--flow-tone) 23%, var(--color-surface)); transform: translateY(-2px); outline: none; }
 .flow-ticket--running, .flow-ticket--assigned, .flow-ticket--ready { --flow-tone: var(--state-running); }
 .flow-ticket--awaiting_human { --flow-tone: var(--state-human); }
-.flow-ticket--paused_user, .flow-ticket--paused_quota, .flow-ticket--cancelling { --flow-tone: var(--state-warn); }
+.flow-ticket--paused_user, .flow-ticket--paused_quota, .flow-ticket--landing_queued, .flow-ticket--cancelling { --flow-tone: var(--state-warn); }
 .flow-ticket--completed { --flow-tone: var(--state-ok); }
 .flow-ticket--failed { --flow-tone: var(--state-danger); }
 .flow-ticket--cancelled, .flow-ticket--draft, .flow-ticket--blocked, .flow-ticket--scheduled,
@@ -1418,6 +1418,12 @@ body {
   color: var(--color-text-dim);
   background: transparent;
   border-style: dashed;
+}
+
+/* The project's own checkout. Heavier than a pool member, so `main` never reads as `ws4`. */
+.flow-ws-badge--trunk {
+  font-weight: 600;
+  border-width: 2px;
 }
 
 .flow-bind-slash { color: var(--color-text-faint); font-size: var(--text-meta); }

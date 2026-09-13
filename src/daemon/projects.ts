@@ -6,7 +6,7 @@ import { proposeChecks } from './projectstack.js'
 import { execFileSync } from 'node:child_process'
 import type { LandingStrategyId, Project, ProjectConfig, Task, UnattendedAuthority, Vcs } from '@shared/tasks.js'
 import type { ProjectPolicyPatch } from '@shared/tasks.js'
-import { readFinishPolicy } from '@shared/tasks.js'
+import { readFinishPolicy, trunkPolicyConflict } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
@@ -367,6 +367,22 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
         throw new Error(`not a completion mode: ${String(patch.completion)}`)
       }
       config.session = { ...config.session, completion: patch.completion }
+    }
+    if (patch.workspaceMode !== undefined) {
+      if (!['worktree', 'trunk'].includes(patch.workspaceMode)) {
+        throw new Error(`not a workspace mode: ${String(patch.workspaceMode)}`)
+      }
+      // ⚠️ `worktree` is written as no key, like the other derived defaults: an absent key already
+      // means it, and a file that never mentioned the mode should not gain a line by being saved.
+      config.workspaces = { ...config.workspaces, mode: patch.workspaceMode }
+      if (patch.workspaceMode === 'worktree') delete config.workspaces.mode
+    }
+    // ⛔ Checked after both halves of the patch are applied, so turning trunk mode on and the pull
+    // request rung off in one save is allowed, and either one alone into the conflict is not.
+    if (config.workspaces?.mode === 'trunk' && project.vcs === 'git') {
+      const finish = config.landing?.finish ? readFinishPolicy(config.landing.finish) : null
+      const conflict = finish && finish !== 'inherit' ? trunkPolicyConflict(finish) : null
+      if (conflict) throw new Error(`this project defaults to the trunk: ${conflict}`)
     }
     if (patch.poolSize !== undefined) {
       const size = Math.trunc(patch.poolSize)

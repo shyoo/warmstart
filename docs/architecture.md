@@ -119,10 +119,13 @@ admitScheduled()        scheduled → ready when not_before passes
 resumeQuotaPaused()     the ONLY thing that ends a paused_quota hold (clock or a measured reading)
 escalateStale()         approvals past their deadline
 askForTitle()           at most one title consult; free, changes nothing this tick
+sweepTrunkLeases()      a trunk lease whose task has settled goes back
+retryQueuedLandings()   the ONLY thing that ends a landing_queued hold (trunk free ⇒ land, in background)
 runWatchdogs()          preemption, stall, runaway, finish-overdue — BEFORE new work
   for each ready task, in schedulingOrder:
     kind === 'plan'  → askForPlan(), never dispatch
-    poolPressure()   → hold (before chooseTarget, so contention never costs a consult)
+    poolPressure()   → hold (before chooseTarget, so contention never costs a consult; asks the
+                       trunk lease instead of the pool for a trunk task)
     chooseTarget()   → deferred/none → hold with a reason and a hold_until
     needsBaseline()  → hold one tick while the window is read
     dispatch()       → Contended ⇒ back to ready; anything else ⇒ failed
@@ -513,8 +516,17 @@ produces a question nobody can reply to.
 
 ### Workspaces and branches
 
-- **Agents work in a pooled worktree, never the trunk.** The branch is named after the *task*
-  (`warmstart/t123-…`), never after the workspace it landed in.
+- **Agents work in a pooled worktree, never the trunk — unless the task chose the trunk.** The
+  branch is named after the *task* (`warmstart/t123-…`), never after the workspace it landed in.
+- ⭐ **Trunk mode** (t401, 2026-09-12). `workspaceMode` is `worktree` or `trunk`, resolved task →
+  project (`workspaces.mode` in `project.json`) → `worktree` by `resolveWorkspaceMode`, and fixed
+  once the task has run. A trunk task has **no branch**: it takes the project's `trunk:<id>` resource
+  (one member, the root, one holder — `claimTrunk`), is dispatched onto whatever the checkout holds and
+  told what that is (`trunkArrivalNotice`), and commits straight onto the target. ⛔ The trunk is a
+  separate resource from the pool, and `parkWorkspace` refuses the project root outright, so nothing
+  that parks, stashes or switches a pool member can reach it. A resting trunk task keeps the lease
+  (its files are there); `sweepTrunkLeases` on the tick gives back a settled one. Its finish is
+  `decideTrunkFinish`, and the rest is in [`landing.md`](landing.md#working-in-the-trunk).
 - **A new task starts from the ref its finish policy will rebase onto**: the local target for
   `merge-local`, otherwise `origin/<target>` when it exists. A subtask starts from its parent's
   branch while that branch still carries work the trunk lacks; after the parent lands it uses the

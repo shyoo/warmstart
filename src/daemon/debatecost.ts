@@ -65,6 +65,7 @@ function draftTask(input: DebatePreviewInput): Task {
     finishPolicy: 'inherit',
     sessionSharing: 'inherit',
     completionMode: 'inherit',
+    workspaceMode: 'inherit',
     objective: 'inherit',
     autoCompact: 'inherit',
     finishAskedAt: null,

@@ -10,11 +10,27 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Last full local validation on this branch (2026-09-12): `npm run typecheck`, `npm run lint`,
-`npm test` (**3,235 passed, 2 skipped**) and `npm run build` all passed.
+`npm test` (**3,260 passed, 2 skipped**) and `npm run build` all passed.
 The expected test warnings exercise refusal and recovery paths; they are not failures.
 
 ## Closed in this cleanup
 
+- **Trunk mode: a task can work in the project checkout itself** (t401). t400 had an agent pull
+  `main` and resolve a conflict by way of a task branch, which confused it and left a branch to clean
+  up. `workspaceMode` (`worktree` | `trunk`, migration 70) resolves task → project → `worktree`; the
+  composer, the task pane and Project Settings set it. Five decisions taken with the operator, each in
+  code and pinned in [`trunkmode.test.ts`](src/daemon/trunkmode.test.ts): one trunk task at a time
+  (`claimTrunk`, a one-member resource separate from the pool); a worktree landing into a busy or dirty
+  trunk goes to the new **`landing_queued`** status and `retryQueuedLandings` lands it from the tick; a
+  trunk task is dispatched onto whatever the checkout holds and told (`surveyTrunk`,
+  `trunkArrivalNotice`); `pull-request` is refused in the trunk; a resting trunk task keeps its lease and
+  `sweepTrunkLeases` frees a settled one. Its finish is `decideTrunkFinish` and its landing the `trunk`
+  strategy (verify in place, push if asked). ⛔ `parkWorkspace` refuses the project root, and a trunk
+  conversation's `land_work` never cuts a next branch. Flow draws the trunk as the first row, labelled
+  `main`. Separately, bare `http(s)` URLs in thread messages are now links, so a PR headline opens in
+  the browser. ⚠️ **Not yet driven in the packaged app or with a real agent**, and a worktree task with
+  an empty branch can still trip the trunk tripwire while a trunk task commits — see
+  [`docs/landing.md`](docs/landing.md#working-in-the-trunk).
 - **Repeated compaction and quota tipping loops are prevented (t401, t404).** `decideRevive`
   in [`src/daemon/cacheclock.ts`](src/daemon/cacheclock.ts) now checks `accountRefusal`, `refusalRateLimit`,
   and `poolVerdict` blocking thresholds before waking a closed conversation for compaction. When quota
@@ -93,33 +109,37 @@ These are deliberately not marked complete: each needs either a real signed-in a
 machine, release credentials, or a human product judgement. Do not replace the missing evidence with
 a unit test.
 
-1. **Run one more live Plan & Split.** Exercise a `merge-branch` landing while a sibling is genuinely
+1. **Run a real trunk task beside worktree tasks.** File a trunk task that pulls `main` and resolves a
+   conflict while a worktree task finishes under `commit-and-merge`; confirm the worktree task sits at
+   `landing_queued` and lands by itself when the trunk frees, and drive the Flow trunk row, composer
+   pill and Project Settings row in the packaged app. None of the UI is covered by `test/ui.test.mjs`.
+2. **Run one more live Plan & Split.** Exercise a `merge-branch` landing while a sibling is genuinely
    mid-run, and an organizer resolution turn where some pieces fail. This is the highest-value
    scheduler integration check.
-2. **Run a real debate and record its measurements.** Compare total tokens/cost against a strong
+3. **Run a real debate and record its measurements.** Compare total tokens/cost against a strong
    single-agent answer; record cache reads, resolved/unresolved citations, and whether the organizer
    changed the operator's decision. The evidence format is in
    [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §7.
-3. **Run human-in-the-loop, `commit-and-merge`, and cross-task reuse with a real agent.** The code
+4. **Run human-in-the-loop, `commit-and-merge`, and cross-task reuse with a real agent.** The code
    and L1–L3 checks exist, but this has not been demonstrated in flight.
-4. **Run on macOS with a real CLI; this is the launch gate — and now the last one.** The other
+5. **Run on macOS with a real CLI; this is the launch gate — and now the last one.** The other
    three pre-public blockers (diff review, security model, notifications) landed above; this and
-   item 5 are what is left between here and a public release. Local build (`scripts/build-mac.sh`),
+   item 6 are what is left between here and a public release. Local build (`scripts/build-mac.sh`),
    packaged execution, and all test suites (L1–L4) pass cleanly on macOS arm64. Packaged app execution
    and daemon startup are verified locally, but more thorough testing driving real agent tasks in flight
    is needed later. Still to verify in flight: detached daemon startup without system Node under hardened
    runtime, Application Support isolation, Antigravity's Keychain interaction, and Gatekeeper. The signed
    arm64 release cannot be called ready before it.
-5. **Execute the signing/release pipeline.** macOS signing and notarisation are decided; required
+6. **Execute the signing/release pipeline.** macOS signing and notarisation are decided; required
    secrets are not configured and `.github/workflows/release.yml` has never run. Windows is
    intentionally unsigned initially. Release notes must tell upgraders to uninstall the old app,
    because the `appId` changed.
-6. **Record one clean single-account first run.** Install the packaged app on a clean profile, add
+7. **Record one clean single-account first run.** Install the packaged app on a clean profile, add
    one account, add one project, file a task, review its diff, land it, and write down what
    happened. ⛔ A demonstration, not a feature, and the purest form of the pre-public question —
    items 1–3 mean the basic loop has never been shown end to end against a real agent. Now
    unblocked: there is finally something to look at at the gate.
-7. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the
+8. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the
    generic declarative adapter cannot meter, gets no MCP tools and cannot reap orphans); CI watch
    after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an
    update-available check that keeps `publish: null`; backup/export of the data directory (no such
@@ -127,15 +147,15 @@ a unit test.
    and a clone-per-worker or container backend, which is the only thing that properly closes both
    the host-authority gap and the shared common-`.git` grant. ⚠️ Deliberately **not** on this list:
    GitHub/Linear/Slack intake, agent-to-agent messaging, kanban, voice, cross-machine sync.
-8. **Give Antigravity a real per-worker isolation root.** It currently shares `~/.gemini`; changing
+9. **Give Antigravity a real per-worker isolation root.** It currently shares `~/.gemini`; changing
    `HOME` must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
-9. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data;
+10. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data;
    compare small and large quality-review models on the same five tasks; verify the Claude credits
    gauge against one real invoice; and decide whether preempted runs should contribute to estimates.
-10. **Increase thread UI coverage where behaviour changes.** The add-project wizard, project settings,
+11. **Increase thread UI coverage where behaviour changes.** The add-project wizard, project settings,
    conversations, session TUI, routing pages and selected thread rows are exercised; most thread
    interactions remain hand-tested. Extract pure decisions into `src/renderer/src/lib/` first.
-11. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines
+12. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines
    against a ~1,500 target. Existing seams import back from it, so no extracted module may read a
    scheduler binding at module evaluation time.
 
@@ -159,7 +179,8 @@ within one account; cross-account transplant needs a second subscription.
 - A worker is an account; a session is a live process. Quota belongs to the worker, context to the
   session. [`docs/glossary.md`](docs/glossary.md) is authoritative.
 - The scheduler spends zero tokens; model judgment is asynchronous and has a deterministic fallback.
-- Agents use pooled worktrees, never the trunk. Nothing kills a process by image name or bare PID.
+- Agents use pooled worktrees, never the trunk — unless the task's workspace mode is `trunk`, which
+  holds the single trunk lease. Nothing kills a process by image name or bare PID.
 - The renderer treats agent output as untrusted text. No raw HTML.
 - Do not trust an agent-session view of `%APPDATA%`: packaged hosts can redirect it. See
   [`docs/development.md`](docs/development.md) §4.

@@ -273,6 +273,17 @@ export function workspacePoolId(projectId: string): string {
 }
 
 /**
+ * The project's own checkout, as a resource of one member: its root.
+ *
+ * ⛔ **A separate resource from the pool, never a member of it.** A pool member is parked, stashed
+ * and switched between tasks; the trunk is the operator's checkout and none of that may ever happen
+ * to it. Keeping it out of `workspacePoolId` is what makes every pool-wide sweep unable to reach it.
+ */
+export function trunkResourceId(projectId: string): string {
+  return `trunk:${projectId}`
+}
+
+/**
  * A claim that was refused because something else holds it *right now*.
  *
  * ⛔ **Busy is not broken, and a dispatch must be able to tell a caller which one it hit.** Until

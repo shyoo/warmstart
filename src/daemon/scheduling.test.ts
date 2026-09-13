@@ -109,6 +109,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
     finishPolicy: overrides.finishPolicy ?? 'inherit',
     sessionSharing: overrides.sessionSharing ?? 'inherit',
     completionMode: overrides.completionMode ?? 'inherit',
+    workspaceMode: overrides.workspaceMode ?? 'inherit',
     objective: overrides.objective ?? 'inherit',
     autoCompact: overrides.autoCompact ?? 'inherit',
     finishAskedAt: overrides.finishAskedAt ?? null,

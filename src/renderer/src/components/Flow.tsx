@@ -10,7 +10,7 @@ export type FlowLane = 'ready' | 'queued' | 'dispatching' | 'running' | 'awaitin
 
 export const LANES: Array<{ id: FlowLane; label: string; statuses: readonly TaskStatus[] }> = [
   { id: 'ready', label: 'ready', statuses: ['ready', 'draft'] },
-  { id: 'queued', label: 'queued', statuses: ['scheduled', 'blocked', 'paused_quota'] },
+  { id: 'queued', label: 'queued', statuses: ['scheduled', 'blocked', 'paused_quota', 'landing_queued'] },
   { id: 'dispatching', label: 'dispatching', statuses: ['assigned'] },
   { id: 'running', label: 'running', statuses: ['running', 'cancelling'] },
   { id: 'awaiting', label: 'awaiting', statuses: ['awaiting_human', 'paused_user'] },
@@ -124,6 +124,12 @@ export function computeWorkspaceRows(
 ): BoundWorkspaceRow[] {
   const unassignedInbound = [...inboundTasks]
   const boundTaskIds = new Set<string>()
+  // ⛔ An inbound ticket is only ever drawn heading for the kind of tree it will get: a worktree
+  // task pointed at `main` would be the one picture this board must never draw. `inherit` follows
+  // the project, whose default the trunk row carries.
+  const projectDefault = workspaces.find((w) => w.kind === 'trunk')?.defaultMode ?? 'worktree'
+  const modeOf = (task: Task): 'worktree' | 'trunk' =>
+    task.workspaceMode === 'trunk' || task.workspaceMode === 'worktree' ? task.workspaceMode : projectDefault
 
   return workspaces.map((ws) => {
     if (ws.taskId) {
@@ -142,6 +148,13 @@ export function computeWorkspaceRows(
       }
     }
 
+    // ⭐ **A held trunk is drawn held**, unlike a held pool member. A resting trunk task keeps the
+    // lease (its files are in the checkout) and every worktree landing waits on it, so "free" would
+    // be the one wrong word; the ticket itself stays in its own lane.
+    if (ws.kind === 'trunk' && ws.taskSeq && ws.holding) {
+      return { ws, activeTask: null, inboundTask: null, inboundWorker: null }
+    }
+
     // Workspace is free/available for inbound tasks.
     // Clear any stale holding/task metadata on this workspace row so it renders as free or inbound.
     const freeWs: FlowWorkspace = (ws.taskId || ws.holding)
@@ -149,12 +162,13 @@ export function computeWorkspaceRows(
       : ws
 
     // Try to match an inbound task!
+    const kind = freeWs.kind ?? 'worktree'
     let matchIdx = -1
     if (freeWs.workerId) {
-      matchIdx = unassignedInbound.findIndex((t) => t.assignee === freeWs.workerId)
+      matchIdx = unassignedInbound.findIndex((t) => t.assignee === freeWs.workerId && modeOf(t) === kind)
     }
-    if (matchIdx === -1 && unassignedInbound.length > 0) {
-      matchIdx = 0
+    if (matchIdx === -1) {
+      matchIdx = unassignedInbound.findIndex((t) => modeOf(t) === kind)
     }
     if (matchIdx !== -1) {
       const inboundTask = unassignedInbound.splice(matchIdx, 1)[0]!
@@ -333,7 +347,7 @@ export function Flow({ projectId, fleet, onOpenTask }: {
           </span>
           <span className="flow-bind-arrow flow-bind-arrow--active" aria-hidden="true">→</span>
           <span className="flow-bind-dest">
-            <span className="flow-ws-badge mono">{ws.label}</span>
+            <span className={`flow-ws-badge mono${ws.kind === 'trunk' ? ' flow-ws-badge--trunk' : ''}`}>{ws.label}</span>
             {ws.workerLabel ? (
               <>
                 <span className="flow-bind-slash">/</span>
@@ -362,6 +376,29 @@ export function Flow({ projectId, fleet, onOpenTask }: {
       )
     }
 
+    // Case 1b: a trunk lease held by a task that is resting, not running: main held by t402
+    if (ws.kind === 'trunk' && ws.taskSeq && ws.holding) {
+      const held = ws.taskId ? byId.get(ws.taskId) : null
+      return (
+        <div
+          className="flow-bind flow-bind--active"
+          key={ws.path}
+          title={`${ws.label} is held by t${ws.taskSeq}${heldFor ? ` for ${heldFor}` : ''} — worktree landings into it wait until it is released`}
+        >
+          <span className="flow-bind-ticket">
+            {held ? ticket(held, `holding ${ws.label}`) : <span className="flow-ticket flow-ticket--other">t{ws.taskSeq}</span>}
+          </span>
+          <span className="flow-bind-arrow flow-bind-arrow--active" aria-hidden="true">→</span>
+          <span className="flow-bind-dest">
+            <span className="flow-ws-badge mono flow-ws-badge--trunk">{ws.label}</span>
+          </span>
+          <span className="flow-bind-meta">
+            <span className="flow-tag flow-tag--held">held</span>
+          </span>
+        </div>
+      )
+    }
+
     // Case 2: Inbound task heading into this workspace: ws4 / CodexFirst <- t68
     if (inboundTask) {
       const workerLabel = inboundWorker?.label ?? ws.workerLabel ?? assigneeLabel(inboundTask, fleet)
@@ -373,7 +410,7 @@ export function Flow({ projectId, fleet, onOpenTask }: {
           title={`${ws.label} / ${workerLabel} ← t${inboundTask.seq} (inbound dispatch)`}
         >
           <span className="flow-bind-dest">
-            <span className="flow-ws-badge mono">{ws.label}</span>
+            <span className={`flow-ws-badge mono${ws.kind === 'trunk' ? ' flow-ws-badge--trunk' : ''}`}>{ws.label}</span>
             <span className="flow-bind-slash">/</span>
             <span className="flow-worker-pill">
               <AgentIcon adapterId={adapterId} size={14} />
@@ -396,10 +433,14 @@ export function Flow({ projectId, fleet, onOpenTask }: {
       <div
         className={`flow-bind flow-bind--free${ws.inPool ? '' : ' flow-bind--stale'}`}
         key={ws.path}
-        title={`${ws.label}${ws.workerLabel ? ` / ${ws.workerLabel}` : ''} — free${ws.branch ? `\nlast branch: ${ws.branch}` : ''}`}
+        title={
+          ws.kind === 'trunk'
+            ? `${ws.label} — the project's own checkout (${ws.path}). No trunk task is working in it.`
+            : `${ws.label}${ws.workerLabel ? ` / ${ws.workerLabel}` : ''} — free${ws.branch ? `\nlast branch: ${ws.branch}` : ''}`
+        }
       >
         <span className="flow-bind-dest">
-          <span className="flow-ws-badge flow-ws-badge--free mono">{ws.label}</span>
+          <span className={`flow-ws-badge flow-ws-badge--free mono${ws.kind === 'trunk' ? ' flow-ws-badge--trunk' : ''}`}>{ws.label}</span>
           {ws.workerLabel ? (
             <>
               <span className="flow-bind-slash">/</span>

@@ -27,7 +27,11 @@ export interface ProjectConfig {
   name?: string
   vcs?: Vcs
   objective?: string
-  workspaces?: { poolSize?: number; root?: string }
+  /**
+   * `mode` is where this project's tasks run by default — see `WorkspaceMode`. ⚠️ Absent means
+   * `worktree`, which is what every project did before trunk mode existed.
+   */
+  workspaces?: { poolSize?: number; root?: string; mode?: WorkspaceMode }
   prepare?: string[]
   check?: string[]
   /**
@@ -123,6 +127,8 @@ export interface ProjectPolicyPatch {
   sessionShare?: SessionSharingChoice
   completion?: CompletionModeChoice
   poolSize?: number
+  /** See `ProjectConfig.workspaces.mode`. */
+  workspaceMode?: WorkspaceMode
   prepare?: string[]
   /**
    * Where this project's pooled worktrees go.
@@ -156,7 +162,7 @@ export interface ProjectPolicyPatch {
 export interface Project {
   id: string
   name: string
-  /** The trunk. Agents never run here. */
+  /** The trunk. Agents run here only when a task's workspace mode is `trunk`. */
   root: string
   vcs: Vcs
   config: ProjectConfig
@@ -534,6 +540,15 @@ export type TaskStatus =
   | 'awaiting_human'
   | 'paused_quota'
   | 'paused_user'
+  /**
+   * Finished and verified-ready, waiting for the trunk to be free before its landing runs again.
+   *
+   * ⛔ **A hold, not a person's job.** A worktree task whose `merge-local` landing found the trunk
+   * busy — a trunk task holding it, or files uncommitted in it — used to rest at `awaiting_human`
+   * for somebody to press Retry. Once agents work in the trunk that is the normal case, so the tick
+   * re-attempts the landing (`retryQueuedLandings`, zero tokens) as soon as the trunk is free.
+   */
+  | 'landing_queued'
   | 'cancelling'
   | 'cancelled'
   | 'completed'
@@ -556,7 +571,7 @@ export type TaskStatus =
  * *not going anywhere without me*.
  */
 export const TASK_VIEWS = {
-  active: ['ready', 'scheduled', 'assigned', 'running', 'cancelling'],
+  active: ['ready', 'scheduled', 'assigned', 'running', 'landing_queued', 'cancelling'],
   needs_you: ['awaiting_human', 'paused_user'],
   blocked: ['blocked', 'paused_quota', 'draft'],
   done: ['completed'],
@@ -876,6 +891,12 @@ export interface Task {
   sessionSharing: SessionSharingChoice
   /** How far the agent is expected to get before it stops. `inherit` follows the project. */
   completionMode: CompletionModeChoice
+  /**
+   * Where the agent works: a pooled worktree on its own branch, or the project's trunk checkout.
+   * `inherit` follows the project. ⛔ Fixed once the task's first run starts — see
+   * `resolveWorkspaceMode`.
+   */
+  workspaceMode: WorkspaceModeChoice
   /** What this task is optimising for, or `inherit` to follow project/fleet. */
   objective: ObjectiveChoice
   /**
@@ -1298,6 +1319,15 @@ export interface Run {
    * the column), never "the trunk did not move". The check declines rather than guessing.
    */
   trunkShaBefore: string | null
+  /**
+   * The files already uncommitted in the trunk when a **trunk-mode** run started, or null for any
+   * other run.
+   *
+   * ⛔ The operator's, not the agent's. A trunk run is dispatched onto whatever the checkout holds
+   * (and told what that is), so its finish must not ask the agent to commit these nor count them as
+   * its loose ends.
+   */
+  trunkDirtyBefore?: string[] | null
   /**
    * Did this run inherit a conversation, or build one from nothing?
    *
@@ -2138,6 +2168,11 @@ export type LandingStrategyId =
    * refuses everywhere else.
    */
   | 'merge-branch'
+  /**
+   * A trunk-mode task: its commits are already on the local target. Verify them in the trunk, and
+   * push the target if the rung pushes. No rebase, no branch. See `landTrunk`.
+   */
+  | 'trunk'
 
 /**
  * What happens to a task's work when the agent says it is finished.
@@ -2507,6 +2542,70 @@ export function projectCompletionChoice(
   return raw === 'autonomous' || raw === 'checkpointed' || raw === 'inherit' ? raw : 'inherit'
 }
 
+/**
+ * Where a task's agent works.
+ *
+ * - `worktree` — a pooled git worktree, on a branch named for the task, landed by the finish policy.
+ * - `trunk` — the project's own checkout, on the landing target itself. No task branch, no pool
+ *   claim: the task holds the project's single **trunk lease** instead, and its commits are on the
+ *   local target the moment it makes them. This is the mode for work that *is* trunk work — pull and
+ *   resolve a conflict, release bookkeeping — which a worktree could only reach by a detour that left
+ *   a branch behind to clean up (t400, 2026-09-12).
+ *
+ * ⛔ **Data, not a name to branch on.** Everything that behaves differently asks
+ * `resolveWorkspaceMode` once and acts on the answer; the answer is a fact about where the files are.
+ */
+export type WorkspaceMode = 'worktree' | 'trunk'
+export type WorkspaceModeChoice = WorkspaceMode | 'inherit'
+
+export const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
+  worktree: 'worktree (own branch)',
+  trunk: 'trunk (project checkout)'
+}
+
+export interface ResolvedWorkspaceMode {
+  mode: WorkspaceMode
+  source: 'task' | 'project' | 'default'
+}
+
+export function projectWorkspaceModeChoice(project: Pick<Project, 'config'> | null | undefined): WorkspaceMode {
+  return project?.config?.workspaces?.mode === 'trunk' ? 'trunk' : 'worktree'
+}
+
+/**
+ * Task, then project, then `worktree`.
+ *
+ * ⚠️ Two tiers and a default, not three: where an agent may write is a fact about a repository and
+ * the person working in it, and a fleet-wide "work in every trunk" has no sensible reading.
+ * ⛔ A project that is not a git repository is always `worktree` — its pool of one already *is* its
+ * own directory, and there is no branch for the distinction to be about.
+ */
+export function resolveWorkspaceMode(
+  task: Pick<Task, 'workspaceMode'> | null | undefined,
+  project: Pick<Project, 'config' | 'vcs'> | null | undefined
+): ResolvedWorkspaceMode {
+  if (!project || project.vcs !== 'git') return { mode: 'worktree', source: 'default' }
+  if (task && task.workspaceMode && task.workspaceMode !== 'inherit') {
+    return { mode: task.workspaceMode, source: 'task' }
+  }
+  if (project.config?.workspaces?.mode === 'trunk') return { mode: 'trunk', source: 'project' }
+  return { mode: 'worktree', source: project.config?.workspaces?.mode ? 'project' : 'default' }
+}
+
+/**
+ * Why this finish policy cannot run in the trunk, or null when it can.
+ *
+ * ⛔ `pull-request` needs a branch to push, and a trunk task has none — its commits are already on
+ * the local target. Cutting one at the finish would leave local and remote `main` diverged until the
+ * PR merged, so the combination is refused where it is chosen and held where it arrives anyway.
+ */
+export function trunkPolicyConflict(policy: FinishPolicy): string | null {
+  return policy === 'pull-request'
+    ? 'a pull request needs a branch, and a trunk task commits straight onto the landing target. ' +
+        'Run it in a worktree, or pick a finish policy that does not open a pull request.'
+    : null
+}
+
 /** The pre-2026-08-28 spelling, still read off any project.json that has not been rewritten. */
 const FROM_STRATEGY: Record<string, FinishPolicy> = {
   'auto-land': 'commit-and-push',
@@ -2761,6 +2860,14 @@ export interface LandingResult {
    * `undefined` is a strategy for which the question does not arise.
    */
   pushed?: boolean
+  /**
+   * The refusal was the trunk being **occupied** — a trunk task holds it, or files are uncommitted in
+   * it, or it is off its target — rather than anything wrong with the branch.
+   *
+   * ⛔ The one refusal that is a hold, not a hand-off: the task goes to `landing_queued` and the tick
+   * lands it once the trunk is free. Every other `ok: false` still rests at `awaiting_human`.
+   */
+  trunkBusy?: boolean
 }
 
 /** Where a resolved model or effort came from, so the UI can say rather than just show. */
@@ -3132,6 +3239,14 @@ export interface FlowWorkspace {
   /** The worktree path. `ws1`-style short name is `label`. */
   path: string
   label: string
+  /**
+   * `trunk` for the project's own checkout, drawn first and labelled with its landing target; every
+   * pool member is `worktree`. ⚠️ The trunk row exists for every git project, trunk tasks or not:
+   * whether it is free is what decides whether a worktree landing can merge.
+   */
+  kind: WorkspaceMode
+  /** On the trunk row only: the project's default mode, so the board can place an `inherit` task. */
+  defaultMode?: WorkspaceMode
   /**
    * Whether this member is still in the configured pool.
    *

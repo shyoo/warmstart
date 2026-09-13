@@ -6,6 +6,8 @@ import {
   type AutoCompactChoice,
   type Compaction,
   type CompletionModeChoice,
+  type WorkspaceMode,
+  type WorkspaceModeChoice,
   type FinishPolicyChoice,
   type Attachment,
   type Objective,
@@ -69,6 +71,7 @@ import { Markdown } from './thread/Markdown'
 import {
   compactionChoice,
   completionChoice,
+  workspaceChoice,
   finishChoice,
   objectiveChoice,
   priorityChoice,
@@ -112,6 +115,7 @@ export interface TaskDetailData {
   inheritedFinish?: ResolvedFinishPolicy
   inheritedSharing?: ResolvedSessionSharing
   inheritedCompletion?: ResolvedCompletionMode
+  inheritedWorkspaceMode?: WorkspaceMode
   inheritedAutoCompact?: ResolvedAutoCompact
   /** Whether the adapter this task would run on can be asked to compact. A capability, not a choice. */
   compactionCapable?: boolean
@@ -889,6 +893,27 @@ function TaskDetail({
                   />
                 </Fact>
               </>
+            )}
+            {/* ⭐ Where the agent works. A choice only until the task first runs: after that its
+                work is on a branch or on the target, and neither can be moved by changing this. */}
+            {task.projectId && (
+              <Fact label="workspace">
+                <TaskSettingPicker
+                  choice={workspaceChoice(task, detail.inheritedWorkspaceMode)}
+                  ariaLabel="Workspace mode"
+                  title={
+                    'Worktree: a pooled checkout on a branch of its own, landed by the finish policy. ' +
+                    'Trunk: the project checkout itself, committing straight onto the landing target ' +
+                    '— for work that is trunk work, like pulling and resolving a conflict. Fixed once ' +
+                    'the task has run.'
+                  }
+                  disabled={detail.runs.some((r) => r.kind === 'work')}
+                  save={(value) =>
+                    rpc('task.setWorkspaceMode', { id: task.id, workspaceMode: value as WorkspaceModeChoice })
+                  }
+                  onChanged={refresh}
+                />
+              </Fact>
             )}
             {/* ⛔ Third of the same shape, and it belongs beside the other two: three tiers,
                 `inherit` a real value, effective on the next run. ⚠️ It is not a care setting -

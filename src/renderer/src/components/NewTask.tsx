@@ -3,7 +3,8 @@ import type {
   FinishPolicyChoice,
   Project,
   SessionSharingChoice,
-  Task
+  Task,
+  WorkspaceModeChoice
 } from '@shared/tasks'
 import {
   FINISH_LABELS,
@@ -15,6 +16,8 @@ import {
   MIN_DEBATE_SEATS,
   SHARING_LABELS,
   SHARING_SHORT,
+  WORKSPACE_MODE_LABELS,
+  projectWorkspaceModeChoice,
   resolveModelChoice,
 } from '@shared/tasks'
 import type { DebateExchange, DebateSeat } from '@shared/tasks'
@@ -301,6 +304,13 @@ export function NewTask({
    * nothing about it.
    */
   const [dependsOn, setDependsOn] = useState<string[]>(restored.dependsOn)
+  /**
+   * ⛔ **Not a remembered pill.** Every other composer choice carries over to the next task, because
+   * filing one task is good evidence about the next. Working in the trunk is the opposite: a
+   * one-off chosen for a particular job, and a sticky `trunk` would put every later task in the
+   * operator's checkout. It goes back to `inherit` after each send.
+   */
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceModeChoice>('inherit')
   const [plannerFinishPolicy, setPlannerFinishPolicy] = useState<FinishPolicyChoice>('commit-and-merge')
   const [piecePriority, setPiecePriority] = useState<ComposerPrefs['priority']>('P2')
   const [pieceLimit, setPieceLimit] = useState<number>(5)
@@ -413,6 +423,7 @@ export function NewTask({
 
   const selectedProject = projectId ? (projects.find((p) => p.id === projectId) ?? null) : null
   const inheritedFinish = resolveFinishPolicy(null, selectedProject, settings?.finishPolicy)
+  const inheritedWorkspace = projectWorkspaceModeChoice(selectedProject)
   const inheritedSharing = resolveSessionSharing(null, selectedProject, settings?.sessionSharing)
   const inheritedFinishShort = inheritedFinish.policy
     ? (FINISH_SHORT[inheritedFinish.policy] ?? inheritedFinish.policy)
@@ -768,6 +779,7 @@ export function NewTask({
           // written over the top. See `isOpenConversation`.
           finishPolicy: isConversation ? 'inherit' : prefs.finishPolicy,
           sessionSharing: isConversation ? 'inherit' : prefs.sessionSharing,
+          ...(workspaceMode !== 'inherit' ? { workspaceMode } : {}),
           ...(isConversation ? { kind: 'conversation' as const } : {}),
           status: targetStatus,
           ...(notBefore ? { notBefore } : {}),
@@ -795,6 +807,7 @@ export function NewTask({
       // task is the strongest evidence there is about how the next one should be set up.
       setPrompt('')
       setDependsOn([])
+      setWorkspaceMode('inherit')
       setScheduleOption('now')
       setCustomTime('')
       paste.clear()
@@ -1251,6 +1264,28 @@ export function NewTask({
                   { value: 'off', label: SHARING_LABELS.off }
                 ]}
                 onChange={(v) => setPrefs({ ...prefs, sessionSharing: v as SessionSharingChoice })}
+              />
+            )}
+
+            {selectedProject?.vcs === 'git' && (
+              <PillSelect
+                ariaLabel="Workspace"
+                title={
+                  'Where the agent works. Worktree: a pooled checkout on a branch of its own, landed ' +
+                  'by the finish policy. Trunk: the project checkout itself, committing straight onto ' +
+                  'the landing target — for trunk work, like pulling and resolving a conflict. One ' +
+                  'trunk task runs at a time, and worktree landings into the trunk wait for it.' +
+                  (workspaceMode === 'inherit' ? `\n\nInherited from the project: ${inheritedWorkspace}.` : '')
+                }
+                muted={workspaceMode === 'inherit'}
+                value={workspaceMode}
+                label={workspaceMode === 'inherit' ? inheritedWorkspace : workspaceMode}
+                options={[
+                  { value: 'inherit', label: `Inherit — ${WORKSPACE_MODE_LABELS[inheritedWorkspace]}`, hint: 'from the project' },
+                  { value: 'worktree', label: WORKSPACE_MODE_LABELS.worktree },
+                  { value: 'trunk', label: WORKSPACE_MODE_LABELS.trunk }
+                ]}
+                onChange={(v) => setWorkspaceMode(v as WorkspaceModeChoice)}
               />
             )}
 

@@ -1,9 +1,9 @@
 import type { FinishPolicy } from '@shared/tasks.js'
-import { policyLands } from '@shared/tasks.js'
+import { policyLands, resolveWorkspaceMode } from '@shared/tasks.js'
 import { decideFinish, resolveFinishPolicy } from './finish.js'
 import { hasRemote, landTask, landingBaseFor } from './landing.js'
 import { landingTargetFor, policyFor, reloadProjectIfPresent } from './projects.js'
-import { addMessage, getTask, setTaskBranch } from './tasks.js'
+import { addMessage, getTask, runsFor, setTaskBranch } from './tasks.js'
 import { noteCurrentBranch } from './sessions.js'
 import { sessionOf } from './scheduler.js'
 import {
@@ -103,6 +103,30 @@ export async function landConversationWork(
   // `reloadProjectIfPresent` and condition 4 in docs/landing.md.
   const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
   if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+
+  // ⛔ **A conversation in the trunk has no branch to land and none to cut next.** Everything below
+  // retires a branch and then `switch -c`s the next numbered one in the tree the conversation sits in
+  // — which, for this task, is the operator's checkout. Its commits are already on the target, so
+  // "landing" it is the trunk strategy: verify in place, push if the rung pushes.
+  if (resolveWorkspaceMode(task, project).mode === 'trunk') {
+    const rung = rungFor(project, opts.rung)
+    const target = landingTargetFor(task, project)
+    if (rung !== 'commit-and-verify' && rung !== 'commit-and-merge' && rung !== 'commit-and-push') {
+      return { ok: false, reason: `this conversation works in the trunk, where ${rung} has nothing to do` }
+    }
+    const state = await workspaceState(project.root, target)
+    if (state.branch !== target) {
+      return { ok: false, reason: `the trunk is not on \`${target}\`, so there is nothing of this conversation's to verify there` }
+    }
+    const trunkBase = runsFor(task.id).filter((r) => r.kind === 'work').at(0)?.trunkShaBefore ?? null
+    const result = await landTask({ project, task, workspacePath: project.root, branch: target, policy: rung, quiet: true, trunkBase })
+    if (!result.ok || !result.commit) return { ok: false, reason: result.reason ?? 'the landing did not complete' }
+    addMessage(task.id, 'system', result.message?.headline ?? `Landed as \`${result.commit.slice(0, 8)}\` onto \`${target}\``, null, [], {
+      event: 'landing.landed',
+      detail: `${result.message?.detail ?? ''} This conversation continues in the trunk.`.trim()
+    })
+    return { ok: true, landedSha: result.commit, target }
+  }
 
   const branch = task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }

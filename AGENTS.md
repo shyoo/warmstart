@@ -126,7 +126,9 @@ measurement behind it, in [`docs/architecture.md`](docs/architecture.md) §4. Th
   feeds one preference term among eleven (`fitness`, `objective.ts`) and can never exclude a candidate.
 - **Cancel is not delete.** Cancel winds down into a resting state and destroys nothing. Delete is
   human-only, soft by default, and never removes runs.
-- **Agents work in a pooled worktree, never the trunk**, on a branch named for the *task*. ⛔ A slot
+- **Agents work in a pooled worktree, never the trunk — unless the task's workspace mode is
+  `trunk`** (`resolveWorkspaceMode`), which takes a one-holder trunk lease instead of a pool member
+  and is never parked, stashed or switched. A worktree task works on a branch named for the *task*. ⛔ A slot
   does not arrive clean: committed if there is a branch, stashed if there is not, `reset --hard`
   never. ⭐ The branch, not the stash, is the carrier — a stash belongs to a repository and does not
   reach the workspace the next run claims.

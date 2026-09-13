@@ -61,7 +61,22 @@ const SAFE_SCHEME = /^(https?:|mailto:)/i
  * an operator typed would otherwise swallow every line up to the next one.
  */
 const INLINE =
-  /(`[^`\n]+`)|(\*\*[^\n]+?\*\*)|(~~[^\n]+?~~)|(\*[^\s*][^\n]*?\*|_[^\s_][^\n]*?_)|(\[[^\]\n]*\]\([^)\s]+\))/
+  /(`[^`\n]+`)|(\*\*[^\n]+?\*\*)|(~~[^\n]+?~~)|(\*[^\s*][^\n]*?\*|_[^\s_][^\n]*?_)|(\[[^\]\n]*\]\([^)\s]+\))|(https?:\/\/[^\s<>"'`]+)/i
+
+/**
+ * ⭐ **A bare URL is a link.** *"Pull request opened for `…` into `main`: https://github.com/…/pull/141"*
+ * printed an address nobody could click (t401, 2026-09-12), and agents write bare URLs far more often
+ * than `[text](url)`. ⚠️ Trailing sentence punctuation is not part of it — a URL at the end of a
+ * sentence would otherwise open `…/pull/141.` — and a closing bracket is kept only when the URL
+ * opened one, so `(see https://x/y)` does not swallow the parenthesis.
+ */
+function trimUrl(url: string): string {
+  let out = url.replace(/[.,;:!?]+$/, '')
+  while (out.endsWith(')') && (out.match(/\(/g)?.length ?? 0) < (out.match(/\)/g)?.length ?? 0)) {
+    out = out.slice(0, -1).replace(/[.,;:!?]+$/, '')
+  }
+  return out
+}
 
 /**
  * Split one line's worth of text into its inline runs.
@@ -76,7 +91,15 @@ export function inlineSpans(text: string): Inline[] {
     const match = INLINE.exec(rest)
     if (!match || match.index === undefined) break
     if (match.index > 0) out.push({ kind: 'text', text: rest.slice(0, match.index) })
-    const token = match[0]
+    let token = match[0]
+    if (match[6]) {
+      // ⚠️ Only `http`/`https` can reach this alternative, so the scheme whitelist below holds for it
+      // by construction; the trim can shorten the token, and what it cut is left for the next pass.
+      token = trimUrl(token)
+      out.push({ kind: 'link', text: token, href: token })
+      rest = rest.slice(match.index + token.length)
+      continue
+    }
     if (token.startsWith('`')) {
       out.push({ kind: 'code', text: token.slice(1, -1) })
     } else if (token.startsWith('**')) {

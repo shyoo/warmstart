@@ -37,6 +37,7 @@ export const STATUS_TONE: Record<string, string> = {
   draft: 'state-idle',
   paused_user: 'state-warn',
   paused_quota: 'state-warn',
+  landing_queued: 'state-idle',
   cancelling: 'state-warn',
   cancelled: 'state-idle'
 }
@@ -49,7 +50,7 @@ export const STATUS_TONE: Record<string, string> = {
  * state a task is in while a workspace is being claimed, a branch checked out and the project's
  * prepare hook run — which is *dispatching*, and is the part of the wait that most needs a name.
  */
-export const STATUS_LABEL: Record<string, string> = { assigned: 'dispatching' }
+export const STATUS_LABEL: Record<string, string> = { assigned: 'dispatching', landing_queued: 'queued to land' }
 
 /**
  * The same rename, asked per task, because one status covers two situations a person tells apart.
@@ -124,7 +125,7 @@ export function isWorking(task: Pick<Task, 'status' | 'gradingWorkerId' | 'landi
  * Statuses where something is happening and the next change arrives on its own.
  * Used for project work state tracking.
  */
-export const IN_FLIGHT = new Set(['ready', 'scheduled', 'assigned', 'running', 'cancelling'])
+export const IN_FLIGHT = new Set(['ready', 'scheduled', 'assigned', 'running', 'landing_queued', 'cancelling'])
 
 export const CANCELLABLE = new Set([
   'ready',
@@ -133,7 +134,8 @@ export const CANCELLABLE = new Set([
   'assigned',
   'running',
   'awaiting_human',
-  'paused_quota'
+  'paused_quota',
+  'landing_queued'
 ])
 
 /**

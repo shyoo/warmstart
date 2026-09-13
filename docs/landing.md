@@ -681,6 +681,52 @@ landed; the other was told *"Waiting to land behind t26"* and parked on a
 person's desk with a perfectly good commit on an intact branch. The lock was doing its job — the
 caller was reporting a queue as a failure.
 
+## Working in the trunk
+
+⭐ **A task can work in the project's own checkout instead of a worktree** (t401, 2026-09-12). t400
+showed the cost of not having that: an agent asked to pull `main` and resolve a conflict did it by a
+detour through a task branch, which confused the agent and left the tool a branch to clean up. The
+choice is the **workspace mode** — `worktree` (the default) or `trunk` — set per project in Project →
+Settings (`workspaces.mode`) and per task in the composer or the task pane, fixed once the task runs.
+Five decisions were taken with the operator and each is enforced in code:
+
+1. **One trunk task at a time.** The trunk is a resource of one (`claimTrunk`); a second trunk task
+   holds, visibly, exactly as a task waiting for a pool member does.
+2. **A worktree landing into a busy trunk queues, and lands by itself.** `merge-local` refuses a trunk
+   that a trunk task holds (`trunkOccupiedBy`, asked *before* `git status`, because a clean moment
+   between an agent's edits is not a free trunk) or that is dirty or off-target. That refusal carries
+   `trunkBusy`, and `landTask` rests the task at **`landing_queued`** — not `awaiting_human` — with one
+   thread line. `retryQueuedLandings` on the tick re-runs the landing in the background once the trunk
+   is free. ⚠️ A conflict or a red check on that retry rests at `awaiting_human` as any landing would,
+   with **Resolve & retry**; no agent is dispatched for a queue alone.
+3. **A trunk task is dispatched onto whatever the checkout holds, and told.** `surveyTrunk` reads the
+   branch, uncommitted files and a merge/rebase/cherry-pick in progress; the first prompt says each
+   (`trunkArrivalNotice`), and the files already there are stored on the run
+   (`runs.trunk_dirty_before_json`) so the finish never asks the agent to commit them.
+4. **`pull-request` cannot run in the trunk** — there is no branch to push. Refused where it is chosen
+   (`task.create`, `task.setWorkspaceMode`, `task.setFinishPolicy`, `setProjectPolicy`) and refused at
+   dispatch if it arrives anyway (`trunkPolicyConflict`).
+5. **Nothing of the agent's is stashed or committed for it.** A paused, preempted or questioning trunk
+   task keeps its lease, so nothing lands over its files; a settled one gives it back
+   (`sweepTrunkLeases`). A cancelled or failed trunk task that left files behind is listed under
+   **Loose ends** as *uncommitted*, counting only files that were not there when its run began.
+   ⛔ `parkWorkspace` refuses the project root outright.
+
+**The finish ladder is shorter, because half of it has already happened** (`decideTrunkFinish`). An
+operation left in progress, or files the agent changed and did not commit, are asked about once; a
+checkout left on another branch goes to a person. There is **no trunk tripwire** — it exists to catch an
+agent working in the trunk, which is what this mode is — so a run that committed nothing is simply
+`done`. The rungs map as: `await-human` rests, `commit-only` is done, and `commit-and-verify`,
+`commit-and-merge` and `commit-and-push` all land with the **`trunk` strategy**: under the landing lease,
+run the checks in the trunk and, for push, `git push origin <target>`. ⚠️ A red check undoes nothing —
+the commits are on `main` already — and the retry that follows asks an agent to fix forward. Commits
+are recorded in `task_commits` as the run's own (`<trunk_sha_before>..HEAD` minus anything another task
+recorded), so the diff and the quality review work without a branch.
+
+⚠️ **Known limit.** A *worktree* task whose branch stays empty while a trunk task commits can still trip
+the trunk tripwire, because a trunk task's commits are recorded only at its finish. The tripwire hands
+it to a person with the commits listed, which is the right outcome for evidence it cannot attribute.
+
 ## Configuring a project
 
 ```json

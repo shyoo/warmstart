@@ -1,4 +1,5 @@
 import type { FinishPolicy, LandingStrategyId, Project, Task } from '@shared/tasks.js'
+import { resolveWorkspaceMode } from '@shared/tasks.js'
 import { landingTargetFor, policyFor } from './projects.js'
 
 /**
@@ -44,8 +45,18 @@ const FOR_POLICY: Partial<Record<FinishPolicy, LandingStrategyId>> = {
 export function landingStrategyIdFor(
   project: Project,
   policy?: FinishPolicy,
-  task?: Pick<Task, 'landingTarget'> | null
+  task?: (Pick<Task, 'landingTarget'> & Partial<Pick<Task, 'workspaceMode'>>) | null
 ): LandingStrategyId {
+  // ⛔ From the task's workspace, which is data: a trunk task's work is on the target already, so
+  // every rung that would move it verifies (and pushes) in place instead. The rungs that move nothing
+  // keep their own strategy, and `custom` and `report-only` never reach a landing in the trunk.
+  if (
+    task?.workspaceMode !== undefined &&
+    resolveWorkspaceMode({ workspaceMode: task.workspaceMode }, project).mode === 'trunk' &&
+    (policy === 'commit-and-verify' || policy === 'commit-and-merge' || policy === 'commit-and-push')
+  ) {
+    return 'trunk'
+  }
   const id = FOR_POLICY[policy as FinishPolicy] ?? policyFor(project).landingStrategy
   if (id === 'merge-local' && landingTargetFor(task, project) !== policyFor(project).landingTarget) {
     return 'merge-branch'
@@ -77,10 +88,10 @@ export function landingBaseFor(
   project: Project,
   policy: FinishPolicy | undefined,
   remote: boolean,
-  task?: Pick<Task, 'landingTarget'> | null
+  task?: (Pick<Task, 'landingTarget'> & Partial<Pick<Task, 'workspaceMode'>>) | null
 ): string {
   const target = landingTargetFor(task, project)
   const id = landingStrategyIdFor(project, policy, task)
-  if (id === 'merge-local' || id === 'merge-branch') return target
+  if (id === 'merge-local' || id === 'merge-branch' || id === 'trunk') return target
   return remote ? `origin/${target}` : target
 }

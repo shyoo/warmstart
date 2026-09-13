@@ -60,7 +60,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 
 | Component | Screen |
 |---|---|
-| `Flow` | project lifecycle map: 6-column kanban flow with ticket ↔ workspace ↔ worker bindings and read-only grading runs |
+| `Flow` | project lifecycle map: 6-column kanban flow with ticket ↔ workspace ↔ worker bindings and read-only grading runs. ⭐ The **trunk** is the first binding row of every git project, labelled with its landing target (`main`); a trunk held by a resting task is drawn *held*, never *free*, and an inbound ticket is only ever drawn heading for the kind of tree it will get (`computeWorkspaceRows`) |
 | `FleetStrip` `Workers` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions; one two-column settings card per worker |
 | `Tasks` `TaskThread` `thread/*` `Dependencies` | the board, one task's thread, and prerequisite edges |
 | `thread/DiffPanel` | the change a task would land, at the `awaiting_human` gate: a file list with counts, one patch per expand. ⛔ Every line is a **text node** in `<pre>` and the only thing derived from its content is a CSS class from the first character (`lib/diffline.ts`) — no markdown, no highlighter, no linkified paths |
@@ -161,7 +161,9 @@ headings, fenced code, lists, quotes, rules, and inline code/strong/em/strike/li
 `dangerouslySetInnerHTML`, and the only attribute a message can reach is a link's `href`, which is
 whitelisted to `http`/`https`/`mailto` **at the parse** so an unsafe scheme is never a link at all.
 Links carry `target="_blank"` and are caught by `setWindowOpenHandler`, which denies the navigation
-and hands the URL to the real browser. ⚠️ A construct the parser does not know renders as the
+and hands the URL to the real browser. ⭐ A **bare** `http(s)` URL is a link too (t401): the PR a
+`pull-request` landing opened was printed as text nobody could click. Trailing sentence punctuation
+and an unmatched closing bracket are trimmed off it. ⚠️ A construct the parser does not know renders as the
 characters the agent wrote. ⚠️ A **person's** message keeps the inline-code-only reading: they typed
 those characters into a box and reinterpreting a `*` they meant literally changes their own words.
 

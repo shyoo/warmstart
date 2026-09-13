@@ -50,6 +50,29 @@ describe('inline runs', () => {
     expect(unsafe.map((s) => s.text).join('')).toBe('[click](javascript:alert(1))')
     expect(inlineSpans('[x](file:///C:/secret)')[0]?.kind).toBe('text')
   })
+
+  it('makes a bare URL a link, without the punctuation that ends its sentence (t401)', () => {
+    const url = 'https://github.com/shyoo/awardtracker/pull/141'
+    expect(inlineSpans(`Pull request opened for \`abc12345\` into \`main\`: ${url}`)).toEqual([
+      { kind: 'text', text: 'Pull request opened for ' },
+      { kind: 'code', text: 'abc12345' },
+      { kind: 'text', text: ' into ' },
+      { kind: 'code', text: 'main' },
+      { kind: 'text', text: ': ' },
+      { kind: 'link', text: url, href: url }
+    ])
+    expect(inlineSpans(`See ${url}.`)).toEqual([
+      { kind: 'text', text: 'See ' },
+      { kind: 'link', text: url, href: url },
+      { kind: 'text', text: '.' }
+    ])
+    expect(inlineSpans(`(see ${url})`)[1]).toEqual({ kind: 'link', text: url, href: url })
+    expect(inlineSpans('https://en.wikipedia.org/wiki/Foo_(bar)')[0]?.href).toBe('https://en.wikipedia.org/wiki/Foo_(bar)')
+    // ⛔ Only http(s) is ever bare-linked; nothing else becomes an href this way.
+    expect(inlineSpans('javascript:alert(1) and file:///C:/x').every((s) => s.kind === 'text')).toBe(true)
+    // A URL inside a code span stays code.
+    expect(inlineSpans(`\`${url}\``)).toEqual([{ kind: 'code', text: url }])
+  })
 })
 
 describe('blocks', () => {

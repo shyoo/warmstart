@@ -1,8 +1,10 @@
 import { sessionEnded } from '@shared/protocol.js'
 import type { Session } from '@shared/protocol.js'
-import type { FlowWorkspace, ResourceClaim, Task, TaskStatus } from '@shared/tasks.js'
+import type { FlowWorkspace, ResourceClaim, Task, TaskStatus, WorkspaceMode } from '@shared/tasks.js'
+import { projectWorkspaceModeChoice } from '@shared/tasks.js'
 import { samePath } from './fspath.js'
-import { getResource, landResourceId, openClaims, workspacePoolId } from './resources.js'
+import { getResource, landResourceId, openClaims, trunkResourceId, workspacePoolId } from './resources.js'
+import { getProject, policyFor } from './projects.js'
 import { getSession, listSessions } from './sessions.js'
 import { getTask, lastRunForSession, runForSession } from './tasks.js'
 import { getWorker } from './workers.js'
@@ -113,14 +115,25 @@ function resolveHolder(claim: ResourceClaim): {
   }
 }
 
-/** Every workspace of one project's pool, with the ticket ↔ workspace ↔ worker binding on each. */
+/**
+ * Every workspace of one project, with the ticket ↔ workspace ↔ worker binding on each: the trunk
+ * first, then the pool.
+ *
+ * ⭐ **The trunk is a row, for every git project.** A trunk-mode task works there and nowhere else,
+ * so a board that drew only `ws1…` hid it; and whether the trunk is free is also what decides when a
+ * worktree landing can merge, so the row earns its place on a project with no trunk tasks at all.
+ * ⚠️ Labelled with the landing target (`main`), which is what the checkout is for.
+ */
 export function flowWorkspaces(projectId: string): FlowWorkspace[] {
-  const resource = getResource(workspacePoolId(projectId))
-  if (!resource) return []
-
-  const claims = openClaims(resource.id).filter((c) => c.member)
   const sessions = listSessions().filter((s) => s.purpose === 'work' && !sessionEnded(s.state))
   const allWorkSessions = listSessions(true).filter((s) => s.purpose === 'work')
+  const project = getProject(projectId)
+  const trunk = project && project.vcs === 'git' ? [trunkRow(project.root, policyFor(project).landingTarget, projectWorkspaceModeChoice(project), projectId, sessions, allWorkSessions)] : []
+
+  const resource = getResource(workspacePoolId(projectId))
+  if (!resource) return trunk
+
+  const claims = openClaims(resource.id).filter((c) => c.member)
 
   // ⛔ Members first, then any claim on a path the pool no longer lists. Dropping the second group
   // would hide a task that is visibly running from the one board that claims to show all of them.
@@ -152,6 +165,7 @@ export function flowWorkspaces(projectId: string): FlowWorkspace[] {
     return {
       path,
       label: shortName(path),
+      kind: 'worktree' as const,
       inPool: resource.members.some((m) => samePath(m, path)),
       holding: held.holding,
       taskId: held.task?.id ?? null,
@@ -194,5 +208,48 @@ export function flowWorkspaces(projectId: string): FlowWorkspace[] {
     loser.taskStatus = null
   }
 
-  return bound
+  return [...trunk, ...bound]
+}
+
+/**
+ * The trunk's row. ⚠️ Reads the claim only — no git, for the reason the header gives — so a trunk
+ * dirty with the operator's own edits reads *free* here: nothing of this tool's is in it.
+ */
+function trunkRow(
+  root: string,
+  target: string,
+  defaultMode: WorkspaceMode,
+  projectId: string,
+  sessions: Session[],
+  allWorkSessions: Session[]
+): FlowWorkspace {
+  const claim = openClaims(trunkResourceId(projectId))[0] ?? null
+  const held = claim ? resolveHolder(claim) : { holding: null, task: null, sessionId: null, workerId: null }
+  const resident = held.holding ? residentSession(sessions, root) : null
+  const lastResident = lastSessionInPath(allWorkSessions, root)
+  const workerId =
+    held.workerId ??
+    resident?.workerId ??
+    held.task?.ranOn ??
+    (held.task?.assignee && held.task.assignee !== 'human' ? held.task.assignee : null) ??
+    null
+  const worker = workerId ? getWorker(workerId) : null
+  return {
+    path: root,
+    label: target,
+    kind: 'trunk',
+    defaultMode,
+    inPool: true,
+    holding: held.holding,
+    taskId: held.task?.id ?? null,
+    taskSeq: held.task?.seq ?? null,
+    taskTitle: held.task ? (held.task.titleSummary ?? held.task.title) : null,
+    taskStatus: held.task?.status ?? null,
+    workerId,
+    workerLabel: worker?.label ?? null,
+    adapterId: worker?.adapterId ?? null,
+    sessionId: held.sessionId ?? resident?.id ?? null,
+    branch: resident?.currentBranch ?? lastResident?.currentBranch ?? target,
+    claimedAt: claim?.acquiredAt ?? null
+  }
 }

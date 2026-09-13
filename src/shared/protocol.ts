@@ -34,6 +34,8 @@ import type {
   ProjectInspection,
   ProjectPolicyPatch,
   WorkspaceRootReport,
+  WorkspaceMode,
+  WorkspaceModeChoice,
   PendingWork,
   TaskDiffFile,
   TaskDiffSummary,
@@ -1695,6 +1697,8 @@ export interface RpcMap {
       inheritedFinish?: ResolvedFinishPolicy
       inheritedSharing?: ResolvedSessionSharing
       inheritedCompletion?: ResolvedCompletionMode
+      /** Where the project puts a task left on `inherit`. */
+      inheritedWorkspaceMode?: WorkspaceMode
       inheritedAutoCompact?: ResolvedAutoCompact
       /** Whether the adapter this task would run on declares `manualCompact`. See the daemon note. */
       compactionCapable?: boolean
@@ -2121,6 +2125,14 @@ export interface RpcMap {
    * `Task.excludedFromStats` for the boundary, and for why the estimator is deliberately not in it.
    */
   'task.setStatsExcluded': { params: { id: string; excluded: boolean }; result: Task }
+  /**
+   * Where the task's agent works. ⛔ Refused once the task has run, and refused into the trunk while
+   * its finish policy opens a pull request.
+   */
+  'task.setWorkspaceMode': {
+    params: { id: string; workspaceMode: WorkspaceModeChoice }
+    result: Task
+  }
   /** ⚠️ Takes effect on the task's **next** run: it changes the prompt, and a prompt is sent once. */
   'task.setCompletionMode': {
     params: { id: string; completionMode: CompletionModeChoice }
@@ -2558,6 +2570,7 @@ export interface TaskCreateParams {
   finishPolicy?: FinishPolicyChoice
   sessionSharing?: SessionSharingChoice
   completionMode?: CompletionModeChoice
+  workspaceMode?: WorkspaceModeChoice
   objective?: ObjectiveChoice
   autoCompact?: AutoCompactChoice
   status?: 'draft' | 'ready'
@@ -2579,6 +2592,7 @@ export interface TaskUpdateParams {
   finishPolicy?: FinishPolicyChoice
   sessionSharing?: SessionSharingChoice
   completionMode?: CompletionModeChoice
+  workspaceMode?: WorkspaceModeChoice
   objective?: ObjectiveChoice
   autoCompact?: AutoCompactChoice
   preemptible?: boolean

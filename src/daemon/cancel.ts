@@ -66,7 +66,8 @@ const CANCELLABLE = new Set([
   'assigned',
   'running',
   'awaiting_human',
-  'paused_quota'
+  'paused_quota',
+  'landing_queued'
 ])
 
 export async function cancelTask(taskId: string, options: CancelOptions = {}): Promise<Task> {

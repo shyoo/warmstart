@@ -21,7 +21,7 @@ import {
   setStatus
 } from './tasks.js'
 import { claimedByAnotherTask, landedCommits, recordTaskCommits } from './taskcommits.js'
-import { landedRef, parkOtherHolders, parkPooledHolders, rescueAtTip } from './worktrees.js'
+import { landedRef, parkOtherHolders, parkPooledHolders, rescueAtTip, trunkHolder } from './worktrees.js'
 import { launchArgs, which } from './which.js'
 import { log } from './log.js'
 import { git } from './git.js'
@@ -80,11 +80,16 @@ export interface LandingContext {
    * caller can say the same things under its own headline.
    */
   quiet?: boolean
+  /**
+   * Where the target stood when a **trunk** task's run began (`Run.trunkShaBefore`), so the landing
+   * can name the commits that run made. ⚠️ Only the `trunk` strategy reads it; null records the tip.
+   */
+  trunkBase?: string | null
 }
 
 export interface LandingStrategy {
   id: LandingStrategyId
-  canLand(ctx: LandingContext): Promise<{ ok: boolean; reason?: string }>
+  canLand(ctx: LandingContext): Promise<{ ok: boolean; reason?: string; trunkBusy?: boolean }>
   land(ctx: LandingContext): Promise<LandingResult>
 }
 
@@ -586,16 +591,16 @@ export const mergeLocal: LandingStrategy = {
     // ⚠️ Only when this task lands onto the project's own trunk — a planner-branch landing
     // never touches the trunk checkout, so its state is irrelevant.
     if (landingTargetFor(ctx.task, ctx.project) === policyFor(ctx.project).landingTarget) {
-      const blocked = await trunkNotReady(
-        ctx.project.root,
-        landingTargetFor(ctx.task, ctx.project)
-      )
+      const blocked =
+        trunkOccupiedBy(ctx.project, ctx.task.id) ??
+        (await trunkNotReady(ctx.project.root, landingTargetFor(ctx.task, ctx.project)))
       if (blocked) {
         return {
           ok: false,
+          trunkBusy: true,
           reason:
             `the trunk is not ready to receive this: ${blocked}. ` +
-            'The branch is intact — merge it once the trunk is clean.'
+            'The branch is intact — it will land by itself once the trunk is free.'
         }
       }
     }
@@ -633,11 +638,13 @@ export const mergeLocal: LandingStrategy = {
       // dirty trunk wastes both and buries the reason. The post-checks gate below stays — the
       // trunk can equally become dirty while the checks run.
       if (target === policyFor(ctx.project).landingTarget) {
-        const blockedEarly = await trunkNotReady(ctx.project.root, target)
+        const blockedEarly =
+          trunkOccupiedBy(ctx.project, ctx.task.id) ?? (await trunkNotReady(ctx.project.root, target))
         if (blockedEarly) {
           return {
             strategy: 'merge-local',
             ok: false,
+            trunkBusy: true,
             branch: ctx.branch,
             reason:
               `not merged: ${blockedEarly}. ` +
@@ -686,11 +693,13 @@ export const mergeLocal: LandingStrategy = {
         // ⛔ The trunk has to be clean and on the target. Anything else and the work stays on its
         // branch with a sentence naming what is in the way, because the alternative is editing a
         // working tree somebody is using.
-        const blocked = await trunkNotReady(ctx.project.root, target)
+        const blocked =
+          trunkOccupiedBy(ctx.project, ctx.task.id) ?? (await trunkNotReady(ctx.project.root, target))
         if (blocked) {
           return {
             strategy: 'merge-local',
             ok: false,
+            trunkBusy: true,
             branch: ctx.branch,
             commit,
             reason:
@@ -1032,7 +1041,22 @@ function porcelainNames(out: string): string[] {
   return names
 }
 
-async function trunkNotReady(root: string, target: string): Promise<string | null> {
+/**
+ * Who, other than `self`, has the trunk leased — as the sentence a hold reason carries — or null.
+ *
+ * ⛔ **Asked before the checkout is.** A trunk task between edits can leave the tree clean for a
+ * moment, and a fast-forward in that moment would move `HEAD` under a live agent. The lease is the
+ * scheduler's own record that somebody is working there, so it outranks what `git status` says.
+ */
+export function trunkOccupiedBy(project: Project, self: string): string | null {
+  const holder = trunkHolder(project)
+  if (!holder || holder.holder === self) return null
+  const id = holder.holder.startsWith('reland:') ? holder.holder.slice('reland:'.length) : holder.holder
+  const task = getTask(id)
+  return task ? `t${task.seq} is working in the trunk` : 'a trunk task is working in the trunk'
+}
+
+export async function trunkNotReady(root: string, target: string): Promise<string | null> {
   try {
     const head = await git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])
     if (head !== target) {
@@ -1471,13 +1495,113 @@ export const pullRequest: LandingStrategy = {
   }
 }
 
+/**
+ * A trunk task's landing: verify what it committed on the target, in the trunk, and push if asked.
+ *
+ * ⛔ **Nothing to rebase and nothing to merge**, because the commits are on the local target already
+ * — that is what working in the trunk means, and the operator chose it knowing so. What is left of
+ * the ladder is the verdict and the push. ⚠️ A red check does not undo anything: the commits stay on
+ * `main`, the task says so, and the retry that follows is sent to an agent to fix forward.
+ *
+ * ⚠️ Under the same per-project landing lease as every other landing, because the checks read the
+ * trunk's tree and a `merge-local` fast-forward mid-check would change what they were reading.
+ */
+export const trunkLanding: LandingStrategy = {
+  id: 'trunk',
+
+  async canLand(ctx) {
+    if (ctx.project.vcs !== 'git') return { ok: false, reason: 'project is not a git repository' }
+    if (ctx.policy === 'commit-and-push' && !mandateAllows(ctx.task, 'land')) {
+      return { ok: false, reason: 'the task has no authority to push' }
+    }
+    const target = landingTargetFor(ctx.task, ctx.project)
+    const head = await git(ctx.project.root, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => 'HEAD')
+    if (head !== target) {
+      return {
+        ok: false,
+        reason: `the trunk has ${head === 'HEAD' ? 'a detached HEAD' : `\`${head}\``} checked out rather than \`${target}\``
+      }
+    }
+    return { ok: true }
+  },
+
+  async land(ctx): Promise<LandingResult> {
+    const target = landingTargetFor(ctx.task, ctx.project)
+    const pushes = ctx.policy === 'commit-and-push'
+    upsertResource({
+      id: landResourceId(ctx.project.id),
+      projectId: ctx.project.id,
+      kind: 'exclusive',
+      label: `${ctx.project.name} landing`,
+      capacity: 1
+    })
+    const turn = await awaitLandTurn(ctx)
+    if (!turn.lock) {
+      return {
+        strategy: 'trunk',
+        ok: false,
+        branch: target,
+        reason:
+          turn.gaveUp === 'cancelled'
+            ? 'this task was cancelled while it was queued to land'
+            : `another task is still landing after ${Math.round(landQueue.waitMs / 1000)}s of waiting for a turn`,
+        ...(turn.queuedBehind ? { contendedWith: turn.queuedBehind } : {})
+      }
+    }
+    try {
+      const commit = await git(ctx.project.root, ['rev-parse', 'HEAD'])
+      const checks =
+        policyFor(ctx.project).check.length > 0
+          ? await runChecks(ctx.project, ctx.project.root)
+          : { ok: true, output: '', passed: 0 }
+      if (!checks.ok) {
+        return {
+          strategy: 'trunk',
+          ok: false,
+          branch: target,
+          commit,
+          reason: `the project checks failed in the trunk — the commits are on \`${target}\` already and nothing was undone`,
+          checkOutput: checks.output
+        }
+      }
+      if (pushes) {
+        try {
+          await git(ctx.project.root, ['push', 'origin', `${target}:${target}`])
+        } catch (err) {
+          return {
+            strategy: 'trunk',
+            ok: false,
+            branch: target,
+            commit,
+            reason:
+              `verified in the trunk, but \`git push origin ${target}\` was refused: ${errorMessage(err)}. ` +
+              `If \`origin/${target}\` moved, pull it into the trunk and push again`
+          }
+        }
+      }
+      log.info(`trunk landing of t${ctx.task.seq} (${commit.slice(0, 8)}) on ${target}${pushes ? ', pushed' : ''}`)
+      return {
+        strategy: 'trunk',
+        ok: true,
+        commit,
+        ...(ctx.trunkBase ? { base: ctx.trunkBase } : {}),
+        checksPassed: checks.passed,
+        pushed: pushes
+      }
+    } finally {
+      release(turn.lock.id)
+    }
+  }
+}
+
 const STRATEGIES: Record<LandingStrategyId, LandingStrategy> = {
   'auto-land': autoLand,
   'leave-branch': leaveBranch,
   'pull-request': pullRequest,
   'verify-only': verifyOnly,
   'merge-local': mergeLocal,
-  'merge-branch': mergeBranch
+  'merge-branch': mergeBranch,
+  trunk: trunkLanding
 }
 
 /**
@@ -1517,6 +1641,16 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
   const restForHuman = (holdReason: string): void => {
     if (!ctx.quiet) setStatus(ctx.task.id, 'awaiting_human', { assignee: 'human', holdReason })
   }
+  // ⭐ A trunk that is merely occupied is a hold, and the tick ends it (`retryQueuedLandings`). Said
+  // once, on the way in: the tick re-attempts every ten seconds and a line per attempt is a wall.
+  const queueForTrunk = (reason: string): void => {
+    if (ctx.quiet) return
+    const current = getTask(ctx.task.id)
+    if (current?.status !== 'landing_queued') {
+      say(`Queued to land: ${oneLine(reason)}`, `${reason} Nothing needs doing — it lands by itself.`, 'finish.held')
+    }
+    setStatus(ctx.task.id, 'landing_queued', { assignee: null, holdReason: reason })
+  }
 
   // ⛔ Before the strategy, and only when the workspace is clean. A task that produced **no commits**
   // has nothing to land, and saying "landed as <the commit that was already there>" is not a
@@ -1525,8 +1659,11 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
   // ⚠️ Not for a task that asked to be checked. "Nothing landed" is still an outcome its author
   // wanted to see before it was called done, and skipping the review because the diff turned out
   // empty decides that for them.
+  // ⚠️ Not for the trunk strategy: it has no branch to be empty, and `decideTrunkFinish` has already
+  // established that the run committed something before a landing was chosen.
   if (
     ctx.project.vcs === 'git' &&
+    strategy.id !== 'trunk' &&
     ctx.task.verification !== 'required' &&
     (await isClean(ctx.workspacePath))
   ) {
@@ -1593,6 +1730,10 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
 
   const allowed = await strategy.canLand(ctx)
 
+  if (!allowed.ok && allowed.trunkBusy) {
+    queueForTrunk(allowed.reason ?? 'the trunk is busy')
+    return { strategy: strategy.id, ok: false, branch: ctx.branch, trunkBusy: true, reason: allowed.reason ?? 'the trunk is busy' }
+  }
   if (!allowed.ok) {
     const fallback = await leaveBranch.land(ctx)
     say(
@@ -1608,7 +1749,9 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
   // ⚠️ Named by seq, not by id. `contendedWith` is a task id because that is what the resource broker
   // records; an operator reading a message wants `t26`.
   const behind = result.contendedWith ? getTask(result.contendedWith) : null
-  if (!result.ok) {
+  if (!result.ok && result.trunkBusy) {
+    queueForTrunk(result.reason ?? 'the trunk is busy')
+  } else if (!result.ok) {
     // ⚠️ `result.reason` is kept whole in the detail: a conflict names its paths and a check failure
     // its command, and the line above the expander is only the first clause of that.
     say(
@@ -1745,15 +1888,22 @@ export function landedMessage(
       result.checksPassed === 0
         ? '⚠️ **Nothing was verified** — this project declares no check commands. Add them in ' +
           'Project settings.'
-        : `Verified first: ${result.checksPassed} project check${result.checksPassed === 1 ? '' : 's'} ` +
-          `passed on the rebased branch, before anything moved.`
+        : result.strategy === 'trunk'
+          ? `Verified: ${result.checksPassed} project check${result.checksPassed === 1 ? '' : 's'} ` +
+            'passed in the trunk, on the commits this task made there.'
+          : `Verified first: ${result.checksPassed} project check${result.checksPassed === 1 ? '' : 's'} ` +
+            `passed on the rebased branch, before anything moved.`
     )
   }
 
   // ⚠️ Not repeated here: the push is on the headline now, which is where somebody looking for it
   // was looking. What the detail adds is the half the headline cannot say in four words.
   if (result.pushed === false) {
-    parts.push(`Your local \`${target}\` was fast-forwarded and is now ahead of the remote.`)
+    parts.push(
+      result.strategy === 'trunk'
+        ? `The agent committed straight onto your local \`${target}\`, which is now ahead of the remote.`
+        : `Your local \`${target}\` was fast-forwarded and is now ahead of the remote.`
+    )
   }
 
   if (result.branchDeleted === true && result.branch) {

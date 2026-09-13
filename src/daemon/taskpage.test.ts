@@ -44,6 +44,7 @@ const ALL_STATUSES: TaskStatus[] = [
   'awaiting_human',
   'paused_quota',
   'paused_user',
+  'landing_queued',
   'cancelling',
   'cancelled',
   'completed',

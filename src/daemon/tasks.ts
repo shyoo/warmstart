@@ -85,6 +85,7 @@ interface TaskRow {
   finish_policy: string
   session_sharing: string
   completion_mode: string
+  workspace_mode?: string | null
   auto_compact: string
   objective_json: string | null
   finish_asked_at: number | null
@@ -227,6 +228,9 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     finishPolicy: (r.finish_policy || 'inherit') as Task['finishPolicy'],
     sessionSharing: (r.session_sharing || 'inherit') as Task['sessionSharing'],
     completionMode: (r.completion_mode || 'inherit') as Task['completionMode'],
+    workspaceMode: (r.workspace_mode === 'trunk' || r.workspace_mode === 'worktree'
+      ? r.workspace_mode
+      : 'inherit'),
     // ⚠️ Coalesced for the same reason as the three above: a row written before migration 32
     // carries no value, and `inherit` is the honest reading of a task that never expressed one.
     autoCompact: (r.auto_compact || 'inherit') as Task['autoCompact'],
@@ -588,6 +592,7 @@ export interface CreateTaskInput {
   finishPolicy?: Task['finishPolicy']
   sessionSharing?: Task['sessionSharing']
   completionMode?: Task['completionMode']
+  workspaceMode?: Task['workspaceMode']
   objective?: Task['objective']
   autoCompact?: Task['autoCompact']
   preemptible?: boolean
@@ -722,8 +727,8 @@ export function createTask(input: CreateTaskInput): Task {
                           not_before, deadline, requires_json, constraints_json, verification,
                           finish_policy, session_sharing, completion_mode, objective_json, auto_compact,
                           preemptible, est_tokens, landing_target, child_defaults_json, debate_json,
-                          non_gradable, created_at, updated_at)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+                          non_gradable, workspace_mode, created_at, updated_at)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -757,6 +762,7 @@ export function createTask(input: CreateTaskInput): Task {
       input.childDefaults ? JSON.stringify(input.childDefaults) : null,
       input.debate ? JSON.stringify(input.debate) : null,
       input.nonGradable ? 1 : 0,
+      input.workspaceMode ?? 'inherit',
       now,
       now
     )
@@ -965,6 +971,7 @@ const TERMINAL_OR_HELD: TaskStatus[] = [
   'assigned',
   'running',
   'awaiting_human',
+  'landing_queued',
   'paused_quota',
   'paused_user',
   'cancelling',
@@ -1326,6 +1333,32 @@ export function setQuotaPreemptWarning(
   return task
 }
 
+/**
+ * Choose where this task's agent works.
+ *
+ * ⛔ **Refused once the task has run.** A task that has worked in a worktree owns a branch with its
+ * commits on it, and one that has worked in the trunk has commits on the target with no branch at
+ * all; neither can be carried to the other by changing a column. File a new task instead.
+ */
+export function setWorkspaceMode(taskId: string, mode: Task['workspaceMode']): Task {
+  const current = requireTask(taskId)
+  if (!['inherit', 'worktree', 'trunk'].includes(mode)) {
+    throw new Error(`not a workspace mode: ${String(mode)}`)
+  }
+  if (current.workspaceMode === mode) return current
+  if (runsFor(taskId).some((r) => r.kind === 'work' || !r.kind)) {
+    throw new Error(
+      `t${current.seq} has already run, so where it works is fixed — file a new task to work elsewhere`
+    )
+  }
+  db()
+    .prepare('update tasks set workspace_mode = ?, updated_at = ? where id = ?')
+    .run(mode, Date.now(), taskId)
+  const task = requireTask(taskId)
+  emit({ type: 'task.changed', task })
+  return task
+}
+
 /** Is a person's quota override on this task still live? ⚠️ One reading of the clock, everywhere. */
 export function quotaOverridden(task: Task, now = Date.now()): boolean {
   return task.quotaOverrideUntil !== null && task.quotaOverrideUntil > now
@@ -1607,6 +1640,7 @@ interface RunRow {
   adapter_id?: string | null
   model?: string | null
   trunk_sha_before?: string | null
+  trunk_dirty_before_json?: string | null
   prompt?: string | null
   plan_id?: string | null
   plan_raw?: string | null
@@ -1643,6 +1677,9 @@ function toRun(r: RunRow, blockedMs = 0): Run {
     quotaAfter: r.quota_after_json ? (JSON.parse(r.quota_after_json) as RunQuota) : null,
     objective: r.objective_json ? (JSON.parse(r.objective_json) as Objective) : null,
     trunkShaBefore: r.trunk_sha_before ?? null,
+    trunkDirtyBefore: r.trunk_dirty_before_json
+      ? (JSON.parse(r.trunk_dirty_before_json) as string[])
+      : null,
     // ⛔ Null is not false. Every run that predates the column recorded nothing, and saying `cold`
     // for those would be a measurement nobody took.
     startedWarm: r.started_warm === null ? null : r.started_warm === 1,
@@ -1740,6 +1777,8 @@ export function startRun(input: {
    * that does not resolve. The finish check reads null as "cannot say" and declines to fire.
    */
   trunkShaBefore?: string | null | undefined
+  /** See `Run.trunkDirtyBefore`. Only a trunk-mode dispatch passes one. */
+  trunkDirtyBefore?: string[] | null | undefined
   /** The actual prompt sent to the agent CLI for this run. */
   prompt?: string | null | undefined
   /** The effective optimization objective vector active when this run was dispatched. */
@@ -1766,8 +1805,8 @@ export function startRun(input: {
     .prepare(
       `insert into runs (id, task_id, project_id, session_id, worker_id, started_at,
                          quota_unverified, cost_model_id, started_warm, adapter_id, model,
-                         trunk_sha_before, prompt, objective_json, kind)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+                         trunk_sha_before, prompt, objective_json, kind, trunk_dirty_before_json)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
     )
     .run(
       id,
@@ -1787,7 +1826,8 @@ export function startRun(input: {
       input.trunkShaBefore ?? null,
       input.prompt ?? null,
       input.objective ? JSON.stringify(input.objective) : null,
-      input.kind ?? 'work'
+      input.kind ?? 'work',
+      input.trunkDirtyBefore ? JSON.stringify(input.trunkDirtyBefore) : null
     )
   stampPlan(id, [])
   bumpPricingEpoch()

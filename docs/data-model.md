@@ -95,14 +95,15 @@ written returns its default rather than `undefined` at the point of use.
 
 ```
 draft · ready · blocked · scheduled · assigned · running
-awaiting_human · paused_quota · paused_user
+awaiting_human · paused_quota · paused_user · landing_queued
 cancelling · cancelled · completed · failed
 ```
 
 ⛔ **Every held status needs something that ends the hold.** `blocked` ← `admitDependents()`, fired by
 `setStatus` on the transition into any settled status and never by a call site, with `admitBlocked()`
 on the tick as the backstop; `scheduled` ← `admitScheduled()`; `paused_quota` ← `resumeQuotaPaused()`, which
-reads a clock **and** `quotaReleaseFor()`. A new held status owes a releaser, or it is a task nothing
+reads a clock **and** `quotaReleaseFor()`; `landing_queued` ← `retryQueuedLandings()`, which lands the
+branch once the trunk lease is free and the checkout is clean (t401). A new held status owes a releaser, or it is a task nothing
 will ever move.
 
 ⚠️ **`queued` is not a status.** A task the scheduler passed over is still `ready`, with a
@@ -162,6 +163,11 @@ Each resolves **task → project → fleet** and each stores `'inherit'` at the 
 | `SessionSharing` | `off` · `on` | `off` |
 | `CompletionMode` | `autonomous` · `checkpointed` | `autonomous` |
 
+⚠️ `tasks.workspace_mode` (`inherit`/`worktree`/`trunk`, migration 70) is **task → project →
+`worktree`**, with no fleet tier: where an agent may write is a fact about a repository. A non-git
+project is always `worktree`. `runs.trunk_dirty_before_json` (same migration) is what a trunk run found
+uncommitted when it started, so its finish does not call the operator's files its own.
+
 ⚠️ `tasks.auto_compact` (`inherit`/`on`/`off`) is **two tiers, not three** — task → fleet. The project
 rung is an additive key if it is ever wanted.
 
@@ -171,7 +177,7 @@ rung is an additive key if it is ever wanted.
 |---|---|
 | `TaskKind` | `work` · `plan` · `conversation` · **`debate`** — ⚠️ `plan` is **Plan & Split**: dispatched to a planning agent, not handed to the controller. ⛔ `conversation` is `work` with the single-turn contract removed: `resolveFinishPolicy`/`resolveSessionSharing` answer `await-human`/`on` from the **kind**, above project and fleet; its turn ends back at `awaiting_human` with the session and workspace kept; and `chooseTarget` returns it to the account it is already talking to (`basis: 'sticky'`) unless a person reassigns it or that window is spent. `isOpenConversation` — kind is `conversation` **and** `finish_policy` is still `inherit` — is the one flag that says which contract a turn runs under. ⛔ **Nothing in the thread writes a real rung any more**: Commit asks the agent to commit and then land, Land lands, `land_work` lands when the person asks the agent to, and all three leave the policy on `inherit` so the conversation stays open and can land again on the next numbered branch (`branch_unit`). Only **Finish** and **Stop** end one; an operator setting the task's own finish dropdown is the remaining way a conversation leaves `isOpenConversation`, and that is them asking for it to be finished like a work task. ⛔ A follow-up into the **same live session** is sent as the person typed it and nothing else: no restated opening prompt, no re-appended contract — that session read both on its first turn and has not stopped since. ⚠️ Since t286 that subtraction is no longer a conversation's alone: every kind gets it, with a one-line re-anchor in place of the contract, and the full framing returns for a fresh session after a preemption, a borrowed one, one that has compacted since this task last spoke, and one whose conversation contract Commit withdrew. See `docs/sessions.md`. ⛔ `debate` is an **organizer**: 2–5 *seats* (child tasks, each pinned to exactly one account/model/effort) answer the same question blind, the organizer arbitrates them and reports an agreement with its dissent, and a `choice` question asks the operator which of five verdicts follows. Its state is one column, `debate_json` (migration 68, `readDebateState`), and its phase is derived from the seats by `debatePhaseOf` in [`src/daemon/debate.ts`](../src/daemon/debate.ts) rather than stored. ⛔ **One kind transition exists in the whole schema and this is it**: `debate` → `conversation`, written only by `becomeConversation` from the verdict path, never by `updateTask` — which is what keeps `kind` safe to branch on in `promptFor`. ⚠️ A **seat** is an ordinary `work` task; nothing about it is a new kind |
 | `DependencyRequirement` | `completed` · `settled` — ⛔ `completed` is the default and every pre-existing edge's meaning: *"do B after A"* means A succeeded. `settled` releases on `completed`/`failed`/`cancelled` and is written by `task_split` alone, because a planner must be woken by the pieces that failed too. ⚠️ `cancelling` is deliberately **not** settled: it is a wind-down in progress, not a resting state |
-| `LandingStrategyId` | `auto-land` · `leave-branch` · `pull-request` · `verify-only` · `merge-local` · **`merge-branch`** — ⛔ the last is chosen from *data* (does this task's resolved target differ from the project's?), never from a task kind. See [`landing.md`](landing.md) |
+| `LandingStrategyId` | `auto-land` · `leave-branch` · `pull-request` · `verify-only` · `merge-local` · `merge-branch` · **`trunk`** — ⛔ the last two are chosen from *data* (a trunk-mode task on a rung that would move work verifies in place and pushes if asked); `merge-branch` (does this task's resolved target differ from the project's?), never from a task kind. See [`landing.md`](landing.md) |
 | `DebateExchange` | `full` · `digest` — what a seat reads from round 2 on: every other position verbatim, or the organizer's brief alone. ⚠️ Data in `debate_json`, never a branch on a seat count |
 | `DebateVerdict` | `execute` · `split` · `discuss` · `complete` · `stop` — the operator's five answers to *what now*, raised as one `choice` question the MCP tool blocks on |
 | `Priority` | `P0` · `P1` · `P2` · `P3` |

@@ -1901,6 +1901,22 @@ const MIGRATIONS: Migration[] = [
       conn.exec('alter table task_deliveries add column retire_blocked text;')
     }
     conn.exec(`delete from task_deliveries where url not glob 'http*://*/pull/[0-9]*';`)
+  },
+  // 70 - trunk mode: where a task's agent works, and what the trunk held when a run started there.
+  //
+  // ⛔ `workspace_mode` is `inherit` on every existing row, which resolves through the project to
+  // `worktree` — exactly what every task did before. `trunk_dirty_before_json` is the list of files
+  // already uncommitted in the trunk when a trunk run started: the operator's, not the agent's, so
+  // the finish neither asks the agent to commit them nor calls them its loose ends.
+  //
+  // ⚠️ Guarded by `hasColumn` like migrations 28/31/32/35/39/43/63/68: `versionBefore` rewinds.
+  (conn) => {
+    if (!hasColumn(conn, 'tasks', 'workspace_mode')) {
+      conn.exec("alter table tasks add column workspace_mode text not null default 'inherit';")
+    }
+    if (!hasColumn(conn, 'runs', 'trunk_dirty_before_json')) {
+      conn.exec('alter table runs add column trunk_dirty_before_json text;')
+    }
   }
 ]
 

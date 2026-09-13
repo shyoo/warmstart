@@ -106,6 +106,7 @@ export const REMOTE_METHODS = {
   'task.setAutoCompact': 'deny',
   'task.setStatsExcluded': 'deny',
   'task.setCompletionMode': 'write',
+  'task.setWorkspaceMode': 'deny',
   'task.setObjective': 'write',
   'task.land': 'write',
   'task.resolveConflict': 'write',
