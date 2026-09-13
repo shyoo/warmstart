@@ -125,6 +125,7 @@ export const REMOTE_METHODS = {
   'looseend.delete': 'deny',
   'looseend.cleanup': 'deny',
   'looseend.checkMerged': 'deny',
+  'delivery.pending': 'deny',
   'log.tail': 'deny',
   'log.files': 'deny',
   'settings.get': 'deny',

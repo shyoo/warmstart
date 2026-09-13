@@ -1,6 +1,6 @@
 import { sessionEnded } from '@shared/protocol'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Project, ResourceAvailability, Task, TaskStatus } from '@shared/tasks'
+import type { Project, PullRequestDelivery, ResourceAvailability, Task, TaskStatus } from '@shared/tasks'
 import {
   fleetCounts,
   rpc,
@@ -151,6 +151,8 @@ export function App(): React.JSX.Element {
   const [resources, setResources] = useState<ResourceAvailability[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [orphanTasks, setOrphanTasks] = useState(0)
+  const [pendingDeliveries, setPendingDeliveries] = useState<PullRequestDelivery[]>([])
+  const [activePrBadgeProjectId, setActivePrBadgeProjectId] = useState<string | null>(null)
   /**
    * The add-project wizard, which is chrome rather than a route.
    *
@@ -170,7 +172,24 @@ export function App(): React.JSX.Element {
     const all = await rpc('task.list', {})
     setTasks(all)
     setOrphanTasks(all.filter((t) => t.projectId === null).length)
+    try {
+      setPendingDeliveries(await rpc('delivery.pending'))
+    } catch {
+      setPendingDeliveries([])
+    }
   }, [connected])
+
+  useEffect(() => {
+    if (!activePrBadgeProjectId) return
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement | null
+      if (!target?.closest('.project-pr-badge') && !target?.closest('.project-dot--pending_pr')) {
+        setActivePrBadgeProjectId(null)
+      }
+    }
+    window.addEventListener('click', handleClickOutside)
+    return () => window.removeEventListener('click', handleClickOutside)
+  }, [activePrBadgeProjectId])
 
   useEffect(() => {
     void refreshProjects()
@@ -401,16 +420,51 @@ export function App(): React.JSX.Element {
           ) : (
             projects.map((project) => {
               const projectTasks = tasks.filter((t) => t.projectId === project.id)
-              const state = projectWorkState(projectTasks)
+              const projectPendingPrs = pendingDeliveries.filter((d) => d.projectId === project.id)
+              const hasPendingPr = projectPendingPrs.length > 0
+              const state = projectWorkState(projectTasks, hasPendingPr)
               return (
-                <NavItem
-                  key={project.id}
-                  active={route.kind === 'project' && route.id === project.id}
-                  onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'tasks' })}
-                >
-                  <ProjectDot state={state} />
-                  <span>{project.name}</span>
-                </NavItem>
+                <div key={project.id} className="nav-item-project-wrapper">
+                  <NavItem
+                    active={route.kind === 'project' && route.id === project.id}
+                    onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'tasks' })}
+                  >
+                    <ProjectDot
+                      state={state}
+                      onClick={
+                        hasPendingPr
+                          ? (e) => {
+                              e.stopPropagation()
+                              setActivePrBadgeProjectId((cur) => (cur === project.id ? null : project.id))
+                            }
+                          : undefined
+                      }
+                    />
+                    <span>{project.name}</span>
+                  </NavItem>
+                  {activePrBadgeProjectId === project.id && hasPendingPr && (
+                    <div
+                      className="project-pr-badge"
+                      role="alert"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setActivePrBadgeProjectId(null)
+                        setRoute({ kind: 'overview', page: 'dashboard' })
+                      }}
+                      title="View in Overview → Dashboard"
+                    >
+                      <span className="project-pr-badge-dot" aria-hidden />
+                      <div className="project-pr-badge-content">
+                        <span className="project-pr-badge-title">
+                          {projectPendingPrs.length === 1
+                            ? 'Pending PR in this project'
+                            : `${projectPendingPrs.length} pending PRs in this project`}
+                        </span>
+                        <span className="project-pr-badge-link">Overview &rarr; Dashboard</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
               )
             })
           )}

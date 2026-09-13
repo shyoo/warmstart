@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { dirname } from 'node:path'
-import type { Project } from '@shared/tasks.js'
+import type { DeliveryState, Project, PullRequestDelivery } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { getProject, landingTargetFor, policyFor } from './projects.js'
 import { addMessage, getTask } from './tasks.js'
@@ -15,24 +15,7 @@ import { taskBranches } from './worktrees.js'
 import { openClaims, workspacePoolId } from './resources.js'
 import { samePath } from './fspath.js'
 
-export type DeliveryState = 'open' | 'merged' | 'closed_unmerged'
-
-export interface PullRequestDelivery {
-  id: string
-  taskId: string
-  projectId: string
-  url: string
-  target: string
-  branch: string
-  headSha: string
-  state: DeliveryState
-  mergeSha: string | null
-  observedAt: number | null
-  observationError: string | null
-  reconciledAt: number | null
-  /** Why the merged PR's local branch was last kept, or `null`. See migration 69. */
-  retireBlocked: string | null
-}
+export type { DeliveryState, PullRequestDelivery }
 
 interface DeliveryRow {
   id: string
@@ -393,6 +376,28 @@ export function mergedDeliveryFor(projectId: string, branch: string): PullReques
     ).get(projectId, branch)
   )
   return found ? toDelivery(found) : null
+}
+
+/** The newest open pull request recorded for this branch, if any. */
+export function openDeliveryFor(projectId: string, branch: string): PullRequestDelivery | null {
+  const found = row<DeliveryRow>(
+    db().prepare(
+      `select * from task_deliveries where project_id = ? and branch = ? and state = 'open'
+       order by coalesce(observed_at, created_at) desc limit 1`
+    ).get(projectId, branch)
+  )
+  return found ? toDelivery(found) : null
+}
+
+/** All open pull requests across all projects that have not landed yet. */
+export function pendingDeliveries(): PullRequestDelivery[] {
+  return rows<DeliveryRow>(
+    db().prepare(
+      `select * from task_deliveries
+       where state = 'open'
+       order by created_at desc`
+    ).all()
+  ).map(toDelivery)
 }
 
 let reconciling = false

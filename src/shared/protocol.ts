@@ -51,6 +51,7 @@ import type {
   RunKind,
   Run,
   Task,
+  PullRequestDelivery,
   TaskCommit,
   TaskConstraints,
   TaskKind,
@@ -2292,6 +2293,8 @@ export interface RpcMap {
     params: void
     result: { ran: boolean; checked: number; cleanedUp: number; kept: number; failed: number }
   }
+  /** Pending pull request deliveries across all projects that have not landed yet. */
+  'delivery.pending': { params: void; result: PullRequestDelivery[] }
   'log.tail': { params: { limit?: number; level?: LogLevel }; result: LogEntry[] }
   /** What is on disk, for the offline half. ⛔ Lists files; never returns their contents. */
   'log.files': { params: void; result: { directory: string; files: LogFile[] } }

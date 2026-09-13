@@ -2782,6 +2782,25 @@ export interface LooseEnd {
 export const DEFAULT_FINISH_INSTRUCTION =
   'Run /commit and follow every step of it. Do not stop until the work is committed.'
 
+export type DeliveryState = 'open' | 'merged' | 'closed_unmerged'
+
+export interface PullRequestDelivery {
+  id: string
+  taskId: string
+  projectId: string
+  url: string
+  target: string
+  branch: string
+  headSha: string
+  state: DeliveryState
+  mergeSha: string | null
+  observedAt: number | null
+  observationError: string | null
+  reconciledAt: number | null
+  /** Why the merged PR's local branch was last kept, or `null`. See migration 69. */
+  retireBlocked: string | null
+}
+
 export interface LandingResult {
   strategy: LandingStrategyId
   ok: boolean

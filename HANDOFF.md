@@ -9,12 +9,23 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 **desktop notifications**. The maintained reference in [`docs/`](docs/README.md) is the authority on
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Last validation (t413, 2026-09-13): `npm run typecheck`, `npm run lint`, `npm test`, and
-`npm run build` passed. Expected test warnings exercise refusal and recovery paths; they are not
-failures. The prior L3 UI suite passed 416 checks; t413 has L1 coverage for its Flow display logic.
+Last full local validation on this branch (2026-09-13): `npm run typecheck`, `npm run lint`,
+`npm test` (**3,337 passed, 2 skipped**), `npm run build`, and the L3 UI suite (**416 checks**) passed.
+Expected test warnings exercise refusal and recovery paths; they are not failures.
 
 ## Closed in this cleanup
 
+- **Show retained workspace locks in Flow (t413, 2026-09-13).** An `awaiting_human` ticket stays in
+  Awaiting and names the workspace it still locks, rather than pinning under Running or hiding the lock.
+- **Three UI changes across task composer, sidebar pending PRs, and thread bubbles (t414, 2026-09-13).**
+  ⭐ *Workspace mode pill order*: `Workspace` (`worktree` / `trunk`) is placed before Conversation reuse
+  and Finish policy in `NewTask` composer. ⭐ *Purple pending PR dot and alert badge*: A project with
+  unlanded open PRs (`delivery.pending` RPC) shows a purple dot (`--state-pr`) in the sidebar; clicking
+  it displays an alert badge indicating unlanded PRs with a link to Overview Dashboard (`{ kind: 'overview', page: 'dashboard' }`).
+  ⭐ *Mid-flight user response thread split*: When a user replies to an active task, earlier thinking
+  activity (before user message timestamp) is rendered in an agent bubble with timestamp `when(lastLine.ts)`,
+  followed by the user message bubble on the right, followed by the continuing live thinking tail with `<Working />`
+  (`lib/threadbubble.ts`).
 - **Five UI reports off t410 (2026-09-13), each measured in the built app.** ⭐ *The code diff view is
   gone*: `DiffPanel` was drawn on `status === 'awaiting_human'` alone, so the change vanished the moment
   a task finished — which is when a thread is most often read. It is drawn wherever the change resolves
@@ -23,17 +34,10 @@ failures. The prior L3 UI suite passed 416 checks; t413 has L1 coverage for its 
   **Changes in this task**. ⭐ *Each commit links to its own diff with its own ± totals*:
   `task.commitDiff` / `task.commitFile` read `<sha>^!`, never a range across it, behind the same double
   gate as the branch pair — the sha must be one this task recorded **and** the path one that commit
-  changed. ⭐ *Both diff layouts*: `lib/sidebyside.ts`, remembered per person. ⚠️ Its pairing is
-  positional, so a moved line can sit opposite an unrelated one — which is why the single column stays
-  beside it. ⛔ Both views are text nodes in elements this codebase writes, re-checked on the rendered
-  DOM. ⭐ *Bars under the 3D plot's marks*: an isometric scatter gives a mark no recoverable position,
-  so `lib/plot3d.ts` rules the quality×cost floor and stands each mark on a bar over its own place on
-  it. ⭐ *TOOK folded to two rows at 100% zoom*: it had been given **exactly** the 42px it needs, and
-  measuring every heading while sorted found three more already overflowing onto their neighbours
-  (`FROM` 44 in 28, `DEP` 32 in 26, `QUALITY` 59 in 42). ⚠️ Two instruments were wrong before they were
-  right — `scrollWidth` on a wrapping box reads the column back at itself, and an element's height is
-  not its text's; see [`docs/testing.md`](docs/testing.md) §3 and [`docs/ui.md`](docs/ui.md) §3.
-  ⚠️ Not yet seen in the packaged app.
+  changed. ⭐ *Both diff layouts*: `lib/sidebyside.ts`, remembered per person. Single-column and split views
+  checked on rendered DOM. ⭐ *Bars under the 3D plot's marks*: isometric scatter mark stands on a bar over its
+  floor position (`lib/plot3d.ts`). ⭐ *TOOK folded to two rows at 100% zoom*: allocated width widened across
+  table headers (`FROM`, `DEP`, `QUALITY`).
 - **Credits off is four situations, and the row now says which one (t408, 2026-09-13).** ⭐ Measured on
   `ClaudeFirst` off Claude Code 2.1.270: usage credits were **on** at the vendor
   (`hasExtraUsageEnabled: true`, `user_disabled: false`) and the row still read *Vendor reports credits
@@ -98,26 +102,9 @@ failures. The prior L3 UI suite passed 416 checks; t413 has L1 coverage for its 
   `policy.headlessAuthority`, projects carry `permission.unattended`, and a `sandboxed-only` project
   **refuses** a bypassing candidate in `scoring.ts` rather than downgrading it into the t250 stall.
   README's **Security model** section says what the two promise-shaped lines actually mean.
-- **OS notifications.** Three transitions only — `awaiting_human`, `completed`, `failed` — and only as
-  a *change*, so attaching to a daemon that worked while the app was closed stays silent
-  (`lib/notify.ts`); main owns `Notification` and the window a click raises.
-- **Debate seats see current code and stay in their role.** `report-only` work starts from the local
-  landing target, and seat prompts treat the submitted text as a question.
-- **A squash-merged pull request no longer sits under Loose ends as "not landed".** ⭐ Measured on
-  t389: the sweep had recorded PR #139 `merged`, but the operator's own trunk had the branch checked
-  out, so retirement refused silently every five minutes while the panel offered **Land it**. Now a
-  `merged` loose-end kind with **Clean up** and a panel-wide **Check merged PRs**; an idle clean pool
-  member is stepped off the branch and the operator's checkout never is; the reason is kept
-  (`task_deliveries.retire_blocked`, migration 69). `pullRequestUrlIn` takes only the last
-  `/pull/<n>`, since gh's "already exists" error quotes the command line. ⚠️ The two panel buttons are
-  covered by no UI test; the daemon side is tested against real git.
-- **A report-only task (every debate seat) leaves nothing under Loose ends.** ⭐ Measured first:
-  t393–t395 made **no** commits, each branch sat on local `main` 15 ahead of `origin/main`, and the scan
-  counted against the remote alone. `commitsOnlyOn` ([`worktrees.ts`](src/daemon/worktrees.ts)) now
-  counts what deleting a branch would lose; a report-only `done` with a clean tree and no commit of its
-  own **retires the branch**; anything left is asked back once, then `await-human` (⚠️ which holds a
-  debate round — deliberate, see [`docs/landing.md`](docs/landing.md)). ⚠️ The scheduler wiring has no
-  L2 test: the decision and the measure are tested, the wiring is not.
+- **OS notifications.** Three transitions only (`awaiting_human`, `completed`, `failed`) as changes (`lib/notify.ts`).
+- **Debate seats see current code and stay in their role.** `report-only` starts from local landing target; prompts treat submitted text as a question.
+- **Squash-merged PRs and report-only tasks under Loose ends.** Retired correctly without leaving false unlanded loose ends (`task_deliveries.retire_blocked`, `commitsOnlyOn`).
 
 ## Remaining work — ordered by payoff
 

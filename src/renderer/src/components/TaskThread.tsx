@@ -1,5 +1,5 @@
 import { sessionEnded } from '@shared/protocol'
-import { Fragment, useCallback, useEffect, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   resolveModelChoice,
   SHARING_LABELS,
@@ -33,7 +33,7 @@ import { TaskQuestions } from './Questions'
 import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
 import { codeSpans } from '../lib/codespans'
-import { bubbleSide, promptMessageId } from '../lib/threadbubble'
+import { bubbleSide, buildThreadItems, promptMessageId } from '../lib/threadbubble'
 import { duration, tokens, when } from '../lib/format'
 import { Money, taskPriceTitle } from './Price'
 import { effortLabel, modelLabel } from '../lib/modelname'
@@ -1263,103 +1263,117 @@ function Thread({
    */
   const showLive = live
   const liveRun = showLive ? runs.find((r) => !r.endedAt) : undefined
+  const items = useMemo(
+    () => buildThreadItems(messages, activity, showLive),
+    [messages, activity, showLive]
+  )
 
   return (
     <div className="thread thread--task">
-      {messages.length === 0 && !showLive && (
+      {items.length === 0 && (
         <p className="dim">Nothing has been said on this task yet.</p>
       )}
-      {messages.map((m) => {
-        const runForMsg = m.runId ? runs.find((r) => r.id === m.runId) : null
-        const isTargetMsgForRunActivity =
-          runForMsg?.activity &&
-          runForMsg.activity.length > 0 &&
-          (m.role === 'agent' ||
-            (!messages.some((other) => other.runId === runForMsg.id && other.role === 'agent') &&
-              m.role === 'system'))
-        return (
-          <div key={m.id} className={`msg msg--${m.role} msg--${bubbleSide(m.role)}`}>
-            {/* ⛔ The bubble holds the words and nothing else; its clock, prompt chip and detail
-                sit in the meta line *under* it, on the same side (t374 took the clock out of the
-                bubble; t378 put it back below, which is where it was meant to go). */}
-            <div className="msg-body">
-            <div className="msg-bubble">
-              <div className="msg-text">
-              {isTargetMsgForRunActivity && (
-                <details className="msg-chip-disclosure">
-                  <summary>⚙ {runForMsg.activity!.length} step{runForMsg.activity!.length === 1 ? '' : 's'}</summary>
-                  <ActivityDisclosure
-                    activity={runForMsg.activity!}
-                    label={`Intermediate activity (${runForMsg.activity!.length} step${runForMsg.activity!.length === 1 ? '' : 's'})`}
-                  />
-                </details>
-              )}
-              {/* ⛔ The backticks were being printed, and then so was everything else. Every message
-                  this codebase writes names refs, branches, shas and files in them — *"Landed as
-                  `98f200ab` onto `main`"* — and an agent's reply is written in markdown throughout.
-                  ⚠️ Agent, controller and system text is read as markdown; a person's own is not.
-                  See `MessageText`. */}
-              <MessageText text={m.text} markdown={m.role !== 'human'} />
-              {m.attachments.length > 0 && (
-                <span className="msg-images">
-                  {m.attachments.map((a) =>
-                    a.kind === 'image' ? (
-                      <MessageImage key={a.id} attachment={a} />
-                    ) : (
-                      <span className="chip" key={a.id} title={a.file}>
-                        {a.kind === 'folder' ? 'Folder: ' : 'File: '}{a.file}
+      {items.map((item) => {
+        if (item.kind === 'message') {
+          const m = item.message
+          const runForMsg = m.runId ? runs.find((r) => r.id === m.runId) : null
+          const isTargetMsgForRunActivity =
+            runForMsg?.activity &&
+            runForMsg.activity.length > 0 &&
+            (m.role === 'agent' ||
+              (!messages.some((other) => other.runId === runForMsg.id && other.role === 'agent') &&
+                m.role === 'system'))
+          return (
+            <div key={m.id} className={`msg msg--${m.role} msg--${bubbleSide(m.role)}`}>
+              {/* ⛔ The bubble holds the words and nothing else; its clock, prompt chip and detail
+                  sit in the meta line *under* it, on the same side (t374 took the clock out of the
+                  bubble; t378 put it back below, which is where it was meant to go). */}
+              <div className="msg-body">
+                <div className="msg-bubble">
+                  <div className="msg-text">
+                    {isTargetMsgForRunActivity && (
+                      <details className="msg-chip-disclosure">
+                        <summary>⚙ {runForMsg.activity!.length} step{runForMsg.activity!.length === 1 ? '' : 's'}</summary>
+                        <ActivityDisclosure
+                          activity={runForMsg.activity!}
+                          label={`Intermediate activity (${runForMsg.activity!.length} step${runForMsg.activity!.length === 1 ? '' : 's'})`}
+                        />
+                      </details>
+                    )}
+                    {/* ⛔ The backticks were being printed, and then so was everything else. Every message
+                        this codebase writes names refs, branches, shas and files in them — *"Landed as
+                        `98f200ab` onto `main`"* — and an agent's reply is written in markdown throughout.
+                        ⚠️ Agent, controller and system text is read as markdown; a person's own is not.
+                        See `MessageText`. */}
+                    <MessageText text={m.text} markdown={m.role !== 'human'} />
+                    {m.attachments.length > 0 && (
+                      <span className="msg-images">
+                        {m.attachments.map((a) =>
+                          a.kind === 'image' ? (
+                            <MessageImage key={a.id} attachment={a} />
+                          ) : (
+                            <span className="chip" key={a.id} title={a.file}>
+                              {a.kind === 'folder' ? 'Folder: ' : 'File: '}{a.file}
+                            </span>
+                          )
+                        )}
                       </span>
-                    )
+                    )}
+                  </div>
+                </div>
+                {/* The meta line under the bubble: when it was said (bare time today, dated otherwise,
+                    the full stamp on hover), the prompt that produced it as a `📋 1,475` chip (on the
+                    run's last answer — see `promptMessageId`), and ⓘ for the detail a short system
+                    line keeps behind it. */}
+                <div className="msg-meta">
+                  <span className="msg-when" title={new Date(m.ts).toLocaleString()}>{when(m.ts)}</span>
+                  {runForMsg?.prompt && promptMessageId(messages, runForMsg.id) === m.id && (
+                    <PromptChip prompt={runForMsg.prompt} />
                   )}
-                </span>
-              )}
+                  {m.detail && <details className="msg-detail"><summary title="Show details">ⓘ</summary><div><MessageText text={m.detail} markdown /></div></details>}
+                </div>
               </div>
             </div>
-            {/* The meta line under the bubble: when it was said (bare time today, dated otherwise,
-                the full stamp on hover), the prompt that produced it as a `📋 1,475` chip (on the
-                run's last answer — see `promptMessageId`), and ⓘ for the detail a short system
-                line keeps behind it. */}
-            <div className="msg-meta">
-              <span className="msg-when" title={new Date(m.ts).toLocaleString()}>{when(m.ts)}</span>
-              {runForMsg?.prompt && promptMessageId(messages, runForMsg.id) === m.id && (
-                <PromptChip prompt={runForMsg.prompt} />
+          )
+        }
+
+        const lastLine = item.lines.length > 0 ? item.lines[item.lines.length - 1] : null
+        return (
+          <div key={item.id} className="msg msg--agent msg--left msg--live">
+            <div className="msg-body">
+              <div className="msg-bubble">
+                <span className="msg-text">
+                  {item.lines.length === 0 ? (
+                    <span className="dim">waiting for the agent’s first words…</span>
+                  ) : (
+                    item.lines.map((line, i) => (
+                      <span key={`${line.ts}-${i}`} className="msg-live-line">
+                        {line.text}
+                      </span>
+                    ))
+                  )}
+                  {item.isLiveTail && <Working />}
+                </span>
+              </div>
+              {item.isLiveTail ? (
+                liveRun?.prompt && promptMessageId(messages, liveRun.id) === null && (
+                  <div className="msg-meta">
+                    <PromptChip prompt={liveRun.prompt} />
+                  </div>
+                )
+              ) : (
+                lastLine && (
+                  <div className="msg-meta">
+                    <span className="msg-when" title={new Date(lastLine.ts).toLocaleString()}>
+                      {when(lastLine.ts)}
+                    </span>
+                  </div>
+                )
               )}
-              {m.detail && <details className="msg-detail"><summary title="Show details">ⓘ</summary><div><MessageText text={m.detail} markdown /></div></details>}
-            </div>
             </div>
           </div>
         )
       })}
-
-      {showLive && (
-        <div className="msg msg--agent msg--left msg--live">
-          <div className="msg-body">
-          <div className="msg-bubble">
-            <span className="msg-text">
-              {activity.length === 0 ? (
-                <span className="dim">waiting for the agent’s first words…</span>
-              ) : (
-                activity.map((line, i) => (
-                  <span key={`${line.ts}-${i}`} className="msg-live-line">
-                    {line.text}
-                  </span>
-                ))
-              )}
-              {/* ⛔ An animation, not a sentence, and once: at the point the text stops, which is
-                  where a reader looks to see whether more is coming. */}
-              <Working />
-            </span>
-          </div>
-          {/* ⚠️ The running turn's prompt has nowhere else to go until the agent answers: a warm
-              continuation on the same worker writes no system line to hang it on. */}
-          {liveRun?.prompt && promptMessageId(messages, liveRun.id) === null && (
-            <div className="msg-meta">
-              <PromptChip prompt={liveRun.prompt} />
-            </div>
-          )}
-          </div>
-        </div>
-      )}
     </div>
   )
 }

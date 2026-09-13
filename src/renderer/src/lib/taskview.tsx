@@ -200,11 +200,12 @@ export function hasQuotaGate(
   return held || Boolean(warning) || live
 }
 
-export type ProjectWorkState = 'working' | 'needs_attention' | 'paused' | 'idle'
+export type ProjectWorkState = 'working' | 'needs_attention' | 'paused' | 'pending_pr' | 'idle'
 
 /**
  * Computes the work state for a project based on its tasks:
  * - 'needs_attention': At least one task is awaiting human input or paused by user.
+ * - 'pending_pr': At least one pending pull request has been opened and not landed yet.
  * - 'working': At least one task is active/in-flight and no tasks need human action.
  * - 'paused': Nothing is moving, but at least one task is held on quota and will resume itself.
  * - 'idle': Nothing is running, held or waiting on anyone.
@@ -215,9 +216,15 @@ export type ProjectWorkState = 'working' | 'needs_attention' | 'paused' | 'idle'
  * not `needs_attention` either: nobody is being waited on, the quota window reopens on its own and
  * the scheduler picks the task back up. So it is its own state, warned in colour and calm in motion.
  */
-export function projectWorkState(tasks: Array<Pick<Task, 'status'>>): ProjectWorkState {
+export function projectWorkState(
+  tasks: Array<Pick<Task, 'status'>>,
+  hasPendingPr = false
+): ProjectWorkState {
   if (tasks.some((t) => t.status === 'awaiting_human' || t.status === 'paused_user')) {
     return 'needs_attention'
+  }
+  if (hasPendingPr) {
+    return 'pending_pr'
   }
   if (tasks.some((t) => IN_FLIGHT.has(t.status))) {
     return 'working'
@@ -229,16 +236,34 @@ export function projectWorkState(tasks: Array<Pick<Task, 'status'>>): ProjectWor
 }
 
 /** Small indicator dot displayed before the project name in the navigation pane. */
-export function ProjectDot({ state }: { state: ProjectWorkState }): React.JSX.Element {
-  const title =
+export function ProjectDot({
+  state,
+  onClick,
+  title: customTitle
+}: {
+  state: ProjectWorkState
+  onClick?: (e: React.MouseEvent) => void
+  title?: string
+}): React.JSX.Element {
+  const defaultTitle =
     state === 'working'
       ? 'Tasks in progress'
       : state === 'needs_attention'
         ? 'Human action needed'
         : state === 'paused'
           ? 'Paused on quota — resumes when the account’s window reopens'
-          : 'Idle'
-  return <span className={`project-dot project-dot--${state}`} title={title} aria-label={title} />
+          : state === 'pending_pr'
+            ? 'Pending pull request — click to view'
+            : 'Idle'
+  const title = customTitle ?? defaultTitle
+  return (
+    <span
+      className={`project-dot project-dot--${state}`}
+      title={title}
+      aria-label={title}
+      onClick={onClick}
+    />
+  )
 }
 
 /** Three dots that indicate an agent is actively working on a task. */

@@ -1146,6 +1146,71 @@ body {
   }
 }
 
+.project-dot--pending_pr {
+  background: var(--state-pr);
+  border: 1px solid var(--state-pr);
+  box-shadow: 0 0 5px var(--state-pr);
+  cursor: pointer;
+}
+
+.nav-item-project-wrapper {
+  position: relative;
+}
+
+.project-pr-badge {
+  position: absolute;
+  top: 100%;
+  left: var(--sp-3);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: 2px;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--color-surface);
+  border: 1px solid var(--state-pr);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-panel), 0 4px 16px rgb(0 0 0 / 0.5);
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: var(--text-meta);
+  line-height: var(--leading-tight);
+  color: var(--color-text);
+}
+
+.project-pr-badge:hover {
+  background: var(--color-surface-2);
+  border-color: var(--color-accent);
+}
+
+.project-pr-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--state-pr);
+  flex-shrink: 0;
+}
+
+.project-pr-badge-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-pr-badge-title {
+  font-weight: 500;
+  color: var(--color-text);
+}
+
+.project-pr-badge-link {
+  color: var(--state-pr);
+  font-size: 10px;
+}
+
+.project-pr-badge:hover .project-pr-badge-link {
+  color: var(--color-accent);
+}
+
 /* A project the sidebar lists but cannot offer yet - the empty state, not a disabled item. */
 /* A second line under a table cell: the state behind the state. */
 .tbl-sub {

@@ -10,7 +10,7 @@ import { lastQuota, windowExpired } from '../quota.js'
 import { getSession } from '../sessions.js'
 import { getProject, policyFor, requireProject } from '../projects.js'
 import { deleteUnlandedBranch, retireStrandedBranch } from '../worktrees.js'
-import { cleanUpMergedBranch, reconcilePullRequestDeliveries } from '../deliveries.js'
+import { cleanUpMergedBranch, pendingDeliveries, reconcilePullRequestDeliveries } from '../deliveries.js'
 import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, setHoldReason, setQuotaOverride, setQuotaPreemptWarning, runsFor, setTaskStatsExcluded, setWorkspaceMode, updateTask } from '../tasks.js'
 import { taskCommits } from '../taskcommits.js'
 import { commitDiffFor, commitFileFor, diffFileFor, diffSummaryFor } from '../taskdiff.js'
@@ -49,7 +49,7 @@ type TaskMethod =
   | 'approval.request' | 'approval.answer' | 'approval.rules' | 'approval.addRule' | 'approval.removeRule'
   | 'question.ask' | 'question.list' | 'question.forTask' | 'question.answer' | 'resource.list'
   | 'conversation.list' | 'looseend.list' | 'looseend.retire' | 'looseend.delete' | 'looseend.dismiss'
-  | 'looseend.reclaim' | 'looseend.cleanup' | 'looseend.checkMerged'
+  | 'looseend.reclaim' | 'looseend.cleanup' | 'looseend.checkMerged' | 'delivery.pending'
 
 /** Apply a next-run worker/model choice without sending a generic “Continue” turn first. */
 function reassignForResolveRetry(
@@ -622,6 +622,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       return cleanUpMergedBranch(p.projectId, p.branch)
     },
     'looseend.checkMerged': () => reconcilePullRequestDeliveries(),
+    'delivery.pending': () => pendingDeliveries(),
     'looseend.dismiss': (p) => {
       dismissLooseEnd(p.id)
       return { ok: true as const }

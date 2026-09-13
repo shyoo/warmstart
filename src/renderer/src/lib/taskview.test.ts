@@ -462,6 +462,18 @@ describe('project work state for left pane indicators', () => {
     ]
     expect(projectWorkState(tasks)).toBe('needs_attention')
   })
+
+  it('returns pending_pr when a project has a pending pull request', () => {
+    expect(projectWorkState([], true)).toBe('pending_pr')
+    expect(projectWorkState([{ status: 'completed' }], true)).toBe('pending_pr')
+    expect(projectWorkState([{ status: 'paused_quota' }], true)).toBe('pending_pr')
+    expect(projectWorkState([{ status: 'running' }], true)).toBe('pending_pr')
+  })
+
+  it('prioritizes needs_attention over pending_pr when a person is being waited on', () => {
+    const tasks: Array<{ status: TaskStatus }> = [{ status: 'awaiting_human' }]
+    expect(projectWorkState(tasks, true)).toBe('needs_attention')
+  })
 })
 
 /**

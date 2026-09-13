@@ -20,7 +20,7 @@ import { listTasks, mandateAllows, runsFor } from './tasks.js'
 import { openClaims, trunkResourceId } from './resources.js'
 import type { MergeReading } from './landing.js'
 import { commitsOnlyOn, ensurePool, taskBranches, workspaceState } from './worktrees.js'
-import { mergedDeliveryFor, type PullRequestDelivery } from './deliveries.js'
+import { mergedDeliveryFor, openDeliveryFor, type PullRequestDelivery } from './deliveries.js'
 import type { WorkspaceState } from './worktrees.js'
 import { settings } from './settings.js'
 export { projectFinishChoice, finishInstructionFor }
@@ -778,6 +778,7 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
       // ⚠️ `-1` is "git could not measure it", not "nothing on it". Neither reported nor retired.
       if (branch.ahead < 0 || branch.taskSeq === null || !closedTaskSeqs.has(branch.taskSeq)) continue
       const pr = merged.get(branch.branch)
+      const openPr = openDeliveryFor(project.id, branch.branch)
       const end: LooseEnd = {
         projectId: project.id,
         projectName: project.name,
@@ -800,7 +801,10 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
               id: `unlanded:${branch.branch}`,
               kind: 'unlanded' as const,
               count: branch.ahead,
-              summary: `${branch.ahead} commit(s) on \`${branch.branch}\` that the trunk does not have`
+              ...(openPr ? { url: openPr.url } : {}),
+              summary: openPr
+                ? `Pull request ${openPr.url} is open — ${branch.ahead} commit(s) on \`${branch.branch}\` that the trunk does not have`
+                : `${branch.ahead} commit(s) on \`${branch.branch}\` that the trunk does not have`
             }
           : {
               id: `stranded:${branch.branch}`,
