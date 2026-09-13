@@ -731,7 +731,13 @@ is too large and too varied.
   and the thread are three views of one project, looked at one after another: they are all wide.
 - **The task table responds to its panel, not the window.** Its fixed operational columns yield via
   the named `task-table` container as the resizable sidebar reduces the space actually available;
-  viewport breakpoints cannot know how wide that sidebar is.
+  viewport breakpoints cannot know how wide that sidebar is. ⛔ A dropped column is `visibility:
+  collapse; width: 0` on its `<col>`, never `display: none` (which left every cell drawn, and hiding
+  the cells too laid the table out against stale slots on some runs). ⚠️ Not a `ResizeObserver`
+  either: it never delivers in the suite's hidden window, so L3 could not see it (2026-09-13).
+- **A paper table scrolls inside its own box.** `.tbl--paper` is a fit-content block with
+  `overflow-x: auto`, because a table cannot shrink below its min-content and Table 12 ran past a
+  narrowed column.
 - **The status bar ends with the app version.** Its left fact is the live orchestratord process;
   worker/session counts, platform and the version are separate facts, so the daemon does not have to
   be restarted just to say which packaged app opened the window. A downloaded update is a link to its

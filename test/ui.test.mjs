@@ -2240,7 +2240,10 @@ try {
       const prior = content.getAttribute('style');
       content.style.width = '620px';
       content.style.flex = '0 0 620px';
-      const c = content.getBoundingClientRect();
+      // ⚠️ The client box, not the border box: a classic (Windows) scrollbar takes ~10px from the
+      // right of \`.content\`, and the page is centred in the space that remains.
+      const b = content.getBoundingClientRect();
+      const c = { left: b.left + content.clientLeft, right: b.left + content.clientLeft + content.clientWidth };
       const p = paper.getBoundingClientRect();
       const tables = [...paper.querySelectorAll('table')].map(t => t.getBoundingClientRect());
       if (prior === null) content.removeAttribute('style'); else content.setAttribute('style', prior);
@@ -2248,7 +2251,11 @@ try {
         ok: Math.abs((p.left + p.right) / 2 - (c.left + c.right) / 2) <= 1 &&
           tables.every(t => t.left >= p.left - 1 && t.right <= p.right + 1),
         paper: { left: Math.round(p.left - c.left), right: Math.round(c.right - p.right) },
-        tables: tables.map(t => ({ left: Math.round(t.left - p.left), right: Math.round(p.right - t.right) }))
+        tables: tables.map((t, i) => ({
+          left: Math.round(t.left - p.left),
+          right: Math.round(p.right - t.right),
+          caption: (paper.querySelectorAll('table')[i].caption?.textContent ?? '').slice(0, 40)
+        }))
       });
     })()`)
   )
@@ -4540,8 +4547,8 @@ try {
         const panel = table?.closest('.panel');
         const dates = [...(table?.querySelectorAll('tbody td.tbl-when') ?? [])];
         const heads = [...(table?.querySelectorAll('thead th') ?? [])];
-        // A hidden <col> collapses its cells geometrically; it does not change each cell's
-        // computed display value (table-cell).
+        // ⚠️ Measured by geometry: a collapsed column keeps its cells in the DOM at table-cell. A
+        // \`display: none\` <col> left all 14 of these drawn (2026-09-13), which is why \`width > 0\`.
         const visibleHeads = heads.filter((th) => th.getBoundingClientRect().width > 0);
         const collisions = visibleHeads.slice(0, -1).filter((th, i) => {
           const text = th.querySelector('.sort-head') ?? th;
@@ -4553,6 +4560,10 @@ try {
           dates: dates.length,
           datesVisible: dates.filter((cell) => cell.getBoundingClientRect().width > 0).length,
           title: Math.round(table?.querySelector('.tbl-title-cell')?.getBoundingClientRect().width ?? 0),
+          // ⚠️ The table as well as the title: a collapsed column Chromium subtracts from the table
+          // leaves the title short by a gap no heading owns, which a title-only check can miss.
+          table: Math.round(table?.getBoundingClientRect().width ?? 0),
+          heads: visibleHeads.map((th) => [th.textContent.trim(), Math.round(th.getBoundingClientRect().width)]),
           collisions
         };
         previous
@@ -4572,7 +4583,7 @@ try {
   )
   check(
     'and the remaining headings do not collide while the title keeps readable space',
-    narrowTable.collisions === 0 && narrowTable.title >= 160,
+    narrowTable.collisions === 0 && narrowTable.title >= 160 && narrowTable.table >= narrowTable.panel - 1,
     JSON.stringify(narrowTable)
   )
 

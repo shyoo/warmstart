@@ -9,10 +9,14 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 **desktop notifications**. The maintained reference in [`docs/`](docs/README.md) is the authority on
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Last full local validation (t419, 2026-09-13): `npm run typecheck`, `npm run lint`, `npm test`,
-`npm run build` and L2 (**203 checks**) passed. ⚠️ L3 is **418 of 421**: the narrowed Routing Model
-centring check and both narrow-task-panel checks fail identically on `main` at cb82200 (measured on a
-clean worktree), so they predate t419 and are open.
+Baseline (2026-09-13, Windows, measured): typecheck, lint, build pass; L1 **3,372 passed, 2 skipped**
+(189 files); L2 **203 checks** (5 skipped); L4 `test:pack` **19 checks** (before the last CSS fix).
+L3 **421 of 421 in 3 of 4 runs** after the fix; the fourth failed only *the landing this section
+needs actually landed* (`git switch -c warmstart/t10.2-…` failed) — unrelated, first seen here.
+
+⚠️ **Not pushed yet.** `/push` was stopped by the 3 red L3 checks; the operator chose *fix, then push*
+and the fix is committed locally on top of 12 unpushed commits. Next agent: re-run L1–L4 once
+(`npm run pack` + `test:pack` too — the renderer changed after the last pack), then `git push`.
 
 ## Closed in this cleanup
 
@@ -26,10 +30,12 @@ clean worktree), so they predate t419 and are open.
   reference: [`docs/remote.md`](docs/remote.md#remote-desktops). ⚠️ **Never driven between two real
   machines**: L1 covers negotiation, the gate, the store and routing; L2 covers only the plain-HTTP refusals.
 - **A nearby reset no longer preempts healthy work (t418, 2026-09-13).** Early wrap-up now needs its model pool at high-water (92% for five-hour windows), not just t416's `config cache` reset; refusal and the 95% active-overrun guard remain separate.
-- **Pages and Routing Model tables stay centred (t417, 2026-09-13).** Pages now centre their
-  measured column; the paper makes its width explicit, keeping prose and tables on that same line
-  as the pane contracts. L3 verifies both a wide Statistics pane and every Routing Model table in a
-  620px scroll surface.
+- **Pages and Routing Model tables stay centred (t417); the task table's narrow columns really drop
+  (t415).** Both L3 checks had been committed red. `.tbl--paper` is now a fit-content block with
+  `overflow-x: auto` (Table 12's ten columns ran 148px past a 620px pane), and the centring check
+  measures `.content`'s client box, not its border box (a Windows scrollbar is 10px). A dropped task
+  column is `visibility: collapse; width: 0` — `display: none` on a `<col>` left the cells drawn, and
+  a `ResizeObserver` never fires in L3's hidden window. Detail in [`docs/ui.md`](docs/ui.md).
 - **Canonical versioning and verified release download (t416, 2026-09-13).** `version.json` now
   names the release and GitHub repository; a build rejects package/lock metadata that does not agree,
   and the daemon, MCP handshake, app footer and builder artifact name consume it. Packaged Warmstart
@@ -42,18 +48,10 @@ clean worktree), so they predate t419 and are open.
   Awaiting and names the workspace it still locks, rather than pinning under Running or hiding the lock.
 - **Composer workspace pill first, purple pending-PR dot, split thread bubbles on a mid-flight reply
   (t414, 2026-09-13).** See `lib/threadbubble.ts` and `delivery.pending`.
-- **Five UI reports off t410 (2026-09-13), each measured in the built app.** ⭐ *The code diff view is
-  gone*: `DiffPanel` was drawn on `status === 'awaiting_human'` alone, so the change vanished the moment
-  a task finished — which is when a thread is most often read. It is drawn wherever the change resolves
-  (rung 1 of `resolveRange` is the recorded commits, which outlive the branch), opens itself only at the
-  gate, and is silent where nothing resolves rather than putting a refusal under every draft. Retitled
-  **Changes in this task**. ⭐ *Each commit links to its own diff with its own ± totals*:
-  `task.commitDiff` / `task.commitFile` read `<sha>^!`, never a range across it, behind the same double
-  gate as the branch pair — the sha must be one this task recorded **and** the path one that commit
-  changed. ⭐ *Both diff layouts*: `lib/sidebyside.ts`, remembered per person. Single-column and split views
-  checked on rendered DOM. ⭐ *Bars under the 3D plot's marks*: isometric scatter mark stands on a bar over its
-  floor position (`lib/plot3d.ts`). ⭐ *TOOK folded to two rows at 100% zoom*: allocated width widened across
-  table headers (`FROM`, `DEP`, `QUALITY`).
+- **Five UI reports off t410 (2026-09-13).** **Changes in this task** is drawn wherever the change
+  resolves, not only at `awaiting_human`; each commit links its own `<sha>^!` diff behind the same
+  double gate; side-by-side layout (`lib/sidebyside.ts`); bars under 3D marks (`lib/plot3d.ts`);
+  `FROM`/`DEP`/`QUALITY`/`TOOK` widths measured to fit.
 - **Credits off is four situations, and the row now says which one (t408, 2026-09-13).** ⭐ Measured on
   `ClaudeFirst` off Claude Code 2.1.270: usage credits were **on** at the vendor
   (`hasExtraUsageEnabled: true`, `user_disabled: false`) and the row still read *Vendor reports credits

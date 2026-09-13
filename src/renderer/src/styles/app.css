@@ -2098,21 +2098,26 @@ body {
 
 /* ⛔ Container widths, not viewport widths. The sidebar is resizable, so two windows with the same
    outer width can leave the table hundreds of pixels apart. A viewport query kept both dates in a
-   960px table and their fixed columns consumed the title before the breakpoint noticed (t415). */
+   960px table and their fixed columns consumed the title before the breakpoint noticed (t415).
+   ⚠️ A dropped column is `visibility: collapse` at `width: 0`, never `display: none`, measured
+   2026-09-13 in `test/ui.test.mjs`: a `display: none` `<col>` left all 14 date cells drawn, and
+   hiding the cells too changed the table's structure mid-layout, so on some runs 247px of a 988px
+   table belonged to no heading. Collapse keeps the grid's shape; the zero width stops Chromium
+   subtracting the column from the table and leaving the title a gap. */
 @container task-table (max-width: 1050px) {
   .tbl--tasks .tbl-col-created,
-  .tbl--tasks .tbl-col-updated { display: none; }
+  .tbl--tasks .tbl-col-updated { visibility: collapse; width: 0; }
 }
 
 @container task-table (max-width: 850px) {
   .tbl--tasks .tbl-col-from,
-  .tbl--tasks .tbl-col-quality { display: none; }
+  .tbl--tasks .tbl-col-quality { visibility: collapse; width: 0; }
   .tbl--tasks .tbl-col-worker { width: 78px; }
   .tbl--tasks .tbl-col-took { width: 62px; }
 }
 
 @container task-table (max-width: 550px) {
-  .tbl--tasks .tbl-col-dep { display: none; }
+  .tbl--tasks .tbl-col-dep { visibility: collapse; width: 0; }
   .tbl--tasks .tbl-col-worker { width: 68px; }
   .tbl--tasks .tbl-col-price { width: 62px; }
   .tbl--tasks .tbl-col-status { width: 68px; }
@@ -6885,9 +6890,15 @@ select:focus-visible,
   border-top: 1.5px solid var(--paper-ink);
   border-bottom: 1.5px solid var(--paper-ink);
   /* Content-width and centred in the column, as a paper's table is; a wide one fills the column
-     and wraps rather than running past its edge. */
-  width: auto;
+     and wraps rather than running past its edge.
+     ⚠️ A table cannot shrink below its min-content, so on its own `max-width` does nothing for one
+     that wraps no further: Table 12's ten columns ran 148px past a narrowed column. As a
+     fit-content block it scrolls inside its own box instead, and at a normal measure it is the
+     same size as before. */
+  display: block;
+  width: fit-content;
   max-width: 100%;
+  overflow-x: auto;
   margin: 0 auto var(--sp-4);
   caption-side: top;
 }
