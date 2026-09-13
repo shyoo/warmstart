@@ -125,6 +125,9 @@ describe('qr', () => {
     const blocks = deinterleave(readCodewords(matrix.modules, matrix.version, matrix.mask), matrix.version)
     for (const block of blocks) expect(syndromes(block, LAYOUT[matrix.version]!.ec)).toEqual(new Array(LAYOUT[matrix.version]!.ec).fill(0))
     expect(decodeText(blocks, matrix.version)).toBe(text)
+    // A scanner may read either format copy. The lower copy intersects the fixed dark module,
+    // which must win over the format bit for every mask.
+    expect(matrix.modules[matrix.size - 8]![8]).toBe(true)
   })
 
   it('draws the three finders, the timing patterns and the dark module', () => {

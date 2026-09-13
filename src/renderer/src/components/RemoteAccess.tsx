@@ -145,7 +145,7 @@ export function RemoteAccess({ machineLabel = null }: { machineLabel?: string | 
             <p className="warn">No address is available yet.</p>
           )}
 
-          <h3>Tailscale setup</h3>
+          <h3>Tailscale connectivity</h3>
           <p>
             {tailscaleStep(status)}{' '}
             {!status.tailscale?.installed && (
@@ -160,7 +160,7 @@ export function RemoteAccess({ machineLabel = null }: { machineLabel?: string | 
 
           {status.desktopsEnabled && (
             <>
-              <h3>Pair a desktop</h3>
+              <h3>Desktop pairing</h3>
               <p className="dim">
                 On the other computer, open Settings → Global → Remote Warmstarts and paste this link. It
                 needs this computer&apos;s Tailscale HTTPS address.
@@ -193,7 +193,7 @@ export function RemoteAccess({ machineLabel = null }: { machineLabel?: string | 
 
           {status.enabled && (
             <>
-          <h3>Pair a phone</h3>
+          <h3>Phone pairing</h3>
           {/* ⚠️ A code is only useful with an address to carry it: the QR encodes a URL, and with no
               listener there is nothing for it to point at. */}
           <button
@@ -210,7 +210,7 @@ export function RemoteAccess({ machineLabel = null }: { machineLabel?: string | 
           </button>
           {pair && <Pairing pair={pair} now={now} />}
 
-          <h3>Projects</h3>
+          <h3>Project enablement</h3>
           <p className="dim">For phones. A paired desktop sees every project.</p>
           {status.projects.map((project) => (
             <SettingRow
@@ -235,7 +235,7 @@ export function RemoteAccess({ machineLabel = null }: { machineLabel?: string | 
             </>
           )}
 
-          <h3>Paired devices</h3>
+          <h3>Devices paired to this computer</h3>
           {status.devices.length ? (
             status.devices.map((device) => (
               <div className="setting-row" key={device.id}>

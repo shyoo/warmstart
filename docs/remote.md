@@ -74,7 +74,7 @@ The fix belongs in what the phone does with a slow path, not in trying to make e
    *Remote access* screen names whichever of these is still missing, one step at a time.
 3. Turn on **Allow paired phones**, enable the projects the phone may reach, and press
    **Generate pairing code**.
-4. Scan the QR code with the phone. The code is eight characters, lives two minutes, and works once.
+4. Scan the QR code with the phone. The code is eight characters, lives two minutes, and works once. The QR matrix includes the mandatory fixed dark module after format metadata is placed; this matters because a camera may reject the affected masks even when the code looks normal on screen.
 5. Add the opened page to the phone's home screen, then turn on notifications from the app.
 
 Success looks like an `https://…ts.net:<port>` address on the desktop screen and the phone in the
@@ -169,7 +169,7 @@ is refused rather than storing the token in plain text.
 1. On the host: turn on *Allow paired desktops*, make sure the Tailscale HTTPS address is listed,
    and press **Generate desktop pairing code**. The code is eight characters, works once, and lasts
    two minutes. Copy the link shown with it.
-2. On the client: **Settings → Global → Remote Warmstarts**, paste the link (or the address and code
+2. On the client: **Settings → Global → Remote connection → Paired computers → Add computer**, paste the link (or the address and code
    separately), optionally name it, and press **Pair**.
 3. Pick it from the list above Overview.
 

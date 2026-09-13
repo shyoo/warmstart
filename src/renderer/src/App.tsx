@@ -38,6 +38,8 @@ import { Controller } from './components/Controller'
 import { Project as ProjectView, type ProjectTab } from './components/Project'
 import { SidebarResizer } from './components/SidebarResizer'
 import { AppSettings } from './components/AppSettings'
+import { RemoteAccess } from './components/RemoteAccess'
+import { RemoteMachines } from './components/RemoteMachines'
 import { RoutingModel, type RoutingTab } from './components/RoutingModel'
 import { Statistics, type StatisticsTab } from './components/Statistics'
 import { QualityReview } from './components/QualityReview'
@@ -666,33 +668,14 @@ export function App({
           ) : route.kind === 'settings' && route.page === 'workers' ? (
             <Workers fleet={fleet} refresh={refresh} />
           ) : route.kind === 'settings' && route.page === 'global' ? (
-            <>
-              <Doctor now={now} />
-              {/* ⚠️ Above the app's own preferences: this one governs the *fleet*, and the tray
-                  switch below it governs this window. Two different scopes, in scope order. */}
-              <div className="panel">
-                <header className="panel-head">
-                  <div>
-                    <h2>Fleet settings</h2>
-                    <p className="panel-sub">Defaults every project and session inherits.</p>
-                  </div>
-                </header>
-                <FleetSettings />
-              </div>
-              <AppSettings />
-              {/* ⛔ No fleet-wide Resources table any more. It listed the same pools and locks a
-                  project's own Settings tab already shows, one screen away from the project they
-                  belong to, and under a heading reading Settings it looked like a page of things
-                  you could change when it was purely informational. Removed 2026-08-31 on the
-                  operator's call — the free/capacity number survives as the Workspaces column on
-                  each project's own row. */}
-              <Projects
-                projects={projects}
-                resources={resources}
-                refresh={refreshProjects}
-                onAdd={() => setAddingProject(true)}
-              />
-            </>
+            <GlobalSettings
+              now={now}
+              projects={projects}
+              resources={resources}
+              refreshProjects={refreshProjects}
+              onAddProject={() => setAddingProject(true)}
+              remoteMachineLabel={target.kind === 'remote' ? target.label : null}
+            />
           ) : route.kind === 'project' ? (
             <ProjectRoute
               route={route}
@@ -743,6 +726,72 @@ export function App({
         </footer>
       </main>
     </div>
+  )
+}
+
+type GlobalTab = 'notice' | 'status' | 'fleet' | 'behavior' | 'remote'
+
+function GlobalSettings({
+  now,
+  projects,
+  resources,
+  refreshProjects,
+  onAddProject,
+  remoteMachineLabel
+}: {
+  now: number
+  projects: Project[]
+  resources: ResourceAvailability[]
+  refreshProjects: () => Promise<void>
+  onAddProject: () => void
+  remoteMachineLabel: string | null
+}): React.JSX.Element {
+  // Opening Global always returns to the controls people change; status panels remain one click away.
+  const [tab, setTab] = useState<GlobalTab>('fleet')
+  const tabs: Array<{ id: GlobalTab; label: string }> = [
+    { id: 'notice', label: 'Notice' },
+    { id: 'status', label: 'Status' },
+    { id: 'fleet', label: 'Fleet settings' },
+    { id: 'behavior', label: 'App behavior' },
+    { id: 'remote', label: 'Remote connection' }
+  ]
+  return (
+    <section className="global-settings">
+      <header className="page-head">
+        <div>
+          <h1>Global settings</h1>
+          <p>Fleet-wide controls, this app&apos;s behavior, and remote access.</p>
+        </div>
+      </header>
+      <nav className="tabs global-settings-tabs" aria-label="Global settings">
+        {tabs.map((item) => (
+          <button
+            key={item.id}
+            className={`tab${tab === item.id ? ' tab--active' : ''}`}
+            aria-current={tab === item.id ? 'page' : undefined}
+            onClick={() => setTab(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
+      {tab === 'notice' && <Doctor now={now} view="notice" />}
+      {tab === 'status' && <>
+        <Doctor now={now} view="status" />
+        <Projects projects={projects} resources={resources} refresh={refreshProjects} onAdd={onAddProject} />
+      </>}
+      {tab === 'fleet' && (
+        <div className="panel">
+          <header className="panel-head"><div><h2>Fleet settings</h2><p className="panel-sub">Defaults every project and session inherits.</p></div></header>
+          <FleetSettings />
+        </div>
+      )}
+      {tab === 'behavior' && <AppSettings />}
+      {tab === 'remote' && <>
+        <RemoteAccess machineLabel={remoteMachineLabel} />
+        <RemoteMachines />
+      </>}
+    </section>
   )
 }
 

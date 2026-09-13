@@ -3498,6 +3498,28 @@ select:focus-visible,
   margin-bottom: var(--sp-2);
 }
 
+.global-settings-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: var(--sp-1) 0;
+  background: var(--color-bg);
+  overflow-x: auto;
+}
+
+.remote-section-head {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+
+.remote-section-head h3,
+.remote-section-head p { margin: 0; }
+
+.remote-pair-modal { max-width: 560px; padding: var(--sp-4); }
+
 .tab {
   font: inherit;
   font-size: var(--text-meta);

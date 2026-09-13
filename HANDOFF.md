@@ -15,6 +15,8 @@ All suites (L1–L4) re-run and pass cleanly after repackaging.
 
 ## Closed in this cleanup
 
+- **Global settings are now task-oriented tabs (t422, 2026-09-13).** Global opens on **Fleet settings**; Notice isolates doctor warnings, Status holds daemon/CLI/worker/cost-model facts and Projects, App behavior holds window preferences, and Remote connection orders Tailscale, project access, desktop and phone pairing. Adding a remote computer is modal. The phone QR encoder now restores QR's fixed dark module after format placement; it was previously overwritten for some masks and could not be read by a camera. Validation on this branch: `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build` passed.
+
 - **Later pushes reconcile with an earlier local landing (t421, 2026-09-13).** A landing message
   remains an honest record of what its own strategy did. When `origin/<target>` later contains its
   commit, startup and a five-minute sweep fetch first and add a separate *Later observed* thread row;

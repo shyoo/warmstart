@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { errorMessage } from '@shared/errors.js'
 import { useTarget } from '../lib/target'
 
@@ -17,9 +17,10 @@ export function RemoteMachines(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [done, setDone] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
   const remotes = state.targets.filter((t) => t.kind === 'remote')
 
-  const pair = async (): Promise<void> => {
+  const pair = async (): Promise<boolean> => {
     setBusy(true)
     setError(null)
     setDone(null)
@@ -30,9 +31,11 @@ export function RemoteMachines(): React.JSX.Element {
       setAddress('')
       setCode('')
       setLabel('')
+      return true
     } catch (err) {
       // ⚠️ IPC wraps a rejection in "Error invoking remote method…"; the sentence after it is ours.
       setError(errorMessage(err).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
+      return false
     } finally {
       setBusy(false)
     }
@@ -83,43 +86,48 @@ export function RemoteMachines(): React.JSX.Element {
         <p className="dim">No remote computers paired.</p>
       )}
 
-      <h3>Pair with another computer</h3>
-      <p className="dim">
-        On the other computer, open Settings → Global → Remote access, turn on <strong>Allow paired
-        desktops</strong>, and press <strong>Generate desktop pairing code</strong>. Paste the link it shows
-        here. The code works once and lasts two minutes.
-      </p>
-      {!state.canStoreCredentials && (
-        <p className="warn">
-          This computer has no OS keychain Warmstart can use, so it cannot keep a remote&apos;s credential
-          encrypted — and will not keep it in plain text. Pairing is unavailable here.
-        </p>
-      )}
-      <div className="remote-pair-form">
-        <label className="dim">
-          Pairing link or address
-          <input
-            className="text-input mono"
-            value={address}
-            placeholder="https://host.tailnet.ts.net:8787/#/desktop-pair?code=…"
-            spellCheck={false}
-            onChange={(e) => setAddress(e.target.value)}
-          />
-        </label>
-        <label className="dim">
-          Code, if it is not in the link
-          <input className="text-input mono" value={code} maxLength={8} spellCheck={false} onChange={(e) => setCode(e.target.value)} />
-        </label>
-        <label className="dim">
-          Name (optional)
-          <input className="text-input" value={label} placeholder="Defaults to the host name" onChange={(e) => setLabel(e.target.value)} />
-        </label>
-        <button className="btn btn--primary" disabled={busy || !address.trim() || !state.canStoreCredentials} onClick={() => void pair()}>
-          {busy ? 'Pairing…' : 'Pair'}
-        </button>
-      </div>
       {error && <p className="warn">{error}</p>}
       {done && <p className="dim">{done}</p>}
+      <div className="remote-section-head">
+        <div><h3>Paired computers</h3><p className="dim">Computers this one can drive over Tailscale.</p></div>
+        <button className="btn btn--primary" disabled={!state.canStoreCredentials} onClick={() => setAdding(true)}>Add computer</button>
+      </div>
+      {!state.canStoreCredentials && <p className="warn">This computer has no OS keychain Warmstart can use, so it cannot keep a remote credential encrypted. Pairing is unavailable here.</p>}
+      {adding && (
+        <PairComputerModal
+          address={address} code={code} label={label} busy={busy} canStoreCredentials={state.canStoreCredentials}
+          setAddress={setAddress} setCode={setCode} setLabel={setLabel}
+          onClose={() => setAdding(false)}
+          onPair={async () => { if (await pair()) setAdding(false) }}
+        />
+      )}
+    </div>
+  )
+}
+
+function PairComputerModal({
+  address, code, label, busy, canStoreCredentials, setAddress, setCode, setLabel, onClose, onPair
+}: {
+  address: string; code: string; label: string; busy: boolean; canStoreCredentials: boolean
+  setAddress: (value: string) => void; setCode: (value: string) => void; setLabel: (value: string) => void
+  onClose: () => void; onPair: () => Promise<void>
+}): React.JSX.Element {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+  return (
+    <div className="confirm-shade" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
+      <section className="task-composer-modal remote-pair-modal" role="dialog" aria-modal="true" aria-labelledby="pair-computer-title">
+        <header className="wizard-head"><div><h3 id="pair-computer-title">Add a paired computer</h3><p className="wizard-sub">On the other computer, enable paired desktops and generate a desktop pairing link. It works once and expires after two minutes.</p></div><button className="btn btn--ghost" aria-label="Close" onClick={onClose}>✕</button></header>
+        <div className="remote-pair-form">
+          <label className="dim">Pairing link or address<input className="text-input mono" value={address} placeholder="https://host.tailnet.ts.net:8787/#/desktop-pair?code=…" spellCheck={false} onChange={(e) => setAddress(e.target.value)} /></label>
+          <label className="dim">Code, if it is not in the link<input className="text-input mono" value={code} maxLength={8} spellCheck={false} onChange={(e) => setCode(e.target.value)} /></label>
+          <label className="dim">Name (optional)<input className="text-input" value={label} placeholder="Defaults to the host name" onChange={(e) => setLabel(e.target.value)} /></label>
+          <div className="modal-actions"><button className="btn" onClick={onClose}>Cancel</button><button className="btn btn--primary" disabled={busy || !address.trim() || !canStoreCredentials} onClick={() => void onPair()}>{busy ? 'Pairing…' : 'Pair computer'}</button></div>
+        </div>
+      </section>
     </div>
   )
 }

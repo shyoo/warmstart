@@ -77,8 +77,9 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Logs` | the daemon's log, live and filterable, ring-buffered so a late window sees the past |
 | `Terminal` | the real agent TUI over xterm.js, not a reconstruction |
 | `AppSettings` `SettingRow` `SettingButtonSelect` `SidebarResizer` | chrome |
-| `RemoteAccess` | the shown computer's listener: the phone and desktop switches, the address, the phone QR, the desktop pairing link and the paired devices. Renders under `AppSettings`, with the per-project half in `ProjectSettings`. See [`remote.md`](remote.md) |
-| `Root` `MachinePicker` `RemoteMachines` | which computer the window shows. `Root` keys `App` by the selected computer so a switch re-mounts everything, and owns notifications so they survive the switch; `MachinePicker` sits above Overview; `RemoteMachines` (under `AppSettings`) pairs and forgets remotes through main. `lib/target.ts` holds the id every `rpc()` names. See [`remote.md`](remote.md#remote-desktops) |
+| `GlobalSettings` | the five in-page Global tabs: Notice (doctor warnings), Status (daemon, CLIs, workers, cost models and projects), Fleet settings (the default), App behavior and Remote connection. |
+| `RemoteAccess` | the shown computer's listener: Tailscale state, project enablement, phone and desktop switches, pairing material and host-paired devices. It renders in Global → Remote connection, with the per-project half in `ProjectSettings`. See [`remote.md`](remote.md) |
+| `Root` `MachinePicker` `RemoteMachines` | which computer the window shows. `Root` keys `App` by the selected computer so a switch re-mounts everything, and owns notifications so they survive the switch; `MachinePicker` sits above Overview; `RemoteMachines` lists remotes and opens a modal to add one from Global → Remote connection. `lib/target.ts` holds the id every `rpc()` names. See [`remote.md`](remote.md#remote-desktops) |
 | `src/mobile` | fixed-tab phone PWA: project-scoped Overview (Attention + 200-entry timeline), quota gauges, paginated task cards with a `+` composer, and read-only Settings. See [`remote.md`](remote.md) |
 
 ⛔ **A thread setting is one component, and the menu behind it is a pure function.**

@@ -12,7 +12,7 @@ import { errorMessage } from '@shared/errors.js'
  * how old each quota reading is, and which cost model is in force. Every warning names the thing to
  * fix.
  */
-export function Doctor({ now }: { now: number }): React.JSX.Element {
+export function Doctor({ now, view = 'status' }: { now: number; view?: 'notice' | 'status' }): React.JSX.Element {
   const [report, setReport] = useState<DoctorReport | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
@@ -37,8 +37,8 @@ export function Doctor({ now }: { now: number }): React.JSX.Element {
     <div className="panel">
       <header className="panel-head">
         <div>
-          <h2>Global</h2>
-          <p className="panel-sub">What Warmstart can see, and what it cannot.</p>
+          <h2>{view === 'notice' ? 'Notice' : 'Status'}</h2>
+          <p className="panel-sub">{view === 'notice' ? 'Potential problems that need attention.' : 'What Warmstart can see, and what it cannot.'}</p>
         </div>
         <button className="btn" disabled={running} onClick={() => void run()}>
           {running ? 'Checking…' : 'Re-check'}
@@ -58,6 +58,9 @@ export function Doctor({ now }: { now: number }): React.JSX.Element {
             </ul>
           )}
 
+          {view === 'notice' && report.warnings.length === 0 ? <p className="ok">No problems found.</p> : null}
+
+          {view === 'status' && <>
           <Section title="Daemon">
             <dl className="kv">
               <dt>version</dt>
@@ -157,6 +160,7 @@ export function Doctor({ now }: { now: number }): React.JSX.Element {
             you how old it is. An old reading is reported as <em>unknown</em> rather than as a number,
             because a stale percentage makes the compaction reserve look satisfied when it is not.
           </p>
+          </>}
         </>
       )}
     </div>

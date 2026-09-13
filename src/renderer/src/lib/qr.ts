@@ -345,6 +345,10 @@ export function qrMatrix(text: string): QrMatrix {
     })
     placeVersion(size, version, modules)
     placeFormat(size, modules, mask)
+    // The dark module overlaps the lower format strip's eighth position. ISO/IEC 18004 requires it
+    // to stay dark regardless of that format bit; setting it before the strip made some masks
+    // camera-unreadable even though an encoder-only round trip looked valid.
+    modules[size - 8]![8] = true
     const score = penalty(modules)
     if (score < bestScore) {
       bestScore = score
