@@ -235,14 +235,20 @@ describe('a run past its estimate', () => {
  * beautifully and gates nothing is the failure mode here.
  */
 describe('the switches that gate all of this', () => {
-  /** A worker whose window closes inside the preempt margin, from a live rate-limit record. */
-  function seedClosingWindow(workerId: string, resetInMs = 10 * 60_000): void {
+  /** A high-water worker whose window closes inside the preempt margin. */
+  function seedClosingWindow(
+    workerId: string,
+    resetInMs = 10 * 60_000,
+    percent = scheduler.QUOTA_HIGH_WATER
+  ): void {
+    const resetsAt = Date.now() + resetInMs
     db.db()
       .prepare(
         `insert into rate_limit_samples (worker_id, session_id, window_id, status, resets_at, sampled_at)
          values (?,?,?,?,?,?)`
       )
-      .run(workerId, null, '5h', 'allowed', Date.now() + resetInMs, Date.now())
+      .run(workerId, null, '5h', 'allowed', resetsAt, Date.now())
+    seedQuotaPercent(workerId, percent, resetsAt)
   }
 
   it('leaves a closing window alone when preemption is off', async () => {
@@ -291,6 +297,21 @@ describe('the switches that gate all of this', () => {
     expect(tasks.getTask(task.id)?.notBefore).not.toBeNull()
   })
 
+  it('does not preempt a healthy run merely because its config-cache reset is near (t418)', async () => {
+    const { task, run } = seedRunawayTask(0)
+    // The reported CodexFirst state: the cached five-hour window had 59% usage with 12m45s to
+    // reset. A reset is a clock, not a refusal; without high-water evidence it must not end work.
+    seedQuotaPercent(tasks.requireRun(run.id).workerId, 59, 12 * 60_000 + 45_000)
+
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(130_000)
+
+    expect(tasks.requireTask(task.id).quotaPreemptWarning).toBeNull()
+    expect(wrapUpsOn(task.id)).toBe(0)
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+    expect(tasks.requireRun(run.id).endedAt).toBeNull()
+  })
+
   it('defaults a compact-capable worker to compact while still offering handoff', async () => {
     const { task, run } = seedRunawayTask(0, 'claude-code')
     seedClosingWindow(tasks.requireRun(run.id).workerId)
@@ -337,8 +358,7 @@ describe('the switches that gate all of this', () => {
   it('falls back to handoff when quota window is 100% exhausted on a compact-capable worker', async () => {
     const { task, run } = seedRunawayTask(0, 'claude-code')
     const workerId = tasks.requireRun(run.id).workerId
-    seedClosingWindow(workerId)
-    seedQuotaPercent(workerId, 100)
+    seedClosingWindow(workerId, 10 * 60_000, 100)
 
     await scheduler.tick()
 

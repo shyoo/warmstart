@@ -998,7 +998,7 @@ the window it overrules so the permission expires with its reason.
 |---|---|
 | the 92% dispatch cut | a disabled, signed-out, human-occupied or quarantined account |
 | the 95% mid-run preempt — ⛔ dispatching under an override and preempting three points later buys a cold start and nothing else | the worker's concurrency cap |
-| | the **window boundary** preempt, which is a clock and not a percentage |
+| the early boundary preempt, when the same fresh model pool is at its high-water mark | |
 | | a turn the vendor **refused**. There is no setting that makes a refused turn a served one |
 | | `windowRisk` itself — ⚠️ an overridden account must still score last, or a fleet with a free account elsewhere would start feeding the full one |
 

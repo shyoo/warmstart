@@ -461,7 +461,9 @@ about (t71, 2026-08-31). A caution now lowers a routing score on its own but mus
 fleet's own reading of **the same window** before it ends anything. See `cost-model.md` §5.
 
 **Preemption** — stopping a run before a quota window closes: wrap up, commit what compiles, write a
-handoff, then compact or close. The task rests at `paused_quota` with `not_before = resets_at` **of
+handoff, then compact or close. An early boundary preemption needs both the reset clock and a fresh
+high-water reading from that run's model pool; the clock alone is not evidence a healthy run will be
+refused. The task rests at `paused_quota` with `not_before = resets_at` **of
 the window that stopped it** — a worker reports several and a weekly one is not a five-hour one, so a
 reset borrowed from the wrong window parks a task for days. And
 `resumeQuotaPaused()` — a clock tick beside `admitScheduled()` — puts it back to `ready` when that

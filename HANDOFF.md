@@ -15,6 +15,7 @@ Expected test warnings exercise refusal and recovery paths; they are not failure
 
 ## Closed in this cleanup
 
+- **A nearby reset no longer preempts healthy work (t418, 2026-09-13).** Early wrap-up now needs its model pool at high-water (92% for five-hour windows), not just t416's `config cache` reset; refusal and the 95% active-overrun guard remain separate.
 - **Pages and Routing Model tables stay centred (t417, 2026-09-13).** Pages now centre their
   measured column; the paper makes its width explicit, keeping prose and tables on that same line
   as the pane contracts. L3 verifies both a wide Statistics pane and every Routing Model table in a

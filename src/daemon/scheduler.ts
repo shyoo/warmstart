@@ -2572,7 +2572,27 @@ async function runWatchdogs(): Promise<void> {
       continue
     }
 
-    if (switches.autoPreempt && reset && reset.at - Date.now() <= margin && task.preemptible) {
+    // A reset clock says when this window turns over, not that the account is about to refuse a
+    // turn.  It needs a fresh reading from this run's own pool at the same high-water mark that
+    // stops new work; otherwise a healthy Codex run at 59% can be interrupted merely because its
+    // periodic config-cache reset is nearby (t418, 2026-09-13).
+    const boundaryQuota = lastQuota(run.workerId)
+    const boundaryWindow = watchdogWorker && boundaryQuota && !boundaryQuota.stale
+      ? sessionWindowFor(boundaryQuota.windows, poolFor(watchdogWorker, runningModel))
+      : null
+    const boundaryAtRisk =
+      boundaryWindow !== null &&
+      boundaryWindow !== undefined &&
+      !windowExpired(boundaryWindow) &&
+      boundaryWindow.percent >= windowHighWater(boundaryWindow)
+
+    if (
+      switches.autoPreempt &&
+      boundaryAtRisk &&
+      reset &&
+      reset.at - Date.now() <= margin &&
+      task.preemptible
+    ) {
       if (onCredits) {
         noteCreditsStandDown(run, task, 'preempt')
       } else if (await warnBeforeQuotaPreempt(task, session, 'window', reset.at, reset.source)) {
