@@ -10,13 +10,8 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-13, Windows, measured): typecheck, lint, build pass; L1 **3,372 passed, 2 skipped**
-(189 files); L2 **203 checks** (5 skipped); L4 `test:pack` **19 checks** (before the last CSS fix).
-L3 **421 of 421 in 3 of 4 runs** after the fix; the fourth failed only *the landing this section
-needs actually landed* (`git switch -c warmstart/t10.2-…` failed) — unrelated, first seen here.
-
-⚠️ **Not pushed yet.** `/push` was stopped by the 3 red L3 checks; the operator chose *fix, then push*
-and the fix is committed locally on top of 12 unpushed commits. Next agent: re-run L1–L4 once
-(`npm run pack` + `test:pack` too — the renderer changed after the last pack), then `git push`.
+(189 files); L2 **203 checks** (5 skipped); L3 **421 checks**; L4 `test:pack` **19 checks**.
+All suites (L1–L4) re-run and pass cleanly after repackaging.
 
 ## Closed in this cleanup
 
