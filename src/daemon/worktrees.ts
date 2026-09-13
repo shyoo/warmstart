@@ -1,6 +1,5 @@
-import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, statSync, writeSync } from 'node:fs'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { FinishPolicy, Project, ResourceClaim, Task, WorkspaceMode } from '@shared/tasks.js'
 import { resolveFinishPolicy } from '@shared/policy.js'
 import { landingBaseFor } from './landingbase.js'
@@ -20,6 +19,7 @@ import { log } from './log.js'
 import { git } from './git.js'
 import { errorMessage } from '@shared/errors.js'
 import { run } from './spawn.js'
+import { sweepAcls } from './acl.js'
 import { appEnvName } from '@shared/env.js'
 
 /**
@@ -140,6 +140,7 @@ export async function ensurePool(project: Project): Promise<string[]> {
     try {
       // --detach: a pool member holds no branch at rest, so any task branch is free to be claimed.
       await git(project.root, ['worktree', 'add', '--detach', path, base])
+      await ensureWorktreePointer(project, path)
       log.info(`created worktree ${path} from ${base}`)
     } catch (err) {
       log.error(`could not create worktree ${path}:`, err)
@@ -511,59 +512,123 @@ async function catchUpEmptyBranch(path: string, branch: string, base: string): P
 }
 
 /**
- * On Windows, sandboxed agent runs (e.g. Codex with `--sandbox workspace-write`) apply NTFS ACLs
- * and temporary sandbox user permissions. An interrupted run or sandbox cleanup glitch can leave
- * explicit `(DENY)` ACLs on the workspace or its `.git/worktrees/<slot>` metadata directory, which
- * subsequently causes git locks (`index.lock`, `HEAD.lock`) to fail with Permission Denied.
- * Resetting ACLs on preparation ensures clean inherited permissions.
+ * Leave the workspace, its git metadata and the shared refs writable to the next sandboxed run.
  *
- * ⚠️ **It cannot reset every file, and now says so.** Measured in ws1, 2026-09-11: 155 files were
- * owned by `CodexSandboxOffline` — a sandboxed run had rewritten them — and the daemon, running as
- * the operator without elevation, holds Modify on them but not WRITE_DAC. `icacls … /reset` answers
- * *Access is denied* for each and `/c` carries on, so those files keep whatever DACL the sandbox
- * last gave them: an old capability SID, and not necessarily the one the next run is granted. With
- * `stdio: 'ignore'` that was invisible; t353's Codex run reported *"Failed to write file"* on one of
- * exactly those files and nothing in the log pointed here.
+ * ⛔ The mechanism, the measurement and the 7.2 s are in `acl.ts`. What is decided here is *where*:
+ * the workspace tree (recursive), the `.git/worktrees/<slot>` directory it points at (recursive —
+ * `index`, `HEAD` and `ORIG_HEAD` are rewritten by every commit), and the common `.git`'s `refs`
+ * and `logs` trees plus its top-level files. ⭐ Measured 2026-09-13: `refs/heads/warmstart/t400-…`
+ * in the trunk's `.git` was owned by `CodexSandboxOffline`, because a commit replaces a ref by
+ * renaming a lock file over it, and the ref a sandboxed run wrote is one the next run cannot
+ * replace. The object store is never walked: objects are immutable, and it is the one directory
+ * large enough to make the sweep cost minutes rather than seconds.
  */
-export function cleanWorkspaceAcls(workspacePath: string): void {
+export async function cleanWorkspaceAcls(workspacePath: string): Promise<void> {
   if (process.platform !== 'win32') return
-  const reset = (path: string): void => {
-    let out: string
-    try {
-      out = execFileSync('icacls', [path, '/reset', '/t', '/c'], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        windowsHide: true,
-        timeout: 5000
-      })
-    } catch (err) {
-      // `/c` makes icacls exit 0 past per-file failures, so this is the timeout or a missing tool.
-      // ⚠️ Measured 2026-09-11: a full `/reset /t` of ws1 takes 7.2 s for 19,321 files, so the 5 s
-      // cap is hit on every prepare and whatever sorts after the cut-off is never reset. Said, not
-      // hidden — raising the cap would cost every dispatch that much, and is a separate decision.
-      if ((err as { killed?: boolean }).killed) log.warn(`ACL reset of ${path} did not finish in 5 s`)
-      else log.warn(`ACL reset of ${path} failed:`, err)
-      return
-    }
-    // icacls ends with `Successfully processed N files; Failed processing M files`.
-    const failed = Number(/Failed processing (\d+) files/.exec(out)?.[1] ?? 0)
-    if (failed > 0) {
-      log.warn(`could not reset ACLs on ${failed} file(s) under ${path} — a sandboxed run owns them`)
-    }
-  }
+  const roots: { path: string; recursive: boolean }[] = []
   try {
-    if (existsSync(workspacePath)) reset(workspacePath)
-    const dotGit = join(workspacePath, '.git')
-    if (existsSync(dotGit) && !statSync(dotGit).isDirectory()) {
-      const pointer = readFileSync(dotGit, 'utf8').trim()
-      const match = /^gitdir:\s*(.+)$/m.exec(pointer)
-      if (match?.[1]) {
-        const gitDir = resolve(workspacePath, match[1].trim())
-        if (existsSync(gitDir)) reset(gitDir)
+    if (existsSync(workspacePath)) roots.push({ path: workspacePath, recursive: true })
+    const pointer = worktreePointer(workspacePath)
+    if (pointer && existsSync(pointer.resolved)) {
+      roots.push({ path: pointer.resolved, recursive: true })
+      const commonFile = join(pointer.resolved, 'commondir')
+      if (existsSync(commonFile)) {
+        const common = resolve(pointer.resolved, readFileSync(commonFile, 'utf8').trim())
+        roots.push({ path: common, recursive: false })
+        roots.push({ path: join(common, 'refs'), recursive: true })
+        roots.push({ path: join(common, 'logs'), recursive: true })
       }
     }
+    await sweepAcls(roots)
+  } catch (err) {
+    // Best-effort ACL hygiene: a workspace this cannot read is one the switch below will explain.
+    log.warn(`ACL sweep of ${workspacePath} was skipped:`, err)
+  }
+}
+
+/**
+ * Rewrite a file's content without recreating it.
+ *
+ * ⛔ Git for Windows marks a worktree's `.git` file **hidden** (`core.hideDotFiles`), and Node's
+ * `writeFileSync` opens with `CREATE_ALWAYS`, which Windows refuses on a hidden file with `EPERM`.
+ * Opening for update and truncating keeps the attributes and works.
+ */
+function overwriteInPlace(file: string, content: string): void {
+  const fd = openSync(file, 'r+')
+  try {
+    ftruncateSync(fd, 0)
+    writeSync(fd, content, 0, 'utf8')
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/** The `gitdir:` pointer file a linked worktree carries, and where it points on this host. */
+export function worktreePointer(
+  workspacePath: string
+): { file: string; target: string; resolved: string } | null {
+  try {
+    const file = join(workspacePath, '.git')
+    if (!existsSync(file) || statSync(file).isDirectory()) return null
+    const match = /^gitdir:\s*(.+)$/m.exec(readFileSync(file, 'utf8'))
+    if (!match?.[1]) return null
+    const target = match[1].trim()
+    return { file, target, resolved: resolve(workspacePath, target) }
   } catch {
-    // Best-effort ACL hygiene
+    return null
+  }
+}
+
+/**
+ * Make sure a pool member's `.git` pointer can be followed from here — and from the other side of a
+ * WSL boundary.
+ *
+ * ⛔ **Measured on t410 (2026-09-13).** A Muse Code run, bridged through WSL, found that its own
+ * `edit_file` tool refuses every edit in a Windows-made worktree — *"cannot resolve workspace
+ * gitdir pointer: No such file or directory"* — because the tool reads `<worktree>/.git` itself and
+ * `gitdir: C:/Dev/…` is not a path a Linux process can open; the `GIT_DIR` the daemon exports helps
+ * `git` and nothing else. The agent's fix was `printf 'gitdir: /mnt/c/…' > .git`, which is the same
+ * file broken the other way: Windows git then answered *not a git repository* for ws3, so the slot
+ * could not be parked when it was released, the branch stayed registered to it, and the next
+ * dispatch of the task died on *`'<branch>' is already used by worktree at ws3`*.
+ *
+ * ⭐ Two things, both measured against git 2.54 (Windows) and 2.53 (WSL):
+ *  1. `git worktree repair <path>` rewrites a pointer whose target does not resolve — it said
+ *     *".git file broken"* and put the Windows spelling back — so a slot an agent has broken is
+ *     mended before anything tries to switch it, rather than being lost until a person notices.
+ *  2. A **relative** pointer (`gitdir: ../../warmstart/.git/worktrees/ws3`) resolves on both sides
+ *     with no environment at all, and `repair` leaves it alone. Every pool member is rewritten to
+ *     that form, so a bridged tool that reads the file finds a directory that exists. ⚠️ Whether
+ *     Muse's `edit_file` accepts it is *inferred* from its error (an `os error 2` on the resolved
+ *     path) and not yet measured against a live run. Only ever relative when the two share a drive;
+ *     `relative()` answers an absolute path otherwise and that is kept as it is.
+ */
+export async function ensureWorktreePointer(project: Project, workspacePath: string): Promise<void> {
+  if (project.vcs !== 'git' || samePath(workspacePath, project.root)) return
+  let pointer = worktreePointer(workspacePath)
+  if (!pointer) return
+  if (!existsSync(pointer.resolved)) {
+    const broken = pointer.target
+    try {
+      await git(project.root, ['worktree', 'repair', workspacePath])
+    } catch (err) {
+      log.warn(`could not repair the .git pointer of ${workspacePath} (it reads ${broken}):`, err)
+      return
+    }
+    pointer = worktreePointer(workspacePath)
+    if (!pointer || !existsSync(pointer.resolved)) {
+      log.warn(`the .git pointer of ${workspacePath} still does not resolve after repair (it read ${broken})`)
+      return
+    }
+    log.warn(`repaired the .git pointer of ${workspacePath}, which read ${broken}`)
+  }
+  if (!isAbsolute(pointer.target)) return
+  const rel = relative(workspacePath, pointer.resolved)
+  if (isAbsolute(rel)) return
+  try {
+    overwriteInPlace(pointer.file, `gitdir: ${rel.split(sep).join('/')}\n`)
+  } catch (err) {
+    log.warn(`could not rewrite the .git pointer of ${workspacePath} as a relative path:`, err)
   }
 }
 
@@ -583,7 +648,10 @@ export async function prepareWorkspace(
   /** ⛔ The task, so the base can be its parent's branch when it is a subtask. See `baseRef`. */
   task?: Task | null
 ): Promise<PrepareResult> {
-  cleanWorkspaceAcls(workspace.path)
+  // ⛔ The pointer first: a slot whose `.git` an agent has rewritten is not a repository to anything
+  // below, the ACL sweep included.
+  await ensureWorktreePointer(project, workspace.path)
+  await cleanWorkspaceAcls(workspace.path)
   const policy = policyFor(project)
   const steps: PrepareResult['steps'] = []
 
@@ -702,6 +770,7 @@ export async function parkOtherHolders(
           // ⚠️ The trunk, not the caller's base. The caller may be cutting a subtask from its
           // parent's branch, and parking a stranger's worktree onto that would be nonsense.
           const base = await trunkBaseRef(project)
+          await ensureWorktreePointer(project, path)
           await rescueDirt(path, base)
           await git(path, ['switch', '--detach', base])
           log.info(`parked ${path}, which still held ${branch}`)
@@ -761,6 +830,7 @@ export async function parkPooledHolders(
       try {
         // ⚠️ Detached **at the branch's own tip**, so nothing the slot was holding is left behind and
         // no work is moved: `rescueDirt` commits whatever it finds onto the branch first.
+        await ensureWorktreePointer(project, path)
         await rescueDirt(path, branch)
         await git(path, ['switch', '--detach', branch])
         log.info(`parked pooled workspace ${path}, which still held ${branch}`)
@@ -975,6 +1045,10 @@ export async function parkWorkspace(project: Project, path: string): Promise<Res
   // trusted to every caller.
   if (samePath(path, project.root)) return null
   try {
+    // ⛔ Before anything asks git about this directory. t410 left ws3's pointer unreadable to
+    // Windows git, so the park failed, the slot was released holding its branch, and the task's next
+    // dispatch could not take the branch anywhere. See `ensureWorktreePointer`.
+    await ensureWorktreePointer(project, path)
     const base = await trunkBaseRef(project)
     // ⛔ Blind, and deliberately first. `git switch` **refuses** while a rebase is in progress, so a
     // workspace abandoned mid-rebase can never be parked and the slot is lost until somebody notices

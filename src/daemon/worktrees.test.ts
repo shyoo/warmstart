@@ -727,9 +727,91 @@ describe('resuming a task whose branch was retired', () => {
 })
 
 describe('workspace ACL hygiene', () => {
-  it('cleanWorkspaceAcls runs without error on workspace and non-existent paths', () => {
-    expect(() => worktrees.cleanWorkspaceAcls('non-existent-path')).not.toThrow()
+  it('cleanWorkspaceAcls runs without error on workspace and non-existent paths', async () => {
+    await expect(worktrees.cleanWorkspaceAcls('non-existent-path')).resolves.toBeUndefined()
     const project = makeProjectWithRemote()
-    expect(() => worktrees.cleanWorkspaceAcls(project.root)).not.toThrow()
+    const ws = await worktrees.claimWorkspace(project, 'run-acl')
+    await expect(worktrees.cleanWorkspaceAcls(ws!.path)).resolves.toBeUndefined()
+    worktrees.releaseWorkspace(ws!.claimId)
   })
+})
+
+/**
+ * The `.git` pointer of a pool member, and the slot an agent broke by rewriting it.
+ *
+ * ⛔ Measured on t410, 2026-09-13. A Muse Code run bridged through WSL wrote
+ * `gitdir: /mnt/c/Dev/warmstart/.git/worktrees/ws3` over ws3's pointer so its own file tools could
+ * open the worktree. Windows git then answered *not a git repository* for ws3; the release could
+ * not park it (`git switch --detach` failed), the branch stayed registered to ws3 in the common
+ * `.git`, and the operator's **Reassign** died on
+ * *'warmstart/t410-…' is already used by worktree at 'C:/Dev/warmstart_workspaces/ws3'*.
+ *
+ * ⚠️ Real git throughout: the defect is in what git does with a pointer it cannot follow, and the
+ * fix is git's own `worktree repair`.
+ */
+describe('a pool member whose .git pointer an agent rewrote', () => {
+  const text = (path: string): string => readFileSync(path, 'utf8').trim()
+  /** The agent's rewrite: a spelling the other side of a WSL boundary can open and this side cannot. */
+  const breakPointer = (workspace: string): void => {
+    // ⚠️ Removed and recreated: git hides the file, and Node cannot truncate a hidden file in place.
+    rmSync(join(workspace, '.git'))
+    writeFileSync(join(workspace, '.git'), 'gitdir: /mnt/c/somewhere/.git/worktrees/ws1\n')
+  }
+
+  it('is created with a relative pointer, which git follows from either side of a WSL boundary', async () => {
+    const project = makeProject(1)
+    const ws = await worktrees.claimWorkspace(project, 'run-1')
+    const pointer = text(join(ws!.path, '.git'))
+    expect(pointer).toMatch(/^gitdir: \.\.\//)
+    expect(pointer).not.toMatch(/^gitdir: [A-Za-z]:|^gitdir: \//)
+    // ⚠️ Not compared to the pool path: on Windows the temp dir comes back in 8.3 form.
+    expect(existsSync(git(ws!.path, 'rev-parse', '--absolute-git-dir'))).toBe(true)
+    expect(() => git(ws!.path, 'status', '--porcelain')).not.toThrow()
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+
+  it('is repaired before it is parked, so the branch is free for the next dispatch', async () => {
+    const project = makeProject(2)
+    const branch = 'warmstart/t410-there-are-multiple-ui-fixes'
+    const first = await worktrees.claimWorkspace(project, 'run-1')
+    expect((await worktrees.prepareWorkspace(project, first!, branch)).ok).toBe(true)
+    writeFileSync(join(first!.path, 'work.txt'), 'the agent got this far\n')
+
+    breakPointer(first!.path)
+    expect(() => git(first!.path, 'status')).toThrow()
+
+    // The release parks the slot: repaired first, then its work committed to the branch and detached.
+    const rescue = await worktrees.parkWorkspace(project, first!.path)
+    expect(rescue?.kind).toBe('commit')
+    expect(git(first!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD')
+    expect(text(join(first!.path, '.git'))).toMatch(/^gitdir: \.\.\//)
+
+    // Reassign: the other slot takes the branch, which used to fail as "already used by worktree".
+    const second = await worktrees.claimWorkspace(project, 'run-2')
+    worktrees.releaseWorkspace(first!.claimId)
+    expect(second!.path).not.toBe(first!.path)
+    const prepared = await worktrees.prepareWorkspace(project, second!, branch)
+    expect(prepared.ok).toBe(true)
+    expect(git(second!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(branch)
+    expect(existsSync(join(second!.path, 'work.txt'))).toBe(true)
+    worktrees.releaseWorkspace(second!.claimId)
+  }, 20_000)
+
+  it('is repaired by prepare too, when the park never ran', async () => {
+    const project = makeProject(2)
+    const branch = 'warmstart/t410-reassigned-after-a-crash'
+    const first = await worktrees.claimWorkspace(project, 'run-1')
+    expect((await worktrees.prepareWorkspace(project, first!, branch)).ok).toBe(true)
+    breakPointer(first!.path)
+    // Released without a park - the daemon died, say - so the slot still holds the branch.
+    const second = await worktrees.claimWorkspace(project, 'run-2')
+    worktrees.releaseWorkspace(first!.claimId)
+    expect(second!.path).not.toBe(first!.path)
+    // `parkOtherHolders` has to open ws1 to step it off the branch; that is where the repair lands.
+    const prepared = await worktrees.prepareWorkspace(project, second!, branch)
+    expect(prepared.ok).toBe(true)
+    expect(git(second!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(branch)
+    expect(git(first!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD')
+    worktrees.releaseWorkspace(second!.claimId)
+  }, 20_000)
 })

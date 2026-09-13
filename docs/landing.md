@@ -328,6 +328,13 @@ appears under **Loose ends**.
 A preemption or a cancel ends with the workspace being parked, and a parked workspace is detached
 from the branch. Whatever the run had not committed has to go somewhere first.
 
+⛔ **And the slot has to be a repository first.** t410 (2026-09-13): an agent rewrote ws3's `.git`
+pointer to a spelling Windows git cannot follow, the park failed, the slot was released still holding
+the branch, and the operator's **Reassign** died on *"already used by worktree at ws3"*. Every park
+and every prepare now begins with `ensureWorktreePointer`, which runs `git worktree repair` on a
+pointer that does not resolve — measured to mend exactly this — before anything asks git about the
+directory. See `docs/adapters.md` for why a bridged agent was tempted.
+
 ⭐ **It is committed onto the task's branch**, with a `wip:` subject and a
 `Multi-Agent-Controller-Rescue` trailer, so the next run of that task inherits it by doing nothing
 more than checking the branch out — in whichever workspace it is later dispatched into. The run that

@@ -1,6 +1,6 @@
 # Warmstart — Session Handoff
 
-## Current state — 2026-09-12
+## Current state — 2026-09-13
 
 Warmstart M0–M6 is implemented. The current branch contains debate mode, quota-aware scheduling,
 pooled worktrees, model-aware routing, quality review, remote access, packaging, the completed
@@ -9,12 +9,27 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 **desktop notifications**. The maintained reference in [`docs/`](docs/README.md) is the authority on
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Last full local validation on this branch (2026-09-12): `npm run typecheck`, `npm run lint`,
-`npm test` (**3,264 passed, 2 skipped**), and `npm run build` all passed.
+Last full local validation on this branch (2026-09-13): `npm run typecheck`, `npm run lint`,
+`npm test` (**3,278 passed, 2 skipped**), and `npm run build` all passed.
 Expected test warnings exercise refusal and recovery paths; they are not failures.
 
 ## Closed in this cleanup
 
+- **Two dispatch faults measured off t408 and t410 (2026-09-13).** ⭐ *A sandboxed Codex run cannot
+  write a file a sandboxed run wrote*: the per-run grant codex puts on the workspace root does not
+  propagate into files owned by `CodexSandboxOffline` (the operator lacks WRITE_DAC on them), so they
+  keep a dead run's DACL and the next run gets *Failed to write file* — t408's `Workers.tsx`, t353's
+  `prefs.ts`. `sweepAcls` ([`acl.ts`](src/daemon/acl.ts)) now replaces every path `icacls /reset`
+  refuses with an operator-owned copy (Modify includes DELETE), on prepare, over the workspace, its
+  worktree metadata and the trunk's `refs`/`logs`; proven with a real sandboxed `codex exec` patching
+  the refused file. Refusals arrive on **stderr**, which the old call discarded; the sweep is async
+  (7.2 s for 19.7k files, no longer freezing the daemon). ⭐ *A Muse run bridged through WSL rewrote
+  ws3's `.git` pointer* because muse's own edit tools cannot follow `gitdir: C:/…` (`GIT_DIR` helps
+  only `git`); Windows git then could not open ws3, the park failed, and Reassign died on *already
+  used by worktree*. Pool pointers are now written **relative**, which both sides follow, and
+  `ensureWorktreePointer` runs `git worktree repair` before every park and prepare. ws1–ws4 were
+  swept and ws3 repaired by hand (t410's uncommitted work is intact on its branch's slot). ⚠️ Whether
+  muse's `edit_file` accepts the relative pointer is inferred from its error, not yet measured live.
 - **Loose ends offers an explicit Delete it, for a branch the operator has decided is not needed.**
   `deleteUnlandedBranch` ([`worktrees.ts`](src/daemon/worktrees.ts)) is `retireStrandedBranch`'s
   destructive sibling — it skips the `ahead === 0` proof that function enforces, since the point is
@@ -51,19 +66,6 @@ Expected test warnings exercise refusal and recovery paths; they are not failure
   via `forceInstalled` in [`revivecompact.test.ts`](src/daemon/revivecompact.test.ts) and
   [`taskcompact.test.ts`](src/daemon/taskcompact.test.ts) so tests evaluate compaction logic without
   requiring vendor CLIs on disk.
-- **A running Antigravity model cannot inherit another model pool's preemption.** The watchdog now
-  reads the session's actual model and `windowResetsAt` prefers its stored pool boundary over an
-  unqualified worker record, so a low-use Gemini run does not offer **Override preemption** because
-  Claude/GPT is near its own reset. Regression coverage pins both the closing-window and high-water
-  cross-contamination cases, including a task edited for a future Claude/GPT run.
-- **Debate positions expose their stated confidence.** `task.debateState` uses the same conservative
-  prose extractor the organizer prompt uses and the board leads each response with an accented
-  metadata table. Missing confidence says **Not stated**; arbitrary formats remain the seat's own
-  text rather than being converted into a number Warmstart cannot justify.
-- **The abandoned t397.2 worktree was reclaimed without losing work.** On 2026-09-12,
-  `warmstart/t397.2-t389-was-completed-with-making-pull-requ` resolved to `f522c5e`, the same
-  commit as `origin/main`; it had no branch-only diff or commits, no stash entry, and a reflog
-  containing only its creation. There was therefore nothing to land or discard.
 - **macOS build script and test parity.** [`scripts/build-mac.sh`](scripts/build-mac.sh) delivers parity with
   [`scripts/build-win.ps1`](scripts/build-win.ps1) (content-addressed step cache in `.build-cache/`, process
   safety checks, `--restart`, `--quick`, `--installer`, `--skip-tests`, `--fresh`, `--stop-daemon`, `--stop-agents`).
@@ -114,10 +116,6 @@ Expected test warnings exercise refusal and recovery paths; they are not failure
   [`docs/landing.md`](docs/landing.md)); and the closing prompt no longer tells such a task to commit,
   squash or rebase. ⚠️ The scheduler wiring (measure + retire in `landCompletion`) has no L2 test —
   no harness drives `completeTask` with a held git workspace; the decision and the measure are tested.
-- **The reported Luna `task_complete` defect is closed.** Codex has no per-session MCP registration
-  (`mcp: false`), so the old universal seat wording was wrong.
-- **The t382 organizer capacity leak is closed.** A debate organizer winds down its run and session
-  after sending round briefs or splitting work.
 
 ## Remaining work — ordered by payoff
 
