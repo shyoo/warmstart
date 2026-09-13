@@ -15,6 +15,10 @@ The expected test warnings exercise refusal and recovery paths; they are not fai
 
 ## Closed in this cleanup
 
+- **The abandoned t397.2 worktree was reclaimed without losing work.** On 2026-09-12,
+  `warmstart/t397.2-t389-was-completed-with-making-pull-requ` resolved to `f522c5e`, the same
+  commit as `origin/main`; it had no branch-only diff or commits, no stash entry, and a reflog
+  containing only its creation. There was therefore nothing to land or discard.
 - **The thread shows the change before you land it.** `task.diffSummary` and `task.diffFile`
   ([`src/daemon/taskdiff.ts`](src/daemon/taskdiff.ts)) read the *same* commits the grader reads —
   `resolveRange` picks them, and `collectDiff` was split into `numstatEntries`/`patchFor` so both
