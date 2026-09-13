@@ -163,6 +163,22 @@ export const paths = {
   get db() {
     return join(dataDir(), `${APP_DIR}.db`)
   },
+  get backups() {
+    return join(dataDir(), 'backups')
+  },
+  /**
+   * Today's backup file.
+   *
+   * ⚠️ Local date, not UTC, for the same reason as `daemonLogFor`: an evening's backup has to land
+   * under the day the operator's clock says it is, not tomorrow because their timezone is ahead of
+   * UTC. The name doubling as "have I already backed up today" is deliberate — `backup.ts` checks
+   * existence rather than keeping its own state.
+   */
+  backupFor(when: Date | number = Date.now()) {
+    const d = typeof when === 'number' ? new Date(when) : when
+    const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    return join(dataDir(), 'backups', `${APP_DIR}-${stamp}.db`)
+  },
   /** Port + token, written 0600. The UI reads this to find a daemon it did not start. */
   get endpoint() {
     return join(dataDir(), 'orchestratord.json')

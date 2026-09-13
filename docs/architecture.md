@@ -207,6 +207,7 @@ same function so both agree.
   orchestratord.json               { port, token } — 0600, the endpoint file
   orchestratord.lock               single-instance lock
   logs/                            one file per day, pruned after a fortnight
+  backups/                         one warmstart.db copy per day, pruned after a fortnight
   workers/<worker>/                per-account isolation roots; the vendor CLI owns the contents
   costmodels/                      user-supplied pricing, takes precedence over bundled
   adapters/*.json                  declarative adapters
@@ -231,6 +232,13 @@ decide which copy of a credential root is current and there is no honest answer 
 file inside is matched against *every* old name, since a migration that failed part-way can leave an
 `agentyard.db` inside a `multi_agent_controller` directory. `repointIsolationRoots()` likewise loops
 every legacy root, so an install that skipped a release is still carried.
+
+⭐ **`backup.ts` copies `warmstart.db` into `backups/` once a day**, using `node:sqlite`'s own
+online backup API rather than a file copy — the database runs in WAL mode, so a raw copy can miss
+pages still sitting in the `-wal` sidecar. `backupToday()` is a no-op once today's file exists, so
+running it at startup and again on an hourly sweep (`index.ts`) costs nothing beyond an
+`existsSync` check until the date rolls over. `pruneBackups` removes anything older than fourteen
+days, by mtime, the same rule `pruneLogs` uses.
 
 ⭐ **`openDb` logs which file it opened and what was in it** — path, size, and the worker, project,
 task and run counts, one `info` line per open (`describeDb` in `db.ts`). ⛔ **This is the line that

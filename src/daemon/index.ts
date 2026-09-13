@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import type { DaemonEvent, Session } from '@shared/protocol.js'
 import { acquireLock, clearEndpoint, publishEndpoint, releaseLock } from './lock.js'
 import { prunePending } from './attachments.js'
+import { backupToday } from './backup.js'
 import { closeDb, openDb } from './db.js'
 import { loadCostModels } from './costmodel.js'
 import { logCostFactors } from './estimator.js'
@@ -95,6 +96,14 @@ async function main(): Promise<void> {
   prunePending()
   const attachmentSweep = setInterval(() => prunePending(), 24 * 60 * 60 * 1000)
   attachmentSweep.unref()
+  // ⛔ Once at startup and once an hour thereafter — cheap, because `backupToday` is a no-op past
+  // the first call on any given day. Hourly rather than daily so a daemon that has been up for
+  // weeks still rolls its backup close to midnight rather than whenever it next happens to restart.
+  void backupToday().catch((err) => log.warn(`could not back up database: ${String(err)}`))
+  const backupSweep = setInterval(() => {
+    void backupToday().catch((err) => log.warn(`could not back up database: ${String(err)}`))
+  }, 60 * 60 * 1000)
+  backupSweep.unref()
   void reconcilePullRequestDeliveries().catch((err) =>
     log.warn(`could not reconcile pull requests: ${String(err)}`)
   )
@@ -293,6 +302,7 @@ async function main(): Promise<void> {
     stopScheduler()
     stopController()
     clearInterval(deliverySweep)
+    clearInterval(backupSweep)
     for (const t of tailers.values()) t.stop()
     shutdownAll()
     void Promise.all([server.close(), remote.close()]).finally(() => {

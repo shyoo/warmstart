@@ -20,6 +20,9 @@ Expected test warnings exercise refusal and recovery paths; they are not failure
   destructive sibling — it skips the `ahead === 0` proof that function enforces, since the point is
   discarding real commits, but keeps the same refusal when a worktree holds the branch. It is the
   one button on that panel `docs/landing.md` and `AGENTS.md` no longer describe as non-destructive.
+- **The database backs itself up.** `backup.ts` copies `warmstart.db` into `<dataDir>/backups/`
+  daily via `node:sqlite`'s online backup API (WAL-safe), pruning anything older than fourteen days
+  by mtime — the same shape as `logs.ts`. Closes half of remaining-work item 8 below.
 - **Trunk mode: a task can work in the project checkout itself** (t401). t400 had an agent pull
   `main` and resolve a conflict by way of a task branch, which confused it and left a branch to clean
   up. `workspaceMode` (`worktree` | `trunk`, migration 70) resolves task → project → `worktree`; the
@@ -155,22 +158,20 @@ a unit test.
 8. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the
    generic declarative adapter cannot meter, gets no MCP tools and cannot reap orphans); CI watch
    after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an
-   update-available check that keeps `publish: null`; backup/export of the data directory (no such
-   path exists today — task history, transcripts and cost evidence are one lost laptop from gone);
-   and a clone-per-worker or container backend, which is the only thing that properly closes both
+   update-available check that keeps `publish: null`; a full data-directory export beyond the
+   database itself (isolation roots, attachments); and a clone-per-worker or container backend,
+   which is the only thing that properly closes both
    the host-authority gap and the shared common-`.git` grant. ⚠️ Deliberately **not** on this list:
    GitHub/Linear/Slack intake, agent-to-agent messaging, kanban, voice, cross-machine sync.
-9. **Give Antigravity a real per-worker isolation root.** It currently shares `~/.gemini`; changing
-   `HOME` must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
+9. **Give Antigravity a real per-worker isolation root.** It shares `~/.gemini` today; changing `HOME`
+   must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
 10. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data;
    compare small and large quality-review models on the same five tasks; verify the Claude credits
    gauge against one real invoice; and decide whether preempted runs should contribute to estimates.
-11. **Increase thread UI coverage where behaviour changes.** The add-project wizard, project settings,
-   conversations, session TUI, routing pages and selected thread rows are exercised; most thread
-   interactions remain hand-tested. Extract pure decisions into `src/renderer/src/lib/` first.
+11. **Increase thread UI coverage where behaviour changes.** Most thread interactions remain
+   hand-tested. Extract pure decisions into `src/renderer/src/lib/` first.
 12. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines
-   against a ~1,500 target. Existing seams import back from it, so no extracted module may read a
-   scheduler binding at module evaluation time.
+   against a ~1,500 target; no extracted module may read a scheduler binding at module evaluation time.
 
 ## Open questions and quiet-worker measurements
 
@@ -184,8 +185,7 @@ a unit test.
 | Expected-idle estimator | Gather real queue data first. | No honest design exists without it. |
 
 Record measurement results, CLI versions and dates in [`docs/cost-model.md`](docs/cost-model.md), then
-remove the corresponding row here. R5 is intentionally dropped: resume is measured and shipped
-within one account; cross-account transplant needs a second subscription.
+remove the corresponding row here. R5 is dropped: cross-account transplant needs a second subscription.
 
 ## Durable constraints
 
