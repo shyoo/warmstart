@@ -15,6 +15,13 @@ Expected test warnings exercise refusal and recovery paths; they are not failure
 
 ## Closed in this cleanup
 
+- **The Tasks table responds to its actual panel width (t415, 2026-09-13).** Its history and
+  secondary columns now yield through a named CSS container as either the window or the resizable
+  sidebar narrows the panel; the old viewport queries kept every fixed-width column in a roughly
+  960px table and let headers paint across their neighbours. The L3 regression recreates that shape
+  by widening the sidebar while leaving the viewport wide. Task validation: typecheck, build, and
+  **3,338 passed / 2 skipped** at L1; the local L3 host could not start Chromium because its GPU
+  process repeatedly exited with `-1073741515`, before any renderer check ran.
 - **Show retained workspace locks in Flow (t413, 2026-09-13).** An `awaiting_human` ticket stays in
   Awaiting and names the workspace it still locks, rather than pinning under Running or hiding the lock.
 - **Three UI changes across task composer, sidebar pending PRs, and thread bubbles (t414, 2026-09-13).**

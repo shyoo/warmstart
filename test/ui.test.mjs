@@ -4455,6 +4455,56 @@ try {
     JSON.stringify(headSizes.map((r) => [r.label, r.width, r.room]))
   )
 
+  section('the task table responds to its own width')
+  // ⭐ Reported 2026-09-13 at a 1342px window: the resizable sidebar left roughly 960px for the
+  // table, but viewport breakpoints still saw 1342px and retained every fixed-width column. Make
+  // that mismatch explicit at the suite's ordinary window width; a viewport query cannot pass it.
+  const narrowTable = JSON.parse(
+    await evaluate(`
+      JSON.stringify((() => {
+        const root = document.documentElement;
+        const previous = root.style.getPropertyValue('--sidebar-w');
+        root.style.setProperty('--sidebar-w', '400px');
+        const table = document.querySelector('.tbl--tasks');
+        const panel = table?.closest('.panel');
+        const dates = [...(table?.querySelectorAll('tbody td.tbl-when') ?? [])];
+        const heads = [...(table?.querySelectorAll('thead th') ?? [])];
+        // A hidden <col> collapses its cells geometrically; it does not change each cell's
+        // computed display value (table-cell).
+        const visibleHeads = heads.filter((th) => th.getBoundingClientRect().width > 0);
+        const collisions = visibleHeads.slice(0, -1).filter((th, i) => {
+          const text = th.querySelector('.sort-head') ?? th;
+          return text.getBoundingClientRect().right > visibleHeads[i + 1].getBoundingClientRect().left + 1;
+        }).length;
+        const out = {
+          viewport: window.innerWidth,
+          panel: Math.round(panel?.getBoundingClientRect().width ?? 0),
+          dates: dates.length,
+          datesVisible: dates.filter((cell) => cell.getBoundingClientRect().width > 0).length,
+          title: Math.round(table?.querySelector('.tbl-title-cell')?.getBoundingClientRect().width ?? 0),
+          collisions
+        };
+        previous
+          ? root.style.setProperty('--sidebar-w', previous)
+          : root.style.removeProperty('--sidebar-w');
+        return out;
+      })())
+    `)
+  )
+  check(
+    '⭐ a narrow task panel drops its date columns even while the viewport remains wide',
+    narrowTable.viewport > 1050 &&
+      narrowTable.panel <= 1050 &&
+      narrowTable.dates > 0 &&
+      narrowTable.datesVisible === 0,
+    JSON.stringify(narrowTable)
+  )
+  check(
+    'and the remaining headings do not collide while the title keeps readable space',
+    narrowTable.collisions === 0 && narrowTable.title >= 160,
+    JSON.stringify(narrowTable)
+  )
+
   section('the date columns stay inside their own columns')
   // ⛔ Reported 2026-09-12 against t376: Created and Updated were drawn straight over Status. The
   // columns are sized in pixels under `table-layout: fixed`, so an overflowing stamp does not widen

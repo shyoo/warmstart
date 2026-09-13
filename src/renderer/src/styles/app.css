@@ -1314,6 +1314,12 @@ body {
   max-width: none;
 }
 
+/* The task table's responsive columns answer to the space beside the resizable sidebar, not to the
+   window around both of them. Named so other wide panels do not inherit the table's breakpoints. */
+.panel--tasks {
+  container: task-table / inline-size;
+}
+
 /* ---- project flow ----------------------------------------------------- */
 
 .flow-board {
@@ -2075,19 +2081,22 @@ body {
 /* A model id qualifies Worker; it must not widen the task table. */
 .tbl--tasks .tbl-model { overflow: hidden; text-overflow: ellipsis; }
 
-@media (max-width: 1250px) {
+/* ⛔ Container widths, not viewport widths. The sidebar is resizable, so two windows with the same
+   outer width can leave the table hundreds of pixels apart. A viewport query kept both dates in a
+   960px table and their fixed columns consumed the title before the breakpoint noticed (t415). */
+@container task-table (max-width: 1050px) {
   .tbl--tasks .tbl-col-created,
   .tbl--tasks .tbl-col-updated { display: none; }
 }
 
-@media (max-width: 1000px) {
+@container task-table (max-width: 850px) {
   .tbl--tasks .tbl-col-from,
   .tbl--tasks .tbl-col-quality { display: none; }
   .tbl--tasks .tbl-col-worker { width: 78px; }
   .tbl--tasks .tbl-col-took { width: 62px; }
 }
 
-@media (max-width: 700px) {
+@container task-table (max-width: 550px) {
   .tbl--tasks .tbl-col-dep { display: none; }
   .tbl--tasks .tbl-col-worker { width: 68px; }
   .tbl--tasks .tbl-col-price { width: 62px; }

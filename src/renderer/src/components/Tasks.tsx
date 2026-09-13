@@ -354,7 +354,7 @@ export function Tasks({
   // being compared across rows — worker, model, price, age — and the 1100px measure that keeps prose
   // readable squeezes exactly those columns while the rest of the window goes unused.
   return (
-    <div className="panel panel--wide">
+    <div className="panel panel--wide panel--tasks">
       <header className="panel-head">
         <div>
           <h2>Tasks</h2>

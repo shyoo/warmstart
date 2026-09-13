@@ -728,6 +728,9 @@ is too large and too varied.
   forms. A panel whose content is a *board* — Flow, the task table — opts out, because squeezing the
   columns a reader is comparing while half the window stays empty is worse, not calmer. ⛔ Flow, Tasks
   and the thread are three views of one project, looked at one after another: they are all wide.
+- **The task table responds to its panel, not the window.** Its fixed operational columns yield via
+  the named `task-table` container as the resizable sidebar reduces the space actually available;
+  viewport breakpoints cannot know how wide that sidebar is.
 
 ⚠️ Reuse an existing class before adding one. The check-command textarea once borrowed `.ask-input`,
 whose entire design is to be invisible.
