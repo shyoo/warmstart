@@ -291,8 +291,8 @@ shown reports `visible` to its own renderer, because nothing ever hid it (measur
 the window manager can answer, which is why the check asks the OS for `MainWindowHandle` and skips
 where there is no equivalent one-liner.
 
-⚠️ The flag is set by the suites, never derived from `app.isPackaged` or `NODE_ENV` — `npm run dev`
-and `build-win.ps1 -Restart` must still open a window.
+⚠️ The flag is set by the suites, never derived from `app.isPackaged` or `NODE_ENV` — `npm run dev`,
+`scripts/build-mac.sh --restart` and `scripts/build-win.ps1 -Restart` must still open a window.
 
 ⛔ **The consequence: no suite can catch a regression in window *showing*.** `ready-to-show` has been
 measured never firing (Windows 11, Electron 44, packaged and dev alike; `did-finish-load` at 72ms,

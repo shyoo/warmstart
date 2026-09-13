@@ -542,7 +542,7 @@ src/mcp                 the MCP server the agent CLI spawns                     
 src/shared              types crossing a process boundary (protocol, ipc, tasks)
 costmodels/             versioned pricing data                                  → cost-model.md
 test/                   the .mjs suites that drive a built app                  → testing.md
-scripts/                ensure-electron, icons, build-win.ps1                   → development.md
+scripts/                ensure-electron, icons, build-mac.sh, build-win.ps1     → development.md
 .claude/skills/         /commit commits locally, /push publishes                → development.md
 ```
 

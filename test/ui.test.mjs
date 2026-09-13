@@ -61,7 +61,8 @@ try {
   app = spawn(electronBinary(), [REPO, `--remote-debugging-port=${PORT}`], {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
+    windowsHide: true,
+    detached: process.platform !== 'win32'
   })
   // ⚠️ Always kept, printed only when something goes wrong. This was verbose-only, so when the app
   // failed to open a debugging target on Linux the suite could say nothing beyond "it did not".

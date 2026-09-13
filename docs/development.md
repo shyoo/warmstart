@@ -58,31 +58,31 @@ that can see the mistakes this codebase actually makes — a floating promise in
 daemon, a `String(x)` on a value a vendor may send as an object, an `any` out of `JSON.parse`. ⛔ A
 rule is disabled only with the reason written down; *"it fired a lot"* is not a reason.
 
-### `scripts/build-win.ps1` — the whole pipeline, cached
+### `scripts/build-mac.sh` and `scripts/build-win.ps1` — the whole pipeline, cached
 
 ⭐ Runs checks → bundle → packaged app → drive it. **~92s cold, seconds warm.** Steps are
 content-addressed: each fingerprints the files it reads (SHA-256 over **content**, never mtimes) and
 is skipped only when the fingerprint is unchanged *and* its outputs are still on disk. A stamp is
 written only after the step exits 0, every stamp carries the script's own hash, and a skip prints the
-date the step last really ran.
+date the step last really ran. On macOS use `scripts/build-mac.sh`, on Windows use `scripts/build-win.ps1`.
 
-| Flag | Does |
+| Flag (macOS / Windows) | Does |
 |---|---|
-| `-Help` (`-h`, `-?`) | the options, grouped by the question being asked |
-| `-Restart` | ⭐ the inner loop: stop what this repo has running, build, start the result |
-| `-Quick` | typecheck, lint, unit, bundle. No packaging |
-| `-Installer` | also the NSIS installer (x64 + arm64) |
-| `-SkipTests` | bundle and package with no suites. ⚠️ `test:pack` is the only asar check |
-| `-Fresh` (`-NoCache`, `-Rebuild`) | ignore every cached step |
-| `-StopDaemon` | stop this repo's app and daemon first. ⛔ Refuses while agent processes are under it |
-| `-StopAgents` | implies `-StopDaemon` and stops the agents too. ⚠️ Ends real work on a real account |
+| `--help` (`-h`) / `-Help` (`-?`) | the options, grouped by the question being asked |
+| `--restart` / `-Restart` | ⭐ the inner loop: stop what this repo has running, build, start the result |
+| `--quick` / `-Quick` | typecheck, lint, unit, bundle. No packaging |
+| `--installer` / `-Installer` | also the installer (macOS DMG or Windows NSIS) |
+| `--skip-tests` / `-SkipTests` | bundle and package with no suites. ⚠️ `test:pack` is the only asar check |
+| `--fresh` / `-Fresh` (`-NoCache`) | ignore every cached step |
+| `--stop-daemon` / `-StopDaemon` | stop this repo's app and daemon first. ⛔ Refuses while agent processes are under it |
+| `--stop-agents` / `-StopAgents` | implies `--stop-daemon` and stops the agents too. ⚠️ Ends real work on a real account |
 
 ⛔ **Never by image name, at either level.** A process is stopped only if it executes from a path this
 repo owns or is a verified descendant of one that does, and its `(pid, creation time)` pair is re-read
 at the moment of the kill. ⚠️ Windows has no SIGTERM: `Stop-Process` is `TerminateProcess`, so the
 daemon's own shutdown — which closes sessions and releases claims — does not run, and any agent CLI it
 spawned is left orphaned, signed in, and able to keep spending. That is why the refusal is the
-default.
+default. On macOS/Unix, `scripts/build-mac.sh` sends `SIGTERM` first and waits for graceful exit.
 
 ## 3. Packaging
 

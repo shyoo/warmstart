@@ -6494,7 +6494,7 @@ select:focus-visible,
   --paper-small: 13px;
   --paper-h3: 17px;
   --paper-title: 28px;
-  --paper-measure: 80ch;
+  --paper-measure: max(80ch, 780px);
   max-width: var(--paper-measure);
   margin: 0 auto;
   padding: var(--sp-4) var(--sp-3) var(--sp-6);

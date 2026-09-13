@@ -83,7 +83,7 @@ describe('documentation', () => {
    * is not a claim about a file, and a glob is not a path.
    */
   it('cites no source file that has been moved or deleted', () => {
-    const re = /`((?:src|test|scripts|costmodels)\/[A-Za-z0-9_./-]+\.(?:ts|tsx|mjs|json|css|ps1))`/g
+    const re = /`((?:src|test|scripts|costmodels)\/[A-Za-z0-9_./-]+\.(?:ts|tsx|mjs|json|css|ps1|sh))`/g
     const missing: string[] = []
     for (const file of markdownFiles()) {
       const text = read(file)

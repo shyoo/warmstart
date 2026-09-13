@@ -167,7 +167,27 @@ export function killTree(pid, expect) {
       // of them keeps holding the debug port.
       execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' })
     } else {
-      process.kill(-pid, 'SIGKILL')
+      try {
+        const out = execFileSync('pgrep', ['-P', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+        for (const cpid of out.trim().split(/\s+/).filter(Boolean)) {
+          try {
+            process.kill(Number(cpid), 'SIGKILL')
+          } catch {
+            // Child already exited
+          }
+        }
+      } catch {
+        // No children or pgrep exited 1
+      }
+      try {
+        process.kill(-pid, 'SIGKILL')
+      } catch {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          // Process already exited
+        }
+      }
     }
   } catch {
     // Already gone. Nothing to stop.

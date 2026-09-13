@@ -91,10 +91,11 @@ const budget = startDeadline(15 * 60 * 1000, 'pack', () => {
 
 /** Where electron-builder leaves the unpacked app for this platform. */
 function unpackedDir() {
+  const isArm = process.arch === 'arm64'
   const candidates = {
-    win32: ['win-unpacked', 'win-arm64-unpacked'],
-    darwin: ['mac', 'mac-arm64', 'mac-universal'],
-    linux: ['linux-unpacked', 'linux-arm64-unpacked']
+    win32: isArm ? ['win-arm64-unpacked', 'win-unpacked'] : ['win-unpacked', 'win-arm64-unpacked'],
+    darwin: isArm ? ['mac-arm64', 'mac', 'mac-universal'] : ['mac', 'mac-universal', 'mac-arm64'],
+    linux: isArm ? ['linux-arm64-unpacked', 'linux-unpacked'] : ['linux-unpacked', 'linux-arm64-unpacked']
   }[process.platform] ?? []
   for (const name of candidates) {
     const full = join(OUT, name)
@@ -282,7 +283,8 @@ try {
   app = spawn(binary, [], {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: true
+    windowsHide: true,
+    detached: process.platform !== 'win32'
   })
   app.stdout.on('data', (d) => appOutput.push(String(d)))
   app.stderr.on('data', (d) => appOutput.push(String(d)))
