@@ -27,6 +27,7 @@ let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
 let settings: typeof import('./settings.js')
 let quota: typeof import('./quota.js')
+let sessions: typeof import('./sessions.js')
 
 /** The estimate the runaway factor is measured against; one completed run is enough to have one. */
 const ESTIMATE = 100_000
@@ -133,7 +134,12 @@ beforeAll(async () => {
   scheduler = await import('./scheduler.js')
   settings = await import('./settings.js')
   quota = await import('./quota.js')
+  sessions = await import('./sessions.js')
   db.openDb(join(dir, 'preempt.db'))
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
 })
 
 beforeEach(() => {
@@ -279,6 +285,70 @@ describe('the switches that gate all of this', () => {
     const warning = tasks.requireTask(task.id).quotaPreemptWarning
     expect(warning?.action).toBe('compact')
     expect(warning?.canCompact).toBe(true)
+  })
+
+  it('falls back to handoff when vendor refused even on a compact-capable worker', async () => {
+    const { task, run } = seedRunawayTask(0, 'claude-code')
+    const workerId = tasks.requireRun(run.id).workerId
+    seedClosingWindow(workerId)
+    seedRateLimit(workerId, 'five_hour', 'rejected', Date.now() + 3_600_000)
+
+    await scheduler.tick()
+
+    // Vendor refusal preempts immediately without warning, choosing handoff over compact
+    expect(tasks.requireTask(task.id).quotaPreemptWarning).toBeNull()
+    const msg = tasks.messagesFor(task.id).find((m) => m.text?.includes('Preempted for quota'))
+    expect(msg?.text).toContain('wrapping up')
+    expect(msg?.text).not.toContain('compacting')
+  })
+
+  it('falls back to handoff when quota window is 100% exhausted on a compact-capable worker', async () => {
+    const { task, run } = seedRunawayTask(0, 'claude-code')
+    const workerId = tasks.requireRun(run.id).workerId
+    seedClosingWindow(workerId)
+    seedQuotaPercent(workerId, 100)
+
+    await scheduler.tick()
+
+    const warning = tasks.requireTask(task.id).quotaPreemptWarning
+    expect(warning?.action).toBe('handoff')
+    expect(warning?.canCompact).toBe(false)
+  })
+
+  it('falls back to handoff when task is set never to compact', async () => {
+    const { task, run } = seedRunawayTask(0, 'claude-code')
+    tasks.updateTask(task.id, { autoCompact: 'off' })
+    const workerId = tasks.requireRun(run.id).workerId
+    seedClosingWindow(workerId)
+
+    await scheduler.tick()
+
+    const warning = tasks.requireTask(task.id).quotaPreemptWarning
+    expect(warning?.action).toBe('handoff')
+    expect(warning?.canCompact).toBe(false)
+  })
+
+  it('preserves clock_move on unlanded preemption compaction rather than clearing it', async () => {
+    const { run, sessionId } = seedRunawayTask(0, 'claude-code')
+    const workerId = tasks.requireRun(run.id).workerId
+    seedClosingWindow(workerId)
+    vi.spyOn(sessions, 'sendPrompt').mockImplementation(() => {})
+
+    await scheduler.tick()
+    // Advance past warning (60s)
+    await vi.advanceTimersByTimeAsync(70_000)
+    await scheduler.tick()
+
+    // Preemption compaction was requested; advance past wrap-up deadline (300s)
+    await vi.advanceTimersByTimeAsync(310_000)
+    await scheduler.tick()
+
+    const s = db
+      .db()
+      .prepare('select clock_move, clock_move_attempts from sessions where id = ?')
+      .get(sessionId) as { clock_move: string | null; clock_move_attempts: number } | undefined
+    expect(s?.clock_move).toBe('compact')
+    expect(s?.clock_move_attempts).toBe(1)
   })
 
   it('lets a person override during the warning without losing the running session', async () => {

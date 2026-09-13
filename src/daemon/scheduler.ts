@@ -186,6 +186,7 @@ import {
 } from './objective.js'
 import {
   compactOnResume,
+  mayCompact,
   RESUME_COMPACT_WAIT_MS,
   runCacheClock,
   type ResumeCompaction
@@ -2276,7 +2277,15 @@ async function warnBeforeQuotaPreempt(
   const existing = current.quotaPreemptWarning
   if (!existing || existing.trigger !== trigger) {
     const protocol = adapter(session.adapterId).info.policy.wrapUpProtocol
-    const canCompact = protocol === 'compact'
+    const worker = getWorker(session.workerId)
+    const onCredits = worker ? spendingCreditsOn(worker, settings().spendCreditsPastLimit) : false
+    const quota = lastQuota(session.workerId)
+    const pool = worker ? poolFor(worker, session.model) : null
+    const blocking = quota ? poolVerdict(windowsForPool(quota.windows, pool)).blocking : null
+    const exhausted = blocking?.exhausted && !onCredits
+    const refused = refusalRateLimit(session.workerId) !== null
+    const permitted = mayCompact(session, settings().autoCompact, settings().spendCreditsPastLimit, 'quota').allowed
+    const canCompact = protocol === 'compact' && !refused && !exhausted && permitted
     const action = canCompact ? 'compact' : 'handoff'
     const preemptAt = trigger === 'window'
       ? Math.min(now + QUOTA_PREEMPT_WARNING_MS, resumeAt)
@@ -2784,8 +2793,17 @@ async function preempt(
   }
 
   const info = adapter(session.adapterId).info
-  const automaticAction = info.policy.wrapUpProtocol === 'compact' ? 'compact' : 'handoff'
-  const action = requestedAction === 'compact' && info.policy.wrapUpProtocol !== 'compact'
+  const worker = getWorker(session.workerId)
+  const onCredits = worker ? spendingCreditsOn(worker, settings().spendCreditsPastLimit) : false
+  const quota = lastQuota(session.workerId)
+  const pool = worker ? poolFor(worker, session.model) : null
+  const blocking = quota ? poolVerdict(windowsForPool(quota.windows, pool)).blocking : null
+  const exhausted = blocking?.exhausted && !onCredits
+  const refused = refusalRateLimit(session.workerId) !== null
+  const permitted = mayCompact(session, settings().autoCompact, settings().spendCreditsPastLimit, 'quota').allowed
+  const canCompact = info.policy.wrapUpProtocol === 'compact' && !refused && !exhausted && permitted
+  const automaticAction = canCompact ? 'compact' : 'handoff'
+  const action = requestedAction === 'compact' && !canCompact
     ? 'handoff'
     : (requestedAction ?? automaticAction)
   const minutes = Math.max(1, Math.round((resumeAt - Date.now()) / 60000))
@@ -2877,7 +2895,6 @@ async function preempt(
         const current = run ? runsFor(task.id).find((r) => r.id === run.id) : null
         if (run && (!current || current.endedAt)) return
         if (action === 'compact' && !landed) {
-          clearClockMove(session.id)
           addMessage(task.id, 'system', 'Compaction did not land before the wrap-up deadline', null, [], {
             event: 'compaction',
             detail: 'The task is still paused safely and the compaction request remains recorded as unlanded.'

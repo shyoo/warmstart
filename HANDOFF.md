@@ -10,11 +10,20 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Last full local validation on this branch (2026-09-12): `npm run typecheck`, `npm run lint`,
-`npm test` (**3,223 passed, 2 skipped**) and `npm run build` all passed.
+`npm test` (**3,235 passed, 2 skipped**) and `npm run build` all passed.
 The expected test warnings exercise refusal and recovery paths; they are not failures.
 
 ## Closed in this cleanup
 
+- **Repeated compaction and quota tipping loops are prevented (t401, t404).** `decideRevive`
+  in [`src/daemon/cacheclock.ts`](src/daemon/cacheclock.ts) now checks `accountRefusal`, `refusalRateLimit`,
+  and `poolVerdict` blocking thresholds before waking a closed conversation for compaction. When quota
+  is blocking, an active task quota override is honored unless the window is 100% exhausted.
+  `reviveAndCompact` preserves and increments `clock_move_attempts` across revive cycles so failed
+  compactions back off after `MAX_MOVE_ATTEMPTS` instead of looping indefinitely on cleared attempts.
+  Preemption wrap-up in [`src/daemon/scheduler.ts`](src/daemon/scheduler.ts) falls back to handoff when
+  the vendor is refusing turns, the window is exhausted without credits, or compaction is disabled, and
+  an unlanded preemption compaction preserves the clock move record.
 - **Debate positions expose their stated confidence.** `task.debateState` uses the same conservative
   prose extractor the organizer prompt uses and the board leads each response with an accented
   metadata table. Missing confidence says **Not stated**; arbitrary formats remain the seat's own

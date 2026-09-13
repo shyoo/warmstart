@@ -1,5 +1,5 @@
-import { resolveAutoCompact, type ClockDecision, type Objective } from '@shared/tasks.js'
-import type { Session, Settings } from '@shared/protocol.js'
+import { poolVerdict, resolveAutoCompact, windowsForPool, type ClockDecision, type Objective } from '@shared/tasks.js'
+import type { Session, Settings, Worker } from '@shared/protocol.js'
 import { db } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
@@ -28,6 +28,8 @@ import { getWorker, spendingCreditsOn } from './workers.js'
 import { reserveState } from './reserve.js'
 import { policy } from './objective.js'
 import { settings as fleetSettings } from './settings.js'
+import { accountRefusal } from './eligibility.js'
+import { lastQuota, refusalRateLimit } from './quota.js'
 import { log } from './log.js'
 
 /**
@@ -618,6 +620,15 @@ export const REVIVE_COMPACT_FLOOR_MS = 5 * 60 * 1000
  * proves the spend is not speculative, and it removes the race where the scheduler dispatches into the
  * session mid-compaction and the agent reads its instructions out of a summary.
  */
+function poolForModel(worker: Worker, model: string | null): string | null {
+  if (!model) return null
+  try {
+    return costModel(adapter(worker.adapterId).info.policy.costModelId).modelSpec(model)?.pool ?? null
+  } catch {
+    return null
+  }
+}
+
 export function decideRevive(session: Session, ctx: ClockContext): ClockDecision {
   const now = ctx.now ?? Date.now()
   const info = adapter(session.adapterId).info
@@ -690,6 +701,15 @@ export function decideRevive(session: Session, ctx: ClockContext): ClockDecision
   if (!worker) return nothing('the account that holds this conversation is gone')
   const unavailable = whyNoSession(worker, 'work')
   if (unavailable) return nothing(unavailable)
+  const unfit = accountRefusal(worker)
+  if (unfit) return nothing(unfit.why)
+
+  const refused = refusalRateLimit(worker.id, now)
+  if (refused) {
+    return nothing(
+      `worker '${worker.label}' has an active vendor refusal (${refused.status} on ${refused.windowId})`
+    )
+  }
 
   // Who is coming back to it, and when.
   const lastRun = lastRunForSession(session.id)
@@ -700,6 +720,24 @@ export function decideRevive(session: Session, ctx: ClockContext): ClockDecision
     // the dispatch path compacts what it revives — so the honest answer is to let it, rather than to
     // race it with a process of our own.
     return nothing(`t${task.seq} is ${task.status}, not parked on a clock`)
+  }
+
+  const onCredits = spendingCreditsOn(worker, ctx.settings?.spendCreditsPastLimit ?? false)
+  if (!onCredits) {
+    const quota = lastQuota(worker.id)
+    if (quota && quota.windows.length > 0) {
+      const pool = poolForModel(worker, session.model)
+      const verdict = poolVerdict(windowsForPool(quota.windows, pool), now)
+      if (verdict.blocking) {
+        const override = quotaOverridden(task, now)
+        if (verdict.blocking.exhausted || !override) {
+          return nothing(
+            `worker '${worker.label}' is at ${Math.round(verdict.blocking.window.percent)}% of its ` +
+              `${verdict.blocking.window.label ?? 'quota'} window - not enough room to revive and compact`
+          )
+        }
+      }
+    }
   }
   const releaseIn = (task.notBefore ?? 0) - now
   if (releaseIn <= RESUME_COMPACT_WAIT_MS) {
@@ -1146,7 +1184,16 @@ export async function runCacheClock(ctx: ClockContext): Promise<ClockResult> {
   // with a different bar — see `decideRevive`. Folding the two together would mean one `decide()`
   // whose branches disagreed about whether a session even exists.
   for (const session of warmClosedConversations(withSettings.now ?? Date.now())) {
-    const decision = decideRevive(session, withSettings)
+    const now = withSettings.now ?? Date.now()
+    const outcome = moveOutcome(session, now)
+    if (outcome === 'landed') {
+      log.info(`${session.clockMove} landed on ${session.id.slice(0, 8)}`)
+      clearClockMove(session.id)
+    }
+    const decision = decideRevive(
+      outcome === 'landed' ? { ...session, clockMove: null } : session,
+      withSettings
+    )
     decisions.push(decision)
     if (decision.move === 'none') continue
 
@@ -1185,6 +1232,11 @@ const SPAWN_TO_PROMPT_MS = 2500
  */
 async function reviveAndCompact(session: Session, decision: ClockDecision): Promise<void> {
   const info = adapter(session.adapterId).info
+  const nextAttempts =
+    (session.clockMove === 'revive_compact' || session.clockMove === 'compact'
+      ? session.clockMoveAttempts
+      : 0) + 1
+
   const revived = spawnSession({
     workerId: session.workerId,
     cwd: session.cwd,
@@ -1201,7 +1253,7 @@ async function reviveAndCompact(session: Session, decision: ClockDecision): Prom
 
   // ⛔ After the spawn, never before: the resume path clears `clock_move` on the way in, so a mark
   // written first would be wiped by the very thing it exists to guard.
-  markClockMove(revived.id, 'revive_compact', session.tokensSinceCompact)
+  markClockMove(revived.id, 'revive_compact', session.tokensSinceCompact, nextAttempts)
 
   const run = lastRunForSession(session.id)
   noteCompactionAsked({
@@ -1233,10 +1285,7 @@ async function reviveAndCompact(session: Session, decision: ClockDecision): Prom
     settled = true
     stopWaiting()
     clearTimeout(timer)
-    if (!landed) {
-      // ⛔ Released rather than left to expire. A mark nobody clears is read two attempts later as a
-      // session that refuses to compact — and the answer to that is `handoff_close`, aimed at a
-      // process this function has already closed.
+    if (landed) {
       clearClockMove(session.id)
     }
     try {

@@ -128,7 +128,35 @@ beforeEach(() => {
   db.db().prepare('delete from runs').run()
   db.db().prepare('delete from tasks').run()
   db.db().prepare('delete from sessions').run()
+  db.db().prepare('delete from quota_samples').run()
+  db.db().prepare('delete from rate_limit_samples').run()
+  db.db().prepare('update workers set health_json = null, credits_json = null, credits_intent_json = null').run()
+  workers.updateWorker(workerId, { enabled: true })
 })
+
+function seedRateLimit(
+  wId: string,
+  windowId: string,
+  status: string,
+  resetsAt: number | null,
+  sampledAt = NOW
+): void {
+  db.db()
+    .prepare(
+      `insert into rate_limit_samples (worker_id, session_id, window_id, status, resets_at, sampled_at)
+       values (?,?,?,?,?,?)`
+    )
+    .run(wId, null, windowId, status, resetsAt, sampledAt)
+}
+
+function seedQuotaPercent(wId: string, percent: number, resetsAt = NOW + 3_600_000): void {
+  db.db()
+    .prepare(
+      `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+       values (?,?,?,?,?,?,?)`
+    )
+    .run(wId, '5h', '5-hour', percent, resetsAt, 'probe', NOW)
+}
 
 describe('⭐ the two hours t92 spent with nobody allowed to look at it', () => {
   it('wakes the conversation up and compacts it while the prefix is still warm', () => {
@@ -311,6 +339,102 @@ describe('it asks once, not once every ten seconds', () => {
     )
     expect(decision.move).toBe('none')
     expect(decision.reason).toContain('never landed')
+  })
+
+  it('⛔ refuses to revive when worker has an active vendor refusal (t401)', () => {
+    seedRateLimit(workerId, 'five_hour', 'rejected', NOW + 30 * 60 * 1000)
+    const decision = clock.decideRevive(session(), ctx())
+    expect(decision.move).toBe('none')
+    expect(decision.reason).toContain('active vendor refusal')
+    expect(decision.reason).toContain('rejected on five_hour')
+  })
+
+  it('⛔ refuses to revive when worker quota is at or above blocking threshold (t401)', () => {
+    seedQuotaPercent(workerId, 95)
+    const decision = clock.decideRevive(session(), ctx())
+    expect(decision.move).toBe('none')
+    expect(decision.reason).toContain('not enough room to revive and compact')
+    expect(decision.reason).toContain('95%')
+  })
+
+  it('⛔ refuses to revive when worker quota is 100% exhausted, even if task has a quota override', () => {
+    const task = tasks.listTasks()[0]!
+    tasks.setQuotaOverride(task.id, NOW + 2 * HOUR)
+    seedQuotaPercent(workerId, 100)
+    const decision = clock.decideRevive(session(), ctx())
+    expect(decision.move).toBe('none')
+    expect(decision.reason).toContain('not enough room to revive and compact')
+    expect(decision.reason).toContain('100%')
+  })
+
+  it('allows revive when worker quota is at threshold but task has an active quota override', () => {
+    const task = tasks.listTasks()[0]!
+    tasks.setQuotaOverride(task.id, NOW + 2 * HOUR)
+    seedQuotaPercent(workerId, 95)
+    const decision = clock.decideRevive(session(), ctx())
+    expect(decision.move).toBe('revive_compact')
+  })
+
+  it('declines quota-motive revive when worker is spending usage credits past the limit', () => {
+    workers.setWorkerCreditsIntent(workerId, true)
+    workers.setWorkerCredits(workerId, {
+      enabled: true,
+      userDisabled: null,
+      disabledReason: null,
+      canToggle: null,
+      everEnabled: true,
+      monthlyLimit: 100,
+      used: 0,
+      currency: 'USD',
+      resetsAt: null
+    })
+    seedQuotaPercent(workerId, 95)
+    const decision = clock.decideRevive(
+      session(),
+      ctx({ settings: { ...settings.DEFAULT_SETTINGS, spendCreditsPastLimit: true } })
+    )
+    expect(decision.move).toBe('none')
+    expect(decision.reason).toContain('spending usage credits past its plan limit')
+  })
+
+  it('refuses to revive when worker has an account refusal', () => {
+    workers.recordDispatchFailure(workerId, 'last turn died', null)
+    const decision = clock.decideRevive(session(), ctx())
+    expect(decision.move).toBe('none')
+    expect(decision.reason).toContain('held out')
+  })
+
+  it('preserves attempt count across revive cycles without looping (t401)', () => {
+    const attempt1Session = session({
+      clockMove: 'revive_compact',
+      clockMoveAt: NOW - 10 * 60 * 1000,
+      clockMoveAttempts: 1,
+      clockMoveContext: 345_708
+    })
+    const decision1 = clock.decideRevive(attempt1Session, ctx())
+    expect(decision1.move).toBe('revive_compact')
+
+    const attempt2Session = session({
+      clockMove: 'revive_compact',
+      clockMoveAt: NOW - 10 * 60 * 1000,
+      clockMoveAttempts: 2,
+      clockMoveContext: 345_708
+    })
+    const decision2 = clock.decideRevive(attempt2Session, ctx())
+    expect(decision2.move).toBe('none')
+    expect(decision2.reason).toContain('was asked for 2 times and never landed - leaving this conversation alone')
+  })
+
+  it('counts an unlanded preemption compaction towards move attempts (t401)', () => {
+    const preemptionFailedSession = session({
+      clockMove: 'compact',
+      clockMoveAt: NOW - 10 * 60 * 1000,
+      clockMoveAttempts: clock.MAX_MOVE_ATTEMPTS,
+      clockMoveContext: 345_708
+    })
+    const decision = clock.decideRevive(preemptionFailedSession, ctx())
+    expect(decision.move).toBe('none')
+    expect(decision.reason).toContain('was asked for 2 times and never landed')
   })
 
   it('and asks again once the conversation has grown enough to be worth asking about', () => {

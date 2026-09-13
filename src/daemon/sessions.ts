@@ -1578,15 +1578,31 @@ function openPipes(
  * drop is proof the move landed; "a turn happened" is not, because an agent answering "I don't
  * understand /compact" is also a turn.
  */
-export function markClockMove(sessionId: string, move: CacheMove, context: number): void {
-  db()
-    .prepare(
-      `update sessions
-          set clock_move = ?, clock_move_at = ?, clock_move_context = ?,
-              clock_move_attempts = case when clock_move = ? then clock_move_attempts + 1 else 1 end
-        where id = ?`
-    )
-    .run(move, Date.now(), context, move, sessionId)
+export function markClockMove(
+  sessionId: string,
+  move: CacheMove,
+  context: number,
+  attempts?: number
+): void {
+  if (attempts !== undefined) {
+    db()
+      .prepare(
+        `update sessions
+            set clock_move = ?, clock_move_at = ?, clock_move_context = ?,
+                clock_move_attempts = ?
+          where id = ?`
+      )
+      .run(move, Date.now(), context, attempts, sessionId)
+  } else {
+    db()
+      .prepare(
+        `update sessions
+            set clock_move = ?, clock_move_at = ?, clock_move_context = ?,
+                clock_move_attempts = case when clock_move = ? then clock_move_attempts + 1 else 1 end
+          where id = ?`
+      )
+      .run(move, Date.now(), context, move, sessionId)
+  }
 }
 
 /** The move landed, or is no longer worth waiting for. Attempts reset with it. */

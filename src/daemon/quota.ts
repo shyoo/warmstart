@@ -684,8 +684,8 @@ export function sessionRateLimit(workerId: string): LiveRateLimit | null {
  *
  * ⛔ The only one a gate may act on. See `RATE_STATUS_FRESH_MS`.
  */
-export function freshRateLimit(workerId: string, windowId?: string): LiveRateLimit | null {
-  return pickRateLimit(workerId, { windowId, maxAgeMs: RATE_STATUS_FRESH_MS })
+export function freshRateLimit(workerId: string, windowId?: string, now = Date.now()): LiveRateLimit | null {
+  return pickRateLimit(workerId, { windowId, maxAgeMs: RATE_STATUS_FRESH_MS, now })
 }
 
 /**
@@ -696,15 +696,15 @@ export function freshRateLimit(workerId: string, windowId?: string): LiveRateLim
  * a `five_hour` refusal makes the refusal invisible to anything that reads only the newest row. A
  * refusal is the strongest thing a vendor says and it has to be found on purpose.
  */
-export function refusalRateLimit(workerId: string): LiveRateLimit | null {
-  return pickRateLimit(workerId, { refusalsOnly: true, maxAgeMs: RATE_STATUS_FRESH_MS })
+export function refusalRateLimit(workerId: string, now = Date.now()): LiveRateLimit | null {
+  return pickRateLimit(workerId, { refusalsOnly: true, maxAgeMs: RATE_STATUS_FRESH_MS, now })
 }
 
 function pickRateLimit(
   workerId: string,
-  opts: { windowId?: string; sessionOnly?: boolean; maxAgeMs?: number; refusalsOnly?: boolean }
+  opts: { windowId?: string; sessionOnly?: boolean; maxAgeMs?: number; refusalsOnly?: boolean; now?: number }
 ): LiveRateLimit | null {
-  const now = Date.now()
+  const now = opts.now ?? Date.now()
   const where = ['worker_id = ?', '(resets_at is null or resets_at > ?)']
   const args: Array<string | number> = [workerId, now]
   if (opts.windowId) {
