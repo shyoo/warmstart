@@ -12,74 +12,40 @@ each subsystem; dated design and incident history belongs in `transient_docs/`, 
 Baseline (2026-09-13, Windows, measured **after** t425): typecheck, lint, build pass; L1
 **3,426 passed, 2 skipped** (195 files); L3 **428 checks**. L2 **203 checks** (5 skipped) and L4
 `test:pack` **19 checks** were measured after t423 and not re-run on t425, which touches no daemon
-code. ⚠️ L4 proves the *package*, not this change's screens — see remaining work 14. ⚠️ The macOS arm64 baseline (L1 **3,367 passed, 12 skipped**; L2
-**198**; L3 **419**; L4 **17**) was taken **before** t423 and has not been re-run on it.
+code. ⚠️ L4 proves the *package*, not this change's screens — see remaining work 14. macOS arm64 baseline (measured 2026-09-13): L1 **3,419 passed, 12 skipped** (195 files); L2 **198**; L3 **426**; L4 **17**.
 
 ## Closed in this cleanup
 
+- **Antigravity CLI commissioning and live quota probe on macOS (2026-09-13).** Standalone OAuth credentials
+  live in `~/.gemini/jetski-standalone-oauth-token` and auth user emails in `antigravity-cli/cli.log`.
+  `readAntigravityIdentity` previously checked only `google_accounts.json` and `oauth_creds.json`, falsely
+  returning `loggedIn: false` when `settings.json` was present. This blocked `mayRefreshUsage`, locking
+  the worker into `Antigravity: unknown`. Fixed `readAntigravityIdentity` and `probeIdentity` to inspect
+  the token file and log, added a screen-parsed identity sync hook, and verified the live probe in the
+  packaged app reads all 4 quota windows (Gemini 5h/7d, Claude/GPT 5h/7d) in 6s.
 - **The diff moved out of the thread into a Diff pane (t425, 2026-09-13).** A patch drawn inline got
   the thread column at best and the 300px ledger at worst, which was the report. `DiffPane` is now a
-  column of the shell right of the work — its own drag handle (`PaneResizer`, the generalised sidebar
-  handle), full height, one scroll, sticky file headers, every file stacked. The inline **Changes in
-  this task** keeps its file list and draws no patch; a file row or *Open in Diff pane* opens the
-  pane there, and the ledger's sha opens it on that commit. It is one `DiffPaneRequest` in `App.tsx`
-  behind a context, and it **follows the route**: closes when the route stops naming its task,
-  survives the task's tabs. `initialExpansion` opens files from the top until 12 files or 1,500
-  counted lines (one `git` call each); `lib/hunks.ts` draws `⋯ N unmodified lines` between hunks from
-  the `@@` headers alone. ⚠️ Hunks only: full-file context (`context: 'full'` on the RPCs, the
-  screenshot's collapsible unmodified runs) is the follow-up. Driven in the built app on a three-file
-  fixture; `test/ui.test.mjs` covers the commit, the branch-at-a-file, close and route-following
-  paths on the project thread. Seven decisions with the operator:
-  [`transient_docs/diff_pane_2026-09-13.md`](transient_docs/diff_pane_2026-09-13.md).
-- **Claude Code narrates its work, and the Session TUI stopped pretending to be one (t423,
-  2026-09-13).** ⛔ It was our decoder, not the CLI: `textBlocks` kept only `type: "text"` blocks, so
-  a prose-less `assistant` record reached nobody — on a real 1,679-record session **78% carried no
-  text block**. Tool calls are now a declared `StreamEvent.tool_use` (`toolLine`). ⛔ The **thinking
-  words do not exist** in the stream; `system/thinking_tokens` is free. A fleet setting
-  (`liveNarration`, default `summary`) buys word-by-word prose at ~10× the stream lines. The Session
-  TUI draws `SessionStream` for a piped session and xterm for a PTY one, with **Open a real
-  terminal** (`session.attach`) — always a **fork**. ⛔ **Work stays on pipes**: `rate_limit_event`
-  exists only in stream-json. ⭐ Raw bytes at a `stream-json` stdin **exit the CLI 1** — that was
-  *take the keyboard* on a dispatched task and `askForWrapUp`'s carriage return (every soft cancel
-  timed out at 90s). ⭐ `rate_limit_info.unifiedWindows` is a live per-window reading
-  (`QuotaSnapshot.source: 'stream'`). ⚠️ **L1 only**; whether `unifiedWindows` names an Opus window
-  is unverified. Decisions:
-  [`transient_docs/live_narration_2026-09-13.md`](transient_docs/live_narration_2026-09-13.md).
-  Also repaired four L3 checks t422 left red (each Global section names its tab).
-- **Remote listener auto-retries Tailscale every 60s (2026-09-13).** A reboot starts the app before
-  the Tailscale service, so the one-shot probe saw none and the listener stayed down until somebody
-  clicked *Re-check Tailscale*. A 60-second `setInterval` in `startRemoteServer`
-  ([`src/daemon/remote/server.ts`](src/daemon/remote/server.ts)) re-probes while `remoteListening()`
-  is true and `live` is null; it is a no-op once the listener is up and is cleared on `close()`.
-- **macOS worktree symlinks, CLI PATH detection, and header metrics (2026-09-13).** Worktree `.git`
-  pointers resolve with `fs.realpathSync`, or a temp dir crossing macOS's `/var` → `/private/var`
-  symlink breaks relative traversal (`worktrees.ts`). A non-Windows GUI launch searches the standard
-  user bin paths (`which.ts`), and task-table column widths gained 2–8px for macOS font metrics.
-- **Global settings are now task-oriented tabs (t422, 2026-09-13).** Global opens on **Fleet settings**; Notice isolates doctor warnings, Status holds daemon/CLI/worker/cost-model facts and Projects, App behavior holds window preferences, and Remote connection orders Tailscale, project access, desktop and phone pairing. Adding a remote computer is modal. The phone QR encoder now restores QR's fixed dark module after format placement; it was previously overwritten for some masks and could not be read by a camera. ⚠️ Landed without `npm run test:ui`, which the tab split broke in four places; t423 repaired it.
-- **Later pushes reconcile with an earlier local landing (t421, 2026-09-13).** A landing message
-  remains an honest record of what its own strategy did. When `origin/<target>` later contains its
-  commit, startup and a five-minute sweep fetch first and add a separate *Later observed* thread row;
-  they never rewrite history or claim the tool made the operator's push.
-- **One desktop drives another computer's fleet (t419, 2026-09-13).** A picker above Overview lists
-  *This computer* and paired remotes; `Root` re-keys `App` on a switch. Main's `RemoteClient`
-  reaches the remote's existing listener with a **desktop** credential: its own *Allow paired
-  desktops* switch, TLS on the tailnet hostname only, sealed by `safeStorage` in `remotes.json`.
-  RPC versions are a negotiated range capped at ±1 (`shared/rpcversion.ts`).
-- **A nearby reset no longer preempts healthy work (t418, 2026-09-13).** Early wrap-up now needs its model pool at high-water (92% for five-hour windows), not just t416's `config cache` reset; refusal and the 95% active-overrun guard remain separate.
-- **Canonical versioning and verified release download (t416, 2026-09-13).** `version.json` names
-  the release and repo; build rejects mismatches. Packaged app polls GitHub Releases, verifies
-  `SHA256SUMS.txt`, and stages download in `<dataDir>/updates/`.
-- **Show retained workspace locks in Flow (t413, 2026-09-13).** An `awaiting_human` ticket stays in
-  Awaiting and names the workspace it still locks, rather than pinning under Running or hiding the lock.
-- **Composer workspace pill first, purple pending-PR dot, split thread bubbles on a mid-flight reply
-  (t414, 2026-09-13).** See `lib/threadbubble.ts` and `delivery.pending`.
-- **Five UI reports off t410 (2026-09-13).** **Changes in this task** is drawn wherever the change
-  resolves, not only at `awaiting_human`; each commit reads its own `<sha>^!` diff; side-by-side
-  layout (`lib/sidebyside.ts`); bars under 3D marks (`lib/plot3d.ts`).
-- **Credits off is four situations, and the row now says which one (t408, 2026-09-13).** Measured on
-  Claude Code 2.1.270: `hasExtraUsageEnabled: true` with `spend_limit_reached: true` reports exact cause
-  and refill date (`creditsMismatchKind`, `src/shared/credits.ts`). Spend meters keep non-zero counters;
-  fleet card draws spent credit gauge. Detail in [`docs/adapters.md`](docs/adapters.md).
+  column of the shell right of the work — its own drag handle (`PaneResizer`), full height, one scroll,
+  sticky file headers, every file stacked. The inline **Changes in this task** keeps its file list and
+  draws no patch; a file row or *Open in Diff pane* opens the pane there.
+- **Claude Code narrates its work, and the Session TUI stopped pretending to be one (t423, 2026-09-13).**
+  Tool calls emit declared `StreamEvent.tool_use` (`toolLine`). A fleet setting (`liveNarration`, default
+  `summary`) buys word-by-word prose. The Session TUI draws `SessionStream` for a piped session and xterm
+  for a PTY one, with **Open a real terminal** (`session.attach`).
+- **Remote listener auto-retries Tailscale every 60s (2026-09-13).** A 60-second `setInterval` in
+  `startRemoteServer` re-probes while `remoteListening()` is true and `live` is null.
+- **macOS worktree symlinks, CLI PATH detection, and header metrics (2026-09-13).** Worktree `.git` pointers
+  resolve with `fs.realpathSync`, non-Windows GUI launch searches standard user bin paths (`which.ts`),
+  and task-table column widths gained 2–8px for macOS font metrics.
+- **Global settings are now task-oriented tabs (t422, 2026-09-13).** Tabs: Fleet settings, Notice, Status,
+  App behavior, and Remote connection. Phone QR encoder restores fixed dark module.
+- **Later pushes reconcile with an earlier local landing (t421, 2026-09-13).** Startup and a five-minute
+  sweep fetch first and add a separate *Later observed* thread row when `origin/<target>` contains the commit.
+- **One desktop drives another computer's fleet (t419, 2026-09-13).** Desktop picker above Overview,
+  `RemoteClient` TLS over Tailnet hostname sealed in `remotes.json`, negotiated RPC version range (±1).
+- **Nearby reset preemption guard, versioning, retained locks, composer pill, UI fixes (t410-t418).**
+  High-water threshold (92%) for 5h window resets; canonical `version.json`; Flow shows locks in Awaiting;
+  composer workspace pill first; credit gauges and DACL `sweepAcls` repair on Windows.
 - **Two dispatch faults measured off t408 and t410 (2026-09-13).** ⭐ *A sandboxed Codex run cannot
   write a file a sandboxed run wrote* — a dead run's DACL the operator cannot rewrite; `sweepAcls`
   ([`acl.ts`](src/daemon/acl.ts)) replaces every path `icacls /reset` refuses (on **stderr**, which the

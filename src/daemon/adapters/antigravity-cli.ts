@@ -125,8 +125,65 @@ export function readAntigravityIdentity(geminiDir = geminiHome()): {
     }
   }
 
+  // 3. Fall back to jetski-standalone-oauth-token
+  const jetskiFiles = [
+    join(geminiDir, 'jetski-standalone-oauth-token'),
+    join(geminiDir, 'antigravity-cli', 'jetski-standalone-oauth-token')
+  ]
+  for (const jetskiFile of jetskiFiles) {
+    if (existsSync(jetskiFile)) {
+      try {
+        const data = JSON.parse(readFileSync(jetskiFile, 'utf8')) as {
+          token?: { access_token?: string; refresh_token?: string; id_token?: string }
+        }
+        if (data.token?.access_token || data.token?.refresh_token || data.token?.id_token) {
+          loggedIn = true
+          if (!account && typeof data.token?.id_token === 'string') {
+            const parts = data.token.id_token.split('.')
+            if (parts.length >= 2) {
+              const payload = JSON.parse(Buffer.from(parts[1]!, 'base64').toString('utf8')) as {
+                email?: string
+              }
+              if (typeof payload.email === 'string' && payload.email.includes('@')) {
+                account = payload.email.trim()
+              }
+            }
+          }
+          break
+        }
+      } catch {
+        // Ignore unparseable token file
+      }
+    }
+  }
+
+  // 4. Fall back to reading account email from CLI log
+  if (!account) {
+    const logFiles = [
+      join(geminiDir, 'antigravity-cli', 'cli.log'),
+      join(geminiDir, 'cli.log')
+    ]
+    for (const logFile of logFiles) {
+      if (existsSync(logFile)) {
+        try {
+          const content = readFileSync(logFile, 'utf8')
+          const match =
+            /OAuth: authenticated successfully as ([^\s]+)/.exec(content) ??
+            /applyAuthResult: email=([^\s,]+)/.exec(content)
+          if (match?.[1] && match[1].includes('@')) {
+            account = match[1].trim()
+            loggedIn = true
+            break
+          }
+        } catch {
+          // Ignore unreadable log file
+        }
+      }
+    }
+  }
+
   let subscriptionType: string | undefined
-  if (account) {
+  if (account || loggedIn) {
     // Antigravity CLI on individual consumer accounts runs on Google AI Pro/Ultra.
     subscriptionType = 'Google AI Pro'
   } else {
@@ -970,8 +1027,8 @@ export const antigravityCli: AgentAdapter = {
    */
   async probeIdentity(): Promise<IdentityProbe> {
     const home = cliHome()
-    const gHome = geminiHome()
-    if (!existsSync(join(home, 'settings.json')) && !existsSync(join(gHome, 'google_accounts.json'))) {
+    const { loggedIn, account, subscriptionType } = readAntigravityIdentity()
+    if (loggedIn === null && !account) {
       return {
         loggedIn: null,
         raw:
@@ -979,8 +1036,6 @@ export const antigravityCli: AgentAdapter = {
           'and keeps nothing here - there is no way to tell the difference without spending a turn.'
       }
     }
-
-    const { loggedIn, account, subscriptionType } = readAntigravityIdentity()
 
     let setupComplete: boolean | null = null
     try {
@@ -1042,6 +1097,7 @@ export const antigravityCli: AgentAdapter = {
   },
 
   parseUsage: parseUsageScreen,
+  parseIdentityFromScreen: parseUsageScreenIdentity,
 
   /**
    * ⛔ Always unknown, and deliberately so — after evaluating every alternative.

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -339,6 +339,42 @@ describe('readAntigravityIdentity', () => {
     }
   })
 
+  it('reads login status from jetski-standalone-oauth-token', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agy-ident-'))
+    try {
+      writeFileSync(
+        join(dir, 'jetski-standalone-oauth-token'),
+        JSON.stringify({
+          auth_method: 'consumer',
+          token: { access_token: 'ya29.test', refresh_token: '1//test' }
+        })
+      )
+      const res = readAntigravityIdentity(dir)
+      expect(res.loggedIn).toBe(true)
+      expect(res.subscriptionType).toBe('Google AI Pro')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reads account email from antigravity-cli/cli.log OAuth log line', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agy-ident-'))
+    const cliDir = join(dir, 'antigravity-cli')
+    mkdirSync(cliDir, { recursive: true })
+    try {
+      writeFileSync(
+        join(cliDir, 'cli.log'),
+        'I0913 15:00:00 1 server_oauth.go:197] OAuth: authenticated successfully as loguser@example.com\n'
+      )
+      const res = readAntigravityIdentity(dir)
+      expect(res.loggedIn).toBe(true)
+      expect(res.account).toBe('loguser@example.com')
+      expect(res.subscriptionType).toBe('Google AI Pro')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('returns loggedIn: false when settings.json exists but no account credentials exist', () => {
     const dir = mkdtempSync(join(tmpdir(), 'agy-ident-'))
     try {
@@ -372,4 +408,18 @@ describe('antigravity-cli detect', () => {
       expect(res.version).toMatch(/^\d+\.\d+\.\d+/)
     }
   })
+
+  it('reads system identity when agy is installed and logged in', async () => {
+    if (antigravityCli.isInstalled()) {
+      const ident = await antigravityCli.probeIdentity('/ignored')
+      if (ident.loggedIn) {
+        expect(ident.loggedIn).toBe(true)
+        if (ident.account) {
+          expect(ident.account).toMatch(/@/)
+        }
+        expect(ident.subscriptionType).toBe('Google AI Pro')
+      }
+    }
+  })
 })
+

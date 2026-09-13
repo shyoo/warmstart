@@ -290,6 +290,9 @@ export interface AgentAdapter {
   // unbound-method error. It never uses `this`.
   parseUsage?: (screen: string, now?: number) => QuotaWindow[] | null
 
+  /** Parse account identity from the same usage screen when available. */
+  parseIdentityFromScreen?: (screen: string) => { account?: string; subscriptionType?: string } | null
+
   /**
    * The same screen, asked a different question: does this CLI say *it* has no reading to give?
    *

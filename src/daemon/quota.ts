@@ -7,6 +7,7 @@ import { stripAnsi } from './stream.js'
 import {
   clearQuarantineByProbe,
   listWorkers,
+  refreshIdentity,
   refreshIdentityIfStale,
   requireWorker
 } from './workers.js'
@@ -343,6 +344,12 @@ async function readUsage(workerId: string): Promise<DatedQuota> {
       source: 'cli'
     }
     storeAndPublish(snapshot)
+    if (screen) {
+      const parsedIdent = adapter(w.adapterId).parseIdentityFromScreen?.(screen)
+      if (parsedIdent?.account && parsedIdent.account !== w.identity?.account) {
+        void refreshIdentity(workerId)
+      }
+    }
     log.info(
       `usage on ${w.label}: ${windows.map((x) => `${x.label} ${Math.round(x.percent)}% used`).join(' · ')}`
     )
