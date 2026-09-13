@@ -14,6 +14,19 @@ export interface AppInfo {
   platform: NodeJS.Platform
 }
 
+/** The update file is downloaded and checksum-verified, never installed by Warmstart itself. */
+export type UpdatePhase = 'idle' | 'checking' | 'current' | 'downloading' | 'downloaded' | 'unavailable' | 'error'
+
+export interface AppUpdateState {
+  phase: UpdatePhase
+  currentVersion: string
+  version: string | null
+  assetName: string | null
+  downloadedBytes: number
+  totalBytes: number | null
+  message: string | null
+}
+
 export type EnterBehavior = 'send' | 'newline'
 export type ThemePreference = 'system' | 'light' | 'dark'
 
@@ -84,6 +97,10 @@ export type DaemonUiStatus =
 
 export interface AgentyardApi {
   getAppInfo(): Promise<AppInfo>
+  getUpdateStatus(): Promise<AppUpdateState>
+  /** Opens the folder containing a checksum-verified installer. Never runs it. */
+  showDownloadedUpdate(): Promise<boolean>
+  onUpdateStatus(handler: (status: AppUpdateState) => void): () => void
   daemonStatus(): Promise<DaemonUiStatus>
   /** Start orchestratord if it is not already running, then attach. Safe to call repeatedly. */
   startDaemon(): Promise<DaemonUiStatus>
@@ -109,6 +126,9 @@ export interface AgentyardApi {
 
 export const IPC = {
   appInfo: 'app:info',
+  updateStatus: 'app:update-status',
+  updateShowDownloaded: 'app:update-show-downloaded',
+  updatePush: 'app:update-push',
   daemonStatus: 'daemon:status',
   daemonStart: 'daemon:start',
   rpc: 'daemon:rpc',

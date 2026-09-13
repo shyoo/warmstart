@@ -12,8 +12,9 @@
 # ⛔ **No tests run here.** `ci.yml` already ran the suites on the commit being tagged, and repeating
 # them would double the bill for no new information. The tag is expected to point at a green commit.
 #
-# ⛔ **`publish: null` in electron-builder.yml is intentional and stays.** The app must never be able
-# to replace its own binary. This workflow uploads artifacts; a human installs them.
+# ⛔ **`publish: null` in electron-builder.yml is intentional and stays.** Packaged Warmstart polls
+# this Release and can download its matching SHA-256-verified installer, but it never runs or
+# installs that file. This workflow uploads artifacts; a human installs them.
 
 name: Release
 
@@ -70,6 +71,15 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Verify the tag names this source version
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          version=$(node -p "require('./version.json').version")
+          test "${{ github.ref_name }}" = "v$version" || {
+            echo "tag ${{ github.ref_name }} does not match version.json v$version" >&2
+            exit 1
+          }
       - run: npm ci
       - uses: actions/cache@v4
         with:

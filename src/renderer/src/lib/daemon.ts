@@ -1,6 +1,6 @@
 import { sessionEnded } from '@shared/protocol'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { AppInfo, DaemonUiStatus } from '@shared/ipc'
+import type { AppInfo, AppUpdateState, DaemonUiStatus } from '@shared/ipc'
 import type {
   DaemonEvent,
   QuotaSnapshot,
@@ -79,6 +79,15 @@ export function useAppInfo(): AppInfo | null {
     void window.agentyard.getAppInfo().then(setInfo)
   }, [])
   return info
+}
+
+export function useUpdateStatus(): AppUpdateState | null {
+  const [status, setStatus] = useState<AppUpdateState | null>(null)
+  useEffect(() => {
+    void window.agentyard.getUpdateStatus().then(setStatus)
+    return window.agentyard.onUpdateStatus(setStatus)
+  }, [])
+  return status
 }
 
 export function useDaemonStatus(): DaemonUiStatus {

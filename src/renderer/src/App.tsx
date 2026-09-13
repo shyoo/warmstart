@@ -8,7 +8,8 @@ import {
   useDaemonEvents,
   useDaemonStatus,
   useFleet,
-  useNow
+  useNow,
+  useUpdateStatus
 } from './lib/daemon'
 import {
   clampZoom,
@@ -99,6 +100,7 @@ type Route =
 export function App(): React.JSX.Element {
   useUiSettings()
   const info = useAppInfo()
+  const update = useUpdateStatus()
   const status = useDaemonStatus()
   const connected = status.state === 'connected'
   const { fleet, refresh } = useFleet(connected)
@@ -712,7 +714,7 @@ export function App(): React.JSX.Element {
           <span>
             <span className={`dot ${connected ? 'dot--ok' : 'dot--down'}`} />
             {status.state === 'connected'
-              ? `orchestratord v${status.version} · pid ${status.pid} · 127.0.0.1:${status.port}`
+              ? `orchestratord · pid ${status.pid} · 127.0.0.1:${status.port}`
               : status.state === 'error'
                 ? `orchestratord: ${status.message}`
                 : `orchestratord: ${status.state}`}
@@ -726,6 +728,17 @@ export function App(): React.JSX.Element {
             {liveSessions.length === 1 ? '' : 's'}
           </span>
           <span>{info?.platform}</span>
+          <span className="num">v{info?.version ?? (status.state === 'connected' ? status.version : '…')}</span>
+          {update?.phase === 'downloaded' && update.version && (
+            <button
+              type="button"
+              className="statusbar-update"
+              title={update.message ?? `Warmstart ${update.version} is ready to install`}
+              onClick={() => void window.agentyard.showDownloadedUpdate()}
+            >
+              ↓ v{update.version}
+            </button>
+          )}
         </footer>
       </main>
     </div>

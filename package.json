@@ -1,6 +1,6 @@
 {
   "name": "warmstart",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "A scheduler with a budget: route coding-agent tasks to the worker, session and moment where they are cheapest to run.",
   "license": "Apache-2.0",
   "repository": {
@@ -19,10 +19,11 @@
   },
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "npm run typecheck && electron-vite build && npm run build:mobile",
+    "build": "npm run version:check && npm run typecheck && electron-vite build && npm run build:mobile",
     "build:mobile": "vite build --config vite.mobile.config.ts",
     "start": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "npm run version:check && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "version:check": "node scripts/check-version.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "coverage": "vitest run --coverage",

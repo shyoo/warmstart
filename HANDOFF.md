@@ -10,18 +10,19 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Last full local validation on this branch (2026-09-13): `npm run typecheck`, `npm run lint`,
-`npm test` (**3,337 passed, 2 skipped**), `npm run build`, and the L3 UI suite (**416 checks**) passed.
+`npm test` (**3,344 passed, 2 skipped**), `npm run build`, and the L3 UI suite (**416 checks**) passed.
 Expected test warnings exercise refusal and recovery paths; they are not failures.
 
 ## Closed in this cleanup
 
-- **The Tasks table responds to its actual panel width (t415, 2026-09-13).** Its history and
-  secondary columns now yield through a named CSS container as either the window or the resizable
-  sidebar narrows the panel; the old viewport queries kept every fixed-width column in a roughly
-  960px table and let headers paint across their neighbours. The L3 regression recreates that shape
-  by widening the sidebar while leaving the viewport wide. Task validation: typecheck, build, and
-  **3,338 passed / 2 skipped** at L1; the local L3 host could not start Chromium because its GPU
-  process repeatedly exited with `-1073741515`, before any renderer check ran.
+- **Canonical versioning and verified release download (t416, 2026-09-13).** `version.json` now
+  names the release and GitHub repository; a build rejects package/lock metadata that does not agree,
+  and the daemon, MCP handshake, app footer and builder artifact name consume it. Packaged Warmstart
+  polls the latest stable GitHub Release and downloads only its exact OS/architecture installer after
+  matching `SHA256SUMS.txt`; it never launches it, and the footer opens the verified file's folder.
+  Task validation: `npm run typecheck`, `npm run lint`, `npm test` (**3,344 passed, 2 skipped**),
+  and `npm run build` passed. Expected Vitest refusal/recovery warnings and Vite chunk warnings remain
+  non-fatal.
 - **Show retained workspace locks in Flow (t413, 2026-09-13).** An `awaiting_human` ticket stays in
   Awaiting and names the workspace it still locks, rather than pinning under Running or hiding the lock.
 - **Three UI changes across task composer, sidebar pending PRs, and thread bubbles (t414, 2026-09-13).**

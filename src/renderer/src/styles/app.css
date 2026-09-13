@@ -534,6 +534,17 @@ body {
   color: var(--color-text-dim);
 }
 
+.statusbar-update {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--color-accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.statusbar-update:hover { text-decoration: underline; }
+
 .dot {
   display: inline-block;
   width: 6px;

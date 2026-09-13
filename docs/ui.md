@@ -731,6 +731,10 @@ is too large and too varied.
 - **The task table responds to its panel, not the window.** Its fixed operational columns yield via
   the named `task-table` container as the resizable sidebar reduces the space actually available;
   viewport breakpoints cannot know how wide that sidebar is.
+- **The status bar ends with the app version.** Its left fact is the live orchestratord process;
+  worker/session counts, platform and the version are separate facts, so the daemon does not have to
+  be restarted just to say which packaged app opened the window. A downloaded update is a link to its
+  verified installer folder, never an install button.
 
 ⚠️ Reuse an existing class before adding one. The check-command textarea once borrowed `.ask-input`,
 whose entire design is to be invisible.

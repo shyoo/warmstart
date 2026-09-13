@@ -37,6 +37,7 @@ packages and TypeScript reports the misleading-looking `Cannot find module` erro
 
 ```bash
 npm run dev          # electron-vite dev
+npm run version:check # version.json agrees with package and lock metadata
 npm run typecheck    # tsc --noEmit over tsconfig.node.json and tsconfig.web.json
 npm run lint         # eslint, type-aware rules on
 npm run build        # typecheck + production bundle into out/
@@ -100,7 +101,19 @@ working, not a leak. Guard the directory actually being rewritten, nothing wider
 
 ⚠️ Builds are **unsigned**. Windows SmartScreen warns; macOS Gatekeeper refuses until cleared by hand.
 That is the honest state of a pre-alpha; signing is a certificate and a release process, not a config
-line. ⛔ Bumping `package.json` `version` is the owner's call.
+line. **`version.json` is the version source.** Its value is compiled into the window, daemon and MCP
+server; `package.json` and `package-lock.json` carry the same value because Electron Builder requires
+package metadata, and `npm run version:check` refuses a mismatch. Change all three deliberately before
+tagging `v<version>`; the release workflow rejects a tag that does not name `version.json`.
+
+### Release downloads
+
+On a packaged build, Warmstart polls the latest stable GitHub Release for the repository recorded in
+`version.json`. A newer release is downloaded only when it contains the exact builder filename for
+this OS and architecture (`warmstart-<version>-<os>-<arch>.<ext>`) and `SHA256SUMS.txt` names a
+matching SHA-256. The file lands in `<dataDir>/updates/`; the footer exposes it once verified.
+⛔ Warmstart never executes or installs the download. Opening its folder is the operator's action,
+because an app that manages credentials and starts agents must not replace itself unattended.
 
 `release/` is gitignored. An artifact is a build product and is never committed.
 

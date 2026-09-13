@@ -1,5 +1,4 @@
 import { randomBytes } from 'node:crypto'
-import { createRequire } from 'node:module'
 import type { DaemonEvent, Session } from '@shared/protocol.js'
 import { acquireLock, clearEndpoint, publishEndpoint, releaseLock } from './lock.js'
 import { prunePending } from './attachments.js'
@@ -48,6 +47,7 @@ import { noteActivity } from './activity.js'
 import { onSettingChange } from './settings.js'
 import { paths } from './paths.js'
 import { reconcilePullRequestDeliveries } from './deliveries.js'
+import { APP_VERSION } from '@shared/version.js'
 
 /**
  * orchestratord.
@@ -56,9 +56,6 @@ import { reconcilePullRequestDeliveries } from './deliveries.js'
  * windows that are hours long; if closing the window killed the fleet, there would be nothing here
  * that a handful of terminal tabs does not already do.
  */
-
-const require = createRequire(import.meta.url)
-const VERSION = (require('../../package.json') as { version: string }).version
 
 async function main(): Promise<void> {
   if (!acquireLock()) {
@@ -115,9 +112,9 @@ async function main(): Promise<void> {
   deliverySweep.unref()
 
   const token = randomBytes(32).toString('hex')
-  const server: DaemonServer = await startServer(token, { version: VERSION, startedAt })
+  const server: DaemonServer = await startServer(token, { version: APP_VERSION, startedAt })
   // Separate credentials and listener: the loopback bearer token never leaves this process.
-  const remote = startRemoteServer({ version: VERSION, startedAt, port: server.port })
+  const remote = startRemoteServer({ version: APP_VERSION, startedAt, port: server.port })
 
   // ⛔ **Not awaited, and it must not be.** Reading every project's history is one `git log` per
   // project, and the endpoint below is what the UI connects to — a repository on a slow or
@@ -128,7 +125,7 @@ async function main(): Promise<void> {
     log.warn(`could not salvage landed commits: ${String(err)}`)
   )
 
-  publishEndpoint({ pid: process.pid, port: server.port, token, version: VERSION, startedAt })
+  publishEndpoint({ pid: process.pid, port: server.port, token, version: APP_VERSION, startedAt })
 
   const emit = (event: DaemonEvent) => { server.broadcast(event); remote.broadcast(event) }
   setEventSink(emit)
@@ -291,7 +288,7 @@ async function main(): Promise<void> {
   // controller be an LLM without putting an LLM in the path of every dispatch.
   startController()
 
-  log.info(`orchestratord ${VERSION} ready (pid ${process.pid}, data ${paths.root})`)
+  log.info(`orchestratord ${APP_VERSION} ready (pid ${process.pid}, data ${paths.root})`)
 
   let shuttingDown = false
   const shutdown = (reason: string) => {

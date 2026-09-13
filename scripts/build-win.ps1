@@ -317,8 +317,8 @@ function Invoke-Step {
 # something it never looked at.
 $LOCK = 'package-lock.json'   # stands in for node_modules; hashing 11MB of @lydell does not pay
 $TSCONFIGS = @('tsconfig.json', 'tsconfig.node.json', 'tsconfig.web.json')
-$BUNDLE_IN = @('src', 'costmodels', 'electron.vite.config.ts', 'package.json', $LOCK) + $TSCONFIGS
-$PACK_IN = @('out', 'electron-builder.yml', 'package.json', 'resources', $LOCK)
+$BUNDLE_IN = @('src', 'costmodels', 'electron.vite.config.ts', 'version.json', 'package.json', $LOCK) + $TSCONFIGS
+$PACK_IN = @('out', 'electron-builder.yml', 'version.json', 'package.json', 'resources', $LOCK)
 
 # What `electron-vite build` is expected to leave behind. Hash-suffixed chunk names are deliberately
 # not listed - these five are the entry points, and their absence is what a half-written out\ looks
@@ -580,7 +580,7 @@ if (-not $SkipTests) {
 }
 
 if ($Installer) {
-  Invoke-Step -Name 'installer' -Title 'Installer' -Inputs $PACK_IN -Outputs @('release/*Setup*.exe') -Body {
+  Invoke-Step -Name 'installer' -Title 'Installer' -Inputs $PACK_IN -Outputs @('release/warmstart-*.exe') -Body {
     Assert-BundleIsCurrent
     Assert-OutputIsFree 'release'
     Run "npx --no-install electron-builder --win"

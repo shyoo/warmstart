@@ -3,6 +3,7 @@ import {
   IPC,
   type AgentyardApi,
   type AppInfo,
+  type AppUpdateState,
   type DaemonUiStatus,
   type UiSettings
 } from '@shared/ipc.js'
@@ -17,6 +18,13 @@ import type { DaemonEvent, RpcMethod, RpcParams, RpcResult } from '@shared/proto
  */
 const api: AgentyardApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfo) as Promise<AppInfo>,
+  getUpdateStatus: () => ipcRenderer.invoke(IPC.updateStatus) as Promise<AppUpdateState>,
+  showDownloadedUpdate: () => ipcRenderer.invoke(IPC.updateShowDownloaded) as Promise<boolean>,
+  onUpdateStatus(handler) {
+    const listener = (_e: unknown, status: AppUpdateState) => handler(status)
+    ipcRenderer.on(IPC.updatePush, listener)
+    return () => ipcRenderer.removeListener(IPC.updatePush, listener)
+  },
   daemonStatus: () => ipcRenderer.invoke(IPC.daemonStatus) as Promise<DaemonUiStatus>,
   startDaemon: () => ipcRenderer.invoke(IPC.daemonStart) as Promise<DaemonUiStatus>,
   rpc: <M extends RpcMethod>(method: M, params?: RpcParams<M>) =>

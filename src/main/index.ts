@@ -22,6 +22,8 @@ import { captionOptions } from './titlebar.js'
 import { readWindowBounds, trackWindowBounds } from './windowstate.js'
 import { dataDir } from '../daemon/paths.js'
 import { appEnv } from '@shared/env.js'
+import { APP_VERSION, RELEASE_REPOSITORY } from '@shared/version.js'
+import { UpdateManager } from './updates.js'
 
 const dirname = join(fileURLToPath(import.meta.url), '..')
 
@@ -113,6 +115,13 @@ function broadcast(channel: string, payload: unknown): void {
     if (!wc.isDestroyed()) wc.send(channel, payload)
   }
 }
+
+const updates = new UpdateManager({
+  currentVersion: APP_VERSION,
+  repository: RELEASE_REPOSITORY,
+  dataDir: dataDir(),
+  onState: (state) => broadcast(IPC.updatePush, state)
+})
 
 /**
  * The window icon, which only Linux needs from us.
@@ -306,10 +315,18 @@ void app.whenReady().then(() => {
     IPC.appInfo,
     (): AppInfo => ({
       name: 'Warmstart',
-      version: app.getVersion(),
+      version: APP_VERSION,
       platform: process.platform
     })
   )
+
+  ipcMain.handle(IPC.updateStatus, () => updates.getState())
+  ipcMain.handle(IPC.updateShowDownloaded, () => {
+    const downloaded = updates.getDownloadedPath()
+    if (!downloaded) return false
+    shell.showItemInFolder(downloaded)
+    return true
+  })
 
   ipcMain.handle(IPC.daemonStatus, (): DaemonUiStatus => toUiStatus(daemon.getStatus()))
 
@@ -365,6 +382,10 @@ void app.whenReady().then(() => {
   uiSettings = readUiSettings()
   applyTraySetting()
   createWindow()
+
+  // Updates are meaningful only for an installed, packaged app. Development and test builds must
+  // never fetch installers merely because somebody opened the renderer.
+  if (app.isPackaged) void updates.checkAndDownload()
 
   // Start the daemon in the background: the window should paint immediately and fill in, not wait.
   void daemon.ensure(daemonScriptPath(dirname))

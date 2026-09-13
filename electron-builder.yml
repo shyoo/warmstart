@@ -16,6 +16,9 @@
 appId: io.github.shyoo.warmstart
 productName: Warmstart
 copyright: Copyright © 2026 Sunghwan Yoo
+# The version comes from package.json, which scripts/check-version.mjs makes match version.json.
+# This exact spelling is also the only asset shape the in-app downloader accepts.
+artifactName: ${name}-${version}-${os}-${arch}.${ext}
 
 directories:
   output: release
@@ -101,7 +104,6 @@ linux:
     Runs a fleet of coding agents across the accounts you own and routes each task to the worker,
     session and moment where it is cheapest to run.
 
-# ⛔ No auto-update. An app that manages other people's credentials and spawns processes on their
-# machine should not also grant itself the ability to replace its own binary silently. Releases are
-# downloaded and installed deliberately.
+# The app polls GitHub Releases and downloads only a SHA-256-verified installer matching this exact
+# filename shape. It never runs or installs that file: replacement remains a deliberate action.
 publish: null

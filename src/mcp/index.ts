@@ -10,6 +10,7 @@ import { paths } from '../daemon/paths.js'
 import { errorMessage } from '@shared/errors.js'
 import { describeTarget, failed, questionsFrom, text, type NativeQuestion } from './payload.js'
 import { appEnv } from '@shared/env.js'
+import { APP_VERSION } from '@shared/version.js'
 
 /**
  * The agentyard MCP server.
@@ -99,7 +100,7 @@ function rpc<M extends RpcMethod>(method: M, params?: RpcParams<M>): Promise<Rpc
 // ⛔ Must match MCP_SERVER_NAME in mcpconfig.ts - the daemon registers this server under that
 // key and tells the CLI to call `mcp__<that key>__approve`. Not imported: this bundle is spawned as
 // a standalone process and deliberately shares no daemon module.
-const server = new McpServer({ name: 'warmstart', version: '0.0.1' })
+const server = new McpServer({ name: 'warmstart', version: APP_VERSION })
 
 /**
  * The permission prompt tool.

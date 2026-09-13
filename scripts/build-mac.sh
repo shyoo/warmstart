@@ -442,8 +442,8 @@ invoke_step() {
 # The input sets, matching scripts/build-win.ps1
 LOCK="package-lock.json"
 TSCONFIGS="tsconfig.json tsconfig.node.json tsconfig.web.json"
-BUNDLE_IN="src costmodels electron.vite.config.ts package.json $LOCK $TSCONFIGS"
-PACK_IN="out electron-builder.yml package.json resources $LOCK"
+BUNDLE_IN="src costmodels electron.vite.config.ts version.json package.json $LOCK $TSCONFIGS"
+PACK_IN="out electron-builder.yml version.json package.json resources $LOCK"
 BUNDLE_OUT="out/main/index.js;out/main/orchestratord.js;out/main/agentyard-mcp.js;out/preload/index.cjs;out/renderer/index.html"
 if [[ "$(uname -m)" == "arm64" ]]; then
   PACKED_APP="release/mac-arm64/Warmstart.app"
@@ -512,7 +512,7 @@ if [[ "$INSTALLER" -eq 1 ]]; then
     node "$CACHE_HELPER" get-repo-processes 0 0
     npx --no-install electron-builder --mac
   }
-  invoke_step 'installer' 'Installer' "$PACK_IN" "release/Warmstart-*.dmg" run_installer
+  invoke_step 'installer' 'Installer' "$PACK_IN" "release/warmstart-*.dmg" run_installer
 fi
 
 # Clean up helper
