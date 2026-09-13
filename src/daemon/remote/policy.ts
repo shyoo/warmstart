@@ -157,6 +157,7 @@ export const REMOTE_METHODS = {
   'remote.status': 'deny',
   'remote.recheck': 'deny',
   'remote.setEnabled': 'deny',
+  'remote.setDesktopsEnabled': 'deny',
   'remote.setBind': 'deny',
   'remote.setProject': 'deny',
   'remote.pairingCode': 'deny',

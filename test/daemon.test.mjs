@@ -1362,6 +1362,50 @@ try {
   )
   void shellBody
 
+  // ⛔ Desktops (t419). This suite can only reach the plain-HTTP LAN listener — there is no tailnet
+  // certificate here — so what it proves is the refusal half: a desktop credential cannot be minted,
+  // or used, anywhere but over TLS. The accepting half is L1 (`desktoppolicy.test.ts`).
+  const hello = await fetch(`${base}/remote/hello`)
+  const helloBody = await hello.json().catch(() => null)
+  check(
+    'the handshake is public and names the protocol versions this daemon speaks',
+    hello.status === 200 && helloBody?.app === 'warmstart' && Number.isInteger(helloBody?.rpc?.min) && Number.isInteger(helloBody?.rpc?.max),
+    JSON.stringify(helloBody)
+  )
+  let desktopCodeRefused = ''
+  try {
+    await daemon.rpc('remote.pairingCode', { kind: 'desktop' })
+  } catch (err) {
+    desktopCodeRefused = err instanceof Error ? err.message : String(err)
+  }
+  check('no desktop pairing code is issued while desktops are off', /Allow paired desktops/.test(desktopCodeRefused), desktopCodeRefused)
+  await daemon.rpc('remote.setDesktopsEnabled', { enabled: true })
+  desktopCodeRefused = ''
+  try {
+    await daemon.rpc('remote.pairingCode', { kind: 'desktop' })
+  } catch (err) {
+    desktopCodeRefused = err instanceof Error ? err.message : String(err)
+  }
+  check('nor without a Tailscale HTTPS address to redeem it at', /HTTPS address/.test(desktopCodeRefused), desktopCodeRefused)
+  const phoneCode = await daemon.rpc('remote.pairingCode')
+  const phoneAsDesktop = await fetch(`${base}/remote/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: phoneCode.code, label: 'sneaky desktop', kind: 'desktop' })
+  })
+  check('a desktop pairing over plain HTTP is refused before any code is looked at', phoneAsDesktop.status === 403)
+  const phoneStillWorks = await fetch(`${base}/remote/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code: phoneCode.code, label: 'second suite phone' })
+  })
+  const phoneStillBody = await phoneStillWorks.json()
+  check('and that attempt did not spend the phone code', phoneStillWorks.status === 200 && phoneStillBody.kind === 'phone')
+  const listed = await daemon.rpc('remote.status')
+  check('paired devices say which kind they are', listed.devices.every((d) => d.kind === 'phone'), JSON.stringify(listed.devices.map((d) => d.kind)))
+  await daemon.rpc('remote.revokeDevice', { id: phoneStillBody.deviceId })
+  await daemon.rpc('remote.setDesktopsEnabled', { enabled: false })
+
   await daemon.rpc('remote.revokeDevice', { id: pairedBody.deviceId })
   const revoked = await remoteRpc(deviceToken, 'fleet.list')
   check('revoking a device stops its token working immediately', revoked.status === 401)

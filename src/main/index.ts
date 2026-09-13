@@ -7,14 +7,17 @@ import {
   Tray,
   ipcMain,
   nativeImage,
+  safeStorage,
   shell,
   type WebContents
 } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { IPC, type AppInfo, type DaemonUiStatus, type NotifyRequest, type UiSettings } from '@shared/ipc.js'
+import { IPC, LOCAL_TARGET, type AppInfo, type DaemonUiStatus, type NotifyRequest, type PairRemoteRequest, type TargetEvent, type TargetsState, type UiSettings } from '@shared/ipc.js'
 import type { DaemonEvent, RpcMethod } from '@shared/protocol.js'
-import { DaemonClient, daemonScriptPath, type DaemonStatus } from './daemon.js'
+import { DaemonClient, daemonScriptPath } from './daemon.js'
+import { TargetManager, localUiStatus } from './targets.js'
+import type { Sealer } from './remotes.js'
 import { DEFAULT_UI_SETTINGS, readUiSettings, writeUiSettings } from './uisettings.js'
 import { showWhenItCan } from './showwindow.js'
 import { trayIconPath } from './trayicon.js'
@@ -37,6 +40,20 @@ const dirname = join(fileURLToPath(import.meta.url), '..')
 
 const daemon = new DaemonClient()
 const windows = new Set<WebContents>()
+/** Created once the app is ready: `safeStorage` cannot answer before then. */
+let targets: TargetManager | null = null
+
+/**
+ * `safeStorage`, and nothing weaker. ⛔ Linux's `basic_text` backend is a hard-coded key, which is
+ * obfuscation, so it counts as unavailable and pairing is refused there.
+ */
+const sealer: Sealer = {
+  available: () =>
+    safeStorage.isEncryptionAvailable() &&
+    (process.platform !== 'linux' || safeStorage.getSelectedStorageBackend() !== 'basic_text'),
+  seal: (plain) => safeStorage.encryptString(plain).toString('base64'),
+  open: (sealed) => safeStorage.decryptString(Buffer.from(sealed, 'base64'))
+}
 
 let uiSettings: UiSettings = { ...DEFAULT_UI_SETTINGS }
 let tray: Tray | null = null
@@ -93,26 +110,9 @@ if (!headless) {
 // required minimal app menu (Quit, etc.) since the OS enforces one.
 Menu.setApplicationMenu(null)
 
-function toUiStatus(status: DaemonStatus): DaemonUiStatus {
-  switch (status.state) {
-    case 'connected':
-      return {
-        state: 'connected',
-        pid: status.endpoint.pid,
-        port: status.endpoint.port,
-        version: status.endpoint.version,
-        connectedAt: status.connectedAt
-      }
-    case 'error':
-      return { state: 'error', message: status.message }
-    default:
-      return { state: status.state }
-  }
-}
-
-function broadcast(channel: string, payload: unknown): void {
+function broadcast(channel: string, ...payload: unknown[]): void {
   for (const wc of windows) {
-    if (!wc.isDestroyed()) wc.send(channel, payload)
+    if (!wc.isDestroyed()) wc.send(channel, ...payload)
   }
 }
 
@@ -328,7 +328,19 @@ void app.whenReady().then(() => {
     return true
   })
 
-  ipcMain.handle(IPC.daemonStatus, (): DaemonUiStatus => toUiStatus(daemon.getStatus()))
+  targets = new TargetManager({
+    local: daemon,
+    file: join(app.getPath('userData'), 'remotes.json'),
+    sealer
+  })
+  const manager = targets
+
+  // ⛔ The status and events the window sees are the *selected* computer's; see targets.ts.
+  ipcMain.handle(IPC.daemonStatus, (): DaemonUiStatus => manager.activeStatus())
+  ipcMain.handle(IPC.targetsGet, (): TargetsState => manager.state())
+  ipcMain.handle(IPC.targetSelect, (_event, id: string): TargetsState => manager.select(id))
+  ipcMain.handle(IPC.targetPair, (_event, request: PairRemoteRequest) => manager.pair(request))
+  ipcMain.handle(IPC.targetForget, (_event, id: string) => manager.forget(id))
 
   ipcMain.handle(IPC.uiSettingsGet, (): UiSettings => uiSettings)
 
@@ -356,7 +368,7 @@ void app.whenReady().then(() => {
     const note = new Notification({ title: request.title, body: request.body })
     note.on('click', () => {
       showWindow()
-      broadcast(IPC.notificationActivate, request.taskId)
+      broadcast(IPC.notificationActivate, request.taskId, request.targetId ?? LOCAL_TARGET)
     })
     note.show()
     return true
@@ -368,16 +380,24 @@ void app.whenReady().then(() => {
   })
 
   ipcMain.handle(IPC.daemonStart, async (): Promise<DaemonUiStatus> => {
-    return toUiStatus(await daemon.ensure(daemonScriptPath(dirname)))
+    // ⚠️ "Try again" on a remote retries the connection; it never starts anything on that computer.
+    if (manager.activeId() !== LOCAL_TARGET) {
+      manager.retry()
+      return manager.activeStatus()
+    }
+    return localUiStatus(await daemon.ensure(daemonScriptPath(dirname)))
   })
 
-  // The renderer names a method; it never names a host, a port or a token.
-  ipcMain.handle(IPC.rpc, (_event, method: RpcMethod, params: unknown) =>
-    daemon.rpc(method, params as never)
+  // The renderer names a method and the computer it thinks it is on; never a host, a port or a token.
+  ipcMain.handle(IPC.rpc, (_event, method: RpcMethod, params: unknown, targetId?: string) =>
+    manager.rpc(method, params as never, typeof targetId === 'string' ? targetId : undefined)
   )
 
-  daemon.on('status', (status: DaemonStatus) => broadcast(IPC.statusPush, toUiStatus(status)))
-  daemon.on('event', (event: DaemonEvent) => broadcast(IPC.eventPush, event))
+  manager.on('status', (status: DaemonUiStatus) => broadcast(IPC.statusPush, status))
+  manager.on('event', (event: DaemonEvent) => broadcast(IPC.eventPush, event))
+  manager.on('background', (event: TargetEvent) => broadcast(IPC.backgroundEventPush, event))
+  manager.on('targets', (state: TargetsState) => broadcast(IPC.targetsPush, state))
+  manager.start()
 
   uiSettings = readUiSettings()
   applyTraySetting()
@@ -407,5 +427,6 @@ app.on('window-all-closed', () => {
 // macOS: the app stays alive with no windows, so this is the only path Cmd-Q takes.
 app.on('before-quit', () => {
   quitting = true
+  targets?.dispose()
   daemon.dispose()
 })

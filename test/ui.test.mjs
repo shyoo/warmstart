@@ -224,6 +224,27 @@ try {
     ),
     nav.join(' | ')
   )
+  // ⛔ t419: the computer picker decides what every entry below it is about, so it sits above
+  // Overview. A clean profile has nothing paired, so this computer is selected and it is the only one.
+  const picker = JSON.parse(
+    await evaluate(`
+      JSON.stringify((() => {
+        const select = document.querySelector('.sidebar .machine-picker-select')
+        const overview = [...document.querySelectorAll('.sidebar h2')].find(h => h.textContent?.trim() === 'Overview')
+        return {
+          present: !!select,
+          aboveOverview: !!select && !!overview && select.getBoundingClientRect().bottom <= overview.getBoundingClientRect().top,
+          selected: select?.selectedOptions?.[0]?.textContent?.trim() ?? null,
+          options: select ? [...select.options].map(o => o.textContent?.trim()) : []
+        }
+      })())
+    `)
+  )
+  check(
+    'the computer picker sits above Overview, on this computer, with the way to pair another',
+    picker.present && picker.aboveOverview && picker.selected === 'This computer' && picker.options.length === 2 && /another computer/.test(picker.options[1] ?? ''),
+    JSON.stringify(picker)
+  )
   check(
     'a project with no projects yet says so rather than showing an empty group',
     nav.some((n) => n.startsWith('No projects yet')),

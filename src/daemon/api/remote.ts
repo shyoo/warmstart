@@ -3,12 +3,14 @@ import { listProjects, requireProject } from '../projects.js'
 import { refreshRemoteListener, remoteConfig, remoteListenerInfo, remoteProjects, setRemoteConfig, setRemoteProject } from '../remote/config.js'
 import { listRemoteDevices, revokeDevice } from '../remote/devices.js'
 import { issuePairingCode } from '../remote/pairing.js'
+import { desktopPairingLink } from '@shared/rpcversion.js'
 import { dropDeviceSubscriptions, unsubscribePush, vapidKeys } from '../remote/push.js'
 
 type RemoteMethod =
   | 'remote.status'
   | 'remote.recheck'
   | 'remote.setEnabled'
+  | 'remote.setDesktopsEnabled'
   | 'remote.setBind'
   | 'remote.setProject'
   | 'remote.pairingCode'
@@ -21,6 +23,7 @@ function status() {
   const config = remoteConfig(), info = remoteListenerInfo(), enabled = remoteProjects()
   return {
     enabled: config.enabled,
+    desktopsEnabled: config.desktopsEnabled,
     bind: config.bind,
     port: config.port,
     ...info,
@@ -39,11 +42,22 @@ export function apiRemote(_ctx: ApiContext): Pick<Api, RemoteMethod> {
     'remote.status': () => status(),
     'remote.recheck': async () => { await refreshRemoteListener(); return status() },
     'remote.setEnabled': (p) => { setRemoteConfig('enabled', p.enabled); return status() },
+    'remote.setDesktopsEnabled': (p) => { setRemoteConfig('desktopsEnabled', p.enabled); return status() },
     'remote.setBind': (p) => { setRemoteConfig('bind', p.bind); if (p.port !== undefined) setRemoteConfig('port', p.port); return status() },
     'remote.setProject': (p) => { requireProject(p.projectId); setRemoteProject(p.projectId, p.enabled); return status() },
-    'remote.pairingCode': () => {
-      const pairing = issuePairingCode()
+    'remote.pairingCode': (p) => {
+      const kind = p && typeof p === 'object' && p.kind === 'desktop' ? 'desktop' : 'phone'
       const current = status()
+      if (kind === 'desktop') {
+        // ⛔ Refused before a code exists: a desktop token only ever travels over the tailnet
+        // hostname's TLS, so a code with no such address to redeem it at would be a code for nothing.
+        const secureUrl = current.secure ? current.urls.find((url) => url.startsWith('https://')) : undefined
+        if (!current.desktopsEnabled) throw new Error('Turn on Allow paired desktops first.')
+        if (!secureUrl) throw new Error('A desktop pairs over the Tailscale HTTPS address, and this computer has none yet. See Tailscale setup.')
+        const pairing = issuePairingCode(Date.now(), 'desktop')
+        return { ...pairing, url: desktopPairingLink(secureUrl, pairing.code) }
+      }
+      const pairing = issuePairingCode(Date.now(), 'phone')
       const base = current.urls[0] ?? `http://localhost:${current.port}`
       return { ...pairing, url: pairingUrl(base, pairing.code) }
     },

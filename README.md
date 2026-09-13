@@ -94,6 +94,11 @@ worth and refuses to let it evaporate.
   live agent — and it reaches only the projects you switch on, one at a time. Over Tailscale it
   installs to the home screen and notifies you with the app closed. See
   [`docs/remote.md`](docs/remote.md).
+- **Drive another computer's fleet.** Pair a second Warmstart desktop over Tailscale and pick it
+  from the list above **Overview**: the whole UI — terminals, workers, settings, diffs — now shows
+  that computer, which only has to be running (the tray is enough). It is HTTPS only, has its own
+  switch, and its credential is kept encrypted by the OS keychain. See
+  [`docs/remote.md`](docs/remote.md#remote-desktops).
 
 ## Requirements
 
@@ -319,7 +324,7 @@ to do to the page that governs it. The ones most people want first:
 | [`docs/routing.md`](docs/routing.md) | How a task is scored and where it is sent |
 | [`docs/adapters.md`](docs/adapters.md) | What each CLI can actually do, measured against a running binary |
 | [`docs/development.md`](docs/development.md) | Setup, build, packaging, and the commit workflow |
-| [`docs/remote.md`](docs/remote.md) | Phone access: the boundary, Tailscale setup, pairing and notifications |
+| [`docs/remote.md`](docs/remote.md) | Phone and remote-desktop access: the boundary, Tailscale setup, pairing and notifications |
 
 Reference under `docs/` is kept current: a test in `npm test` fails the build on a page nobody
 indexed, a link that resolves to nothing, or a source path a doc cites that has since moved.

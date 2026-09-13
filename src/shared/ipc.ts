@@ -87,13 +87,75 @@ export interface NotifyRequest {
   body: string
   /** The task to open when the notification is clicked. */
   taskId: string
+  /** The computer the task lives on. Absent means this one. */
+  targetId?: string
 }
 
 export type DaemonUiStatus =
   | { state: 'stopped' }
   | { state: 'starting' }
-  | { state: 'connected'; pid: number; port: number; version: string; connectedAt: number }
+  | {
+      state: 'connected'
+      pid: number
+      port: number
+      version: string
+      connectedAt: number
+      /** Set when the fleet on screen is another computer's, reached over its remote listener. */
+      remote?: { label: string; url: string }
+    }
   | { state: 'error'; message: string }
+
+/** The id of this computer's own daemon among the targets. */
+export const LOCAL_TARGET = 'local'
+
+export type TargetState = 'connected' | 'connecting' | 'disconnected' | 'error' | 'refused'
+
+/**
+ * One computer the window can show: this one, or a paired remote Warmstart.
+ *
+ * ⛔ **No credential, ever.** The renderer displays untrusted agent output, so a remote's device token
+ * stays in main exactly as the loopback token does.
+ */
+export interface TargetSummary {
+  id: string
+  label: string
+  kind: 'local' | 'remote'
+  /** The remote's `https://…ts.net:<port>` origin; `null` for this computer. */
+  url: string | null
+  state: TargetState
+  /** Why it is not connected, or the upgrade warning while it is. */
+  message: string | null
+  remoteAppVersion: string | null
+  /** The protocol version the two ends negotiated. */
+  rpcVersion: number | null
+  /** The remote speaks an older protocol than this app: it works, and it should be upgraded. */
+  remoteNeedsUpgrade: boolean
+  pairedAt: number | null
+}
+
+export interface TargetsState {
+  active: string
+  targets: TargetSummary[]
+  /**
+   * Whether this computer can keep a remote's credential encrypted (OS keychain). ⚠️ When it cannot,
+   * pairing is refused rather than storing the token in plain text.
+   */
+  canStoreCredentials: boolean
+}
+
+/** What **Add remote** sends: the pairing link (or address), an optional separate code, and a name. */
+export interface PairRemoteRequest {
+  address: string
+  code?: string
+  label?: string
+}
+
+/** A daemon event from a computer the window is not showing — for notifications only. */
+export interface TargetEvent {
+  targetId: string
+  label: string
+  event: DaemonEvent
+}
 
 export interface AgentyardApi {
   getAppInfo(): Promise<AppInfo>
@@ -104,7 +166,11 @@ export interface AgentyardApi {
   daemonStatus(): Promise<DaemonUiStatus>
   /** Start orchestratord if it is not already running, then attach. Safe to call repeatedly. */
   startDaemon(): Promise<DaemonUiStatus>
-  rpc<M extends RpcMethod>(method: M, params?: RpcParams<M>): Promise<RpcResult<M>>
+  /**
+   * ⚠️ `targetId` names the computer the caller believes it is talking to. Main refuses a call that
+   * arrives after the window switched computers, rather than sending it to the other one.
+   */
+  rpc<M extends RpcMethod>(method: M, params?: RpcParams<M>, targetId?: string): Promise<RpcResult<M>>
   onDaemonStatus(handler: (status: DaemonUiStatus) => void): () => void
   onDaemonEvent(handler: (event: DaemonEvent) => void): () => void
   getUiSettings(): Promise<UiSettings>
@@ -120,8 +186,18 @@ export interface AgentyardApi {
    * decides *whether it can* and owns the window it would raise. Neither half is useful alone.
    */
   notify(request: NotifyRequest): Promise<boolean>
-  /** A notification was clicked: open this task. */
-  onNotificationActivate(handler: (taskId: string) => void): () => void
+  /** A notification was clicked: open this task, on this computer. */
+  onNotificationActivate(handler: (taskId: string, targetId: string) => void): () => void
+  getTargets(): Promise<TargetsState>
+  onTargets(handler: (state: TargetsState) => void): () => void
+  /** Show another computer's fleet. The window re-mounts; nothing on either computer changes. */
+  selectTarget(id: string): Promise<TargetsState>
+  /** Pair with a remote Warmstart. Rejects with the reason when pairing did not happen. */
+  pairRemote(request: PairRemoteRequest): Promise<TargetsState>
+  /** Forget a remote here, and ask it to revoke this computer's credential if it can be reached. */
+  forgetRemote(id: string): Promise<TargetsState>
+  /** `task.changed` from this computer while another is on screen, so its notifications still arrive. */
+  onBackgroundEvent(handler: (event: TargetEvent) => void): () => void
 }
 
 export const IPC = {
@@ -138,5 +214,11 @@ export const IPC = {
   uiSettingsSet: 'ui:settings-set',
   pickFolders: 'attachment:pick-folders',
   notify: 'ui:notify',
-  notificationActivate: 'ui:notification-activate'
+  notificationActivate: 'ui:notification-activate',
+  targetsGet: 'target:list',
+  targetsPush: 'target:push',
+  targetSelect: 'target:select',
+  targetPair: 'target:pair',
+  targetForget: 'target:forget',
+  backgroundEventPush: 'target:background-event'
 } as const

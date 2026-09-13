@@ -62,6 +62,7 @@ quit and relaunched. Pinned by `src/main/daemonretry.test.ts`.
 | MCP server | reads `<dataDir>/orchestratord.json`, `POST /rpc` with `Authorization: Bearer <token>` |
 | Tests | the same HTTP + WS surface (`test/lib/harness.mjs`) |
 | Paired phone | a **second listener** on a second credential — see [`remote.md`](remote.md) |
+| Another computer's window | main's `RemoteClient` over that computer's same second listener, with a **desktop** credential over HTTPS only — see [`remote.md`](remote.md#remote-desktops) |
 
 ⛔ **Remote access is a separate listener with a separate credential, and that is the point.** The
 loopback endpoint above authorises spawning processes, so its token never leaves the machine.
@@ -92,7 +93,7 @@ had succeeded; only the answer was destroyed in transit. Two rules follow:
   the scan an index (5,225ms → 91ms for the same 2,576 calls). ⚠️ The renderer owes the other half:
   a poll must not stack on itself (`QualityReview.tsx`).
 
-The RPC method table is **129 methods across six domain files** — `daemon/api/workers.ts`,
+The RPC method table is **148 methods across six domain files** — `daemon/api/workers.ts`,
 `projects.ts`, `tasks.ts`, `quality.ts`, `agent.ts` and `remote.ts` — that `daemon/api.ts` spreads
 into one object. `RpcMethod`/`RpcParams`/`RpcResult` in `shared/protocol.ts` are derived from it, so adding a
 method is one edit plus its types.
@@ -380,6 +381,12 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   `settings.set`. Two switches gate it — global, then per project — and the per-project one lives in
   the daemon database rather than the committed `project.json`, because a network-exposure decision
   must not travel to another machine with a clone.
+- ⛔ **A paired desktop has this window's authority, so it is fenced by transport rather than by
+  method** (t419). Its token is minted only from a desktop code shown on the host, is accepted only
+  over TLS on the tailnet hostname and only while **Allow paired desktops** is on, and reaches every
+  method except `daemon.shutdown`, `agent.*` and `remote.subscribe` (`remote/desktoppolicy.ts`). On
+  the client it is sealed by `safeStorage` in main's `remotes.json` and never reaches the renderer or
+  the fleet database, which every local agent can read.
 - ⛔ **Native modules live in the daemon, never the renderer.** An Electron upgrade must not be able
   to break a running fleet.
 - ⛔ **Code is never loaded from the data directory.** Declarative adapters are JSON driven by a

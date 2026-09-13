@@ -7,12 +7,16 @@ import { networkInterfaces } from 'node:os'
 import { WebSocketServer, type WebSocket } from 'ws'
 import type { ApiContext } from '../api.js'
 import { buildApi } from '../api.js'
-import type { DaemonEvent, RemoteBind, RemotePushSubscription, RpcRequest, RpcResponse } from '@shared/protocol.js'
+import type { TLSSocket } from 'node:tls'
+import type { DaemonEvent, RemoteBind, RemoteDevice, RemoteDeviceKind, RemotePushSubscription, RpcRequest, RpcResponse } from '@shared/protocol.js'
+import { RPC_VERSION, RPC_VERSION_HEADER, type RemoteHello } from '@shared/rpcversion.js'
+import { APP_VERSION } from '@shared/version.js'
 import { errorMessage } from '@shared/errors.js'
 import { getTask } from '../tasks.js'
 import { requireQuestion } from '../questions.js'
 import { requireApproval } from '../approvals.js'
-import { remoteConfig, onRemoteConfigChange, remoteProjects, setRemoteListenerInfo, setRemoteListenerRefresh } from './config.js'
+import { remoteConfig, remoteListening, onRemoteConfigChange, remoteProjects, setRemoteListenerInfo, setRemoteListenerRefresh } from './config.js'
+import { desktopGate, desktopRefusal } from './desktoppolicy.js'
 import { verifyDevice, touchDevice } from './devices.js'
 import { redeemPairingCode } from './pairing.js'
 import { createPushDispatcher, subscribePush } from './push.js'
@@ -22,7 +26,7 @@ import { log } from '../log.js'
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024
 const failures = new Map<string, number[]>()
-interface RemoteServer { close(): Promise<void>; broadcast(event: DaemonEvent): void }
+interface RemoteServer { close(): Promise<void>; broadcast(event: DaemonEvent): void; dropInadmissible(): void }
 
 export function startRemoteServer(ctx: ApiContext): { close(): Promise<void>; broadcast(event: DaemonEvent): void } {
   let live: RemoteServer | null = null
@@ -41,9 +45,10 @@ export function startRemoteServer(ctx: ApiContext): { close(): Promise<void>; br
   }
   const refreshNow = async (probeOnly: boolean) => {
     if (live) { await live.close(); live = null }
-    if (!remoteConfig().enabled && !probeOnly) return publish()
+    // ⚠️ Either switch keeps the listener up; which kind of device may use it is decided per request.
+    if (!remoteListening() && !probeOnly) return publish()
     info = await tailscaleInfo()
-    if (!remoteConfig().enabled) return publish()
+    if (!remoteListening()) return publish()
     const c = remoteConfig()
     if (c.bind === 'tailscale' && !info.ipv4) { log.warn('remote access not listening: Tailscale is unavailable'); return publish() }
     try { live = await listen(ctx, info); publish() } catch (err) { log.warn(`remote access could not bind port ${c.port}: ${errorMessage(err)}`); publish() }
@@ -57,7 +62,16 @@ export function startRemoteServer(ctx: ApiContext): { close(): Promise<void>; br
     refreshTail = next.catch(() => undefined)
     return next
   }
-  const off = onRemoteConfigChange(() => { void refresh() })
+  const off = onRemoteConfigChange((key) => {
+    // ⚠️ Flipping one kind's switch while the other keeps the listener up needs no rebind — a rebind
+    // would drop every connected device of the kind that stayed on. The event sockets of the kind
+    // just switched off are closed instead; their next request is refused by `kindAdmitted`.
+    if ((key === 'enabled' || key === 'desktopsEnabled') && live && remoteListening()) {
+      live.dropInadmissible()
+      return publish()
+    }
+    void refresh()
+  })
   setRemoteListenerRefresh(() => refresh(true))
   void refresh()
   // ⛔ Notifications are gated on the *setting*, not on `live`. A phone that is asleep on another
@@ -96,7 +110,7 @@ function remotelyVisible(event: DaemonEvent): boolean {
 }
 
 async function listen(ctx: ApiContext, ts: TailscaleInfo): Promise<RemoteServer> {
-  const c = remoteConfig(), api = buildApi(ctx), clients = new Map<WebSocket, string>()
+  const c = remoteConfig(), api = buildApi(ctx), clients = new Map<WebSocket, { id: string; kind: RemoteDeviceKind }>()
   const handler = (req: IncomingMessage, res: ServerResponse) => void handle(req, res, api)
   const server: Server = secure(c.bind, ts) && ts.certPath && ts.keyPath ? createHttpsServer({ cert: readFileSync(ts.certPath), key: readFileSync(ts.keyPath) }, handler) : createHttpServer(handler)
   const wss = new WebSocketServer({ noServer: true })
@@ -106,26 +120,62 @@ async function listen(ctx: ApiContext, ts: TailscaleInfo): Promise<RemoteServer>
     // token, never which of the two carried it.
     const headers = req.headers as unknown as Record<string, string | string[] | undefined>
     const authorization = headers.authorization
-    const presented = eventSocketToken(
-      Array.isArray(authorization) ? authorization[0] : authorization,
-      req.url
-    )
-    const id = presented ? verifyDevice(presented)?.id ?? null : null
+    const header = Array.isArray(authorization) ? authorization[0] : authorization
+    const presented = eventSocketToken(header, req.url)
+    const device = presented ? verifyDevice(presented) : null
     const pathname = req.url?.split('?')[0] ?? ''
-    if (pathname !== '/remote/events' || !id) { socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n'); socket.destroy(); return }
-    touchDevice(id, addressOf(req)); wss.handleUpgrade(req, socket, head, (ws) => { clients.set(ws, id); ws.on('close', () => clients.delete(ws)); ws.on('error', () => clients.delete(ws)) })
+    const refuse = (status: string) => { socket.write(`HTTP/1.1 ${status}\r\n\r\n`); socket.destroy() }
+    if (pathname !== '/remote/events' || !device || !kindAdmitted(device)) return refuse('401 Unauthorized')
+    if (device.kind === 'desktop') {
+      // ⛔ A desktop's main process can set headers, so its token never rides in a URL that a proxy
+      // or a log line could keep.
+      if (!header?.startsWith('Bearer ')) return refuse('401 Unauthorized')
+      const gate = desktopGate({ desktopsEnabled: remoteConfig().desktopsEnabled, encrypted: encrypted(req), rpcVersion: headers[RPC_VERSION_HEADER] })
+      if (!gate.ok) return refuse(gate.status === 426 ? '426 Upgrade Required' : '403 Forbidden')
+    }
+    touchDevice(device.id, addressOf(req)); wss.handleUpgrade(req, socket, head, (ws) => { clients.set(ws, { id: device.id, kind: device.kind }); ws.on('close', () => clients.delete(ws)); ws.on('error', () => clients.delete(ws)) })
   })
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(c.port, c.bind === 'tailscale' ? ts.ipv4! : '0.0.0.0', resolve) })
-  return { close: () => new Promise((resolve) => { for (const ws of clients.keys()) ws.terminate(); wss.close(); server.close(() => resolve()) }), broadcast(event) { if (!remotelyVisible(event)) return; const payload = JSON.stringify(event); for (const ws of clients.keys()) if (ws.readyState === 1) ws.send(payload) } }
+  return { close: () => new Promise((resolve) => { for (const ws of clients.keys()) ws.terminate(); wss.close(); server.close(() => resolve()) }), dropInadmissible() {
+    const c = remoteConfig()
+    for (const [ws, client] of clients) if (!(client.kind === 'desktop' ? c.desktopsEnabled : c.enabled)) { ws.terminate(); clients.delete(ws) }
+  }, broadcast(event) {
+    // ⛔ A desktop has parity, so it is sent every event — terminal bytes included — and a phone only
+    // what the per-project switch lets leave. Serialised once, and only if anyone will receive it.
+    let payload: string | null = null
+    const phoneVisible = remotelyVisible(event)
+    for (const [ws, client] of clients) {
+      if (ws.readyState !== 1 || (client.kind === 'phone' && !phoneVisible)) continue
+      payload ??= JSON.stringify(event)
+      ws.send(payload)
+    }
+  } }
   async function handle(req: IncomingMessage, res: ServerResponse, handlers: ReturnType<typeof buildApi>) {
     const send = (status: number, body: unknown) => { const payload = JSON.stringify(body); res.writeHead(status, { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload) }); res.end(payload) }
-    if (req.method === 'POST' && req.url === '/remote/pair') { const address = addressOf(req); const body = await bodyOf(req); if (!body || limited(address)) return send(body ? 429 : 400, { error: body ? 'too many pairing attempts' : 'malformed json' }); const p = body as { code?: string; label?: string }; if (!p.code || !p.label) return send(400, { error: 'code and label required' }); const pair = redeemPairingCode(p.code, p.label, address); if (!pair) { fail(address); return send(401, { error: 'invalid pairing code' }) }; return send(200, { token: pair.token, deviceId: pair.device.id }) }
+    // ⚠️ Public, like the shell: a desktop must learn which protocol versions this computer speaks
+    // before it spends a pairing code, and none of it is per-device.
+    if (req.method === 'GET' && req.url === '/remote/hello') return send(200, { app: 'warmstart', appVersion: APP_VERSION, rpc: RPC_VERSION } satisfies RemoteHello)
+    if (req.method === 'POST' && req.url === '/remote/pair') {
+      const address = addressOf(req); const body = await bodyOf(req)
+      if (!body || limited(address)) return send(body ? 429 : 400, { error: body ? 'too many pairing attempts' : 'malformed json' })
+      const p = body as { code?: string; label?: string; kind?: string }
+      if (!p.code || !p.label) return send(400, { error: 'code and label required' })
+      // ⛔ The kind asked for must match the kind the code was issued as; see `pairing.ts`.
+      const kind: RemoteDeviceKind = p.kind === 'desktop' ? 'desktop' : 'phone'
+      if (kind === 'desktop' && (!remoteConfig().desktopsEnabled || !encrypted(req))) return send(403, { error: 'desktop pairing needs Allow paired desktops on, over HTTPS' })
+      if (kind === 'phone' && !remoteConfig().enabled) return send(403, { error: 'paired phones are switched off on this computer' })
+      const pair = redeemPairingCode(p.code, p.label, address, Date.now(), kind)
+      if (!pair) { fail(address); return send(401, { error: 'invalid pairing code' }) }
+      return send(200, { token: pair.token, deviceId: pair.device.id, kind: pair.device.kind })
+    }
     // ⛔ The app shell is public on purpose: the pair screen, manifest, icons and service worker
     // must load before any token exists — and browsers fetch all four without custom headers, so
     // gating them would break pairing and installability, not protect anything. There is nothing
     // per-device in the built files; everything under `/remote/` stays token-gated.
     if (!(req.url ?? '').startsWith('/remote/')) return staticFile(req, res)
-    const device = authenticate(req); if (!device) return send(401, { error: 'unauthorized' }); touchDevice(device, addressOf(req))
+    const device = authenticate(req); if (!device || !kindAdmitted(device)) return send(401, { error: 'unauthorized' })
+    if (device.kind === 'desktop') return handleDesktop(req, device, send, handlers)
+    touchDevice(device.id, addressOf(req))
     if (req.method === 'GET' && req.url === '/remote/health') return send(200, { ok: true })
     if (req.method === 'POST' && req.url === '/remote/rpc') {
       const parsed = await bodyOf(req)
@@ -143,7 +193,7 @@ async function listen(ctx: ApiContext, ts: TailscaleInfo): Promise<RemoteServer>
         // ⛔ The one method that needs to know *who* is calling: a push subscription belongs to the
         // device that made it, so that revoking the device takes its notifications with it.
         if (allowed === 'remote.subscribe') {
-          subscribePush(device, request.params as RemotePushSubscription)
+          subscribePush(device.id, request.params as RemotePushSubscription)
           return send(200, { id: request.id, ok: true, result: { ok: true } } satisfies RpcResponse)
         }
         const raw = await (handlers[allowed] as (p: unknown) => unknown)(request.params)
@@ -155,6 +205,39 @@ async function listen(ctx: ApiContext, ts: TailscaleInfo): Promise<RemoteServer>
     return staticFile(req, res)
   }
 }
+
+/**
+ * A request carrying a desktop token: the gate, then any method the desktop policy does not deny,
+ * with no project scoping — a desktop administers the whole fleet, exactly as this window does.
+ */
+async function handleDesktop(req: IncomingMessage, device: RemoteDevice, send: (status: number, body: unknown) => void, handlers: ReturnType<typeof buildApi>): Promise<void> {
+  const gate = desktopGate({ desktopsEnabled: remoteConfig().desktopsEnabled, encrypted: encrypted(req), rpcVersion: req.headers[RPC_VERSION_HEADER] })
+  if (!gate.ok) return send(gate.status, { error: gate.error })
+  touchDevice(device.id, addressOf(req))
+  if (req.method === 'GET' && req.url === '/remote/health') return send(200, { ok: true, appVersion: APP_VERSION, rpc: gate.version })
+  if (req.method !== 'POST' || req.url !== '/remote/rpc') return send(404, { error: 'not found' })
+  const parsed = await bodyOf(req)
+  if (!parsed || typeof parsed !== 'object') return send(400, { error: 'malformed json' })
+  const request = parsed as RpcRequest
+  if (typeof request.method !== 'string' || !Object.hasOwn(handlers, request.method)) return send(404, { error: 'unknown method' })
+  const method = request.method
+  const refusal = desktopRefusal(method)
+  if (refusal) return send(403, { error: refusal })
+  try {
+    const result = await (handlers[method] as (p: unknown) => unknown)(request.params)
+    return send(200, { id: request.id, ok: true, result } satisfies RpcResponse)
+  } catch (err) {
+    return send(200, { id: request.id, ok: false, error: { message: errorMessage(err) } } satisfies RpcResponse)
+  }
+}
+
+/** Which switch admits this device. ⛔ The listener runs while either is on, so each token checks its own. */
+function kindAdmitted(device: RemoteDevice): boolean {
+  const c = remoteConfig()
+  return device.kind === 'desktop' ? c.desktopsEnabled : c.enabled
+}
+
+function encrypted(req: IncomingMessage): boolean { return (req.socket as TLSSocket).encrypted === true }
 /**
  * Every IPv4 address a phone on the same network could reach this machine at.
  *
@@ -177,7 +260,7 @@ function lanAddresses(): string[] {
   return [...usable].sort((a, b) => Number(private_(b)) - Number(private_(a)))
 }
 
-function authenticate(req: IncomingMessage): string | null { const h = req.headers.authorization; if (!h?.startsWith('Bearer ')) return null; return verifyDevice(h.slice(7))?.id ?? null }
+function authenticate(req: IncomingMessage): RemoteDevice | null { const h = req.headers.authorization; if (!h?.startsWith('Bearer ')) return null; return verifyDevice(h.slice(7)) }
 function addressOf(req: IncomingMessage): string { return req.socket.remoteAddress ?? 'unknown' }
 async function bodyOf(req: IncomingMessage): Promise<unknown> { const chunks: Buffer[] = []; let size = 0; for await (const chunk of req) { size += (chunk as Buffer).length; if (size > MAX_BODY_BYTES) return null; chunks.push(chunk as Buffer) } try { return JSON.parse(Buffer.concat(chunks).toString('utf8')) } catch { return null } }
 function fail(address: string): void {

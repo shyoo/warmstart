@@ -1917,6 +1917,17 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'runs', 'trunk_dirty_before_json')) {
       conn.exec('alter table runs add column trunk_dirty_before_json text;')
     }
+  },
+  // 71 - a paired credential says which policy it gets: the phone allowlist or desktop parity.
+  //
+  // ⛔ Every existing row is a phone, because only phones could pair before this. The kind is decided
+  // by the pairing code the host issued, never by what the redeeming client claims.
+  //
+  // ⚠️ Guarded by `hasColumn`: `versionBefore` rewinds `user_version` and replays.
+  (conn) => {
+    if (!hasColumn(conn, 'remote_devices', 'kind')) {
+      conn.exec("alter table remote_devices add column kind text not null default 'phone';")
+    }
   }
 ]
 

@@ -34,6 +34,7 @@ import {
   type NewProjectStep
 } from '../lib/newproject'
 import { errorMessage } from '@shared/errors.js'
+import { useIsRemote, useTarget } from '../lib/target'
 
 /**
  * Adding a project, as a setup step.
@@ -378,6 +379,8 @@ function PathField({
   onChange: (value: string) => void
   disabled?: boolean
 }): React.JSX.Element {
+  const { active } = useTarget()
+  const remote = useIsRemote()
   const pick = async (): Promise<void> => {
     // ⚠️ The picker is multi-select because one bridge serves both callers; a project has one
     // directory, so the first is the answer and the rest are ignored.
@@ -399,10 +402,14 @@ function PathField({
           aria-label={label}
           onChange={(e) => onChange(e.target.value)}
         />
-        <button className="btn" disabled={disabled} onClick={() => void pick()}>
-          Choose…
-        </button>
+        {/* ⛔ The OS picker browses *this* computer's disk; on a remote fleet the path must be typed. */}
+        {!remote && (
+          <button className="btn" disabled={disabled} onClick={() => void pick()}>
+            Choose…
+          </button>
+        )}
       </div>
+      {remote && <p className="dim">A path on {active.label}, not on this computer.</p>}
     </div>
   )
 }

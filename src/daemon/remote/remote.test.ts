@@ -42,6 +42,25 @@ describe('remote storage', () => {
     const expired = issuePairingCode(100)
     expect(redeemPairingCode(expired.code, 'late', 'addr', expired.expiresAt + 1)).toBeNull()
   })
+  it('mints the kind the code was issued as, and never the other', () => {
+    expect(remoteConfig().desktopsEnabled).toBe(false)
+    const phone = issuePairingCode(100, 'phone')
+    const desktop = issuePairingCode(100, 'desktop')
+    // ⛔ A phone code redeemed as a desktop fails, and is not spent by the attempt.
+    expect(redeemPairingCode(phone.code, 'sneaky', 'addr', 101, 'desktop')).toBeNull()
+    expect(redeemPairingCode(phone.code, 'phone', 'addr', 101, 'phone')?.device.kind).toBe('phone')
+    const paired = redeemPairingCode(desktop.code, 'laptop', 'addr', 101, 'desktop')
+    expect(paired?.device.kind).toBe('desktop')
+    expect(verifyDevice(paired!.token)?.kind).toBe('desktop')
+    expect(listRemoteDevices().map((d) => d.kind).sort()).toEqual(['desktop', 'phone'])
+  })
+  it('replays the kind migration and keeps a phone a phone', () => {
+    const { device } = mintDevice('old phone')
+    store.db().prepare('pragma user_version = ' + store.versionBefore("add column kind text not null default 'phone'")).run()
+    store.closeDb()
+    store.openDb(join(dir, 'remote.db'))
+    expect(listRemoteDevices().find((d) => d.id === device.id)?.kind).toBe('phone')
+  })
   it('replays the remote table migration', () => {
     store.db().exec(`pragma user_version = ${store.versionBefore('create table if not exists remote_config')}`)
     store.closeDb()

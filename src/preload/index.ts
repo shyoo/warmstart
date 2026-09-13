@@ -5,6 +5,8 @@ import {
   type AppInfo,
   type AppUpdateState,
   type DaemonUiStatus,
+  type TargetEvent,
+  type TargetsState,
   type UiSettings
 } from '@shared/ipc.js'
 import type { DaemonEvent, RpcMethod, RpcParams, RpcResult } from '@shared/protocol.js'
@@ -27,8 +29,8 @@ const api: AgentyardApi = {
   },
   daemonStatus: () => ipcRenderer.invoke(IPC.daemonStatus) as Promise<DaemonUiStatus>,
   startDaemon: () => ipcRenderer.invoke(IPC.daemonStart) as Promise<DaemonUiStatus>,
-  rpc: <M extends RpcMethod>(method: M, params?: RpcParams<M>) =>
-    ipcRenderer.invoke(IPC.rpc, method, params) as Promise<RpcResult<M>>,
+  rpc: <M extends RpcMethod>(method: M, params?: RpcParams<M>, targetId?: string) =>
+    ipcRenderer.invoke(IPC.rpc, method, params, targetId) as Promise<RpcResult<M>>,
   onDaemonStatus(handler) {
     const listener = (_e: unknown, status: DaemonUiStatus) => handler(status)
     ipcRenderer.on(IPC.statusPush, listener)
@@ -50,9 +52,24 @@ const api: AgentyardApi = {
   pickFolders: () => ipcRenderer.invoke(IPC.pickFolders) as Promise<string[]>,
   notify: (request) => ipcRenderer.invoke(IPC.notify, request) as Promise<boolean>,
   onNotificationActivate(handler) {
-    const listener = (_e: unknown, taskId: string) => handler(taskId)
+    const listener = (_e: unknown, taskId: string, targetId: string) => handler(taskId, targetId)
     ipcRenderer.on(IPC.notificationActivate, listener)
     return () => ipcRenderer.removeListener(IPC.notificationActivate, listener)
+  },
+  getTargets: () => ipcRenderer.invoke(IPC.targetsGet) as Promise<TargetsState>,
+  onTargets(handler) {
+    const listener = (_e: unknown, state: TargetsState) => handler(state)
+    ipcRenderer.on(IPC.targetsPush, listener)
+    return () => ipcRenderer.removeListener(IPC.targetsPush, listener)
+  },
+  selectTarget: (id) => ipcRenderer.invoke(IPC.targetSelect, id) as Promise<TargetsState>,
+  // ⚠️ A pairing code and an address cross here; the token they are exchanged for never comes back.
+  pairRemote: (request) => ipcRenderer.invoke(IPC.targetPair, request) as Promise<TargetsState>,
+  forgetRemote: (id) => ipcRenderer.invoke(IPC.targetForget, id) as Promise<TargetsState>,
+  onBackgroundEvent(handler) {
+    const listener = (_e: unknown, event: TargetEvent) => handler(event)
+    ipcRenderer.on(IPC.backgroundEventPush, listener)
+    return () => ipcRenderer.removeListener(IPC.backgroundEventPush, listener)
   }
 }
 

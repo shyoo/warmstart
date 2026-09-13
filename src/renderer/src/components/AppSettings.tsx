@@ -5,6 +5,8 @@ import { SettingRow, SettingSwitch } from './SettingRow'
 import { SettingButtonSelect } from './SettingButtonSelect'
 import { errorMessage } from '@shared/errors.js'
 import { RemoteAccess } from './RemoteAccess'
+import { RemoteMachines } from './RemoteMachines'
+import { useTarget } from '../lib/target'
 
 /**
  * The preferences that belong to this window rather than to the fleet.
@@ -18,6 +20,7 @@ import { RemoteAccess } from './RemoteAccess'
  */
 export function AppSettings(): React.JSX.Element {
   const { settings, updateUiSettings } = useUiSettings()
+  const { active } = useTarget()
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -139,7 +142,10 @@ export function AppSettings(): React.JSX.Element {
         />
       </div>
     </div>
-    <RemoteAccess />
+    <RemoteMachines />
+    {/* ⚠️ Remote access is the *shown* computer's listener, read over rpc — so while a remote is on
+        screen this panel administers that computer, and says so. */}
+    <RemoteAccess machineLabel={active.kind === 'remote' ? active.label : null} />
     </>
   )
 }

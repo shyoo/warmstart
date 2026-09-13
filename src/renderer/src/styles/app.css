@@ -7459,3 +7459,42 @@ select:focus-visible,
   font-size: var(--text-meta);
   margin: var(--sp-2) 0;
 }
+
+/* ---- machine picker ----------------------------------------------------- */
+/* Above Overview: which computer's fleet every entry in the sidebar is about. */
+.machine-picker {
+  padding: var(--sp-3) var(--sp-3) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.machine-picker-select {
+  font: inherit;
+  font-size: var(--text-dense);
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-1) var(--sp-2);
+  width: 100%;
+  min-width: 0;
+}
+
+.machine-picker-note {
+  margin: 0;
+  font-size: var(--text-meta);
+  color: var(--color-text-faint);
+  overflow-wrap: anywhere;
+}
+
+.machine-picker-note--warn {
+  color: var(--state-warn);
+}
+
+.remote-pair-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-width: 520px;
+}

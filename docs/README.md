@@ -23,7 +23,7 @@ correction below the wrong sentence. `AGENTS.md` is the short entry point that p
 | write or change a test | [`testing.md`](testing.md) — the four tiers, and the ways a suite here has reported a confident false pass |
 | build, package, or hit a platform-specific failure | [`development.md`](development.md) |
 | change the renderer | [`ui.md`](ui.md) |
-| configure phone access or notifications | [`remote.md`](remote.md) |
+| configure phone or remote-desktop access, or notifications | [`remote.md`](remote.md) |
 | change pricing or add a provider | `../costmodels/` — data, never code. See [`cost-model.md`](cost-model.md) § *Cost models are data* |
 | check or update a model's agentic-coding prior | `../benchmarks/` — versioned data, never code, mirroring `costmodels/`. See [`routing.md`](routing.md) § *Fitness* |
 | understand *why* the design is shaped this way | `../transient_docs/implementation_plan_2026-08-24.md` — the design of record, decisions D1–D18. ⚠️ Dated, and never read for status |
@@ -44,7 +44,7 @@ correction below the wrong sentence. `AGENTS.md` is the short entry point that p
 | [`testing.md`](testing.md) | The four test tiers, what each can and cannot prove, and the suite pitfalls |
 | [`development.md`](development.md) | Setup, build, packaging, platform pitfalls, and the commit workflow |
 | [`ui.md`](ui.md) | Renderer structure, routes, styling tokens and the UI's own conventions |
-| [`remote.md`](remote.md) | Remote device access, pairing, Tailscale setup and notifications |
+| [`remote.md`](remote.md) | Phone and remote-desktop access, pairing, protocol versions, Tailscale setup and notifications |
 
 ## Where a fact belongs
 

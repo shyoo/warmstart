@@ -53,6 +53,7 @@ import {
   type ScheduleOption
 } from '../lib/composerscratch'
 import { errorMessage } from '@shared/errors.js'
+import { useIsRemote } from '../lib/target'
 
 /**
  * When a task is allowed to start, as offered on the clock beside Send.
@@ -333,6 +334,7 @@ export function NewTask({
   const [saving, setSaving] = useState<'draft' | 'ready' | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const attachmentPickerRef = useRef<HTMLInputElement>(null)
+  const remoteFleet = useIsRemote()
 
   /**
    * ⚠️ Focus lands in the prompt, not on the close button. This opens as a modal over the whole
@@ -940,7 +942,9 @@ export function NewTask({
             label="+"
             menu={(close) => (
               <PillOptions
-                options={ATTACH_OPTIONS}
+                // ⚠️ A folder is attached by *path*, and the OS picker only knows this computer's disk;
+                // on a remote fleet that path would name nothing. Files upload their bytes, so they stay.
+                options={remoteFleet ? ATTACH_OPTIONS.filter((o) => o.value !== 'folder') : ATTACH_OPTIONS}
                 value=""
                 ariaLabel="Add attachment"
                 onPick={(next) => {

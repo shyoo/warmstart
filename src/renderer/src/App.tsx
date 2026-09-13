@@ -1,6 +1,6 @@
 import { sessionEnded } from '@shared/protocol'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Project, PullRequestDelivery, ResourceAvailability, Task, TaskStatus } from '@shared/tasks'
+import { useCallback, useEffect, useState } from 'react'
+import type { Project, PullRequestDelivery, ResourceAvailability, Task } from '@shared/tasks'
 import {
   fleetCounts,
   rpc,
@@ -43,7 +43,8 @@ import { Statistics, type StatisticsTab } from './components/Statistics'
 import { QualityReview } from './components/QualityReview'
 import { ProjectDot, projectWorkState } from './lib/taskview'
 import { useUiSettings } from './lib/uisettings'
-import { notifiableTransition, worthTracking } from './lib/notify'
+import { useTarget } from './lib/target'
+import { MachinePicker } from './components/MachinePicker'
 
 /**
  * The shell.
@@ -97,8 +98,22 @@ type Route =
   | { kind: 'history'; page: 'conversations' | 'logs'; taskId?: string }
   | { kind: 'settings'; page: 'workers' | 'global' }
 
-export function App(): React.JSX.Element {
+/** A notification click, for a task on the computer this App is showing. */
+export interface OpenTaskRequest {
+  taskId: string
+  targetId: string
+  at: number
+}
+
+export function App({
+  openTask,
+  onOpenTaskHandled
+}: {
+  openTask: OpenTaskRequest | null
+  onOpenTaskHandled: () => void
+}): React.JSX.Element {
   useUiSettings()
+  const { active: target } = useTarget()
   const info = useAppInfo()
   const update = useUpdateStatus()
   const status = useDaemonStatus()
@@ -221,41 +236,23 @@ export function App(): React.JSX.Element {
   })
 
   /**
-   * Come and get the person when a task wants them, finishes, or fails.
+   * Clicking a notification opens the task it was about.
    *
-   * ⛔ **The state lives in a ref, because a notification is a side effect and not a render.** The
-   * previous status of every live task is what makes this a *transition* rather than a state — see
-   * `lib/notify.ts` — and holding it in React state would redraw the whole app on every scheduler
-   * tick to change nothing anybody can see.
+   * ⚠️ The notifier itself lives in `Root`, so it survives a switch between computers; `Root` has
+   * already switched this window to the right one, and the request waits here until the task list
+   * that can resolve it has loaded.
    */
-  const lastStatus = useRef(new Map<string, TaskStatus>())
-  useDaemonEvents((event) => {
-    if (event.type !== 'task.changed') return
-    const task = event.task
-    const seen = lastStatus.current
-    const note = notifiableTransition(seen.get(task.id), task)
-    if (worthTracking(task.status)) seen.set(task.id, task.status)
-    else seen.delete(task.id)
-    if (!note) return
-    // ⚠️ Fire and forget. Main answers `false` when the platform cannot show one, and there is
-    // nothing useful to do about that except not care.
-    void window.agentyard.notify({ title: note.title, body: note.body, taskId: note.taskId })
-  })
-
-  /** Clicking a notification opens the task it was about. */
-  useEffect(
-    () =>
-      window.agentyard.onNotificationActivate((taskId) => {
-        const task = tasks.find((t) => t.id === taskId)
-        if (!task) return
-        setRoute(
-          task.projectId
-            ? { kind: 'project', id: task.projectId, tab: 'thread', taskId }
-            : { kind: 'unassigned', taskId }
-        )
-      }),
-    [tasks, setRoute]
-  )
+  useEffect(() => {
+    if (!openTask) return
+    const task = tasks.find((t) => t.id === openTask.taskId)
+    if (!task) return
+    onOpenTaskHandled()
+    setRoute(
+      task.projectId
+        ? { kind: 'project', id: task.projectId, tab: 'thread', taskId: task.id }
+        : { kind: 'unassigned', taskId: task.id }
+    )
+  }, [openTask, tasks, setRoute, onOpenTaskHandled])
 
   /**
    * ⛔ Re-reads the data, never reloads the window. A reload would drop every open terminal's
@@ -381,6 +378,8 @@ export function App(): React.JSX.Element {
         </button>
       </header>
       <aside className="sidebar">
+        {/* ⛔ Above Overview, because it decides what every entry below it is *about*. */}
+        <MachinePicker onManage={() => setRoute({ kind: 'settings', page: 'global' })} />
         <nav className="nav-group">
           <h2>Overview</h2>
           <NavItem
@@ -584,7 +583,7 @@ export function App(): React.JSX.Element {
 
         <div className="content">
           {!connected ? (
-            <DaemonNotice status={status} />
+            <DaemonNotice status={status} remoteLabel={target.kind === 'remote' ? target.label : null} />
           ) : route.kind === 'overview' && route.page === 'dashboard' ? (
             <Overview />
           ) : route.kind === 'overview' && route.page === 'controller' ? (
@@ -714,7 +713,9 @@ export function App(): React.JSX.Element {
           <span>
             <span className={`dot ${connected ? 'dot--ok' : 'dot--down'}`} />
             {status.state === 'connected'
-              ? `orchestratord · pid ${status.pid} · 127.0.0.1:${status.port}`
+              ? status.remote
+                ? `${status.remote.label} · ${status.remote.url} · Warmstart ${status.version}`
+                : `orchestratord · pid ${status.pid} · 127.0.0.1:${status.port}`
               : status.state === 'error'
                 ? `orchestratord: ${status.message}`
                 : `orchestratord: ${status.state}`}
@@ -783,10 +784,33 @@ function NavItem({
 }
 
 function DaemonNotice({
-  status
+  status,
+  remoteLabel
 }: {
   status: ReturnType<typeof useDaemonStatus>
+  remoteLabel: string | null
 }): React.JSX.Element {
+  // ⚠️ A remote is reached, never started: nothing this window does can launch a daemon over there.
+  if (remoteLabel) {
+    return (
+      <div className="empty">
+        <h2>{status.state === 'error' ? `Cannot reach ${remoteLabel}` : `Connecting to ${remoteLabel}…`}</h2>
+        <p>
+          This window is showing another computer&apos;s fleet, over Tailscale. Warmstart must be running
+          there — in the tray is enough — with <strong>Allow paired desktops</strong> on. Switch back to
+          This computer from the picker above Overview at any time.
+        </p>
+        {status.state === 'error' && (
+          <>
+            <div className="alert">{status.message}</div>
+            <button className="btn btn--primary" onClick={() => void window.agentyard.startDaemon()}>
+              Try again
+            </button>
+          </>
+        )}
+      </div>
+    )
+  }
   return (
     <div className="empty">
       <h2>{status.state === 'error' ? 'orchestratord did not start' : 'Starting orchestratord…'}</h2>

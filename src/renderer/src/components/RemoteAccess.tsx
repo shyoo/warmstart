@@ -14,9 +14,10 @@ import { SettingRow, SettingSwitch } from './SettingRow'
  * complete — scheme, host, port, `#/pair?code=…` — and building a second one here is how it ended
  * up doubled (t310). This screen displays it and encodes it; it does not compose it.
  */
-export function RemoteAccess(): React.JSX.Element {
+export function RemoteAccess({ machineLabel = null }: { machineLabel?: string | null }): React.JSX.Element {
   const [status, setStatus] = useState<RemoteStatus | null>(null)
   const [pair, setPair] = useState<{ code: string; expiresAt: number; url: string } | null>(null)
+  const [desktopPair, setDesktopPair] = useState<{ code: string; expiresAt: number; url: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
@@ -31,7 +32,8 @@ export function RemoteAccess(): React.JSX.Element {
   // The code dies on its own; stop showing a QR that no longer pairs anything.
   useEffect(() => {
     if (pair && pair.expiresAt <= now) setPair(null)
-  }, [pair, now])
+    if (desktopPair && desktopPair.expiresAt <= now) setDesktopPair(null)
+  }, [pair, desktopPair, now])
 
   if (!status) {
     return (
@@ -49,8 +51,9 @@ export function RemoteAccess(): React.JSX.Element {
     <div className="panel">
       <header className="panel-head">
         <div>
-          <h2>Remote access</h2>
+          <h2>Remote access{machineLabel ? ` · ${machineLabel}` : ''}</h2>
           <p className="panel-sub">
+            {machineLabel ? <>This is <strong>{machineLabel}</strong>&apos;s listener, not this computer&apos;s. </> : null}
             A phone reaches a project only when remote access is on here <em>and</em> enabled for that project.
             Paired phones never get the credential the desktop uses.
           </p>
@@ -71,6 +74,23 @@ export function RemoteAccess(): React.JSX.Element {
               on={status.enabled}
               busy={false}
               onToggle={() => change(() => rpc('remote.setEnabled', { enabled: !status.enabled }))}
+            />
+          }
+        />
+        {/* ⛔ Its own switch, and the description says why: a desktop has this window's authority. */}
+        <SettingRow
+          title="Allow paired desktops"
+          description={
+            status.desktopsEnabled
+              ? 'On. A paired Warmstart desktop can do anything this window can — including typing into agents and adding accounts — except stop the daemon. HTTPS over Tailscale only.'
+              : 'Off. No other computer can drive this fleet.'
+          }
+          control={
+            <SettingSwitch
+              label="Allow paired desktops"
+              on={status.desktopsEnabled}
+              busy={false}
+              onToggle={() => change(() => rpc('remote.setDesktopsEnabled', { enabled: !status.desktopsEnabled }))}
             />
           }
         />
@@ -111,7 +131,7 @@ export function RemoteAccess(): React.JSX.Element {
 
       {error && <p className="warn">{error}</p>}
 
-      {status.enabled && (
+      {(status.enabled || status.desktopsEnabled) && (
         <>
           <h3>Addresses</h3>
           {status.urls.length ? (
@@ -138,6 +158,41 @@ export function RemoteAccess(): React.JSX.Element {
             Re-check Tailscale
           </button>
 
+          {status.desktopsEnabled && (
+            <>
+              <h3>Pair a desktop</h3>
+              <p className="dim">
+                On the other computer, open Settings → Global → Remote Warmstarts and paste this link. It
+                needs this computer&apos;s Tailscale HTTPS address.
+              </p>
+              <button
+                className="btn btn--primary"
+                disabled={!status.secure}
+                onClick={() => {
+                  setDesktopPair(null)
+                  void rpc('remote.pairingCode', { kind: 'desktop' })
+                    .then(setDesktopPair)
+                    .catch((err: unknown) => setError(errorMessage(err)))
+                }}
+              >
+                Generate desktop pairing code
+              </button>
+              {desktopPair && (
+                <div className="remote-block">
+                  <p className="mono remote-code">
+                    {desktopPair.code} · {countdown(desktopPair.expiresAt, now)}
+                  </p>
+                  <code>{desktopPair.url}</code>
+                  <button className="btn" onClick={() => void navigator.clipboard?.writeText(desktopPair.url)}>
+                    Copy link
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {status.enabled && (
+            <>
           <h3>Pair a phone</h3>
           {/* ⚠️ A code is only useful with an address to carry it: the QR encodes a URL, and with no
               listener there is nothing for it to point at. */}
@@ -156,6 +211,7 @@ export function RemoteAccess(): React.JSX.Element {
           {pair && <Pairing pair={pair} now={now} />}
 
           <h3>Projects</h3>
+          <p className="dim">For phones. A paired desktop sees every project.</p>
           {status.projects.map((project) => (
             <SettingRow
               key={project.id}
@@ -176,12 +232,17 @@ export function RemoteAccess(): React.JSX.Element {
             />
           ))}
 
+            </>
+          )}
+
           <h3>Paired devices</h3>
           {status.devices.length ? (
             status.devices.map((device) => (
               <div className="setting-row" key={device.id}>
                 <div>
-                  <p className="setting-row-title">{device.label}</p>
+                  <p className="setting-row-title">
+                    {device.label} <span className="dim">· {device.kind === 'desktop' ? 'desktop' : 'phone'}</span>
+                  </p>
                   <p className="setting-row-desc">
                     Paired {new Date(device.createdAt).toLocaleString()} · last seen{' '}
                     {device.lastSeenAt ? new Date(device.lastSeenAt).toLocaleString() : 'never'}
@@ -189,7 +250,7 @@ export function RemoteAccess(): React.JSX.Element {
                 </div>
                 <button
                   className="btn btn--danger"
-                  title="Stop this phone's access and remove it from the list. It would need to pair again."
+                  title="Stop this device's access and remove it from the list. It would need to pair again."
                   onClick={() => void rpc('remote.revokeDevice', { id: device.id }).then(() => refresh())}
                 >
                   Revoke
@@ -197,7 +258,7 @@ export function RemoteAccess(): React.JSX.Element {
               </div>
             ))
           ) : (
-            <p className="dim">No phones paired.</p>
+            <p className="dim">Nothing paired.</p>
           )}
         </>
       )}

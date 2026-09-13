@@ -2556,9 +2556,15 @@ export interface RpcMap {
   'remote.status': { params: void; result: RemoteStatus }
   'remote.recheck': { params: void; result: RemoteStatus }
   'remote.setEnabled': { params: { enabled: boolean }; result: RemoteStatus }
+  /**
+   * Whether paired *desktops* may connect. ⛔ Separate from `remote.setEnabled` (phones): a desktop
+   * token reaches the whole fleet with full desktop authority, which is a different decision.
+   */
+  'remote.setDesktopsEnabled': { params: { enabled: boolean }; result: RemoteStatus }
   'remote.setBind': { params: { bind: RemoteBind; port?: number }; result: RemoteStatus }
   'remote.setProject': { params: { projectId: string; enabled: boolean }; result: RemoteStatus }
-  'remote.pairingCode': { params: void; result: { code: string; expiresAt: number; url: string } }
+  /** ⚠️ The code carries its kind: a phone code can never mint a desktop token. Defaults to `phone`. */
+  'remote.pairingCode': { params: { kind?: RemoteDeviceKind } | void; result: { code: string; expiresAt: number; url: string; kind: RemoteDeviceKind } }
   'remote.revokeDevice': { params: { id: string }; result: { ok: true } }
 
   /**
@@ -2613,9 +2619,15 @@ export interface RemotePushSubscription {
 }
 
 export type RemoteBind = 'tailscale' | 'lan' | 'both'
-export interface RemoteDevice { id: string; label: string; createdAt: number; lastSeenAt: number | null; lastAddress: string | null; revokedAt: number | null }
+/** Which policy a paired credential gets: the phone allowlist, or desktop parity. */
+export type RemoteDeviceKind = 'phone' | 'desktop'
+export interface RemoteDevice { id: string; label: string; kind: RemoteDeviceKind; createdAt: number; lastSeenAt: number | null; lastAddress: string | null; revokedAt: number | null }
 export interface RemoteStatus {
-  enabled: boolean; bind: RemoteBind; port: number; listening: boolean; secure: boolean; urls: string[]
+  /** Paired phones may connect. */
+  enabled: boolean
+  /** Paired desktops may connect. */
+  desktopsEnabled: boolean
+  bind: RemoteBind; port: number; listening: boolean; secure: boolean; urls: string[]
   tailscale: { installed: boolean; hostname: string | null; certAvailable: boolean; error: string | null; certError: string | null; certTimedOut: boolean } | null
   projects: Array<{ id: string; name: string; enabled: boolean }>; devices: RemoteDevice[]
 }

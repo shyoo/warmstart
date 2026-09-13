@@ -1,8 +1,11 @@
 import type { RemoteBind } from '@shared/protocol.js'
 import { db, row, rows } from '../db.js'
 
-export interface RemoteConfig { enabled: boolean; bind: RemoteBind; port: number; tlsCertPath: string | null; tlsKeyPath: string | null }
-export const DEFAULT_REMOTE_CONFIG: RemoteConfig = { enabled: false, bind: 'tailscale', port: 8787, tlsCertPath: null, tlsKeyPath: null }
+/** `enabled` admits paired phones; `desktopsEnabled` admits paired desktops. The listener runs while either is on. */
+export interface RemoteConfig { enabled: boolean; desktopsEnabled: boolean; bind: RemoteBind; port: number; tlsCertPath: string | null; tlsKeyPath: string | null }
+export const DEFAULT_REMOTE_CONFIG: RemoteConfig = { enabled: false, desktopsEnabled: false, bind: 'tailscale', port: 8787, tlsCertPath: null, tlsKeyPath: null }
+/** Whether anything may connect at all, which is when the listener has to exist. */
+export function remoteListening(config: RemoteConfig = remoteConfig()): boolean { return config.enabled || config.desktopsEnabled }
 type Listener = <K extends keyof RemoteConfig>(key: K, value: RemoteConfig[K]) => void
 const listeners: Listener[] = []
 export function onRemoteConfigChange(listener: Listener): () => void { listeners.push(listener); return () => { const i = listeners.indexOf(listener); if (i >= 0) listeners.splice(i, 1) } }

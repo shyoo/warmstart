@@ -11,6 +11,7 @@ import type {
   Worker
 } from '@shared/protocol'
 import { errorMessage } from '@shared/errors.js'
+import { currentTargetId } from './target'
 
 /**
  * The renderer's view of the fleet.
@@ -21,7 +22,8 @@ import { errorMessage } from '@shared/errors.js'
  */
 
 export function rpc<M extends RpcMethod>(method: M, params?: RpcParams<M>): Promise<RpcResult<M>> {
-  return window.agentyard.rpc(method, params)
+  // ⛔ Names the computer this window believes it is showing; see `lib/target.ts`.
+  return window.agentyard.rpc(method, params, currentTargetId())
 }
 
 export interface FleetEntry {

@@ -9,12 +9,22 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 **desktop notifications**. The maintained reference in [`docs/`](docs/README.md) is the authority on
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Last full local validation on this branch (2026-09-13): `npm run typecheck`, `npm run lint`,
-`npm test` (**3,344 passed, 2 skipped**), `npm run build`, and the L3 UI suite (**416 checks**) passed.
-Expected test warnings exercise refusal and recovery paths; they are not failures.
+Last full local validation (t419, 2026-09-13): `npm run typecheck`, `npm run lint`, `npm test`,
+`npm run build` and L2 (**203 checks**) passed. ⚠️ L3 is **418 of 421**: the narrowed Routing Model
+centring check and both narrow-task-panel checks fail identically on `main` at cb82200 (measured on a
+clean worktree), so they predate t419 and are open.
 
 ## Closed in this cleanup
 
+- **One desktop drives another computer's fleet (t419, 2026-09-13).** A picker above Overview lists
+  *This computer* and paired remotes; `Root` re-keys `App` on a switch. Main's `RemoteClient`
+  reaches the remote's existing listener with a **desktop** credential: its own *Allow paired
+  desktops* switch, TLS on the tailnet hostname only, the kind fixed by the host's code (migration 71),
+  and parity except `daemon.shutdown` / `agent.*` / `remote.subscribe`. The token is sealed by
+  `safeStorage` in main's `remotes.json`. RPC versions are a negotiated range capped at ±1
+  (`shared/rpcversion.ts`). Decisions: [`transient_docs/remote_desktop_2026-09-13.md`](transient_docs/remote_desktop_2026-09-13.md);
+  reference: [`docs/remote.md`](docs/remote.md#remote-desktops). ⚠️ **Never driven between two real
+  machines**: L1 covers negotiation, the gate, the store and routing; L2 covers only the plain-HTTP refusals.
 - **A nearby reset no longer preempts healthy work (t418, 2026-09-13).** Early wrap-up now needs its model pool at high-water (92% for five-hour windows), not just t416's `config cache` reset; refusal and the 95% active-overrun guard remain separate.
 - **Pages and Routing Model tables stay centred (t417, 2026-09-13).** Pages now centre their
   measured column; the paper makes its width explicit, keeping prose and tables on that same line
@@ -30,15 +40,8 @@ Expected test warnings exercise refusal and recovery paths; they are not failure
   non-fatal.
 - **Show retained workspace locks in Flow (t413, 2026-09-13).** An `awaiting_human` ticket stays in
   Awaiting and names the workspace it still locks, rather than pinning under Running or hiding the lock.
-- **Three UI changes across task composer, sidebar pending PRs, and thread bubbles (t414, 2026-09-13).**
-  ⭐ *Workspace mode pill order*: `Workspace` (`worktree` / `trunk`) is placed before Conversation reuse
-  and Finish policy in `NewTask` composer. ⭐ *Purple pending PR dot and alert badge*: A project with
-  unlanded open PRs (`delivery.pending` RPC) shows a purple dot (`--state-pr`) in the sidebar; clicking
-  it displays an alert badge indicating unlanded PRs with a link to Overview Dashboard (`{ kind: 'overview', page: 'dashboard' }`).
-  ⭐ *Mid-flight user response thread split*: When a user replies to an active task, earlier thinking
-  activity (before user message timestamp) is rendered in an agent bubble with timestamp `when(lastLine.ts)`,
-  followed by the user message bubble on the right, followed by the continuing live thinking tail with `<Working />`
-  (`lib/threadbubble.ts`).
+- **Composer workspace pill first, purple pending-PR dot, split thread bubbles on a mid-flight reply
+  (t414, 2026-09-13).** See `lib/threadbubble.ts` and `delivery.pending`.
 - **Five UI reports off t410 (2026-09-13), each measured in the built app.** ⭐ *The code diff view is
   gone*: `DiffPanel` was drawn on `status === 'awaiting_human'` alone, so the change vanished the moment
   a task finished — which is when a thread is most often read. It is drawn wherever the change resolves
@@ -75,12 +78,8 @@ Expected test warnings exercise refusal and recovery paths; they are not failure
   through WSL rewrote ws3's `.git` pointer*, because muse's edit tools cannot follow `gitdir: C:/…`;
   pool pointers are now **relative** and `ensureWorktreePointer` runs `git worktree repair` before every
   park and prepare. ⚠️ Whether muse's `edit_file` accepts the relative pointer is inferred, not measured.
-- **Loose ends offers an explicit Delete it, for a branch the operator has decided is not needed.**
-  `deleteUnlandedBranch` ([`worktrees.ts`](src/daemon/worktrees.ts)) is `retireStrandedBranch`'s
-  destructive sibling: it skips the `ahead === 0` proof, since the point is discarding real commits,
-  and keeps the same refusal when a worktree holds the branch.
-- **The database backs itself up.** `backup.ts` copies `warmstart.db` into `<dataDir>/backups/` daily
-  via `node:sqlite`'s online backup API (WAL-safe), pruning past fourteen days by mtime.
+- **Loose ends offers Delete it; the database backs itself up.** `deleteUnlandedBranch` (`worktrees.ts`)
+  discards real commits only on a confirmed click; `backup.ts` copies `warmstart.db` daily, 14-day prune.
 - **Trunk mode: a task can work in the project checkout itself** (t401). `workspaceMode`
   (`worktree` | `trunk`, migration 70) resolves task → project → `worktree`; the composer, the task pane
   and Project Settings set it. Five decisions, each in code and pinned in
@@ -99,10 +98,8 @@ Expected test warnings exercise refusal and recovery paths; they are not failure
   across revives so failures back off instead of looping. Preemption wrap-up falls back to handoff
   where the vendor is refusing, the window is spent without credits, or compaction is off. Suites stub
   CLI presence via `forceInstalled`.
-- **macOS build script and test parity.** [`scripts/build-mac.sh`](scripts/build-mac.sh) has the same
-  flags and step cache as [`scripts/build-win.ps1`](scripts/build-win.ps1); see
-  [`docs/development.md`](docs/development.md) §1. Fixed with it: a probe-lifetime race in
-  `test/daemon.test.mjs`, table centring under macOS serif fonts, and child reaping in `test/lib/harness.mjs`.
+- **macOS build script and test parity.** [`scripts/build-mac.sh`](scripts/build-mac.sh) mirrors
+  `build-win.ps1`; see [`docs/development.md`](docs/development.md) §1.
 - **The thread shows the change before you land it.** `task.diffSummary` / `task.diffFile`
   ([`taskdiff.ts`](src/daemon/taskdiff.ts)) read the *same* commits the grader reads. ⛔ Two measured
   git facts are pinned in [`taskdiff.test.ts`](src/daemon/taskdiff.test.ts): `--numstat` without `-z`
@@ -150,12 +147,15 @@ a unit test.
    secrets are not configured and `.github/workflows/release.yml` has never run. Windows is
    intentionally unsigned initially. Release notes must tell upgraders to uninstall the old app,
    because the `appId` changed.
-7. **Record one clean single-account first run.** Install the packaged app on a clean profile, add
+7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
+   other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
+   both computers, a revoke on the host cutting the client off, and the ±1 version warning.
+8. **Record one clean single-account first run.** Install the packaged app on a clean profile, add
    one account, add one project, file a task, review its diff, land it, and write down what
    happened. ⛔ A demonstration, not a feature, and the purest form of the pre-public question —
    items 1–3 mean the basic loop has never been shown end to end against a real agent. Now
    unblocked: there is finally something to look at at the gate.
-8. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the
+9. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the
    generic declarative adapter cannot meter, gets no MCP tools and cannot reap orphans); CI watch
    after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an
    update-available check that keeps `publish: null`; a full data-directory export beyond the
@@ -163,14 +163,14 @@ a unit test.
    which is the only thing that properly closes both
    the host-authority gap and the shared common-`.git` grant. ⚠️ Deliberately **not** on this list:
    GitHub/Linear/Slack intake, agent-to-agent messaging, kanban, voice, cross-machine sync.
-9. **Give Antigravity a real per-worker isolation root.** It shares `~/.gemini` today; changing `HOME`
+10. **Give Antigravity a real per-worker isolation root.** It shares `~/.gemini` today; changing `HOME`
    must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
-10. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data;
+11. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data;
    compare small and large quality-review models on the same five tasks; verify the Claude credits
    gauge against one real invoice; and decide whether preempted runs should contribute to estimates.
-11. **Increase thread UI coverage where behaviour changes.** Most thread interactions remain
+12. **Increase thread UI coverage where behaviour changes.** Most thread interactions remain
    hand-tested. Extract pure decisions into `src/renderer/src/lib/` first.
-12. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines
+13. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines
    against a ~1,500 target; no extracted module may read a scheduler binding at module evaluation time.
 
 ## Open questions and quiet-worker measurements

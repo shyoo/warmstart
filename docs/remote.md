@@ -122,6 +122,77 @@ effect on the next request, removes the device from the list, and takes that dev
 subscriptions with it — a revoked handset that kept receiving pushes would still be told what the
 fleet is doing. To use that phone again, pair it again.
 
+## Remote desktops
+
+One Warmstart desktop can drive another computer's fleet. The picker above **Overview** lists
+*This computer* and every paired remote. Picking a remote re-mounts the whole window against that
+computer, so terminals, workers, settings and diffs all belong to it until you pick again. The remote
+only has to be running (in the tray is enough), because the listener belongs to its daemon, not its window.
+
+**How it works.** The renderer already talks only in `rpc()` and daemon events, and Electron main
+is the daemon's only client. So a remote is a second client in main
+([`src/main/remoteclient.ts`](../src/main/remoteclient.ts)) pointed at the remote's *existing*
+listener. [`src/main/targets.ts`](../src/main/targets.ts) routes the window's calls and events to
+whichever computer is selected. This computer's daemon stays connected either way. Its
+`task.changed` events keep arriving as background events, so its notifications still reach you, and
+a remote's notifications name that computer. Only the selected remote is connected.
+
+⛔ **Authority: everything this window can do, except three things** (operator's decision, t419).
+[`desktoppolicy.ts`](../src/daemon/remote/desktoppolicy.ts) denies `daemon.shutdown` (stopping a fleet
+is the host operator's call), `agent.*` (an agent's MCP identity, by prefix) and `remote.subscribe`
+(a phone's push). A desktop token can therefore run code on the host. The fence is built out of that:
+
+- **A separate switch.** *Allow paired desktops* is independent of *Allow paired phones*. The
+  listener runs while either is on, and each token is admitted only by its own switch. Flipping one
+  switch never rebinds the listener; it closes the event sockets of the kind switched off.
+- **TLS on the tailnet hostname, or nothing.** A desktop pairing code is not issued without the
+  Tailscale HTTPS address. `/remote/pair` refuses a desktop pairing, and every desktop request and
+  event socket is refused, on a connection that is not TLS. The client refuses an `http://` address
+  before spending a code. The token is only ever sent as a header, never in a URL.
+- **The kind belongs to the code.** `remote.pairingCode({ kind: 'desktop' })` issues a code that
+  only mints a desktop credential. Presenting a phone code as a desktop pairing fails without
+  spending it.
+- **No per-project gate.** A desktop administers the whole fleet, so it gets every event, terminal
+  bytes included, and unfiltered results.
+- **Revocable where you can see it.** Desktops appear in *Paired devices* labelled as desktops.
+  Forgetting a remote on the client first asks that computer to revoke the credential, if it can be
+  reached.
+
+**Where the credential lives.** On the client it is sealed by Electron `safeStorage` into main's own
+`remotes.json` (in the UI profile directory), next to which remote is selected. ⛔ It is not stored in
+the fleet database, which every local agent can read, and it never reaches the renderer. Where no OS
+keychain is available (including Linux's `basic_text` fallback, which is not encryption), pairing
+is refused rather than storing the token in plain text.
+
+**Pairing.**
+
+1. On the host: turn on *Allow paired desktops*, make sure the Tailscale HTTPS address is listed,
+   and press **Generate desktop pairing code**. The code is eight characters, works once, and lasts
+   two minutes. Copy the link shown with it.
+2. On the client: **Settings → Global → Remote Warmstarts**, paste the link (or the address and code
+   separately), optionally name it, and press **Pair**.
+3. Pick it from the list above Overview.
+
+### Protocol versions
+
+⛔ **A client's renderer is its own build**, so it may call something an older remote does not have.
+Each side declares the protocol range it speaks
+([`src/shared/rpcversion.ts`](../src/shared/rpcversion.ts)). `GET /remote/hello` is public and
+returns the remote's app version and range. The client uses the newest version both sides speak and
+sends it as `x-warmstart-rpc` on every call and on the event socket. The server answers `426` to a
+version outside its range, and the client then re-negotiates.
+
+- **No overlap** → the client refuses to connect and names which side to upgrade.
+- **The remote's newest version is older than the client's** → it connects, and the picker and
+  *Remote Warmstarts* say the remote needs upgrading.
+- ⛔ **At most one version either way.** `max - min` never exceeds `RPC_COMPATIBILITY_SPAN` (1), so
+  raising `max` to N+1 also raises `min` to N. `rpcversion.test.ts` fails on a wider range. When the
+  version is raised, the server keeps answering the old shape for that one step and the client
+  gates new calls on the negotiated version.
+
+**Not done, deliberately.** Background sockets to unselected remotes, Tailscale peer-identity checks
+(`tailscale whois`), and driving two real machines end to end (see `HANDOFF.md`).
+
 ## Notifications
 
 Notifications are browser **Web Push**, over the Tailscale HTTPS address. The daemon signs each one

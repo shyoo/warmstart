@@ -77,7 +77,8 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Logs` | the daemon's log, live and filterable, ring-buffered so a late window sees the past |
 | `Terminal` | the real agent TUI over xterm.js, not a reconstruction |
 | `AppSettings` `SettingRow` `SettingButtonSelect` `SidebarResizer` | chrome |
-| `RemoteAccess` | phone access: the two switches, the address, the pairing QR and the paired devices. Renders under `AppSettings`, with the per-project half in `ProjectSettings`. See [`remote.md`](remote.md) |
+| `RemoteAccess` | the shown computer's listener: the phone and desktop switches, the address, the phone QR, the desktop pairing link and the paired devices. Renders under `AppSettings`, with the per-project half in `ProjectSettings`. See [`remote.md`](remote.md) |
+| `Root` `MachinePicker` `RemoteMachines` | which computer the window shows. `Root` keys `App` by the selected computer so a switch re-mounts everything, and owns notifications so they survive the switch; `MachinePicker` sits above Overview; `RemoteMachines` (under `AppSettings`) pairs and forgets remotes through main. `lib/target.ts` holds the id every `rpc()` names. See [`remote.md`](remote.md#remote-desktops) |
 | `src/mobile` | fixed-tab phone PWA: project-scoped Overview (Attention + 200-entry timeline), quota gauges, paginated task cards with a `+` composer, and read-only Settings. See [`remote.md`](remote.md) |
 
 ⛔ **A thread setting is one component, and the menu behind it is a pure function.**
