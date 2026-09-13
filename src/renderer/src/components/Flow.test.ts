@@ -7,6 +7,7 @@ import {
   computeWorkspaceRows,
   completionTime,
   bindingLine,
+  workspaceLockLine,
   laneFor,
   runningWorkspaceRows,
   visibleTasksForLane,
@@ -368,6 +369,11 @@ describe('bindingLine description helper', () => {
       .toBe('t204 working in ws3 / CodexFirst')
     expect(bindingLine({ ...base, taskId: null, taskSeq: null, taskTitle: null, taskStatus: null, holding: null }))
       .toBe('ws3 / CodexFirst — free')
+  })
+
+  it('names the retained workspace on an awaiting-human ticket', () => {
+    const ws = mockWorkspace({ label: 'ws3', workerLabel: 'CodexFirst', taskId: 't-204', taskSeq: 204, taskStatus: 'awaiting_human', holding: 'task' })
+    expect(workspaceLockLine(ws)).toBe('locks ws3 / CodexFirst')
   })
 })
 

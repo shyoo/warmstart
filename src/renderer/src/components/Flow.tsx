@@ -100,6 +100,11 @@ export function bindingLine(ws: FlowWorkspace): string {
   return `t${ws.taskSeq} ${how} ${where}`
 }
 
+/** The visible qualification on a waiting ticket that retains a workspace claim. */
+export function workspaceLockLine(ws: FlowWorkspace): string {
+  return `locks ${ws.label}${ws.workerLabel ? ` / ${ws.workerLabel}` : ''}`
+}
+
 export interface BoundWorkspaceRow {
   ws: FlowWorkspace
   activeTask: Task | null
@@ -284,7 +289,8 @@ export function Flow({ projectId, fleet, onOpenTask }: {
 
   // ⛔ A workspace claim is evidence of a resource hold, not evidence that its task is running.
   // Keep free and inbound rows so the pool remains legible, but leave terminal/awaiting tickets to
-  // the one lifecycle lane that owns their status.
+  // the one lifecycle lane that owns their status. Awaiting tickets name their retained workspace
+  // in that lane instead of being copied into Running.
   const runningRows = useMemo(() => runningWorkspaceRows(workspaceRows), [workspaceRows])
 
   /** Any remaining inbound tasks that did not fit in any free workspace (when pool is full). */
@@ -360,10 +366,13 @@ export function Flow({ projectId, fleet, onOpenTask }: {
           </span>
           <span className="flow-bind-meta">
             {activeTask && ws.holding === 'session' ? (
-              <span className="flow-bind-time" title="Working duration">
-                <span className="flow-pulse-dot" aria-hidden="true" />
-                {duration(activeMs(activeTask, now))}
-              </span>
+              <>
+                <span className="flow-tag flow-tag--locked">locked</span>
+                <span className="flow-bind-time" title="Working duration">
+                  <span className="flow-pulse-dot" aria-hidden="true" />
+                  {duration(activeMs(activeTask, now))}
+                </span>
+              </>
             ) : ws.holding === 'task' ? (
               <span className="flow-tag flow-tag--held">held</span>
             ) : ws.holding === 'landing' ? (
@@ -521,7 +530,18 @@ export function Flow({ projectId, fleet, onOpenTask }: {
                     </div>
                   ) : (
                     <div className="flow-cards">
-                      {visibleTasks.map((task) => ticket(task))}
+                      {visibleTasks.map((task) => {
+                        const lockedWorkspace = lane.id === 'awaiting' ? homeOf.get(task.id) : null
+                        return lockedWorkspace ? (
+                          <div className="flow-wait-lock" key={task.id}>
+                            {ticket(task, workspaceLockLine(lockedWorkspace))}
+                            <span className="flow-wait-lock-line">
+                              <span>locks</span>
+                              <span className={`flow-ws-badge mono${lockedWorkspace.kind === 'trunk' ? ' flow-ws-badge--trunk' : ''}`}>{lockedWorkspace.label}</span>
+                            </span>
+                          </div>
+                        ) : ticket(task)
+                      })}
                       {hiddenCount > 0 && <span className="flow-more">+{hiddenCount} more</span>}
                     </div>
                   )}

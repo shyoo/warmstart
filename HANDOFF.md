@@ -9,9 +9,9 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 **desktop notifications**. The maintained reference in [`docs/`](docs/README.md) is the authority on
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Last full local validation on this branch (2026-09-13): `npm run typecheck`, `npm run lint`,
-`npm test` (**3,330 passed, 2 skipped**), `npm run build`, and the L3 UI suite (**416 checks**) passed.
-Expected test warnings exercise refusal and recovery paths; they are not failures.
+Last validation (t413, 2026-09-13): `npm run typecheck`, `npm run lint`, `npm test`, and
+`npm run build` passed. Expected test warnings exercise refusal and recovery paths; they are not
+failures. The prior L3 UI suite passed 416 checks; t413 has L1 coverage for its Flow display logic.
 
 ## Closed in this cleanup
 

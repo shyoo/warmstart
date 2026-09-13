@@ -1313,6 +1313,22 @@ body {
 .flow-ticket--other { cursor: default; }
 .flow-ticket--bound { box-shadow: inset 2px 0 0 color-mix(in srgb, var(--flow-tone) 70%, transparent); }
 
+/* A retained tree remains a real pool lock while its ticket waits for a person. */
+.flow-wait-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.flow-wait-lock-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--color-text-dim);
+  font-size: var(--text-meta);
+  white-space: nowrap;
+}
+
 .flow-lane-label {
   display: flex;
   justify-content: space-between;
@@ -1500,6 +1516,11 @@ body {
 .flow-tag--held {
   background: color-mix(in srgb, var(--state-warn) 15%, transparent);
   color: var(--state-warn);
+}
+
+.flow-tag--locked {
+  background: color-mix(in srgb, var(--state-running) 12%, transparent);
+  color: var(--state-running);
 }
 
 .flow-tag--landing {
