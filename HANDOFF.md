@@ -9,9 +9,12 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 **desktop notifications**. The maintained reference in [`docs/`](docs/README.md) is the authority on
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Last full local validation on this branch (2026-09-12): `npm run typecheck`, `npm run lint`,
-`npm test` (**3,260 passed, 2 skipped**) and `npm run build` all passed.
-The expected test warnings exercise refusal and recovery paths; they are not failures.
+Last full local validation before t405 (2026-09-12): `npm run typecheck`, `npm run lint`,
+`npm test` (**3,260 passed, 2 skipped**) and `npm run build` all passed. This task's local validation
+(2026-09-12): `npm run typecheck`, `npm run lint`, `npm run build`, `preemption.test.ts` (**36 passed**),
+and `docs.test.ts` (**6 passed**) passed. The sandbox's 30-second wrapper ended the full `npm test`
+before its result; the landing tool must run it. Expected test warnings exercise refusal and recovery
+paths; they are not failures.
 
 ## Closed in this cleanup
 
@@ -40,6 +43,11 @@ The expected test warnings exercise refusal and recovery paths; they are not fai
   Preemption wrap-up in [`src/daemon/scheduler.ts`](src/daemon/scheduler.ts) falls back to handoff when
   the vendor is refusing turns, the window is exhausted without credits, or compaction is disabled, and
   an unlanded preemption compaction preserves the clock move record.
+- **A running Antigravity model cannot inherit another model pool's preemption.** The watchdog now
+  reads the session's actual model and `windowResetsAt` prefers its stored pool boundary over an
+  unqualified worker record, so a low-use Gemini run does not offer **Override preemption** because
+  Claude/GPT is near its own reset. Regression coverage pins both the closing-window and high-water
+  cross-contamination cases, including a task edited for a future Claude/GPT run.
 - **Debate positions expose their stated confidence.** `task.debateState` uses the same conservative
   prose extractor the organizer prompt uses and the board leads each response with an accented
   metadata table. Missing confidence says **Not stated**; arbitrary formats remain the seat's own

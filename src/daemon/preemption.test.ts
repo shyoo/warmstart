@@ -35,16 +35,16 @@ const ESTIMATE = 100_000
 let seq = 0
 
 /** A session row written straight to the store: no CLI is installed in a unit test and none is needed. */
-function seedSession(workerId: string, adapterId = 'openai-compatible'): string {
+function seedSession(workerId: string, adapterId = 'openai-compatible', model: string | null = null): string {
   seq += 1
   const id = `5e551011-0000-4000-8000-${String(seq).padStart(12, '0')}`
   db.db()
     .prepare(
-      `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose, started_at,
+      `insert into sessions (id, worker_id, adapter_id, transport, cwd, model, state, purpose, started_at,
                              tokens_since_compact)
-       values (?,?,?,?,?,?,?,?,0)`
+       values (?,?,?,?,?,?,?,?,?,0)`
     )
-    .run(id, workerId, adapterId, 'stream', dir, 'live', 'work', Date.now())
+    .run(id, workerId, adapterId, 'stream', dir, model, 'live', 'work', Date.now())
   return id
 }
 
@@ -75,9 +75,9 @@ function seedHistory(): void {
 }
 
 /** A live run that has already spent well past `RUNAWAY_FACTOR` times the estimate above. */
-function seedRunawayTask(spend = ESTIMATE * 4, adapterId = 'openai-compatible') {
+function seedRunawayTask(spend = ESTIMATE * 4, adapterId = 'openai-compatible', model: string | null = null) {
   const workerId = seedWorker(adapterId)
-  const sessionId = seedSession(workerId, adapterId)
+  const sessionId = seedSession(workerId, adapterId, model)
   const task = tasks.createTask({ title: 'a run that will not stop', createdBy: { kind: 'human' } })
   const run = tasks.startRun({
     taskId: task.id,
@@ -114,6 +114,21 @@ function seedQuotaPercent(workerId: string, percent: number, resetsAt = Date.now
        values (?,?,?,?,?,?,?)`
     )
     .run(workerId, '5h', '5-hour', percent, resetsAt, 'probe', Date.now())
+}
+
+function seedPoolQuota(
+  workerId: string,
+  id: string,
+  group: string,
+  percent: number,
+  resetsAt: number
+): void {
+  db.db()
+    .prepare(
+      `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at, window_group)
+       values (?,?,?,?,?,?,?,?)`
+    )
+    .run(workerId, id, `${group} 5-hour`, percent, resetsAt, 'probe', Date.now(), group)
 }
 
 const noticesOn = (taskId: string): number =>
@@ -285,6 +300,23 @@ describe('the switches that gate all of this', () => {
     const warning = tasks.requireTask(task.id).quotaPreemptWarning
     expect(warning?.action).toBe('compact')
     expect(warning?.canCompact).toBe(true)
+  })
+
+  it('does not preempt a Gemini Antigravity run on Claude/GPT\'s closing pool', async () => {
+    const { task, run } = seedRunawayTask(0, 'antigravity-cli', 'gemini-3.7-flash-medium')
+    const workerId = tasks.requireRun(run.id).workerId
+    seedPoolQuota(workerId, '5h:gemini', 'gemini', 4, Date.now() + 4 * 60 * 60_000)
+    seedPoolQuota(workerId, '5h:claude-and-gpt', 'claude-and-gpt', 96, Date.now() + 10 * 60_000)
+    // A task edit is for its next run. The active run must keep using its session's actual Gemini
+    // model rather than borrowing the future Claude/GPT selection and its nearly-full pool.
+    tasks.updateTask(task.id, { constraints: { model: 'claude-sonnet-4-6' } })
+
+    await scheduler.tick()
+
+    // The two rows share an account but not a quota pool. A preemption warning here would make
+    // t404's Gemini work answer for another model family's quota.
+    expect(tasks.requireTask(task.id).quotaPreemptWarning).toBeNull()
+    expect(quota.windowResetsAt(workerId, 'gemini')?.at).toBeGreaterThan(Date.now() + 3 * 60 * 60_000)
   })
 
   it('falls back to handoff when vendor refused even on a compact-capable worker', async () => {

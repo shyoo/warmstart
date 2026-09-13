@@ -804,6 +804,11 @@ out against a pool it does not draw on. ⚠️ The gate can only do better becau
 knowable before the spawn — `resolveModelChoice` resolves task → worker → CLI *before* dispatch, so
 the pool is a lookup rather than a guess. `pool` on each model in the cost model is that lookup.
 
+⛔ **The same model-specific lookup applies after dispatch.** A running session records its actual
+model, which outranks a task edit intended for its next run. `windowResetsAt(worker, pool)` therefore
+prefers that pool's stored five-hour boundary over an unqualified live record: a Gemini run must not
+be preempted because Claude/GPT's independent pool is closing (t404, 2026-09-12).
+
 ⛔ **Matched by containment, not equality — and the table above is why.** The panel's heading here
 reads *"Claude and GPT"*, which slugifies to `claude-and-gpt`; the CLI also writes it `CLAUDE & GPT`
 and `CLAUDE/GPT`, giving `claude-gpt`. A pool token of `claude` or `gpt` is a substring of all three

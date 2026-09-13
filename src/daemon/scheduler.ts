@@ -2530,7 +2530,15 @@ async function runWatchdogs(): Promise<void> {
     }
 
     // 1. The window boundary. This is the case the whole tool was built for.
-    const reset = windowResetsAt(run.workerId)
+    // The account may meter several model families independently. This run's session records the
+    // model that actually started, so it outranks a task constraint a person may have edited for a
+    // later retry. Asking for an unqualified worker reset here would let another pool preempt it.
+    const watchdogWorker = getWorker(run.workerId)
+    const runningModel = session.model ?? run.model
+    const reset = windowResetsAt(
+      run.workerId,
+      watchdogWorker ? poolFor(watchdogWorker, runningModel) : null
+    )
     const project = task.projectId ? getProject(task.projectId) : null
     const taskObjective = resolveObjective(project?.config?.objective, task.objective, switches.objective)
     const margin = policy(taskObjective).preemptMarginMs
@@ -2574,12 +2582,12 @@ async function runWatchdogs(): Promise<void> {
 
     // 2. Active 5h quota exhaustion, or a vendor refusal mid-stream.
     if (switches.autoOverrunPreempt && task.preemptible) {
-      const worker = getWorker(run.workerId)
+      const worker = watchdogWorker
       const quota = lastQuota(run.workerId)
       let percent: number | null = null
       if (worker && quota && !quota.stale) {
         const choice = resolveModelChoice(task.constraints, worker, false, quota)
-        const win = sessionWindowFor(quota.windows, poolFor(worker, choice.model))
+        const win = sessionWindowFor(quota.windows, poolFor(worker, runningModel ?? choice.model))
         if (win && !windowExpired(win)) percent = Math.round(win.percent)
       } else if (worker && run.quotaBefore && !run.quotaBefore.stale) {
         // Fall back to the baseline snapshot taken at dispatch if mid-run staleness elapsed (>15m)

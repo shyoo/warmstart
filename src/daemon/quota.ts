@@ -1,5 +1,5 @@
 import type { QuotaSnapshot, QuotaWindow } from '@shared/protocol.js'
-import { QUOTA_STALE_AFTER_MS } from '@shared/tasks.js'
+import { QUOTA_STALE_AFTER_MS, sessionWindowFor } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { adapter } from './adapters/index.js'
@@ -749,17 +749,33 @@ function pickRateLimit(
  * `resets_at` the config cache carried, which may be from a window that has already turned over -
  * so a reset time in the past is discarded rather than treated as "any moment now".
  */
-export function windowResetsAt(workerId: string): { at: number; source: string } | null {
+export function windowResetsAt(workerId: string, pool: string | null = null): { at: number; source: string } | null {
   // ⛔ `sessionRateLimit`, not `lastRateLimit`. Every caller of this treats the answer as *the*
   // window boundary - preemption parks a task until it, and `not_before` is written from it - so
   // handing back a seven-day reset here parks a run for a week over a five-hour concern. That is
   // not hypothetical: t71 sat at `not_before` 2026-09-07 from a 2026-08-31 advisory.
+  const cached = lastQuota(workerId)
+
+  // ⛔ A multi-pool provider's live rate-limit records do not name the model group they came
+  // from. When the usage screen does name the group, it is therefore stronger evidence for a
+  // model-pinned run than a generic live `5h` record. Without this, a nearly-empty Gemini task on
+  // Antigravity could inherit Claude/GPT's closing window and be offered a false preemption.
+  const poolWindow = pool ? sessionWindowFor(cached?.windows ?? [], pool) : null
+  if (
+    poolWindow?.group?.includes(pool ?? '') &&
+    poolWindow.resetsAt &&
+    poolWindow.resetsAt > Date.now()
+  ) {
+    return { at: poolWindow.resetsAt, source: 'model-pool config cache' }
+  }
+
   const live = sessionRateLimit(workerId)
   if (live?.resetsAt && live.resetsAt > Date.now()) {
     return { at: live.resetsAt, source: 'live rate-limit record' }
   }
-  const cached = lastQuota(workerId)
-  const window = cached?.windows.find((w) => w.id === 'session' || w.id === '5h')
+  const window = pool
+    ? sessionWindowFor(cached?.windows ?? [], pool)
+    : cached?.windows.find((w) => w.id === 'session' || w.id === '5h')
   if (window?.resetsAt && window.resetsAt > Date.now()) {
     return { at: window.resetsAt, source: 'config cache' }
   }
