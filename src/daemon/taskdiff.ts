@@ -1,8 +1,10 @@
 /** The change a task is about to land, read for a person rather than for a grader. */
 import type { TaskDiffFile, TaskDiffFileEntry, TaskDiffSummary } from '@shared/tasks.js'
+import { tryGit } from './git.js'
 import { getProject, landingTargetFor, policyFor } from './projects.js'
 import { diffSpecs, isGeneratedPath, numstatEntries, patchFor, resolveRange } from './review.js'
 import { pendingWorkFor } from './resolutions.js'
+import { taskCommitShas } from './taskcommits.js'
 import { getTask } from './tasks.js'
 
 /**
@@ -115,13 +117,17 @@ async function pendingFacts(
   }
 }
 
-/** The changed-file list for a task, with the workspace facts beside it. */
-export async function diffSummaryFor(taskId: string): Promise<TaskDiffSummary> {
-  const pending = await pendingFacts(taskId)
-  const at = await locate(taskId)
-  if (!at.ok) return { ...NO_SUMMARY, ...pending, reason: at.reason }
-
-  const entries = await numstatEntries(at.cwd, at.specs)
+/**
+ * One entry list into the summary shape both diff answers share.
+ *
+ * ⛔ Totals over every entry, not the truncated list. The header says what the change is; saying
+ * "+12/-3" over a list that dropped 40,000 files would be a wrong number, not a short one.
+ */
+function toSummary(
+  entries: Array<{ path: string; added: number; removed: number; binary: boolean }>,
+  head: { base: string | null; head: string; from: TaskDiffSummary['from']; separateCommits: number },
+  pending: Pick<TaskDiffSummary, 'uncommittedFiles' | 'unlandedCommits' | 'workspaceReadable'>
+): TaskDiffSummary {
   // Biggest change first, the same order the grader reads them in: a truncated list should hold the
   // files where the work happened, not the first ones in the tree.
   const ordered = [...entries].sort((a, b) => b.added + b.removed - (a.added + a.removed))
@@ -136,18 +142,89 @@ export async function diffSummaryFor(taskId: string): Promise<TaskDiffSummary> {
   return {
     ok: true,
     reason: '',
-    base: at.base,
-    head: at.head,
-    from: at.from,
-    separateCommits: at.separateCommits,
+    base: head.base,
+    head: head.head,
+    from: head.from,
+    separateCommits: head.separateCommits,
     files,
-    // ⛔ Totalled over every entry, not over the truncated list. The header says what the change is;
-    // saying "+12/-3" over a list that dropped 40,000 files would be a wrong number, not a short one.
     insertions: entries.reduce((n, e) => n + e.added, 0),
     deletions: entries.reduce((n, e) => n + e.removed, 0),
     filesTruncated: ordered.length > MAX_DIFF_FILES,
     ...pending
   }
+}
+
+/** The changed-file list for a task, with the workspace facts beside it. */
+export async function diffSummaryFor(taskId: string): Promise<TaskDiffSummary> {
+  const pending = await pendingFacts(taskId)
+  const at = await locate(taskId)
+  if (!at.ok) return { ...NO_SUMMARY, ...pending, reason: at.reason }
+
+  const entries = await numstatEntries(at.cwd, at.specs)
+  return toSummary(
+    entries,
+    { base: at.base, head: at.head, from: at.from, separateCommits: at.separateCommits },
+    pending
+  )
+}
+
+/**
+ * Resolve one recorded commit into the spec that reads exactly it.
+ *
+ * ⛔ **The sha must be one of this task's recorded commits, in full.** The renderer hands back a
+ * sha from a row it was shown; anything else — a prefix, a branch name, another task's commit —
+ * is not an answer. `<sha>^!` is git's own spelling for *this commit against its parent* (the
+ * same spec `diffSpecs` emits), so the counts and patches come from the same functions the branch
+ * panel reads, over one commit instead of a range.
+ */
+async function locateCommit(
+  taskId: string,
+  sha: string
+): Promise<
+  | { ok: true; cwd: string; spec: string; base: string | null; head: string }
+  | { ok: false; reason: string }
+> {
+  const task = getTask(taskId)
+  if (!task) return { ok: false, reason: 'no such task' }
+  const recorded = /^[0-9a-f]{40}$/i.test(sha)
+    ? taskCommitShas(taskId).find((s) => s.toLowerCase() === sha.toLowerCase())
+    : undefined
+  if (!recorded) return { ok: false, reason: 'that commit is not one this task landed' }
+  const project = task.projectId ? getProject(task.projectId) : null
+  if (!project) return { ok: false, reason: 'this task has no project, so there is no diff to show' }
+  if (project.vcs !== 'git') {
+    return { ok: false, reason: 'this project is not a git repository, so there is no diff to show' }
+  }
+  const cwd = project.root
+  const head = await tryGit(cwd, ['rev-parse', `${recorded}^{commit}`])
+  // ⚠️ Salvage rows predate commit recording and name commits from messages; a rewritten history
+  // can leave one naming a commit that no longer resolves. That is reported, not guessed at.
+  if (!head) return { ok: false, reason: 'that commit no longer resolves in this repository' }
+  return {
+    ok: true,
+    cwd,
+    spec: `${head}^!`,
+    base: await tryGit(cwd, ['rev-parse', `${head}^`]),
+    head
+  }
+}
+
+/**
+ * One recorded commit's file list and totals.
+ *
+ * ⚠️ No workspace facts: a landed commit is history, and the tree it landed from is released, so
+ * "uncommitted files" is not a question with an answer here. The component that draws this never
+ * reads those fields; they are neutral rather than absent because the shape is shared.
+ */
+export async function commitDiffFor(taskId: string, sha: string): Promise<TaskDiffSummary> {
+  const at = await locateCommit(taskId, sha)
+  if (!at.ok) return { ...NO_SUMMARY, reason: at.reason }
+  const entries = await numstatEntries(at.cwd, [at.spec])
+  return toSummary(
+    entries,
+    { base: at.base, head: at.head, from: 'commit', separateCommits: 0 },
+    { uncommittedFiles: 0, unlandedCommits: 0, workspaceReadable: false }
+  )
 }
 
 /** One file's patch, capped and cut at a line boundary. */
@@ -168,6 +245,30 @@ export async function diffFileFor(taskId: string, path: string): Promise<TaskDif
   }
 
   const full = await patchFor(at.cwd, at.specs, path)
+  return cutPatch(path, full)
+}
+
+/** One file's patch out of one recorded commit, capped and cut at a line boundary. */
+export async function commitFileFor(taskId: string, sha: string, path: string): Promise<TaskDiffFile> {
+  const none = { ok: false, path, patch: '', truncated: false, bytes: 0 }
+  const at = await locateCommit(taskId, sha)
+  if (!at.ok) return { ...none, reason: at.reason }
+
+  // ⛔ The same double gate as `diffFileFor`: the sha is this task's recorded commit and the path
+  // is one that commit changed, so a renderer holding a row cannot reach sideways into the repo.
+  const entries = await numstatEntries(at.cwd, [at.spec])
+  const entry = entries.find((e) => e.path === path)
+  if (!entry) return { ...none, reason: 'that file is not part of this commit' }
+  if (entry.binary) return { ...none, reason: 'this file is binary, so there is nothing to show' }
+  if (isGeneratedPath(path)) {
+    return { ...none, reason: 'this file is generated, so it is counted but not shown' }
+  }
+
+  const full = await patchFor(at.cwd, [at.spec], path)
+  return cutPatch(path, full)
+}
+
+function cutPatch(path: string, full: string): TaskDiffFile {
   const bytes = full.length
   if (bytes <= MAX_PATCH_CHARS) {
     return { ok: true, reason: '', path, patch: full, truncated: false, bytes }

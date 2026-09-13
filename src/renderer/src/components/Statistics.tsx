@@ -14,6 +14,7 @@ import { effortLabel, modelLabel } from '../lib/modelname'
 import { readStatisticsWindow, writeStatisticsWindow } from '../lib/prefs'
 import { errorMessage } from '@shared/errors.js'
 import { AgentIcon } from './AgentIcon'
+import { floorGrid, project3d, stemFor, type PlotPoint } from '../lib/plot3d'
 
 /**
  * Analytics › Statistics.
@@ -611,8 +612,14 @@ export function measuredModelPoints(report: StatisticsReport, excludeApiMixed = 
     .sort((a, b) => a.label.localeCompare(b.label))
 }
 
-/** A compact dependency-free 3D scatter plot. Drag it to inspect the model trade-offs. */
-function ThreeAxisPlot({ report }: { report: StatisticsReport }): React.JSX.Element | null {
+/**
+ * A compact dependency-free 3D scatter plot. Drag it to inspect the model trade-offs.
+ *
+ * ⚠️ Exported for its own test, which renders it with `renderToStaticMarkup` — the suites run in a
+ * `node` environment with no DOM, and this is the one way the *drawing* (rather than the arithmetic in
+ * `lib/plot3d.ts`) can be checked at all.
+ */
+export function ThreeAxisPlot({ report }: { report: StatisticsReport }): React.JSX.Element | null {
   const [excludeApiMixed, setExcludeApiMixed] = useState(false)
   // ⛔ The gate on whether this section exists at all reads the unfiltered set: hiding the whole
   // plot (and its own toggle) the moment the filter empties it would leave no way back to "off".
@@ -624,25 +631,35 @@ function ThreeAxisPlot({ report }: { report: StatisticsReport }): React.JSX.Elem
   if (everPoints.length === 0) return null
   const maxCost = Math.max(...points.map((p) => p.cost), 0.01)
   const maxVelocity = Math.max(...points.map((p) => p.velocity), 1)
-  const project = (x: number, y: number, z: number) => {
-    const cy = Math.cos(view.yaw), sy = Math.sin(view.yaw), cp = Math.cos(view.pitch), sp = Math.sin(view.pitch)
-    const rx = x * cy - y * sy, rz = x * sy + y * cy, ry = z * cp - rz * sp
-    return { x: 210 + rx * 132, y: 178 - ry * 112, depth: z * sp + rz * cp }
-  }
+  const project = (x: number, y: number, z: number): PlotPoint => project3d(view, x, y, z)
   const origin = project(0, 0, 0)
   const axes = [
     { end: project(1, 0, 0), label: 'Quality · 10.0', low: '0' },
     { end: project(0, 1, 0), label: 'Cost · $0', low: money(maxCost) },
     { end: project(0, 0, 1), label: 'Velocity · fastest', low: duration(maxVelocity) }
   ]
-  const projected = points.map((point) => ({ point, at: project(point.quality / 10, 1 - point.cost / maxCost, 1 - point.velocity / maxVelocity) })).sort((a, b) => a.at.depth - b.at.depth)
+  /**
+   * ⛔ **Every mark carries the cube coordinate it was drawn from, not only its screen position.**
+   * The stem under it has to be computed from the same three numbers — see `stemFor` — and
+   * recovering them from a projected `x, y` is not possible.
+   */
+  const projected = points
+    .map((point) => {
+      const cube = {
+        x: point.quality / 10,
+        y: 1 - point.cost / maxCost,
+        z: 1 - point.velocity / maxVelocity
+      }
+      return { point, cube, at: project(cube.x, cube.y, cube.z), ...stemFor(view, cube.x, cube.y, cube.z) }
+    })
+    .sort((a, b) => a.at.depth - b.at.depth)
   const active = projected.find((p) => p.point.key === hovered)?.point
   const iconSize = 16
   return <section className="three-axis-plot" aria-label="Cost, quality and velocity model comparison">
     <div className="three-axis-plot-head">
       <div>
         <h3>Measured model trade-offs</h3>
-        <p>Drag to rotate. Farther from the origin is more favourable on every measured axis. Each mark is the icon of the agent that ran it.</p>
+        <p>Drag to rotate. Farther from the origin is more favourable on every measured axis. Each mark is the icon of the agent that ran it, standing on a bar over its own place on the quality-and-cost floor.</p>
       </div>
       <label className="three-axis-filter" title="When on, the cost axis folds only amortised subscription dollars — API-rate and mixed-basis tasks are left out rather than averaged in as though they were the same kind of dollar.">
         <input type="checkbox" checked={excludeApiMixed} onChange={(e) => setExcludeApiMixed(e.target.checked)} />
@@ -658,6 +675,27 @@ function ThreeAxisPlot({ report }: { report: StatisticsReport }): React.JSX.Elem
           onPointerDown={(e) => { drag.current = { x: e.clientX, y: e.clientY }; e.currentTarget.setPointerCapture(e.pointerId) }}
           onPointerMove={(e) => { if (!drag.current) return; const dx = e.clientX - drag.current.x, dy = e.clientY - drag.current.y; drag.current = { x: e.clientX, y: e.clientY }; setView((v) => ({ yaw: v.yaw + dx / 180, pitch: Math.max(-1.2, Math.min(1.2, v.pitch + dy / 180)) })) }}
           onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }}>
+          {/* ⭐ **The floor, and a bar down to it from every mark** (reported 2026-09-13: it was
+              *challenging to see where the pareto planes exist*). A mark floating in an isometric box
+              has no readable position — two icons a centimetre apart on screen can be anywhere along
+              each other's line of sight — so the plane the flat axes span is ruled, and each mark
+              stands on a bar over its own place on it. Drawn before the axes and the marks, so
+              nothing structural is ever obscured by the scaffolding under it. */}
+          <g className="three-axis-floor" aria-hidden>
+            {floorGrid(view).map((seg, i) => (
+              <line key={i} x1={seg.from.x} y1={seg.from.y} x2={seg.to.x} y2={seg.to.y} className="three-axis-grid" />
+            ))}
+          </g>
+          <g className="three-axis-stems" aria-hidden>
+            {projected.map(({ point, foot, top }) => (
+              <g key={point.key} className={hovered === point.key ? 'three-axis-stem--on' : undefined}>
+                <line x1={foot.x} y1={foot.y} x2={top.x} y2={top.y} className="three-axis-stem" />
+                {/* ⚠️ The foot is drawn even where the bar has no length: a mark sitting on the floor
+                    is anchored at zero, which is a reading, not a missing stem. */}
+                <circle cx={foot.x} cy={foot.y} r="2" className="three-axis-foot" />
+              </g>
+            ))}
+          </g>
           {axes.map((axis) => <g key={axis.label}><line x1={origin.x} y1={origin.y} x2={axis.end.x} y2={axis.end.y} className="three-axis-line" /><text x={axis.end.x} y={axis.end.y - 8} className="three-axis-label">{axis.label}</text><text x={origin.x} y={origin.y + 15} className="three-axis-low">{axis.low}</text></g>)}
           <circle cx={origin.x} cy={origin.y} r="4" className="three-axis-origin" />
           {projected.map(({ point, at }) => {

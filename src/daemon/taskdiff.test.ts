@@ -257,3 +257,84 @@ describe('the grader and the panel read one change', () => {
     expect(graded.deletions).toBe(summary.deletions)
   })
 })
+
+/**
+ * One recorded commit, read on its own.
+ *
+ * ⛔ **The row in the ledger is the only durable answer to "where did this work go", and until now it
+ * was a sha and nothing else.** A commit's own diff is `<sha>^!` — this commit against its parent —
+ * and the point of reading it that way rather than as part of a range is a task that landed twice:
+ * `base..head` across the pair would show whatever else landed in between as if this task had done
+ * it. ⚠️ Real git again, because `^!` and the double membership gate are both git's behaviour rather
+ * than ours.
+ */
+describe('one recorded commit', () => {
+  /** A project whose task has landed one commit onto `main`, with the row recorded for it. */
+  async function landedOne(files: Record<string, string>): Promise<{ project: Project; task: Task; sha: string }> {
+    const { project, task } = projectWithBranch(files)
+    kit.git(project.root, 'merge', '--no-ff', '-m', 'land it', task.branch as string)
+    const sha = kit.git(project.root, 'rev-parse', `${task.branch as string}`).trim()
+    const commits = await import('./taskcommits.js')
+    commits.recordTaskCommits(task.id, [{ sha, subject: 'the work', authoredAt: Date.now() }], 'main')
+    return { project, task, sha }
+  }
+
+  it('counts only that commit’s own lines', async () => {
+    const { task, sha } = await landedOne({ 'one.ts': 'export const one = 1\n' })
+    const summary = await taskdiff.commitDiffFor(task.id, sha)
+    expect(summary.ok).toBe(true)
+    expect(summary.from).toBe('commit')
+    expect(summary.files.map((f) => f.path)).toEqual(['one.ts'])
+    expect(summary.insertions).toBe(1)
+    expect(summary.deletions).toBe(0)
+  })
+
+  it('reads one file’s patch out of it', async () => {
+    const { task, sha } = await landedOne({ 'two.ts': 'export const two = 2\n' })
+    const file = await taskdiff.commitFileFor(task.id, sha, 'two.ts')
+    expect(file.ok).toBe(true)
+    expect(file.patch).toContain('+export const two = 2')
+  })
+
+  /**
+   * ⛔ **The gate that keeps the renderer inside its own task.** A panel holding a sha may ask for
+   * that sha and no other: any commit in the repository would otherwise be readable through a task
+   * that never touched it.
+   */
+  it('refuses a commit this task never recorded', async () => {
+    const { project, task } = await landedOne({ 'three.ts': 'export const three = 3\n' })
+    const other = kit.git(project.root, 'rev-parse', 'main~1').trim()
+    const summary = await taskdiff.commitDiffFor(task.id, other)
+    expect(summary.ok).toBe(false)
+    expect(summary.reason).toMatch(/not one this task landed/)
+    const file = await taskdiff.commitFileFor(task.id, other, 'three.ts')
+    expect(file.ok).toBe(false)
+  })
+
+  /** ⚠️ And an abbreviation is not the sha it abbreviates: the record holds forty characters. */
+  it('refuses an abbreviated sha rather than resolving it', async () => {
+    const { task, sha } = await landedOne({ 'four.ts': 'export const four = 4\n' })
+    const summary = await taskdiff.commitDiffFor(task.id, sha.slice(0, 8))
+    expect(summary.ok).toBe(false)
+  })
+
+  /** ⛔ The second half of the double gate: the path has to be one this commit changed. */
+  it('refuses a file that is not part of the commit', async () => {
+    const { task, sha } = await landedOne({ 'five.ts': 'export const five = 5\n' })
+    const file = await taskdiff.commitFileFor(task.id, sha, 'elsewhere.ts')
+    expect(file.ok).toBe(false)
+    expect(file.reason).toMatch(/not part of this commit/)
+  })
+
+  /**
+   * ⚠️ A landed commit is history and the workspace that made it is long released, so *uncommitted
+   * files* is not a question with an answer here. It reads as unknown rather than as zero, which
+   * would be a claim nobody measured.
+   */
+  it('claims nothing about a workspace it never looked at', async () => {
+    const { task, sha } = await landedOne({ 'six.ts': 'export const six = 6\n' })
+    const summary = await taskdiff.commitDiffFor(task.id, sha)
+    expect(summary.workspaceReadable).toBe(false)
+    expect(summary.uncommittedFiles).toBe(0)
+  })
+})

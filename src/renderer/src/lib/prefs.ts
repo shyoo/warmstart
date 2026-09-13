@@ -246,6 +246,40 @@ export function writeTaskPageSize(size: number): void {
   }
 }
 
+const DIFF_VIEW_KEY = appKey('diffView')
+
+/**
+ * Which layout a patch is drawn in: one column, or the old and new side by side.
+ *
+ * ⛔ **A person's preference, not a task's.** Whether a two-column diff is readable depends on the
+ * width of the window in front of somebody and on how they were taught to read patches — so it is
+ * remembered here rather than in settings, where it would push one operator's layout onto another's
+ * screen. ⚠️ `unified` is the default because it is what `git` itself prints, and because the
+ * pairing the split view does is positional: a moved line can sit opposite an unrelated one, and the
+ * layout that cannot mislead that way is the one a fresh install should open in.
+ */
+export type DiffView = 'unified' | 'split'
+
+export function readDiffView(): DiffView {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return 'unified'
+    // ⛔ Only the one value opts in, the same rule `readFleetDensity` follows: anything else —
+    // absent, empty, a layout since renamed — reads as the default rather than as a blank panel.
+    return window.localStorage.getItem(DIFF_VIEW_KEY) === 'split' ? 'split' : 'unified'
+  } catch {
+    return 'unified'
+  }
+}
+
+export function writeDiffView(view: DiffView): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(DIFF_VIEW_KEY, view)
+  } catch {
+    // A preference that cannot be saved is not an error worth showing anybody.
+  }
+}
+
 const QUALITY_GRADABLE_ONLY_KEY = appKey('qualityGradableOnly')
 
 /**

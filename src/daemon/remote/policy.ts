@@ -63,6 +63,10 @@ export const REMOTE_METHODS = {
   // effect of building the desktop panel. See `docs/remote.md`.
   'task.diffSummary': 'deny',
   'task.diffFile': 'deny',
+  // ⛔ The same answer for the per-commit pair, for the same reason: they are the landed half of the
+  // very same patch text, and nothing about a commit row makes unbounded text fit on a phone.
+  'task.commitDiff': 'deny',
+  'task.commitFile': 'deny',
   'task.commitConversation': 'deny',
   'task.landConversation': 'deny',
   'task.overrideQuota': 'write',

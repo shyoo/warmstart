@@ -10,11 +10,30 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Last full local validation on this branch (2026-09-13): `npm run typecheck`, `npm run lint`,
-`npm test` (**3,278 passed, 2 skipped**), and `npm run build` all passed.
+`npm test` (**3,330 passed, 2 skipped**), `npm run build`, and the L3 UI suite (**416 checks**) passed.
 Expected test warnings exercise refusal and recovery paths; they are not failures.
 
 ## Closed in this cleanup
 
+- **Five UI reports off t410 (2026-09-13), each measured in the built app.** ⭐ *The code diff view is
+  gone*: `DiffPanel` was drawn on `status === 'awaiting_human'` alone, so the change vanished the moment
+  a task finished — which is when a thread is most often read. It is drawn wherever the change resolves
+  (rung 1 of `resolveRange` is the recorded commits, which outlive the branch), opens itself only at the
+  gate, and is silent where nothing resolves rather than putting a refusal under every draft. Retitled
+  **Changes in this task**. ⭐ *Each commit links to its own diff with its own ± totals*:
+  `task.commitDiff` / `task.commitFile` read `<sha>^!`, never a range across it, behind the same double
+  gate as the branch pair — the sha must be one this task recorded **and** the path one that commit
+  changed. ⭐ *Both diff layouts*: `lib/sidebyside.ts`, remembered per person. ⚠️ Its pairing is
+  positional, so a moved line can sit opposite an unrelated one — which is why the single column stays
+  beside it. ⛔ Both views are text nodes in elements this codebase writes, re-checked on the rendered
+  DOM. ⭐ *Bars under the 3D plot's marks*: an isometric scatter gives a mark no recoverable position,
+  so `lib/plot3d.ts` rules the quality×cost floor and stands each mark on a bar over its own place on
+  it. ⭐ *TOOK folded to two rows at 100% zoom*: it had been given **exactly** the 42px it needs, and
+  measuring every heading while sorted found three more already overflowing onto their neighbours
+  (`FROM` 44 in 28, `DEP` 32 in 26, `QUALITY` 59 in 42). ⚠️ Two instruments were wrong before they were
+  right — `scrollWidth` on a wrapping box reads the column back at itself, and an element's height is
+  not its text's; see [`docs/testing.md`](docs/testing.md) §3 and [`docs/ui.md`](docs/ui.md) §3.
+  ⚠️ Not yet seen in the packaged app.
 - **Credits off is four situations, and the row now says which one (t408, 2026-09-13).** ⭐ Measured on
   `ClaudeFirst` off Claude Code 2.1.270: usage credits were **on** at the vendor
   (`hasExtraUsageEnabled: true`, `user_disabled: false`) and the row still read *Vendor reports credits
@@ -35,89 +54,70 @@ Expected test warnings exercise refusal and recovery paths; they are not failure
   write a file a sandboxed run wrote*: files owned by `CodexSandboxOffline` keep a dead run's DACL and
   the operator lacks WRITE_DAC on them, so the next run gets *Failed to write file*. `sweepAcls`
   ([`acl.ts`](src/daemon/acl.ts)) replaces every path `icacls /reset` refuses (on **stderr**, which the
-  old call discarded) with an operator-owned copy, async — 7.2 s for 19.7k files. ⭐ *A Muse run
-  bridged through WSL rewrote ws3's `.git` pointer*, because muse's edit tools cannot follow
-  `gitdir: C:/…`; pool pointers are now **relative** and `ensureWorktreePointer` runs
-  `git worktree repair` before every park and prepare. ws1–ws4 swept, ws3 repaired by hand.
-  ⚠️ Whether muse's `edit_file` accepts the relative pointer is inferred from its error, not measured.
+  old call discarded) with an operator-owned copy, async — 7.2 s for 19.7k files. ⭐ *A Muse run bridged
+  through WSL rewrote ws3's `.git` pointer*, because muse's edit tools cannot follow `gitdir: C:/…`;
+  pool pointers are now **relative** and `ensureWorktreePointer` runs `git worktree repair` before every
+  park and prepare. ⚠️ Whether muse's `edit_file` accepts the relative pointer is inferred, not measured.
 - **Loose ends offers an explicit Delete it, for a branch the operator has decided is not needed.**
   `deleteUnlandedBranch` ([`worktrees.ts`](src/daemon/worktrees.ts)) is `retireStrandedBranch`'s
-  destructive sibling — it skips the `ahead === 0` proof that function enforces, since the point is
-  discarding real commits, but keeps the same refusal when a worktree holds the branch. It is the
-  one button on that panel `docs/landing.md` and `AGENTS.md` no longer describe as non-destructive.
-- **The database backs itself up.** `backup.ts` copies `warmstart.db` into `<dataDir>/backups/`
-  daily via `node:sqlite`'s online backup API (WAL-safe), pruning anything older than fourteen days
-  by mtime — the same shape as `logs.ts`. Closes half of remaining-work item 8 below.
-- **Trunk mode: a task can work in the project checkout itself** (t401). t400 had an agent pull
-  `main` and resolve a conflict by way of a task branch, which confused it and left a branch to clean
-  up. `workspaceMode` (`worktree` | `trunk`, migration 70) resolves task → project → `worktree`; the
-  composer, the task pane and Project Settings set it. Five decisions taken with the operator, each in
-  code and pinned in [`trunkmode.test.ts`](src/daemon/trunkmode.test.ts): one trunk task at a time
-  (`claimTrunk`, a one-member resource separate from the pool); a worktree landing into a busy or dirty
-  trunk goes to the new **`landing_queued`** status and `retryQueuedLandings` lands it from the tick; a
-  trunk task is dispatched onto whatever the checkout holds and told (`surveyTrunk`,
-  `trunkArrivalNotice`); `pull-request` is refused in the trunk; a resting trunk task keeps its lease and
-  `sweepTrunkLeases` frees a settled one. Its finish is `decideTrunkFinish` and its landing the `trunk`
-  strategy (verify in place, push if asked). ⛔ `parkWorkspace` refuses the project root, and a trunk
-  conversation's `land_work` never cuts a next branch. Flow draws the trunk as the first row, labelled
-  `main`. Separately, bare `http(s)` URLs in thread messages are now links, so a PR headline opens in
-  the browser. ⚠️ **Not yet driven in the packaged app or with a real agent**, and a worktree task with
-  an empty branch can still trip the trunk tripwire while a trunk task commits — see
-  [`docs/landing.md`](docs/landing.md#working-in-the-trunk).
+  destructive sibling: it skips the `ahead === 0` proof, since the point is discarding real commits,
+  and keeps the same refusal when a worktree holds the branch.
+- **The database backs itself up.** `backup.ts` copies `warmstart.db` into `<dataDir>/backups/` daily
+  via `node:sqlite`'s online backup API (WAL-safe), pruning past fourteen days by mtime.
+- **Trunk mode: a task can work in the project checkout itself** (t401). `workspaceMode`
+  (`worktree` | `trunk`, migration 70) resolves task → project → `worktree`; the composer, the task pane
+  and Project Settings set it. Five decisions, each in code and pinned in
+  [`trunkmode.test.ts`](src/daemon/trunkmode.test.ts): one trunk task at a time (`claimTrunk`); a
+  worktree landing into a busy or dirty trunk goes to **`landing_queued`** and `retryQueuedLandings`
+  lands it from the tick; a trunk task is dispatched onto whatever the checkout holds and told
+  (`surveyTrunk`); `pull-request` is refused in the trunk; a resting trunk task keeps its lease and
+  `sweepTrunkLeases` frees a settled one. ⛔ `parkWorkspace` refuses the project root, and a trunk
+  conversation's `land_work` never cuts a next branch. ⚠️ **Not yet driven in the packaged app or with
+  a real agent**, and a worktree task with an empty branch can still trip the trunk tripwire while a
+  trunk task commits — see [`docs/landing.md`](docs/landing.md#working-in-the-trunk).
 - **Repeated compaction and quota tipping loops are prevented (t401, t404).** `decideRevive`
   ([`cacheclock.ts`](src/daemon/cacheclock.ts)) checks `accountRefusal`, `refusalRateLimit` and
   `poolVerdict` before waking a closed conversation to compact, honouring an active task's quota
   override unless the window is fully exhausted; `reviveAndCompact` carries `clock_move_attempts`
-  across revives so failures back off instead of looping. Preemption wrap-up
-  ([`scheduler.ts`](src/daemon/scheduler.ts)) falls back to handoff where the vendor is refusing, the
-  window is spent without credits, or compaction is off. Suites stub CLI presence via `forceInstalled`.
+  across revives so failures back off instead of looping. Preemption wrap-up falls back to handoff
+  where the vendor is refusing, the window is spent without credits, or compaction is off. Suites stub
+  CLI presence via `forceInstalled`.
 - **macOS build script and test parity.** [`scripts/build-mac.sh`](scripts/build-mac.sh) has the same
   flags and step cache as [`scripts/build-win.ps1`](scripts/build-win.ps1); see
   [`docs/development.md`](docs/development.md) §1. Fixed with it: a probe-lifetime race in
   `test/daemon.test.mjs`, table centring under macOS serif fonts, and child reaping in `test/lib/harness.mjs`.
-- **The thread shows the change before you land it.** `task.diffSummary` and `task.diffFile`
-  ([`src/daemon/taskdiff.ts`](src/daemon/taskdiff.ts)) read the *same* commits the grader reads —
-  `resolveRange` picks them, and `collectDiff` was split into `numstatEntries`/`patchFor` so both
-  callers see one file set. `thread/DiffPanel.tsx` draws it at the `awaiting_human` gate. ⛔ Two
-  measured git facts are pinned in [`taskdiff.test.ts`](src/daemon/taskdiff.test.ts): `--numstat`
-  without `-z` returns non-ASCII paths **C-quoted** (`"cafÃ©.txt"`), and a bare pathspec
-  **over**-matches — `-- '*.tsx'` returned two files where `:(literal)*.tsx` returned none.
-  ⚠️ The `rangeCache` stale-head trap reported during the debate **is not real**: rung 3 returns the
-  branch answer without ever calling `rangeCache.set`, so a moving branch is re-resolved every time.
-  The test pins that rather than the reasoning.
+- **The thread shows the change before you land it.** `task.diffSummary` / `task.diffFile`
+  ([`taskdiff.ts`](src/daemon/taskdiff.ts)) read the *same* commits the grader reads. ⛔ Two measured
+  git facts are pinned in [`taskdiff.test.ts`](src/daemon/taskdiff.test.ts): `--numstat` without `-z`
+  returns non-ASCII paths **C-quoted**, and a bare pathspec **over**-matches — `-- '*.tsx'` returned
+  two files where `:(literal)*.tsx` returned none. ⚠️ The `rangeCache` stale-head trap reported during
+  the debate **is not real**: rung 3 never calls `rangeCache.set`, so a moving branch is re-resolved.
 - **The security model is written down, and the permissive default is now a choice.**
-  `permissionModeFor` ([`src/daemon/sessions.ts:720`](src/daemon/sessions.ts)) puts unattended work
-  on `bypassPermissions` (claude-code) and `--dangerously-skip-permissions` (antigravity) — full OS
-  user authority, no approvals raised. Adapters now declare `policy.headlessAuthority`, projects
-  carry `permission.unattended`, and a `sandboxed-only` project **refuses** a bypassing candidate in
-  `scoring.ts` rather than downgrading it into the t250 stall. README has a **Security model**
-  section; the two lines that read as a security promise (*Isolated workspaces*, *Approvals, not
-  interruptions*) now say what they actually mean.
-- **OS notifications.** Three transitions only — `awaiting_human`, `completed`, `failed` — and only
-  as a *change*, so attaching to a daemon that worked while the app was closed stays silent.
-  `lib/notify.ts` holds the rule; main owns `Notification` and the window a click raises.
+  `permissionModeFor` ([`sessions.ts`](src/daemon/sessions.ts)) puts unattended work on
+  `bypassPermissions` — full OS user authority, no approvals raised. Adapters declare
+  `policy.headlessAuthority`, projects carry `permission.unattended`, and a `sandboxed-only` project
+  **refuses** a bypassing candidate in `scoring.ts` rather than downgrading it into the t250 stall.
+  README's **Security model** section says what the two promise-shaped lines actually mean.
+- **OS notifications.** Three transitions only — `awaiting_human`, `completed`, `failed` — and only as
+  a *change*, so attaching to a daemon that worked while the app was closed stays silent
+  (`lib/notify.ts`); main owns `Notification` and the window a click raises.
 - **Debate seats see current code and stay in their role.** `report-only` work starts from the local
-  landing target, and seat prompts treat the submitted text as a question. See
-  [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §12.
+  landing target, and seat prompts treat the submitted text as a question.
 - **A squash-merged pull request no longer sits under Loose ends as "not landed".** ⭐ Measured on
-  t389 (2026-09-12): the sweep had already recorded PR #139 `merged`, but the operator's trunk
-  `C:\Dev\awardtracker` had the branch checked out, so retirement refused — silently, every five
-  minutes — while the panel offered **Land it**. Now: a new `merged` loose-end kind with **Clean up**
-  and a panel-wide **Check merged PRs**; an idle clean pool member is stepped off the branch, the
-  operator's checkout never is; the reason is kept (`task_deliveries.retire_blocked`, migration 69)
-  and said on the thread once. Same task: gh's "already exists" error quotes the command line, and
-  the first-URL rule recorded `…/issues/133` as a delivery — `pullRequestUrlIn` takes only the last
-  `/pull/<n>`, and migration 69 deletes such rows. ⚠️ The two panel buttons are covered by no UI test and
-  have not been driven in the packaged app; the daemon side is tested against real git.
+  t389: the sweep had recorded PR #139 `merged`, but the operator's own trunk had the branch checked
+  out, so retirement refused silently every five minutes while the panel offered **Land it**. Now a
+  `merged` loose-end kind with **Clean up** and a panel-wide **Check merged PRs**; an idle clean pool
+  member is stepped off the branch and the operator's checkout never is; the reason is kept
+  (`task_deliveries.retire_blocked`, migration 69). `pullRequestUrlIn` takes only the last
+  `/pull/<n>`, since gh's "already exists" error quotes the command line. ⚠️ The two panel buttons are
+  covered by no UI test; the daemon side is tested against real git.
 - **A report-only task (every debate seat) leaves nothing under Loose ends.** ⭐ Measured first:
-  t393–t395 made **no** commits — each branch sat on local `main` at `4619e6f`, which was 15 ahead of
-  `origin/main`, and the scan counted against the remote alone. Now `commitsOnlyOn`
-  ([`worktrees.ts`](src/daemon/worktrees.ts)) counts what deleting a branch would lose; a report-only
-  `done` requires a clean tree with no commit of its own and **retires the branch**; anything left is
-  asked back once, then `await-human` (⚠️ which holds a debate round — deliberate, see
-  [`docs/landing.md`](docs/landing.md)); and the closing prompt no longer tells such a task to commit,
-  squash or rebase. ⚠️ The scheduler wiring (measure + retire in `landCompletion`) has no L2 test —
-  no harness drives `completeTask` with a held git workspace; the decision and the measure are tested.
+  t393–t395 made **no** commits, each branch sat on local `main` 15 ahead of `origin/main`, and the scan
+  counted against the remote alone. `commitsOnlyOn` ([`worktrees.ts`](src/daemon/worktrees.ts)) now
+  counts what deleting a branch would lose; a report-only `done` with a clean tree and no commit of its
+  own **retires the branch**; anything left is asked back once, then `await-human` (⚠️ which holds a
+  debate round — deliberate, see [`docs/landing.md`](docs/landing.md)). ⚠️ The scheduler wiring has no
+  L2 test: the decision and the measure are tested, the wiring is not.
 
 ## Remaining work — ordered by payoff
 

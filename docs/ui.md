@@ -63,7 +63,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Flow` | project lifecycle map: 6-column kanban flow with ticket ↔ workspace ↔ worker bindings and read-only grading runs. ⭐ The **trunk** is the first binding row of every git project, labelled with its landing target (`main`); a trunk held by a resting task is drawn *held*, never *free*, and an inbound ticket is only ever drawn heading for the kind of tree it will get (`computeWorkspaceRows`) |
 | `FleetStrip` `Workers` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions; one two-column settings card per worker |
 | `Tasks` `TaskThread` `thread/*` `Dependencies` | the board, one task's thread, and prerequisite edges |
-| `thread/DiffPanel` | the change a task would land, at the `awaiting_human` gate: a file list with counts, one patch per expand. ⛔ Every line is a **text node** in `<pre>` and the only thing derived from its content is a CSS class from the first character (`lib/diffline.ts`) — no markdown, no highlighter, no linkified paths |
+| `thread/DiffPanel` | **Changes in this task**: a file list with counts, one patch per expand, in one column or two. ⛔ Every line is a **text node** — in `<pre>` for the single column, in a `<td>` for the split (`lib/sidebyside.ts`) — and the only thing derived from its content is a CSS class from the first character (`lib/diffline.ts`): no markdown, no highlighter, no linkified paths. ⚠️ Drawn wherever the change resolves, **open** only at the `awaiting_human` gate; `CommitDiff` is the same file list over one recorded commit |
 | `TaskSettingPicker` | ⛔ **one component, seven uses** — the thread's finish, conversation, completion, compaction, objective, worker and priority settings |
 | `NewTask` `NewTaskModal` `Pill` | one shell-owned composer modal: the project and the prompt first, the rest as a row of **pills** under it; a project in view is selected but can always be changed |
 | `Attention` `Questions` | the approvals/questions/quota-gate bar — one keystroke above the operator's work |
@@ -71,7 +71,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Project` `ProjectSettings` `Projects` | the project routes and the policy tier |
 | `NewProject` | the add-project wizard: three steps, one modal, `lib/newproject.ts` holds its rules |
 | `RoutingModel` `RoutingOverview` `QualityModel` `CostModel` `VelocityModel` `ModelsModel` `Math` | the routing model, written up as a paper: abstract, contents, five numbered sections, KaTeX for the arithmetic |
-| `Statistics` | what finished tasks actually cost, took and scored — three tabs, one RPC, a window control |
+| `Statistics` | what finished tasks actually cost, took and scored — three tabs, one RPC, a window control. ⭐ `ThreeAxisPlot` draws the three-way trade-off as a rotatable scatter: `lib/plot3d.ts` projects it, and every mark stands on a **bar down to a ruled floor**, because an unanchored mark in an isometric box has no position a reader can recover |
 | `LooseEnds` | work that exists and is going nowhere → [`landing.md`](landing.md) |
 | `Doctor` | which CLIs were found, who is signed in, how old each reading is, what is unverifiable |
 | `Logs` | the daemon's log, live and filterable, ring-buffered so a late window sees the past |
@@ -556,6 +556,18 @@ measures both halves of this: that nothing overflows or reaches Status as render
 still has room for the widest single line a 12-hour clock can draw, measured in the cell's own font
 rather than assumed from the machine running the test.
 
+⛔ **And the heading has to fit too, which is a separate measurement from the cell.** A column sized
+for its values can still be too narrow for its own label: the headings are uppercase with 0.06em
+tracking and the **sorted** one carries an arrow, so `TOOK ↓` needs 42px where *4m 12s* needs far less.
+It was given exactly 42 — a zero-pixel fit, which folded into two lines on the operator's display and
+not in the suite (reported 2026-09-13), and a folded heading makes the whole header row two lines deep.
+⭐ Measuring every heading found three more already overflowing silently onto their neighbours, the
+same fault as the dates above: `FROM ↑` needed 44px in 28, `DEP ↓` 32 in 26, `QUALITY ↓` 59 in 42.
+Headings on this table therefore never wrap (`white-space: nowrap` on the cell, not only on the sort
+button — `ACTION` has no button in it), the widths are the measured need plus padding plus a margin,
+and the L3 suite clicks **every** heading and reports `[label, needs, room]` on a passing run so the
+next rename can read its margin off the output.
+
 ⛔ **Every column of the task table sorts, and two kinds of column sort in two different places.**
 `seq`, `title`, `status`, `quality`, `created` and `updated` are real columns: SQLite orders them and
 the pager slices the result. `from`, `worker`, `dep`, `took` and `price` are **derived on read** —
@@ -672,10 +684,12 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 | `format.ts` `modelname.ts` `agenticon.ts` | display formatting |
 | `live.ts` | `showsLiveOutput(status)` — which statuses get a peephole |
 | `diffline.ts` | `patchLineKind(line)` — how a patch line is classified for display, from its **first character and nothing else** |
+| `sidebyside.ts` | `splitPatch(patch)` — a unified patch as two-column rows. ⚠️ The pairing is **positional**: a removed run and an added run are zipped top-to-top and the surplus stands alone, so a line that moved across a large edit can sit opposite an unrelated one — which is what the single-column view beside the toggle is for |
+| `plot3d.ts` | `project3d` / `stemFor` / `floorGrid` — the three-axis plot's projection, the bar under each mark, and the ruled floor it stands on |
 | `notify.ts` | `notifiableTransition(before, task)` — when a task's movement is worth an OS notification. ⛔ A *transition*, never a state: first sight is always silent |
 | `menuposition.ts` | where a pill's portalled menu goes: flip above, clamp to the window, never clip |
 | `newproject.ts` | the add-project wizard's step blockers, its creation plan, and the template signature |
-| `prefs.ts` | saved views, fleet collapse and density, page size, **which page of the list you were reading** (localStorage) |
+| `prefs.ts` | saved views, fleet collapse and density, page size, **which page of the list you were reading**, and which diff layout you read patches in (localStorage) |
 | `uisettings.ts` `zoom.ts` | tray/Enter behaviour, colour theme and zoom, mirrored from main's `ui-settings.json` |
 | `pasteimages.tsx` | paste-to-attach; downscales to 1568px and uploads one image per call |
 | `composerprefs.ts` | what the composer was last set to — ⛔ **last-selected beats inherited**, and model/effort are keyed **per account** |

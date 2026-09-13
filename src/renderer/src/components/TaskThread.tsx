@@ -20,6 +20,7 @@ import {
   type SessionSharingChoice,
   type Task,
   type TaskCommit,
+  type TaskDiffSummary,
   type TaskMessage
 } from '@shared/tasks'
 import type { ModelOptions, Session } from '@shared/protocol'
@@ -63,7 +64,7 @@ import { useAction } from '../lib/useAction'
 import { TaskSettingPicker } from './TaskSettingPicker'
 import { CacheCost, Fact, ModelFact, SessionFact } from './thread/Facts'
 import { Decide, QuotaDecide, QuotaOverride } from './thread/Decide'
-import { DiffPanel } from './thread/DiffPanel'
+import { CommitDiff, counts, DiffPanel } from './thread/DiffPanel'
 import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
 import { DebateBoard } from './thread/DebateBoard'
 import { CompactionRow, ReviewRow, RunRow } from './thread/RunRow'
@@ -513,8 +514,18 @@ function TaskDetail({
           {/* ⛔ Above the decision, not beside it: the card asks whether to land, and until this
               existed the only answer available on this screen was a boolean. A person had to leave
               the app and run git to see what pressing Land would move. */}
-          {task.status === 'awaiting_human' && task.branch && (
-            <DiffPanel taskId={task.id} updatedAt={task.updatedAt} />
+          {/* ⛔ **Wherever there is a change, not only at the gate.** Drawn on `awaiting_human`
+              alone, the diff disappeared the second a task finished — which is exactly when somebody
+              opening the thread wants to know what it did, and the operator reported it as the panel
+              having gone away (2026-09-13). A finished task still resolves: `resolveRange`'s first
+              rung is the recorded commits, which outlive the branch. The panel opens itself only at
+              the gate and says nothing at all where there is no change to resolve. */}
+          {(task.branch || commits.length > 0) && (
+            <DiffPanel
+              taskId={task.id}
+              updatedAt={task.updatedAt}
+              atGate={task.status === 'awaiting_human'}
+            />
           )}
           {task.status === 'awaiting_human' && (
             <Decide
@@ -1091,7 +1102,7 @@ function TaskDetail({
             </Fact>
           </div>
 
-          {commits.length > 0 && <CommitsBox commits={commits} />}
+          {commits.length > 0 && <CommitsBox taskId={task.id} commits={commits} />}
 
           <QualityReviewBox task={task} reviews={reviews} refresh={refresh} />
           <ManualReviewBox task={task} reviews={manualReviews} refresh={refresh} />
@@ -1471,40 +1482,127 @@ function DependencyEditor({
  * leave them naming a commit that no longer resolves. That is not corrected here: this pane reports
  * the record, and `review.ts` is where reachability is checked before anything is graded on it.
  */
-function CommitsBox({ commits }: { commits: TaskCommit[] }): React.JSX.Element {
+/**
+ * ⛔ **How many rows read their own size when the pane opens.** Each total is one `git` call, and the
+ * point of showing `+12 −3` on a row is that it is there before anybody asks — so the rows that fit
+ * a normal task fetch on mount, and a thread that somehow carries more than this fetches on expand
+ * instead. Neither is on a timer, and no row is ever read twice.
+ */
+const EAGER_COMMIT_TOTALS = 12
+
+/**
+ * One commit row: what it is, how big it was, and its own diff when asked.
+ *
+ * ⛔ **The commit's own change, never the task's.** `task.commitDiff` reads `<sha>^!` — this commit
+ * against its parent — so a task that landed twice shows two honest rows rather than one range that
+ * would claim whatever landed in between. ⚠️ A row whose sha no longer resolves says so: history can
+ * be rewritten under a record, and this pane reports the record.
+ */
+function CommitRow({
+  taskId,
+  commit,
+  eager
+}: {
+  taskId: string
+  commit: TaskCommit
+  eager: boolean
+}): React.JSX.Element {
+  const [summary, setSummary] = useState<TaskDiffSummary | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  // ⚠️ Asked once, by whichever comes first: the eager read on mount or the first press. `wanted`
+  // is the trigger rather than a call at each site, so there is exactly one place that reads and
+  // exactly one guard against reading twice.
+  const wanted = eager || open
+
+  useEffect(() => {
+    if (!wanted || summary !== null || error !== null) return
+    let live = true
+    void (async () => {
+      try {
+        const answer = await rpc('task.commitDiff', { id: taskId, sha: commit.sha })
+        if (live) setSummary(answer)
+      } catch (e) {
+        if (live) setError(e instanceof Error ? e.message : 'could not read this commit')
+      }
+    })()
+    return () => {
+      live = false
+    }
+  }, [wanted, summary, error, taskId, commit.sha])
+
+  const toggle = useCallback((): void => setOpen((was) => !was), [])
+
+  return (
+    <div className="side-run">
+      <div className="side-run-head">
+        {/* ⛔ The sha *is* the link, because it is the thing a person would otherwise copy into a
+            terminal to see this. One press opens the same patch, in the same app. */}
+        <button
+          type="button"
+          className="side-commit-link mono"
+          onClick={toggle}
+          aria-expanded={open}
+          title={
+            `${commit.sha}\n` +
+            (commit.target ? `landed onto ${commit.target}\n` : '') +
+            (commit.source === 'salvage'
+              ? 'Recovered from this task’s own “Landed as …” message — it landed before ' +
+                'commits were recorded.\n'
+              : 'Recorded by the landing that made it.\n') +
+            'Opens this commit’s own diff.'
+          }
+        >
+          <span className="diff-file-caret" aria-hidden>
+            {open ? '▾' : '▸'}
+          </span>
+          {commit.sha.slice(0, 8)}
+        </button>
+        {/* ⚠️ The totals of the whole commit, not of the files listed: a truncated list still
+            reports the real size. `n/a` where the commit could not be read — never a zero, which
+            would say it changed nothing. */}
+        {summary?.ok === true && counts(summary.insertions, summary.deletions)}
+        {(error !== null || summary?.ok === false) && (
+          <span className="diff-counts-none" title={error ?? summary?.reason ?? ''}>
+            n/a
+          </span>
+        )}
+        {commit.authoredAt !== null && <span className="num dim">{when(commit.authoredAt)}</span>}
+      </div>
+      {commit.subject && <div className="side-commit-subject">{commit.subject}</div>}
+      {open && (
+        <>
+          {error !== null && <p className="diff-refusal">{error}</p>}
+          {error === null && !summary && <p className="diff-note">Reading…</p>}
+          {error === null && summary && (
+            <CommitDiff summary={summary} taskId={taskId} sha={commit.sha} />
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
+function CommitsBox({ taskId, commits }: { taskId: string; commits: TaskCommit[] }): React.JSX.Element {
   return (
     <div className="detail-side-box">
       <div
         className="side-label"
         title={
           'Every commit this task landed on its target, oldest first. The branch is deleted when a ' +
-          'task lands, so these SHAs are what identifies the work afterwards.'
+          'task lands, so these SHAs are what identifies the work afterwards. Press one to read its ' +
+          'own diff.'
         }
       >
         commits in this task · {commits.length}
       </div>
       {commits.map((commit) => (
-        <div className="side-run" key={commit.sha}>
-          <div className="side-run-head">
-            <span
-              className="side-run-seq mono"
-              title={
-                `${commit.sha}\n` +
-                (commit.target ? `landed onto ${commit.target}\n` : '') +
-                (commit.source === 'salvage'
-                  ? 'Recovered from this task’s own “Landed as …” message — it landed before ' +
-                    'commits were recorded.'
-                  : 'Recorded by the landing that made it.')
-              }
-            >
-              {commit.sha.slice(0, 8)}
-            </span>
-            {commit.authoredAt !== null && (
-              <span className="num dim">{when(commit.authoredAt)}</span>
-            )}
-          </div>
-          {commit.subject && <div className="side-commit-subject">{commit.subject}</div>}
-        </div>
+        <CommitRow
+          key={commit.sha}
+          taskId={taskId}
+          commit={commit}
+          eager={commits.length <= EAGER_COMMIT_TOTALS}
+        />
       ))}
     </div>
   )

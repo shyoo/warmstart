@@ -1877,6 +1877,26 @@ export interface RpcMap {
    */
   'task.diffFile': { params: { id: string; path: string }; result: TaskDiffFile }
   /**
+   * One recorded commit's own diff — the change a task that already landed put on the trunk.
+   *
+   * ⛔ **The sha must be one of this task's recorded commits.** The renderer does not get to name
+   * an arbitrary commit: after the branch is retired these rows are the only durable answer to
+   * "where did this work go", and each row opens onto exactly the commit it names. `from` reads
+   * `'commit'` so the panel can tell this answer apart from the branch it would land.
+   *
+   * ⚠️ Runs git, like `task.diffSummary`, and is asked when a commit row is expanded or when the
+   * commits box first needs its per-commit totals — never on a timer.
+   */
+  'task.commitDiff': { params: { id: string; sha: string }; result: TaskDiffSummary }
+  /**
+   * One file's patch text out of one recorded commit.
+   *
+   * ⛔ **Two memberships, not one.** The sha must be this task's recorded commit *and* the path
+   * must be one that commit changed — the same double gate `task.diffFile` keeps, moved onto a
+   * commit the branch no longer carries.
+   */
+  'task.commitFile': { params: { id: string; sha: string; path: string }; result: TaskDiffFile }
+  /**
    * Ask this conversation's agent to commit, on the rung the operator picked.
    *
    * ⛔ **The rung is a parameter rather than a separate `setFinishPolicy` call**, because the two

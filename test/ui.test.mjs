@@ -4382,6 +4382,79 @@ try {
   // The whole data directory goes in `finally`.
   void titleShown
 
+  section('the table headings each fit on one line')
+  // ⭐ Reported 2026-09-13: at 100% zoom *Took* was drawn as two rows, which makes the whole header
+  // row two rows deep and pushes every label out of line with the numbers under it. The headings are
+  // uppercase with letter-spacing, and the sorted one carries an arrow, so this is a measurement
+  // rather than a guess about four characters — taken in the built app, in the font it actually loads.
+  //
+  // ⛔ **Every heading, and each while it is the sorted one.** Any column can be sorted, so the
+  // arrow can appear on any of them; measuring only the column that happens to be sorted passes a
+  // table that breaks the moment somebody clicks a different one. Two of the three faults this found
+  // were not the one reported — `ACTION` wrapped and `QUALITY` overflowed.
+  const headRows = []
+  const headLabels = JSON.parse(
+    await evaluate(
+      `JSON.stringify([...document.querySelectorAll('.tbl--tasks thead th')].map(th => (th.querySelector('.sort-head') ?? th).innerText.replace(/\\s+/g, ' ').trim()))`
+    )
+  )
+  for (let i = 0; i < headLabels.length; i += 1) {
+    // Sortable headings are measured while sorted; the rest as they are drawn.
+    await evaluate(
+      `document.querySelectorAll('.tbl--tasks thead th')[${i}]?.querySelector('.sort-head')?.click()`
+    )
+    await wait(150)
+    headRows.push(
+      JSON.parse(
+        await evaluate(`
+          JSON.stringify((() => {
+            const th = document.querySelectorAll('.tbl--tasks thead th')[${i}];
+            if (!th) return null;
+            const text = th.querySelector('.sort-head') ?? th;
+            // ⛔ A Range over the label's own contents, not the element's box. Two ways of
+            // measuring this were wrong before this one: scrollWidth on a *wrapping* box reports
+            // the box's own width, so it reads the column back at itself and calls any overflow a
+            // fit; and an element's height includes the cell's padding, which rounded the one
+            // heading with no button inside it (ACTION) up to two lines that were never there.
+            // A Range measures the text, whatever markup does or does not wrap it.
+            const range = document.createRange();
+            range.selectNodeContents(text);
+            const box = range.getBoundingClientRect();
+            // One line box per distinct top: the arrow is its own rect beside the word, so counting
+            // rects would read every sorted heading as two lines.
+            const lines = new Set([...range.getClientRects()].map((r) => Math.round(r.top))).size;
+            const style = getComputedStyle(th);
+            const room = th.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+            return {
+              label: text.innerText.replace(/\\s+/g, ' ').trim(),
+              lines,
+              width: Math.ceil(box.width),
+              room: Math.round(room)
+            };
+          })())
+        `)
+      )
+    )
+  }
+  const headSizes = headRows.filter((r) => r !== null)
+  check(
+    'the table draws its headings',
+    headSizes.length > 0 && headSizes.some((r) => /^TOOK/i.test(r.label)),
+    JSON.stringify(headSizes.map((r) => r.label))
+  )
+  check(
+    '⛔ every heading is a single line, the sorted one included',
+    headSizes.every((r) => r.lines === 1),
+    JSON.stringify(headSizes.filter((r) => r.lines !== 1))
+  )
+  // ⚠️ The measurement itself is the record: every label with what it needs and what it is given,
+  // so the next person to widen or rename a column can read the margin off a passing run.
+  check(
+    '⚠️ and each fits the room its column leaves it, so nothing is painted on a neighbour',
+    headSizes.every((r) => r.width <= r.room + 1),
+    JSON.stringify(headSizes.map((r) => [r.label, r.width, r.room]))
+  )
+
   section('the date columns stay inside their own columns')
   // ⛔ Reported 2026-09-12 against t376: Created and Updated were drawn straight over Status. The
   // columns are sized in pixels under `table-layout: fixed`, so an overflowing stamp does not widen
@@ -4640,6 +4713,19 @@ try {
     /1 file/.test(diffHead) && /\+1/.test(diffHead),
     diffHead
   )
+  // ⭐ Renamed 2026-09-13. *Review the change* is an instruction, and the panel is now drawn on
+  // finished tasks too — where there is nothing left to review and the words describe a decision
+  // that was already taken.
+  // ⚠️ `textContent`, not `innerText`: the title is uppercased by CSS, and `innerText` reports the
+  // transformed text — so an assertion on the words as they are written has to read the node.
+  const diffTitle = await evaluate(
+    `document.querySelector('.diff-panel .diff-panel-title')?.textContent.trim() ?? ''`
+  )
+  check(
+    '⛔ the panel is titled for what it holds, not for a decision that may be over',
+    diffTitle === 'Changes in this task',
+    diffTitle
+  )
   // Expand it: the patch is fetched one file at a time, on demand.
   // ⚠️ The panel opens itself when there is a change to read; force it open anyway so this check
   // does not quietly depend on that default.
@@ -4691,6 +4777,54 @@ try {
     })
   )
 
+  // ⭐ Two layouts, asked for 2026-09-13: the unified patch above, and the old and new side by side.
+  // ⛔ The two-column view is a `<table>` of cells this codebase writes — the untrusted-text rule is
+  // the same one, and it is checked the same way, on the rendered DOM.
+  await evaluate(
+    `[...document.querySelectorAll('.diff-view-toggle button')].find(b => /Side by side/i.test(b.innerText))?.click()`
+  )
+  await wait(300)
+  const splitShown = JSON.parse(
+    await evaluate(`JSON.stringify({
+      unified: document.querySelectorAll('.diff-panel .diff-patch').length,
+      rows: [...document.querySelectorAll('.diff-panel .diff-split-row')].length,
+      cells: [...document.querySelectorAll('.diff-panel .diff-split-row')].map(r => r.children.length),
+      added: [...document.querySelectorAll('.diff-panel .diff-split-cell--add .diff-split-text')].map(e => e.textContent),
+      numbered: [...document.querySelectorAll('.diff-panel .diff-split-no')].map(e => e.textContent).filter(Boolean).length,
+      html: document.querySelector('.diff-panel .diff-split-wrap')?.innerHTML ?? ''
+    })`)
+  )
+  check(
+    'switching to side by side draws the patch as two columns',
+    splitShown.rows > 0 && splitShown.cells.every((n) => n === 2) && splitShown.unified === 0,
+    JSON.stringify({ rows: splitShown.rows, cells: splitShown.cells, unified: splitShown.unified })
+  )
+  check(
+    'the added line is on its own side, and both sides carry line numbers',
+    splitShown.added.some((l) => l.includes('not committed yet')) && splitShown.numbered > 0,
+    JSON.stringify({ added: splitShown.added, numbered: splitShown.numbered })
+  )
+  const straySplitTag = /<(?!\/?(?:span|pre|table|tbody|tr|td|div)[^a-z])[a-z]/i.exec(splitShown.html)
+  check(
+    '⛔ the two-column view is text nodes in cells — no tags a patch could have introduced',
+    straySplitTag === null,
+    JSON.stringify({
+      stray: straySplitTag
+        ? splitShown.html.slice(Math.max(0, straySplitTag.index - 40), straySplitTag.index + 40)
+        : null
+    })
+  )
+  // ⚠️ And back, because the choice is remembered: leaving it on `split` would change what every
+  // later section of this suite reads.
+  await evaluate(
+    `[...document.querySelectorAll('.diff-view-toggle button')].find(b => /Single column/i.test(b.innerText))?.click()`
+  )
+  await wait(300)
+  const backToUnified = await evaluate(
+    `document.querySelectorAll('.diff-panel .diff-patch').length`
+  )
+  check('and back to one column, which is the layout it opens in', Number(backToUnified) === 1, String(backToUnified))
+
   // ⭐ t283: the card says which landing strategy the button will use, and it is the project's
   // answer rather than the bottom rung of the ladder. `ui project` inherits the fleet default.
   const landTitle = await evaluate(
@@ -4741,6 +4875,141 @@ try {
   // ⚠️ Closed again, so the portal menu is not left over the next section's clicks.
   await evaluate(`document.body.click()`)
   await wait(300)
+
+  // ------------------------------------------------------------- one commit's own diff, afterwards
+  // ⭐ Asked for 2026-09-13: *make each git commit have a link to show the diff, and show total + and
+  // − lines as a summary for each commit.* ⛔ Driven by **actually landing** this conversation rather
+  // than by seeding a row, because the thing under test is the whole path — a real merge into the
+  // seeded repo, the commit row the landing records, and `task.commitDiff` reading `<sha>^!` back out
+  // of git afterwards. A fixture would have proved only that the component renders.
+  section('the diff of one commit a task landed')
+  // ⛔ **A landing will not merge a project that proves nothing.** `commit-and-merge` refuses where
+  // no check commands are configured — correctly, and it is the fixture's job to give it one rather
+  // than the test's job to pick a rung that skips the proof. One trivial command, which is enough for
+  // the verify step to have actually run something.
+  await evaluate(`
+    window.agentyard.rpc('project.setChecks', {
+      id: ${JSON.stringify(convoProjectId)},
+      checks: ['node --version']
+    })
+  `)
+  // ⚠️ And committed in the trunk, because `setChecks` writes `.warmstart/project.json` there — and
+  // a landing refuses a dirty trunk, which is the guard working rather than something to route around.
+  gitIn(projectRoot, 'add', '-A')
+  gitIn(projectRoot, 'commit', '-m', 'declare the project checks')
+  // ⚠️ The tool's own answer is read rather than assumed: a landing that refused says so, and a
+  // suite that only waited for a row would report the refusal as a missing panel.
+  const landOutcome = await evaluate(`
+    (async () => {
+      try {
+        // ⛔ task.landConversation, which is what the card's own Land button calls. task.land is
+        // the scheduler's re-landing of a *task* and refuses a conversation waiting on a person —
+        // a real distinction, and calling the wrong one here tested nothing at all.
+        const r = await window.agentyard.rpc('task.landConversation', {
+          id: ${JSON.stringify(settleTask.id)},
+          finishPolicy: 'commit-and-merge'
+        });
+        return JSON.stringify({ landed: r.ok, reason: r.reason ?? null });
+      } catch (e) {
+        return JSON.stringify({ threw: String(e && e.message ? e.message : e) });
+      }
+    })()
+  `)
+  check(
+    'the landing this section needs actually landed',
+    /"landed":\s*true/.test(landOutcome),
+    String(landOutcome).slice(0, 600)
+  )
+  let commitRows = '[]'
+  await waitFor(async () => {
+    commitRows = await evaluate(`
+      JSON.stringify([...document.querySelectorAll('.detail-side-box .side-commit-link')].map(b => ({
+        sha: b.textContent.replace(/[^0-9a-f]/gi, ''),
+        counts: b.parentElement?.querySelector('.diff-counts')?.innerText.replace(/\\s+/g, ' ').trim() ?? ''
+      })))
+    `)
+    const rows = JSON.parse(commitRows)
+    // ⚠️ Both, and in this order: the row is rendered from the record the landing wrote, and its
+    // totals arrive one `git` call later. Reading the counts the instant the row appears is a race,
+    // and it lost — which is worth a sentence here, because the eager read is the feature.
+    return rows.length > 0 && rows[0].counts !== ''
+  }, 'the landed commit to appear in the ledger, with the totals its own read fills in')
+  const landedRows = JSON.parse(commitRows)
+  check(
+    'the commit the landing recorded is a link, with its own line totals beside it',
+    landedRows.length > 0 && /^[0-9a-f]{8}$/.test(landedRows[0].sha) && /\+/.test(landedRows[0].counts),
+    commitRows
+  )
+  // ⚠️ Expanded on the press, not on render: the totals are one `git` call per row and the patch is
+  // another per file, so a row nobody opened must not have read one.
+  await evaluate(`document.querySelector('.detail-side-box .side-commit-link')?.click()`)
+  let commitDiff = '{}'
+  await waitFor(async () => {
+    commitDiff = await evaluate(`JSON.stringify({
+      files: [...document.querySelectorAll('.diff-commit-body .diff-file-path')].map(e => e.textContent.trim()),
+      toggle: [...document.querySelectorAll('.diff-commit-body .diff-view-toggle button')].map(b => b.innerText.trim())
+    })`)
+    return JSON.parse(commitDiff).files.length > 0
+  }, 'the file list of the landed commit')
+  const shownCommit = JSON.parse(commitDiff)
+  check(
+    'pressing it lists the files that commit changed, with both layouts offered',
+    shownCommit.files.includes('edited.txt') && shownCommit.toggle.length === 2,
+    commitDiff
+  )
+  await evaluate(
+    `[...document.querySelectorAll('.diff-commit-body .diff-file-head')].find(b => b.textContent.includes('edited.txt'))?.click()`
+  )
+  let commitPatch = '{}'
+  await waitFor(async () => {
+    commitPatch = await evaluate(`JSON.stringify({
+      added: [...document.querySelectorAll('.diff-commit-body .diff-line--add')].map(e => e.textContent.trim()),
+      html: document.querySelector('.diff-commit-body .diff-patch')?.innerHTML ?? ''
+    })`)
+    return JSON.parse(commitPatch).added.length > 0
+  }, 'the patch of a file inside the landed commit')
+  const commitShown = JSON.parse(commitPatch)
+  const strayCommitTag = /<(?!\/?(?:span|pre)[^a-z])[a-z]/i.exec(commitShown.html)
+  check(
+    'and expanding a file shows that commit’s own patch, as text nodes only',
+    commitShown.added.some((l) => l.includes('not committed yet')) && strayCommitTag === null,
+    JSON.stringify({ added: commitShown.added.slice(0, 3), stray: strayCommitTag?.[0] ?? null })
+  )
+  // ⛔ **The other half of the report, and it needs the task actually settled.** Landing a
+  // conversation deliberately leaves it open for another turn, so the panel is still at its gate
+  // here; only once the task is *finished* does the old `status === 'awaiting_human'` condition go
+  // false — which is the moment the diff used to disappear. So: finish it, then look again.
+  await evaluate(
+    `window.agentyard.rpc('task.resolve', { id: ${JSON.stringify(settleTask.id)} })`
+  )
+  let afterSettled = { panels: 0 }
+  await waitFor(async () => {
+    const got = await evaluate(`
+      (async () => {
+        const t = await window.agentyard.rpc('task.get', { id: ${JSON.stringify(settleTask.id)} });
+        const panel = document.querySelector('.diff-panel');
+        return JSON.stringify({
+          status: t.task.status,
+          panels: document.querySelectorAll('.diff-panel').length,
+          title: panel?.querySelector('.diff-panel-title')?.textContent.trim() ?? '',
+          open: panel?.hasAttribute('open') ?? false,
+          files: [...document.querySelectorAll('.diff-panel .diff-panel-body .diff-file-path')].length
+        });
+      })()
+    `)
+    afterSettled = JSON.parse(got)
+    return afterSettled.status === 'completed'
+  }, 'the conversation to settle as completed')
+  check(
+    '⛔ the change is still on the screen after the task has finished',
+    afterSettled.panels === 1 && afterSettled.title === 'Changes in this task' && afterSettled.files > 0,
+    JSON.stringify(afterSettled)
+  )
+  check(
+    '⚠️ but closed, because away from the gate it is history rather than a decision',
+    afterSettled.open === false,
+    JSON.stringify(afterSettled)
+  )
 
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')
   check('no uncaught renderer errors', errors === 0)

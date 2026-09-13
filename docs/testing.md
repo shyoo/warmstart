@@ -101,6 +101,21 @@ happened to be missing from that reading while being demonstrably present in the
 wrote. ⚠️ Read a form control's **`.value`**; `innerText` answers a question about a *rendering* and a
 control's content is not rendered into its own subtree.
 
+### A wrapping box reports its own width, so asking whether the text fits reads the column back
+
+⛔ **`element.scrollWidth` is the content's width only while the content cannot wrap.** Asked of a box
+whose text *has* wrapped, it is the box: `scrollWidth <= clientWidth` is then true by construction, so
+a check written as *does this label fit its column* answers **yes** for the one heading that did not
+(2026-09-13, the task table's `ACTION`). The same reading also called a one-line heading two lines,
+because an element's height includes the cell's padding and a lone line-height does not.
+
+⚠️ Measure the **text**, not the element that holds it: a `Range` over the node's contents gives the
+text's own box whatever markup wraps it, and the number of distinct `top` values among
+`range.getClientRects()` is the number of lines it occupies — one rect per run, so a heading with a
+sort arrow beside it is still one line. And take one line's height from a probe inserted in that very
+element, because `getComputedStyle(el).lineHeight` is the string `normal` in most of this app and
+`parseFloat` of it is `NaN`, which every comparison reads as *fits*.
+
 ### An `overflow: hidden` box still scrolls, so scrolling it proves nothing
 
 ⛔ **`scrollHeight > clientHeight` and an assignment to `scrollTop` are both true of a box the

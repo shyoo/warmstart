@@ -2709,7 +2709,7 @@ export interface TaskDiffSummary {
   base: string | null
   head: string | null
   /** Which rung of `resolveRange` answered — the vocabulary is `review.ts`'s, not a second one. */
-  from: 'commits' | 'landed' | 'branch' | null
+  from: 'commits' | 'landed' | 'branch' | 'commit' | null
   /**
    * How many commits are being shown separately rather than as one range.
    *

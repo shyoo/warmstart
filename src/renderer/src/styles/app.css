@@ -1795,6 +1795,13 @@ body {
   text-transform: inherit;
   color: inherit;
   cursor: pointer;
+  /* ⛔ **A heading is one line or the column is wrong.** Reported 2026-09-13: at 100% zoom
+     *TOOK* wrapped to two rows, which made the whole header row two rows deep and pushed every
+     column's label out of line with its numbers. A heading is one short word plus a sort arrow, and
+     the honest fix for one that does not fit is a wider column — not a fold inside a four-letter
+     word. ⚠️ Under `table-layout: fixed` this can overflow rather than widen anything, so the
+     widths below are measured against the arrow being present. */
+  white-space: nowrap;
 }
 
 .sort-head:hover {
@@ -1934,19 +1941,39 @@ body {
 /* The task table has responsive viewpoints. Compact operational facts keep their space; title gets
    the remainder. Secondary history and context yield before the table asks for horizontal scroll. */
 .tbl--tasks { table-layout: fixed; }
+/* ⛔ **On the cell, not only on the sort button.** `ACTION` is the one heading with no button inside
+   it, so the nowrap on `.sort-head` does not reach it — and a heading that folds costs every row on
+   the table, because the header row grows by a line. ⚠️ A heading is one short word and an arrow; the
+   honest fix for one that does not fit is the wider column below, never a fold. */
+.tbl--tasks thead th { white-space: nowrap; }
+/* ⭐ **Wide enough for the heading, not only for the cells.** Reported 2026-09-13: *Took* was drawn
+   as two rows at 100% zoom, which makes the whole header row two lines deep and lifts every label off
+   the numbers under it. The headings are uppercase with 0.06em tracking and the **sorted** one carries
+   an arrow, so a four-letter word is wider than it looks and any column can be the sorted one.
+
+   Measured in the built app rather than estimated — `test/ui.test.mjs`, *the table headings each fit
+   on one line*, clicks every heading and reports `[label, needs, room]` on a passing run. What it
+   found at 11px with 8px of padding each side: `TOOK ↓` needed **42px and was given 42**, a
+   zero-pixel fit that folds on any display whose metrics round the other way — which is the report.
+   ⭐ Three more were already overflowing their columns unnoticed, painting on the neighbour the way
+   the date stamps did in t376: `FROM ↑` needed 44 in 28, `DEP ↓` 32 in 26, `QUALITY ↓` 59 in 42.
+   `UPDATED ↓` had exactly 0px spare. The widths below are the measured need plus the 16px of
+   padding plus a few pixels of margin, and the suite re-measures every one of them on each run. */
 .tbl--tasks .tbl-col-seq { width: 44px; }
-.tbl--tasks .tbl-col-from { width: 44px; }
+.tbl--tasks .tbl-col-from { width: 64px; }
 .tbl--tasks .tbl-col-worker { width: 92px; }
-.tbl--tasks .tbl-col-dep { width: 42px; }
-.tbl--tasks .tbl-col-took { width: 58px; }
+.tbl--tasks .tbl-col-dep { width: 54px; }
+.tbl--tasks .tbl-col-took { width: 68px; }
 .tbl--tasks .tbl-col-price { width: 70px; }
-.tbl--tasks .tbl-col-quality { width: 58px; }
+.tbl--tasks .tbl-col-quality { width: 80px; }
 /* ⚠️ Wide enough for `11:45 PM` — the widest a single line of a stamp gets — plus the cell's own
    padding. 64px was set against a 24-hour clock and clipped everywhere else (t376). */
 .tbl--tasks .tbl-col-created,
-.tbl--tasks .tbl-col-updated { width: 78px; }
+.tbl--tasks .tbl-col-updated { width: 82px; }
 .tbl--tasks .tbl-col-status { width: 82px; }
-.tbl--tasks .tbl-col-action { width: 48px; }
+/* ⚠️ 64px for the word *ACTION* (measured need 44), where the single icon button in the cells wanted
+   only 48. The heading is the wider of the two facts, so it is the one that sets the column. */
+.tbl--tasks .tbl-col-action { width: 64px; }
 
 /* Un-sized in fixed layout means title gets every remaining pixel. */
 .tbl--tasks .tbl-title-cell,
@@ -1971,7 +1998,7 @@ body {
   .tbl--tasks .tbl-col-from,
   .tbl--tasks .tbl-col-quality { display: none; }
   .tbl--tasks .tbl-col-worker { width: 78px; }
-  .tbl--tasks .tbl-col-took { width: 52px; }
+  .tbl--tasks .tbl-col-took { width: 62px; }
 }
 
 @media (max-width: 700px) {
@@ -6479,6 +6506,15 @@ select:focus-visible,
 .three-axis-label { fill: var(--color-text); font-size: 12px; font-weight: 600; }
 .three-axis-low { fill: var(--color-text-faint); font-size: 10px; }
 .three-axis-origin { fill: var(--color-text-faint); }
+/* ⭐ The floor and the bars that stand on it. ⚠️ Fainter than the axes and the marks, in that order:
+   they exist to say *where* a mark is, and a grid that competes with the icons for attention has
+   replaced one unreadable plot with another. */
+.three-axis-grid { stroke: var(--color-border); stroke-width: 1; opacity: 0.55; }
+.three-axis-stem { stroke: var(--color-text-faint); stroke-width: 1.25; opacity: 0.7; }
+.three-axis-foot { fill: var(--color-text-faint); opacity: 0.8; }
+/* The hovered mark's own bar, so pointing at an icon says which spot on the floor is its. */
+.three-axis-stem--on .three-axis-stem { stroke: var(--color-accent); stroke-width: 2; opacity: 1; }
+.three-axis-stem--on .three-axis-foot { fill: var(--color-accent); opacity: 1; }
 .three-axis-point-halo { fill: var(--color-bg); stroke: var(--color-border-strong); stroke-width: 1; cursor: pointer; }
 .three-axis-filter { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-meta); color: var(--color-text-dim); white-space: nowrap; cursor: pointer; }
 .three-axis-filter input { cursor: pointer; }
@@ -7171,6 +7207,131 @@ select:focus-visible,
 .diff-line--del { color: var(--state-danger); }
 .diff-line--hunk { color: var(--color-accent); }
 .diff-line--meta { color: var(--color-text-faint); }
+
+/* ---- single column / side by side
+
+   ⛔ The two-column view is a `<table>` of `<td>`s this codebase writes, filled with text nodes —
+   the same rule as the unified `<pre>` above. `splitPatch` (`lib/sidebyside.ts`) decides the shape
+   and never produces markup. */
+
+.diff-view-toggle {
+  display: flex;
+  gap: var(--sp-1);
+  justify-content: flex-end;
+  padding: var(--sp-1) 0;
+}
+
+.diff-view-toggle button {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-faint);
+  font: inherit;
+  font-size: var(--text-meta);
+  padding: 1px var(--sp-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.diff-view-toggle button:hover {
+  color: var(--color-text);
+}
+
+.diff-view-toggle .diff-view-toggle--on {
+  background: var(--color-surface-2);
+  border-color: var(--color-accent);
+  color: var(--color-text);
+}
+
+/* ⚠️ One scroller around the whole file, not one per hunk: two independently scrolling hunks would
+   let the columns of one slide out of line with the columns of the next. */
+.diff-split-wrap {
+  background: var(--color-bg);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-2);
+  overflow: auto;
+  max-height: 60vh;
+  font-family: var(--font-mono);
+  font-size: var(--text-dense);
+  line-height: var(--leading-tight);
+}
+
+.diff-split-meta {
+  margin: 0;
+  color: var(--color-text-faint);
+  white-space: pre;
+}
+
+.diff-split-hunk {
+  color: var(--color-accent);
+  white-space: pre;
+  padding-top: var(--sp-1);
+}
+
+/* ⛔ `fixed` with two 50% columns, so the halves of an edit line up down the whole file rather than
+   being sized by whichever hunk happens to hold the longest line. */
+.diff-split {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.diff-split-cell {
+  width: 50%;
+  padding: 0 var(--sp-1);
+  vertical-align: top;
+  /* ⚠️ `pre`, not `pre-wrap`: a wrapped patch line silently changes where a change appears to be —
+     the same reason the unified view does not wrap. The wrapper scrolls instead. */
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-left: 1px solid var(--color-border);
+}
+
+.diff-split-cell:first-child {
+  border-left: 0;
+}
+
+/* The tint is the *row's* meaning, drawn per side: a paired edit is red on the left and green on the
+   right, and a line only one side has is tinted on that side alone. */
+.diff-split-cell--del { color: var(--state-danger); background: color-mix(in srgb, var(--state-danger) 9%, transparent); }
+.diff-split-cell--add { color: var(--state-ok); background: color-mix(in srgb, var(--state-ok) 9%, transparent); }
+.diff-split-cell--empty { background: color-mix(in srgb, var(--color-text-faint) 6%, transparent); }
+
+.diff-split-no {
+  display: inline-block;
+  width: 4ch;
+  margin-right: var(--sp-2);
+  text-align: right;
+  color: var(--color-text-faint);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- one commit's own diff, in the ledger beside the thread
+
+   ⚠️ Narrower than the thread panel, because the ledger column is: the patch scrolls sideways in its
+   own box rather than widening the pane it sits in. */
+.diff-commit-body {
+  padding-top: var(--sp-1);
+}
+
+.side-commit-link {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: var(--color-accent);
+  cursor: pointer;
+  text-align: left;
+}
+
+.side-commit-link:hover {
+  text-decoration: underline;
+}
 
 .diff-warn {
   color: var(--state-warn);
