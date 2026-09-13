@@ -73,6 +73,15 @@ export interface SpawnRequest {
    */
   resumeFrom?: string | undefined
   /**
+   * Open a **new** conversation holding a copy of an existing one's context.
+   *
+   * ⛔ **Not `resumeFrom`, and the difference is whether the original is still running.** A resume
+   * re-enters the same conversation and takes the same id back; a fork mints its own, so both can be
+   * live at once and nothing the original is doing is disturbed. ⚠️ Only set when the adapter
+   * declares `forkSession`.
+   */
+  forkFrom?: string | undefined
+  /**
    * Images this run is carrying.
    *
    * ⛔ Read only by a `spawn-flag` adapter, which is the whole reason this is on the *spawn* rather
@@ -82,6 +91,14 @@ export interface SpawnRequest {
    * on all of them and a path an agent may not open is worse than no path at all.
    */
   attachments?: Attachment[] | undefined
+  /**
+   * Stream this turn as it is written, rather than a message at a time.
+   *
+   * ⛔ Set only when the adapter declares `streamsPartialOutput` **and** the operator asked for it
+   * (`Settings.liveNarration`), exactly the way `effort` is gated — so an adapter reading this can
+   * trust that it said it could act on it, and nothing anywhere branches on an adapter's name.
+   */
+  partialMessages?: boolean | undefined
 }
 
 export interface SpawnPlan {

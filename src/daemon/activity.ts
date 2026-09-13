@@ -313,10 +313,11 @@ export function activityFor(taskId: string): Array<{ text: string; ts: number }>
 /**
  * The prose in a tail: every line that is not an adapter's tool or status announcement.
  *
- * ⚠️ The prefixes are the ones `antigravity-cli` writes and the `[run: …]` line the stream shim
- * writes; claude-code narrates no tool use into the peephole at all, so on it every line is prose.
- * This is the one list, shared by the completion paths that fall back to the peephole when an
- * agent reported nothing.
+ * ⚠️ The prefixes are the ones the adapters write — `antigravity-cli` since M5, `claude-code` since
+ * t423, both through `toolLine` in `stream.ts` so the vocabulary stays one list. This is also the
+ * list the completion paths use when they fall back to the peephole because an agent reported
+ * nothing, which is why a tool announcement that did not look like one would be quoted back onto a
+ * thread as though the agent had said it.
  */
 export function proseOf(entries: Array<{ text: string }>): string[] {
   return entries
@@ -329,7 +330,11 @@ export function proseOf(entries: Array<{ text: string }>): string[] {
         !t.startsWith('[search:') &&
         !t.startsWith('[find:') &&
         !t.startsWith('[list:') &&
-        !t.startsWith('[fetch:')
+        !t.startsWith('[fetch:') &&
+        // ⚠️ A phase marker, not a sentence. It carries no words by construction — the vendor does
+        // not publish them (see `StreamEvent.thinking`) — so it is the emptiest possible thing to
+        // hand a debate seat's thread as that seat's closing position.
+        !t.startsWith('[thinking')
     )
 }
 

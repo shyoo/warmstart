@@ -92,6 +92,9 @@ function capabilitiesFrom(file: ExternalAdapterFile): AdapterInfo['capabilities'
     // for the day one does — framing unknown events as whole messages costs an extra row, framing
     // them as continuations would run unrelated sentences together and lose the linebreaks.
     outputFraming: 'message',
+    // ⛔ Not declarable either: the flag would have to be an argv template, and a declaration that
+    // got it wrong would put an unknown flag on somebody's spawn rather than failing here.
+    streamsPartialOutput: false,
     // ⛔ Also not negotiable. Minting a session id means agentyard can prove a process is its own and
     // may kill it. A declaration cannot grant itself that.
     mintsSessionId: false,

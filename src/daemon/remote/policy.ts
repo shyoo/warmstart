@@ -27,6 +27,8 @@ export const REMOTE_METHODS = {
   'session.resize': 'deny',
   'session.close': 'deny',
   'session.backscroll': 'deny',
+  'session.streamlog': 'deny',
+  'session.attach': 'deny',
   'project.list': 'read',
   'project.activity': 'read',
   'project.add': 'deny',
@@ -294,7 +296,7 @@ export const REMOTE_EVENT_CLASS = {
   'worker.changed': 'fleet', 'project.changed': 'never', 'resource.changed': 'fleet', 'task.changed': 'task',
   'run.changed': 'task', 'approval.opened': 'task', 'approval.answered': 'task', 'question.opened': 'task',
   'question.answered': 'task', 'question.parked': 'task', 'quota.changed': 'fleet', 'session.changed': 'fleet',
-  'session.data': 'never', 'session.exit': 'never', 'turn': 'task', 'consult.changed': 'task', 'chat.message': 'never',
+  'session.data': 'never', 'session.stream': 'never', 'session.exit': 'never', 'turn': 'task', 'consult.changed': 'task', 'chat.message': 'never',
   'log': 'never', 'task.activity': 'task'
 } as const satisfies Record<DaemonEvent['type'], 'fleet' | 'task' | 'never'>
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { StreamParser, renderForHuman, type StreamEvent } from './stream.js'
+import { StreamParser, describeStream, renderForHuman, type StreamEvent } from './stream.js'
 import { adapter } from './adapters/index.js'
 
 /**
@@ -19,6 +19,10 @@ const decoderFor = (id: string) => {
   if (!decode) throw new Error(`${id} declares no stream decoder`)
   return decode
 }
+
+const rateLimitNoWindows =
+  '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1787684400,' +
+  '"rateLimitType":"five_hour"}}'
 
 const parse = (id: string, lines: string[]): StreamEvent[] => {
   const parser = new StreamParser(decoderFor(id))
@@ -51,12 +55,86 @@ describe('claude-code', () => {
     expect(events.find((e) => e.kind === 'result')).toMatchObject({ text: 'done', isError: false })
   })
 
-  it('reports a tool-only turn as something other than empty prose', () => {
-    const [event] = parse('claude-code', [
-      '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash"}]}}'
+  /**
+   * ⛔ **The record that made Claude Code look mute.** This used to assert `other` — nothing
+   * forwarded, nothing shown — and the reasoning was right about half the question: an empty
+   * `assistant_text` would make a chat pane look like the model answered with nothing. What it
+   * missed is that a tool call is not the absence of an answer, it is the answer.
+   *
+   * ⭐ Measured 2026-09-13 on a real 1,679-record session in this repository: 814 assistant records
+   * carried a tool call and 1,310 carried no prose at all, so 78% of the agent's working day was
+   * decoded into `other` and dropped. The pane and the peephole both sat blank for minutes at a time
+   * while the agent read files and ran the suite.
+   */
+  it('reports a tool call as a tool call, never as empty prose', () => {
+    const [event, ...rest] = parse('claude-code', [
+      '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash",' +
+        '"input":{"command":"npm test","description":"Run the suite"}}]}}'
     ])
-    // Empty assistant_text would make a chat pane look like the model answered with nothing.
+    expect(rest).toHaveLength(0)
+    expect(event).toMatchObject({
+      kind: 'tool_use',
+      name: 'Bash',
+      summary: '[run: npm test]',
+      detail: 'npm test'
+    })
+  })
+
+  it('carries prose and the tool calls beside it, in the order they were written', () => {
+    const events = parse('claude-code', [
+      '{"type":"assistant","message":{"content":[' +
+        '{"type":"thinking","thinking":"","signature":"x"},' +
+        '{"type":"text","text":"Let me look at the decoder."},' +
+        '{"type":"tool_use","name":"Read","input":{"file_path":"src/daemon/stream.ts"}}]}}'
+    ])
+    expect(events.map((e) => e.kind)).toEqual(['assistant_text', 'tool_use'])
+    expect(events[1]).toMatchObject({ summary: '[Tool: Read src/daemon/stream.ts]' })
+  })
+
+  /**
+   * ⛔ **The thinking words do not exist, and this pins that rather than hoping.** Measured
+   * 2026-09-13 on claude 2.1.270: a `thinking` block in the stream carries `thinking: ""` and a
+   * signature, with `--include-partial-messages` and without it, and the transcript agrees (490 of
+   * 496 thinking blocks in a real session were empty). So a `thinking` content block is worth no
+   * event at all — what says a phase happened is the `system/thinking_tokens` record below.
+   */
+  it('emits nothing for a thinking block, because the vendor sends no words in one', () => {
+    const [event] = parse('claude-code', [
+      '{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"","signature":"s"}]}}'
+    ])
     expect(event?.kind).toBe('other')
+  })
+
+  it('reads a thinking phase off the record that carries its estimate', () => {
+    const events = parse('claude-code', [
+      '{"type":"system","subtype":"thinking_tokens","estimated_tokens":50,"estimated_tokens_delta":50}',
+      '{"type":"system","subtype":"thinking_tokens","estimated_tokens":147,"estimated_tokens_delta":97}'
+    ])
+    // ⚠️ `start` is the first record of a phase — tokens equal to the delta — and it is the only one
+    // the peephole pushes a row for. See index.ts.
+    expect(events).toEqual([
+      { kind: 'thinking', tokens: 50, start: true },
+      { kind: 'thinking', tokens: 147, start: false }
+    ])
+  })
+
+  it('reads prose deltas only where the caller asked for partial output', () => {
+    const line =
+      '{"type":"stream_event","event":{"type":"content_block_delta","index":0,' +
+      '"delta":{"type":"text_delta","text":"Remov"}}}'
+    expect(parse('claude-code', [line])).toEqual([{ kind: 'assistant_delta', text: 'Remov' }])
+  })
+
+  /**
+   * ⛔ The framed copy is still what the peephole reads — it is the only one that is framed — so it
+   * is marked rather than suppressed. `renderForHuman` and `describeStream` both drop a `streamed`
+   * message, because those words are already on the screen a character at a time.
+   */
+  it('marks a whole message as already streamed when partial output is on', () => {
+    const record = { type: 'assistant', message: { content: [{ type: 'text', text: 'done' }] } }
+    const decode = adapter('claude-code').decodeStream
+    expect(decode?.(record, { partialMessages: true })).toMatchObject({ streamed: true })
+    expect(decode?.(record, { partialMessages: false })).not.toHaveProperty('streamed')
   })
 
   it('does not claim usage: this adapter is metered from its transcript', () => {
@@ -211,14 +289,25 @@ describe('antigravity-cli', () => {
     })
   })
 
-  it('extracts tool action descriptions as assistant text for activity streaming', () => {
+  /**
+   * ⚠️ The **wording is unchanged** and that is deliberate: these lines are what the peephole stores
+   * and what `activity.proseOf` skips by prefix, so respelling them would start quoting tool calls
+   * back onto threads as though the agent had written them. What changed is the envelope — a
+   * declared `tool_use` event rather than prose in brackets — so a view can lay one out, and so
+   * claude-code could join this vocabulary instead of inventing a second one.
+   */
+  it('reports a tool call as a tool call, keeping the wording the peephole filters on', () => {
     const toolCall =
       '{"event":"step_update","step_update":{"conversation_id":"379cc136","step_index":2,"state":"ACTIVE",' +
       '"step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"git status","toolAction":"Running command","toolSummary":"Command execution"}}}}'
     const events = parse('antigravity-cli', [toolCall])
-    const assistant = events.find((e) => e.kind === 'assistant_text')
-    expect(assistant).toBeDefined()
-    expect((assistant as { text: string }).text).toBe('[Tool: Running command — Command execution]\n')
+    expect(events.find((e) => e.kind === 'tool_use')).toMatchObject({
+      name: 'run_command',
+      summary: '[Tool: Running command — Command execution]'
+    })
+    // ⛔ And not as prose. A tool announcement arriving as `assistant_text` is indistinguishable
+    // downstream from the agent's own words.
+    expect(events.some((e) => e.kind === 'assistant_text')).toBe(false)
   })
 
   it('formats command-line and target-file parameters when tool action is not set', () => {
@@ -226,13 +315,13 @@ describe('antigravity-cli', () => {
       '{"event":"step_update","step_update":{"conversation_id":"379cc136","step_index":2,"state":"ACTIVE",' +
       '"step_type":"tool","tool_name":"run_command","tool_info":{"name":"run_command","parameters":{"CommandLine":"npm test"}}}}'
     const [runEvent] = parse('antigravity-cli', [runCall])
-    expect(runEvent).toMatchObject({ kind: 'assistant_text', text: '[run: npm test]\n' })
+    expect(runEvent).toMatchObject({ kind: 'tool_use', summary: '[run: npm test]' })
 
     const fileCall =
       '{"event":"step_update","step_update":{"conversation_id":"379cc136","step_index":3,"state":"ACTIVE",' +
       '"step_type":"tool","tool_name":"view_file","tool_info":{"name":"view_file","parameters":{"TargetFile":"src/index.ts"}}}}'
     const [fileEvent] = parse('antigravity-cli', [fileCall])
-    expect(fileEvent).toMatchObject({ kind: 'assistant_text', text: '[view_file: src/index.ts]\n' })
+    expect(fileEvent).toMatchObject({ kind: 'tool_use', summary: '[view_file: src/index.ts]' })
   })
 
   it('extracts result text from various result formats and trims whitespace', () => {
@@ -439,5 +528,135 @@ describe('renderForHuman', () => {
     })
     expect(out).toContain('failed')
     expect(out).toContain('max turns')
+  })
+})
+
+/**
+ * The second tier: the same events, shaped for a view that can lay one out.
+ *
+ * ⛔ **Not a replacement for `renderForHuman`.** The rendered form still feeds `scrollback`, which
+ * `turnend.ts` reads to find a completion an MCP-less adapter could not report, so removing it would
+ * quietly take a completion signal with it. These two run side by side and answer different
+ * questions: what should a terminal print, and what should a pane draw.
+ */
+describe('describeStream', () => {
+  it('gives a tool call its own kind and keeps the long form for the disclosure', () => {
+    expect(
+      describeStream({
+        kind: 'tool_use',
+        name: 'Bash',
+        summary: '[run: npm test]',
+        detail: 'npm test -- --reporter=verbose'
+      })
+    ).toEqual({
+      kind: 'tool',
+      text: '[run: npm test]',
+      detail: 'npm test -- --reporter=verbose',
+      tone: 'dim'
+    })
+  })
+
+  /**
+   * ⚠️ The number is the content. Claude Code publishes an estimate and no words (measured
+   * 2026-09-13 on 2.1.270, and again in a real session's transcript: 490 of 496 thinking blocks
+   * empty), so a row that claimed to show reasoning would be showing something else.
+   */
+  it('carries a thinking phase as an estimate, never as words', () => {
+    const line = describeStream({ kind: 'thinking', tokens: 1470, start: true })
+    expect(line).toMatchObject({ kind: 'thinking', thinkingTokens: 1470 })
+    expect(line?.text).toBe('Thinking')
+  })
+
+  it('puts the live window readings on the rate-limit row and marks a caution', () => {
+    const line = describeStream({
+      kind: 'rate_limit',
+      info: {
+        status: 'allowed_warning',
+        resetsAt: null,
+        rateLimitType: 'five_hour',
+        windows: [{ id: 'session', label: 'Claude 5h', percent: 91, resetsAt: null }]
+      }
+    })
+    expect(line).toMatchObject({ kind: 'rate_limit', tone: 'warn' })
+    expect(line?.detail).toContain('Claude 5h 91%')
+  })
+
+  it('leaves an `allowed` rate limit dim, because a reading is not a caution', () => {
+    const line = describeStream({
+      kind: 'rate_limit',
+      info: { status: 'allowed', resetsAt: null, rateLimitType: 'five_hour' }
+    })
+    expect(line?.tone).toBe('dim')
+  })
+
+  /**
+   * ⛔ The typing goes to the terminal rung and nowhere else. A structured view that appended a row
+   * per fragment would draw one word per line, which is the t272 failure with a different renderer.
+   */
+  it('draws no row for a fragment, and none for a message already drawn as fragments', () => {
+    expect(describeStream({ kind: 'assistant_delta', text: 'Remov' })).toBeNull()
+    expect(describeStream({ kind: 'assistant_text', text: 'Removed it.', streamed: true })).toBeNull()
+    expect(describeStream({ kind: 'assistant_text', text: 'Removed it.' })).toMatchObject({
+      kind: 'text'
+    })
+  })
+
+  it('says nothing about usage, which is a fact about the session rather than a line of it', () => {
+    expect(
+      describeStream({
+        kind: 'usage',
+        final: true,
+        usage: { input: 1, output: 1, thinking: 0, cacheRead: 0, cacheWrite: 0 }
+      })
+    ).toBeNull()
+    expect(describeStream({ kind: 'other', type: 'stream_event' })).toBeNull()
+  })
+})
+
+/**
+ * ⭐ The free live quota reading, which was decoded and dropped until t423.
+ *
+ * ⛔ The window **ids** are the load-bearing part, not the numbers: every gate downstream keys on
+ * them, so a live reading that called the five-hour pool something the config cache does not would
+ * read as a different window at the same percentage. See `UNIFIED_WINDOWS` in claude-code.ts.
+ */
+describe('claude-code unifiedWindows', () => {
+  const withWindows =
+    '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1789342200,' +
+    '"rateLimitType":"five_hour","overageStatus":"allowed","overageResetsAt":1790812800,' +
+    '"isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.12,"resetsAt":1789342200},' +
+    '"seven_day":{"utilization":0.43,"resetsAt":1789606800}}}}'
+
+  it('reads a utilization fraction as a percentage, under the ids the cache already uses', () => {
+    const [event] = parse('claude-code', [withWindows])
+    expect(event).toMatchObject({
+      kind: 'rate_limit',
+      info: {
+        overageResetsAt: 1790812800000,
+        windows: [
+          { id: 'session', label: 'Claude 5h', percent: 12, resetsAt: 1789342200000 },
+          { id: 'weekly_all', label: 'Claude 7d', percent: 43, resetsAt: 1789606800000 }
+        ]
+      }
+    })
+  })
+
+  /**
+   * ⚠️ A key nobody has mapped is skipped rather than guessed at, and `publishStreamWindows` then
+   * declines the whole reading rather than losing the window it could not name. Conservative is the
+   * cheap direction: the account keeps the cadence it already had.
+   */
+  it('skips a window it has no id for rather than inventing one', () => {
+    const [event] = parse('claude-code', [
+      '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":null,' +
+        '"rateLimitType":"five_hour","unifiedWindows":{"lunar_month":{"utilization":0.5}}}}'
+    ])
+    expect(event).toMatchObject({ kind: 'rate_limit' })
+    expect((event as { info: { windows?: unknown } }).info.windows).toBeUndefined()
+  })
+
+  it('leaves an older record that carries no windows alone', () => {
+    const [event] = parse('claude-code', [rateLimitNoWindows])
+    expect((event as { info: { windows?: unknown } }).info.windows).toBeUndefined()
   })
 })

@@ -14,7 +14,7 @@ import {
   runsFor,
   setStatus
 } from './tasks.js'
-import { closeSession, getSession, interruptSession, writeSession } from './sessions.js'
+import { closeSession, getSession, interruptSession, sendPrompt } from './sessions.js'
 import { releaseAllFor } from './resources.js'
 import { adapter } from './adapters/index.js'
 import { getProject, policyFor } from './projects.js'
@@ -200,7 +200,15 @@ async function windDown(task: Task, hard: boolean): Promise<void> {
  */
 async function askForWrapUp(sessionId: string): Promise<boolean> {
   try {
-    writeSession(sessionId, `${WRAP_UP_PROMPT}\r`)
+    // ⛔ **`sendPrompt`, not `writeSession`, and the difference was a silently lost wrap-up.** This
+    // used to type the prompt in as raw bytes with a carriage return, which is what a PTY wants and
+    // what a pipe cannot use: a dispatched task runs on `--input-format stream-json`, where stdin
+    // takes whole JSON messages terminated by a newline. Measured 2026-09-13 on claude 2.1.270 —
+    // `Please wrap up now.\r` produced no turn at all, and glued itself onto the next real message,
+    // which then failed to parse and **exited the CLI 1**. So every soft cancel of a dispatched task
+    // waited out its full timeout and logged *did not wrap up in time* about a prompt the agent had
+    // never been shown. `sendPrompt` encodes what each transport expects.
+    sendPrompt(sessionId, WRAP_UP_PROMPT)
   } catch {
     return false
   }

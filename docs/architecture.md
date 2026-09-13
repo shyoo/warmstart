@@ -292,6 +292,14 @@ it nowhere (measured 2026-08-27; see [`adapters.md`](adapters.md)). ⛔ Such a p
 a rendering fails — return null rather than a partial reading. The first live run proved why: at 30
 rows the panel scrolled, a window fell below the fold, and three of four came back looking complete.
 
+⛔ **And the rule runs the other way too: never write keystrokes into something that is not a
+keyboard.** A dispatched session's stdin is `stream-json`, not a terminal. Measured 2026-09-13 on
+claude 2.1.270, three raw characters ahead of the next message corrupted it and **exited the CLI 1**
+— so `writeSession` refuses a `stream` session outright, `interruptSession` is a no-op on one, and a
+prompt reaches it only through `sendPrompt`, which encodes what the transport expects. What a person
+watching a piped session is shown is `describeStream`'s decoded records, drawn as records; the real
+screen exists only where a real PTY does, and `attachTerminal` is how one is opened beside a run.
+
 ### The scheduler costs zero tokens
 
 ⛔ Dependency resolution, quota gates, cache countdowns, retries and auto-resume are arithmetic. The

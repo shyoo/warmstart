@@ -496,10 +496,33 @@ finding.
 and a final `result` record carrying `total_cost_usd`, `modelUsage` per model, and the same
 `usage.iterations[]` the transcript has.
 
-This is **free and live** - it arrives with a turn already being paid for. It is not a percentage, so
-it does not replace the calibration in §5; what it gives is a **status** (`allowed` / warning /
-rejected) and a **real `resetsAt`**, which is most of what a preemption deadline actually needs. The
-`overageStatus` field also says whether spilling past the window is even possible on this account.
+This is **free and live** - it arrives with a turn already being paid for. What it gives is a
+**status** (`allowed` / warning / rejected) and a **real `resetsAt`**, which is most of what a
+preemption deadline actually needs. The `overageStatus` field also says whether spilling past the
+window is even possible on this account.
+
+⭐ **And, since 2.1.270, a percentage as well** (measured 2026-09-13, t423). The same record carries:
+
+```json
+"unifiedWindows":{"five_hour":{"utilization":0.12,"resetsAt":1789342200},
+                  "seven_day":{"utilization":0.43,"resetsAt":1789606800}},
+"overageResetsAt":1790812800
+```
+
+`utilization` is a **fraction**, not a percentage. This is a reading taken *now*, on an account whose
+only other source is a cache measured **19 days** stale — so `QuotaSnapshot.source` gained `'stream'`,
+stamped with **our** clock rather than the vendor's, and `publishStreamWindows` (`quota.ts`) records it
+before the urgent probe it would otherwise have asked for.
+
+⛔ **It still does not replace the calibration in §5.** A percentage is not a size, so the compaction
+reserve reports `unknown` exactly as before; what changed is the age of the percentages, not what they
+can answer.
+
+⛔ **And it is published only where it names every window the account's newest reading named.** A
+snapshot is atomic — `sampleAt` returns every row sharing the newest `sampled_at` — so a record naming
+two windows would *delete* a third by being newer, and an account with a separate Opus pool would
+silently stop having one. ⚠️ Whether `unifiedWindows` carries that pool on an account that has one is
+**unverified**: no Max account was available. The guard is what makes being wrong about it cost nothing.
 
 ⛔ **`rateLimitType` is not one window.** The same account emits `five_hour` and `seven_day` records
 on the same stream, minutes apart and disagreeing - measured 2026-08-31 on ClaudeThird, claude-code

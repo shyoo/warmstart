@@ -168,7 +168,19 @@ export const DEFAULT_SETTINGS: Settings = {
   /**
    * Probability (0..1) of exploring an alternative model on an eligible decision. Default 0.10.
    */
-  modelExplorationRate: 0.10
+  modelExplorationRate: 0.10,
+
+  /**
+   * How much of a running turn the live views show.
+   *
+   * ⛔ **`summary`, and the measurement is why.** `streaming` adds `--include-partial-messages` on the
+   * adapters that declare it, which turned a seven-line turn into eighty-one (2026-09-13, claude
+   * 2.1.270). What it buys is prose appearing word by word; what it does *not* buy is the thinking
+   * text — the vendor sends an empty string for that with the flag and without it — nor the thinking
+   * token estimate, which arrives on `system/thinking_tokens` for free either way. Ten times the
+   * parser traffic for a typing animation is a choice, not a default.
+   */
+  liveNarration: 'summary'
 }
 
 type SettingChangeListener = <K extends keyof Settings>(key: K, value: Settings[K]) => void

@@ -75,7 +75,8 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `LooseEnds` | work that exists and is going nowhere → [`landing.md`](landing.md) |
 | `Doctor` | which CLIs were found, who is signed in, how old each reading is, what is unverifiable |
 | `Logs` | the daemon's log, live and filterable, ring-buffered so a late window sees the past |
-| `Terminal` | the real agent TUI over xterm.js, not a reconstruction |
+| `Terminal` | the real agent TUI over xterm.js, not a reconstruction. ⚠️ Only a `pty` session has one — see below |
+| `SessionStream` | the *decoded* stream of a dispatched agent: one row per tool call, thinking phase, rate-limit caution and message. ⛔ Openly a reconstruction, because there is no screen to mirror |
 | `AppSettings` `SettingRow` `SettingButtonSelect` `SidebarResizer` | chrome |
 | `GlobalSettings` | the five in-page Global tabs: Notice (doctor warnings), Status (daemon, CLIs, workers, cost models and projects), Fleet settings (the default), App behavior and Remote connection. |
 | `RemoteAccess` | the shown computer's listener: Tailscale state, project enablement, phone and desktop switches, pairing material and host-paired devices. It renders in Global → Remote connection, with the per-project half in `ProjectSettings`. See [`remote.md`](remote.md) |
@@ -685,6 +686,7 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 | `taskview.tsx` `threadview.ts` `fleetcard.ts` `fleetcounts.ts` | derived view state |
 | `format.ts` `modelname.ts` `agenticon.ts` | display formatting |
 | `live.ts` | `showsLiveOutput(status)` — which statuses get a peephole |
+| `streamview.ts` | `mergeStreamLines(rows, line)` — one `session.stream` event folded into a live view. ⛔ Keyed on `seq`, because the backfill and the live feed **always** overlap: a pane asks for `session.streamlog` and starts receiving events in the same breath, so every line published in between arrives twice |
 | `diffline.ts` | `patchLineKind(line)` — how a patch line is classified for display, from its **first character and nothing else** |
 | `sidebyside.ts` | `splitPatch(patch)` — a unified patch as two-column rows. ⚠️ The pairing is **positional**: a removed run and an added run are zipped top-to-top and the surplus stands alone, so a line that moved across a large edit can sit opposite an unrelated one — which is what the single-column view beside the toggle is for |
 | `plot3d.ts` | `project3d` / `stemFor` / `floorGrid` — the three-axis plot's projection, the bar under each mark, and the ruled floor it stands on |
@@ -710,6 +712,28 @@ does — including whether closing it leaves the daemon running, which main must
 is not answering.
 
 **Appearance is a window preference:** Global offers System (the default), Light and Dark. System follows live OS light/dark changes; Light and Dark set an explicit palette.
+
+### The Session TUI tab is two things, because a dispatched agent has no terminal
+
+⛔ **There is no screen to mirror, and none can be made.** Work runs on the `stream` transport
+because `--print` refuses to start under a pseudo-terminal (`docs/adapters.md`), so a dispatched
+session's output is a machine protocol on a pipe. The tab therefore draws whichever of two things is
+true of the session in front of it:
+
+- **`pty` session** — `TerminalPane`, the real CLI screen over xterm.js, with *take the keyboard*.
+- **`stream` session** — `SessionStream`, the decoded records as rows, and it says on screen that it
+  is not a terminal. Beside it, **Open a real terminal** (`session.attach`) starts the CLI itself in
+  the same workspace holding a **fork** of the conversation — always a fork, even when it is resting.
+  ⛔ `spawnSession`'s resume path reuses the *same row*, so a resumed conversation would come back
+  marked `pty` while still reading `purpose: 'work'`, and `warmSessionFor` would then offer the
+  terminal a person is sitting at to the next dispatch. ⚠️ Two processes, one worktree: the pane says
+  so rather than implying otherwise.
+
+⛔ **The keyboard switch is not offered on a pipe session, and that is a bug fix.** Measured
+2026-09-13 on claude 2.1.270, raw keystrokes into `--input-format stream-json` stdin corrupt the next
+message and **exit the CLI 1** — so *take the keyboard* on a dispatched task ended the run on the
+first character. `writeSession` refuses it in the daemon too, because the RPC is reachable from a
+paired desktop. Talking to a running agent is the thread composer, which delivers into the live turn.
 
 ## 5. Styling
 

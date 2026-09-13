@@ -86,7 +86,12 @@ worth and refuses to let it evaporate.
   landings queue until it is done. ⛔ This is *organisation*, not a security boundary
   — read **[Security model](#security-model)** before you run this on a machine that has anything on
   it.
-- **A live view.** The real agent TUI, not a reconstruction.
+- **A live view, and it says which kind it is.** A session you open yourself is the real CLI screen,
+  keystrokes and all. ⛔ A *dispatched* agent has no terminal — it runs on a pipe, because print mode
+  refuses to start under one — so what you get there is its own structured record of what it is
+  doing: every tool call, every thinking phase, the vendor's own quota cautions. Beside it,
+  **Open a real terminal** starts the CLI in the same workspace holding a copy of that conversation,
+  so you can take over without disturbing the run.
 - **Answer it from your phone.** Turn on remote access and pair a phone by scanning a QR code: it
   shows quota and everything waiting on you, answers questions and approvals, overrides a quota gate,
   stops or reassigns work, and files new tasks. It gets its own revocable credential and a much

@@ -14,6 +14,7 @@ import { normalise } from '@shared/policy'
 import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 import { SettingRow, SettingSwitch } from './SettingRow'
+import { SettingButtonSelect } from './SettingButtonSelect'
 import { errorMessage } from '@shared/errors.js'
 
 /**
@@ -83,6 +84,7 @@ export function FleetSettings(): React.JSX.Element {
   const summariseTitles = settings?.summariseTitles ?? false
   const modelExploration = settings?.modelExploration ?? false
   const modelExplorationRate = settings?.modelExplorationRate ?? 0.1
+  const liveNarration = settings?.liveNarration ?? 'summary'
   const finishPolicy = settings?.finishPolicy ?? DEFAULT_FLEET_FINISH
   const sessionSharing = settings?.sessionSharing ?? 'off'
   const probeIntervalMinutes = settings?.probeIntervalMinutes ?? 5
@@ -336,6 +338,33 @@ export function FleetSettings(): React.JSX.Element {
             </div>
           )}
         </SettingRow>
+
+        {/* ⛔ What this buys is *smaller* than it sounds, and the description says so rather than
+            selling it. Measured 2026-09-13 on claude 2.1.270: the flag does not carry the thinking
+            words (the vendor sends an empty string for those either way) and does not carry the
+            thinking token estimate (that arrives free on every turn). It carries the typing. */}
+        <SettingRow
+          title="Live narration"
+          description={
+            liveNarration === 'streaming'
+              ? 'Prose appears word by word as the agent writes it, on CLIs that can stream a turn. About ten times as many stream records per turn; no extra tokens.'
+              : 'Whole messages as they are finished, one line per tool call, one line per thinking phase. What a CLI cannot say is still not said.'
+          }
+          control={
+            <SettingButtonSelect
+              value={liveNarration}
+              aria-label="Live narration"
+              disabled={disabled}
+              onChange={(value) =>
+                void save({ liveNarration: value as 'summary' | 'streaming' })
+              }
+              options={[
+                { value: 'summary', label: 'Summary' },
+                { value: 'streaming', label: 'Streaming' }
+              ]}
+            />
+          }
+        />
 
         {/* ⛔ Two cadences, not one. A single interval had to serve an account spending its window
             right now and a fleet with nothing running, and it answered neither: the number said five

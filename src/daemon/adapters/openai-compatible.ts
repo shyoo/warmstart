@@ -158,6 +158,9 @@ const info: AdapterInfo = {
     streamPrompts: 'once',
     // `item.completed` only — codex publishes an `agent_message` when it is finished writing one.
     outputFraming: 'message',
+    // ⚠️ `codex exec --json` has no partial-message flag measured on it. Conservative is the cheap
+    // direction: declaring one that does not exist would put an unknown flag on every spawn.
+    streamsPartialOutput: false,
     // `codex exec resume <SESSION_ID>` takes an id, but the id is codex's to create - there is no
     // flag that supplies one for a *new* session.
     mintsSessionId: false,

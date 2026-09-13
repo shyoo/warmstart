@@ -9,26 +9,54 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 **desktop notifications**. The maintained reference in [`docs/`](docs/README.md) is the authority on
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-13, macOS arm64, measured): typecheck, lint, build pass; L1 **3,367 passed, 12 skipped**
-(189 files); L2 **198 checks** (11 skipped); L3 **419 checks** (2 skipped); L4 `test:pack` **17 checks**.
-All suites (L1–L4) re-run and pass cleanly after repackaging.
+Baseline (2026-09-13, Windows, measured **after** t423): typecheck, lint, build pass; L1
+**3,409 passed, 2 skipped** (193 files); L2 **203 checks** (5 skipped); L3 **421 checks**; L4
+`test:pack` **19 checks**, re-run after repackaging. ⚠️ L4 proves the *package*, not this change's
+screens — see remaining work 14. ⚠️ The macOS arm64 baseline (L1 **3,367 passed, 12 skipped**; L2
+**198**; L3 **419**; L4 **17**) was taken **before** t423 and has not been re-run on it.
 
 ## Closed in this cleanup
 
+- **Claude Code narrates its work, and the Session TUI stopped pretending to be one (t423,
+  2026-09-13).** ⛔ It was our decoder, not the CLI: `textBlocks` kept only `type: "text"` blocks, so
+  a prose-less `assistant` record decoded to `other` and reached nobody — measured on a real
+  1,679-record session, **1,310 (78%) carried no text block at all** (814 tool calls, 496 thinking).
+  Tool calls are now a declared `StreamEvent.tool_use` on both adapters, in one vocabulary
+  (`toolLine`) that `activity.proseOf` already filters. ⛔ The **thinking words do not exist**:
+  `thinking: ""` in the stream, with `--include-partial-messages` and without, and 490 of 496 empty
+  in the transcript — what is free is `system/thinking_tokens`, an estimate, with no flag. A fleet
+  setting (`liveNarration`, default `summary`) turns on partial output where an adapter declares
+  `streamsPartialOutput`; it buys word-by-word prose at ~10× the stream lines and nothing else.
+  The Session TUI tab now draws `SessionStream` (decoded records, collapsible) for a piped session
+  and the real xterm for a PTY one, with **Open a real terminal** (`session.attach`) beside it —
+  always a **fork**, so the run carries on and the original stays resumable
+  (`--resume <old> --fork-session --session-id <new>`, measured: minted id honoured, 31,372 tokens
+  read from cache). ⛔ **Work stays on pipes**: `rate_limit_event` exists only in stream-json output
+  and nowhere in the transcript, so a full-TUI work session would go quota-blind.
+  ⭐ Two live bugs fell out of the same root cause — raw bytes written at a `stream-json` stdin, which
+  corrupts the next message and **exits the CLI 1** (measured; the control run exited 0): *take the
+  keyboard* on a dispatched task ended the run on the first character, and `askForWrapUp` wrote its
+  prompt with a carriage return, so **every soft cancel of a dispatched task** timed out at 90s
+  logging *did not wrap up in time* about a prompt the agent had never seen. ⭐ And a third finding
+  wired in: `rate_limit_info.unifiedWindows` carries a live utilization per window on every turn
+  (`QuotaSnapshot.source: 'stream'`), where the only other source is a cache measured 19 days stale.
+  ⚠️ **L1 only — none of the UI has been driven in the packaged app**, and whether `unifiedWindows`
+  names an Opus window is unverified (the publish guard makes being wrong cost nothing). Decisions:
+  [`transient_docs/live_narration_2026-09-13.md`](transient_docs/live_narration_2026-09-13.md).
+  ⚠️ It also carries **four L3 checks t422 left red**: splitting Global into tabs moved the tray
+  switch, the fleet finish picker and the Projects table behind three different tabs, and
+  `test/ui.test.mjs` still looked at whichever tab Global happened to remember. Each section names
+  its tab now — the controls were never gone.
 - **Remote listener auto-retries Tailscale every 60s (2026-09-13).** A reboot starts the app before
-  the Tailscale service; the one-shot probe saw no Tailscale and the listener stayed down until the
-  operator clicked *Re-check Tailscale*. A 60-second `setInterval` in `startRemoteServer`
-  ([`src/daemon/remote/server.ts`](src/daemon/remote/server.ts)) now re-probes when
-  `remoteListening()` is true and `live` is null. The poll is a no-op once the listener is up, and
-  `clearInterval` runs on `close()`. Validation: `npm run typecheck`, `npm run lint`, `npm test`,
-  `npm run build` passed.
+  the Tailscale service, so the one-shot probe saw none and the listener stayed down until somebody
+  clicked *Re-check Tailscale*. A 60-second `setInterval` in `startRemoteServer`
+  ([`src/daemon/remote/server.ts`](src/daemon/remote/server.ts)) re-probes while `remoteListening()`
+  is true and `live` is null; it is a no-op once the listener is up and is cleared on `close()`.
 - **macOS worktree symlinks, CLI PATH detection, and header metrics (2026-09-13).** Worktree `.git`
-  pointers resolve paths with `fs.realpathSync` to prevent broken relative traversal when temp dirs
-  cross the macOS `/var` -> `/private/var` symlink (`worktrees.ts`). Non-Windows GUI app launches search
-  standard user bin paths (`~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`) in `which.ts` and
-  `antigravity-cli.ts` fallback lists. Task table column widths in `app.css` adjusted 2–8px so sort-arrow
-  headings fit comfortably under macOS font metrics without neighbour collision.
-- **Global settings are now task-oriented tabs (t422, 2026-09-13).** Global opens on **Fleet settings**; Notice isolates doctor warnings, Status holds daemon/CLI/worker/cost-model facts and Projects, App behavior holds window preferences, and Remote connection orders Tailscale, project access, desktop and phone pairing. Adding a remote computer is modal. The phone QR encoder now restores QR's fixed dark module after format placement; it was previously overwritten for some masks and could not be read by a camera. Validation on this branch: `npm run typecheck`, `npm run lint`, `npm test`, and `npm run build` passed.
+  pointers resolve with `fs.realpathSync`, or a temp dir crossing macOS's `/var` → `/private/var`
+  symlink breaks relative traversal (`worktrees.ts`). A non-Windows GUI launch searches the standard
+  user bin paths (`which.ts`), and task-table column widths gained 2–8px for macOS font metrics.
+- **Global settings are now task-oriented tabs (t422, 2026-09-13).** Global opens on **Fleet settings**; Notice isolates doctor warnings, Status holds daemon/CLI/worker/cost-model facts and Projects, App behavior holds window preferences, and Remote connection orders Tailscale, project access, desktop and phone pairing. Adding a remote computer is modal. The phone QR encoder now restores QR's fixed dark module after format placement; it was previously overwritten for some masks and could not be read by a camera. ⚠️ Landed without `npm run test:ui`, which the tab split broke in four places; t423 repaired it.
 
 - **Later pushes reconcile with an earlier local landing (t421, 2026-09-13).** A landing message
   remains an honest record of what its own strategy did. When `origin/<target>` later contains its
@@ -58,50 +86,35 @@ All suites (L1–L4) re-run and pass cleanly after repackaging.
   and refill date (`creditsMismatchKind`, `src/shared/credits.ts`). Spend meters keep non-zero counters;
   fleet card draws spent credit gauge. Detail in [`docs/adapters.md`](docs/adapters.md).
 - **Two dispatch faults measured off t408 and t410 (2026-09-13).** ⭐ *A sandboxed Codex run cannot
-  write a file a sandboxed run wrote*: files owned by `CodexSandboxOffline` keep a dead run's DACL and
-  the operator lacks WRITE_DAC on them, so the next run gets *Failed to write file*. `sweepAcls`
+  write a file a sandboxed run wrote* — a dead run's DACL the operator cannot rewrite; `sweepAcls`
   ([`acl.ts`](src/daemon/acl.ts)) replaces every path `icacls /reset` refuses (on **stderr**, which the
-  old call discarded) with an operator-owned copy, async — 7.2 s for 19.7k files. ⭐ *A Muse run bridged
-  through WSL rewrote ws3's `.git` pointer*, because muse's edit tools cannot follow `gitdir: C:/…`;
-  pool pointers are now **relative** and `ensureWorktreePointer` runs `git worktree repair` before every
-  park and prepare. ⚠️ Whether muse's `edit_file` accepts the relative pointer is inferred, not measured.
-- **Loose ends offers Delete it; the database backs itself up.** `deleteUnlandedBranch` (`worktrees.ts`)
-  discards real commits only on a confirmed click; `backup.ts` copies `warmstart.db` daily, 14-day prune.
+  old call discarded), 7.2 s for 19.7k files. ⭐ *A Muse run bridged through WSL rewrote ws3's `.git`
+  pointer*; pool pointers are now **relative** and `ensureWorktreePointer` repairs before every park.
+  ⚠️ Whether muse's `edit_file` accepts the relative pointer is inferred, not measured.
+- **Loose ends offers Delete it** (`deleteUnlandedBranch`, on a confirmed click only); **the database
+  backs itself up** (`backup.ts`, daily, 14-day prune).
 - **Trunk mode: a task can work in the project checkout itself** (t401). `workspaceMode`
-  (`worktree` | `trunk`, migration 70) resolves task → project → `worktree`; the composer, the task pane
-  and Project Settings set it. Five decisions, each in code and pinned in
-  [`trunkmode.test.ts`](src/daemon/trunkmode.test.ts): one trunk task at a time (`claimTrunk`); a
-  worktree landing into a busy or dirty trunk goes to **`landing_queued`** and `retryQueuedLandings`
-  lands it from the tick; a trunk task is dispatched onto whatever the checkout holds and told
-  (`surveyTrunk`); `pull-request` is refused in the trunk; a resting trunk task keeps its lease and
-  `sweepTrunkLeases` frees a settled one. ⛔ `parkWorkspace` refuses the project root, and a trunk
-  conversation's `land_work` never cuts a next branch. ⚠️ **Not yet driven in the packaged app or with
-  a real agent**, and a worktree task with an empty branch can still trip the trunk tripwire while a
-  trunk task commits — see [`docs/landing.md`](docs/landing.md#working-in-the-trunk).
+  (`worktree` | `trunk`, migration 70) resolves task → project → `worktree`. Five decisions pinned in
+  [`trunkmode.test.ts`](src/daemon/trunkmode.test.ts): one trunk task at a time; a worktree landing
+  into a busy or dirty trunk goes to **`landing_queued`**; a trunk task is dispatched onto whatever
+  the checkout holds and told; `pull-request` is refused there; a resting trunk task keeps its lease.
+  ⚠️ **Not driven in the packaged app** — [`docs/landing.md`](docs/landing.md#working-in-the-trunk).
 - **Repeated compaction and quota tipping loops are prevented (t401, t404).** `decideRevive`
-  ([`cacheclock.ts`](src/daemon/cacheclock.ts)) checks `accountRefusal`, `refusalRateLimit` and
-  `poolVerdict` before waking a closed conversation to compact, honouring an active task's quota
-  override unless the window is fully exhausted; `reviveAndCompact` carries `clock_move_attempts`
-  across revives so failures back off instead of looping. Preemption wrap-up falls back to handoff
-  where the vendor is refusing, the window is spent without credits, or compaction is off. Suites stub
-  CLI presence via `forceInstalled`.
-- **macOS build script and test parity.** [`scripts/build-mac.sh`](scripts/build-mac.sh) mirrors
-  `build-win.ps1`; see [`docs/development.md`](docs/development.md) §1.
+  ([`cacheclock.ts`](src/daemon/cacheclock.ts)) checks refusal and pool state before waking a closed
+  conversation to compact; `reviveAndCompact` backs off across revives. Preemption wrap-up falls back
+  to handoff where the vendor is refusing or the window is spent.
+- **macOS build script parity.** [`scripts/build-mac.sh`](scripts/build-mac.sh) mirrors `build-win.ps1`.
 - **The thread shows the change before you land it.** `task.diffSummary` / `task.diffFile`
   ([`taskdiff.ts`](src/daemon/taskdiff.ts)) read the *same* commits the grader reads. ⛔ Two measured
   git facts are pinned in [`taskdiff.test.ts`](src/daemon/taskdiff.test.ts): `--numstat` without `-z`
-  returns non-ASCII paths **C-quoted**, and a bare pathspec **over**-matches — `-- '*.tsx'` returned
-  two files where `:(literal)*.tsx` returned none. ⚠️ The `rangeCache` stale-head trap reported during
-  the debate **is not real**: rung 3 never calls `rangeCache.set`, so a moving branch is re-resolved.
-- **The security model is written down, and the permissive default is now a choice.**
-  `permissionModeFor` ([`sessions.ts`](src/daemon/sessions.ts)) puts unattended work on
-  `bypassPermissions` — full OS user authority, no approvals raised. Adapters declare
-  `policy.headlessAuthority`, projects carry `permission.unattended`, and a `sandboxed-only` project
-  **refuses** a bypassing candidate in `scoring.ts` rather than downgrading it into the t250 stall.
-  README's **Security model** section says what the two promise-shaped lines actually mean.
-- **OS notifications.** Three transitions only (`awaiting_human`, `completed`, `failed`) as changes (`lib/notify.ts`).
-- **Debate seats see current code and stay in their role.** `report-only` starts from local landing target; prompts treat submitted text as a question.
-- **Squash-merged PRs and report-only tasks under Loose ends.** Retired correctly without leaving false unlanded loose ends (`task_deliveries.retire_blocked`, `commitsOnlyOn`).
+  returns non-ASCII paths **C-quoted**, and a bare pathspec **over**-matches.
+- **The security model is written down, and the permissive default is a choice.** `permissionModeFor`
+  ([`sessions.ts`](src/daemon/sessions.ts)) puts unattended work on `bypassPermissions` — full OS user
+  authority. Adapters declare `policy.headlessAuthority`, projects carry `permission.unattended`, and
+  a `sandboxed-only` project **refuses** a bypassing candidate rather than downgrading it into t250's
+  stall. README's **Security model** says what it means.
+- **Debate seats see current code and stay in their role**; **squash-merged PRs and report-only tasks
+  retire under Loose ends** without leaving false unlanded ends (`task_deliveries.retire_blocked`).
 
 ## Remaining work — ordered by payoff
 
@@ -122,14 +135,10 @@ a unit test.
    [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §7.
 4. **Run human-in-the-loop, `commit-and-merge`, and cross-task reuse with a real agent.** The code
    and L1–L3 checks exist, but this has not been demonstrated in flight.
-5. **Run on macOS with a real CLI; this is the launch gate — and now the last one.** The other
-   three pre-public blockers (diff review, security model, notifications) landed above; this and
-   item 6 are what is left between here and a public release. Local build (`scripts/build-mac.sh`),
-   packaged execution, and all test suites (L1–L4) pass cleanly on macOS arm64. Packaged app execution
-   and daemon startup are verified locally, but more thorough testing driving real agent tasks in flight
-   is needed later. Still to verify in flight: detached daemon startup without system Node under hardened
-   runtime, Application Support isolation, Antigravity's Keychain interaction, and Gatekeeper. The signed
-   arm64 release cannot be called ready before it.
+5. **Run on macOS with a real CLI; this is the launch gate.** Local build, packaged execution and
+   L1–L4 pass on macOS arm64; driving real agent tasks in flight does not. Still to verify: detached
+   daemon startup without system Node under hardened runtime, Application Support isolation,
+   Antigravity's Keychain interaction, and Gatekeeper. The signed arm64 release waits on it.
 6. **Execute the signing/release pipeline.** macOS signing and notarisation are decided; required
    secrets are not configured and `.github/workflows/release.yml` has never run. Windows is
    intentionally unsigned initially. Release notes must tell upgraders to uninstall the old app,
@@ -145,10 +154,9 @@ a unit test.
 9. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the
    generic declarative adapter cannot meter, gets no MCP tools and cannot reap orphans); CI watch
    after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an
-   update-available check that keeps `publish: null`; a full data-directory export beyond the
-   database itself (isolation roots, attachments); and a clone-per-worker or container backend,
-   which is the only thing that properly closes both
-   the host-authority gap and the shared common-`.git` grant. ⚠️ Deliberately **not** on this list:
+   update-available check that keeps `publish: null`; a full data-directory export (isolation roots,
+   attachments); and a clone-per-worker or container backend, the only thing that closes both the
+   host-authority gap and the shared common-`.git` grant. ⚠️ Deliberately **not** on this list:
    GitHub/Linear/Slack intake, agent-to-agent messaging, kanban, voice, cross-machine sync.
 10. **Give Antigravity a real per-worker isolation root.** It shares `~/.gemini` today; changing `HOME`
    must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
@@ -159,6 +167,11 @@ a unit test.
    hand-tested. Extract pure decisions into `src/renderer/src/lib/` first.
 13. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines
    against a ~1,500 target; no extracted module may read a scheduler binding at module evaluation time.
+14. **Drive t423's live views in the packaged app, with a real run behind them.** Watch a dispatched
+   Claude task narrate its tool calls into the thread peephole and the Session TUI; open **Open a real
+   terminal** on it and confirm the fork holds the context while the run carries on; turn
+   `liveNarration` to `streaming` and see whether the typing is worth ten times the stream lines.
+   ⚠️ None of it is covered by `test/ui.test.mjs`, which never opens a project tab.
 
 ## Open questions and quiet-worker measurements
 
@@ -171,8 +184,8 @@ a unit test.
 | Vertex/Antigravity cache price | Find a published vendor price; do not infer it experimentally. | Keeps `cache.kind: "unpriced"` honest. |
 | Expected-idle estimator | Gather real queue data first. | No honest design exists without it. |
 
-Record measurement results, CLI versions and dates in [`docs/cost-model.md`](docs/cost-model.md), then
-remove the corresponding row here. R5 is dropped: cross-account transplant needs a second subscription.
+Record results, CLI versions and dates in [`docs/cost-model.md`](docs/cost-model.md), then remove the
+row. R5 is dropped: cross-account transplant needs a second subscription.
 
 ## Durable constraints
 

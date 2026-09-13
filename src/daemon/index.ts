@@ -178,6 +178,9 @@ async function main(): Promise<void> {
     onData(sessionId, data) {
       emit({ type: 'session.data', sessionId, data })
     },
+    onStreamLine(sessionId, line) {
+      emit({ type: 'session.stream', sessionId, line })
+    },
     onStream(session, event) {
       // ⛔ The vendor's name for this conversation, and the only moment it is ever offered. It was
       // decoded and thrown away: `agy` names its own conversations, reports the id once on `init`,
@@ -224,6 +227,24 @@ async function main(): Promise<void> {
       // ⛔ Framed by the adapter, not by this module reading the bytes. One `assistant_text` off
       // claude-code is a whole message; one off muse is a handful of tokens. Treating either as the
       // other wrecks the pane — see `AdapterCapabilities.outputFraming`.
+      // ⛔ **The 78% that used to reach nobody.** A tool call and a thinking phase are the two things
+      // a Claude Code turn is mostly made of — measured 2026-09-13 on a real 1,679-record session,
+      // 1,310 of its assistant records carried no prose at all — and neither had an event to arrive
+      // on, so the pane and the peephole both sat blank while the agent worked. Framed as `message`
+      // whatever the adapter's prose framing is, because each of these *is* one whole line: an
+      // announcement is never a fragment of the next one.
+      //
+      // ⚠️ `start` only, for a thinking phase. The estimate ticks several times a turn and the
+      // peephole is a bounded tail of settled lines — it cannot revise a row it has pushed, so
+      // pushing one per tick would spend the whole tail on a counter. The live count is on the
+      // session view, which can.
+      if (event.kind === 'tool_use' || (event.kind === 'thinking' && event.start)) {
+        const run = runForSession(session.id) ?? resumeIdleConversation(session)
+        if (run?.taskId) {
+          const line = event.kind === 'tool_use' ? event.summary : '[thinking…]'
+          noteActivity(run.taskId, `${line}\n`, run.id, 'message')
+        }
+      }
       if (event.kind === 'assistant_text') {
         // ⛔ **A session may speak when no run is open, and the words are not noise.** A resting
         // conversation whose agent wakes itself up — a background command it left running comes

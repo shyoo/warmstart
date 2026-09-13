@@ -29,6 +29,8 @@ describe('local-llm adapter unit tests', () => {
       streamPrompts: 'conversation',
       // The bridge flushes on a rung, not on a message: the peephole must reassemble it.
       outputFraming: 'delta',
+      // ⚠️ Already as partial as it gets. `false` here means *nothing to turn on*, not less detail.
+      streamsPartialOutput: false,
       metering: 'stream',
       maxAccounts: null,
       mintsSessionId: false,

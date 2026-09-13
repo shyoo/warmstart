@@ -9,12 +9,21 @@ import type {
   AdapterInfo,
   CreditStatus,
   QuotaSnapshot,
+  QuotaWindow,
   SpendMeter,
   SpendSnapshot
 } from '@shared/protocol.js'
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
 import { workspaceGrants } from './grants.js'
-import { asRecord, textBlocks, type StreamEvent } from '../stream.js'
+import {
+  asRecord,
+  num,
+  textBlocks,
+  toolBlocks,
+  toolLine,
+  type DecodeContext,
+  type StreamEvent
+} from '../stream.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, spawnEnv, which } from '../which.js'
 import { APPROVE_TOOL } from '../mcpconfig.js'
@@ -68,6 +77,11 @@ const info: AdapterInfo = {
     // One `{"type":"assistant"}` record per message, its text blocks joined. Whole prose, own
     // linebreaks, and the next record is a new message rather than more of this one.
     outputFraming: 'message',
+    // ⭐ Measured 2026-09-13 on 2.1.270: `--include-partial-messages` turned one seven-line turn into
+    // eighty-one, carrying `content_block_delta` with `text_delta` for prose. ⚠️ It does **not**
+    // carry the thinking words — `thinking_delta.thinking` is the empty string with the flag exactly
+    // as without it — so what this capability buys is prose appearing as it is typed, and nothing else.
+    streamsPartialOutput: true,
     // `--session-id` takes a uuid we choose, which is what makes the transcript path knowable before
     // the file exists and what lets orphan reaping prove a pid is ours.
     mintsSessionId: true,
@@ -464,12 +478,94 @@ function envFor(isolationRoot: string): Record<string, string> {
  * ⚠️ And the only one that does *not* report usage in the stream. Its numbers come from the
  * transcript, which is exact and includes the compaction sampling iteration (cost-model.md §6).
  */
-function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEvent[] | null {
+/**
+ * The five windows `unifiedWindows` can name, under the ids the config-cache probe already uses.
+ *
+ * ⛔ **The ids have to agree with `probeQuota`'s or the two readings are two accounts.** Every gate
+ * downstream keys on the window id — `isSessionRateWindow`, `sessionWindowFor`, the reset countdown
+ * — so a live reading calling the five-hour pool `five_hour` where the cache calls it `session`
+ * would read as a *different* window that happened to be at the same percentage. Measured on this
+ * install 2026-09-13: the cache publishes `session` / `weekly_all`, labelled `Claude 5h` / `Claude 7d`.
+ *
+ * ⚠️ A key this does not recognise is skipped rather than guessed at. `quota.ts` then declines to
+ * publish the reading at all rather than losing a window nobody mapped — see `recordRateLimit`.
+ */
+const UNIFIED_WINDOWS: Record<string, { id: string; label: string }> = {
+  five_hour: { id: 'session', label: 'Claude 5h' },
+  seven_day: { id: 'weekly_all', label: 'Claude 7d' },
+  seven_day_opus: { id: 'weekly_opus', label: 'Claude 7d Opus' }
+}
+
+/**
+ * `{five_hour: {utilization: 0.12, resetsAt: 1789342200}}` → the fleet's own window shape.
+ *
+ * ⚠️ `utilization` is a **fraction**, not a percentage: measured 0.12 against a `/usage` reading of
+ * 12%. Multiplying is the whole conversion, and getting it the wrong way round would put every
+ * account at 0% of its window forever, which is the direction that spends quota rather than saving it.
+ */
+function unifiedWindows(value: unknown): QuotaWindow[] {
+  const record = asRecord(value)
+  if (!record) return []
+  const windows: QuotaWindow[] = []
+  for (const [key, raw] of Object.entries(record)) {
+    const known = UNIFIED_WINDOWS[key]
+    const window = asRecord(raw)
+    if (!known || !window || typeof window.utilization !== 'number') continue
+    windows.push({
+      id: known.id,
+      label: known.label,
+      percent: Math.max(0, Math.min(100, window.utilization * 100)),
+      resetsAt: typeof window.resetsAt === 'number' ? window.resetsAt * 1000 : null
+    })
+  }
+  return windows
+}
+
+/**
+ * One Claude Code tool call, as a line.
+ *
+ * ⚠️ The vocabulary is `antigravity-cli`'s, deliberately: `activity.proseOf` skips exactly these
+ * prefixes when it pulls an agent's *prose* out of the peephole, and a line that spells itself
+ * differently gets quoted back to a thread as though the agent had written it.
+ */
+function describeTool(tool: { name: string; input: Record<string, unknown> }): StreamEvent {
+  const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null)
+  const { name, input } = tool
+  const command = str(input.command)
+  const path = str(input.file_path) ?? str(input.notebook_path) ?? str(input.path)
+  const pattern = str(input.pattern)
+  const url = str(input.url)
+  const query = str(input.query)
+
+  // ⛔ A shell command is the one argument worth carrying whole: it is what an operator watching a
+  // run actually wants to read, and it is also the longest. The summary is capped by the peephole;
+  // `detail` is what the session pane opens.
+  if (command) return { kind: 'tool_use', name, summary: toolLine('run', command), detail: command }
+  if (path) return { kind: 'tool_use', name, summary: toolLine('Tool', `${name} ${path}`), detail: path }
+  if (pattern) return { kind: 'tool_use', name, summary: toolLine('search', pattern), detail: str(input.path) }
+  if (url) return { kind: 'tool_use', name, summary: toolLine('fetch', url), detail: url }
+  if (query) return { kind: 'tool_use', name, summary: toolLine('search', query), detail: null }
+  // ⚠️ `description` last rather than first: several tools carry both a real argument and a prose
+  // description of it, and the argument is the thing that can be checked.
+  const description = str(input.description) ?? str(input.prompt)
+  return {
+    kind: 'tool_use',
+    name,
+    summary: toolLine('Tool', description ? `${name} — ${description}` : name),
+    detail: description
+  }
+}
+
+function decodeStream(
+  record: Record<string, unknown>,
+  ctx?: DecodeContext
+): StreamEvent | StreamEvent[] | null {
   const type = typeof record.type === 'string' ? record.type : ''
 
   if (type === 'rate_limit_event') {
     const info = asRecord(record.rate_limit_info)
     if (!info) return null
+    const windows = unifiedWindows(info.unifiedWindows)
     return {
       kind: 'rate_limit',
       info: {
@@ -478,9 +574,40 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
         resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt * 1000 : null,
         rateLimitType: typeof info.rateLimitType === 'string' ? info.rateLimitType : 'unknown',
         ...(typeof info.overageStatus === 'string' ? { overageStatus: info.overageStatus } : {}),
-        ...(typeof info.isUsingOverage === 'boolean' ? { isUsingOverage: info.isUsingOverage } : {})
+        ...(typeof info.isUsingOverage === 'boolean' ? { isUsingOverage: info.isUsingOverage } : {}),
+        ...(typeof info.overageResetsAt === 'number'
+          ? { overageResetsAt: info.overageResetsAt * 1000 }
+          : {}),
+        ...(windows.length > 0 ? { windows } : {})
       }
     }
+  }
+
+  // ⭐ The thinking phase, as a phase. There is nothing else to have — see `StreamEvent.thinking`.
+  // ⚠️ Arrives with **no flag**: measured 2026-09-13 on 2.1.270, a plain `--output-format stream-json
+  // --verbose` turn emitted two of these. `--include-partial-messages` makes them more frequent and
+  // adds nothing they do not already carry.
+  if (type === 'system' && record.subtype === 'thinking_tokens') {
+    const tokens = num(record.estimated_tokens)
+    const delta = num(record.estimated_tokens_delta)
+    return { kind: 'thinking', tokens, start: tokens > 0 && tokens === delta }
+  }
+
+  // The partial-output rung. ⛔ Only the two deltas that say something a whole record does not:
+  // prose as it is typed, and a thinking estimate that ticks while it is still thinking. Every
+  // other `stream_event` is the framing of a record that arrives whole a moment later.
+  if (type === 'stream_event') {
+    const event = asRecord(record.event)
+    if (event?.type !== 'content_block_delta') return { kind: 'other', type }
+    const delta = asRecord(event.delta)
+    if (delta?.type === 'text_delta' && typeof delta.text === 'string' && delta.text) {
+      return { kind: 'assistant_delta', text: delta.text }
+    }
+    if (delta?.type === 'thinking_delta') {
+      // ⚠️ `delta.thinking` is the empty string here, every time. The estimate is the content.
+      return { kind: 'thinking', tokens: num(delta.estimated_tokens), start: false }
+    }
+    return { kind: 'other', type }
   }
 
   if (type === 'result') {
@@ -494,10 +621,24 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
   }
 
   if (type === 'assistant') {
+    const events: StreamEvent[] = []
     const text = textBlocks(record.message)
     // A tool-use-only turn carries no prose. Reporting it as empty text would make a chat pane look
     // like the controller answered with nothing.
-    return text ? { kind: 'assistant_text', text } : { kind: 'other', type }
+    // ⚠️ `streamed` when the caller asked for partial output: the words are already on the screen a
+    // character at a time, and the peephole still needs this framed copy.
+    if (text) {
+      events.push({
+        kind: 'assistant_text',
+        text,
+        ...(ctx?.partialMessages ? { streamed: true } : {})
+      })
+    }
+    // ⛔ **What used to be dropped on the floor.** Measured 2026-09-13 on a real 1,679-record
+    // session: 814 of these records carried a tool call and 1,310 carried no prose at all, so the
+    // agent's whole working day was invisible between one paragraph and the next.
+    for (const tool of toolBlocks(record.message)) events.push(describeTool(tool))
+    return events.length === 0 ? { kind: 'other', type } : events.length === 1 ? events[0]! : events
   }
 
   // ⛔ The record that says the agent stopped *for a person* rather than because it was finished.
@@ -929,7 +1070,23 @@ export const claudeCode: AgentAdapter = {
     // ⚠️ Resuming re-reads the transcript from the top, so every turn already recorded arrives
     // again. That is absorbed by the unique index on (session_id, request_id) in `recordTurn`, which
     // exists because this CLI writes duplicate usage records anyway - see cost-model.md §6.
-    const args = req.resumeFrom
+    // ⭐ **A fork takes both ids, and that is measured rather than assumed.** The note below says
+    // asking for `--session-id` alongside `--resume` is asking for two ids at once, and it is — but
+    // `--fork-session` makes it two *conversations*, and the new one is ours to name. Measured
+    // 2026-09-13 on 2.1.270: `--resume <old> --fork-session --session-id <new>` printed an `init`
+    // carrying the minted id and read 31,372 cached tokens. Naming it is what keeps the transcript
+    // path knowable and the process provably ours.
+    const args = req.forkFrom
+      ? [
+          '--resume',
+          req.forkFrom,
+          '--fork-session',
+          '--session-id',
+          req.sessionId,
+          '--permission-mode',
+          req.permissionMode ?? info.policy.defaultPermissionMode
+        ]
+      : req.resumeFrom
       ? ['--resume', req.resumeFrom, '--permission-mode', req.permissionMode ?? info.policy.defaultPermissionMode]
       : [
           // Minted before the process starts, so the transcript path is known before there is a file.
@@ -967,6 +1124,9 @@ export const claudeCode: AgentAdapter = {
     }
     if (req.transport === 'stream') {
       args.push('-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose')
+      // ⚠️ Only when the caller asked and only on this transport — the flag's own help says it
+      // works with `--print` and `--output-format=stream-json` and nowhere else.
+      if (req.partialMessages) args.push('--include-partial-messages')
     }
     return { command, args: [...prefixArgs, ...args], env }
   },

@@ -2493,6 +2493,14 @@ try {
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Global')).click()`
   )
   await wait(1500)
+  // ⚠️ Global opens on **Fleet settings** since t422 split it into tabs, and the window preferences
+  // moved behind **App behavior**. These four checks went red in that commit rather than in the one
+  // that noticed: the switch is still there, still a switch, and still says what turning it off ends
+  // — the suite was simply looking at the tab in front of it. Reaching the tab is the whole fix.
+  await evaluate(
+    `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'App behavior')?.click()`
+  )
+  await wait(1000)
   const globalPanel = await evaluate('document.querySelector(".content")?.innerText ?? ""')
   check(
     'the Global page offers the tray switch',
@@ -2864,6 +2872,13 @@ try {
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim() === 'Global')?.click()`
   )
   await wait(1500)
+  // ⚠️ Global remembers the tab it was last on, and the section above leaves it on **App behavior**.
+  // Naming the tab is what makes each section independent of the one before it — which is the
+  // property the suite had for free while Global was a single page (t422 split it).
+  await evaluate(
+    `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Fleet settings')?.click()`
+  )
+  await wait(1000)
   const fleetPicker = `[...document.querySelectorAll('select')].find(
      s => s.getAttribute('aria-label') === 'Fleet finish policy')`
   check('the fleet tier has a control', (await evaluate(`!!(${fleetPicker})`)) === true)
@@ -4136,6 +4151,13 @@ try {
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Global')).click()`
   )
   await wait(800)
+  // ⚠️ The Projects table, and the Workspaces column these checks read, moved onto **Status** when
+  // t422 split Global into tabs. Naming the tab is what keeps the check about the column rather than
+  // about which tab Global happened to remember.
+  await evaluate(
+    `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Status')?.click()`
+  )
+  await wait(1000)
   // ⛔ Removed 2026-08-31. A read-only roll-up of every pool and lock in the fleet, one screen away
   // from the project each belongs to, under a heading that says Settings — it read as a page of
   // things you could change and was not. The free/capacity number survives where it is useful: the

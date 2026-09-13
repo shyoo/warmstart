@@ -206,6 +206,10 @@ const info: AdapterInfo = {
     streamPrompts: 'conversation',
     // `step_update` carries `text_delta`/`thought_delta`: a few tokens at a time, split mid-word.
     outputFraming: 'delta',
+    // ⚠️ Its stream is already a delta stream — every `step_update` is a fragment — so there is no
+    // separate partial mode to ask for and no flag to pass. `false` means *nothing to turn on*, not
+    // *less detail*: this is the adapter that was never quiet in the first place.
+    streamsPartialOutput: false,
     mintsSessionId: false,
     // ⚠️ Not from a transcript: agy writes conversations as SQLite, which the line-oriented tailer
     // cannot read. But usage IS in the stream - measured 2026-08-25 - so the work is metered after
@@ -392,7 +396,7 @@ function formatToolActivity(step: Record<string, unknown>): string | null {
     summary = `[Tool: ${toolName}]`
   }
 
-  return summary ? `${summary}\n` : null
+  return summary
 }
 
 function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEvent[] | null {
@@ -415,10 +419,21 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
     if (!text && typeof step?.text === 'string') text = step.text
     if (!text && typeof step?.thought_delta === 'string') text = step.thought_delta
     if (!text && typeof step?.thought === 'string') text = step.thought
-    if (!text && step && step.step_type === 'tool' && step.state === 'ACTIVE') {
-      text = formatToolActivity(step) ?? ''
-    }
     if (text) events.push({ kind: 'assistant_text', text })
+    // ⛔ **A tool call is a declared `tool_use` event now, not prose wearing brackets.** The line it
+    // produces is unchanged — `activity.proseOf` still skips it by prefix, and every measurement
+    // taken off this stream still reads the same — but a session view can lay a declared event out,
+    // and it could never tell a `[run: …]` line from an agent that started a sentence with one.
+    if (!text && step && step.step_type === 'tool' && step.state === 'ACTIVE') {
+      const summary = formatToolActivity(step)
+      if (summary) {
+        events.push({
+          kind: 'tool_use',
+          name: typeof step.tool_name === 'string' ? step.tool_name : '',
+          summary
+        })
+      }
+    }
     // ⭐ One record per **model call**, and the only place the context window level is visible:
     // `input_tokens` here is the prompt this call sent. The terminal `result` sums them, so it
     // answers neither "what did the turn cost" nor "how full is the window" - see `streamusage.ts`.

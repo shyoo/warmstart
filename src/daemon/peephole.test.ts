@@ -327,6 +327,33 @@ describe('the closing prose of a report-only run', () => {
     expect(proseOf(entries)).toEqual(['Reading the scheduler.', 'I hold X.'])
   })
 
+  /**
+   * ⛔ A thinking marker is not a sentence, and it carries no words by construction — the vendor does
+   * not publish them (see `StreamEvent.thinking`). It is the emptiest possible thing to hand a debate
+   * seat's thread as that seat's closing position, so it is filtered with the tool lines.
+   */
+  it('skips the thinking marker, which has no words in it to quote', () => {
+    const entries = ['[thinking…]', 'I hold X.'].map((text) => ({ text }))
+    expect(proseOf(entries)).toEqual(['I hold X.'])
+  })
+
+  /**
+   * ⭐ Claude Code's tool lines now spell themselves in this same vocabulary (`toolLine` in
+   * stream.ts), which is what lets one filter list serve both adapters. Before t423 it narrated no
+   * tool use at all, so the question never came up on it — and the day it did, a `[run: npm test]`
+   * would have been quoted onto a thread as something the agent said.
+   */
+  it('skips the lines claude-code writes, which are the same shapes antigravity writes', () => {
+    const entries = [
+      '[run: npm test]',
+      '[Tool: Read src/daemon/stream.ts]',
+      '[search: admit]',
+      '[fetch: https://example.com]',
+      'What I actually concluded.'
+    ].map((text) => ({ text }))
+    expect(proseOf(entries)).toEqual(['What I actually concluded.'])
+  })
+
   it('keeps the last whole lines that fit the budget, oldest first', () => {
     const entries = ['one', 'two two', 'three three three', 'four'].map((text) => ({ text }))
     expect(closingProse(entries, 100)).toBe('one\ntwo two\nthree three three\nfour')

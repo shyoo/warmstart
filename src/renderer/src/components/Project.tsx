@@ -1,11 +1,14 @@
 import { sessionEnded } from '@shared/protocol'
 import type { Project as ProjectRecord, ResourceAvailability } from '@shared/tasks'
 import type { FleetEntry } from '../lib/daemon'
+import { rpc } from '../lib/daemon'
+import { useAction } from '../lib/useAction'
 import { Tasks } from './Tasks'
 import { TaskThread } from './TaskThread'
 import { ProjectSettings } from './ProjectSettings'
 import { Conversations } from './Conversations'
 import { TerminalPane } from './Terminal'
+import { SessionStream } from './SessionStream'
 import { Flow } from './Flow'
 
 export type ProjectTab = 'flow' | 'tasks' | 'thread' | 'conversations' | 'sessionTui' | 'settings'
@@ -151,16 +154,20 @@ export function Project({
 }
 
 /**
- * The raw terminal of a live agent process, for this project.
+ * What a live agent is doing, and a real terminal beside it.
  *
- * ⛔ Live only, and that is not a limitation to apologise for: a TTY needs a process on the other
- * end of it. What a *finished* session did is the Conversations tab, which is why the empty state
- * points there rather than explaining an absence.
+ * ⛔ **Two tiers, because a dispatched agent genuinely has no terminal.** Work runs on pipes —
+ * `--print` refuses to start under a pseudo-terminal — so there is no screen to mirror and no
+ * keyboard to take. What this pane draws for such a session is the decoded stream: tool calls,
+ * thinking phases, the vendor's own rate-limit cautions, the turn ending. A session that *does* have
+ * a TTY (one you opened yourself) gets the real thing, unchanged.
  *
- * ⚠️ The note that used to be here said sessions were never stamped with a project and the filter
- * would always be empty. That stopped being true when dispatch began passing `projectId` to
- * `spawnSession` (scheduler.ts) — every work session on this install carries one — so the filter is
- * real and the fallback below is for rows that predate it.
+ * ⛔ **The keyboard switch is gone from the pipe case, and that is a bug fix rather than a tidy-up.**
+ * Measured 2026-09-13 on claude 2.1.270: its `--input-format stream-json` stdin takes whole JSON
+ * messages, and raw keystrokes written ahead of the next one produced
+ * `Error parsing streaming input line … SyntaxError` and **exit 1**. Offering *take the keyboard* on
+ * a dispatched task meant one stray character ended the run. The daemon refuses it now too; this is
+ * the half that stops anybody reaching for it.
  */
 function ProjectSessions({
   project,
@@ -189,15 +196,21 @@ function ProjectSessions({
     openSession && shown.some((s) => s.session.id === openSession)
       ? openSession
       : (shown[0]?.session.id ?? null)
+  const current = shown.find((s) => s.session.id === selected)?.session ?? null
+  const pipe = current?.transport === 'stream'
+
+  const attach = useAction(
+    async (id: string) => rpc('session.attach', { id }),
+    { successNote: (s) => `Opened a terminal on ${s.id.slice(0, 6)}. Pick it from the tabs above.` }
+  )
 
   if (shown.length === 0) {
     return (
       <div className="empty-inline">
         <p>No live session to watch.</p>
         <p className="dim">
-          This tab is a terminal, so it needs a process on the other end of it. Scheduled work runs
-          on a pipe transport and appears here as it streams; a session you open yourself gets a
-          real TTY. What earlier sessions did is on <strong>Conversations</strong>.
+          Scheduled work runs on a pipe and appears here as it streams, decoded; a session you open
+          yourself gets a real TTY. What earlier sessions did is on <strong>Conversations</strong>.
         </p>
       </div>
     )
@@ -209,19 +222,51 @@ function ProjectSessions({
         <div>
           <h2>Session TUI</h2>
           <p className="panel-sub">
-            The real agent terminal, exactly as the CLI is drawing it. Read-only until you take the
-            keyboard — a stray keystroke into a running agent is a real edit to a real repository.
+            {pipe ? (
+              <>
+                This agent was dispatched, so it has no terminal: it runs on a pipe, and what you are
+                reading is its own structured record of what it is doing — not a screen. To say
+                something to it, reply on its task.
+              </>
+            ) : (
+              <>
+                The real agent terminal, exactly as the CLI is drawing it. Read-only until you take
+                the keyboard — a stray keystroke into a running agent is a real edit to a real
+                repository.
+              </>
+            )}
           </p>
         </div>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={keyboard}
-            onChange={(e) => setKeyboard(e.target.checked)}
-          />
-          take the keyboard
-        </label>
+        {pipe ? (
+          <button
+            className="btn"
+            disabled={attach.busy || !selected}
+            onClick={() => selected && void attach.run(selected)}
+          >
+            {attach.busy ? 'Opening…' : 'Open a real terminal'}
+          </button>
+        ) : (
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={keyboard}
+              onChange={(e) => setKeyboard(e.target.checked)}
+            />
+            take the keyboard
+          </label>
+        )}
       </header>
+
+      {attach.note && <div className="notice">{attach.note}</div>}
+
+      {pipe && (
+        <p className="dim">
+          <strong>Open a real terminal</strong> starts the CLI itself in this workspace, holding a
+          copy of this conversation. ⛔ A copy, always — a fork, never the conversation itself — so
+          the run here carries on undisturbed and the scheduler can still resume the original. ⚠️ It
+          stands in the same worktree and can edit the same files, so it is yours to be careful with.
+        </p>
+      )}
 
       {mine.length === 0 && (
         <div className="notice">
@@ -240,11 +285,17 @@ function ProjectSessions({
           >
             <span className="mono">{session.id.slice(0, 6)}</span>
             <span className="dim">{worker.label}</span>
+            {session.transport === 'stream' && <span className="dim">· piped</span>}
           </button>
         ))}
       </div>
 
-      {selected && <TerminalPane sessionId={selected} interactive={keyboard} />}
+      {selected &&
+        (pipe ? (
+          <SessionStream sessionId={selected} live />
+        ) : (
+          <TerminalPane sessionId={selected} interactive={keyboard} />
+        ))}
     </div>
   )
 }

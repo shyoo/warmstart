@@ -605,12 +605,51 @@ export function isRefusal(status: string): boolean {
 }
 
 /**
+ * Publish the windows a `rate_limit_event` volunteered, unless doing so would lose one.
+ *
+ * ⭐ **Free, and fresher than anything else this project has.** Measured 2026-09-13 on claude 2.1.270:
+ * every `rate_limit_event` carries `unifiedWindows` with a utilization per window, riding a turn
+ * already being paid for. The alternative — `probeQuota` — reads a vendor cache that only moves when
+ * a `/usage` PTY drive runs, and has been measured **19 days** stale.
+ *
+ * ⛔ **A snapshot is atomic, so an incomplete one silently deletes windows.** `sampleAt` reads every
+ * row sharing the newest `sampled_at`, which means a reading naming two windows *replaces* a reading
+ * that named three: an account with a separate Opus pool would simply stop having one, at full
+ * confidence, with no error anywhere. So this publishes only where the live record names every window
+ * the newest stored reading named. Where it does not, the reading is dropped and the existing path is
+ * untouched — the honest cost is that the account keeps the cache's cadence, which is what it had.
+ *
+ * ⚠️ Whether `unifiedWindows` carries an Opus window on an account that has one is **unverified**:
+ * no Max account was available to measure. `UNIFIED_WINDOWS` in `claude-code.ts` maps a key for it
+ * on the assumption that it is spelled like the others, and this guard is what makes being wrong
+ * about that cost nothing.
+ */
+function publishStreamWindows(workerId: string, windows: QuotaWindow[]): void {
+  if (windows.length === 0) return
+  const known = lastQuotaReading(workerId)
+  const named = new Set(windows.map((w) => w.id))
+  const missing = (known?.windows ?? []).filter((w) => !named.has(w.id))
+  if (missing.length > 0) {
+    log.debug(
+      `not publishing ${workerId.slice(0, 8)}'s live windows: the record says nothing about ` +
+        missing.map((w) => w.label).join(', ')
+    )
+    return
+  }
+  // ⚠️ **Our clock, and that is the point.** The vendor stamps its cache with when it last refreshed
+  // it; this record describes the request happening right now, so the age shown is a few seconds.
+  storeAndPublish({ workerId, windows, sampledAt: Date.now(), source: 'stream' })
+}
+
+/**
  * Record a `rate_limit_event` from the stream transport.
  *
  * This is the one quota signal that is both **live and free** - it rides a turn already being paid
- * for. It carries no size, so it cannot satisfy the compaction reserve on its own; what it does give
- * is a trustworthy **reset time** (which preemption needs) and an early warning when the status stops
- * being `allowed`.
+ * for. Since 2026-09-13 it carries **sizes** as well on claude-code: `unifiedWindows` gives a
+ * utilization per window, which `publishStreamWindows` turns into a reading. What it still cannot do
+ * is satisfy the compaction reserve, because a percentage is not a number of tokens (cost-model.md
+ * §5); what it gives beyond that is a trustworthy **reset time** and an early warning when the status
+ * stops being `allowed`.
  */
 export function recordRateLimit(
   workerId: string,
@@ -622,6 +661,8 @@ export function recordRateLimit(
     /** ⚠️ The vendor's own words for the overage state, when it says anything at all. */
     overageStatus?: string
     isUsingOverage?: boolean
+    /** The live reading, where this vendor publishes one. See `publishStreamWindows`. */
+    windows?: QuotaWindow[]
   }
 ): void {
   db()
@@ -637,6 +678,12 @@ export function recordRateLimit(
   // price anything by itself; what it does is mark which runs were burning it, and without that mark
   // no overage arithmetic is possible at all. See `markRunOverage`.
   if (sessionId) markRunOverage(sessionId, info)
+
+  // ⛔ Before the urgent-probe request below, deliberately. A probe that has already been answered by
+  // the record that triggered it is a PTY session started to re-learn something already known — and
+  // `requestUrgentProbe` exists precisely because the gate and the operator were reading different
+  // numbers, which is the disagreement this closes without spawning anything.
+  if (info.windows) publishStreamWindows(workerId, info.windows)
 
   if (info.status !== 'allowed') {
     log.warn(`worker ${workerId.slice(0, 8)} rate limit status is '${info.status}' (${info.rateLimitType})`)

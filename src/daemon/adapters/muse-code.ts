@@ -119,6 +119,8 @@ const info: AdapterInfo = {
     // `run.output.delta`, and it is the stream that named this capability: t272 read one word per
     // line before anything reassembled it.
     outputFraming: 'delta',
+    // `run.output.delta` is already every few tokens. Nothing to ask for.
+    streamsPartialOutput: false,
     // `--session-id <UUID>` takes an id we choose, which is what makes the session log's path
     // knowable before the file exists and lets orphan reaping prove a pid is ours.
     mintsSessionId: true,

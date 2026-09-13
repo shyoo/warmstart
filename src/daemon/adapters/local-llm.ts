@@ -68,6 +68,8 @@ const info: AdapterInfo = {
     // The bridge flushes its SSE buffer on a newline, a sentence end or 60 characters, so an event
     // is a rung of one reply rather than the reply.
     outputFraming: 'delta',
+    // The bridge already emits ~60-character rungs; there is no coarser mode to opt out of.
+    streamsPartialOutput: false,
     mintsSessionId: false,
     // Usage comes from the OpenAI-format response's `usage` field in the final SSE chunk.
     // llama.cpp reports `prompt_tokens` and `completion_tokens` there.

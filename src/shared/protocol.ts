@@ -201,6 +201,19 @@ export interface Settings {
    * Probability (0..1) of exploring an alternative model on an eligible decision. Default 0.10.
    */
   modelExplorationRate: number
+  /**
+   * How much of a running turn the live views show. Default `summary`.
+   *
+   *  - `summary`   — whole messages, one line per tool call, one line per thinking phase. Every
+   *    adapter, no extra flags, no extra stream traffic.
+   *  - `streaming` — as above, plus prose arriving word by word on adapters that declare
+   *    `streamsPartialOutput`. ⚠️ Roughly ten times the stream lines per turn (measured 2026-09-13:
+   *    81 against 7), which is why it is opted into rather than defaulted into.
+   *
+   * ⛔ Never branch on the adapter here: a CLI that cannot do it simply does not declare the
+   * capability, and `streaming` is then the same as `summary` for that worker.
+   */
+  liveNarration: 'summary' | 'streaming'
 }
 
 /** The per-agent cost scale, as the Cost screen shows it. Mirrors `estimator.ts`'s own types. */
@@ -606,9 +619,62 @@ export interface QuotaSnapshot {
   workerId: string
   windows: QuotaWindow[]
   sampledAt: number
-  source: 'cli' | 'config-cache' | 'unknown'
+  /**
+   * Where the numbers came from, which is what says how much to trust their age.
+   *
+   *  - `cli`          — a reading taken *now*, by asking the CLI.
+   *  - `config-cache` — a file the vendor refreshes on its own schedule. As old as `sampledAt` says.
+   *  - `stream`       — ⭐ the vendor volunteered it mid-turn, on a record riding work already being
+   *    paid for. Fresher than either of the above and free: Claude Code's `rate_limit_event` carries
+   *    `unifiedWindows` with a utilization per window (measured 2026-09-13 on 2.1.270). Stamped with
+   *    **our** clock, because the record describes the request that is happening now.
+   *  - `unknown`      — nothing usable was read. Never a synonym for `ok`.
+   */
+  source: 'cli' | 'config-cache' | 'stream' | 'unknown'
   /** Set when the probe failed. The scheduler degrades conservatively rather than stalling. */
   error?: string
+}
+
+/**
+ * One line of a `stream` session, decoded for a person to read.
+ *
+ * ⛔ **The second tier, and the reason there are two.** A dispatched agent has no terminal: `--print`
+ * refuses to start under a PTY, so work runs on pipes and there is no screen to mirror. What the
+ * session pane can honestly show is this — the same structured events the scheduler already consumes,
+ * rendered. ⚠️ It is a *reconstruction*, it says so on screen, and nothing downstream reads it back.
+ *
+ * ⛔ `text` and `detail` are agent output and therefore untrusted. Rendered as text, never as markup.
+ */
+export interface SessionStreamLine {
+  /** Monotonic per session, so a backfill and the live feed can be merged without duplicates. */
+  seq: number
+  ts: number
+  /**
+   * What this line is, so the pane can style it without reading the words.
+   *
+   *  - `text`       — assistant prose.
+   *  - `thinking`   — a thinking phase. ⚠️ Never the words: measured 2026-09-13 on claude 2.1.270,
+   *    the stream's `thinking` blocks carry an empty string and a signature, and `--include-partial-
+   *    messages` gives `thinking_delta.thinking === ""` too. What exists is a token estimate.
+   *  - `tool`       — a tool call, summarised by the adapter that knows its vendor's shapes.
+   *  - `rate_limit` — the vendor's own quota caution, which is also what preemption runs on.
+   *  - `result`     — the turn ended.
+   *  - `note`       — anything else worth a line: the model and mode a session opened with.
+   */
+  kind: 'text' | 'thinking' | 'tool' | 'rate_limit' | 'result' | 'note'
+  text: string
+  /** The long form — a command, a path, a reason — shown only when the row is opened. */
+  detail?: string | null
+  /** ⚠️ `error` is the turn failing, not the agent reporting bad news. */
+  tone?: 'normal' | 'dim' | 'warn' | 'error'
+  /**
+   * Tokens estimated for the thinking phase this line describes, where the vendor says.
+   *
+   * ⭐ Free: claude-code emits `{"type":"system","subtype":"thinking_tokens"}` with a running
+   * `estimated_tokens` on every turn, with no flag. It is the only measure of a thinking phase that
+   * a caller can have, and a caller that shows it must show it as an estimate.
+   */
+  thinkingTokens?: number
 }
 
 /**
@@ -1025,6 +1091,18 @@ export interface AdapterCapabilities {
    * for, and a capability that lies in that direction silently loses somebody's context.
    */
   resumeSession: boolean
+  /**
+   * This adapter's `plan` honours `SpawnRequest.forkFrom`: a second process can be opened on a
+   * conversation **that is still live**, holding its context without touching it.
+   *
+   * ⭐ What it is for, since t423: a dispatched task runs on pipes and has no terminal, so there is
+   * no TTY to attach to and no way to make one. A fork is the closest honest thing — the real CLI,
+   * in the real workspace, holding the same context, as a separate conversation nobody's run depends
+   * on. Measured 2026-09-13 on claude 2.1.270: `--resume <id> --fork-session --session-id <new>`
+   * honoured the minted id and read 31,372 cached tokens, which is a cache read and not a rebuild.
+   *
+   * ⚠️ Same claim shape as `resumeSession`: about *this adapter*, never about the vendor's flag list.
+   */
   forkSession: boolean
   nativeWorktree: boolean
   /**
@@ -1130,6 +1208,20 @@ export interface AdapterCapabilities {
    * destroys the text by running unrelated sentences together.
    */
   outputFraming: 'message' | 'delta'
+  /**
+   * Can this CLI be asked to stream a turn as it is written, rather than a message at a time?
+   *
+   * ⛔ **A capability, because it is a fact about the binary and because the setting that turns it on
+   * is fleet-wide.** Claude Code has `--include-partial-messages`, which turns one `assistant` record
+   * into a `content_block_start` / many `content_block_delta` / `content_block_stop` run — measured
+   * 2026-09-13 on 2.1.270: 81 stream lines where the same turn without the flag produced 7.
+   *
+   * ⚠️ What it buys is smaller than it sounds, and the measurement is the reason the fleet default is
+   * off. It does **not** unlock the thinking text (that is empty either way) and it does not unlock
+   * the thinking token estimate (`system/thinking_tokens` arrives without any flag). It buys prose
+   * appearing word by word in the live session view, at roughly ten times the parser traffic.
+   */
+  streamsPartialOutput: boolean
   /**
    * Will this CLI accept a session id agentyard chose?
    *
@@ -1566,6 +1658,19 @@ export interface RpcMap {
   'session.resize': { params: { id: string; cols: number; rows: number }; result: { ok: true } }
   'session.close': { params: { id: string }; result: { ok: true } }
   'session.backscroll': { params: { id: string }; result: { data: string } }
+  /**
+   * The decoded log of a `stream` session, for a pane opened after the run began.
+   *
+   * ⚠️ Additive, and a caller must tolerate it being absent: a desktop driving an older remote
+   * reaches a daemon that has never heard of it, and the live view is still fed by `session.stream`
+   * events from the moment it opens. A missing backfill is a shorter history, not a broken pane.
+   */
+  'session.streamlog': { params: { id: string }; result: { lines: SessionStreamLine[] } }
+  /**
+   * Open a real interactive terminal on a conversation — resumed where it is resting, forked where a
+   * run is still in it. See `attachTerminal`; it refuses rather than guessing.
+   */
+  'session.attach': { params: { id: string }; result: Session }
 
   // ---- M2: projects, tasks, approvals, resources ----------------------------------------
   'project.list': { params: void; result: Project[] }
@@ -2715,6 +2820,17 @@ export type DaemonEvent =
   | { type: 'quota.changed'; quota: QuotaSnapshot }
   | { type: 'session.changed'; session: Session }
   | { type: 'session.data'; sessionId: string; data: string }
+  /**
+   * One decoded line of a `stream` session's output, for the live session view.
+   *
+   * ⛔ **Structure, not bytes.** `session.data` carries what a terminal should draw, and for a
+   * `stream` session that is `renderForHuman`'s ANSI — a person-shaped rendering of a machine
+   * protocol, which xterm can show and nothing can lay out. This carries the same events as
+   * *records*, so the pane can collapse a tool call, dim a thinking phase and keep a rate-limit
+   * line apart from prose. Neither is read to decide anything: the transcript is still the
+   * machine's copy (AGENTS.md).
+   */
+  | { type: 'session.stream'; sessionId: string; line: SessionStreamLine }
   | { type: 'session.exit'; sessionId: string; exitCode: number | null }
   | { type: 'turn'; turn: Turn }
   | { type: 'consult.changed'; consult: Consult }

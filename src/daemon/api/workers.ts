@@ -6,7 +6,7 @@ import { createWorker, listWorkers, creditsDiscrepancy, noteCreditsDiscrepancyRe
 import { accountUnavailability } from '../eligibility.js'
 import { lastQuota, lastQuotaReading, probeWorker, refreshNow } from '../quota.js'
 import { emit } from '../events.js'
-import { backscroll, closeSession, listSessions, resizeSession, sessionsForWorker, sessionsAndWarmConversationsForWorker, spawnSession, writeSession } from '../sessions.js'
+import { attachTerminal, backscroll, closeSession, listSessions, resizeSession, sessionsForWorker, sessionsAndWarmConversationsForWorker, spawnSession, streamLog, writeSession } from '../sessions.js'
 import { costModel, costModels } from '../costmodel.js'
 import { requestShutdown } from '../lifecycle.js'
 import { paths } from '../paths.js'
@@ -22,7 +22,8 @@ type WorkerMethod =
   | 'health' | 'adapter.list' | 'adapter.detect' | 'fleet.list' | 'worker.create' | 'worker.update'
   | 'worker.setCreditsIntent' | 'worker.reorder' | 'worker.retire' | 'worker.probe' | 'costmodel.list'
   | 'model.options' | 'daemon.shutdown' | 'doctor.run' | 'session.list' | 'session.spawn' | 'session.write'
-  | 'session.resize' | 'session.close' | 'session.backscroll' | 'settings.get' | 'settings.set' | 'log.tail'
+  | 'session.resize' | 'session.close' | 'session.backscroll' | 'session.streamlog' | 'session.attach'
+  | 'settings.get' | 'settings.set' | 'log.tail'
   | 'log.files'
 
 export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
@@ -266,6 +267,8 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
       return { ok: true as const }
     },
     'session.backscroll': (p) => ({ data: backscroll(p.id) }),
+    'session.streamlog': (p) => ({ lines: streamLog(p.id) }),
+    'session.attach': (p) => attachTerminal(p.id),
     'settings.get': () => settings(),
     // ⚠️ A partial patch, not a whole object. The renderer sends the one switch the operator threw,
     // so two clients cannot silently overwrite each other's unrelated settings by round-tripping a

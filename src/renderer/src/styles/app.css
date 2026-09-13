@@ -3452,6 +3452,98 @@ select:focus-visible,
   overflow: hidden;
 }
 
+/* ---- the live stream view ----------------------------------------------- */
+
+/* ⛔ Visibly not a terminal. The pane beside it draws a real TTY in a monospace grid; this one
+   draws records, so it gets rows, wrapping and a reading measure rather than a screen. Making it
+   look like xterm would be claiming to mirror something that does not exist. */
+.sstream {
+  height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-bg);
+  padding: var(--sp-2);
+  font-size: var(--text-dense);
+  line-height: var(--leading-body);
+}
+
+.sstream-row {
+  display: block;
+  padding: 2px 0;
+  max-width: 100ch;
+  overflow-wrap: anywhere;
+}
+
+.sstream-mark {
+  display: inline-block;
+  width: 1.1em;
+  color: var(--color-accent);
+  font-family: var(--font-mono);
+}
+
+/* Prose is the thing being read; everything else is context for it. */
+.sstream-row--text .sstream-text {
+  color: var(--color-text);
+}
+
+.sstream-row--tool .sstream-text,
+.sstream-row--thinking .sstream-text {
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+}
+
+.sstream-row--dim .sstream-text {
+  color: var(--color-text-dim);
+}
+
+.sstream-row--warn .sstream-text {
+  color: var(--state-warn);
+}
+
+.sstream-row--error .sstream-text {
+  color: var(--state-danger);
+}
+
+.sstream-count {
+  color: var(--color-text-dim);
+}
+
+/* ⚠️ A button, not a div with a click handler: a row that opens is operable from the keyboard, and
+   the detail is a disclosure rather than a tooltip nobody can select text out of. */
+.sstream-open {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.sstream-open:hover .sstream-text {
+  text-decoration: underline;
+}
+
+.sstream-detail {
+  margin: 2px 0 var(--sp-1) 1.1em;
+  padding: var(--sp-1);
+  border-left: 2px solid var(--color-border);
+  background: var(--color-surface);
+  font-family: var(--font-mono);
+  font-size: var(--text-meta);
+  color: var(--color-text-dim);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sstream-live {
+  font-style: italic;
+  padding-top: var(--sp-1);
+}
+
 .login {
   margin-top: var(--sp-5);
 }

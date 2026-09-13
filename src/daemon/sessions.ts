@@ -8,6 +8,7 @@ import type {
   Session,
   SessionPurpose,
   SessionState,
+  SessionStreamLine,
   SessionTransport,
   Worker
 } from '@shared/protocol.js'
@@ -21,7 +22,8 @@ import { getWorker, refreshIdentity, requireWorker, watchReadiness } from './wor
 import { log } from './log.js'
 import { ensureDir, paths } from './paths.js'
 import { removeMcpConfig, writeMcpConfig } from './mcpconfig.js'
-import { StreamParser, renderForHuman, type StreamEvent } from './stream.js'
+import { StreamParser, describeStream, renderForHuman, type StreamEvent } from './stream.js'
+import { settings } from './settings.js'
 import { formatCmdInvocation, unwrapForPty } from './which.js'
 import { appEnv } from '@shared/env.js'
 
@@ -168,15 +170,74 @@ function retainScrollback(id: string, text: string): void {
   }
 }
 
+/**
+ * The decoded log a `stream` session's live view reads back when it is opened mid-run.
+ *
+ * ⛔ **Not the transcript and not the scrollback.** The transcript is the machine's exact copy and
+ * stays the machine's; the scrollback is what a terminal should draw, which for a pipe session is
+ * `renderForHuman`'s ANSI and cannot be laid out. This is the third thing, and it exists for the
+ * same reason `activity.ts` does: a pane opened in the middle of a run has to show what has already
+ * happened, and re-deriving it from a file the daemon does not own is not available.
+ *
+ * ⚠️ In memory and bounded, on purpose. Its correct lifetime is the process: a `stream` session that
+ * is gone has nothing live to look at, and a log that outlived it would be describing a run that no
+ * longer exists. What was *decided* is on the thread, which is the durable record.
+ */
+const STREAM_LOG_LINES = 500
+const streamLogs = new Map<string, SessionStreamLine[]>()
+let streamSeq = 0
+
+function noteStreamLine(id: string, line: Omit<SessionStreamLine, 'seq' | 'ts'>): SessionStreamLine {
+  const full: SessionStreamLine = { ...line, seq: ++streamSeq, ts: Date.now() }
+  const log = streamLogs.get(id) ?? []
+  log.push(full)
+  while (log.length > STREAM_LOG_LINES) log.shift()
+  streamLogs.set(id, log)
+  return full
+}
+
+/** What a pane opened mid-run is shown before the live feed reaches it. */
+export function streamLog(id: string): SessionStreamLine[] {
+  return streamLogs.get(id) ?? []
+}
+
+/**
+ * Keep an exited session's log, oldest evicted first.
+ *
+ * ⚠️ The same bound and the same reason as `retainScrollback`: this is a convenience for reading and
+ * not a record, so it is bounded on both axes and the transcript stays the thing that is kept.
+ */
+function retainStreamLog(id: string): void {
+  const log = streamLogs.get(id)
+  if (!log) return
+  streamLogs.delete(id)
+  streamLogs.set(id, log)
+  // ⛔ A running session's log is never the one evicted, however old its first line is. The cap is
+  // there to stop finished sessions accumulating; dropping the log of a session somebody is
+  // watching would blank the pane of the one run that still has something to say.
+  for (const key of [...streamLogs.keys()]) {
+    if (streamLogs.size <= FINISHED_SESSIONS) break
+    if (!live.has(key)) streamLogs.delete(key)
+  }
+}
+
 export interface SessionEvents {
   onChange(session: Session): void
   onData(sessionId: string, data: string): void
   onExit(sessionId: string, exitCode: number | null): void
   /** Structured records from the `stream` transport - rate limits, results. Never screen text. */
   onStream(session: Session, event: StreamEvent): void
+  /** The same records, shaped for the live view. See `streamLog`. */
+  onStreamLine(sessionId: string, line: SessionStreamLine): void
 }
 
-let events: SessionEvents = { onChange() {}, onData() {}, onExit() {}, onStream() {} }
+let events: SessionEvents = {
+  onChange() {},
+  onData() {},
+  onExit() {},
+  onStream() {},
+  onStreamLine() {}
+}
 export function setSessionEvents(e: SessionEvents): void {
   events = e
 }
@@ -671,6 +732,14 @@ export interface SpawnOptions {
    */
   resume?: Session | undefined
   /**
+   * Open a second conversation holding a copy of this one's context, leaving it running.
+   *
+   * ⛔ A **new row** and a new id, where `resume` is deliberately the same row. That is the whole
+   * distinction: a resume re-enters a conversation nobody else is in, a fork is how you look at one
+   * somebody is still using. ⚠️ Only honoured when the adapter declares `forkSession`.
+   */
+  fork?: Session | undefined
+  /**
    * Images the first prompt on this session will carry.
    *
    * ⛔ Needed **at spawn**, not at prompt time, for a `spawn-flag` adapter: codex takes `-i <file>`
@@ -678,6 +747,28 @@ export interface SpawnOptions {
    * why `promptFor` is called before `spawnSession` rather than after it.
    */
   attachments?: Attachment[] | undefined
+}
+
+/**
+ * Should this session be asked to stream its prose as it is written?
+ *
+ * ⛔ **Two conditions, and both are read here rather than at any call site.** The operator's standing
+ * preference (`Settings.liveNarration`) says what they want to watch; the adapter's
+ * `streamsPartialOutput` says whether its CLI can do it. A worker whose CLI cannot simply runs as it
+ * always did — ⛔ never an `if` on which adapter it is, which is the invariant this would be the
+ * easiest place in the codebase to break.
+ *
+ * ⚠️ `work` on `stream` only. A PTY session is a person watching a real TUI, which streams by itself
+ * and takes no such flag; a probe and a login have no prose to stream.
+ */
+function wantsPartialMessages(
+  info: AdapterInfo,
+  purpose: SessionPurpose,
+  transport: SessionTransport
+): boolean {
+  if (transport !== 'stream') return false
+  if (!info.capabilities.streamsPartialOutput) return false
+  return settings().liveNarration === 'streaming'
 }
 
 /**
@@ -806,6 +897,9 @@ export function spawnSession(opts: SpawnOptions): Session {
   // Minted here, before the process exists, so the transcript path is known before the file is.
   // ⚠️ Except when resuming, where the id already exists and is the whole point - see `opts.resume`.
   const resuming = opts.resume && ad.info.capabilities.resumeSession ? opts.resume : null
+  // ⚠️ A fork keeps its own id even where the CLI mints ids, because the whole point is that the
+  // original keeps its own: two rows, two transcripts, one shared prefix.
+  const forking = opts.fork && ad.info.capabilities.forkSession ? opts.fork : null
   const id = resuming?.id ?? randomUUID()
   const transport: SessionTransport = opts.transport ?? 'pty'
   // ⛔ Tool sets, by purpose, and each is a deliberate cost and trust decision:
@@ -823,6 +917,7 @@ export function spawnSession(opts: SpawnOptions): Session {
       : purpose === 'chat'
         ? writeMcpConfig(id, 'controller')
         : null
+  const partialMessages = wantsPartialMessages(ad.info, purpose, transport)
   const plan = ad.plan({
     sessionId: id,
     isolationRoot: worker.isolationRoot,
@@ -830,6 +925,7 @@ export function spawnSession(opts: SpawnOptions): Session {
     transport,
     model: opts.model,
     effort: opts.effort,
+    partialMessages,
     permissionMode: permissionModeFor(ad.info, purpose, transport, opts.permissionMode),
     mcpConfig,
     argv: opts.argv,
@@ -837,7 +933,8 @@ export function spawnSession(opts: SpawnOptions): Session {
     // ⛔ The vendor's handle where it gave us one, ours where it took ours. `mintsSessionId` is
     // exactly the question of which, and getting it backwards means handing a CLI an id it has never
     // heard of - which resumes nothing and says nothing about it.
-    ...(resuming ? { resumeFrom: resuming.vendorSessionId ?? resuming.id } : {})
+    ...(resuming ? { resumeFrom: resuming.vendorSessionId ?? resuming.id } : {}),
+    ...(forking ? { forkFrom: forking.vendorSessionId ?? forking.id } : {})
   })
 
   // Stopped from handleExit, whichever way the session ends. Declared here so both closures see it.
@@ -879,6 +976,11 @@ export function spawnSession(opts: SpawnOptions): Session {
       events.onStream(entry.session, event)
       for (const listener of listeners ?? []) listener(event)
       text += renderForHuman(event)
+      // ⛔ The second tier, beside the first rather than instead of it. The rendered bytes above
+      // still feed `scrollback`, which `turnend.ts` reads to find a completion an MCP-less adapter
+      // could not report; this is the same events shaped for a view that can lay one out.
+      const described = describeStream(event)
+      if (described) events.onStreamLine(id, noteStreamLine(id, described))
     }
     return text
   }
@@ -887,6 +989,10 @@ export function spawnSession(opts: SpawnOptions): Session {
     const exiting = live.get(id)
     if (exiting) retainScrollback(id, exiting.scrollback.join(''))
     live.delete(id)
+    // ⚠️ Kept past the exit, unlike the entry above. The seconds after a run fails are exactly when
+    // somebody opens the pane to find out why, and a view that blanked itself on exit would clear
+    // the screen at the moment it became worth reading. `retainStreamLog` bounds how many survive.
+    retainStreamLog(id)
     removeMcpConfig(id)
     for (const listener of endListeners.get(id) ?? []) listener(exitCode)
     streamListeners.delete(id)
@@ -979,7 +1085,9 @@ export function spawnSession(opts: SpawnOptions): Session {
     // almost nothing, and a parser keyed on the wrong dialect returns an empty list for every line
     // rather than an error. An adapter that offers `stream` and no decoder gets nothing, loudly.
     parser:
-      transport === 'stream' && ad.decodeStream ? new StreamParser(ad.decodeStream) : null,
+      transport === 'stream' && ad.decodeStream
+        ? new StreamParser(ad.decodeStream, { partialMessages })
+        : null,
     promptedOnce: false,
     promptedAt: null,
     lastActivityAt: null
@@ -1202,7 +1310,31 @@ export function sendPrompt(
   // would roll a cache clock forward over a request that never happened.
   entry.promptedAt = Date.now()
 }
+/**
+ * Type into a session, as a person at a keyboard.
+ *
+ * ⛔ **A `stream` session has no keyboard, and pretending otherwise killed runs.** Measured
+ * 2026-09-13 on claude 2.1.270: its `--input-format stream-json` stdin is newline-delimited JSON,
+ * and three raw keystrokes written ahead of the next message produced
+ * `Error parsing streaming input line (type=user, 112 chars): SyntaxError` and **exit 1** — the
+ * identical run without them exited 0. The session pane offered *take the keyboard* on dispatched
+ * work, so one stray character ended the task. Refused here rather than in the pane, because the
+ * RPC is reachable from the remote desktop too.
+ *
+ * ⚠️ Talking to a running agent is `sendPrompt` — it encodes what the transport expects — and on a
+ * task that is what the thread composer already does.
+ */
 export function writeSession(id: string, data: string): void {
+  // ⚠️ The transport is asked about **before** liveness, so the answer is the same whether or not
+  // the process happens to be up: typing into a pipe session is never the right thing, and a caller
+  // told only `not live` would try again when it was.
+  const row = getSession(id)
+  if (row && row.transport === 'stream') {
+    throw new Error(
+      `session '${id.slice(0, 8)}' runs on a pipe, not a terminal: its stdin takes whole ` +
+        'stream-json messages and a keystroke on it ends the run. Reply on the task instead.'
+    )
+  }
   const entry = live.get(id)
   if (!entry) throw new Error(`session '${id}' is not live`)
   entry.channel.write(data)
@@ -1211,10 +1343,21 @@ export function writeSession(id: string, data: string): void {
 /**
  * Interrupt a session the way a person would - the adapter's own key, not a signal. A killed agent
  * leaves its work uncommitted and its claims held; an interrupted one can be asked to wrap up.
+ *
+ * ⛔ **A keystroke only reaches a keyboard.** On a `stream` session the interrupt key is not an
+ * interrupt at all: the CLI's stdin is a newline-delimited JSON reader, so an ESC sits in its buffer
+ * and then corrupts the next real message. Measured 2026-09-13 on claude 2.1.270 — a stray prefix
+ * ahead of a valid line produced `Error parsing streaming input line … SyntaxError` and **exit 1**,
+ * so what read as *interrupt politely, then ask it to wrap up* was in fact *destroy the next prompt*.
+ * A pipe session is wound down by asking it, through `sendPrompt`, and closed if it will not.
  */
 export function interruptSession(id: string): void {
   const entry = live.get(id)
   if (!entry) return
+  if (entry.session.transport === 'stream') {
+    log.debug(`session ${id.slice(0, 8)} runs on a pipe; there is no interrupt key to press`)
+    return
+  }
   const sequence = adapter(entry.session.adapterId).info.policy.interruptSequence
   try {
     entry.channel.write(sequence)
@@ -1632,4 +1775,56 @@ export function invalidateSessionContext(sessionId: string): void {
     session.state = 'failed'
     events.onChange(session)
   }
+}
+
+/**
+ * Open a real terminal on a conversation, and say plainly when there cannot be one.
+ *
+ * ⛔ **A dispatched agent has no terminal and none can be made for it.** Work runs on pipes because
+ * `--print` refuses to start under a pseudo-terminal (measured 2026-08-25, see `Channel`), so the
+ * session pane cannot mirror a screen that does not exist — it draws the decoded stream instead, and
+ * says so. This is the other half of that answer: the real CLI, in the same workspace, holding the
+ * same context, as its *own* conversation.
+ *
+ * ⛔ **Always a fork, never a resume, and that is not the obvious choice.** A resume would be cheaper
+ * to describe — the conversation is often resting, and `--resume` is what resting conversations are
+ * for — but `spawnSession`'s resume path reuses **the same row**, and it would come back marked `pty`
+ * while still reading `purpose: 'work'`. `warmSessionFor` walks a task's own runs and offers any live,
+ * idle session it finds, so the next dispatch would write scheduled unattended work into the terminal
+ * a person is sitting at, in the CLI's interactive permission mode. A fork mints its own row, leaves
+ * the original exactly as resumable as it was, and costs a cache read: measured 2026-09-13 on claude
+ * 2.1.270, `--resume <old> --fork-session --session-id <new>` read 31,372 tokens from cache.
+ *
+ * ⚠️ **Two processes, one worktree, and this does not pretend otherwise.** A person typing into the
+ * fork can edit the same files the run is editing. It opens in the CLI's own default permission mode
+ * — a person is watching, so `permissionModeFor` leaves it alone and the agent asks — and the caller
+ * that offers the button is the one that has to say what the workspace is.
+ */
+export function attachTerminal(sessionId: string): Session {
+  const target = getSession(sessionId)
+  if (!target) throw new Error(`session '${sessionId}' is not known`)
+  const info = adapter(target.adapterId).info
+  if (!info.capabilities.transports.includes('pty')) {
+    throw new Error(`${info.label} has no interactive terminal to open`)
+  }
+  if (!info.capabilities.forkSession) {
+    throw new Error(
+      `${info.label} cannot fork a conversation, so there is no way to open one beside a run ` +
+        'without becoming a second agent in it.'
+    )
+  }
+  // ⚠️ The conversation's own directory, never a fresh one. A terminal opened somewhere else is a
+  // terminal onto a different piece of work, and the whole value here is standing where the agent is.
+  return spawnSession({
+    workerId: target.workerId,
+    cwd: target.cwd,
+    transport: 'pty',
+    // ⛔ `chat`, which is the tier where a person is watching: it gets agentyard's controller MCP
+    // tools and the CLI's own permission mode, so it asks before it acts. `work` would substitute
+    // the headless bypass, which is exactly the authority nobody is asking for at a keyboard.
+    purpose: 'chat',
+    projectId: target.projectId,
+    ...(target.model ? { model: target.model } : {}),
+    fork: target
+  })
 }
