@@ -353,22 +353,30 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       if (task.constraints.workerId !== worker.id) {
         voidQuestionsForTask(task.id, 'task reassigned')
       }
-      // If the adapter changed, clear model and effort because they belong to the previous adapter
+      // If the adapter changed, clear an *old* model and effort because they belong to the previous
+      // adapter. A reassign control supplies its new choice in this very RPC: a scheduler tick can
+      // land after either RPC, so setting the worker and then the model used to let the new account's
+      // default model start a run before the explicit choice arrived.
       const adapterChanged = task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId
-      const modelPolicy = adapterChanged
-        ? 'inherit'
-        : (task.constraints.modelPolicy ?? (task.constraints.model ? undefined : 'inherit'))
+      const hasModelChoice = p.model !== undefined || p.modelPolicy !== undefined || p.effort !== undefined
+      const model = hasModelChoice ? (p.model ?? undefined) : (adapterChanged ? undefined : task.constraints.model)
+      const effort = hasModelChoice ? (p.effort ?? undefined) : (adapterChanged ? undefined : task.constraints.effort)
+      const modelPolicy = hasModelChoice
+        ? (p.modelPolicy ?? (p.model ? undefined : 'inherit'))
+        : (adapterChanged ? 'inherit' : (task.constraints.modelPolicy ?? (task.constraints.model ? undefined : 'inherit')))
       const { workerIds: _workerIds, ...baseConstraints } = task.constraints
       const constraints = checkConstraints({
         ...baseConstraints,
         workerId: worker.id,
         adapterId: worker.adapterId,
-        model: adapterChanged ? undefined : task.constraints.model,
-        effort: adapterChanged ? undefined : task.constraints.effort,
+        model,
+        effort,
         modelPolicy
       })
-      if (adapterChanged) {
+      if (!model) {
         delete constraints.model
+      }
+      if (!effort) {
         delete constraints.effort
       }
       if (!constraints.modelPolicy) delete constraints.modelPolicy

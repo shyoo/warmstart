@@ -4,10 +4,10 @@
 
 Warmstart M0–M6 is implemented. The current branch contains debate mode, quota-aware scheduling,
 pooled worktrees, model-aware routing, quality review, remote access, packaging, the completed
-Warmstart rename, and the three pre-public blockers a three-seat debate on t392 converged on:
-**in-app diff review**, an **honest security model with a per-project containment setting**, and
-**desktop notifications**. The maintained reference in [`docs/`](docs/README.md) is the authority on
-each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
+Warmstart rename, the three pre-public blockers a three-seat debate on t392 converged on, and atomic
+worker/model reassignment: the scheduler cannot resume an explicit Opus choice on an account's Haiku
+default between separate UI writes. The maintained reference in [`docs/`](docs/README.md) is the
+authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-13, Windows, measured **after** t425): typecheck, lint, build pass; L1
 **3,426 passed, 2 skipped** (195 files); L3 **428 checks**. L2 **203 checks** (5 skipped) and L4

@@ -341,6 +341,39 @@ describe('task.setWorker RPC', () => {
     expect(unpinned.constraints.modelPolicy).toBeUndefined()
   })
 
+  it('stores an explicit model with its reassigned worker before a scheduler tick can see the account default', async () => {
+    const tasks = await import('./tasks.js')
+    const handlers = api.buildApi({
+      version: '1.0.0',
+      startedAt: Date.now(),
+      port: 8080
+    })
+    const target = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst', enabled: false })
+    workers.updateWorker(target.id, {
+      defaultModel: 'claude-haiku-4-5-20251001',
+      routableModels: ['claude-haiku-4-5-20251001', 'claude-opus-5']
+    })
+    const task = tasks.createTask({ title: 'explicit Opus reassignment' })
+
+    // This returns only after the one database update carrying both choices. The former two-RPC UI
+    // sequence exposed the inherited Haiku state to the scheduler between these two facts.
+    const reassigned = await handlers['task.setWorker']({
+      id: task.id,
+      workerId: target.id,
+      model: 'claude-opus-5',
+      modelPolicy: null,
+      effort: null
+    })
+
+    expect(reassigned.constraints).toMatchObject({
+      workerId: target.id,
+      adapterId: 'claude-code',
+      model: 'claude-opus-5'
+    })
+    expect(reassigned.constraints.modelPolicy).toBeUndefined()
+    expect(tasks.requireTask(task.id).constraints.model).toBe('claude-opus-5')
+  })
+
   it('clears workerIds when setting a specific worker or unpinning to auto', async () => {
     const tasks = await import('./tasks.js')
     const handlers = api.buildApi({
@@ -376,4 +409,3 @@ describe('task.setWorker RPC', () => {
     expect(unpinned.constraints.workerIds).toBeUndefined()
   })
 })
-

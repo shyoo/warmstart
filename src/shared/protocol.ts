@@ -2255,9 +2255,19 @@ export interface RpcMap {
   }
   /**
    * Choose the worker this task's **next** run uses, or null to reassign to Auto / scheduler choice.
+   *
+   * A reassigning control may include its model and effort in this same write. The scheduler ticks
+   * independently of RPCs, so writing a worker and then its explicit model in two calls would give
+   * the account default one opportunity to start work in between.
    */
   'task.setWorker': {
-    params: { id: string; workerId: string | null }
+    params: {
+      id: string
+      workerId: string | null
+      model?: string | null
+      effort?: string | null
+      modelPolicy?: 'auto' | 'inherit' | null
+    }
     result: Task
   }
   /**

@@ -124,19 +124,16 @@ export function QuotaDecide({
   const handleReassign = async () => {
     setBusy(true)
     try {
-      await rpc('task.setWorker', { id: task.id, workerId: selectedWorkerId || null })
-      if (selectedWorkerId) {
-        const modelPolicy =
-          selectedModel === '__auto__' ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
-        const model =
-          selectedModel === '__auto__' || selectedModel === '__inherit__' ? null : selectedModel || null
-        await rpc('task.setModel', {
-          id: task.id,
-          model,
-          modelPolicy,
-          effort: selectedEffort || null
-        })
-      }
+      const modelPolicy =
+        selectedModel === '__auto__' ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
+      const model = selectedModel === '__auto__' || selectedModel === '__inherit__' ? null : selectedModel || null
+      // ⛔ One write. The scheduler can dispatch after the worker write, so a following model write
+      // is too late — it was how an explicit Opus reassignment resumed on the account's Haiku default.
+      await rpc('task.setWorker', {
+        id: task.id,
+        workerId: selectedWorkerId || null,
+        ...(selectedWorkerId ? { model, modelPolicy, effort: selectedEffort || null } : {})
+      })
       if (isPaused) {
         await rpc('task.resume', { id: task.id })
       }
@@ -627,19 +624,15 @@ export function Decide({
   const handleReassign = async () => {
     setBusy(true)
     try {
-      await rpc('task.setWorker', { id: task.id, workerId: selectedWorkerId || null })
-      if (selectedWorkerId) {
-        const modelPolicy =
-          selectedModel === '__auto__' ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
-        const model =
-          selectedModel === '__auto__' || selectedModel === '__inherit__' ? null : selectedModel || null
-        await rpc('task.setModel', {
-          id: task.id,
-          model,
-          modelPolicy,
-          effort: selectedEffort || null
-        })
-      }
+      const modelPolicy =
+        selectedModel === '__auto__' ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
+      const model = selectedModel === '__auto__' || selectedModel === '__inherit__' ? null : selectedModel || null
+      // ⛔ Same atomic reassignment as the quota card above; this handler dispatches immediately.
+      await rpc('task.setWorker', {
+        id: task.id,
+        workerId: selectedWorkerId || null,
+        ...(selectedWorkerId ? { model, modelPolicy, effort: selectedEffort || null } : {})
+      })
       // ⛔ **Not a sentence in the person's voice.** This used to post *"Reassigned worker to X and
       // continued."* as a human message — words nobody typed, read back to them in their own bubble
       // and sent to the agent as though they had said it. The daemon already writes the *Worker
