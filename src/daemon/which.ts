@@ -1,4 +1,5 @@
 import { accessSync, constants, existsSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { delimiter, extname, isAbsolute, join } from 'node:path'
 
 /**
@@ -19,8 +20,22 @@ export function which(command: string): string | null {
       ? (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
       : ['']
 
-  for (const dir of (process.env.PATH ?? '').split(delimiter)) {
-    if (!dir) continue
+  const raw = process.env.PATH ?? ''
+  const dirs = raw.split(delimiter).filter(Boolean)
+
+  if (process.platform !== 'win32') {
+    const extraDirs = [
+      join(homedir(), '.local', 'bin'),
+      '/opt/homebrew/bin',
+      '/opt/homebrew/sbin',
+      '/usr/local/bin'
+    ]
+    for (const d of extraDirs) {
+      if (!dirs.includes(d)) dirs.push(d)
+    }
+  }
+
+  for (const dir of dirs) {
     for (const ext of pathext) {
       const candidate = join(dir, command + ext)
       try {
@@ -208,6 +223,26 @@ export function spawnEnv(): Record<string, string> {
   for (const [key, value] of Object.entries(process.env)) {
     if (value === undefined || HOST_SESSION.test(key)) continue
     env[key] = value
+  }
+  if (process.platform !== 'win32') {
+    const current = env.PATH ?? ''
+    const dirs = current.split(delimiter).filter(Boolean)
+    const extraDirs = [
+      join(homedir(), '.local', 'bin'),
+      '/opt/homebrew/bin',
+      '/opt/homebrew/sbin',
+      '/usr/local/bin'
+    ]
+    let changed = false
+    for (const d of extraDirs) {
+      if (!dirs.includes(d) && existsSync(d)) {
+        dirs.push(d)
+        changed = true
+      }
+    }
+    if (changed) {
+      env.PATH = dirs.join(delimiter)
+    }
   }
   return env
 }

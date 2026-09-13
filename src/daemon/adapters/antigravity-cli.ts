@@ -317,7 +317,10 @@ function fallbackPaths(): string[] {
   return [
     join(local, 'agy', 'bin', 'agy.exe'),
     join(local, 'agy', 'bin', 'agy'),
-    join(homedir(), '.agy', 'bin', 'agy')
+    join(homedir(), '.agy', 'bin', 'agy'),
+    join(homedir(), '.local', 'bin', 'agy'),
+    '/opt/homebrew/bin/agy',
+    '/usr/local/bin/agy'
   ]
 }
 

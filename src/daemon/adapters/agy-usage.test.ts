@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { describe, expect, it } from 'vitest'
 import {
+  antigravityCli,
   parseContextScreen,
   parseTokenCount,
   parseUsageScreen,
@@ -358,6 +359,17 @@ describe('readAntigravityIdentity', () => {
       expect(res.account).toBeUndefined()
     } finally {
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('antigravity-cli detect', () => {
+  it('detects installed agy binary when present on system', async () => {
+    if (antigravityCli.isInstalled()) {
+      const res = await antigravityCli.detect()
+      expect(res.found).toBe(true)
+      expect(res.path).toBeTruthy()
+      expect(res.version).toMatch(/^\d+\.\d+\.\d+/)
     }
   })
 })

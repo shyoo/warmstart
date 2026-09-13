@@ -143,11 +143,18 @@ one file. Every launch by the agent showed the fleet; every launch by the user w
 (`Invoke-CimMethod -ClassName Win32_Process -MethodName Create`, output to `C:\Users\Public\`) or ask
 the user to run the command. `C:\Dev` and `C:\Users\Public` are not redirected.
 
+⛔ **macOS `/var` is a symlink to `/private/var`.** Computing relative paths with `path.relative` breaks
+if one path traversed the symlink and the other was canonicalized. Always canonicalize with
+`realpathSync` before writing relative worktree `.git` pointers (`worktrees.ts`).
+
 ### Spawning
 
 - **node-pty does not search PATH.** On Windows it goes straight to `CreateProcess` and fails with a
   bare *File not found* for a command that runs fine in a shell. Everything spawnable goes through
   `daemon/which.ts`, which also routes `.cmd`/`.bat` shims through the command processor.
+- **GUI apps on macOS/Linux do not inherit shell profile PATH.** App bundles launched via desktop shells
+  inherit a minimal system PATH missing `~/.local/bin`, `/opt/homebrew/bin`, and `/usr/local/bin`.
+  `which.ts` appends standard user bin directories on non-Windows platforms.
 - ⛔ **`cmd /d /s /c <shim>` splits any path containing a space.** `/s` makes cmd strip the outer
   quotes and take the rest literally, and the Windows default home has a space in it. Use `/d /c` and
   let Node quote the argument; do **not** add quotes yourself. Latent since M1 and invisible until a
