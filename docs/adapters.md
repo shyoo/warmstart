@@ -553,6 +553,36 @@ the existing `/usage` PTY drive already refreshes. So it costs a `readFileSync` 
 status and no numbers at all, so rendering `$0.00` would claim a purse is empty when it has merely
 not been shown.
 
+⭐ **Credits off is two different situations, and only one field tells them apart** (2026-09-13,
+2.1.270, t408). Measured on `ClaudeFirst`, where the operator had turned usage credits on at the
+vendor and the app still reported them off:
+
+```jsonc
+"extra_usage": { "is_enabled": false, "monthly_limit": 1730, "used_credits": 2057, "utilization": 100,
+                 "currency": "USD", "decimal_places": 2, "disabled_reason": "org_level_disabled_until",
+                 "user_disabled": false, "spend_limit_reached": true, "credits_ever_enabled": true },
+"spend": { "used": { "amount_minor": 2057, ... }, "limit": { "amount_minor": 1730, ... },
+           "percent": 100, "severity": "critical", "enabled": false, "can_purchase_credits": false },
+// and, one level up: "oauthAccount": { "hasExtraUsageEnabled": true }
+```
+
+⛔ Both switches the operator controls are **on** — `hasExtraUsageEnabled: true`,
+`user_disabled: false` — and the vendor has still cut credits off, because `used_credits` ($20.57) is
+past `monthly_limit` ($17.30). `spend_limit_reached` is the vendor's own verdict on that and is now
+`CreditStatus.spendLimitReached`, which `creditsPurseEmpty` reads *ahead of* comparing the two numbers
+itself. ⚠️ Note the numbers are present here: the earlier capture's all-`null` money block is the
+*never-offered* shape, not the credits-off shape, and the two must not be conflated.
+
+⚠️ **The reason string is recorded and never matched on**, which is why 2.1.270 renaming
+`org_level_disabled` to `org_level_disabled_until` changed no behaviour. A parser that had branched on
+the old spelling would have read this account as *no reason given*.
+
+⛔ **A non-zero counter keeps being metered after credits are cut off.** `spendMeters` used to drop
+every meter on `enabled === false`, to avoid reading the zero-shaped counter of an unavailable balance
+as `$0.00`. On this account the counter is the whole month's overage cash, so the suppression now
+applies to the **zero only** — otherwise the run that crosses the cut-off gets one reading and no
+second, and prices as `null` at exactly the moment the most money has been spent.
+
 ⭐ **The refill date is inferred, because the vendor never prints one** (2026-09-07, t278). Measured
 across three live accounts: `extra_usage`, `spend` and `limits[]` carry no credits reset — the limits
 carry only the 5h and 7d windows. What the file *does* carry is `oauthAccount.subscriptionCreatedAt`,

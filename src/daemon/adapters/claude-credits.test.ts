@@ -346,3 +346,125 @@ describe('spendMeters', () => {
     expect(meters[0]).toMatchObject({ balance: 10, usdPerUnit: null })
   })
 })
+
+/**
+ * Live payload captured 2026-09-13 off Claude Code **2.1.270** on `ClaudeFirst`, the reading that
+ * produced *Vendor reports credits off* on an account whose credits the operator had turned on.
+ *
+ * ⭐ **Credits off with the numbers present, which no earlier capture had.** `hasExtraUsageEnabled:
+ * true` and `user_disabled: false` say the operator's switch is on; `used_credits: 2057` past
+ * `monthly_limit: 1730` with `spend_limit_reached: true` says the vendor cut credits off because the
+ * month's allowance ran out. ⚠️ 2.1.270 also spells the reason `org_level_disabled_until` where
+ * 2.1.263 wrote `org_level_disabled` — which changed nothing, because the reason is recorded and
+ * never matched on. That is the property the last assertion here pins.
+ */
+const CREDITS_SPENT = {
+  cachedUsageUtilization: {
+    fetchedAtMs: 1789274316776,
+    utilization: {
+      extra_usage: {
+        is_enabled: false,
+        monthly_limit: 1730,
+        used_credits: 2057,
+        utilization: 100,
+        currency: 'USD',
+        decimal_places: 2,
+        disabled_reason: 'org_level_disabled_until',
+        user_disabled: false,
+        spend_limit_reached: true,
+        credits_ever_enabled: true,
+        daily: null,
+        weekly: null
+      },
+      spend: {
+        used: { amount_minor: 2057, currency: 'USD', exponent: 2 },
+        limit: { amount_minor: 1730, currency: 'USD', exponent: 2 },
+        percent: 100,
+        severity: 'critical',
+        enabled: false,
+        disabled_reason: 'org_level_disabled_until',
+        cap: { money: null, credits: { amount_minor: 1730, exponent: 2 } },
+        balance: null,
+        auto_reload: null,
+        can_purchase_credits: false,
+        can_toggle: false
+      }
+    }
+  },
+  oauthAccount: {
+    hasExtraUsageEnabled: true,
+    subscriptionCreatedAt: '2026-06-21T12:17:45.681833Z'
+  },
+  cachedExtraUsageDisabledReason: 'org_level_disabled_until'
+}
+
+describe('creditStatus, on the live payload whose allowance ran out', () => {
+  const status = creditStatus(CREDITS_SPENT, Date.UTC(2026, 8, 13, 5))
+
+  /** ⛔ Still off: precedence takes the direct statement over the cheerful account-level cache. */
+  it('reports credits off even though the account-level switch is on', () => {
+    expect(status?.enabled).toBe(false)
+  })
+
+  /**
+   * ⛔ **The field that makes the two credits-off situations tellable apart**, and the whole reason
+   * this payload is here. Without it the row can only say *credits are off*, which sent an operator
+   * looking for a switch that was already on.
+   */
+  it('carries the vendor’s word that the allowance is spent, and that nobody turned it off', () => {
+    expect(status?.spendLimitReached).toBe(true)
+    expect(status?.userDisabled).toBe(false)
+  })
+
+  it('reads the money in dollars, spend past the ceiling', () => {
+    expect(status?.used).toBe(20.57)
+    expect(status?.monthlyLimit).toBe(17.3)
+    expect(status?.currency).toBe('USD')
+  })
+
+  /** ⚠️ Inferred from the subscription anniversary, the only date the vendor publishes. */
+  it('dates the refill from the subscription month', () => {
+    expect(status?.resetsAt).toBe(Date.UTC(2026, 8, 21, 12, 17, 45, 681))
+  })
+
+  /**
+   * ⛔ **Recorded, never interpreted.** 2.1.270 renamed the reason and nothing branched on it. A
+   * parser that matched the string would have read this account as *no reason given*.
+   */
+  it('records the reason 2.1.270 renamed without matching on it', () => {
+    expect(status?.disabledReason).toBe('org_level_disabled_until')
+  })
+
+  /**
+   * ⭐ **The meter that used to vanish at the worst moment.** `spendMeters` dropped every meter on
+   * `enabled === false`, to avoid reading the zero-shaped counter of an unavailable balance as a
+   * `$0.00` reading. But this counter is not zero — it is the whole month's overage cash — so the
+   * run that crossed the cut-off got one reading and no second, and priced as `null`.
+   */
+  it('keeps metering a non-zero counter after the vendor cuts credits off', () => {
+    const meters = spendMeters(
+      CREDITS_SPENT.cachedUsageUtilization.utilization.spend,
+      creditStatus(CREDITS_SPENT)?.enabled
+    )
+    expect(meters).toEqual([
+      {
+        id: 'claude-extra-usage',
+        label: 'Claude usage credits',
+        unit: 'usd',
+        balance: 20.57,
+        direction: 'spend_rises',
+        usdPerUnit: 1
+      }
+    ])
+  })
+
+  /** ⛔ And still refuses the zero, which is the shape of a balance that was never published. */
+  it('still drops a zero-shaped counter on an account with credits off', () => {
+    expect(
+      spendMeters(
+        { used: { amount_minor: 0, currency: 'USD', exponent: 2 } },
+        creditStatus(CREDITS_SPENT)?.enabled
+      )
+    ).toEqual([])
+  })
+})

@@ -651,6 +651,18 @@ body {
 }
 
 /*
+ * The same gauge for an allowance the vendor has cut off.
+ *
+ * ⚠️ Dimmed label and value, because the number is no longer moving: it is what this month cost,
+ * not what is accruing. The bar keeps its urgency fill — a full red bar is the accurate drawing of
+ * a spent purse, and turning that grey too would hide the reason the gauge is here.
+ */
+.wcard-credits.gauge--credits-spent .gauge-label,
+.wcard-credits.gauge--credits-spent .gauge-value {
+  color: var(--color-text-dim);
+}
+
+/*
  * The corner of the head row: how old the reading is, or three dots while a fresh one is on its way.
  *
  * ⛔ Here rather than under the quota bars, and that is the whole point of it. Both facts are
@@ -2558,6 +2570,9 @@ body {
 .tbl-workers .worker-credits label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .tbl-workers .worker-credits--disabled label { opacity: 0.48; }
 .tbl-workers .worker-credits-warning { font-size: var(--text-meta); color: var(--color-warning); }
+/* ⚠️ A spent allowance is a fact, not a fault: amber says *something is wrong here* and sends the
+   operator looking for a switch that is already on. It reads as a reading, like every other number. */
+.tbl-workers .worker-credits-warning--spent { color: var(--color-text-dim); }
 .tbl-workers .worker-model-row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: nowrap; }
 .tbl-workers .worker-model-select { width: auto; min-width: 150px; max-width: 200px; }
 .tbl-workers .worker-effort-select { width: auto; min-width: 100px; max-width: 130px; margin-top: 0; }

@@ -4,6 +4,7 @@ import type { AdapterDetection, AdapterInfo, ModelOptions, Session, Settings, Wo
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isWorkerSubscriptionExpired, QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import { age, percent, quotaGap } from '../lib/format'
+import { creditsMismatchKind, creditsMismatchNote } from '@shared/credits'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { Pill } from './Pill'
 import { TerminalPane } from './Terminal'
@@ -979,8 +980,25 @@ export function Workers({
                             {!globalCreditsOn && workerCreditsOn && (
                               <span className="worker-credits-warning">Disabled: turn on the global setting first.</span>
                             )}
-                            {globalCreditsOn && worker.credits && !worker.credits.enabled && (
-                              <span className="worker-credits-warning">Vendor reports credits off.</span>
+                            {/* ⛔ **The cause, not just the effect.** This cell said *Vendor reports
+                                credits off.* for all four reasons an account can not be spending,
+                                and on 2026-09-13 the operator met the one that sentence describes
+                                worst: they had turned credits on at the vendor, the month's $17.30
+                                allowance had been spent ($20.57 used), and the vendor had cut them
+                                off until the refill. Told the switch was off, there was nothing to
+                                go and switch. `creditsMismatchNote` names which of the four it is
+                                and what would change it; `purse-empty` reads as spent rather than
+                                as broken, because nothing here is. */}
+                            {globalCreditsOn && creditsMismatchKind(worker.credits) && (
+                              <span
+                                className={`worker-credits-warning${
+                                  creditsMismatchKind(worker.credits) === 'purse-empty'
+                                    ? ' worker-credits-warning--spent'
+                                    : ''
+                                }`}
+                              >
+                                {creditsMismatchNote(worker.credits, now)}
+                              </span>
                             )}
                           </div>
                         )

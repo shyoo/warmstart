@@ -294,7 +294,19 @@ precisely what defeats the purchase.
 | Read through | `spendingCreditsOn(worker, switch)` — the *only* reader of the pair |
 | Stands down | both quota preempts in `runWatchdogs`, `mayCompact(…, 'quota')`, the dispatch gate in `chooseTarget`, and `quotaReleaseFor` |
 | Does **not** stand down | `mayCompact(…, 'context')`, `autoRunawayStop`, the reserve itself, every gate that is not a percentage |
-| Also needs | credits left this month — `creditsPurseEmpty` reads a spent allowance as credits off |
+| Also needs | credits left this month — `creditsPurseEmpty` ([`shared/credits.ts`](../src/shared/credits.ts)) reads a spent allowance as credits off, from `extra_usage.spend_limit_reached` where the vendor publishes it and from `used >= monthlyLimit` where it does not |
+
+⭐ **Measured 2026-09-13 on `ClaudeFirst` (2.1.270): credits on at the vendor, off in effect,
+because the allowance ran out.** `used_credits` $20.57 against a `monthly_limit` of $17.30,
+`utilization: 100`, `spend_limit_reached: true`, `disabled_reason: "org_level_disabled_until"` — while
+`hasExtraUsageEnabled: true` and `user_disabled: false`. So `credits.enabled` was `false`, the quota
+guards correctly stayed up, and the only thing the app said about it was *Vendor reports credits off*,
+which described the one situation this was not. Three consequences, all in this commit: the row names
+which of the four causes it is (`creditsMismatchNote`); the purse verdict comes from the vendor's field
+before the arithmetic; and the credit *meter* no longer disappears when the vendor cuts credits off
+with a non-zero counter — which had been silently ending overage metering at the point of maximum
+spend. ⚠️ The refill date is still inferred from the subscription anniversary (2026-09-21 here) and
+is labelled as such wherever it is shown.
 
 ⛔ **Both halves, and neither alone.** The switch is the operator's standing intent; `credits.enabled`
 is what the vendor says about one account. Acting on the switch alone would apply it to accounts with

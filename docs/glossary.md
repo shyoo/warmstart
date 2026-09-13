@@ -435,11 +435,18 @@ reader of the pair, and where both are true the quota guards stand down for that
 preempts, the quota-motivated half of compaction, the **dispatch gate** and the release of a
 `paused_quota` park — because hitting the limit is the moment credits start doing their job, and
 holding work there is what defeats the purchase. ⚠️ A worker no spend probe has read is `null`: **not
-knowing is not permission**. ⚠️ Nor is an allowance already spent: `creditsPurseEmpty` reads
-`used >= monthlyLimit` as credits off, because a purse with nothing in it buys a hard vendor refusal
-rather than a reprieve.
+knowing is not permission**. ⚠️ Nor is an allowance already spent: `creditsPurseEmpty`
+(⭐ in [`shared/credits.ts`](../src/shared/credits.ts), so the renderer and the scheduler cannot
+disagree about it) reads `extra_usage.spend_limit_reached` — or, where the vendor publishes no verdict,
+`used >= monthlyLimit` — as credits off, because a purse with nothing in it buys a hard vendor refusal
+rather than a reprieve. ⛔ **`enabled: false` is four situations**, and `creditsMismatchKind` names
+which: `purse-empty` (wait for the refill or raise the ceiling), `user-off` (a switch somebody threw),
+`never-offered`, and a bare `off`. Measured 2026-09-13 on `ClaudeFirst`, they were being reported as
+one — an operator whose vendor switch was *on* and whose $17.30 allowance was spent was told the
+switch was off.
 ⛔ **A reading, never a request.** Nothing here turns credits on. Measured 2026-09-07 on Claude Code
-2.1.263, both live accounts report `can_toggle: false` with `org_level_disabled`, and `/usage-credits`
+2.1.263, both live accounts report `can_toggle: false` with `org_level_disabled` (⚠️ spelled
+`org_level_disabled_until` by 2.1.270 — the reason is recorded and never matched on), and `/usage-credits`
 opens a **login chooser** rather than a toggle — so the switch is thrown by a person where the vendor
 put it. What the app adds is that it knows what was *asked for* (`Worker.creditsIntent`), which is the
 only way `creditsDiscrepancy` can say *you asked for credits here and the vendor says they are off*.

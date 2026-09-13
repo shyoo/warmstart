@@ -33,6 +33,7 @@ const ON: CreditStatus = {
   disabledReason: null,
   canToggle: false,
   everEnabled: true,
+  spendLimitReached: false,
   monthlyLimit: 50,
   used: 12.5,
   currency: 'USD',
@@ -51,6 +52,7 @@ const OFF: CreditStatus = {
   disabledReason: 'org_level_disabled',
   canToggle: false,
   everEnabled: true,
+  spendLimitReached: false,
   monthlyLimit: null,
   used: null,
   currency: 'USD',
@@ -183,6 +185,27 @@ describe('spendingCreditsOn — all three halves, and none alone', () => {
   })
 })
 
+/**
+ * Credits off because the month's allowance ran out — live off `ClaudeFirst`, 2026-09-13, 2.1.270.
+ *
+ * ⚠️ The operator's switch is *on* here (`userDisabled: false`, and the account-level cache said
+ * `hasExtraUsageEnabled: true`); the vendor cut credits when `used` passed `monthlyLimit`.
+ */
+const SPENT: CreditStatus = {
+  enabled: false,
+  userDisabled: false,
+  disabledReason: 'org_level_disabled_until',
+  canToggle: false,
+  everEnabled: true,
+  spendLimitReached: true,
+  monthlyLimit: 17.3,
+  used: 20.57,
+  currency: 'USD',
+  resetsAt: Date.UTC(2026, 8, 21, 12, 17, 45, 681)
+}
+
+const NOW = Date.UTC(2026, 8, 13, 5)
+
 describe('the gap between what was asked for and what the vendor is doing', () => {
   /**
    * ⛔ The direction that costs the operator something they did not expect: they asked for credits,
@@ -196,6 +219,43 @@ describe('the gap between what was asked for and what the vendor is doing', () =
     const said = workers.creditsDiscrepancy(workers.getWorker(worker.id)!)
     expect(said).toContain('org_level_disabled')
     expect(said).toContain('cannot be changed from the CLI')
+  })
+
+  /**
+   * ⭐ **The reading that produced the complaint, measured 2026-09-13 on `ClaudeFirst`.** The
+   * operator's own switch was on at the vendor (`userDisabled: false`) and the month's allowance was
+   * spent — `$20.57` against a `$17.30` ceiling — so the old wording sent them to look for a switch
+   * that was already thrown. It must name the spend and the refill, and must *not* offer the
+   * *cannot be changed from the CLI* advice, which is only useful when a switch is the answer.
+   */
+  it('names a spent allowance rather than calling the switch off', () => {
+    const worker = seedWorker('ClaudeFirst')
+    workers.setWorkerCredits(worker.id, SPENT)
+    workers.setWorkerCreditsIntent(worker.id, true)
+    const said = workers.creditsDiscrepancy(workers.getWorker(worker.id)!, NOW)
+    expect(said).toContain('$20.57 of $17.30 used')
+    expect(said).toContain('refills in')
+    expect(said).not.toContain('cannot be changed from the CLI')
+  })
+
+  /**
+   * ⛔ **Once per cause, not once per account.** This is the other half of the same incident: the
+   * mismatch had already been reported while credits were merely off, so when the cause changed to a
+   * spent allowance the Doctor warning stayed silent and the operator had nothing new to read.
+   */
+  it('says it again when the cause changes, and not when it has not', () => {
+    const worker = seedWorker('ClaudeFirst')
+    workers.setWorkerCredits(worker.id, OFF)
+    workers.setWorkerCreditsIntent(worker.id, true)
+    expect(workers.creditsDiscrepancy(workers.getWorker(worker.id)!)).not.toBeNull()
+    workers.noteCreditsDiscrepancyReported(worker.id)
+    expect(workers.creditsDiscrepancy(workers.getWorker(worker.id)!)).toBeNull()
+
+    workers.setWorkerCredits(worker.id, SPENT)
+    const again = workers.creditsDiscrepancy(workers.getWorker(worker.id)!, NOW)
+    expect(again).toContain('spent')
+    workers.noteCreditsDiscrepancyReported(worker.id)
+    expect(workers.creditsDiscrepancy(workers.getWorker(worker.id)!, NOW)).toBeNull()
   })
 
   /** ⚠️ Once. A question the operator has already been shown must not return on every probe. */

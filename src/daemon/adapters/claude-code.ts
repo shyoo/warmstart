@@ -174,6 +174,16 @@ function usageFileFor(isolationRoot: string): string | null {
  * ⚠️ Every field optional and every value nullable, because that is how the vendor writes them: on
  * an account with credits off, `used_credits`, `monthly_limit`, `currency` and `balance` are all
  * `null` — which is *not reported*, and must never become `0`.
+ *
+ * ⭐ **Credits off is two different situations wearing one field, measured 2026-09-13 on 2.1.270
+ * (`ClaudeFirst`).** There the numbers are *not* null: `used_credits: 2057` past
+ * `monthly_limit: 1730`, `utilization: 100`, `spend_limit_reached: true`,
+ * `disabled_reason: "org_level_disabled_until"` — while `hasExtraUsageEnabled: true` and
+ * `user_disabled: false` say the operator's own switch is on. So the vendor turned credits off
+ * because the month's allowance ran out, and an account that never had them is the same
+ * `is_enabled: false`. `spend_limit_reached` is the only field that separates them; the reason
+ * string is recorded and never matched on, which is why the `_until` suffix 2.1.270 added to
+ * `org_level_disabled` changed no behaviour here.
  */
 interface ClaudeConfigShape {
   cachedUsageUtilization?: {
@@ -212,6 +222,8 @@ interface ClaudeExtraUsageShape {
   decimal_places?: number | null
   disabled_reason?: string | null
   user_disabled?: boolean | null
+  /** ⛔ The vendor saying *the allowance ran out*, which `is_enabled: false` alone cannot say. */
+  spend_limit_reached?: boolean | null
   credits_ever_enabled?: boolean | null
 }
 
@@ -246,12 +258,19 @@ function extraAmount(value: unknown, decimalPlaces?: number | null): number | nu
  * different statement from a meter reading zero, and only one of them is true here.
  */
 function spendMeters(spend: ClaudeSpendShape | undefined, creditsEnabled?: boolean): SpendMeter[] {
+  if (!spend) return []
   // ⛔ Claude keeps `spend.used.amount_minor: 0` in the usage cache after the operator turns
   // credits off. That is the shape of an unavailable balance, not evidence that the accumulated
   // counter reset: `extra_usage.is_enabled` is the vendor's direct statement of which one it is.
   // Reporting that zero would turn a previous $20.57 reading into a fabricated $0.00 run delta.
-  if (creditsEnabled === false) return []
-  if (!spend) return []
+  //
+  // ⭐ But *only* the zero. Credits off with a **non-zero** counter is the case measured
+  // 2026-09-13 on 2.1.270: `used: 2057` (`$20.57`) with `is_enabled: false`, because the vendor
+  // cut credits off when the allowance ran out. Dropping every meter on `enabled === false`
+  // stopped metering overage cash at the exact moment the most of it had been spent — the last
+  // run before the cut-off got one reading and no second, so it priced as `null` — and left the
+  // strip drawing no credit gauge at all for an account with $20.57 on the clock.
+  const suppressCounter = creditsEnabled === false && (majorUnits(spend.used) ?? 0) === 0
   const meters: SpendMeter[] = []
   const currency = spend.used?.currency ?? null
   // ⚠️ `usdPerUnit` is 1 only because the measured accounts bill in USD. A vendor reporting another
@@ -259,7 +278,7 @@ function spendMeters(spend: ClaudeSpendShape | undefined, creditsEnabled?: boole
   const usdPerUnit = currency === null || currency === 'USD' ? 1 : null
 
   const used = majorUnits(spend.used)
-  if (used !== null) {
+  if (used !== null && !suppressCounter) {
     meters.push({
       id: 'claude-extra-usage',
       label: 'Claude usage credits',
@@ -359,6 +378,7 @@ function creditStatus(parsed: ClaudeConfigShape, now: number = Date.now()): Cred
       str(extra?.disabled_reason) ?? str(spend?.disabled_reason) ?? str(parsed.cachedExtraUsageDisabledReason),
     canToggle: bool(spend?.can_toggle),
     everEnabled: bool(extra?.credits_ever_enabled),
+    spendLimitReached: bool(extra?.spend_limit_reached),
     monthlyLimit: extraAmount(extra?.monthly_limit, extra?.decimal_places) ?? majorUnits(spend?.limit),
     used: extraAmount(extra?.used_credits, extra?.decimal_places) ?? majorUnits(spend?.used),
     currency: str(extra?.currency) ?? str(spend?.used?.currency),

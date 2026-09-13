@@ -682,6 +682,22 @@ export interface CreditStatus {
   canToggle: boolean | null
   /** Has this account ever had credits on? ⚠️ Distinguishes "off" from "never offered". */
   everEnabled: boolean | null
+  /**
+   * Does the vendor say this month's credit allowance is already spent?
+   *
+   * ⛔ **The difference between *you turned credits off* and *the vendor turned them off because the
+   * allowance ran out*, which no other field here can tell apart.** Measured 2026-09-13 on Claude
+   * Code 2.1.270 (`ClaudeFirst`): `hasExtraUsageEnabled: true` and `user_disabled: false` — the
+   * operator's switch is on — while `is_enabled: false`, `spend_limit_reached: true` and
+   * `used_credits` (20.57) is past `monthly_limit` (17.30). Both readings collapse into
+   * `enabled: false`, and only this one says the next move is to wait for `resetsAt` (or raise the
+   * ceiling) rather than to go and find a toggle.
+   *
+   * ⚠️ The vendor's own statement, not an arithmetic one: `creditsPurseEmpty` still infers the same
+   * thing from `used >= monthlyLimit` where this is `null`, which is every adapter but this one and
+   * every row written before this field existed.
+   */
+  spendLimitReached: boolean | null
   /** The monthly ceiling, where the vendor publishes one. */
   monthlyLimit: number | null
   /** Spend against that ceiling so far this billing month. See `SpendMeter.direction`. */
@@ -710,7 +726,28 @@ export interface CreditsIntent {
   at: number
   /** When a mismatch between `asked` and the vendor's reading was last put to the operator. */
   reportedAt: number | null
+  /**
+   * Which mismatch that was — `creditsMismatchKind`'s answer at the moment it was reported.
+   *
+   * ⛔ **Once per *cause*, not once per account.** The operator who acts on the sentence and then
+   * meets a different obstacle is told nothing by a silence keyed on `reportedAt` alone: measured
+   * 2026-09-13 on `ClaudeFirst`, they turned the vendor's switch on, the allowance then ran out, and
+   * the one surviving word for both situations was *Vendor reports credits off* — with the Doctor
+   * warning suppressed since the first reading. ⚠️ `undefined` on rows written before this field,
+   * which read as *nothing reported yet* and so raise their current cause once.
+   */
+  reportedKind?: CreditsMismatchKind | null
 }
+
+/**
+ * Why the vendor is not spending credits this account was asked to spend.
+ *
+ * ⛔ A closed set, because each one has a different next move and `enabled: false` names none of
+ * them: `purse-empty` waits for the refill (or a higher ceiling), `user-off` is a switch somebody
+ * threw, `never-offered` is an account that has never had credits at all, and `off` is the vendor
+ * saying no without saying why.
+ */
+export type CreditsMismatchKind = 'purse-empty' | 'user-off' | 'never-offered' | 'off'
 
 /** Every meter one worker reports, at one moment. The money analogue of `QuotaSnapshot`. */
 export interface SpendSnapshot {

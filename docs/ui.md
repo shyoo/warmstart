@@ -734,14 +734,31 @@ whose entire design is to be invisible.
   every row's tooltip in both cases.
 - ⛔ **Money accrues in dollars, under the windows it is no longer bounded by.** A quota gauge is a
   share of a fee already paid; a usage-credit meter is a bill being run up now, so the fleet card
-  draws it as its own row below the gauges rather than as a fourth gauge among them. ⚠️ Drawn only
-  where the vendor reports credits *enabled* on that account: with them off the vendor publishes no
-  balance at all, and `money()` would print `$0.00` for a purse that has merely not been shown.
+  draws it as its own row below the gauges rather than as a fourth gauge among them. ⚠️ Drawn where
+  the vendor published an amount to draw — `creditGaugeVisible` in
+  [`shared/credits.ts`](../src/shared/credits.ts): credits on, *or* credits the vendor cut off with
+  real spend on the clock, where the label reads `spent` and the value dims. ⛔ Never on a
+  credits-off account with no numbers: the vendor publishes no balance at all there, and `money()`
+  would print `$0.00` for a purse that has merely not been shown. ⭐ The second case was measured
+  2026-09-13 on `ClaudeFirst`, where testing `enabled === true` alone left the account with the
+  largest bill in the fleet (`$20.57`) as the one card drawing no credit gauge — because the vendor
+  had turned credits off *on account of* that spend.
 - ⛔ **A checkbox that records an intention says so.** Settings › Workers › *Credits* does not turn
   usage credits on — the vendor reports `can_toggle: false` and `/usage-credits` opens a login chooser
   — so it is labelled with what the vendor currently says (`(on)` / `(vendor: off)`) and its tooltip
   names where the real switch lives. Presenting it as the switch would be the one lie the fleet strip
   exists to prevent: a control that appears to be on and does nothing.
+- ⛔ **Credits off is four situations, and the row says which one.** `enabled: false` covers a spent
+  monthly allowance, a switch somebody threw, an account never offered credits, and a vendor refusing
+  without saying why — each with a different next move. `creditsMismatchNote`
+  ([`shared/credits.ts`](../src/shared/credits.ts)) names the one that applies, with the numbers where
+  the vendor published them, and the Doctor warning and the once-per-cause suppression in
+  `CreditsIntent.reportedKind` read the same judgement so they cannot drift from the row.
+  ⭐ Measured 2026-09-13 on `ClaudeFirst`: the operator had turned usage credits on at the vendor and
+  the row still said *Vendor reports credits off.* — true, and useless, because the switch was on and
+  the *allowance* was spent (`$20.57` of `$17.30`, refilling on the subscription anniversary). ⚠️ A
+  spent purse is drawn in dim text rather than amber: it is a reading, not a fault, and amber sends
+  somebody looking for a switch that is already thrown.
 - ⛔ **A held task says *why*, and says *when* where the refusal has an end.** `ready` on its own is
   unreadable: it is the scheduler's word for *eligible*, and a person who just filed a task reads it
   as *waiting for me*.

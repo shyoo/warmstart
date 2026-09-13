@@ -15,21 +15,31 @@ Expected test warnings exercise refusal and recovery paths; they are not failure
 
 ## Closed in this cleanup
 
+- **Credits off is four situations, and the row now says which one (t408, 2026-09-13).** ⭐ Measured on
+  `ClaudeFirst` off Claude Code 2.1.270: usage credits were **on** at the vendor
+  (`hasExtraUsageEnabled: true`, `user_disabled: false`) and the row still read *Vendor reports credits
+  off.* — because `used_credits` ($20.57) had passed `monthly_limit` ($17.30), so the vendor cut them
+  until the refill (`spend_limit_reached: true`, `org_level_disabled_until`). The parse was never wrong:
+  **one sentence covered four causes**, and the only actionable one here is a date.
+  [`src/shared/credits.ts`](src/shared/credits.ts) now holds the single judgement — `creditsMismatchKind`,
+  `creditsMismatchNote`, `creditGaugeVisible`, and `creditsPurseEmpty` moved out of `workers.ts` so the
+  row and the dispatch gate cannot disagree — and `CreditStatus.spendLimitReached` outranks the
+  `used >= monthlyLimit` arithmetic. Two hidden faults fell out of the same reading: ⛔ `spendMeters`
+  dropped **every** meter on `enabled === false`, ending overage metering at the moment of maximum spend
+  (now only the zero-shaped counter is suppressed), and ⛔ the fleet card drew no credit gauge for the
+  account with the largest bill on it (now drawn, labelled `spent`). The Doctor warning is raised once
+  per *cause* (`CreditsIntent.reportedKind`), which is why the changed cause had gone unsaid.
+  ⚠️ L1 only; the new wording and the `spent` gauge have not been driven in the packaged app. See
+  [`docs/adapters.md`](docs/adapters.md) for the payload.
 - **Two dispatch faults measured off t408 and t410 (2026-09-13).** ⭐ *A sandboxed Codex run cannot
-  write a file a sandboxed run wrote*: the per-run grant codex puts on the workspace root does not
-  propagate into files owned by `CodexSandboxOffline` (the operator lacks WRITE_DAC on them), so they
-  keep a dead run's DACL and the next run gets *Failed to write file* — t408's `Workers.tsx`, t353's
-  `prefs.ts`. `sweepAcls` ([`acl.ts`](src/daemon/acl.ts)) now replaces every path `icacls /reset`
-  refuses with an operator-owned copy (Modify includes DELETE), on prepare, over the workspace, its
-  worktree metadata and the trunk's `refs`/`logs`; proven with a real sandboxed `codex exec` patching
-  the refused file. Refusals arrive on **stderr**, which the old call discarded; the sweep is async
-  (7.2 s for 19.7k files, no longer freezing the daemon). ⭐ *A Muse run bridged through WSL rewrote
-  ws3's `.git` pointer* because muse's own edit tools cannot follow `gitdir: C:/…` (`GIT_DIR` helps
-  only `git`); Windows git then could not open ws3, the park failed, and Reassign died on *already
-  used by worktree*. Pool pointers are now written **relative**, which both sides follow, and
-  `ensureWorktreePointer` runs `git worktree repair` before every park and prepare. ws1–ws4 were
-  swept and ws3 repaired by hand (t410's uncommitted work is intact on its branch's slot). ⚠️ Whether
-  muse's `edit_file` accepts the relative pointer is inferred from its error, not yet measured live.
+  write a file a sandboxed run wrote*: files owned by `CodexSandboxOffline` keep a dead run's DACL and
+  the operator lacks WRITE_DAC on them, so the next run gets *Failed to write file*. `sweepAcls`
+  ([`acl.ts`](src/daemon/acl.ts)) replaces every path `icacls /reset` refuses (on **stderr**, which the
+  old call discarded) with an operator-owned copy, async — 7.2 s for 19.7k files. ⭐ *A Muse run
+  bridged through WSL rewrote ws3's `.git` pointer*, because muse's edit tools cannot follow
+  `gitdir: C:/…`; pool pointers are now **relative** and `ensureWorktreePointer` runs
+  `git worktree repair` before every park and prepare. ws1–ws4 swept, ws3 repaired by hand.
+  ⚠️ Whether muse's `edit_file` accepts the relative pointer is inferred from its error, not measured.
 - **Loose ends offers an explicit Delete it, for a branch the operator has decided is not needed.**
   `deleteUnlandedBranch` ([`worktrees.ts`](src/daemon/worktrees.ts)) is `retireStrandedBranch`'s
   destructive sibling — it skips the `ahead === 0` proof that function enforces, since the point is
@@ -55,24 +65,16 @@ Expected test warnings exercise refusal and recovery paths; they are not failure
   an empty branch can still trip the trunk tripwire while a trunk task commits — see
   [`docs/landing.md`](docs/landing.md#working-in-the-trunk).
 - **Repeated compaction and quota tipping loops are prevented (t401, t404).** `decideRevive`
-  in [`src/daemon/cacheclock.ts`](src/daemon/cacheclock.ts) now checks `accountRefusal`, `refusalRateLimit`,
-  and `poolVerdict` blocking thresholds before waking a closed conversation for compaction. When quota
-  is blocking, an active task quota override is honored unless the window is 100% exhausted.
-  `reviveAndCompact` preserves and increments `clock_move_attempts` across revive cycles so failed
-  compactions back off after `MAX_MOVE_ATTEMPTS` instead of looping indefinitely on cleared attempts.
-  Preemption wrap-up in [`src/daemon/scheduler.ts`](src/daemon/scheduler.ts) falls back to handoff when
-  the vendor is refusing turns, the window is exhausted without credits, or compaction is disabled, and
-  an unlanded preemption compaction preserves the clock move record. Suites stub `claude-code` presence
-  via `forceInstalled` in [`revivecompact.test.ts`](src/daemon/revivecompact.test.ts) and
-  [`taskcompact.test.ts`](src/daemon/taskcompact.test.ts) so tests evaluate compaction logic without
-  requiring vendor CLIs on disk.
-- **macOS build script and test parity.** [`scripts/build-mac.sh`](scripts/build-mac.sh) delivers parity with
-  [`scripts/build-win.ps1`](scripts/build-win.ps1) (content-addressed step cache in `.build-cache/`, process
-  safety checks, `--restart`, `--quick`, `--installer`, `--skip-tests`, `--fresh`, `--stop-daemon`, `--stop-agents`).
-  Fixed probe lifetime race in [`test/daemon.test.mjs`](test/daemon.test.mjs) (`AGENT_PROBE_ARGV` keeps probe open
-  until explicit close), table centring overflow under macOS serif fonts in [`src/renderer/src/styles/app.css`](src/renderer/src/styles/app.css)
-  (`--paper-measure: max(80ch, 780px)`), and child process reaping / architecture detection in
-  [`test/lib/harness.mjs`](test/lib/harness.mjs) and [`test/pack.test.mjs`](test/pack.test.mjs).
+  ([`cacheclock.ts`](src/daemon/cacheclock.ts)) checks `accountRefusal`, `refusalRateLimit` and
+  `poolVerdict` before waking a closed conversation to compact, honouring an active task's quota
+  override unless the window is fully exhausted; `reviveAndCompact` carries `clock_move_attempts`
+  across revives so failures back off instead of looping. Preemption wrap-up
+  ([`scheduler.ts`](src/daemon/scheduler.ts)) falls back to handoff where the vendor is refusing, the
+  window is spent without credits, or compaction is off. Suites stub CLI presence via `forceInstalled`.
+- **macOS build script and test parity.** [`scripts/build-mac.sh`](scripts/build-mac.sh) has the same
+  flags and step cache as [`scripts/build-win.ps1`](scripts/build-win.ps1); see
+  [`docs/development.md`](docs/development.md) §1. Fixed with it: a probe-lifetime race in
+  `test/daemon.test.mjs`, table centring under macOS serif fonts, and child reaping in `test/lib/harness.mjs`.
 - **The thread shows the change before you land it.** `task.diffSummary` and `task.diffFile`
   ([`src/daemon/taskdiff.ts`](src/daemon/taskdiff.ts)) read the *same* commits the grader reads —
   `resolveRange` picks them, and `collectDiff` was split into `numstatEntries`/`patchFor` so both

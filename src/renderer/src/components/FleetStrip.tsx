@@ -13,6 +13,7 @@ import { cardStatus, creditResetDays, gaugedSessions, shortWindowLabels } from '
 import { Working } from '../lib/taskview'
 import { AgentIcon } from './AgentIcon'
 import { cacheUrgency, countdown, money, percent, quotaUrgency, tokens, when } from '../lib/format'
+import { creditGaugeVisible, creditsMismatchNote } from '@shared/credits'
 
 /**
  * Context-fill fraction for sessions with no cache clock.
@@ -226,11 +227,18 @@ function CreditGauge({ credits, now, stale }: { credits: CreditStatus; now: numb
   const urgencyClass = fill !== null ? quotaUrgency(fill * 100) : 'ok'
   const valueText = `${money(credits.used)}${credits.monthlyLimit !== null ? `/${money(credits.monthlyLimit)}` : ''}`
   const resetText = creditResetDays(credits.resetsAt, now)
+  /**
+   * ⛔ The gauge is now drawn for an account whose credits the vendor has **cut off**, which is the
+   * only way a spent allowance is visible at all (`creditGaugeVisible`). It must not read as money
+   * still accruing: the label says `spent`, and the tooltip leads with the vendor's own reason.
+   */
+  const spent = credits.enabled !== true
 
   return (
     <div
-      className={`wcard-credits gauge gauge--credits${stale ? ' dim' : ''}`}
+      className={`wcard-credits gauge gauge--credits${spent ? ' gauge--credits-spent' : ''}${stale ? ' dim' : ''}`}
       title={
+        (spent ? `${creditsMismatchNote(credits, now)}\n` : '') +
         (credits.monthlyLimit !== null
           ? `credits: ${money(credits.used)} used of ${money(credits.monthlyLimit)} monthly limit`
           : `credits: ${money(credits.used)} used`) +
@@ -239,7 +247,7 @@ function CreditGauge({ credits, now, stale }: { credits: CreditStatus; now: numb
         ((credits.resetsAt ?? null) !== null ? `\nrefills ${when(credits.resetsAt)}` : '')
       }
     >
-      <span className="gauge-label">credits</span>
+      <span className="gauge-label">{spent ? 'spent' : 'credits'}</span>
       <span className="bar">
         {fill !== null && (
           <span
@@ -481,10 +489,13 @@ function WorkerCard({
           asked to be able to see how they are being billed rather than inferring it from a window
           at 100%. Sized and styled as a gauge matching sessions below it: font-size
           var(--text-meta), a bar with urgency fill, and $0.00/$40.00 value. "billing" tag dropped.
-          ⚠️ Rendered only when the vendor says credits are *on* for this account — an account with
-          credits off publishes no balance at all, and `money()` would print `$0.00` for a purse
-          that has merely not been shown. */}
-      {worker.credits?.enabled === true && <CreditGauge credits={worker.credits} now={now} stale={stale} />}
+          ⚠️ Rendered where the vendor published a number to draw — credits on, or credits the vendor
+          cut off with real spend on the clock (`creditGaugeVisible`). An account with credits off and
+          no numbers publishes no balance at all, and `money()` would print `$0.00` for a purse that
+          has merely not been shown. */}
+      {creditGaugeVisible(worker.credits) && worker.credits && (
+        <CreditGauge credits={worker.credits} now={now} stale={stale} />
+      )}
 
       {/* ⛔ The rule is load-bearing, not decoration. Everything above it is the **account**: one
           quota, shared by every session on it, and it survives the session ending. Everything below

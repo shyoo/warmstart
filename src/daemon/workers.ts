@@ -11,6 +11,7 @@ import type {
   WorkerRole
 } from '@shared/protocol.js'
 import { resolveModelChoice } from '@shared/tasks.js'
+import { creditsMismatchKind, creditsMismatchNote, creditsPurseEmpty } from '@shared/credits.js'
 import { db, row, rows } from './db.js'
 import { ensureDir, paths, slugify } from './paths.js'
 import { adapter, hasAdapter } from './adapters/index.js'
@@ -427,18 +428,28 @@ export function setWorkerCredits(id: string, credits: CreditStatus | null): Work
  */
 export function setWorkerCreditsIntent(id: string, asked: boolean): Worker {
   requireWorker(id)
-  const intent: CreditsIntent = { asked, at: Date.now(), reportedAt: null }
+  const intent: CreditsIntent = { asked, at: Date.now(), reportedAt: null, reportedKind: null }
   db()
     .prepare('update workers set credits_intent_json = ? where id = ?')
     .run(JSON.stringify(intent), id)
   return announce(requireWorker(id))
 }
 
-/** Remember that the operator has been told about a mismatch, so it is raised once and not hourly. */
+/**
+ * Remember that the operator has been told about a mismatch, so it is raised once and not hourly.
+ *
+ * ⛔ Records *which* mismatch. A bare timestamp silences the next cause as well as this one — see
+ * `creditsDiscrepancy` — and the kind is read back off the same reading that produced the sentence,
+ * never passed in by the caller, so the two cannot disagree.
+ */
 export function noteCreditsDiscrepancyReported(id: string): void {
   const worker = getWorker(id)
   if (!worker?.creditsIntent) return
-  const intent: CreditsIntent = { ...worker.creditsIntent, reportedAt: Date.now() }
+  const intent: CreditsIntent = {
+    ...worker.creditsIntent,
+    reportedAt: Date.now(),
+    reportedKind: creditsMismatchKind(worker.credits)
+  }
   db()
     .prepare('update workers set credits_intent_json = ? where id = ?')
     .run(JSON.stringify(intent), id)
@@ -472,23 +483,13 @@ export function spendingCreditsOn(worker: Worker | null, switchOn: boolean): boo
 }
 
 /**
- * Has this account already spent every credit it was allowed this month?
+ * Re-exported so every caller keeps one rule.
  *
- * ⛔ **A purse with nothing in it is credits *off* for every decision that matters.** `enabled`
- * says the vendor is willing to bill past the plan limit; it does not say there is anything left to
- * bill against. Standing the quota guards down on an emptied purse is the worst of both answers —
- * the run is not wrapped up cleanly *and* the vendor refuses the turn anyway, which is exactly the
- * outcome `spendingCreditsOn` exists to avoid.
- *
- * ⚠️ Both numbers or nothing. A vendor that publishes no ceiling, or no spend against it, has
- * said nothing about the purse being empty — and an unknown is not an exhaustion.
+ * ⛔ The judgement itself lives in [`@shared/credits`](../shared/credits.ts), because the renderer
+ * decides what an account row says with it and a second copy here is how a row comes to contradict
+ * the scheduler. `spendingCreditsOn` above is its only gate-side reader.
  */
-export function creditsPurseEmpty(credits: CreditStatus | null | undefined): boolean {
-  if (!credits) return false
-  const { monthlyLimit, used } = credits
-  if (monthlyLimit === null || monthlyLimit <= 0 || used === null) return false
-  return used >= monthlyLimit
-}
+export { creditsPurseEmpty }
 
 /**
  * Has the operator asked for something the vendor is not doing? One sentence, or null.
@@ -497,21 +498,33 @@ export function creditsPurseEmpty(credits: CreditStatus | null | undefined): boo
  * for credits and the account is not spending them, so runs they expected to carry on past the limit
  * are still being wrapped up. The opposite — credits on where none were asked for — is the vendor's
  * own setting on the operator's own account and is not this app's business to challenge.
+ *
+ * ⛔ **Once per *cause*, not once per account** (2026-09-13). The old test was `reportedAt !== null`,
+ * so the first reading after the switch was thrown silenced every later one — and on `ClaudeFirst`
+ * the cause then changed underneath it: the operator turned credits on at the vendor, the month's
+ * allowance ran out, the vendor cut them off again, and the only thing left on screen was the same
+ * *credits are off* wording it had shown before they did anything. `reportedKind` is the evidence
+ * that *this* mismatch was reported, which is what makes it safe to say the next one.
+ *
+ * ⚠️ The `canToggle: false` sentence is withheld on an emptied purse: it says *go and find the
+ * vendor's switch*, and on that account the switch was already on. The next move there is the refill
+ * date, or a higher ceiling.
  */
-export function creditsDiscrepancy(worker: Worker): string | null {
+export function creditsDiscrepancy(worker: Worker, now: number = Date.now()): string | null {
   const intent = worker.creditsIntent
   const credits = worker.credits
   if (!intent?.asked || !credits || credits.enabled) return null
-  if (intent.reportedAt !== null) return null
-  const why = credits.disabledReason ? ` The reason it gives is \`${credits.disabledReason}\`.` : ''
+  const kind = creditsMismatchKind(credits)
+  if (!kind) return null
+  if (intent.reportedAt !== null && (intent.reportedKind ?? null) === kind) return null
   const toggle =
-    credits.canToggle === false
+    credits.canToggle === false && kind !== 'purse-empty'
       ? ' It also reports that this cannot be changed from the CLI, so the switch is somewhere ' +
         'in the vendor’s own account settings rather than in the terminal.'
       : ''
   return (
-    `You asked for ${worker.label} to spend usage credits past its plan limit, but the vendor ` +
-    `reports credits as **off** on this account.${why}${toggle} Until they are on, runs on this ` +
+    `You asked for ${worker.label} to spend usage credits past its plan limit, and it is not ` +
+    `spending them. ${creditsMismatchNote(credits, now)}${toggle} Until they are on, runs on this ` +
     'worker are still wrapped up at the limit rather than carrying on.'
   )
 }

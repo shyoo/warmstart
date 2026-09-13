@@ -388,6 +388,7 @@ describe('it asks once, not once every ten seconds', () => {
       disabledReason: null,
       canToggle: null,
       everEnabled: true,
+      spendLimitReached: false,
       monthlyLimit: 100,
       used: 0,
       currency: 'USD',
