@@ -9,44 +9,43 @@ Warmstart rename, and the three pre-public blockers a three-seat debate on t392 
 **desktop notifications**. The maintained reference in [`docs/`](docs/README.md) is the authority on
 each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-13, Windows, measured **after** t423): typecheck, lint, build pass; L1
-**3,409 passed, 2 skipped** (193 files); L2 **203 checks** (5 skipped); L3 **421 checks**; L4
-`test:pack` **19 checks**, re-run after repackaging. ⚠️ L4 proves the *package*, not this change's
-screens — see remaining work 14. ⚠️ The macOS arm64 baseline (L1 **3,367 passed, 12 skipped**; L2
+Baseline (2026-09-13, Windows, measured **after** t425): typecheck, lint, build pass; L1
+**3,426 passed, 2 skipped** (195 files); L3 **428 checks**. L2 **203 checks** (5 skipped) and L4
+`test:pack` **19 checks** were measured after t423 and not re-run on t425, which touches no daemon
+code. ⚠️ L4 proves the *package*, not this change's screens — see remaining work 14. ⚠️ The macOS arm64 baseline (L1 **3,367 passed, 12 skipped**; L2
 **198**; L3 **419**; L4 **17**) was taken **before** t423 and has not been re-run on it.
 
 ## Closed in this cleanup
 
+- **The diff moved out of the thread into a Diff pane (t425, 2026-09-13).** A patch drawn inline got
+  the thread column at best and the 300px ledger at worst, which was the report. `DiffPane` is now a
+  column of the shell right of the work — its own drag handle (`PaneResizer`, the generalised sidebar
+  handle), full height, one scroll, sticky file headers, every file stacked. The inline **Changes in
+  this task** keeps its file list and draws no patch; a file row or *Open in Diff pane* opens the
+  pane there, and the ledger's sha opens it on that commit. It is one `DiffPaneRequest` in `App.tsx`
+  behind a context, and it **follows the route**: closes when the route stops naming its task,
+  survives the task's tabs. `initialExpansion` opens files from the top until 12 files or 1,500
+  counted lines (one `git` call each); `lib/hunks.ts` draws `⋯ N unmodified lines` between hunks from
+  the `@@` headers alone. ⚠️ Hunks only: full-file context (`context: 'full'` on the RPCs, the
+  screenshot's collapsible unmodified runs) is the follow-up. Driven in the built app on a three-file
+  fixture; `test/ui.test.mjs` covers the commit, the branch-at-a-file, close and route-following
+  paths on the project thread. Seven decisions with the operator:
+  [`transient_docs/diff_pane_2026-09-13.md`](transient_docs/diff_pane_2026-09-13.md).
 - **Claude Code narrates its work, and the Session TUI stopped pretending to be one (t423,
   2026-09-13).** ⛔ It was our decoder, not the CLI: `textBlocks` kept only `type: "text"` blocks, so
-  a prose-less `assistant` record decoded to `other` and reached nobody — measured on a real
-  1,679-record session, **1,310 (78%) carried no text block at all** (814 tool calls, 496 thinking).
-  Tool calls are now a declared `StreamEvent.tool_use` on both adapters, in one vocabulary
-  (`toolLine`) that `activity.proseOf` already filters. ⛔ The **thinking words do not exist**:
-  `thinking: ""` in the stream, with `--include-partial-messages` and without, and 490 of 496 empty
-  in the transcript — what is free is `system/thinking_tokens`, an estimate, with no flag. A fleet
-  setting (`liveNarration`, default `summary`) turns on partial output where an adapter declares
-  `streamsPartialOutput`; it buys word-by-word prose at ~10× the stream lines and nothing else.
-  The Session TUI tab now draws `SessionStream` (decoded records, collapsible) for a piped session
-  and the real xterm for a PTY one, with **Open a real terminal** (`session.attach`) beside it —
-  always a **fork**, so the run carries on and the original stays resumable
-  (`--resume <old> --fork-session --session-id <new>`, measured: minted id honoured, 31,372 tokens
-  read from cache). ⛔ **Work stays on pipes**: `rate_limit_event` exists only in stream-json output
-  and nowhere in the transcript, so a full-TUI work session would go quota-blind.
-  ⭐ Two live bugs fell out of the same root cause — raw bytes written at a `stream-json` stdin, which
-  corrupts the next message and **exits the CLI 1** (measured; the control run exited 0): *take the
-  keyboard* on a dispatched task ended the run on the first character, and `askForWrapUp` wrote its
-  prompt with a carriage return, so **every soft cancel of a dispatched task** timed out at 90s
-  logging *did not wrap up in time* about a prompt the agent had never seen. ⭐ And a third finding
-  wired in: `rate_limit_info.unifiedWindows` carries a live utilization per window on every turn
-  (`QuotaSnapshot.source: 'stream'`), where the only other source is a cache measured 19 days stale.
-  ⚠️ **L1 only — none of the UI has been driven in the packaged app**, and whether `unifiedWindows`
-  names an Opus window is unverified (the publish guard makes being wrong cost nothing). Decisions:
+  a prose-less `assistant` record reached nobody — on a real 1,679-record session **78% carried no
+  text block**. Tool calls are now a declared `StreamEvent.tool_use` (`toolLine`). ⛔ The **thinking
+  words do not exist** in the stream; `system/thinking_tokens` is free. A fleet setting
+  (`liveNarration`, default `summary`) buys word-by-word prose at ~10× the stream lines. The Session
+  TUI draws `SessionStream` for a piped session and xterm for a PTY one, with **Open a real
+  terminal** (`session.attach`) — always a **fork**. ⛔ **Work stays on pipes**: `rate_limit_event`
+  exists only in stream-json. ⭐ Raw bytes at a `stream-json` stdin **exit the CLI 1** — that was
+  *take the keyboard* on a dispatched task and `askForWrapUp`'s carriage return (every soft cancel
+  timed out at 90s). ⭐ `rate_limit_info.unifiedWindows` is a live per-window reading
+  (`QuotaSnapshot.source: 'stream'`). ⚠️ **L1 only**; whether `unifiedWindows` names an Opus window
+  is unverified. Decisions:
   [`transient_docs/live_narration_2026-09-13.md`](transient_docs/live_narration_2026-09-13.md).
-  ⚠️ It also carries **four L3 checks t422 left red**: splitting Global into tabs moved the tray
-  switch, the fleet finish picker and the Projects table behind three different tabs, and
-  `test/ui.test.mjs` still looked at whichever tab Global happened to remember. Each section names
-  its tab now — the controls were never gone.
+  Also repaired four L3 checks t422 left red (each Global section names its tab).
 - **Remote listener auto-retries Tailscale every 60s (2026-09-13).** A reboot starts the app before
   the Tailscale service, so the one-shot probe saw none and the listener stayed down until somebody
   clicked *Re-check Tailscale*. A 60-second `setInterval` in `startRemoteServer`
@@ -57,7 +56,6 @@ screens — see remaining work 14. ⚠️ The macOS arm64 baseline (L1 **3,367 p
   symlink breaks relative traversal (`worktrees.ts`). A non-Windows GUI launch searches the standard
   user bin paths (`which.ts`), and task-table column widths gained 2–8px for macOS font metrics.
 - **Global settings are now task-oriented tabs (t422, 2026-09-13).** Global opens on **Fleet settings**; Notice isolates doctor warnings, Status holds daemon/CLI/worker/cost-model facts and Projects, App behavior holds window preferences, and Remote connection orders Tailscale, project access, desktop and phone pairing. Adding a remote computer is modal. The phone QR encoder now restores QR's fixed dark module after format placement; it was previously overwritten for some masks and could not be read by a camera. ⚠️ Landed without `npm run test:ui`, which the tab split broke in four places; t423 repaired it.
-
 - **Later pushes reconcile with an earlier local landing (t421, 2026-09-13).** A landing message
   remains an honest record of what its own strategy did. When `origin/<target>` later contains its
   commit, startup and a five-minute sweep fetch first and add a separate *Later observed* thread row;
@@ -68,9 +66,6 @@ screens — see remaining work 14. ⚠️ The macOS arm64 baseline (L1 **3,367 p
   desktops* switch, TLS on the tailnet hostname only, sealed by `safeStorage` in `remotes.json`.
   RPC versions are a negotiated range capped at ±1 (`shared/rpcversion.ts`).
 - **A nearby reset no longer preempts healthy work (t418, 2026-09-13).** Early wrap-up now needs its model pool at high-water (92% for five-hour windows), not just t416's `config cache` reset; refusal and the 95% active-overrun guard remain separate.
-- **Pages and Routing Model tables stay centred (t417); the task table's narrow columns really drop
-  (t415).** `.tbl--paper` is a fit-content block with `overflow-x: auto`; centring check measures
-  client box. A dropped task column is `visibility: collapse; width: 0` so cells stay in DOM without gap.
 - **Canonical versioning and verified release download (t416, 2026-09-13).** `version.json` names
   the release and repo; build rejects mismatches. Packaged app polls GitHub Releases, verifies
   `SHA256SUMS.txt`, and stages download in `<dataDir>/updates/`.
@@ -79,8 +74,8 @@ screens — see remaining work 14. ⚠️ The macOS arm64 baseline (L1 **3,367 p
 - **Composer workspace pill first, purple pending-PR dot, split thread bubbles on a mid-flight reply
   (t414, 2026-09-13).** See `lib/threadbubble.ts` and `delivery.pending`.
 - **Five UI reports off t410 (2026-09-13).** **Changes in this task** is drawn wherever the change
-  resolves, not only at `awaiting_human`; each commit links its own `<sha>^!` diff behind the same
-  double gate; side-by-side layout (`lib/sidebyside.ts`); bars under 3D marks (`lib/plot3d.ts`).
+  resolves, not only at `awaiting_human`; each commit reads its own `<sha>^!` diff; side-by-side
+  layout (`lib/sidebyside.ts`); bars under 3D marks (`lib/plot3d.ts`).
 - **Credits off is four situations, and the row now says which one (t408, 2026-09-13).** Measured on
   Claude Code 2.1.270: `hasExtraUsageEnabled: true` with `spend_limit_reached: true` reports exact cause
   and refill date (`creditsMismatchKind`, `src/shared/credits.ts`). Spend meters keep non-zero counters;
@@ -103,7 +98,6 @@ screens — see remaining work 14. ⚠️ The macOS arm64 baseline (L1 **3,367 p
   ([`cacheclock.ts`](src/daemon/cacheclock.ts)) checks refusal and pool state before waking a closed
   conversation to compact; `reviveAndCompact` backs off across revives. Preemption wrap-up falls back
   to handoff where the vendor is refusing or the window is spent.
-- **macOS build script parity.** [`scripts/build-mac.sh`](scripts/build-mac.sh) mirrors `build-win.ps1`.
 - **The thread shows the change before you land it.** `task.diffSummary` / `task.diffFile`
   ([`taskdiff.ts`](src/daemon/taskdiff.ts)) read the *same* commits the grader reads. ⛔ Two measured
   git facts are pinned in [`taskdiff.test.ts`](src/daemon/taskdiff.test.ts): `--numstat` without `-z`

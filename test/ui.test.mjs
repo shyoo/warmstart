@@ -4880,7 +4880,8 @@ try {
     diffTitle === 'Changes in this task',
     diffTitle
   )
-  // Expand it: the patch is fetched one file at a time, on demand.
+  // Press a file: since t425 the patch is drawn in the **Diff pane** at the right of the window,
+  // fetched one file at a time, on demand — the inline list only names the files.
   // ⚠️ The panel opens itself when there is a change to read; force it open anyway so this check
   // does not quietly depend on that default.
   await evaluate(`document.querySelector('.diff-panel')?.setAttribute('open', '')`)
@@ -4891,16 +4892,16 @@ try {
   let diffPatch = '{}'
   await waitFor(async () => {
     diffPatch = await evaluate(`JSON.stringify({
-      lines: [...document.querySelectorAll('.diff-panel .diff-patch .diff-line')].length,
-      added: [...document.querySelectorAll('.diff-panel .diff-line--add')].map(e => e.textContent.trim()),
-      meta: [...document.querySelectorAll('.diff-panel .diff-line--meta')].map(e => e.textContent.trim()),
-      html: document.querySelector('.diff-panel .diff-patch')?.innerHTML ?? ''
+      lines: [...document.querySelectorAll('.diffpane .diff-patch .diff-line')].length,
+      added: [...document.querySelectorAll('.diffpane .diff-line--add')].map(e => e.textContent.trim()),
+      meta: [...document.querySelectorAll('.diffpane .diff-line--meta')].map(e => e.textContent.trim()),
+      html: document.querySelector('.diffpane .diff-patch')?.innerHTML ?? ''
     })`)
     return JSON.parse(diffPatch).lines > 0
-  }, 'the patch text for the expanded file')
+  }, 'the patch text for the pressed file, in the Diff pane')
   const diffShown = JSON.parse(diffPatch)
   check(
-    'expanding a file shows its added line, which is the content that will land',
+    'pressing a file opens the Diff pane on its added line, which is the content that will land',
     diffShown.added.some((l) => l.includes('not committed yet')),
     JSON.stringify(diffShown.added)
   )
@@ -4940,12 +4941,12 @@ try {
   await wait(300)
   const splitShown = JSON.parse(
     await evaluate(`JSON.stringify({
-      unified: document.querySelectorAll('.diff-panel .diff-patch').length,
-      rows: [...document.querySelectorAll('.diff-panel .diff-split-row')].length,
-      cells: [...document.querySelectorAll('.diff-panel .diff-split-row')].map(r => r.children.length),
-      added: [...document.querySelectorAll('.diff-panel .diff-split-cell--add .diff-split-text')].map(e => e.textContent),
-      numbered: [...document.querySelectorAll('.diff-panel .diff-split-no')].map(e => e.textContent).filter(Boolean).length,
-      html: document.querySelector('.diff-panel .diff-split-wrap')?.innerHTML ?? ''
+      unified: document.querySelectorAll('.diffpane .diff-patch').length,
+      rows: [...document.querySelectorAll('.diffpane .diff-split-row')].length,
+      cells: [...document.querySelectorAll('.diffpane .diff-split-row')].map(r => r.children.length),
+      added: [...document.querySelectorAll('.diffpane .diff-split-cell--add .diff-split-text')].map(e => e.textContent),
+      numbered: [...document.querySelectorAll('.diffpane .diff-split-no')].map(e => e.textContent).filter(Boolean).length,
+      html: document.querySelector('.diffpane .diff-split-wrap')?.innerHTML ?? ''
     })`)
   )
   check(
@@ -4975,9 +4976,12 @@ try {
   )
   await wait(300)
   const backToUnified = await evaluate(
-    `document.querySelectorAll('.diff-panel .diff-patch').length`
+    `document.querySelectorAll('.diffpane .diff-patch').length`
   )
   check('and back to one column, which is the layout it opens in', Number(backToUnified) === 1, String(backToUnified))
+  // ⚠️ Closed again, so the commit section below starts from no pane, as it asserts.
+  await evaluate(`document.querySelector('.diffpane-close')?.click()`)
+  await wait(200)
 
   // ⭐ t283: the card says which landing strategy the button will use, and it is the project's
   // answer rather than the bottom rung of the ladder. `ui project` inherits the fleet default.
@@ -5094,40 +5098,80 @@ try {
     landedRows.length > 0 && /^[0-9a-f]{8}$/.test(landedRows[0].sha) && /\+/.test(landedRows[0].counts),
     commitRows
   )
-  // ⚠️ Expanded on the press, not on render: the totals are one `git` call per row and the patch is
-  // another per file, so a row nobody opened must not have read one.
+  // ⭐ t425, 2026-09-13: *the side pane's width is too small for a diff.* The sha no longer unfolds
+  // a patch in the 300px ledger; it opens the **Diff pane**, a column of the shell at the right of
+  // the window. ⚠️ Read on the press, not on render: the totals are one `git` call per row and
+  // each patch another per file, so a row nobody opened must not have read one.
+  const noPaneYet = await evaluate(`document.querySelectorAll('.diffpane').length`)
+  check('no Diff pane is open before anything is pressed', noPaneYet === 0, String(noPaneYet))
   await evaluate(`document.querySelector('.detail-side-box .side-commit-link')?.click()`)
-  let commitDiff = '{}'
+  let paneState = '{}'
   await waitFor(async () => {
-    commitDiff = await evaluate(`JSON.stringify({
-      files: [...document.querySelectorAll('.diff-commit-body .diff-file-path')].map(e => e.textContent.trim()),
-      toggle: [...document.querySelectorAll('.diff-commit-body .diff-view-toggle button')].map(b => b.innerText.trim())
+    paneState = await evaluate(`JSON.stringify({
+      shell: document.querySelector('.shell')?.classList.contains('shell--diffpane') ?? false,
+      title: document.querySelector('.diffpane-title')?.innerText.trim() ?? '',
+      files: [...document.querySelectorAll('.diffpane .diffpane-file .diff-file-path')].map(e => e.textContent.trim()),
+      toggle: [...document.querySelectorAll('.diffpane-tools .diff-view-toggle button')].map(b => b.innerText.trim()),
+      // ⛔ The budget opens a small change by itself: the patch is on the screen with no second press.
+      added: [...document.querySelectorAll('.diffpane .diff-line--add')].map(e => e.textContent.trim()),
+      html: document.querySelector('.diffpane .diff-patch')?.innerHTML ?? '',
+      paneW: document.querySelector('.diffpane')?.getBoundingClientRect().width ?? 0,
+      mainRight: document.querySelector('.main')?.getBoundingClientRect().right ?? 0,
+      windowW: window.innerWidth,
+      pressed: document.querySelector('.detail-side-box .side-commit-link')?.getAttribute('aria-pressed') ?? ''
     })`)
-    return JSON.parse(commitDiff).files.length > 0
-  }, 'the file list of the landed commit')
-  const shownCommit = JSON.parse(commitDiff)
+    return JSON.parse(paneState).added.length > 0
+  }, 'the Diff pane to open on the landed commit, with its first file already expanded')
+  const pane = JSON.parse(paneState)
   check(
-    'pressing it lists the files that commit changed, with both layouts offered',
-    shownCommit.files.includes('edited.txt') && shownCommit.toggle.length === 2,
-    commitDiff
+    'pressing the sha opens the Diff pane on that commit, with both layouts offered',
+    pane.shell && /^t\d+ · [0-9a-f]{8}/.test(pane.title) && pane.files.includes('edited.txt') && pane.toggle.length === 2,
+    paneState.slice(0, 400)
   )
+  check(
+    '⛔ the pane is a column of the shell, not a box inside the ledger: the work narrows to make room',
+    pane.paneW >= 360 && pane.mainRight <= pane.windowW - pane.paneW,
+    JSON.stringify({ paneW: pane.paneW, mainRight: pane.mainRight, windowW: pane.windowW })
+  )
+  const strayCommitTag = /<(?!\/?(?:span|pre)[^a-z])[a-z]/i.exec(pane.html)
+  check(
+    'and the patch it shows is that commit’s own, as text nodes only',
+    pane.added.some((l) => l.includes('not committed yet')) && strayCommitTag === null,
+    JSON.stringify({ added: pane.added.slice(0, 3), stray: strayCommitTag?.[0] ?? null })
+  )
+  check('the row that opened it says so', pane.pressed === 'true', pane.pressed)
+  // The inline list at the gate still names every file; pressing one opens the pane on the
+  // *branch*, focused on that file, and replaces what the pane was showing.
   await evaluate(
-    `[...document.querySelectorAll('.diff-commit-body .diff-file-head')].find(b => b.textContent.includes('edited.txt'))?.click()`
+    `[...document.querySelectorAll('.diff-panel .diff-file-head')].find(b => b.textContent.includes('edited.txt'))?.click()`
   )
-  let commitPatch = '{}'
+  let branchPane = '{}'
   await waitFor(async () => {
-    commitPatch = await evaluate(`JSON.stringify({
-      added: [...document.querySelectorAll('.diff-commit-body .diff-line--add')].map(e => e.textContent.trim()),
-      html: document.querySelector('.diff-commit-body .diff-patch')?.innerHTML ?? ''
+    branchPane = await evaluate(`JSON.stringify({
+      title: document.querySelector('.diffpane-title')?.innerText.trim() ?? '',
+      focused: document.querySelector('.diffpane-file--focused .diff-file-path')?.textContent.trim() ?? '',
+      open: document.querySelector('.diffpane-file--focused .diffpane-file-head')?.getAttribute('aria-expanded') ?? ''
     })`)
-    return JSON.parse(commitPatch).added.length > 0
-  }, 'the patch of a file inside the landed commit')
-  const commitShown = JSON.parse(commitPatch)
-  const strayCommitTag = /<(?!\/?(?:span|pre)[^a-z])[a-z]/i.exec(commitShown.html)
+    const got = JSON.parse(branchPane)
+    return /Changes in this task/.test(got.title) && got.focused !== ''
+  }, 'the Diff pane to switch to the branch when a file of the inline list is pressed')
+  const onBranch = JSON.parse(branchPane)
   check(
-    'and expanding a file shows that commit’s own patch, as text nodes only',
-    commitShown.added.some((l) => l.includes('not committed yet')) && strayCommitTag === null,
-    JSON.stringify({ added: commitShown.added.slice(0, 3), stray: strayCommitTag?.[0] ?? null })
+    'a file in the inline list opens the pane on the branch, at that file, expanded',
+    onBranch.focused === 'edited.txt' && onBranch.open === 'true',
+    branchPane
+  )
+  await evaluate(`document.querySelector('.diffpane-close')?.click()`)
+  await wait(300)
+  const afterClose = await evaluate(`JSON.stringify({
+    panes: document.querySelectorAll('.diffpane').length,
+    shell: document.querySelector('.shell')?.classList.contains('shell--diffpane') ?? false,
+    handles: document.querySelectorAll('.resizer--diffpane').length
+  })`)
+  check(
+    'the close button takes the pane and its handle out of the grid',
+    afterClose === JSON.stringify({ panes: 0, shell: false, handles: 0 }),
+    afterClose
   )
   // ⛔ **The other half of the report, and it needs the task actually settled.** Landing a
   // conversation deliberately leaves it open for another turn, so the panel is still at its gate
@@ -5164,6 +5208,32 @@ try {
     afterSettled.open === false,
     JSON.stringify(afterSettled)
   )
+  // ⛔ The pane follows the route. Back to the Tasks tab keeps the open task on the route — that is
+  // the tab rule, *the open task survives a tab change* — so the pane stays; leaving for Overview
+  // names no task, and the pane closes by itself rather than standing beside a screen it is not
+  // about.
+  await evaluate(`document.querySelector('.detail-side-box .side-commit-link')?.click()`)
+  await waitFor(
+    async () => (await evaluate(`document.querySelectorAll('.diffpane').length`)) === 1,
+    'the Diff pane to open again on the settled task'
+  )
+  await evaluate(`document.querySelector('.back-to-list')?.click()`)
+  await wait(300)
+  const afterBack = await evaluate(`JSON.stringify({
+    panes: document.querySelectorAll('.diffpane').length,
+    onThread: document.querySelectorAll('.detail').length
+  })`)
+  check(
+    'Back to the Tasks tab keeps the pane, because the route still names the task',
+    afterBack === JSON.stringify({ panes: 1, onThread: 0 }),
+    afterBack
+  )
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim() === 'Dashboard')?.click()`
+  )
+  await wait(300)
+  const afterLeave = await evaluate(`document.querySelectorAll('.diffpane').length`)
+  check('and leaving the task closes the Diff pane with it', afterLeave === 0, String(afterLeave))
 
   const errors = await evaluate('window.__agentyardErrors?.length ?? 0')
   check('no uncaught renderer errors', errors === 0)

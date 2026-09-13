@@ -64,7 +64,8 @@ import { useAction } from '../lib/useAction'
 import { TaskSettingPicker } from './TaskSettingPicker'
 import { CacheCost, Fact, ModelFact, SessionFact } from './thread/Facts'
 import { Decide, QuotaDecide, QuotaOverride } from './thread/Decide'
-import { CommitDiff, counts, DiffPanel } from './thread/DiffPanel'
+import { counts, DiffPanel } from './thread/DiffPanel'
+import { sameSource, useDiffPane } from '../lib/diffpane'
 import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
 import { DebateBoard } from './thread/DebateBoard'
 import { CompactionRow, ReviewRow, RunRow } from './thread/RunRow'
@@ -1505,12 +1506,15 @@ function DependencyEditor({
 const EAGER_COMMIT_TOTALS = 12
 
 /**
- * One commit row: what it is, how big it was, and its own diff when asked.
+ * One commit row: what it is, how big it was, and a press that opens its own diff in the Diff pane.
  *
- * ⛔ **The commit's own change, never the task's.** `task.commitDiff` reads `<sha>^!` — this commit
- * against its parent — so a task that landed twice shows two honest rows rather than one range that
- * would claim whatever landed in between. ⚠️ A row whose sha no longer resolves says so: history can
- * be rewritten under a record, and this pane reports the record.
+ * ⛔ **The commit's own change, never the task's.** The pane reads `task.commitDiff` — `<sha>^!`,
+ * this commit against its parent — so a task that landed twice shows two honest rows rather than
+ * one range that would claim whatever landed in between. ⚠️ A row whose sha no longer resolves says
+ * so: history can be rewritten under a record, and this pane reports the record.
+ *
+ * ⭐ **Opens the pane rather than unfolding here** (t425, 2026-09-13): this ledger is 300px wide,
+ * and a patch drawn in it was the report that made the pane.
  */
 function CommitRow({
   taskId,
@@ -1523,11 +1527,16 @@ function CommitRow({
 }): React.JSX.Element {
   const [summary, setSummary] = useState<TaskDiffSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [open, setOpen] = useState(false)
-  // ⚠️ Asked once, by whichever comes first: the eager read on mount or the first press. `wanted`
-  // is the trigger rather than a call at each site, so there is exactly one place that reads and
-  // exactly one guard against reading twice.
-  const wanted = eager || open
+  const pane = useDiffPane()
+  const source = useMemo(
+    () => ({ kind: 'commit' as const, sha: commit.sha, subject: commit.subject }),
+    [commit.sha, commit.subject]
+  )
+  const shown = pane.request?.taskId === taskId && sameSource(pane.request.source, source)
+
+  // ⚠️ The totals are read once, on mount, for the rows that fit a normal task; a thread that
+  // somehow carries more fetches on the first press instead. Neither is on a timer.
+  const wanted = eager || shown
 
   useEffect(() => {
     if (!wanted || summary !== null || error !== null) return
@@ -1545,8 +1554,6 @@ function CommitRow({
     }
   }, [wanted, summary, error, taskId, commit.sha])
 
-  const toggle = useCallback((): void => setOpen((was) => !was), [])
-
   return (
     <div className="side-run">
       <div className="side-run-head">
@@ -1555,8 +1562,8 @@ function CommitRow({
         <button
           type="button"
           className="side-commit-link mono"
-          onClick={toggle}
-          aria-expanded={open}
+          onClick={() => (shown ? pane.close() : pane.open({ taskId, source }))}
+          aria-pressed={shown}
           title={
             `${commit.sha}\n` +
             (commit.target ? `landed onto ${commit.target}\n` : '') +
@@ -1564,11 +1571,11 @@ function CommitRow({
               ? 'Recovered from this task’s own “Landed as …” message — it landed before ' +
                 'commits were recorded.\n'
               : 'Recorded by the landing that made it.\n') +
-            'Opens this commit’s own diff.'
+            'Opens this commit’s own diff in the Diff pane.'
           }
         >
           <span className="diff-file-caret" aria-hidden>
-            {open ? '▾' : '▸'}
+            {shown ? '▾' : '›'}
           </span>
           {commit.sha.slice(0, 8)}
         </button>
@@ -1584,15 +1591,6 @@ function CommitRow({
         {commit.authoredAt !== null && <span className="num dim">{when(commit.authoredAt)}</span>}
       </div>
       {commit.subject && <div className="side-commit-subject">{commit.subject}</div>}
-      {open && (
-        <>
-          {error !== null && <p className="diff-refusal">{error}</p>}
-          {error === null && !summary && <p className="diff-note">Reading…</p>}
-          {error === null && summary && (
-            <CommitDiff summary={summary} taskId={taskId} sha={commit.sha} />
-          )}
-        </>
-      )}
     </div>
   )
 }

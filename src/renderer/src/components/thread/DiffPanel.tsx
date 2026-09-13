@@ -1,5 +1,6 @@
 /**
- * The change a task made, on the screen where somebody decides what to do about it.
+ * The change a task made, on the screen where somebody decides what to do about it — and the two
+ * patch renderers the Diff pane draws it with.
  *
  * ⛔ **Agent output is untrusted text, and a patch is the most untrusted text in this app** — it is
  * literally a file the agent wrote, quoted back. Every line below is a React text node inside
@@ -19,14 +20,22 @@
  * where the question is *should this land* and closed elsewhere, and it stays silent rather than
  * showing a refusal on a task that never had one.
  *
- * ⚠️ One `git` call for the list, one more per file somebody expands. Asked when the panel opens
- * and when the task moves, never on a timer — the same contract as `task.pendingWork`.
+ * ⭐ **The list is here; the patches are in the Diff pane** (t425, 2026-09-13). A patch drawn inline
+ * got the thread column's width at best and the 300px ledger's at worst, which is what the pane
+ * exists to fix — so a file row here *opens* the pane at that file rather than unfolding under
+ * itself, and nothing in this column draws a line of code. `PatchBody` and `SplitBody` live in this
+ * file because the rule at the top applies to them, and the pane imports them.
+ *
+ * ⚠️ One `git` call for the list, asked when the panel opens and when the task moves, never on a
+ * timer — the same contract as `task.pendingWork`.
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { TaskDiffFile, TaskDiffSummary } from '@shared/tasks'
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import type { TaskDiffFile, TaskDiffFileEntry, TaskDiffSummary } from '@shared/tasks'
 import { rpc } from '../../lib/daemon'
 import { patchLineClass } from '../../lib/diffline'
-import { readDiffView, writeDiffView, type DiffView } from '../../lib/prefs'
+import { useDiffPane } from '../../lib/diffpane'
+import { gapsBefore } from '../../lib/hunks'
+import type { DiffView } from '../../lib/prefs'
 import { splitPatch } from '../../lib/sidebyside'
 
 /** `+12 −3`, or nothing at all for a file with no counted lines. */
@@ -41,6 +50,22 @@ export function counts(added: number, removed: number): React.JSX.Element {
 }
 
 /**
+ * `⋯ 586 unmodified lines`, between two hunks or above the first.
+ *
+ * ⚠️ Arithmetic on the `@@` headers (`lib/hunks.ts`), never a read of the file: the pane knows how
+ * far apart two hunks are, not what lies between them. Nothing after the last hunk, because a
+ * patch does not say how long the file is.
+ */
+function gapText(lines: number): string {
+  return `⋯ ${lines.toLocaleString()} unmodified line${lines === 1 ? '' : 's'}`
+}
+
+function Gap({ lines }: { lines: number }): React.JSX.Element | null {
+  if (lines <= 0) return null
+  return <div className="diff-gap">{gapText(lines)}</div>
+}
+
+/**
  * One file's patch as two columns: old on the left, new on the right.
  *
  * ⛔ **Cells, never markup.** Every number and every line is a React text node, exactly like the
@@ -48,39 +73,44 @@ export function counts(added: number, removed: number): React.JSX.Element {
  * codebase writes. A changed row pairs the two halves of one edit; a row standing alone on one side
  * is a line only that side has.
  */
-function SplitBody({ patch }: { patch: string }): React.JSX.Element {
+export function SplitBody({ patch }: { patch: string }): React.JSX.Element {
   const blocks = useMemo(() => splitPatch(patch), [patch])
+  const gaps = useMemo(() => gapsBefore(blocks.map((b) => b.header)), [blocks])
   return (
     <div className="diff-split-wrap">
-      {blocks.map((block, bi) => (
-        // ⚠️ The index is the key for the same reason the unified view uses it: a patch has
-        // repeated identical rows by nature and nothing here reorders.
-        <div key={bi} className="diff-split-block">
-          {block.meta.length > 0 && (
-            <pre className="diff-split-meta">
-              {block.meta.map((line, i) => (
-                <span key={i} className={patchLineClass(line)}>
-                  {line}
-                  {'\n'}
-                </span>
-              ))}
-            </pre>
-          )}
-          {block.header !== null && <div className="diff-split-hunk">{block.header}</div>}
-          {block.rows.length > 0 && (
-            <table className="diff-split">
-              <tbody>
-                {block.rows.map((row, ri) => (
-                  <tr key={ri} className={`diff-split-row diff-split-row--${row.kind}`}>
-                    <SplitCell side={row.left} tint={row.kind === 'change' ? 'del' : row.kind} />
-                    <SplitCell side={row.right} tint={row.kind === 'change' ? 'add' : row.kind} />
-                  </tr>
+      {blocks.map((block, bi) => {
+        const gap = gaps[bi] ?? 0
+        return (
+          // ⚠️ The index is the key for the same reason the unified view uses it: a patch has
+          // repeated identical rows by nature and nothing here reorders.
+          <div key={bi} className="diff-split-block">
+            {block.meta.length > 0 && (
+              <pre className="diff-split-meta">
+                {block.meta.map((line, i) => (
+                  <span key={i} className={patchLineClass(line)}>
+                    {line}
+                    {'\n'}
+                  </span>
                 ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      ))}
+              </pre>
+            )}
+            <Gap lines={gap} />
+            {block.header !== null && <div className="diff-split-hunk">{block.header}</div>}
+            {block.rows.length > 0 && (
+              <table className="diff-split">
+                <tbody>
+                  {block.rows.map((row, ri) => (
+                    <tr key={ri} className={`diff-split-row diff-split-row--${row.kind}`}>
+                      <SplitCell side={row.left} tint={row.kind === 'change' ? 'del' : row.kind} />
+                      <SplitCell side={row.right} tint={row.kind === 'change' ? 'add' : row.kind} />
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -108,12 +138,12 @@ function SplitCell({
 /**
  * Single column or side by side, for every patch on the screen.
  *
- * ⛔ **One control per panel, not one per file.** A toggle on each file is a control somebody has to
+ * ⛔ **One control per pane, not one per file.** A toggle on each file is a control somebody has to
  * press again for every file in a forty-file change, and two files left in different layouts read as
  * a rendering bug rather than as a choice. ⚠️ Remembered in `localStorage` (`prefs.ts`) because
  * which layout somebody reads a diff in is a property of the person, not of the task.
  */
-function ViewToggle({
+export function ViewToggle({
   view,
   onView
 }: {
@@ -144,25 +174,42 @@ function ViewToggle({
   )
 }
 
-function PatchBody({ file, view }: { file: TaskDiffFile; view: DiffView }): React.JSX.Element {
-  if (!file.ok) return <p className="diff-refusal">{file.reason}</p>
-  const lines = file.patch.split('\n')
+/** The unified patch, one `<span>` of text per line, with a gap row above each hunk. */
+function UnifiedBody({ patch }: { patch: string }): React.JSX.Element {
+  const lines = useMemo(() => patch.split('\n'), [patch])
+  const gaps = useMemo(() => gapsBefore(lines), [lines])
   return (
-    <>
-      {view === 'split' ? (
-        <SplitBody patch={file.patch} />
-      ) : (
-        <pre className="diff-patch">
-          {lines.map((line, i) => (
-            // ⚠️ The index is the key because a patch has repeated identical lines by nature and
-            // nothing here reorders: this list is rebuilt wholesale or not at all.
-            <span key={i} className={patchLineClass(line)}>
+    <pre className="diff-patch">
+      {lines.map((line, i) => {
+        // ⚠️ The index is the key because a patch has repeated identical lines by nature and
+        // nothing here reorders: this list is rebuilt wholesale or not at all.
+        const gap = gaps[i] ?? 0
+        return (
+          // ⚠️ A `<span>` for the gap too, not a `<div>`: the `<pre>` holds spans of text and
+          // nothing else, and `test/ui.test.mjs` reads its markup to prove that.
+          <Fragment key={i}>
+            {gap > 0 && (
+              <span className="diff-line diff-line--gap">
+                {gapText(gap)}
+                {'\n'}
+              </span>
+            )}
+            <span className={patchLineClass(line)}>
               {line === '' ? ' ' : line}
               {'\n'}
             </span>
-          ))}
-        </pre>
-      )}
+          </Fragment>
+        )
+      })}
+    </pre>
+  )
+}
+
+export function PatchBody({ file, view }: { file: TaskDiffFile; view: DiffView }): React.JSX.Element {
+  if (!file.ok) return <p className="diff-refusal">{file.reason}</p>
+  return (
+    <>
+      {view === 'split' ? <SplitBody patch={file.patch} /> : <UnifiedBody patch={file.patch} />}
       {file.truncated && (
         <p className="diff-note">
           Showing {file.patch.length.toLocaleString()} of {file.bytes.toLocaleString()} characters —
@@ -174,142 +221,37 @@ function PatchBody({ file, view }: { file: TaskDiffFile; view: DiffView }): Reac
 }
 
 /**
- * One row of the file list, which fetches its own patch when it is opened.
+ * One row of the inline file list: a path, its counts, and a press that opens the Diff pane there.
  *
- * ⚠️ `load` rather than a task id and a path: the identical row draws a file out of the branch and a
- * file out of one recorded commit, and the only difference between those is which call answers.
+ * ⚠️ A binary or generated file is listed and not pressable — there is nothing to open on it — and
+ * says which of the two it is.
  */
 function FileRow({
-  path,
-  added,
-  removed,
-  binary,
-  generated,
-  view,
-  load
+  file,
+  onOpen
 }: {
-  path: string
-  added: number
-  removed: number
-  binary: boolean
-  generated: boolean
-  view: DiffView
-  load: (path: string) => Promise<TaskDiffFile>
+  file: TaskDiffFileEntry
+  onOpen: (path: string) => void
 }): React.JSX.Element {
-  const [open, setOpen] = useState(false)
-  const [file, setFile] = useState<TaskDiffFile | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  // ⚠️ Paid on expand, never on render. A hundred-file change is a hundred `git diff` calls if this
-  // is done eagerly, to show text nobody has asked to read.
-  const expand = useCallback(async (): Promise<void> => {
-    const next = !open
-    setOpen(next)
-    if (!next || file) return
-    try {
-      setFile(await load(path))
-      setError(null)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'could not read this file')
-    }
-  }, [open, file, load, path])
-
-  const shown = !binary && !generated
+  const shown = !file.binary && !file.generated
   return (
     <div className="diff-file">
       <button
         type="button"
         className="diff-file-head"
-        onClick={shown ? () => void expand() : undefined}
+        onClick={shown ? () => onOpen(file.path) : undefined}
         disabled={!shown}
-        aria-expanded={shown ? open : undefined}
+        title={shown ? 'Open this file in the Diff pane' : undefined}
       >
-        <span className="diff-file-caret">{shown ? (open ? '▾' : '▸') : '·'}</span>
+        <span className="diff-file-caret" aria-hidden>
+          {shown ? '›' : '·'}
+        </span>
         {/* ⛔ Text. A path is agent-influenced too — it is whatever the agent named a file. */}
-        <span className="diff-file-path">{path}</span>
-        {binary && <span className="diff-badge">binary</span>}
-        {generated && <span className="diff-badge">generated</span>}
-        {counts(added, removed)}
+        <span className="diff-file-path">{file.path}</span>
+        {file.binary && <span className="diff-badge">binary</span>}
+        {file.generated && <span className="diff-badge">generated</span>}
+        {counts(file.added, file.removed)}
       </button>
-      {open && shown && (
-        <div className="diff-file-body">
-          {error && <p className="diff-refusal">{error}</p>}
-          {!error && !file && <p className="diff-note">Reading…</p>}
-          {!error && file && <PatchBody file={file} view={view} />}
-        </div>
-      )}
-    </div>
-  )
-}
-
-/**
- * A resolved change: its files, and the layout toggle that draws them.
- *
- * ⚠️ Shared by the branch panel and by one commit's row, so neither can grow a way of drawing a
- * patch the other does not have.
- */
-export function DiffFiles({
-  summary,
-  load
-}: {
-  summary: TaskDiffSummary
-  load: (path: string) => Promise<TaskDiffFile>
-}): React.JSX.Element {
-  const [view, setView] = useState<DiffView>(() => readDiffView())
-  const choose = useCallback((next: DiffView): void => {
-    setView(next)
-    writeDiffView(next)
-  }, [])
-  return (
-    <>
-      {summary.files.length > 0 && <ViewToggle view={view} onView={choose} />}
-      {summary.files.map((f) => (
-        <FileRow
-          key={f.path}
-          path={f.path}
-          added={f.added}
-          removed={f.removed}
-          binary={f.binary}
-          generated={f.generated}
-          view={view}
-          load={load}
-        />
-      ))}
-    </>
-  )
-}
-
-/**
- * One recorded commit's own change, read on demand.
- *
- * ⛔ **The commit, not the range.** A task that landed twice put its commits on the trunk with other
- * tasks' work between them, so `base..head` over the pair would claim the lot — `task.commitDiff`
- * reads exactly the sha of the row this hangs under. ⚠️ Only the totals are fetched until somebody
- * expands the row; the patch text costs a second call per file, as everywhere else here.
- */
-export function CommitDiff({
-  summary,
-  taskId,
-  sha
-}: {
-  summary: TaskDiffSummary
-  taskId: string
-  sha: string
-}): React.JSX.Element {
-  const load = useCallback(
-    (path: string) => rpc('task.commitFile', { id: taskId, sha, path }),
-    [taskId, sha]
-  )
-  if (!summary.ok) return <p className="diff-refusal">{summary.reason}</p>
-  return (
-    <div className="diff-commit-body">
-      {summary.filesTruncated && (
-        <p className="diff-warn">
-          More files changed than are listed here. The largest changes are shown first.
-        </p>
-      )}
-      <DiffFiles summary={summary} load={load} />
-      {summary.files.length === 0 && <p className="diff-note">This commit changes no files.</p>}
     </div>
   )
 }
@@ -333,6 +275,7 @@ export function DiffPanel({
 }): React.JSX.Element | null {
   const [summary, setSummary] = useState<TaskDiffSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const pane = useDiffPane()
 
   useEffect(() => {
     let live = true
@@ -353,17 +296,16 @@ export function DiffPanel({
     }
   }, [taskId, updatedAt])
 
-  const load = useCallback(
-    (path: string) => rpc('task.diffFile', { id: taskId, path }),
-    [taskId]
-  )
-
   // `null` means not yet known, which is not the same as "nothing there" and draws nothing.
   if (!summary && !error) return null
   // ⛔ Away from the gate, an unresolved change is not news: a draft has no branch and a task that
   // landed months ago has no workspace. The gate is the one screen where *I could not look* is the
   // answer to the question being asked, so it is the one screen that says it.
   if (!atGate && (error !== null || summary?.ok !== true)) return null
+
+  const openPane = (focusPath?: string): void =>
+    pane.open({ taskId, source: { kind: 'branch' }, ...(focusPath ? { focusPath } : {}) })
+  const shownInPane = pane.request?.taskId === taskId && pane.request.source.kind === 'branch'
 
   /**
    * ⛔ **Open when there is something to read and a decision to make.** At the gate a collapsed
@@ -416,7 +358,20 @@ export function DiffPanel({
           </p>
         )}
 
-        {summary?.ok && <DiffFiles summary={summary} load={load} />}
+        {summary?.ok && summary.files.length > 0 && (
+          <div className="diff-panel-actions">
+            <button
+              type="button"
+              className="btn btn--ghost diff-open-pane"
+              aria-pressed={shownInPane}
+              title="Read every file's patch in the Diff pane, at the right of the window."
+              onClick={() => openPane()}
+            >
+              {shownInPane ? 'Shown in Diff pane' : 'Open in Diff pane'}
+            </button>
+          </div>
+        )}
+        {summary?.ok && summary.files.map((f) => <FileRow key={f.path} file={f} onOpen={openPane} />)}
         {summary?.ok && summary.files.length === 0 && (
           <p className="diff-note">This branch changes no files.</p>
         )}

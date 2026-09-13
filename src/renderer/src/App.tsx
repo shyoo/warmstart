@@ -1,5 +1,5 @@
 import { sessionEnded } from '@shared/protocol'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Project, PullRequestDelivery, ResourceAvailability, Task } from '@shared/tasks'
 import {
   fleetCounts,
@@ -37,6 +37,8 @@ import { Overview } from './components/Overview'
 import { Controller } from './components/Controller'
 import { Project as ProjectView, type ProjectTab } from './components/Project'
 import { SidebarResizer } from './components/SidebarResizer'
+import { DiffPane, DiffPaneResizer } from './components/DiffPane'
+import { DiffPaneContext, paneFollows, type DiffPaneApi, type DiffPaneRequest } from './lib/diffpane'
 import { AppSettings } from './components/AppSettings'
 import { RemoteAccess } from './components/RemoteAccess'
 import { RemoteMachines } from './components/RemoteMachines'
@@ -184,6 +186,25 @@ export function App({
   const [newTaskProjectId, setNewTaskProjectId] = useState<string | undefined>()
   const [sidebarHidden, setSidebarHidden] = useState(false)
 
+  /**
+   * The Diff pane, which is a column of this grid and not a route.
+   *
+   * ⛔ Owned here for the same reason the composer is: it is one pane at the right of the whole
+   * window, and `TaskThread` — which opens it — is mounted from four routes. It follows the route
+   * (`paneFollows`, `lib/diffpane.ts`): the moment the route stops naming the task it was opened
+   * for, it closes, so a diff is never read beside a thread it does not belong to. Opening it is not
+   * a history entry; Back leaves the task, and that closes it.
+   */
+  const [diffRequest, setDiffRequest] = useState<DiffPaneRequest | null>(null)
+  const routeTaskId = 'taskId' in route ? (route.taskId ?? null) : null
+  useEffect(() => {
+    if (diffRequest !== null && !paneFollows(diffRequest, routeTaskId)) setDiffRequest(null)
+  }, [diffRequest, routeTaskId])
+  const diffPane = useMemo<DiffPaneApi>(
+    () => ({ request: diffRequest, open: setDiffRequest, close: () => setDiffRequest(null) }),
+    [diffRequest]
+  )
+
   const refreshProjects = useCallback(async () => {
     if (!connected) return
     setProjects(await rpc('project.list'))
@@ -320,7 +341,8 @@ export function App({
   )
 
   return (
-    <div className={`shell${sidebarHidden ? ' shell--sidebar-hidden' : ''}`}>
+    <DiffPaneContext.Provider value={diffPane}>
+    <div className={`shell${sidebarHidden ? ' shell--sidebar-hidden' : ''}${diffRequest ? ' shell--diffpane' : ''}`}>
       {/*
         The window's caption area, which this app draws itself.
 
@@ -725,7 +747,17 @@ export function App({
           )}
         </footer>
       </main>
+
+      {/* ⛔ Two more grid columns, drawn only while a request is open, so a closed pane costs the
+          layout nothing and `.main` keeps its flexible column either way. */}
+      {diffRequest && (
+        <>
+          <DiffPaneResizer />
+          <DiffPane request={diffRequest} onClose={() => setDiffRequest(null)} />
+        </>
+      )}
     </div>
+    </DiffPaneContext.Provider>
   )
 }
 

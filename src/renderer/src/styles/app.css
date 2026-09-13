@@ -180,6 +180,35 @@ body {
   grid-template-columns: 0 0 1fr;
 }
 
+/* ---- the Diff pane: two more columns, only while one is open
+
+   The pane and its handle are drawn only with a request, so a closed pane costs the grid nothing
+   and `.main` keeps column three either way. The variants compose: hidden sidebar and open pane
+   is `0 0 1fr 4px w`. `--diffpane-w` is written by its resizer, like `--sidebar-w`. */
+.shell--diffpane {
+  grid-template-columns: var(--sidebar-w) 4px minmax(0, 1fr) 4px var(--diffpane-w, 560px);
+}
+
+.shell--sidebar-hidden.shell--diffpane {
+  grid-template-columns: 0 0 minmax(0, 1fr) 4px var(--diffpane-w, 560px);
+}
+
+.resizer--diffpane {
+  grid-column: 4;
+  grid-row: 2;
+}
+
+.diffpane {
+  grid-column: 5;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--color-surface);
+  border-left: 1px solid var(--color-border);
+}
+
 .shell--sidebar-hidden .sidebar,
 .shell--sidebar-hidden .resizer {
   display: none;
@@ -7422,10 +7451,6 @@ select:focus-visible,
 .diff-counts-del { color: var(--state-danger); }
 .diff-counts-none { color: var(--color-text-faint); }
 
-.diff-file-body {
-  padding-bottom: var(--sp-2);
-}
-
 .diff-patch {
   margin: 0;
   padding: var(--sp-2);
@@ -7547,14 +7572,6 @@ select:focus-visible,
   font-variant-numeric: tabular-nums;
 }
 
-/* ---- one commit's own diff, in the ledger beside the thread
-
-   ⚠️ Narrower than the thread panel, because the ledger column is: the patch scrolls sideways in its
-   own box rather than widening the pane it sits in. */
-.diff-commit-body {
-  padding-top: var(--sp-1);
-}
-
 .side-commit-link {
   display: inline-flex;
   align-items: baseline;
@@ -7583,6 +7600,120 @@ select:focus-visible,
   color: var(--color-text-dim);
   font-size: var(--text-meta);
   margin: var(--sp-2) 0;
+}
+
+/* The button under the inline list, and the row it belongs beside. */
+.diff-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: var(--sp-1) 0 var(--sp-2);
+}
+
+/* ---- the Diff pane's insides
+
+   ⛔ The same `.diff-patch` and `.diff-split-wrap` the thread drew, with their own 60vh scroll
+   boxes turned off: here the *pane* scrolls, and a scroll box inside a scroll box is two wheels
+   fighting over one gesture. */
+.diffpane-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border-bottom: 1px solid var(--color-border);
+  flex: none;
+}
+
+.diffpane-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: var(--text-dense);
+  font-weight: 600;
+}
+
+/* ⚠️ `anywhere`: a subject is the agent's own first line and can be a paragraph long. */
+.diffpane-subject {
+  font-weight: 400;
+  color: var(--color-text-dim);
+  font-size: var(--text-meta);
+  overflow-wrap: anywhere;
+}
+
+.diffpane-close {
+  align-self: center;
+  flex: none;
+}
+
+.diffpane-tools {
+  padding: 0 var(--sp-3);
+  border-bottom: 1px solid var(--color-border);
+  flex: none;
+}
+
+.diffpane-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--sp-3) var(--sp-4);
+}
+
+.diffpane-file {
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* ⚠️ Sticky, so the path of the file being read stays in view down a long patch — the one thing
+   the screenshot this was drawn from does that a plain stack does not. Opaque, or the patch shows
+   through it as it scrolls under. */
+.diffpane-file-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) 0;
+  background: var(--color-surface);
+  border: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font-size: var(--text-dense);
+}
+
+.diffpane-file-head:disabled {
+  cursor: default;
+  color: var(--color-text-faint);
+}
+
+.diffpane-file--focused .diffpane-file-head .diff-file-path {
+  color: var(--color-accent);
+}
+
+.diffpane-file-body {
+  padding-bottom: var(--sp-2);
+}
+
+.diffpane .diff-patch,
+.diffpane .diff-split-wrap {
+  max-height: none;
+  overflow-y: visible;
+}
+
+/* `⋯ N unmodified lines`: a rule between hunks, in the faint colour, in both layouts. */
+.diff-gap,
+.diff-line--gap {
+  color: var(--color-text-faint);
+  font-style: italic;
+  user-select: none;
+}
+
+.diff-gap {
+  white-space: pre;
+  padding: var(--sp-1) 0;
+  border-top: 1px dashed var(--color-border);
+  border-bottom: 1px dashed var(--color-border);
+  margin: var(--sp-1) 0;
 }
 
 /* ---- machine picker ----------------------------------------------------- */
