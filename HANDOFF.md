@@ -12,18 +12,18 @@ authority on each subsystem; dated design and incident history belongs in `trans
 Baseline (2026-09-14, **Windows 11 x64**, measured on this branch's tip): typecheck, lint, build
 pass; L1 **3,439 passed, 4 skipped** (197 files); L2 **203 checks** (5 skipped); L3 **439 checks**.
 ⚠️ L4 `test:pack` was **not run here** — the previous macOS reading (17 checks against
-`release/mac-arm64`, 2026-09-13 on `ac37ec7`) is the last one, and it proves the package rather than
-any screen below. ⚠️ One L3 flake seen and not reproduced: a stale
+`release/mac-arm64`, 2026-09-13 on `ac37ec7`) is the last one. ⚠️ One L3 flake seen and not reproduced: a stale
 `.git/worktrees/convo-ws1/index.lock` left by an interrupted run failed *the landing this section
 needs actually landed*; a clean re-run was green. Last CI seen (HEAD `d27a282`, run 34798079433, green on all seven jobs): L2 198
 on both runners; L3 **425** on Windows (4 skipped) and **424** on Linux (5 skipped) — the skips name
 the screen; L4 19 on Windows, 17 on Linux. ⚠️ CI was disabled by the owner around 2026-09-13; the
-two commits after `d27a282` have no runner counts. L4 proves the *package*, not this change's
-screens — see remaining work 14.
+two commits after `d27a282` have no runner counts.
 
 ## Closed in this cleanup
 
 - **Global › Status no longer repeats Notice's warnings (t433, 2026-09-14);** only Notice lists them.
+- **Muse reasoning-effort choices are available end to end (2026-09-14).** The catalogue offers
+  `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `ultra`; controls pass them to Muse. ⚠️ The regression test rejects retired `max`.
 - **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).**
   ⭐ *The reorder arrows could not be clicked, and vanished on hover.* The workers table re-lays its
   rows out as cards where the order cell and the worker cell are given the **same grid area**; overlaps

@@ -403,6 +403,11 @@ behaviour falls out of it:
     a hard dispatch failure rather than a politely ignored flag.
   - **`openai-compatible`: false, still unrun.** `model_reasoning_effort` is a documented `-c`
     override and that adapter's verification says `measured`, so documentation alone is not enough.
+  - **`muse-code`: true.** `muse exec --reasoning-effort` receives the selected level on both the
+    interactive and stream spawn paths. Its picker offers `none`, `minimal`, `low`, `medium`, `high`,
+    `xhigh` and `ultra`; the current list was supplied for this change on 2026-09-14. ⚠️ This worker
+    could not re-run Muse because its WSL instance returned `E_ACCESSDENIED`, so that update is not
+    promoted to a local measurement.
 - **`needsReauth(reason)`** → the *presentation* of a held-out account: `re-sign-in required` and a
   Sign in button, rather than a reason to go and read. ⛔ Optional, and the adapter answers because
   the sentence is its CLI's — an expired subscription, a revoked key and a crash all arrive as the

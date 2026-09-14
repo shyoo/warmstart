@@ -171,12 +171,14 @@ describe('what an account is allowed to default to', () => {
     expect(workers.getWorker(w.id)?.summarisingModel).toBe('claude-sonnet-5')
   })
 
-  it('stores a Muse grading effort separately and rejects one the grading model cannot take', () => {
+  it('stores every Muse reasoning effort separately and rejects a retired level', () => {
     const w = workers.createWorker({ adapterId: 'muse-code', label: 'grader-muse' })
-    api.checkWorkerDefaults('muse-code', {
-      gradingModel: 'muse-spark-1.3',
-      gradingEffort: 'max'
-    })
+    for (const gradingEffort of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'ultra']) {
+      api.checkWorkerDefaults('muse-code', {
+        gradingModel: 'muse-spark-1.3',
+        gradingEffort
+      })
+    }
     expect(() =>
       api.checkWorkerDefaults('muse-code', {
         gradingModel: 'muse-spark-1.3-contributor',
@@ -186,10 +188,10 @@ describe('what an account is allowed to default to', () => {
 
     const saved = workers.updateWorker(w.id, {
       gradingModel: 'muse-spark-1.3',
-      gradingEffort: 'max'
+      gradingEffort: 'ultra'
     })
-    expect(saved.gradingEffort).toBe('max')
-    expect(workers.getWorker(w.id)?.gradingEffort).toBe('max')
+    expect(saved.gradingEffort).toBe('ultra')
+    expect(workers.getWorker(w.id)?.gradingEffort).toBe('ultra')
   })
   it('stores a model its own CLI can be priced for', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'defaults-1' })
