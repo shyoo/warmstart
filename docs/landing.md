@@ -390,9 +390,11 @@ Everything else here either does nothing destructive or re-derives its own proof
 being lost before it acts. **Delete it** is the opposite case: the operator is looking at a branch
 with real commits and saying, explicitly and after a confirmation prompt, that they are not needed.
 It still refuses a branch a worktree holds, exactly as **Retire it** does — a checked-out branch is
-somebody working, and the daemon does not switch a checkout to get at it — but it does not require
-`ahead === 0` the way **Retire it** does, because the whole point is to remove commits the trunk does
-not have.
+somebody working, and the daemon does not switch a checkout to get at it — unless that worktree is an
+idle, unclaimed, clean pool member, which is exactly what `parkWorkspace` would detach anyway
+(`idlePoolHolder`, the same licence the merged-PR sweep steps off on, [below](#landed-means-pushed)).
+It does not require `ahead === 0` the way **Retire it** does, because the whole point is to remove
+commits the trunk does not have.
 
 ⛔ Everything else here leaves work intact. **Retire it** deletes a *name*, and the daemon re-derives
 the proof that the branch carries nothing before it does — the panel may be minutes old, and a branch

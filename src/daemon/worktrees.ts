@@ -1,5 +1,5 @@
 import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { FinishPolicy, Project, ResourceClaim, Task, WorkspaceMode } from '@shared/tasks.js'
 import { resolveFinishPolicy } from '@shared/policy.js'
 import { landingBaseFor } from './landingbase.js'
@@ -16,7 +16,7 @@ import {
 } from './resources.js'
 import { samePath } from './fspath.js'
 import { log } from './log.js'
-import { git } from './git.js'
+import { git, tryGit } from './git.js'
 import { errorMessage } from '@shared/errors.js'
 import { run } from './spawn.js'
 import { sweepAcls } from './acl.js'
@@ -1284,6 +1284,32 @@ function seqFromBranch(branch: string): number | null {
 }
 
 /**
+ * Whether a worktree holding a branch is nothing but an idle pool member — unclaimed and clean,
+ * exactly what `parkWorkspace` would detach anyway. Shared with `deliveries.ts`'s merged-PR
+ * retirement, which asks the identical question about a worktree standing on a delivered branch.
+ */
+export async function idlePoolHolder(
+  project: Project,
+  heldBy: string
+): Promise<{ poolMember: boolean; claimed: boolean; dirty: boolean }> {
+  // ⚠️ Through the real path: `git worktree list` reports the long form, and a root configured through
+  // an 8.3 short name (`C:\Users\SUNGHW~1\…`, which is what `os.tmpdir()` returns) never compares equal.
+  const real = (p: string): string => {
+    try {
+      return realpathSync.native(p)
+    } catch {
+      return p
+    }
+  }
+  const poolMember = samePath(real(dirname(heldBy)), real(policyFor(project).workspaceRoot))
+  const claimed = openClaims(workspacePoolId(project.id)).some(
+    (claim) => typeof claim.member === 'string' && samePath(real(claim.member), real(heldBy))
+  )
+  const dirty = poolMember && !claimed ? Boolean(await tryGit(heldBy, ['status', '--porcelain'])) : false
+  return { poolMember, claimed, dirty }
+}
+
+/**
  * Delete a task branch that carries nothing.
  *
  * ⛔ **Re-derives its own licence rather than trusting the caller.** `retireBranch` documents that
@@ -1292,8 +1318,9 @@ function seqFromBranch(branch: string): number | null {
  * has gained a commit since — an agent pushed to it, a resumed task committed — must not be deleted
  * because a stale row said it was empty.
  *
- * ⚠️ Refuses a branch a worktree still holds. `git branch -D` would refuse too; refusing here means
- * the reason reaches the operator instead of a git error message.
+ * ⚠️ Refuses a branch a worktree still holds, unless that worktree is an idle, unclaimed, clean pool
+ * member — the same licence the merged-PR sweep already steps off on (`idlePoolHolder`). Anything
+ * else (the operator's own trunk, a claimed slot, an uncommitted one) is left alone and reported.
  */
 export async function retireStrandedBranch(
   project: Project,
@@ -1303,7 +1330,12 @@ export async function retireStrandedBranch(
   const state = (await taskBranches(project, target)).find((b) => b.branch === branch)
   if (!state) return { deleted: false, reason: `there is no branch called \`${branch}\`` }
   if (state.heldBy) {
-    return { deleted: false, reason: `\`${branch}\` is checked out in ${state.heldBy}` }
+    const { poolMember, claimed, dirty } = await idlePoolHolder(project, state.heldBy)
+    if (poolMember && !claimed && !dirty) {
+      await git(state.heldBy, ['switch', '--detach', state.head])
+    } else {
+      return { deleted: false, reason: `\`${branch}\` is checked out in ${state.heldBy}` }
+    }
   }
   if (state.ahead !== 0) {
     return {
@@ -1331,9 +1363,9 @@ export async function retireStrandedBranch(
  * the branch carries work and wants it gone anyway — the destructive counterpart to **Land it** on
  * the same row, never something the daemon reaches for on its own.
  *
- * ⚠️ Still refuses a branch a worktree holds, for the same reason `retireStrandedBranch` does: a
- * checked-out branch is somebody working, and `git branch -D` cannot touch it without switching a
- * checkout that is not this tool's to switch.
+ * ⚠️ Still refuses a branch a worktree holds — an idle pool member excepted, the same licence
+ * `retireStrandedBranch` runs on — for the same reason: a checked-out branch is somebody working,
+ * and `git branch -D` cannot touch it without switching a checkout that is not this tool's to switch.
  */
 export async function deleteUnlandedBranch(
   project: Project,
@@ -1343,7 +1375,12 @@ export async function deleteUnlandedBranch(
   const state = (await taskBranches(project, target)).find((b) => b.branch === branch)
   if (!state) return { deleted: false, reason: `there is no branch called \`${branch}\`` }
   if (state.heldBy) {
-    return { deleted: false, reason: `\`${branch}\` is checked out in ${state.heldBy}` }
+    const { poolMember, claimed, dirty } = await idlePoolHolder(project, state.heldBy)
+    if (poolMember && !claimed && !dirty) {
+      await git(state.heldBy, ['switch', '--detach', state.head])
+    } else {
+      return { deleted: false, reason: `\`${branch}\` is checked out in ${state.heldBy}` }
+    }
   }
   try {
     await git(project.root, ['branch', '-D', branch])

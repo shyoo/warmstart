@@ -343,6 +343,30 @@ describe('task branches the repository still has a name for', () => {
     expect(git(root, 'branch', '--list', branch)).toContain(branch)
   })
 
+  /**
+   * ⭐ The trunk above refuses outright — that worktree is the operator's own. A branch sitting in
+   * an idle, unclaimed pool member instead is exactly what `parkWorkspace` would have detached anyway
+   * (t443, 2026-09-14: a finished task's branch, carrying nothing, sat checked out in an unclaimed
+   * pool member and `retireStrandedBranch` refused it as if it were somebody working).
+   */
+  it('steps off an idle pool member to retire a branch checked out there', async () => {
+    const branch = 'warmstart/t35-idle-pool-member'
+    const { project, root } = seed(branch)
+    git(root, 'switch', 'main')
+    git(root, 'branch', '-D', branch)
+
+    const poolRoot = projects.policyFor(project).workspaceRoot
+    mkdirSync(poolRoot, { recursive: true })
+    const member = join(poolRoot, 'ws1')
+    git(root, 'worktree', 'add', '-b', branch, member, 'main')
+
+    const held = (await worktrees.taskBranches(project, 'main')).find((b) => b.branch === branch)
+    expect(held?.heldBy).not.toBeNull()
+
+    expect(await worktrees.retireStrandedBranch(project, branch, 'main')).toEqual({ deleted: true })
+    expect(git(root, 'branch', '--list', branch)).toBe('')
+  })
+
   it('says so plainly when asked about a branch that is not there', async () => {
     const { project } = seed('warmstart/t29-present')
     const verdict = await worktrees.retireStrandedBranch(
@@ -380,6 +404,24 @@ describe('task branches the repository still has a name for', () => {
     expect(verdict.deleted).toBe(false)
     expect(verdict.reason).toContain('checked out in')
     expect(git(root, 'branch', '--list', branch)).toContain(branch)
+  })
+
+  it('steps off an idle pool member to delete a branch checked out there', async () => {
+    const branch = 'warmstart/t36-idle-pool-member-delete'
+    const { project, root } = seed(branch)
+    git(root, 'switch', 'main')
+    git(root, 'branch', '-D', branch)
+
+    const poolRoot = projects.policyFor(project).workspaceRoot
+    mkdirSync(poolRoot, { recursive: true })
+    const member = join(poolRoot, 'ws1')
+    git(root, 'worktree', 'add', '-b', branch, member, 'main')
+    writeFileSync(join(member, 'abandoned.txt'), 'work nobody wants anymore\n')
+    git(member, 'add', '-A')
+    git(member, 'commit', '-m', 'abandoned work')
+
+    expect(await worktrees.deleteUnlandedBranch(project, branch, 'main')).toEqual({ deleted: true })
+    expect(git(root, 'branch', '--list', branch)).toBe('')
   })
 
   it('says so plainly when asked to delete a branch that is not there', async () => {

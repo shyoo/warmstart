@@ -1,9 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { realpathSync } from 'node:fs'
-import { dirname } from 'node:path'
 import type { DeliveryState, Project, PullRequestDelivery } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
-import { getProject, landingTargetFor, policyFor } from './projects.js'
+import { getProject, landingTargetFor } from './projects.js'
 import { addMessage, getTask } from './tasks.js'
 import { git, tryGit } from './git.js'
 import { launchArgs, which } from './which.js'
@@ -11,9 +9,7 @@ import * as spawn from './spawn.js'
 import { errorMessage } from '@shared/errors.js'
 import { log } from './log.js'
 import { recordTaskCommits } from './taskcommits.js'
-import { taskBranches } from './worktrees.js'
-import { openClaims, workspacePoolId } from './resources.js'
-import { samePath } from './fspath.js'
+import { idlePoolHolder, taskBranches } from './worktrees.js'
 
 export type { DeliveryState, PullRequestDelivery }
 
@@ -221,20 +217,7 @@ async function holderOf(
   delivery: PullRequestDelivery,
   heldBy: string
 ): Promise<ReturnType<typeof holderVerdict>> {
-  // ⚠️ Through the real path: `git worktree list` reports the long form, and a root configured through
-  // an 8.3 short name (`C:\Users\SUNGHW~1\…`, which is what `os.tmpdir()` returns) never compares equal.
-  const real = (p: string): string => {
-    try {
-      return realpathSync.native(p)
-    } catch {
-      return p
-    }
-  }
-  const poolMember = samePath(real(dirname(heldBy)), real(policyFor(project).workspaceRoot))
-  const claimed = openClaims(workspacePoolId(project.id)).some(
-    (claim) => typeof claim.member === 'string' && samePath(real(claim.member), real(heldBy))
-  )
-  const dirty = poolMember && !claimed ? Boolean(await tryGit(heldBy, ['status', '--porcelain'])) : false
+  const { poolMember, claimed, dirty } = await idlePoolHolder(project, heldBy)
   return holderVerdict({ branch: delivery.branch, target: delivery.target, heldBy, poolMember, claimed, dirty })
 }
 

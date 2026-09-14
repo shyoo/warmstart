@@ -8,7 +8,7 @@ The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-14, **Windows 11 x64**, measured on this branch's tip): typecheck, lint, build
-pass; L1 **3,450 passed, 4 skipped** (197 files); L2 **203 checks** (5 skipped); L3 **440 checks**;
+pass; L1 **3,454 passed, 4 skipped** (197 files); L2 **203 checks** (5 skipped); L3 **440 checks**;
 L4 **19 checks** against `release/win-unpacked`. Last CI seen (HEAD `d27a282`, run 34798079433,
 green on all seven jobs): L2 198 on both runners; L3 **425** on Windows (4 skipped) and **424** on
 Linux (5 skipped) — the skips name the screen; L4 19 on Windows, 17 on Linux. ⚠️ CI was disabled by
@@ -16,6 +16,13 @@ the owner around 2026-09-13; the commits after `d27a282` have no runner counts.
 
 ## Closed in this cleanup
 
+- **Retire it / Delete it no longer refuse a branch sitting in an idle pool member (t444, 2026-09-14).**
+  `retireStrandedBranch` and `deleteUnlandedBranch` refused any branch a worktree held, full stop —
+  even a finished task's own unclaimed, clean pool-member slot, which is exactly what `parkWorkspace`
+  would detach anyway. The merged-PR sweep (`deliveries.ts`) already had this exception; the new
+  `idlePoolHolder` in [`worktrees.ts`](src/daemon/worktrees.ts) is the shared question both now ask —
+  still refusing the operator's own trunk, a claimed slot, or a dirty one, stepping off (`git switch
+  --detach`) only what a park would.
 - **The controller's label consult stopped dropping itself as "overtaken" (t440, 2026-09-14).**
   `questionStillStands` had no branch for the `title` kind and fell through to `triage`'s gate —
   `awaiting_human` or `failed` only — so a label asked about a task doing its ordinary work (`ready`,
@@ -59,16 +66,11 @@ the owner around 2026-09-13; the commits after `d27a282` have no runner counts.
   and a wait on the lock file's pid.
 - **The status bar spans the full window as `.shell`'s own grid row (t434, 2026-09-14)** — it used to sit inside `.main`'s flex column, so its border stopped at the resizable sidebar's edge. **Global › Status no longer repeats Notice's warnings (t433):** only Notice lists them.
 - **Muse reasoning-effort choices are available end to end (2026-09-14).** The catalogue offers `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `ultra`; controls pass them to Muse. ⚠️ The regression test rejects retired `max`.
-- **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).**
-  ⭐ The workers table's reorder arrows could not be clicked and vanished on hover — the order cell and
-  worker cell shared one grid area, so hover painted over the arrows; the order cell is now
-  `position: relative; z-index: 1`, caught only by `elementFromPoint`, since a scripted `.click()`
-  bypasses hit-testing ([`docs/testing.md`](docs/testing.md) §3).
-  ⭐ A sign-in run while driving another computer opened the vendor's OAuth browser on *that* screen;
-  `SignInLocationWarning` names the machine or states the rule for an RDP/VNC operator to apply.
-  ⭐ A host left running to take work could sleep mid-run; `preventSleep` (`UiSettings`, default on)
-  holds a `powerSaveBlocker`, per-install since the setting deciding whether a run survives the night
-  is the host's. ⚠️ None of the three driven in the packaged app.
+- **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).** The workers
+  table's reorder arrows are `position: relative; z-index: 1` so hover no longer paints over them
+  ([`docs/testing.md`](docs/testing.md) §3); `SignInLocationWarning` names the machine for an RDP/VNC
+  sign-in; `preventSleep` (`UiSettings`, default on) holds a `powerSaveBlocker` per-install. ⚠️ None
+  of the three driven in the packaged app.
 - **The thread ledger reads as one list (2026-09-13).** Operational facts lead, run prompt and
   activity references open compact dialogs, and the model row separates the latest run from
   next-run choices.
