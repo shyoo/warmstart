@@ -322,6 +322,11 @@ Use a directory created beneath `tmpdir()` for any fixture a subject may write, 
 suite teardown. Reserve Windows-shaped strings for pure path-shape assertions whose subjects perform
 no filesystem I/O.
 
+⚠️ The leak outlives the fix: the tree is empty, git never lists an empty directory, and a checkout
+that ran the old suite still holds it. The regression guard therefore fails on such a checkout
+(seen 2026-09-13 on macOS, a `C:` dated two days before the fix) and says so — delete the stale
+`C:` and rerun.
+
 ### A window the operator did not ask for
 
 ⛔ **A suite may drive a window; it may not put one on the operator's screen.** `test:ui` and

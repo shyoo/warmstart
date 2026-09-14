@@ -3,6 +3,7 @@ import type { Attachment } from '@shared/tasks.js'
 import { execFileSync } from 'node:child_process'
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -519,6 +520,13 @@ describe('the measured surprises, kept as regressions', () => {
 
   it('plans every adapter without creating a Windows drive name in the checkout', () => {
     const leakedDrive = join(process.cwd(), 'C:')
+    // A checkout that ran the pre-fix suite still holds the empty tree it left (git never sees an
+    // empty directory), and against that the assertion below cannot tell old leak from new. Say so
+    // rather than fail as if plan() had just recreated it.
+    expect(
+      existsSync(leakedDrive),
+      `${leakedDrive} exists before planning - a stale leak from an earlier run; delete it and rerun`
+    ).toBe(false)
     expect(() => {
       for (const a of ALL) {
         a.plan({

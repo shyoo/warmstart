@@ -9,12 +9,14 @@ worker/model reassignment: the scheduler cannot resume an explicit Opus choice o
 default between separate UI writes. The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-13, macOS arm64, measured on HEAD `d27a282`): typecheck, lint, build pass; L1
-**3,433 passed, 5 skipped** (197 files); L2 **203 checks** (5 skipped); L3 **427 checks** (2
-skipped); L4 `test:pack` **17 checks** against `release/mac-arm64`. CI on the same HEAD (run
-34798079433, green on all seven jobs): L2 198 on both runners; L3 **425** on Windows (4 skipped) and
-**424** on Linux (5 skipped) — the skips name the screen; L4 19 on Windows, 17 on Linux. ⚠️ L4
-proves the *package*, not this change's screens — see remaining work 14.
+Baseline (2026-09-13, macOS arm64, measured on `ac37ec7` plus the adapters-guard precondition
+committed with it): typecheck, lint, build pass; L1 **3,434 passed, 5 skipped** (197 files); L2
+**203 checks** (5 skipped); L3 **427 checks** (2 skipped); L4 `test:pack` **17 checks** against
+`release/mac-arm64`. Last CI seen (HEAD `d27a282`, run 34798079433, green on all seven jobs): L2 198
+on both runners; L3 **425** on Windows (4 skipped) and **424** on Linux (5 skipped) — the skips name
+the screen; L4 19 on Windows, 17 on Linux. ⚠️ CI was disabled by the owner around 2026-09-13; the
+two commits after `d27a282` have no runner counts. L4 proves the *package*, not this change's
+screens — see remaining work 14.
 
 ## Closed in this cleanup
 
