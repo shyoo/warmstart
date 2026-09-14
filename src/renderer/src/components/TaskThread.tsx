@@ -29,6 +29,7 @@ import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../l
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { ImageChips, usePastedImages } from '../lib/pasteimages'
 import { SettingButtonSelect } from './SettingButtonSelect'
+import { SettingSwitch } from './SettingRow'
 import { TaskQuestions } from './Questions'
 import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
@@ -553,7 +554,7 @@ function TaskDetail({
               {task.gradingWorkerId ? (
                 <button
                   type="button"
-                  className="setting-btn-select task-stop"
+                  className="task-stop"
                   title="Stop this quality review. The task remains at rest."
                   onClick={() => void cancel()}
                 >
@@ -563,7 +564,7 @@ function TaskDetail({
                 CANCELLABLE.has(task.status) && task.status !== 'awaiting_human' && (
                   <button
                     type="button"
-                    className="setting-btn-select task-stop"
+                    className="task-stop"
                     title="Stop the work and return this task to a resting state. Destroys nothing."
                     onClick={() => void cancel()}
                   >
@@ -2087,36 +2088,31 @@ function StatsExclusionToggle({
   task: Task
   onChanged?: () => Promise<void>
 }): React.JSX.Element {
-  const excluded = task.excludedFromStats
+  const excluded = Boolean(task.excludedFromStats)
+  const included = !excluded
   const { busy, note, run: toggle } = useAction(
     () => rpc('task.setStatsExcluded', { id: task.id, excluded: !excluded }),
     { onSuccess: onChanged }
   )
 
+  const title = excluded
+    ? 'This task is excluded from Statistics, out of the pace factor the router reads, ' +
+      'and out of every quality aggregate. Toggle on to count it in statistics again.'
+    : 'This task is included in Statistics, in the pace factor the router reads, and in quality aggregates. ' +
+      'Toggle off to leave it out (for a measurement that is wrong — an active time no agent could have spent, ' +
+      'a price attributed to the wrong window).'
+
   return (
-    <>
-      <button
-        type="button"
-        className={`btn btn--xs ${excluded ? 'btn--primary' : 'btn--secondary'}`}
-        disabled={busy}
-        aria-pressed={excluded}
-        onClick={() => void toggle()}
-        title={
-          excluded
-            ? 'This task is being left out of Statistics, out of the pace factor the router reads, ' +
-              'and out of every quality aggregate. Nothing else about it changed — the thread, the ' +
-              'runs and the price are all still here. Press to count it again.'
-            : 'Leave this task out of Statistics, out of the pace factor the router reads, and out ' +
-              'of every quality aggregate. ⛔ For a measurement that is wrong — an active time no ' +
-              'agent could have spent, a price attributed to the wrong window — and not for a ' +
-              'result you would rather not see. The estimator still reads its tokens either way: a ' +
-              'task excluded for an impossible duration still spent exactly what it spent.'
-        }
-      >
-        {excluded ? 'off · excluded' : 'on · included'}
-      </button>
+    <div className="stats-toggle">
+      <SettingSwitch
+        label="Include in statistics"
+        on={included}
+        busy={busy}
+        title={title}
+        onToggle={() => void toggle()}
+      />
       {note && <div className="note">{note}</div>}
-    </>
+    </div>
   )
 }
 

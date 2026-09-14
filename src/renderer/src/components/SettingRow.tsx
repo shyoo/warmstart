@@ -44,12 +44,16 @@ export function SettingSwitch({
   label,
   on,
   busy,
-  onToggle
+  onToggle,
+  title,
+  className
 }: {
   label: string
   on: boolean
   busy: boolean
   onToggle: () => void
+  title?: string
+  className?: string
 }): React.JSX.Element {
   return (
     <button
@@ -57,8 +61,9 @@ export function SettingSwitch({
       role="switch"
       aria-checked={on}
       aria-label={label}
+      title={title}
       disabled={busy}
-      className={`switch ${on ? 'switch--on' : ''}`}
+      className={`switch ${on ? 'switch--on' : ''} ${className ?? ''}`}
       onClick={onToggle}
     >
       <span className="switch-knob" />

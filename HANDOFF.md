@@ -8,7 +8,7 @@ The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-14, **Windows 11 x64**, measured on this branch's tip): typecheck, lint, build
-pass; L1 **3,439 passed, 4 skipped** (197 files); L2 **203 checks** (5 skipped); L3 **439 checks**.
+pass; L1 **3,450 passed, 4 skipped** (197 files); L2 **203 checks** (5 skipped); L3 **440 checks**.
 ⚠️ L4 `test:pack` was **not run here** — the previous macOS reading (17 checks against
 `release/mac-arm64`, 2026-09-13 on `ac37ec7`) is the last one. ⚠️ One L3 flake seen and not reproduced: a stale
 `.git/worktrees/convo-ws1/index.lock` left by an interrupted run failed *the landing this section
@@ -19,6 +19,10 @@ two commits after `d27a282` have no runner counts.
 
 ## Closed in this cleanup
 
+- **Thread detail controls: Stop button layout and color, compact dependency remove, and Statistics toggle (t437, 2026-09-14).**
+  ⭐ *Stop button*: Replaced oversized `setting-btn-select` class with standalone `.task-stop`, aligning it horizontally beside status text without wrapping, styled in red danger state (`--state-danger`).
+  ⭐ *Depends on Remove button*: Scaled down `.dep-remove` by removing oversized `min-width: 76px; min-height: 30px` and setting compact padding (`1px 6px`) and `var(--text-meta)`.
+  ⭐ *Statistics toggle*: Replaced text button with standard `SettingSwitch` toggle matching global "Automatic compaction" setting.
 - **Muse could not grade anything, and the app would not say why (t436, 2026-09-14).** Muse Code
   1.1.1 reads `<workspace>/.codex/skills` at startup and exits 1 in ~4.5s against a non-directory
   (`runtime host failed to start: … Not a directory (os error 20)`, stderr, stdout empty). This
@@ -97,24 +101,9 @@ two commits after `d27a282` have no runner counts.
   replaces every path `icacls /reset` refuses (on **stderr**, which the old call discarded), 7.2 s for
   19.7k files. ⭐ *A Muse run bridged through WSL rewrote ws3's `.git` pointer*; pool pointers are now
   **relative**. ⚠️ Whether muse's `edit_file` accepts that is inferred, not measured.
-- **Loose ends offers Delete it** (`deleteUnlandedBranch`, on a confirmed click only); **the database
-  backs itself up** (`backup.ts`, daily, 14-day prune).
-- **Trunk mode: a task can work in the project checkout itself** (t401). `workspaceMode`
-  (`worktree` | `trunk`, migration 70); five decisions pinned in
-  [`trunkmode.test.ts`](src/daemon/trunkmode.test.ts).
-  ⚠️ **Not driven in the packaged app** — [`docs/landing.md`](docs/landing.md#working-in-the-trunk).
-- **Repeated compaction and quota tipping loops are prevented (t401, t404).** `decideRevive`
-  ([`cacheclock.ts`](src/daemon/cacheclock.ts)) checks refusal and pool state before reviving to
-  compact; preemption wrap-up falls back to handoff where the window is spent.
-- **The thread shows the change before you land it.** `task.diffSummary` / `task.diffFile`
-  ([`taskdiff.ts`](src/daemon/taskdiff.ts)) read the *same* commits the grader reads; two measured git
-  facts are pinned in [`taskdiff.test.ts`](src/daemon/taskdiff.test.ts).
-- **The security model is written down, and the permissive default is a choice.** `permissionModeFor`
-  ([`sessions.ts`](src/daemon/sessions.ts)) puts unattended work on `bypassPermissions` — full OS user
-  authority — and a `sandboxed-only` project **refuses** a bypassing candidate rather than downgrading
-  it into t250's stall. [`docs/security.md`](docs/security.md) says what it means.
-- **Debate seats see current code and stay in their role**; **squash-merged PRs and report-only tasks
-  retire under Loose ends** without leaving false unlanded ends (`task_deliveries.retire_blocked`).
+- **Database backups and trunk mode.** `backup.ts` copies `warmstart.db` daily (14-day prune); trunk mode allows working in the project checkout itself (`trunkmode.test.ts`).
+- **Compaction loops and thread diffs.** `cacheclock.ts` prevents compaction loops; `taskdiff.ts` shows commit diffs before landing.
+- **Security model and loose ends cleanup.** Unattended permission mode documented (`docs/security.md`); squash-merged PRs and report-only tasks cleanly retire under Loose ends.
 
 ## Remaining work — ordered by payoff
 
