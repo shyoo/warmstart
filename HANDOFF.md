@@ -10,8 +10,8 @@ authority on each subsystem; dated design and incident history belongs in `trans
 Baseline (2026-09-14, **Windows 11 x64**, measured on this branch's tip): typecheck, lint pass; L1
 **3,460 passed, 4 skipped** (199 files); L2 **203 checks** (5 skipped); L3 **436 passed, 4 skipped**,
 now at a pinned 1024×720 window (was 440 at 1440×900); L4 **19 checks** as of `3489bc0`, not rerun
-for t445.2. Last CI green on all seven jobs: `397ef82`, run 34798606736; `3489bc0` (run 34872370257)
-was red on `ui · windows-latest` only, and t445.2 below is the fix. CI is **enabled**; ⛔ the
+for t445.2. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
+`3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**; ⛔ the
 **Release** workflow is deliberately still disabled, so that the first macOS runner is spent only
 once the Mac has answered locally.
 
@@ -42,8 +42,8 @@ once the Mac has answered locally.
   proves nothing about the hardened runtime**, because the runtime is a signing flag — a machine
   with no certificate produces a bundle the flag was never applied to, identical in name and size to
   one that passed. `scripts/build-mac.sh` and the release workflow now read the bundle back with
-  `codesign` and print which happened. ⚠️ **None of it has run on a Mac**; `macsigning.test.ts`
-  pins only what the configuration asks for. [`docs/development.md`](docs/development.md) §3 has the
+  `codesign` and print which happened. ✅ The owner's Mac built it **signed with the hardened
+  runtime** (2026-09-14); not notarised, and nothing has yet been run under it. [`docs/development.md`](docs/development.md) §3 has the
   first-session checklist, certificate first.
 - **The controller's label consult stopped dropping itself as "overtaken" (t440, 2026-09-14).**
   `questionStillStands` had no branch for the `title` kind and fell through to `triage`'s gate —
@@ -133,10 +133,9 @@ a unit test.
 4. **Run human-in-the-loop, `commit-and-merge`, and cross-task reuse with a real agent.** The code
    and L1–L3 checks exist, but this has not been demonstrated in flight.
 5. **Run the *signed* app on macOS with a real CLI; this is the launch gate.** The owner confirmed
-   an unsigned macOS build compiles, runs and pairs in remote mode (2026-09-14) — ⛔ which is the
-   state immediately *before* the risky change, not after it. Install the Developer ID certificate,
-   run `./scripts/build-mac.sh`, and believe its signing line; then open a PTY, `npm run test:pack`,
-   and drive one real task. Still unverified either way: detached daemon startup without system Node
+   an unsigned build compiles, runs and pairs in remote mode, and `./scripts/build-mac.sh` now
+   reports a build signed with the hardened runtime, and `npm run test:pack` passes on the Mac (all
+   2026-09-14). Remaining: launch *that* bundle, open a PTY, and drive one real task. Still unverified either way: detached daemon startup without system Node
    under the hardened runtime, Application Support isolation, Antigravity's Keychain, Gatekeeper.
 6. **Execute the release pipeline for macOS.** The config is ready (item 5's entry above); the five
    Apple secrets are not set and `platforms=macos` has never run — Windows was proven end to end
