@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for the hardened runtime, which `electron-builder.yml` turns on and notarisation
+  requires. electron-builder finds this file by name in `buildResources`; there is no path to it in
+  any config, which is why the filename must not change.
+
+  ⛔ This file REPLACES electron-builder's built-in template, it does not extend it. The three keys
+  below are exactly that template (app-builder-lib 26.15.3,
+  `node_modules/app-builder-lib/templates/entitlements.mac.plist`) — copied so that a version bump
+  cannot change what this app ships without the change appearing in a diff. That is the same reason
+  `asarUnpack` names node-pty explicitly instead of leaning on auto-detection.
+
+  ⚠️ Nothing here has been exercised on a Mac. Each key below says what it is for and what would
+  prove it unnecessary; `docs/development.md` §3 has the checklist for the first real run.
+-->
+<plist version="1.0">
+  <dict>
+    <!-- V8 compiles at runtime. Without these two, Electron does not start under the hardened
+         runtime at all, so a failure here is total and immediate rather than subtle. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- The hardened runtime otherwise refuses to load any library not signed by this team or by
+         Apple. ⚠️ The one this app most depends on is `@lydell/node-pty`, whose `.node` lives in
+         `app.asar.unpacked` and which spawns a helper binary of its own; electron-builder does sign
+         nested binaries with the same identity, so this key may well be unnecessary once that is
+         verified. ⭐ It is the first thing to try removing after a signed build is proven to open
+         a PTY — drop it, rebuild, open a terminal in the app, and see whether a session still
+         starts. Keep it only if that fails. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- ⬜ NOT set, deliberately: `com.apple.security.cs.allow-dyld-environment-variables`. The
+         daemon and the MCP server are spawned with `process.execPath` and `ELECTRON_RUN_AS_NODE=1`,
+         which is an ordinary environment variable and not a DYLD one, and `spawnEnv()` sets no
+         DYLD_* variable either. ⭐ If the packaged app opens but the daemon never comes up on
+         macOS, this is the first entitlement to add — that is the §3 risk this app was warned
+         about, and an unexplained daemon death is what it would look like. -->
+  </dict>
+</plist>

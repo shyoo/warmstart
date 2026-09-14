@@ -134,12 +134,59 @@ matching the packaged binary matches the operator's own app just as well as a te
 orchestratord is **detached by design**, so it holds the binary after its window closes — the topology
 working, not a leak. Guard the directory actually being rewritten, nothing wider.
 
-⚠️ Builds are **unsigned**. Windows SmartScreen warns; macOS Gatekeeper refuses until cleared by hand.
-That is the honest state of a pre-alpha; signing is a certificate and a release process, not a config
-line. **`version.json` is the version source.** Its value is compiled into the window, daemon and MCP
+⚠️ **Windows builds are unsigned** and SmartScreen warns. That is a deliberate decision, not an
+oversight: signing Windows is a certificate and a purchase, not a config line. **macOS is the other
+way round now** — see below. **`version.json` is the version source.** Its value is compiled into the window, daemon and MCP
 server; `package.json` and `package-lock.json` carry the same value because Electron Builder requires
 package metadata, and `npm run version:check` refuses a mismatch. Change all three deliberately before
 tagging `v<version>`; the release workflow rejects a tag that does not name `version.json`.
+
+### macOS signing and the hardened runtime
+
+⛔ **Nothing in this section has been run on a Mac.** The settings are in the tree so that the
+first Mac session is debugging rather than configuration; every claim below is read out of
+`app-builder-lib` 26.15.3's own source, not out of a build log. Pinned by
+[`src/daemon/macsigning.test.ts`](../src/daemon/macsigning.test.ts), which runs everywhere and proves
+only what the configuration *asks for*.
+
+| Setting | Value | Why |
+|---|---|---|
+| `mac.identity` | **absent** | `identity: null` takes `handleNullIdentity()` in `macPackager.js` and returns before anything else. ⛔ Notarisation is called from *inside* `sign()`, so a null identity silently disabled both. Absent means auto-discovery of a *Developer ID Application* certificate. |
+| `mac.hardenedRuntime` | `true` | Notarisation requires it. ⚠️ Also app-builder-lib's own default for a non-MAS build; stated because it is a decision. |
+| `mac.notarize` | `false` | Unset, app-builder-lib notarises whenever signing succeeded *and* the Apple variables happen to be in the environment, so a local build's duration would depend on the operator's shell. `npm run dist:mac:release` overrides it to `true`, and the release workflow is the only caller. |
+| `resources/entitlements.mac.plist` + `.inherit.plist` | 3 keys | Found by name in `buildResources`, so no path in any config can be wrong. ⛔ They **replace** electron-builder's built-in template rather than extend it. |
+
+⭐ **The trap to hold in your head: an unsigned build proves nothing about any of this.** The
+hardened runtime is a *signing* flag. On a machine with no certificate electron-builder logs a
+warning, builds happily, and produces a bundle the flag was never applied to — identical in name,
+size and behaviour to one that passed. `scripts/build-mac.sh` therefore ends by reading the bundle
+back with `codesign` and printing which of the three outcomes actually happened (unsigned / signed
+without the runtime / signed with it). ⛔ Believe that line, not this table.
+
+**The first Mac session, in order.** Each step is worth doing before the next because each one can
+fail on its own.
+
+1. **Certificate first.** Install the *Developer ID Application* certificate into the login keychain
+   and confirm `security find-identity -v -p codesigning` lists it. Without this, steps 2–4 are
+   measuring an unsigned bundle and will all appear to pass.
+2. **`./scripts/build-mac.sh`** — no installer, no notarisation, ~90s. Read the signing line it
+   prints. ⭐ If it does not say *hardened runtime ON*, stop and fix that; nothing after this means
+   anything until it does.
+3. **Open a PTY in the signed app.** This is the actual risk: library validation applies to every
+   `.node` the app loads, and `@lydell/node-pty` loads out of `app.asar.unpacked` and spawns a helper
+   binary of its own. Open a terminal in the app and start a session. ⚠️ If the app opens but the
+   *daemon* never comes up, the first thing to try is
+   `com.apple.security.cs.allow-dyld-environment-variables` — the plists say why it is deliberately
+   absent.
+4. **`npm run test:pack`** against the signed bundle, then drive a real task end to end.
+5. **Only then** add the five release secrets (`MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`, `APPLE_ID`,
+   `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`) and dispatch the release workflow with
+   `platforms=macos`. ⚠️ macOS runners bill at roughly ten times the Linux rate, so it is worth
+   having the answer before spending one.
+
+⭐ **If the hardened runtime does break node-pty, that is a finding, not a defeat** — write down
+which binary failed validation and how, because it decides whether the fix is an entitlement, a
+signing-order change, or `asarUnpack`.
 
 ### Release downloads
 

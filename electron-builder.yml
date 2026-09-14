@@ -79,12 +79,34 @@ mac:
     - target: dmg
       arch: [x64, arm64]
   category: public.app-category.developer-tools
-  # ⚠️ Unsigned and un-notarised. On macOS this means Gatekeeper refuses the app until the user
-  # clears it by hand. Fixing it needs an Apple Developer account, not a setting.
-  identity: null
-  # node-pty spawns processes and the daemon opens a local socket; both need the hardened runtime
-  # relaxed unless the app is properly signed.
-  hardenedRuntime: false
+  # ⛔ `identity` is deliberately *absent*, not `null`. Measured in app-builder-lib 26.15.3,
+  # `macPackager.js` `sign()`: `identity: null` takes the `handleNullIdentity()` branch and returns
+  # before anything else runs — and notarisation is called from *inside* `sign()`, so a null identity
+  # silently disables both. Absent means auto-discovery: electron-builder looks for a "Developer ID
+  # Application" certificate in the keychain, signs with it if it finds one, and carries on unsigned
+  # with a warning if it does not. ⚠️ A machine with no certificate therefore still builds, and what
+  # it builds is *not* hardened — the hardened runtime is a signing flag, so an unsigned app proves
+  # nothing about it. `CSC_IDENTITY_AUTO_DISCOVERY=false` forces unsigned on a machine that has one.
+  #
+  # Notarisation requires the hardened runtime, and the hardened runtime is the single setting most
+  # likely to break this app: it enforces library validation on every `.node` loaded, and
+  # `@lydell/node-pty` is loaded out of `app.asar.unpacked` (see `asarUnpack` above) and spawns a
+  # helper binary of its own. ⚠️ **Never run on a Mac.** `docs/development.md` §3 has the checklist.
+  # ⚠️ `true` is also the app-builder-lib default for a non-MAS build (`MacTargetHelper.js`,
+  # `config.hardenedRuntime !== false`); it is stated here because this is a decision, not a default.
+  hardenedRuntime: true
+  # Entitlements come from `resources/entitlements.mac.plist` and `.inherit.plist`, which
+  # electron-builder picks up by name out of `buildResources` — no path in this file to get wrong.
+  # ⛔ Their presence *replaces* electron-builder's built-in template rather than adding to it, so
+  # they restate every key it carries. Read the header in the plist before removing one.
+  #
+  # ⛔ Notarisation is a release step, not part of the inner loop. Left unset, app-builder-lib
+  # notarises whenever signing succeeded and `APPLE_ID` / `APPLE_APP_SPECIFIC_PASSWORD` /
+  # `APPLE_TEAM_ID` happen to be in the environment (`MacTargetHelper.getNotarizeOptions`) — so one
+  # exported variable would add minutes to every local build, and a half-set trio throws
+  # `InvalidConfigurationError` in the middle of packaging. `false` makes the local answer the same
+  # on every machine; `npm run dist:mac:release` overrides it to `true` for the build that ships.
+  notarize: false
 
 linux:
   # ⛔ Set explicitly, because electron-builder does NOT use `productName` verbatim here. On Windows

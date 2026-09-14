@@ -548,9 +548,39 @@ for dmg in release/Warmstart-*.dmg; do
   fi
 done
 
-echo ""
-echo -e "${COLOR_GRAY}⚠️  Unsigned by design - macOS Gatekeeper will refuse until cleared by hand.${COLOR_RESET}"
-echo -e "${COLOR_GRAY}    That is the honest state of a pre-alpha, not a build failure.${COLOR_RESET}"
+# ---------------------------------------------------------------- Signing state
+# ⛔ Do not print a signing state; read one. `hardenedRuntime: true` in electron-builder.yml is a
+# request, and it is honoured only when a "Developer ID Application" certificate was found —
+# otherwise an unsigned bundle is built happily, the flag is never applied, and nothing in the
+# output path says so. `flags=...(runtime)` below is the only proof the hardened runtime shipped,
+# and the hardened runtime is the one thing about macOS packaging this repo has never verified.
+if [[ -n "$TARGET_APP" ]]; then
+  echo ""
+  if ! command -v codesign >/dev/null 2>&1; then
+    echo -e "${COLOR_YELLOW}⚠️  codesign is not on PATH - this build's signing state is unknown.${COLOR_RESET}"
+  else
+    SIGN_INFO="$(codesign --display --verbose=2 "$TARGET_APP" 2>&1 || true)"
+    AUTHORITY="$(printf '%s\n' "$SIGN_INFO" | grep -m1 '^Authority=' | sed 's/^Authority=//' || true)"
+    CODEDIR="$(printf '%s\n' "$SIGN_INFO" | grep -m1 '^CodeDirectory ' || true)"
+
+    if printf '%s' "$SIGN_INFO" | grep -q 'not signed at all'; then
+      echo -e "${COLOR_YELLOW}⚠️  UNSIGNED. Gatekeeper will refuse it until cleared by hand - and the part that${COLOR_RESET}"
+      echo -e "${COLOR_YELLOW}    matters more: the hardened runtime was NOT applied, so this build says nothing${COLOR_RESET}"
+      echo -e "${COLOR_YELLOW}    about whether node-pty survives it. Install a Developer ID Application${COLOR_RESET}"
+      echo -e "${COLOR_YELLOW}    certificate and build again. docs/development.md §3.${COLOR_RESET}"
+    elif printf '%s' "$CODEDIR" | grep -q 'runtime'; then
+      echo -e "${COLOR_GREEN}✔  Signed, hardened runtime ON.  ${AUTHORITY:-ad-hoc}${COLOR_RESET}"
+      echo -e "${COLOR_GRAY}    ⭐ This is the build worth testing. Open a terminal in the app and start a${COLOR_RESET}"
+      echo -e "${COLOR_GRAY}       session: if a PTY opens, the §3 node-pty risk is retired.${COLOR_RESET}"
+    else
+      echo -e "${COLOR_YELLOW}⚠️  Signed, but WITHOUT the hardened runtime.  ${AUTHORITY:-unknown authority}${COLOR_RESET}"
+      echo -e "${COLOR_YELLOW}    Notarisation requires it, so this bundle cannot be notarised as built.${COLOR_RESET}"
+    fi
+    echo -e "${COLOR_GRAY}    ${CODEDIR:-no CodeDirectory line in codesign output}${COLOR_RESET}"
+    echo -e "${COLOR_GRAY}    Never notarised locally: electron-builder.yml pins notarize:false, and the${COLOR_RESET}"
+    echo -e "${COLOR_GRAY}    release workflow is the only thing that turns it on.${COLOR_RESET}"
+  fi
+fi
 
 if [[ "$RESTART" -eq 1 && "$QUICK" -eq 1 ]]; then
   echo ""

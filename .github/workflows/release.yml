@@ -90,9 +90,15 @@ jobs:
 
       # ⚠️ macOS signing is opt-in on the presence of secrets, so this workflow still produces an
       # (unsigned) build before the certificate is wired up. electron-builder reads these env names
-      # directly. ⛔ `electron-builder.yml` still sets `identity: null` and `hardenedRuntime: false` —
-      # both must change when signing goes live, and hardenedRuntime is the setting most likely to
-      # break node-pty. Test that on the Mac before tagging anything.
+      # directly. ⛔ But an unsigned build proves nothing about the hardened runtime, because the
+      # hardened runtime is a *signing* flag — `electron-builder.yml` now asks for it, and a runner
+      # with no certificate silently produces a bundle that never had it applied. The real test is
+      # the Mac (`docs/development.md` §3), not this job.
+      #
+      # ⛔ Notarisation is enabled here and nowhere else. `electron-builder.yml` pins `notarize:
+      # false` so a local build is fast and deterministic; `dist:mac:release` overrides it, and is
+      # chosen only when the credentials to do it are actually present — otherwise app-builder-lib
+      # throws `InvalidConfigurationError` on a partially configured secret set rather than skipping.
       - name: Build installers
         shell: bash
         env:
@@ -104,9 +110,34 @@ jobs:
         run: |
           case "${{ runner.os }}" in
             Windows) npm run dist:win ;;
-            macOS)   npm run dist:mac ;;
             Linux)   npm run dist:linux ;;
+            macOS)
+              if [ -n "$APPLE_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ] && [ -n "$APPLE_TEAM_ID" ]; then
+                echo "Apple credentials present — building signed and notarised."
+                npm run dist:mac:release
+              else
+                echo "::warning::APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD/APPLE_TEAM_ID not all set."
+                echo "::warning::Building without notarisation. Gatekeeper will refuse this .dmg."
+                npm run dist:mac
+              fi
+              ;;
           esac
+
+      # ⛔ Say what was actually produced, rather than what the config asked for. `hardenedRuntime:
+      # true` is a request; whether it was applied depends on a certificate having been found, and
+      # the difference is invisible in the installer's filename. A `flags=0x10000(runtime)` line here
+      # is the only thing in this workflow that proves the hardened runtime shipped.
+      - name: What did the signing actually do?
+        if: runner.os == 'macOS'
+        shell: bash
+        continue-on-error: true
+        run: |
+          app=$(find release -maxdepth 2 -name 'Warmstart.app' -print -quit)
+          if [ -z "$app" ]; then echo "no .app found under release/"; exit 0; fi
+          echo "== $app"
+          codesign --display --verbose=2 "$app" 2>&1 || true
+          echo "== gatekeeper assessment"
+          spctl --assess --type execute --verbose=2 "$app" 2>&1 || true
 
       # Only the installers. electron-builder leaves unpacked trees and blockmaps in release/ that
       # nobody should download.
