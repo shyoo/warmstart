@@ -700,7 +700,7 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 | `menuposition.ts` | where a pill's portalled menu goes: flip above, clamp to the window, never clip |
 | `newproject.ts` | the add-project wizard's step blockers, its creation plan, and the template signature |
 | `prefs.ts` | saved views, fleet collapse and density, page size, **which page of the list you were reading**, and which diff layout you read patches in (localStorage) |
-| `uisettings.ts` `zoom.ts` | tray/Enter behaviour, colour theme and zoom, mirrored from main's `ui-settings.json` |
+| `uisettings.ts` `zoom.ts` | tray/Enter behaviour, colour theme, **keep-awake** and zoom, mirrored from main's `ui-settings.json` |
 | `pasteimages.tsx` | paste-to-attach; downscales to 1568px and uploads one image per call |
 | `composerprefs.ts` | what the composer was last set to — ⛔ **last-selected beats inherited**, and model/effort are keyed **per account** |
 | `composerscratch.ts` | what is still half-written in the composer — ⛔ a **scratch, not a draft**: no task row is filed |
@@ -718,6 +718,14 @@ does — including whether closing it leaves the daemon running, which main must
 is not answering.
 
 **Appearance is a window preference:** Global offers System (the default), Light and Dark. System follows live OS light/dark changes; Light and Dark set an explicit palette.
+
+**Keep this computer awake** (`preventSleep`) is the one switch on App behavior that **defaults to
+on**. Main holds a `powerSaveBlocker('prevent-app-suspension')` while it is set, started at launch as
+well as on change — the machine it matters most on is a host left running to take work, which nobody
+opens the settings panel on. ⚠️ It asks the OS not to *idle*-sleep; it does not force the display on
+and cannot override a closed lid, a deliberate Sleep or a flat battery. ⛔ Per-install, like every
+other `UiSettings` field: driving another computer's fleet, the setting that decides whether the run
+survives the night is the one on **that** computer, read by switching to it in the picker.
 
 ### The Session TUI tab is two things, because a dispatched agent has no terminal
 

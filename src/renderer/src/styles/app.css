@@ -2282,19 +2282,27 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 14px;
+  width: 20px;
+  height: 16px;
   padding: 0;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--color-text-faint);
+  /* ⛔ An opaque background of its own, never `transparent`. The workers table re-lays its rows out
+     as cards, where this cell and the worker cell share one grid area (see `.tbl-workers` below) —
+     a button that let whatever is behind it show through had nothing of its own to be seen. It also
+     matches `.worker-actions .btn`, which is the other button on this card. */
+  background: var(--color-surface-2);
+  color: var(--color-text-dim);
   cursor: pointer;
 }
 
+/* ⚠️ Lands on `--color-border`, not on `--color-surface`: the workers card is already
+   `--color-surface`, so hovering onto the card's own colour is a hover state that reads as the
+   button going away. */
 .order-btn:hover:not(:disabled) {
   color: var(--color-text);
   border-color: var(--color-border-strong);
+  background: var(--color-border);
 }
 
 /* ⛔ Still drawn, not hidden. The worker at the top of the fleet has no *up*, and a button that
@@ -2732,7 +2740,17 @@ body {
   align-items: center; gap: var(--sp-2); min-width: 0; padding: 5px var(--sp-2); border: 0;
 }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td::before { color: var(--color-text-dim); font-size: var(--text-meta); }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(1) { grid-column: 1; grid-row: 1; display: block; width: 24px; padding: 0; }
+/* ⛔ `position: relative` and a z-index, and this is load-bearing rather than tidy. This cell and
+   the worker cell below are deliberately given the **same grid area** — column 1, starting at row 1
+   — so the two little arrows sit in the gutter the worker cell leaves with its `padding-left: 32px`.
+   Overlapping boxes are painted in tree order, so the worker cell paints over this one; that was
+   invisible only while the worker cell had no background of its own. `.tbl tr:hover td` gives it
+   one, so hovering the row painted `--color-surface` straight over both arrows and, worse, put the
+   worker cell on top for hit-testing: the arrows vanished on hover and the click that followed
+   reached the cell behind them instead of the button. Lifting this cell into a stacking position
+   keeps it painted and clickable above its overlapping sibling. Reported 2026-09-13; pinned by
+   *the reorder arrows stay on top of the cell they overlap* in `test/ui.test.mjs`. */
+.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(1) { grid-column: 1; grid-row: 1; display: block; width: 24px; padding: 0; position: relative; z-index: 1; }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(2) { grid-column: 1; grid-row: 1 / span 10; display: block; padding: 0 0 0 32px; }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(3)::before { content: 'Adapter'; }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(4)::before { content: 'Config location'; }
@@ -3623,6 +3641,21 @@ select:focus-visible,
   gap: var(--sp-2);
   margin-left: auto;
   flex-shrink: 0;
+}
+
+/* ⚠️ Amber and boxed, unlike `.login-note` beside it. This one says a step is about to happen
+   somewhere the reader cannot see, and a dim grey sentence under a terminal is exactly the shape of
+   text an operator skips on their way to typing. It is not `.alert`: nothing has failed yet. */
+.login-remote-warning {
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--state-warn);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  font-size: var(--text-meta);
+  line-height: 1.5;
+  max-width: 72ch;
 }
 
 .login-note {

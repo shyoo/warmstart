@@ -4,6 +4,7 @@ import {
   dialog,
   Menu,
   Notification,
+  powerSaveBlocker,
   Tray,
   ipcMain,
   nativeImage,
@@ -237,6 +238,36 @@ function applyTraySetting(): void {
   }
 }
 
+/**
+ * The id of the active `powerSaveBlocker`, or -1 when none is running.
+ *
+ * ⚠️ `powerSaveBlocker.start` returns a new id every call, so tracking the previous one is how we
+ * stop it before starting a replacement. Starting without stopping leaks a blocker for the process
+ * lifetime, and stopping a wrong id is silently ignored — so the id is the only authority.
+ */
+let preventSleepBlockerId = -1
+
+/**
+ * Start or stop the OS sleep blocker to match `uiSettings.preventSleep`.
+ *
+ * ⚠️ `prevent-app-suspension` rather than `prevent-display-sleep`. The goal is to keep the machine
+ * awake so the daemon keeps running, not to force the display to stay on — especially on a remote
+ * machine where nobody is looking at the screen anyway.
+ *
+ * ⛔ Applied immediately whenever settings change, the same way `applyTraySetting` is, so there is
+ * never a window where the setting says one thing and the OS blocker says another.
+ */
+function applyPreventSleep(): void {
+  const want = uiSettings.preventSleep
+  const running = preventSleepBlockerId !== -1 && powerSaveBlocker.isStarted(preventSleepBlockerId)
+  if (want && !running) {
+    preventSleepBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+  } else if (!want && running) {
+    powerSaveBlocker.stop(preventSleepBlockerId)
+    preventSleepBlockerId = -1
+  }
+}
+
 function createWindow(): BrowserWindow {
   const icon = windowIcon()
   const savedBounds = readWindowBounds()
@@ -349,6 +380,7 @@ void app.whenReady().then(() => {
     // ⚠️ Applied immediately. A tray toggle that needed a restart to take effect would be
     // indistinguishable from one that did not work.
     applyTraySetting()
+    applyPreventSleep()
     return uiSettings
   })
 
@@ -401,6 +433,10 @@ void app.whenReady().then(() => {
 
   uiSettings = readUiSettings()
   applyTraySetting()
+  // ⛔ At startup as well as on change. The machine this matters most on is the one nobody opens
+  // the settings panel on — a remote host left running to take work — and a blocker that only
+  // starts when somebody toggles it would never start there at all.
+  applyPreventSleep()
   createWindow()
 
   // Updates are meaningful only for an installed, packaged app. Development and test builds must

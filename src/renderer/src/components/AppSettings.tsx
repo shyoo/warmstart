@@ -38,6 +38,7 @@ export function AppSettings(): React.JSX.Element {
   const notifications = settings.notifications
   const enterBehavior = settings.enterBehavior
   const theme = settings.theme
+  const preventSleep = settings.preventSleep
 
   return (
     <>
@@ -133,6 +134,40 @@ export function AppSettings(): React.JSX.Element {
               on={notifications}
               busy={saving}
               onToggle={() => void save({ notifications: !notifications })}
+            />
+          }
+        />
+
+        {/* ⛔ **This machine's setting, and each computer keeps its own.** The one that decides
+            whether a run survives the night is the setting on the computer the agent is running on,
+            not on the one you are looking at it from — so when you drive another computer's fleet,
+            switch to it in the picker and read this row there. ⚠️ It is also the only switch on this
+            panel that defaults to on, because the other three trade one convenience for another and
+            this one is the difference between a run finishing and a run being lost. */}
+        <SettingRow
+          title="Keep this computer awake"
+          description={
+            preventSleep ? (
+              <>
+                While Warmstart is open, this computer is asked not to fall asleep on idle, so a
+                scheduled run keeps going when nobody is at the keyboard. It does not force the
+                display on, and it cannot override a closed lid, a deliberate <em>Sleep</em>, or a
+                battery running out.
+              </>
+            ) : (
+              <>
+                This computer sleeps on its normal schedule. A run in flight when it does is
+                suspended with it — committed work is safe, the session&rsquo;s context is not, and
+                you find out from the task table rather than from an error.
+              </>
+            )
+          }
+          control={
+            <SettingSwitch
+              label="Keep this computer awake"
+              on={preventSleep}
+              busy={saving}
+              onToggle={() => void save({ preventSleep: !preventSleep })}
             />
           }
         />

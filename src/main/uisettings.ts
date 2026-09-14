@@ -43,7 +43,11 @@ export function readUiSettings(): UiSettings {
       notifications:
         typeof parsed.notifications === 'boolean'
           ? parsed.notifications
-          : DEFAULT_UI_SETTINGS.notifications
+          : DEFAULT_UI_SETTINGS.notifications,
+      preventSleep:
+        typeof parsed.preventSleep === 'boolean'
+          ? parsed.preventSleep
+          : DEFAULT_UI_SETTINGS.preventSleep
     }
   } catch {
     return { ...DEFAULT_UI_SETTINGS }

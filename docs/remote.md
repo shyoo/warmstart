@@ -175,6 +175,23 @@ is refused rather than storing the token in plain text.
    separately), optionally name it, and press **Pair**.
 3. Pick it from the list above Overview.
 
+### ⛔ Commissioning a worker from the other computer signs in over there
+
+A worker's login is the **vendor's own CLI**, hosted in a PTY beside the isolation root it is
+writing a credential into — which is on the host, not on the computer you are sitting at. Every
+adapter here hands the OAuth step to a browser, and that browser opens on the *host's* screen.
+Driving a remote fleet, the Sign in terminal therefore sits at "waiting for the browser" while the
+window that would finish it is on a desk somewhere else. Reported 2026-09-13. The same trap catches a
+single machine viewed over RDP / VNC / Screen Sharing, for the same reason and with no way for the
+app to detect it.
+
+Warmstart does not try to forward the browser; it warns instead. `SignInLocationWarning`
+([`Workers.tsx`](../src/renderer/src/components/Workers.tsx)) is drawn above **Create and sign in**
+and again in the Sign in panel, and it names the host by label when `useTarget().active.kind` is
+`remote`. Finish the browser step on the host's screen, then press **Check sign-in again** — the
+worker row re-reads the account. An adapter that can complete a login from a pasted code or a device
+link is the one to prefer from a remote window.
+
 ### Protocol versions
 
 ⛔ **A client's renderer is its own build**, so it may call something an older remote does not have.

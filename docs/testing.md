@@ -133,6 +133,23 @@ and where none is drawn `skip` with the window and panel width as the reason —
 capability of the machine. ⛔ Not a check over the collapsed cells, which fails a layout nobody sees,
 and not one over an empty list, which passes while proving nothing.
 
+### A button answers `.click()` from a script even when the pointer can never reach it
+
+⛔ **`querySelector` finds it, `disabled` is `false`, `.click()` dispatches and the handler runs —
+and the operator still cannot press it.** Measured 2026-09-13: the workers table re-lays its rows out
+as cards where the reorder cell and the worker cell are deliberately given the *same* grid area, and
+the worker cell — later in tree order — was painted and hit-tested on top. Every DOM-level assertion
+in `test/ui.test.mjs` was green, including one that clicked the arrow and watched the daemon reorder
+the fleet, while the reported behaviour was *"the arrows disappear when I hover and moving up does
+nothing"*. `.tbl tr:hover td` gave the covering cell a background, which is what made the arrows
+vanish on hover as well.
+
+⚠️ For any control that overlaps a sibling, hit-test it: take the button's own
+`getBoundingClientRect()`, call `document.elementFromPoint` at its centre, and require the answer to
+be the button or something inside it. Reporting *what* was found instead of the button is what makes
+the failure readable — the check that caught this printed `worker-cell`. ⛔ A scripted `.click()` is
+not a substitute: it bypasses hit-testing entirely, which is exactly why it passed.
+
 ### An `overflow: hidden` box still scrolls, so scrolling it proves nothing
 
 ⛔ **`scrollHeight > clientHeight` and an assignment to `scrollTop` are both true of a box the

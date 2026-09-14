@@ -1,12 +1,6 @@
 # Warmstart — Session Handoff
 
-## Current state — 2026-09-13
-
-The thread ledger has been compacted and reordered: operational facts lead, created/directory/landing
-use the clearer labels, the stopped-task control matches the small setting controls, and run prompt
-and activity references open compact dialogs instead of boxed disclosures. The model row now separates
-the latest run from next-run choices; cache-risk copy is behind its info control. `typecheck`, `lint`,
-L1 `test`, and `build` passed locally on 2026-09-13.
+## Current state — 2026-09-14
 
 Warmstart M0–M6 is implemented. The current branch contains debate mode, quota-aware scheduling,
 pooled worktrees, model-aware routing, quality review, remote access, packaging, the completed
@@ -15,10 +9,13 @@ worker/model reassignment: the scheduler cannot resume an explicit Opus choice o
 default between separate UI writes. The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-13, macOS arm64, measured on `ac37ec7` plus the adapters-guard precondition
-committed with it): typecheck, lint, build pass; L1 **3,434 passed, 5 skipped** (197 files); L2
-**203 checks** (5 skipped); L3 **427 checks** (2 skipped); L4 `test:pack` **17 checks** against
-`release/mac-arm64`. Last CI seen (HEAD `d27a282`, run 34798079433, green on all seven jobs): L2 198
+Baseline (2026-09-14, **Windows 11 x64**, measured on this branch's tip): typecheck, lint, build
+pass; L1 **3,439 passed, 4 skipped** (197 files); L2 **203 checks** (5 skipped); L3 **439 checks**.
+⚠️ L4 `test:pack` was **not run here** — the previous macOS reading (17 checks against
+`release/mac-arm64`, 2026-09-13 on `ac37ec7`) is the last one, and it proves the package rather than
+any screen below. ⚠️ One L3 flake seen and not reproduced: a stale
+`.git/worktrees/convo-ws1/index.lock` left by an interrupted run failed *the landing this section
+needs actually landed*; a clean re-run was green. Last CI seen (HEAD `d27a282`, run 34798079433, green on all seven jobs): L2 198
 on both runners; L3 **425** on Windows (4 skipped) and **424** on Linux (5 skipped) — the skips name
 the screen; L4 19 on Windows, 17 on Linux. ⚠️ CI was disabled by the owner around 2026-09-13; the
 two commits after `d27a282` have no runner counts. L4 proves the *package*, not this change's
@@ -26,18 +23,37 @@ screens — see remaining work 14.
 
 ## Closed in this cleanup
 
-- **Quality Review's copy and tile labels read as one page (t430, 2026-09-13).** The intro paragraph
-  under the heading was capped at 62ch like every other panel subtitle, but the two explanatory
-  paragraphs under *Commission a batch* had no width limit and stretched the full panel, so the same
-  page read two different widths of prose. A new `.prose-note` class holds both to the same 62ch
-  as `.panel-sub`. The four count tiles were named by review-count bucket (*"finished tasks with no
-  review"*, *"cannot be graded"*) — the operator-relevant question is eligibility, so they now read
-  *Gradable tasks with 0 reviews / only 1 review / 2+ reviews* and *Non-gradable tasks*.
+- **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).**
+  ⭐ *The reorder arrows could not be clicked, and vanished on hover.* The workers table re-lays its
+  rows out as cards where the order cell and the worker cell are given the **same grid area**; overlaps
+  paint in tree order, so the worker cell was on top for hit-testing, and `.tbl tr:hover td` gave it a
+  background that painted over the arrows too. The cell is now `position: relative; z-index: 1`.
+  ⛔ Every DOM-level check was green through all of it, including one that clicks the arrow and watches
+  the daemon reorder the fleet: a scripted `.click()` bypasses hit-testing. The new check asks
+  `elementFromPoint` and printed `worker-cell` before the fix ([`docs/testing.md`](docs/testing.md) §3).
+  ⭐ *A sign-in runs beside the credential, not beside the operator.* Commissioning while driving
+  another computer opened the vendor's OAuth browser on **that** computer's screen while the Sign in
+  terminal here waited. `SignInLocationWarning` (above *Create and sign in*, and again in the Sign in
+  panel) names the machine when one is selected, and otherwise states the rule for an RDP/VNC operator
+  to apply — the app cannot detect that case. [`docs/remote.md`](docs/remote.md).
+  ⭐ *A host left running to take work slept mid-run.* `preventSleep` (`UiSettings`, **default on**,
+  the only App-behavior switch that is) holds a `powerSaveBlocker('prevent-app-suspension')`, applied
+  at launch as well as on change. ⚠️ Idle sleep only — not a closed lid, and the copy says so.
+  ⛔ Per-install, so the setting deciding whether a run survives the night is the **host's**.
+  ⚠️ None of the three has been driven in the packaged app.
+- **The thread ledger reads as one list (2026-09-13).** Operational facts lead;
+  created/directory/landing take clearer labels; the stopped-task control matches the small setting
+  controls; run prompt and activity references open compact dialogs rather than boxed disclosures; and
+  the model row separates the latest run from next-run choices, cache-risk copy behind its info control.
+- **Quality Review's copy and tile labels read as one page (t430, 2026-09-13).** The paragraphs under
+  *Commission a batch* had no width limit while the panel subtitle was capped at 62ch, so one page read
+  two widths of prose; a new `.prose-note` holds both to 62ch. The four count tiles were named by
+  review-count bucket, but the operator-relevant question is eligibility — they now read *Gradable
+  tasks with 0 reviews / only 1 review / 2+ reviews* and *Non-gradable tasks*.
 - **The three-axis plot trusts its own data and remembers its filter (t429, 2026-09-13).**
   `measuredModelPoints` drops any model whose weakest axis is under `MIN_TRUSTED_SAMPLES` (5); the
-  "Exclude API rate & mixed" checkbox now persists via `lib/prefs.ts`, on `localStorage` like the
-  window control beside it; and each axis's low-end label moved off the shared origin point, which
-  had drawn three strings stacked into garbled text. Windows: typecheck, lint, build, L1 pass.
+  "Exclude API rate & mixed" checkbox persists via `lib/prefs.ts`; and each axis's low-end label moved
+  off the shared origin point, which had drawn three strings stacked into garbled text.
 - **CI on `main` is green again (2026-09-13).** The ~30-commit merge `3ff9ffd` never got a run, and
   the first push after it (run 34795442043) failed six task-table checks on both runners. Three
   causes, each measured: a *collapsed* column keeps its geometry and read as an overflow it never
@@ -58,61 +74,45 @@ screens — see remaining work 14.
   the packaged app: the running daemon hosts this task, so it could not be restarted from here —
   rebuild, press **Refresh** on Muse, and expect *Currently unavailable* until the account completes
   one turn (adapters.md, fault 3).
-- **Antigravity CLI commissioning and live quota probe on macOS (2026-09-13).** Standalone OAuth credentials
-  live in `~/.gemini/jetski-standalone-oauth-token` and auth user emails in `antigravity-cli/cli.log`.
-  `readAntigravityIdentity` previously checked only `google_accounts.json` and `oauth_creds.json`, falsely
-  returning `loggedIn: false` when `settings.json` was present. This blocked `mayRefreshUsage`, locking
-  the worker into `Antigravity: unknown`. Fixed `readAntigravityIdentity` and `probeIdentity` to inspect
-  the token file and log, added a screen-parsed identity sync hook, and verified the live probe in the
-  packaged app reads all 4 quota windows (Gemini 5h/7d, Claude/GPT 5h/7d) in 6s.
-- **The diff moved out of the thread into a Diff pane (t425, 2026-09-13).** A patch drawn inline got
-  the thread column at best and the 300px ledger at worst, which was the report. `DiffPane` is now a
-  column of the shell right of the work — its own drag handle (`PaneResizer`), full height, one scroll,
-  sticky file headers, every file stacked. The inline **Changes in this task** keeps its file list and
-  draws no patch; a file row or *Open in Diff pane* opens the pane there.
+- **Antigravity CLI commissioning and live quota probe on macOS (2026-09-13).** Standalone OAuth
+  credentials live in `~/.gemini/jetski-standalone-oauth-token` and auth emails in
+  `antigravity-cli/cli.log`; `readAntigravityIdentity` read neither, returned a false
+  `loggedIn: false`, and so blocked `mayRefreshUsage` — locking the worker into
+  `Antigravity: unknown`. It and `probeIdentity` now read both, and the live packaged probe read all
+  4 quota windows in 6s.
+- **The diff moved out of the thread into a Diff pane (t425, 2026-09-13).** `DiffPane` is a column of
+  the shell right of the work — its own drag handle, full height, one scroll, sticky file headers.
+  The inline **Changes in this task** keeps its file list and draws no patch.
 - **Claude Code narrates its work, and the Session TUI stopped pretending to be one (t423, 2026-09-13).**
-  Tool calls emit declared `StreamEvent.tool_use` (`toolLine`). A fleet setting (`liveNarration`, default
-  `summary`) buys word-by-word prose. The Session TUI draws `SessionStream` for a piped session and xterm
-  for a PTY one, with **Open a real terminal** (`session.attach`).
-- **macOS worktree symlinks, CLI PATH detection, and header metrics (2026-09-13).** Worktree `.git` pointers
-  resolve with `fs.realpathSync`, non-Windows GUI launch searches standard user bin paths (`which.ts`),
-  and task-table column widths gained 2–8px for macOS font metrics.
-- **Global settings are now task-oriented tabs (t422, 2026-09-13).** Tabs: Fleet settings, Notice, Status,
-  App behavior, and Remote connection. Phone QR encoder restores fixed dark module.
-- **Later pushes reconcile with an earlier local landing (t421, 2026-09-13).** Startup and a five-minute
-  sweep fetch first and add a separate *Later observed* thread row when `origin/<target>` contains the commit.
-- **One desktop drives another computer's fleet (t419, 2026-09-13).** Desktop picker above Overview,
-  `RemoteClient` TLS over Tailnet hostname sealed in `remotes.json`, negotiated RPC version range (±1).
-- **Nearby reset preemption guard, versioning, retained locks, composer pill, UI fixes (t410-t418).**
-  High-water threshold (92%) for 5h window resets; canonical `version.json`; Flow shows locks in Awaiting;
-  composer workspace pill first; credit gauges and DACL `sweepAcls` repair on Windows.
+  Tool calls emit declared `StreamEvent.tool_use`; `liveNarration` (default `summary`) buys word-by-word
+  prose; the Session TUI draws `SessionStream` for a piped session and xterm for a PTY one.
+- **t410–t422, all landed and all documented in [`docs/`](docs/README.md) (2026-09-13).** macOS
+  worktree symlink resolution and GUI-launch PATH search; Global settings split into task-oriented
+  tabs; *Later observed* reconciliation when a push lands after a local landing; one desktop driving
+  another computer's fleet (picker above Overview, TLS over the Tailnet hostname, RPC range ±1); the
+  92% high-water preemption guard, canonical `version.json`, retained locks in Flow's Awaiting, the
+  composer workspace pill, credit gauges and `sweepAcls`.
 - **Two dispatch faults measured off t408 and t410 (2026-09-13).** ⭐ *A sandboxed Codex run cannot
-  write a file a sandboxed run wrote* — a dead run's DACL the operator cannot rewrite; `sweepAcls`
-  ([`acl.ts`](src/daemon/acl.ts)) replaces every path `icacls /reset` refuses (on **stderr**, which the
-  old call discarded), 7.2 s for 19.7k files. ⭐ *A Muse run bridged through WSL rewrote ws3's `.git`
-  pointer*; pool pointers are now **relative** and `ensureWorktreePointer` repairs before every park.
-  ⚠️ Whether muse's `edit_file` accepts the relative pointer is inferred, not measured.
+  write a file a sandboxed run wrote* — a dead run's DACL; `sweepAcls` ([`acl.ts`](src/daemon/acl.ts))
+  replaces every path `icacls /reset` refuses (on **stderr**, which the old call discarded), 7.2 s for
+  19.7k files. ⭐ *A Muse run bridged through WSL rewrote ws3's `.git` pointer*; pool pointers are now
+  **relative**. ⚠️ Whether muse's `edit_file` accepts that is inferred, not measured.
 - **Loose ends offers Delete it** (`deleteUnlandedBranch`, on a confirmed click only); **the database
   backs itself up** (`backup.ts`, daily, 14-day prune).
 - **Trunk mode: a task can work in the project checkout itself** (t401). `workspaceMode`
-  (`worktree` | `trunk`, migration 70) resolves task → project → `worktree`. Five decisions pinned in
-  [`trunkmode.test.ts`](src/daemon/trunkmode.test.ts): one trunk task at a time; a worktree landing
-  into a busy or dirty trunk goes to **`landing_queued`**; a trunk task is dispatched onto whatever
-  the checkout holds and told; `pull-request` is refused there; a resting trunk task keeps its lease.
+  (`worktree` | `trunk`, migration 70); five decisions pinned in
+  [`trunkmode.test.ts`](src/daemon/trunkmode.test.ts).
   ⚠️ **Not driven in the packaged app** — [`docs/landing.md`](docs/landing.md#working-in-the-trunk).
 - **Repeated compaction and quota tipping loops are prevented (t401, t404).** `decideRevive`
-  ([`cacheclock.ts`](src/daemon/cacheclock.ts)) checks refusal and pool state before waking a closed
-  conversation to compact; `reviveAndCompact` backs off across revives. Preemption wrap-up falls back
-  to handoff where the vendor is refusing or the window is spent.
+  ([`cacheclock.ts`](src/daemon/cacheclock.ts)) checks refusal and pool state before reviving to
+  compact; preemption wrap-up falls back to handoff where the window is spent.
 - **The thread shows the change before you land it.** `task.diffSummary` / `task.diffFile`
-  ([`taskdiff.ts`](src/daemon/taskdiff.ts)) read the *same* commits the grader reads. ⛔ Two measured
-  git facts are pinned in [`taskdiff.test.ts`](src/daemon/taskdiff.test.ts): `--numstat` without `-z`
-  returns non-ASCII paths **C-quoted**, and a bare pathspec **over**-matches.
+  ([`taskdiff.ts`](src/daemon/taskdiff.ts)) read the *same* commits the grader reads; two measured git
+  facts are pinned in [`taskdiff.test.ts`](src/daemon/taskdiff.test.ts).
 - **The security model is written down, and the permissive default is a choice.** `permissionModeFor`
   ([`sessions.ts`](src/daemon/sessions.ts)) puts unattended work on `bypassPermissions` — full OS user
-  authority. Adapters declare `policy.headlessAuthority`, projects carry `permission.unattended`, and
-  a `sandboxed-only` project **refuses** a bypassing candidate rather than downgrading it into t250's
-  stall. README's **Security model** says what it means.
+  authority — and a `sandboxed-only` project **refuses** a bypassing candidate rather than downgrading
+  it into t250's stall. README's **Security model** says what it means.
 - **Debate seats see current code and stay in their role**; **squash-merged PRs and report-only tasks
   retire under Loose ends** without leaving false unlanded ends (`task_deliveries.retire_blocked`).
 

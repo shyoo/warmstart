@@ -2547,6 +2547,49 @@ try {
     (await evaluate(`${traySwitch}?.getAttribute('aria-checked')`)) === 'false'
   )
 
+  // ⭐ The one switch on this panel that defaults **on**, and the asymmetry is the point: a host
+  // left running to take work sleeps mid-run and the session's context is gone, which the operator
+  // learns from the task table the next morning. Reported 2026-09-13 against a remote macOS machine.
+  // ⛔ The default is the whole feature — nobody opens the settings panel on the machine this
+  // matters most on — so it is read back from main rather than off the painted switch.
+  check(
+    'the Global page offers a keep-awake switch',
+    /keep this computer awake/i.test(globalPanel),
+    JSON.stringify(globalPanel.slice(0, 60))
+  )
+  check(
+    '⛔ and it defaults on, unlike every other switch here',
+    (await evaluate(`window.agentyard.getUiSettings().then(s => String(s.preventSleep))`)) === 'true'
+  )
+  // ⚠️ It asks the OS not to *idle*-sleep. Saying so is what stops a closed lid reading as a bug.
+  check(
+    'and says what it cannot do, so a lid closed on it is not read as a failure',
+    /closed lid/i.test(globalPanel),
+    'a promise this switch cannot keep would be worse than no switch'
+  )
+  const sleepSwitch = `[...document.querySelectorAll('.switch')].find(
+     s => s.getAttribute('aria-label') === 'Keep this computer awake')`
+  await evaluate(`${sleepSwitch}.click()`)
+  await wait(1200)
+  check(
+    'turning it off is persisted by main, not just painted',
+    (await evaluate(`window.agentyard.getUiSettings().then(s => String(s.preventSleep))`)) === 'false',
+    'the switch reads back what main returned, never the value that was clicked'
+  )
+  check(
+    'and off names what a sleeping machine costs',
+    /context is not|suspended with it/i.test(
+      await evaluate('document.querySelector(".content")?.innerText ?? ""')
+    ),
+    'committed work survives a sleep; the session holding the context does not'
+  )
+  await evaluate(`${sleepSwitch}.click()`)
+  await wait(1200)
+  check(
+    'and back on, which is where a fresh install starts',
+    (await evaluate(`${sleepSwitch}?.getAttribute('aria-checked')`)) === 'true'
+  )
+
   check(
     'the Global page offers enter key behavior setting',
     /enter key behavior/i.test(globalPanel)
@@ -3495,6 +3538,27 @@ try {
     (await evaluate(`!!(${upOnSecond})`)) === true,
     'commissioning order was the only order there was'
   )
+  // ⛔ Hit-tested, not merely queried. The workers table is re-laid-out as cards, and the order
+  // cell shares its grid area with the worker cell that draws the account — so `.order-btn` existed,
+  // was enabled, and answered `.click()` from a script while the *pointer* never reached it: the
+  // overlapping cell was on top, and once `.tbl tr:hover td` gave that cell a background the arrows
+  // were painted over as well. The operator's report was "the button disappears when I hover and
+  // moving up does nothing" (2026-09-13). `elementFromPoint` at the arrow's own centre is the only
+  // form of this check that would have been red, because every DOM-level assertion above was green.
+  const topmostAtUpArrow = `(() => {
+    const btn = ${upOnSecond}
+    if (!btn) return 'no button'
+    const r = btn.getBoundingClientRect()
+    if (r.width < 1 || r.height < 1) return 'button has no box'
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+    if (!hit) return 'nothing at that point'
+    return btn.contains(hit) || hit === btn ? 'the button' : hit.className || hit.tagName
+  })()`
+  check(
+    'the reorder arrows stay on top of the cell they overlap',
+    (await evaluate(topmostAtUpArrow)) === 'the button',
+    `a click at the arrow's centre would land on ${await evaluate(topmostAtUpArrow)}`
+  )
   check(
     'and the first row cannot be moved up, rather than silently doing nothing',
     (await evaluate(
@@ -3545,6 +3609,42 @@ try {
     'while active counts enabled workers in the fleet',
     badge.split('/')[1] === String(orderAfter.split('|').length),
     'both commissioned workers are enabled'
+  )
+
+  // ⭐ Where the sign-in is going to happen, said before the operator commits to it. Reported
+  // 2026-09-13: commissioning a worker while driving another computer opened the vendor's browser on
+  // *that* computer's screen, and the Sign in terminal here simply waited. ⚠️ This window is local,
+  // so the local wording is the one under test — the remote wording is the same component reading
+  // `useTarget()`, and this suite has no paired computer to select. ⛔ The form is opened and closed
+  // again: `Add worker` is a toggle and everything after this section reads the table it covers.
+  const addWorkerButton = `[...document.querySelectorAll('.panel-head .btn')].find(b => b.innerText.trim() === 'Add worker')`
+  await evaluate(`${addWorkerButton}?.click()`)
+  await wait(250)
+  const commissionWarning = await evaluate(
+    `(document.querySelector('.form .login-remote-warning')?.innerText ?? '').replace(/\\s+/g, ' ').trim()`
+  )
+  check(
+    'commissioning warns that the browser opens on the computer running Warmstart',
+    /browser/i.test(commissionWarning) && /remote desktop/i.test(commissionWarning),
+    commissionWarning || 'no warning drawn above Create and sign in'
+  )
+  check(
+    '⛔ and it sits above the button, where it can still change the decision',
+    await evaluate(`(() => {
+      const warn = document.querySelector('.form .login-remote-warning')
+      const btn = document.querySelector('.form .form-actions .btn')
+      if (!warn || !btn) return false
+      return warn.getBoundingClientRect().bottom <= btn.getBoundingClientRect().top + 1
+    })()`),
+    'a warning read after the click is a report, not a warning'
+  )
+  await evaluate(
+    `[...document.querySelectorAll('.panel-head .btn')].find(b => b.innerText.trim() === 'Cancel')?.click()`
+  )
+  await wait(250)
+  check(
+    'and the form closes again, leaving the table as this section found it',
+    (await evaluate(`!!document.querySelector('.tbl-workers') && !document.querySelector('.form .login-remote-warning')`)) === true
   )
 
   // ⛔ Left to the end on purpose: each of these three rewrites the task table's statuses to put the

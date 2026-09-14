@@ -70,6 +70,22 @@ export interface UiSettings {
    * two machines attached to one daemon should not have to agree about whether this one beeps.
    */
   notifications: boolean
+
+  /**
+   * Prevent this machine from going to sleep while Warmstart is running.
+   *
+   * ⚠️ **Default on**, and the asymmetry with the other booleans here is the point. Every other
+   * setting here is about a UI behaviour the operator opts into; this one prevents data loss. A
+   * remote machine sleeping mid-run loses the run's context and leaves the session stranded — the
+   * operator finds out from the task table the next morning, not from an error they can recover
+   * from. Preventing sleep is the safe default; the operator turns it off only if they have their
+   * own power-management reason.
+   *
+   * ⚠️ Acts on *this machine* — the one running the Warmstart process — which is the remote machine
+   * when accessed over remote desktop. Pair this with remote desktop access for the scenario it is
+   * designed for: keeping the host machine awake while you drive it from another device.
+   */
+  preventSleep: boolean
 }
 
 export const DEFAULT_UI_SETTINGS: UiSettings = {
@@ -78,7 +94,10 @@ export const DEFAULT_UI_SETTINGS: UiSettings = {
   theme: 'system',
   // ⚠️ On by default. The whole point is the person who walked away, and a notification setting
   // nobody found is the same as not having built it.
-  notifications: true
+  notifications: true,
+  // ⚠️ On by default. A remote machine sleeping mid-run loses the session context with no recovery
+  // path. The operator opts out deliberately rather than discovering the loss afterwards.
+  preventSleep: true
 }
 
 /** What a notification says, and where clicking it goes. */

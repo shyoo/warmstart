@@ -8,6 +8,7 @@ import { creditsMismatchKind, creditsMismatchNote } from '@shared/credits'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { Pill } from './Pill'
 import { TerminalPane } from './Terminal'
+import { useTarget } from '../lib/target'
 import { errorMessage } from '@shared/errors.js'
 
 /**
@@ -26,6 +27,52 @@ function ColumnInfo({ text }: { text: string }): React.JSX.Element {
         <circle cx="8" cy="4.9" r="0.85" fill="currentColor" stroke="none" />
       </svg>
     </span>
+  )
+}
+
+/**
+ * Where a sign-in is actually going to happen, said before it happens.
+ *
+ * ⛔ **The login runs beside the credential, never beside the operator.** Warmstart hosts the
+ * vendor's own CLI in a PTY on whichever machine owns the isolation root, and every CLI here hands
+ * the OAuth step to a *browser on that machine*. When the window is driving another computer's
+ * fleet, or is itself a remote-desktop view of one, the browser opens on a screen the operator is
+ * not sitting at: the terminal below sits at "waiting for the browser" and nothing ever comes back.
+ * Reported 2026-09-13, from a commissioning attempt over a remote desktop.
+ *
+ * ⚠️ Two wordings, because the two cases end differently. Driving a paired computer, Warmstart knows
+ * which machine it is and can name it — the operator has to go to that machine's screen, and no
+ * amount of waiting here will help. Locally it cannot know whether the window itself is being viewed
+ * over RDP/VNC, so it states the rule and lets the operator decide whether it applies to them.
+ *
+ * ⛔ Shown at the point of no return and again during the login, not once in a doc. The first is
+ * where the operator can still choose to walk over to the other machine; the second is where they
+ * are staring at a terminal that looks hung.
+ */
+function SignInLocationWarning(): React.JSX.Element {
+  const { active } = useTarget()
+  const remote = active.kind === 'remote'
+  return (
+    <p className="login-remote-warning" role="note">
+      {remote ? (
+        <>
+          <strong>This signs in on {active.label}, not here.</strong> The CLI runs on that computer,
+          so a sign-in step that opens a browser opens it <em>on that computer&rsquo;s screen</em> —
+          nothing will appear on this one, and the terminal below will simply wait. Finish the
+          browser step at {active.label}, then come back here and use{' '}
+          <strong>Check sign-in again</strong>. An adapter that can be signed in from a pasted code
+          or a device link is the one to prefer from here.
+        </>
+      ) : (
+        <>
+          <strong>Signing in opens a browser on the computer running Warmstart.</strong> If you are
+          looking at this window over a remote desktop (RDP, VNC, Screen Sharing), that browser
+          appears on the <em>remote</em> machine&rsquo;s own screen rather than on the desk in front
+          of you. Stay on the remote session&rsquo;s screen to complete it — or copy the URL the
+          terminal prints and open it yourself.
+        </>
+      )}
+    </p>
   )
 }
 
@@ -1088,6 +1135,10 @@ export function Workers({
               </button>
             </div>
           </header>
+          {/* ⛔ Below the header, not inside it. `.login-head` is a flex row whose paragraph takes
+              the slack and whose buttons refuse to shrink; a third item in it squeezes the prose to
+              its ellipsis. This warning gets the full width instead. */}
+          <SignInLocationWarning />
           {loginEnded && (
             <p className="login-note">
               The login session has ended. Warmstart re-read the account by itself — the Account
@@ -1297,6 +1348,12 @@ function AddWorker({
           </span>
         </div>
       )}
+
+      {/* ⚠️ Above the button, not under it. This is the last moment the operator can decide to walk
+          over to the other machine instead, and a warning read after the click is a report. ⛔ A
+          `local-llm` worker has no interactive login at all — it is an endpoint URL — so warning
+          about a browser that will never open would train the operator to skip this box. */}
+      {adapterId !== 'local-llm' && <SignInLocationWarning />}
 
       <div className="form-actions">
         <button className="btn btn--primary" disabled={saving} onClick={() => void submit()}>
