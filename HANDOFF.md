@@ -2,6 +2,12 @@
 
 ## Current state — 2026-09-13
 
+The thread ledger has been compacted and reordered: operational facts lead, created/directory/landing
+use the clearer labels, the stopped-task control matches the small setting controls, and run prompt
+and activity references open compact dialogs instead of boxed disclosures. The model row now separates
+the latest run from next-run choices; cache-risk copy is behind its info control. `typecheck`, `lint`,
+L1 `test`, and `build` passed locally on 2026-09-13.
+
 Warmstart M0–M6 is implemented. The current branch contains debate mode, quota-aware scheduling,
 pooled worktrees, model-aware routing, quality review, remote access, packaging, the completed
 Warmstart rename, the three pre-public blockers a three-seat debate on t392 converged on, and atomic

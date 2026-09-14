@@ -179,3 +179,41 @@ export function ActivityDisclosure({
     </details>
   )
 }
+
+/** A compact timeline link for intermediate activity, opened in the same dialog as a prompt. */
+export function ActivityChip({
+  activity,
+  title = 'Intermediate activity'
+}: {
+  activity: Array<{ text: string; ts: number }>
+  title?: string
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    void navigator.clipboard.writeText(activity.map((line) => line.text).join('\n')).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+  const count = `${activity.length.toLocaleString()} ${activity.length === 1 ? 'step' : 'steps'}`
+
+  return (
+    <>
+      <button type="button" className="prompt-chip" onClick={() => setOpen(true)} title={`${title} — ${count}. Click to read or copy it.`}>
+        ⚡ {activity.length.toLocaleString()}
+      </button>
+      {open && (
+        <div className="confirm-shade" role="presentation" onClick={() => setOpen(false)}>
+          <div className="confirm-dialog prompt-dialog" role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()}>
+            <div className="prompt-dialog-head"><h3>{title}</h3><span className="num dim">{count}</span></div>
+            <div className="activity-disclosure-list prompt-dialog-body">
+              {activity.map((line, i) => <div key={`${line.ts}-${i}`} className="activity-disclosure-line"><span className="activity-disclosure-ts">{when(line.ts)}</span><span className="activity-disclosure-text">{line.text}</span></div>)}
+            </div>
+            <div className="confirm-actions"><button type="button" className="btn" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button><button type="button" className="btn btn--primary" autoFocus onClick={() => setOpen(false)}>Close</button></div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}

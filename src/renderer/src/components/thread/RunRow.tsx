@@ -20,7 +20,7 @@ import { duration, money, quotaWindowDeltas, spendDeltas, timeRange, tokens } fr
 import { Money, runPriceTitle } from '../Price'
 import { modelLabel } from '../../lib/modelname'
 import { outcomeClass } from '../../lib/threadview'
-import { ActivityDisclosure, PromptDisclosure } from './Disclosure'
+import { ActivityChip, PromptChip } from './Disclosure'
 
 /**
  * One attempt, with what it cost — twice over, and deliberately not reconciled.
@@ -82,7 +82,7 @@ export function RunRow({
           <div className="side-run-fact">
             <span className="side-run-key">prompt:</span>
             <span className="side-run-val">
-              <PromptDisclosure prompt={run.prompt} label="link" />
+              <PromptChip prompt={run.prompt} title="Prompt sent to the agent" />
             </span>
           </div>
         )}
@@ -90,7 +90,7 @@ export function RunRow({
           <div className="side-run-fact">
             <span className="side-run-key">activity:</span>
             <span className="side-run-val">
-              <ActivityDisclosure activity={run.activity} label="link" />
+              <ActivityChip activity={run.activity} />
             </span>
           </div>
         )}

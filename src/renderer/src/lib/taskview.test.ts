@@ -788,14 +788,14 @@ describe('the model row in the thread', () => {
     expect(headline.text).toBe('Gemini 3.8 Flash Med')
   })
 
-  it('confirms rather than warns when the two agree', () => {
+  it('does not repeat a confirmation when the model agrees', () => {
     const { headline, note } = modelFacts({
       observed: { model: 'claude-sonnet-5', effort: 'medium' },
       ran: null,
       requested: requested({ model: 'claude-sonnet-5', effort: 'medium' })
     })
     expect(headline.text).toBe('Sonnet 5 Med')
-    expect(note).toMatchObject({ tone: 'dim', text: 'confirmed by the transcript' })
+    expect(note).toBeNull()
   })
 
   it('⚠️ shows the resolution alone, and no note, until a turn has been metered', () => {

@@ -4131,6 +4131,31 @@ select:focus-visible,
   padding: var(--sp-3);
 }
 
+/* The ledger is a reading order, not a chronology of when its controls were added. */
+.detail-side > .detail-side-box:first-child { display: flex; flex-direction: column; }
+.detail-side > .detail-side-box:first-child > :not(.fact) { order: 50; }
+.fact { order: 50; }
+.fact--status { order: 1; } .fact--type { order: 2; } .fact--worker { order: 3; }
+.fact--model { order: 4; } .fact--session { order: 5; } .fact--created { order: 6; }
+.fact--started { order: 7; } .fact--parent { order: 8; } .fact--children { order: 8; }
+.fact--depends { order: 9; } .fact--blocks { order: 10; } .fact--workspace { order: 11; }
+.fact--directory { order: 12; } .fact--branch { order: 13; } .fact--mandate { order: 14; }
+.fact--priority { order: 15; } .fact--conversation { order: 16; } .fact--completion { order: 17; }
+.fact--compaction { order: 18; } .fact--objective { order: 19; } .fact--landing { order: 20; }
+.fact--statistics { order: 21; } .fact--took { order: 22; } .fact--elapsed { order: 23; }
+.fact--context { order: 24; } .fact--tokens { order: 25; } .fact--price { order: 26; }
+.task-stop { width: auto; margin-left: var(--sp-1); padding: 2px 7px; color: var(--state-danger); border-color: color-mix(in srgb, var(--state-danger) 55%, var(--color-border)); }
+.task-stop:hover:not(:disabled) { background: color-mix(in srgb, var(--state-danger) 14%, transparent); border-color: var(--state-danger); }
+.model-next { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); margin-top: var(--sp-1); }
+.model-next .setting-btn-select-wrap { width: auto; max-width: 100%; }
+.model-next-label { color: var(--color-text-faint); font-size: var(--text-meta); text-transform: uppercase; }
+.model-current { color: var(--color-text-dim); font-size: var(--text-meta); }
+.fact-info { color: var(--color-text-faint); cursor: help; font-size: var(--text-meta); }
+.fact-info-details { display: inline; }
+.fact-info-details > summary { display: inline; list-style: none; }
+.fact-info-details > summary::-webkit-details-marker { display: none; }
+.fact-info-details > .tbl-sub { margin-top: var(--sp-1); }
+
 .fact {
   display: grid;
   grid-template-columns: 76px minmax(0, 1fr);
@@ -4149,6 +4174,11 @@ select:focus-visible,
 .fact-value {
   overflow-wrap: anywhere;
 }
+
+/* No prerequisite is a one-line fact; a real prerequisite keeps its add control below the list. */
+.fact--depends .fact-value { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); }
+.fact--depends .setting-btn-select-wrap { width: auto; }
+.fact--depends .setting-btn-select { width: auto; }
 
 /* The one fact that is counting down to an action. Warning colour, not danger: the whole point of
    the minute is that nothing has happened yet and a person can still decide it. */
@@ -5031,9 +5061,9 @@ select:focus-visible,
 
 /* The prompt a run was sent: `📋 1,475` under the bubble, opening a dialog. See `PromptChip`. */
 .prompt-chip {
-  padding: 0 5px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   background: transparent;
   color: var(--color-text-faint);
   font-family: var(--font-mono);
@@ -5041,7 +5071,7 @@ select:focus-visible,
   line-height: 16px;
   cursor: pointer;
 }
-.prompt-chip:hover { color: var(--color-text); border-color: var(--color-border-strong); }
+.prompt-chip:hover { color: var(--color-text); text-decoration: underline; }
 .prompt-dialog { width: min(820px, 100%); }
 .prompt-dialog-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-2); }
 .prompt-dialog-body { max-height: 60vh; padding: var(--sp-2); border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); }

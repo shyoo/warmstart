@@ -545,7 +545,7 @@ function TaskDetail({
 
         <aside className="detail-side">
           <div className="detail-side-box">
-            <Fact label="status">
+            <Fact label="status" className="fact--status">
               <span className={`status ${statusToneFor(task)}`}>
                 {statusLabel(task)}
                 {isWorking(task) && <Working />}
@@ -553,7 +553,7 @@ function TaskDetail({
               {task.gradingWorkerId ? (
                 <button
                   type="button"
-                  className="btn btn--danger btn--ghost"
+                  className="setting-btn-select task-stop"
                   title="Stop this quality review. The task remains at rest."
                   onClick={() => void cancel()}
                 >
@@ -563,7 +563,7 @@ function TaskDetail({
                 CANCELLABLE.has(task.status) && task.status !== 'awaiting_human' && (
                   <button
                     type="button"
-                    className="btn btn--danger btn--ghost"
+                    className="setting-btn-select task-stop"
                     title="Stop the work and return this task to a resting state. Destroys nothing."
                     onClick={() => void cancel()}
                   >
@@ -584,7 +584,7 @@ function TaskDetail({
                 onto its own branch; an ordinary task does none of that. The two pages were
                 indistinguishable, so an operator checking a plan's settings was reading a pane that
                 never said which kind of task they were looking at. */}
-            <Fact label="type">
+            <Fact label="type" className="fact--type">
               <span
                 title={
                   task.kind === 'plan'
@@ -606,7 +606,7 @@ function TaskDetail({
                 subtask's page could say which branch it merged into without ever saying whose plan
                 it belonged to. */}
             {parent && (
-              <Fact label="parent">
+              <Fact label="parent" className="fact--parent">
                 <button
                   type="button"
                   className="dep-link"
@@ -627,7 +627,7 @@ function TaskDetail({
                 included: the resolution turn exists to deal with those, so hiding them would
                 describe a different task. */}
             {children.length > 0 && (
-              <Fact label="children">
+              <Fact label="children" className="fact--children">
                 <DependencyList tasks={children} fallbackCount={0} onOpenTask={onOpenTask} />
               </Fact>
             )}
@@ -649,7 +649,7 @@ function TaskDetail({
               </Fact>
             )}
 
-            <Fact label="depends on">
+            <Fact label="depends on" className="fact--depends">
               <DependencyEditor
                 task={task}
                 dependencies={dependencies}
@@ -658,7 +658,7 @@ function TaskDetail({
               />
             </Fact>
             {(dependents.length > 0 || blocking > 0) && (
-              <Fact label="blocks">
+              <Fact label="blocks" className="fact--blocks">
                 <DependencyList
                   tasks={dependents}
                   fallbackCount={blocking}
@@ -683,7 +683,7 @@ function TaskDetail({
                 </span>
               </Fact>
             )}
-            <Fact label="worker">
+            <Fact label="worker" className="fact--worker">
               <TaskSettingPicker
                 choice={workerChoice(task, fleet)}
                 ariaLabel="Worker"
@@ -701,22 +701,25 @@ function TaskDetail({
             {/* ⭐ The question this whole cost model exists to answer, and the one the UI could not.
                 A worker id says which account paid; only the session says whether the run continued
                 from a warm prefix at 0.1·C or rebuilt one at 2.0·C. */}
-            <Fact label="session">
+            <Fact label="session" className="fact--session">
               <SessionFact runs={runs} sessions={sessions} />
             </Fact>
 
             {/* ⭐ Which model answered, and how hard it was told to think. Both were chosen, stored and
                 metered since M3 and shown nowhere at all — the transcript knew and the operator did
                 not. */}
-            <Fact label="model">
+            <Fact label="model" className="fact--model">
               <ModelFact
                 session={liveSession ?? null}
                 ran={task.ranModel ?? runs[0]?.model ?? null}
                 requested={requestedModel}
+                current={!!(liveSession?.model || task.ranModel || runs[0]?.model)}
               />
               {/* ⚠️ Only where the account's CLI has models to offer. A fleet whose cost models failed
                   to load still runs work; it just cannot be re-pointed from here. */}
-              {offered.length > 0 && (
+              {(offered.length > 0 || taskEfforts.length > 0) && (
+                <div className="model-next">
+                  {(liveSession?.model || task.ranModel || runs[0]?.model) && <span className="model-next-label">next</span>}
                 <SettingButtonSelect
                   style={{ marginTop: 'var(--sp-1)' }}
                   value={
@@ -768,7 +771,6 @@ function TaskDetail({
                     }).then(refresh)
                   }}
                 />
-              )}
               {taskEfforts.length > 0 && (
                 <SettingButtonSelect
                   style={{ marginTop: 'var(--sp-1)' }}
@@ -801,6 +803,8 @@ function TaskDetail({
                   }}
                 />
               )}
+                </div>
+              )}
               <CacheCost session={liveSession ?? null} changing="model" />
             </Fact>
 
@@ -814,7 +818,7 @@ function TaskDetail({
             {/* ⚠️ Only when there is a number. `0 in the window now` is a measurement of nothing — the
                 same reason the session chip draws an empty context as an absence. */}
             {liveSession?.contextTokens ? (
-              <Fact label="context">
+            <Fact label="context" className="fact--context">
                 <span
                   className="num"
                   title={
@@ -839,12 +843,12 @@ function TaskDetail({
                 hide what the landing is about to do. */}
             {task.kind === 'conversation' && task.finishPolicy === 'inherit' ? (
               <>
-                <Fact label="finish">
+                <Fact label="landing" className="fact--landing">
                   <span title="A conversation rests after every turn and commits only when you press Commit. The project's own finish policy does not apply to it.">
                     await human — you decide, per turn
                   </span>
                 </Fact>
-                <Fact label="conversation">
+                <Fact label="conversation" className="fact--conversation">
                   <span title="A conversation reuses its own session between turns, which is what makes each reply warm. This is part of the kind, not a setting.">
                     {SHARING_LABELS.on} — kept between turns
                   </span>
@@ -860,7 +864,7 @@ function TaskDetail({
                     finished task also *lands* it, and the attempt can be refused. Hence
                     `successNote` — a control that painted itself green while the push was rejected
                     would be the worst kind of lie this app could tell. */}
-                <Fact label="finish">
+                <Fact label="landing" className="fact--landing">
                   <TaskSettingPicker
                     choice={finishChoice(task, detail.inheritedFinish)}
                     ariaLabel="Finish policy"
@@ -885,7 +889,7 @@ function TaskDetail({
                     thing sharing must never do. It applies from the next run. ⚠️ The saving is real
                     and measured, and so is the disclosure the tooltip makes: an agent joining a
                     conversation sees everything said in it. */}
-                <Fact label="conversation">
+                <Fact label="conversation" className="fact--conversation">
                   <TaskSettingPicker
                     choice={sharingChoice(task, detail.inheritedSharing)}
                     ariaLabel="Session sharing"
@@ -909,8 +913,10 @@ function TaskDetail({
             {/* ⭐ Where the agent works. A choice only until the task first runs: after that its
                 work is on a branch or on the target, and neither can be moved by changing this. */}
             {task.projectId && (
-              <Fact label="workspace">
-                <TaskSettingPicker
+              <Fact label="workspace" className="fact--workspace">
+                {detail.runs.some((r) => r.kind === 'work') ? (
+                  <span title="Workspace mode is fixed after the first run.">{workspaceChoice(task, detail.inheritedWorkspaceMode).displayLabel}</span>
+                ) : <TaskSettingPicker
                   choice={workspaceChoice(task, detail.inheritedWorkspaceMode)}
                   ariaLabel="Workspace mode"
                   title={
@@ -924,13 +930,13 @@ function TaskDetail({
                     rpc('task.setWorkspaceMode', { id: task.id, workspaceMode: value as WorkspaceModeChoice })
                   }
                   onChanged={refresh}
-                />
+                />}
               </Fact>
             )}
             {/* ⛔ Third of the same shape, and it belongs beside the other two: three tiers,
                 `inherit` a real value, effective on the next run. ⚠️ It is not a care setting -
                 an autonomous agent still stops to ask when a decision changes what it builds. */}
-            <Fact label="completion">
+            <Fact label="completion" className="fact--completion">
               <TaskSettingPicker
                 choice={completionChoice(task, detail.inheritedCompletion)}
                 ariaLabel="Completion mode"
@@ -963,7 +969,7 @@ function TaskDetail({
                 daemon that does not send the field, and disabling a working control because the
                 answer is missing is the worse of the two mistakes. Nothing here branches on an
                 adapter name; the daemon read `capabilities.manualCompact` and sent the answer. */}
-            <Fact label="compaction">
+            <Fact label="compaction" className="fact--compaction">
               <TaskSettingPicker
                 choice={compactionChoice(task, detail.inheritedAutoCompact)}
                 ariaLabel="Automatic compaction"
@@ -987,7 +993,7 @@ function TaskDetail({
                 onChanged={refresh}
               />
             </Fact>
-            <Fact label="objective">
+            <Fact label="objective" className="fact--objective">
               <TaskSettingPicker
                 choice={objectiveChoice(task.objective, detail.inheritedObjective)}
                 ariaLabel="Optimization objective"
@@ -998,7 +1004,7 @@ function TaskDetail({
                 onChanged={refresh}
               />
             </Fact>
-            <Fact label="priority">
+            <Fact label="priority" className="fact--priority">
               <TaskSettingPicker
                 choice={priorityChoice(task)}
                 ariaLabel="Priority"
@@ -1012,7 +1018,7 @@ function TaskDetail({
                 onChanged={refresh}
               />
             </Fact>
-            <Fact label="filed">{when(task.createdAt)}</Fact>
+            <Fact label="created" className="fact--created">{when(task.createdAt)}</Fact>
             {task.status === 'scheduled' && task.notBefore && (
               <Fact label="scheduled">
                 <span title={new Date(task.notBefore).toLocaleString()}>
@@ -1022,20 +1028,20 @@ function TaskDetail({
                 </span>
               </Fact>
             )}
-            {task.firstRunAt && <Fact label="started">{when(task.firstRunAt)}</Fact>}
+            {task.firstRunAt && <Fact label="started" className="fact--started">{when(task.firstRunAt)}</Fact>}
             {/* ⛔ Two numbers, because they answer two questions and only one of them is about the
                 agent. `took` is the time an agent was actually working — dispatch, routing and the
                 CLI's start-up included, queueing and every minute spent waiting on you excluded.
                 `elapsed` is the span the task existed inside, and the gap between them is exactly the
                 time nobody was working. Showing only the second is what this pane used to do, and it
                 is the reading that made per-agent durations useless. */}
-            <Fact label="took">
+            <Fact label="took" className="fact--took">
               <span className="num" title={activeTimeTitle(task, now)}>
                 {activeTime(task, now)} of agent time
               </span>
             </Fact>
             {task.firstRunAt && (
-              <Fact label="elapsed">
+              <Fact label="elapsed" className="fact--elapsed">
                 <span
                   className="num dim"
                   title={
@@ -1052,7 +1058,7 @@ function TaskDetail({
                 who has just noticed a "took" that cannot be true is looking at exactly these rows.
                 ⚠️ Deliberately not a delete and not a hide — the task keeps its thread, its runs and
                 its price, and only the fleet-wide aggregates stop counting it. */}
-            <Fact label="statistics">
+            <Fact label="statistics" className="fact--statistics">
               <StatsExclusionToggle task={task} onChanged={refresh} />
             </Fact>
             {/* ⛔ Money over tokens, and the money first. The two are different measurements of
@@ -1065,7 +1071,7 @@ function TaskDetail({
                 price as a `price-sub` caption, which read as an annotation *of* the price — the one
                 reading §5 forbids. Two labelled rows in the same ledger as every other fact say what
                 they are on their own, and the label carries the unit so the value stays a number. */}
-            <Fact label="price">
+            <Fact label="price" className="fact--price">
               <Money
                 usd={task.budget.spentUsd}
                 estimated={task.budget.spentUsdEstimated}
@@ -1073,7 +1079,7 @@ function TaskDetail({
                 title={taskPriceTitle(task.budget)}
               />
             </Fact>
-            <Fact label="tokens">
+            <Fact label="tokens" className="fact--tokens">
               <span
                 className="num"
                 title={
@@ -1086,18 +1092,18 @@ function TaskDetail({
               </span>
             </Fact>
             {workspace && (
-              <Fact label="workspace">
+              <Fact label="directory" className="fact--directory">
                 <span className="mono" title={workspace}>
                   {workspace}
                 </span>
               </Fact>
             )}
             {task.branch && (
-              <Fact label="branch">
+              <Fact label="branch" className="fact--branch">
                 <span className="mono">{task.branch}</span>
               </Fact>
             )}
-            <Fact label="mandate">
+            <Fact label="mandate" className="fact--mandate">
               {task.mandate.allowed.join(', ')} · depth {task.lineageDepth}/
               {task.mandate.maxLineageDepth}
             </Fact>
@@ -2107,7 +2113,7 @@ function StatsExclusionToggle({
               'task excluded for an impossible duration still spent exactly what it spent.'
         }
       >
-        {excluded ? 'excluded from stats' : 'counted'}
+        {excluded ? 'off · excluded' : 'on · included'}
       </button>
       {note && <div className="note">{note}</div>}
     </>

@@ -21,11 +21,13 @@ import { modelFacts } from '../../lib/taskview'
 export function ModelFact({
   session,
   ran,
-  requested
+  requested,
+  current = false
 }: {
   session: Session | null
   ran: string | null
   requested: { model: string | null; effort: string | null; source: string; undecided?: boolean }
+  current?: boolean
 }): React.JSX.Element {
   const { headline, note } = modelFacts({
     observed: session ? { model: session.model ?? null, effort: session.effort ?? null } : null,
@@ -34,8 +36,8 @@ export function ModelFact({
   })
   return (
     <>
-      <span title={headline.title}>{headline.text}</span>
-      {note && (
+      <span title={headline.title}>{headline.text}{current && <span className="model-current"> (Current)</span>} <span className="fact-info" title="The model and effort the latest run actually used.">(i)</span></span>
+      {note && note.tone !== 'dim' && (
         <div className={`tbl-sub ${note.tone}`} title={note.title}>
           {note.text}
         </div>
@@ -71,7 +73,9 @@ export function CacheCost({
   if (!session || held <= 0) return null
 
   return (
-    <div className="warn tbl-sub">
+    <details className="fact-info-details">
+      <summary className="fact-info" title="Show cache warning">(i)</summary>
+      <div className="warn tbl-sub">
       {changing === 'model' ? (
         <>
           This conversation holds {tokens(held)} of cached context. Prompt caches belong to one model,
@@ -85,13 +89,22 @@ export function CacheCost({
         </>
       )}{' '}
       Applies to the next run; this session keeps what it started with.
-    </div>
+      </div>
+    </details>
   )
 }
 
-export function Fact({ label, children }: { label: string; children: React.ReactNode }): React.JSX.Element {
+export function Fact({
+  label,
+  children,
+  className
+}: {
+  label: string
+  children: React.ReactNode
+  className?: string
+}): React.JSX.Element {
   return (
-    <div className="fact">
+    <div className={`fact ${className ?? ''}`}>
       <span className="fact-label">{label}</span>
       <span className="fact-value">{children}</span>
     </div>
@@ -130,14 +143,14 @@ export function SessionFact({ runs, sessions }: { runs: Run[]; sessions: Session
           className="ok"
           title="This run inherited a conversation that already existed — continued in a live session, or resumed one that had closed. The prompt prefix was read, not rebuilt."
         >
-          reused, context kept
+          reused
         </span>
       ) : (
         <span
           className="dim"
           title="A new conversation, so the prompt prefix was built from nothing. Measured on this machine: 41,542 cache-creation tokens for a trivial prompt in an empty directory."
         >
-          new conversation
+          new
         </span>
       )}
     </>

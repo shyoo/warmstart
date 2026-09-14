@@ -470,9 +470,7 @@ export function modelFacts(input: {
       // sent.
       title: `${model ?? ''} — what the transcript says actually answered each turn`
     },
-    note: differs
-      ? { text: `next run asks for ${asked}`, title: askedTitle, tone: 'warn' }
-      : { text: 'confirmed by the transcript', title: 'confirmed by the transcript, turn by turn', tone: 'dim' }
+    note: differs ? { text: `next run asks for ${asked}`, title: askedTitle, tone: 'warn' } : null
   }
 }
 
