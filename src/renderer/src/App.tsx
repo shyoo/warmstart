@@ -713,39 +713,6 @@ export function App({
             />
           ) : null}
         </div>
-
-        <footer className="statusbar">
-          <span>
-            <span className={`dot ${connected ? 'dot--ok' : 'dot--down'}`} />
-            {status.state === 'connected'
-              ? status.remote
-                ? `${status.remote.label} · ${status.remote.url} · Warmstart ${status.version}`
-                : `orchestratord · pid ${status.pid} · 127.0.0.1:${status.port}`
-              : status.state === 'error'
-                ? `orchestratord: ${status.message}`
-                : `orchestratord: ${status.state}`}
-          </span>
-          <span className="statusbar-spacer" />
-          <span
-            className="num"
-            title={`${counts.running} running · ${counts.active} active · ${counts.total} total worker${counts.total === 1 ? '' : 's'}`}
-          >
-            {counts.running}/{counts.active}/{counts.total} worker{counts.total === 1 ? '' : 's'} · {liveSessions.length} session
-            {liveSessions.length === 1 ? '' : 's'}
-          </span>
-          <span>{info?.platform}</span>
-          <span className="num">v{info?.version ?? (status.state === 'connected' ? status.version : '…')}</span>
-          {update?.phase === 'downloaded' && update.version && (
-            <button
-              type="button"
-              className="statusbar-update"
-              title={update.message ?? `Warmstart ${update.version} is ready to install`}
-              onClick={() => void window.agentyard.showDownloadedUpdate()}
-            >
-              ↓ v{update.version}
-            </button>
-          )}
-        </footer>
       </main>
 
       {/* ⛔ Two more grid columns, drawn only while a request is open, so a closed pane costs the
@@ -756,6 +723,43 @@ export function App({
           <DiffPane request={diffRequest} onClose={() => setDiffRequest(null)} />
         </>
       )}
+
+      {/* ⛔ Its own grid row, spanning every column, so it reads as one line under the whole
+          window rather than stopping at the sidebar's edge - a resizable sidebar means that edge
+          moves, and a status bar that only covered `.main` left a seam where its border met the
+          sidebar's instead of running the full width. */}
+      <footer className="statusbar">
+        <span>
+          <span className={`dot ${connected ? 'dot--ok' : 'dot--down'}`} />
+          {status.state === 'connected'
+            ? status.remote
+              ? `${status.remote.label} · ${status.remote.url} · Warmstart ${status.version}`
+              : `orchestratord · pid ${status.pid} · 127.0.0.1:${status.port}`
+            : status.state === 'error'
+              ? `orchestratord: ${status.message}`
+              : `orchestratord: ${status.state}`}
+        </span>
+        <span className="statusbar-spacer" />
+        <span
+          className="num"
+          title={`${counts.running} running · ${counts.active} active · ${counts.total} total worker${counts.total === 1 ? '' : 's'}`}
+        >
+          {counts.running}/{counts.active}/{counts.total} worker{counts.total === 1 ? '' : 's'} · {liveSessions.length} session
+          {liveSessions.length === 1 ? '' : 's'}
+        </span>
+        <span>{info?.platform}</span>
+        <span className="num">v{info?.version ?? (status.state === 'connected' ? status.version : '…')}</span>
+        {update?.phase === 'downloaded' && update.version && (
+          <button
+            type="button"
+            className="statusbar-update"
+            title={update.message ?? `Warmstart ${update.version} is ready to install`}
+            onClick={() => void window.agentyard.showDownloadedUpdate()}
+          >
+            ↓ v{update.version}
+          </button>
+        )}
+      </footer>
     </div>
     </DiffPaneContext.Provider>
   )

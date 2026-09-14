@@ -94,8 +94,10 @@ body {
      and a resizer positioned *inside* the sidebar would scroll away with its content. */
   grid-template-columns: var(--sidebar-w) 4px 1fr;
   /* ⚠️ `auto`, not a constant: row one is the window's caption area and the platform decides how
-     tall that is. `.titlebar` measures it from `env(titlebar-area-height)`. */
-  grid-template-rows: auto minmax(0, 1fr);
+     tall that is. `.titlebar` measures it from `env(titlebar-area-height)`. Row three is the
+     status bar - its own row, not part of `.main`'s, so it spans every column below rather than
+     stopping at the sidebar's edge. */
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100%;
 }
 
@@ -551,7 +553,11 @@ body {
 /* ---- status bar -------------------------------------------------------- */
 
 .statusbar {
-  flex: 0 0 auto;
+  /* Its own full-width grid row (see `.shell`), not a flex child of `.main` - a resizable
+     sidebar means the boundary between it and `.main` moves, and a status bar confined to
+     `.main` left a seam where its border met the sidebar instead of running under it. */
+  grid-column: 1 / -1;
+  grid-row: 3;
   border-top: 1px solid var(--color-border);
   background: var(--color-surface);
   padding: 0 var(--sp-4);

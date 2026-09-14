@@ -21,7 +21,9 @@ two commits after `d27a282` have no runner counts.
 
 ## Closed in this cleanup
 
-- **Global › Status no longer repeats Notice's warnings (t433, 2026-09-14);** only Notice lists them.
+- **The status bar spans the full window as `.shell`'s own grid row (t434, 2026-09-14)** — it used
+  to sit inside `.main`'s flex column, so its border stopped at the resizable sidebar's edge.
+  **Global › Status no longer repeats Notice's warnings (t433):** only Notice lists them.
 - **Muse reasoning-effort choices are available end to end (2026-09-14).** The catalogue offers
   `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `ultra`; controls pass them to Muse. ⚠️ The regression test rejects retired `max`.
 - **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).**
@@ -74,12 +76,10 @@ two commits after `d27a282` have no runner counts.
   the packaged app: the running daemon hosts this task, so it could not be restarted from here —
   rebuild, press **Refresh** on Muse, and expect *Currently unavailable* until the account completes
   one turn (adapters.md, fault 3).
-- **Antigravity CLI commissioning and live quota probe on macOS (2026-09-13).** Standalone OAuth
-  credentials live in `~/.gemini/jetski-standalone-oauth-token` and auth emails in
-  `antigravity-cli/cli.log`; `readAntigravityIdentity` read neither, returned a false
-  `loggedIn: false`, and so blocked `mayRefreshUsage` — locking the worker into
-  `Antigravity: unknown`. It and `probeIdentity` now read both, and the live packaged probe read all
-  4 quota windows in 6s.
+- **Antigravity CLI commissioning and live quota probe on macOS (2026-09-13).** `readAntigravityIdentity`
+  and `probeIdentity` now read the OAuth token and auth email the CLI writes instead of returning a
+  false `loggedIn: false` that locked the worker into `Antigravity: unknown`; the live packaged probe
+  reads all 4 quota windows in 6s.
 - **The diff moved out of the thread into a Diff pane (t425, 2026-09-13).** `DiffPane` is a column of
   the shell right of the work — its own drag handle, full height, one scroll, sticky file headers.
   The inline **Changes in this task** keeps its file list and draws no patch.

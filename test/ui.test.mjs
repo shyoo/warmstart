@@ -422,7 +422,7 @@ try {
             mainStartsAtShellEdge: Math.abs(mainRect.left - shellRect.left) < 1,
             mainFillsShell: Math.abs(mainRect.right - shellRect.right) < 1,
             mainHasArea: mainRect.width > 100,
-            statusbarVisible: !!main.querySelector('.statusbar')
+            statusbarVisible: !!shell.querySelector('.statusbar')
           }
         })())
       `)
@@ -448,6 +448,32 @@ try {
     'Show panel restores the navigation and resize handle',
     shownPanel.label === 'Hide panel' && shownPanel.sidebarVisible === true && shownPanel.resizerVisible === true,
     JSON.stringify(shownPanel)
+  )
+
+  // ⛔ t434: the status bar used to live inside `.main`'s own flex column, so its border stopped
+  // at the sidebar's edge instead of running under it - a resizable sidebar means that edge moves,
+  // so the seam read as a small gap rather than a fixed, deliberate one.
+  const seam = JSON.parse(
+    await evaluate(`
+      JSON.stringify((() => {
+        const sidebar = document.querySelector('.sidebar')
+        const statusbar = document.querySelector('.statusbar')
+        if (!sidebar || !statusbar) return { missing: true }
+        const sidebarRect = sidebar.getBoundingClientRect()
+        const statusbarRect = statusbar.getBoundingClientRect()
+        return {
+          sidebarBottom: sidebarRect.bottom,
+          statusbarTop: statusbarRect.top,
+          statusbarLeft: statusbarRect.left,
+          shellLeft: document.querySelector('.shell').getBoundingClientRect().left
+        }
+      })())
+    `)
+  )
+  check(
+    'the status bar runs the full width, meeting the sidebar with no seam',
+    Math.abs(seam.sidebarBottom - seam.statusbarTop) < 1 && Math.abs(seam.statusbarLeft - seam.shellLeft) < 1,
+    JSON.stringify(seam)
   )
 
   await evaluate(`[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim() === 'Controller')?.click()`)
