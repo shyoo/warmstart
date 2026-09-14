@@ -192,10 +192,10 @@ export function QualityReview({
       {error && <div className="alert">{error}</div>}
 
       <div className="metric-grid">
-        <Tile value={counts ? String(counts.none) : '—'} label="finished tasks with no review" />
-        <Tile value={counts ? String(counts.one) : '—'} label="with exactly 1 review" />
-        <Tile value={counts ? String(counts.many) : '—'} label="with 2 or more reviews" />
-        <Tile value={counts && counts.ungradable !== undefined ? String(counts.ungradable) : '—'} label="cannot be graded" />
+        <Tile value={counts ? String(counts.none) : '—'} label="Gradable tasks with 0 reviews" />
+        <Tile value={counts ? String(counts.one) : '—'} label="Gradable tasks with only 1 review" />
+        <Tile value={counts ? String(counts.many) : '—'} label="Gradable tasks with 2+ reviews" />
+        <Tile value={counts && counts.ungradable !== undefined ? String(counts.ungradable) : '—'} label="Non-gradable tasks" />
       </div>
 
       <section className="doc-section">
@@ -236,13 +236,13 @@ export function QualityReview({
             </button>
           )}
         </div>
-        <p className="dim">
+        <p className="dim prose-note">
           ⚠️ Each one spends a real turn on a real peer account and takes minutes, not seconds.{' '}
           <strong>ALL</strong> is exactly that — every finished task matching the filter, up to 500 —
           so on a fleet with a backlog it is hours of grading, not a longer press of the same button.
           Reviews run one per account at a time; a two-account fleet grades two tasks at once.
         </p>
-        <p className="dim">
+        <p className="dim prose-note">
           ⛔ No agent is asked to grade a task twice, and none is ever asked to grade its own work.
           Once an agent has produced a score for a task it stops being a candidate for that task — a
           second grade from the same judge costs a turn to reproduce a number that is already stored.

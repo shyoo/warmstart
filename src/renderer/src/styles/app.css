@@ -1725,6 +1725,12 @@ body {
   max-width: 62ch;
 }
 
+/* Explanatory prose beside a control, kept to the same readable width as `.panel-sub` so a page's
+   narrative text reads as one voice instead of switching between a column and the full panel. */
+.prose-note {
+  max-width: 62ch;
+}
+
 .doc-section {
   margin-bottom: var(--sp-5);
 }

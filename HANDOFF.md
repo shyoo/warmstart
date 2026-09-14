@@ -20,6 +20,13 @@ screens — see remaining work 14.
 
 ## Closed in this cleanup
 
+- **Quality Review's copy and tile labels read as one page (t430, 2026-09-13).** The intro paragraph
+  under the heading was capped at 62ch like every other panel subtitle, but the two explanatory
+  paragraphs under *Commission a batch* had no width limit and stretched the full panel, so the same
+  page read two different widths of prose. A new `.prose-note` class holds both to the same 62ch
+  as `.panel-sub`. The four count tiles were named by review-count bucket (*"finished tasks with no
+  review"*, *"cannot be graded"*) — the operator-relevant question is eligibility, so they now read
+  *Gradable tasks with 0 reviews / only 1 review / 2+ reviews* and *Non-gradable tasks*.
 - **CI on `main` is green again (2026-09-13).** The ~30-commit merge `3ff9ffd` never got a run, and
   the first push after it (run 34795442043) failed six task-table checks on both runners. Three
   causes, each measured: a *collapsed* column keeps its geometry and read as an overflow it never
