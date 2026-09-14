@@ -761,6 +761,9 @@ is too large and too varied.
   collapse; width: 0` on its `<col>`, never `display: none` (which left every cell drawn, and hiding
   the cells too laid the table out against stale slots on some runs). ⚠️ Not a `ResizeObserver`
   either: it never delivers in the suite's hidden window, so L3 could not see it (2026-09-13).
+  ⛔ A narrow panel drops columns and never squeezes one: a column's width is its *sorted* heading's
+  need on Linux, the widest of the three fonts, plus padding and margin (measured in CI, 2026-09-13),
+  and a collapsed column still keeps its geometry — see [`testing.md`](testing.md) §3.
 - **A paper table scrolls inside its own box.** `.tbl--paper` is a fit-content block with
   `overflow-x: auto`, because a table cannot shrink below its min-content and Table 12 ran past a
   narrowed column.

@@ -4620,6 +4620,16 @@ try {
           const text = th.querySelector('.sort-head') ?? th;
           return text.getBoundingClientRect().right > visibleHeads[i + 1].getBoundingClientRect().left + 1;
         }).length;
+        // ⛔ And each drawn heading's text against its own room, the sorted one included: a
+        // neighbour-to-neighbour collision misses a column narrowed under the arrow it carries.
+        const squeezed = visibleHeads.filter((th) => {
+          const text = th.querySelector('.sort-head') ?? th;
+          const range = document.createRange();
+          range.selectNodeContents(text);
+          const style = getComputedStyle(th);
+          const room = th.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+          return range.getBoundingClientRect().width > room + 1;
+        }).map((th) => th.textContent.trim());
         const out = {
           viewport: window.innerWidth,
           panel: Math.round(panel?.getBoundingClientRect().width ?? 0),
@@ -4630,7 +4640,8 @@ try {
           // leaves the title short by a gap no heading owns, which a title-only check can miss.
           table: Math.round(table?.getBoundingClientRect().width ?? 0),
           heads: visibleHeads.map((th) => [th.textContent.trim(), Math.round(th.getBoundingClientRect().width)]),
-          collisions
+          collisions,
+          squeezed
         };
         previous
           ? root.style.setProperty('--sidebar-w', previous)
@@ -4649,7 +4660,7 @@ try {
   )
   check(
     'and the remaining headings do not collide while the title keeps readable space',
-    narrowTable.collisions === 0 && narrowTable.title >= 160 && narrowTable.table >= narrowTable.panel - 1,
+    narrowTable.collisions === 0 && narrowTable.squeezed.length === 0 && narrowTable.title >= 160 && narrowTable.table >= narrowTable.panel - 1,
     JSON.stringify(narrowTable)
   )
 
