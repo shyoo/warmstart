@@ -310,6 +310,18 @@ for the *wrong reason*, so a test asserting `toBeNull()` passes while proving no
 Write such literals with the **Edit tool**, which does not go through a shell, and put the path in a
 named constant so there is one occurrence to get right rather than nine.
 
+### A Windows-shaped fixture path is relative off Windows
+
+⛔ On POSIX, Node treats `C:/tmp/root` as a relative path, not a drive-rooted one. A test that hands
+that spelling to code which creates directories therefore writes a literal `C:` directory beneath
+the test process's working directory. This happened in `adapters.test.ts`: Muse planning correctly
+creates its prompt and XDG roots, and the cross-adapter fixture leaked them into the checkout on
+macOS (measured 2026-09-13).
+
+Use a directory created beneath `tmpdir()` for any fixture a subject may write, and remove it in the
+suite teardown. Reserve Windows-shaped strings for pure path-shape assertions whose subjects perform
+no filesystem I/O.
+
 ### A window the operator did not ask for
 
 ⛔ **A suite may drive a window; it may not put one on the operator's screen.** `test:ui` and

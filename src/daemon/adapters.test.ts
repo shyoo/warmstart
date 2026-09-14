@@ -490,7 +490,10 @@ describe('the measured surprises, kept as regressions', () => {
         // it was there.
         const plan = a.plan({
           sessionId: 'ignored',
-          isolationRoot: 'C:/tmp/root',
+          // Muse creates its XDG and prompt directories while planning. A Windows-shaped relative
+          // path such as `C:/tmp/root` is therefore a repository-relative path off Windows and used
+          // to leave a literal `C:` directory in every macOS/Linux checkout that ran this test.
+          isolationRoot: join(stubDir!, 'worker-root'),
           cwd: 'C:/tmp/work',
           transport: 'stream'
         })
@@ -512,6 +515,21 @@ describe('the measured surprises, kept as regressions', () => {
         else process.env[k] = saved[k]
       }
     }
+  })
+
+  it('plans every adapter without creating a Windows drive name in the checkout', () => {
+    const leakedDrive = join(process.cwd(), 'C:')
+    expect(() => {
+      for (const a of ALL) {
+        a.plan({
+          sessionId: 'ignored',
+          isolationRoot: join(stubDir!, 'worker-root'),
+          cwd: 'C:/tmp/work',
+          transport: 'stream'
+        })
+      }
+    }).not.toThrow()
+    expect(() => realpathSync(leakedDrive)).toThrow()
   })
 })
 

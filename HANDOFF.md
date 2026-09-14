@@ -25,6 +25,10 @@ proves the *package*, not this change's screens — see remaining work 14.
   their Linux headings, so every width is now the Linux need plus margin and no rung squeezes a
   column; and a 1024px screen cannot stage the container-versus-viewport half of the narrow check,
   which skips there by name. Dep and Took now collapse together at a 660px panel.
+- **Cross-platform adapter tests no longer create `C:` in POSIX checkouts (2026-09-13).** The
+  cross-adapter API-key test passed `C:/tmp/root` to every adapter; Muse planning creates its prompt
+  and XDG roots, and Node treats that spelling as relative on macOS/Linux. The writable fixture now
+  lives under the suite's temporary directory and a regression asserts the checkout stays clean.
 - **A probe PTY answers the TUI's cursor-position query (t3, 2026-09-13).** Muse Code 1.2.1 writes
   `ESC[6n` at startup and exits 0 at +6.4s unanswered — before `readyMs` — so every `/usage` probe
   read *"the probe session did not start"* on a signed-in, trusted worker (t1's trust fix was in the
@@ -50,8 +54,6 @@ proves the *package*, not this change's screens — see remaining work 14.
   Tool calls emit declared `StreamEvent.tool_use` (`toolLine`). A fleet setting (`liveNarration`, default
   `summary`) buys word-by-word prose. The Session TUI draws `SessionStream` for a piped session and xterm
   for a PTY one, with **Open a real terminal** (`session.attach`).
-- **Remote listener auto-retries Tailscale every 60s (2026-09-13).** A 60-second `setInterval` in
-  `startRemoteServer` re-probes while `remoteListening()` is true and `live` is null.
 - **macOS worktree symlinks, CLI PATH detection, and header metrics (2026-09-13).** Worktree `.git` pointers
   resolve with `fs.realpathSync`, non-Windows GUI launch searches standard user bin paths (`which.ts`),
   and task-table column widths gained 2–8px for macOS font metrics.
