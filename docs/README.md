@@ -24,6 +24,7 @@ correction below the wrong sentence. `AGENTS.md` is the short entry point that p
 | build, package, or hit a platform-specific failure | [`development.md`](development.md) |
 | change the renderer | [`ui.md`](ui.md) |
 | configure phone or remote-desktop access, or notifications | [`remote.md`](remote.md) |
+| understand the authority given to unattended agents | [`security.md`](security.md) — adapter containment, credentials, landing gates and remote access |
 | change pricing or add a provider | `../costmodels/` — data, never code. See [`cost-model.md`](cost-model.md) § *Cost models are data* |
 | check or update a model's agentic-coding prior | `../benchmarks/` — versioned data, never code, mirroring `costmodels/`. See [`routing.md`](routing.md) § *Fitness* |
 | understand *why* the design is shaped this way | `../transient_docs/implementation_plan_2026-08-24.md` — the design of record, decisions D1–D18. ⚠️ Dated, and never read for status |
@@ -45,6 +46,7 @@ correction below the wrong sentence. `AGENTS.md` is the short entry point that p
 | [`development.md`](development.md) | Setup, build, packaging, platform pitfalls, and the commit workflow |
 | [`ui.md`](ui.md) | Renderer structure, routes, styling tokens and the UI's own conventions |
 | [`remote.md`](remote.md) | Phone and remote-desktop access, pairing, protocol versions, Tailscale setup and notifications |
+| [`security.md`](security.md) | Unattended agent authority, credential separation, landing gates and current containment limits |
 
 ## Where a fact belongs
 

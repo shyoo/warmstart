@@ -2,11 +2,9 @@
 
 ## Current state — 2026-09-14
 
-Warmstart M0–M6 is implemented. The current branch contains debate mode, quota-aware scheduling,
-pooled worktrees, model-aware routing, quality review, remote access, packaging, the completed
-Warmstart rename, the three pre-public blockers a three-seat debate on t392 converged on, and atomic
-worker/model reassignment: the scheduler cannot resume an explicit Opus choice on an account's Haiku
-default between separate UI writes. The maintained reference in [`docs/`](docs/README.md) is the
+Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling, pooled worktrees,
+model-aware routing, quality review, remote access, packaging, and atomic worker/model reassignment.
+The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-14, **Windows 11 x64**, measured on this branch's tip): typecheck, lint, build
@@ -21,6 +19,8 @@ two commits after `d27a282` have no runner counts.
 
 ## Closed in this cleanup
 
+- **README is now a concise, visual product tour (t435, 2026-09-14).** Nine isolated showcase
+  visuals lead; durable security detail moved to [`docs/security.md`](docs/security.md).
 - **The status bar spans the full window as `.shell`'s own grid row (t434, 2026-09-14)** — it used
   to sit inside `.main`'s flex column, so its border stopped at the resizable sidebar's edge.
   **Global › Status no longer repeats Notice's warnings (t433):** only Notice lists them.
@@ -112,7 +112,7 @@ two commits after `d27a282` have no runner counts.
 - **The security model is written down, and the permissive default is a choice.** `permissionModeFor`
   ([`sessions.ts`](src/daemon/sessions.ts)) puts unattended work on `bypassPermissions` — full OS user
   authority — and a `sandboxed-only` project **refuses** a bypassing candidate rather than downgrading
-  it into t250's stall. README's **Security model** says what it means.
+  it into t250's stall. [`docs/security.md`](docs/security.md) says what it means.
 - **Debate seats see current code and stay in their role**; **squash-merged PRs and report-only tasks
   retire under Loose ends** without leaving false unlanded ends (`task_deliveries.retire_blocked`).
 
