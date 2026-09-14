@@ -68,7 +68,7 @@ src/daemon              orchestratord: scheduler, PTYs, store, MCP server
 src/shared              types crossing a process boundary
 costmodels/             versioned pricing data
 docs/                   the maintained reference — start at docs/README.md
-.claude/skills/         project skills. /commit commits locally, /push publishes
+.claude/skills/         project skills. /commit commits locally, /push publishes. .codex → .claude
 ```
 
 ## The invariants

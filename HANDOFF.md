@@ -9,10 +9,11 @@ worker/model reassignment: the scheduler cannot resume an explicit Opus choice o
 default between separate UI writes. The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-13, Windows, measured **after** t425): typecheck, lint, build pass; L1
-**3,426 passed, 2 skipped** (195 files); L3 **428 checks**. L2 **203 checks** (5 skipped) and L4
-`test:pack` **19 checks** were measured after t423 and not re-run on t425, which touches no daemon
-code. ⚠️ L4 proves the *package*, not this change's screens — see remaining work 14. macOS arm64 baseline (measured 2026-09-13): L1 **3,419 passed, 12 skipped** (195 files); L2 **198**; L3 **426**; L4 **17**.
+Baseline (2026-09-13, macOS arm64, measured on HEAD `6f22ea5` before the push): typecheck, lint,
+build pass; L1 **3,433 passed, 5 skipped** (197 files); L2 **203 checks** (5 skipped); L3 **426
+checks** (2 skipped); L4 `test:pack` **17 checks** against `release/mac-arm64`. Windows (measured
+after t425): L1 3,426 passed, 2 skipped; L3 428; L2 203; L4 19. ⚠️ L4 proves the *package*, not
+this change's screens — see remaining work 14.
 
 ## Closed in this cleanup
 
