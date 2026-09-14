@@ -23,6 +23,7 @@ screens — see remaining work 14.
 
 ## Closed in this cleanup
 
+- **Global › Status no longer repeats Notice's warnings (t433, 2026-09-14);** only Notice lists them.
 - **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).**
   ⭐ *The reorder arrows could not be clicked, and vanished on hover.* The workers table re-lays its
   rows out as cards where the order cell and the worker cell are given the **same grid area**; overlaps
@@ -39,8 +40,7 @@ screens — see remaining work 14.
   ⭐ *A host left running to take work slept mid-run.* `preventSleep` (`UiSettings`, **default on**,
   the only App-behavior switch that is) holds a `powerSaveBlocker('prevent-app-suspension')`, applied
   at launch as well as on change. ⚠️ Idle sleep only — not a closed lid, and the copy says so.
-  ⛔ Per-install, so the setting deciding whether a run survives the night is the **host's**.
-  ⚠️ None of the three has been driven in the packaged app.
+  ⛔ Per-install, so the setting deciding whether a run survives the night is the **host's**. ⚠️ None of the three driven in the packaged app.
 - **The thread ledger reads as one list (2026-09-13).** Operational facts lead;
   created/directory/landing take clearer labels; the stopped-task control matches the small setting
   controls; run prompt and activity references open compact dialogs rather than boxed disclosures; and

@@ -50,7 +50,7 @@ export function Doctor({ now, view = 'status' }: { now: number; view?: 'notice' 
         <p className="dim">Checking…</p>
       ) : (
         <>
-          {report.warnings.length > 0 && (
+          {view === 'notice' && report.warnings.length > 0 && (
             <ul className="warnings">
               {report.warnings.map((w, i) => (
                 <li key={i}>{w}</li>
