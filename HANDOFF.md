@@ -19,6 +19,11 @@ two commits after `d27a282` have no runner counts.
 
 ## Closed in this cleanup
 
+- **The live thread tail named landing correctly (t438, 2026-09-14).** A task with `task.landing`
+  true still counted as `live` output because `showsLiveOutput` only looks at `status`, so the empty
+  tail read *"waiting for the agent's first words…"* while the agent had already finished and the
+  branch was rebasing, verifying or merging. `Thread` now takes a `landing` prop and swaps the
+  placeholder to *"landing — rebasing, verifying and merging…"* when it is set.
 - **Thread detail controls: Stop button layout and color, compact dependency remove, and Statistics toggle (t437, 2026-09-14).**
   ⭐ *Stop button*: Replaced oversized `setting-btn-select` class with standalone `.task-stop`, aligning it horizontally beside status text without wrapping, styled in red danger state (`--state-danger`).
   ⭐ *Depends on Remove button*: Scaled down `.dep-remove` by removing oversized `min-width: 76px; min-height: 30px` and setting compact padding (`1px 6px`) and `var(--text-meta)`.

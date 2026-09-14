@@ -434,7 +434,7 @@ function TaskDetail({
               parsed as the closed markdown subset; nothing here renders raw HTML. */}
           <DebateBoard task={task} />
 
-          <Thread messages={messages} runs={runs} activity={activity} live={live} />
+          <Thread messages={messages} runs={runs} activity={activity} live={live} landing={Boolean(task.landing)} />
 
           {/* ⛔ Between the conversation and the box for replying, because that is what it is: the
               agent's turn to speak ended with a question, and this is where the answer goes. In the
@@ -1255,12 +1255,14 @@ function Thread({
   messages,
   runs,
   activity,
-  live
+  live,
+  landing
 }: {
   messages: TaskMessage[]
   runs: Run[]
   activity: Array<{ text: string; ts: number }>
   live: boolean
+  landing: boolean
 }): React.JSX.Element {
   /**
    * ⛔ **`live` alone.** This was `live || activity.length > 0`, and the tail is not cleared when a
@@ -1352,7 +1354,9 @@ function Thread({
               <div className="msg-bubble">
                 <span className="msg-text">
                   {item.lines.length === 0 ? (
-                    <span className="dim">waiting for the agent’s first words…</span>
+                    <span className="dim">
+                      {landing ? 'landing — rebasing, verifying and merging…' : 'waiting for the agent’s first words…'}
+                    </span>
                   ) : (
                     item.lines.map((line, i) => (
                       <span key={`${line.ts}-${i}`} className="msg-live-line">
