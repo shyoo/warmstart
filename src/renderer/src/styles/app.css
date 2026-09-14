@@ -2155,8 +2155,14 @@ body {
   .tbl--tasks .tbl-col-quality { visibility: collapse; width: 0; }
 }
 
-@container task-table (max-width: 550px) {
-  .tbl--tasks .tbl-col-dep { visibility: collapse; width: 0; }
+/* ⚠️ The rungs are arithmetic, not taste: seq, Status and Action are 202px and never yield, so with
+   the dates gone the fixed columns are 672px and with From and Quality gone 504 — which at a 562px
+   panel (a 1024px screen with the sidebar at 400) left the title 58px, and 102 before the columns
+   were sized for Linux. Dep and Took go together at 660px: 370px fixed leaves the title 160px at a
+   530px panel, the bar the suite holds it to. Took is the one duration among what remains. */
+@container task-table (max-width: 660px) {
+  .tbl--tasks .tbl-col-dep,
+  .tbl--tasks .tbl-col-took { visibility: collapse; width: 0; }
 }
 
 .tbl-title .tbl-strong {

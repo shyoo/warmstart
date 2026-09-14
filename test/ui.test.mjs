@@ -4650,14 +4650,22 @@ try {
       })())
     `)
   )
-  check(
-    '⭐ a narrow task panel drops its date columns even while the viewport remains wide',
-    narrowTable.viewport > 1050 &&
-      narrowTable.panel <= 1050 &&
-      narrowTable.dates > 0 &&
-      narrowTable.datesVisible === 0,
-    JSON.stringify(narrowTable)
-  )
+  // ⚠️ The first half asks the container to differ from the viewport, which a 1024px screen cannot
+  // stage: Windows CI clamps the window to one (run 34795442043), and there a viewport query would
+  // drop the dates too, so the check would be reading the wrong rule's answer. The display, not the
+  // code. The second half — nothing squeezed, the title readable — holds at every width and runs.
+  if (narrowTable.viewport > 1050) {
+    check(
+      '⭐ a narrow task panel drops its date columns even while the viewport remains wide',
+      narrowTable.panel <= 1050 && narrowTable.dates > 0 && narrowTable.datesVisible === 0,
+      JSON.stringify(narrowTable)
+    )
+  } else {
+    skip(
+      '⭐ a narrow task panel drops its date columns even while the viewport remains wide',
+      `a ${narrowTable.viewport}px window cannot hold a panel under 1050px beside a viewport over it`
+    )
+  }
   check(
     'and the remaining headings do not collide while the title keeps readable space',
     narrowTable.collisions === 0 && narrowTable.squeezed.length === 0 && narrowTable.title >= 160 && narrowTable.table >= narrowTable.panel - 1,
