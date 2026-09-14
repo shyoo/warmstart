@@ -7,14 +7,13 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-14, **Windows 11 x64**, measured on this branch's tip): typecheck, lint, build
-pass; L1 **3,458 passed, 4 skipped** (198 files); L2 **203 checks** (5 skipped); L3 **440 checks**;
-L4 **19 checks** against a freshly packed `release/win-unpacked`. ⚠️ L1 was 3,450 in the previous
-handoff and is 3,458 here: **+6 are this branch's new `macsigning.test.ts`**, measured by running the
-suite with the change stashed (3,452 on the branch tip), and the other +2 predate it — the old figure
-was stale, not wrong about anything. Last CI green on all seven jobs: `397ef82`, run 34798606736. CI
-is **enabled**; ⛔ the **Release** workflow is deliberately still disabled, so that the first macOS
-runner is spent only once the Mac has answered locally.
+Baseline (2026-09-14, **Windows 11 x64**, measured on this branch's tip): typecheck, lint pass; L1
+**3,460 passed, 4 skipped** (199 files); L2 **203 checks** (5 skipped); L3 **436 passed, 4 skipped**,
+now at a pinned 1024×720 window (was 440 at 1440×900); L4 **19 checks** as of `3489bc0`, not rerun
+for t445.2. Last CI green on all seven jobs: `397ef82`, run 34798606736; `3489bc0` (run 34872370257)
+was red on `ui · windows-latest` only, and t445.2 below is the fix. CI is **enabled**; ⛔ the
+**Release** workflow is deliberately still disabled, so that the first macOS runner is spent only
+once the Mac has answered locally.
 
 ## Closed in this cleanup
 
@@ -25,6 +24,14 @@ runner is spent only once the Mac has answered locally.
   `idlePoolHolder` in [`worktrees.ts`](src/daemon/worktrees.ts) is the shared question both now ask —
   still refusing the operator's own trunk, a claimed slot, or a dirty one, stepping off (`git switch
   --detach`) only what a park would.
+- **`ui · windows-latest` went red on two checks the local suite could not see (t445.2, 2026-09-14).**
+  ⭐ `test:ui` now pins its window to CI's 1024×720 via `ui/window-state.json`, and reproduced the
+  reorder-arrow failure locally on the first run. The arrows were fine: at that height the row sat
+  below `.content`'s fold and `elementFromPoint` hit-tested an off-screen point, so the check scrolls
+  first; mutating the cell's `z-index` away still turns it red. ⛔ The second was a product bug:
+  `task.message` on a `ready` task emitted nothing, so no other view saw the note. Locally the task
+  was `running` (a CLI on `PATH`) and run events hid it. Now emits `task.changed`, pinned by
+  `taskmessage.test.ts`. [`docs/testing.md`](docs/testing.md) §3 and the headless section.
 - **macOS signing is configured, and the config now says which of three things a build did (t445,
   2026-09-14).** `hardenedRuntime: true`, `identity` *absent* rather than `null`, `notarize: false`,
   and explicit entitlements in `resources/entitlements.mac.*.plist`. ⛔ The measurement that changed
@@ -38,7 +45,6 @@ runner is spent only once the Mac has answered locally.
   `codesign` and print which happened. ⚠️ **None of it has run on a Mac**; `macsigning.test.ts`
   pins only what the configuration asks for. [`docs/development.md`](docs/development.md) §3 has the
   first-session checklist, certificate first.
-
 - **The controller's label consult stopped dropping itself as "overtaken" (t440, 2026-09-14).**
   `questionStillStands` had no branch for the `title` kind and fell through to `triage`'s gate —
   `awaiting_human` or `failed` only — so a label asked about a task doing its ordinary work (`ready`,
@@ -52,13 +58,6 @@ runner is spent only once the Mac has answered locally.
   `answerableHere` checked only option count/length, so a long question with short options rendered
   inline while `.approvals-what` truncated the text — answerable blind. It now also requires the
   full question fit in 100 characters, else falls back to **Answer…**.
-- **The live thread tail named landing correctly (t438, 2026-09-14).** A task with `task.landing`
-  true still counted as `live` output because `showsLiveOutput` only looks at `status`, so the empty
-  tail read *"waiting for the agent's first words…"* while the agent had already finished and the
-  branch was rebasing, verifying or merging. `Thread` now takes a `landing` prop and swaps the
-  placeholder to *"landing — rebasing, verifying and merging…"* when it is set.
-- **Thread controls (t437, 2026-09-14).** Stop is a compact red `.task-stop` beside the status;
-  `.dep-remove` lost its oversized minimums; the Statistics toggle is a `SettingSwitch`.
 - **Muse could not grade anything, and the app would not say why (t436, 2026-09-14).** Muse Code
   1.1.1 reads `<workspace>/.codex/skills` at startup and exits 1 in ~4.5s against a non-directory
   (`runtime host failed to start: … Not a directory (os error 20)`, stderr, stdout empty). This
@@ -81,7 +80,6 @@ runner is spent only once the Mac has answered locally.
   running — six orphans were found on this machine — so every launch now ends with `daemon.shutdown`
   and a wait on the lock file's pid.
 - **The status bar spans the full window as `.shell`'s own grid row (t434, 2026-09-14)** — it used to sit inside `.main`'s flex column, so its border stopped at the resizable sidebar's edge. **Global › Status no longer repeats Notice's warnings (t433):** only Notice lists them.
-- **Muse reasoning-effort choices are available end to end (2026-09-14).** The catalogue offers `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `ultra`; controls pass them to Muse. ⚠️ The regression test rejects retired `max`.
 - **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).**
   ⭐ The workers table's reorder arrows could not be clicked and vanished on hover — the order cell and
   worker cell shared one grid area, so hover painted over the arrows; the order cell is now
@@ -92,10 +90,6 @@ runner is spent only once the Mac has answered locally.
   ⭐ A host left running to take work could sleep mid-run; `preventSleep` (`UiSettings`, default on)
   holds a `powerSaveBlocker`, per-install since the setting deciding whether a run survives the night
   is the host's. ⚠️ None of the three driven in the packaged app.
-- **Three reading passes over existing pages (t429/t430, 2026-09-13).** The thread ledger reads as
-  one list; Quality Review's paragraphs share a 62ch `.prose-note` and its tiles are named for
-  eligibility; the three-axis plot drops any model under `MIN_TRUSTED_SAMPLES` (5) and persists its
-  "Exclude API rate & mixed" filter.
 - **CI on `main` is green again (2026-09-13).** Six task-table checks failed on both runners after
   the ~30-commit merge `3ff9ffd`; three measured causes, all written up in
   [`docs/testing.md`](docs/testing.md) §3. Dep and Took now collapse together at a 660px panel.

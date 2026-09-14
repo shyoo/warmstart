@@ -150,6 +150,13 @@ be the button or something inside it. Reporting *what* was found instead of the 
 the failure readable — the check that caught this printed `worker-cell`. ⛔ A scripted `.click()` is
 not a substitute: it bypasses hit-testing entirely, which is exactly why it passed.
 
+⚠️ **Scroll the control into view first.** `elementFromPoint` answers only inside the viewport, so a
+control below the fold reads as whatever is there — `statusbar` at 1024×720 here, `null` on the
+Windows runner (run 34872370257) — which is an off-screen point, not a covered button. The check
+calls `scrollIntoView({ block: 'center' })`, and with the cell's `z-index` mutated away it still
+prints `worker-cell` (2026-09-14). It proves stacking, not reachability: an `overflow: hidden`
+ancestor scrolls programmatically too (next section).
+
 ### An `overflow: hidden` box still scrolls, so scrolling it proves nothing
 
 ⛔ **`scrollHeight > clientHeight` and an assignment to `scrollTop` are both true of a box the
@@ -350,7 +357,15 @@ that ran the old suite still holds it. The regression guard therefore fails on s
 `test:pack` set `WARMSTART_HEADLESS=1`, and `createWindow` honours it by skipping both of
 its `show()` paths. The window is created, the renderer loads, React runs, Blink lays out, and every
 `innerText` and `getBoundingClientRect` answers exactly as it does on screen. What stops is a
-1440×900 window taking focus off whatever the operator was typing, several times a run.
+window taking focus off whatever the operator was typing, several times a run.
+
+⛔ **`test:ui` draws at CI's size on every machine.** `createWindow()` opens at 1440×900, but the
+Windows runner's screen clamps it to a 1024×720 work area, so a layout check could pass locally and
+fail only on the runner that costs more to find out on. The suite writes `ui/window-state.json` into
+its data directory before launch, and `readWindowBounds` restores 1024×720 as if the operator had
+left it there. ⚠️ Size is not the only way a host leaks in: on a machine with a CLI on `PATH` the
+suite's task reaches `running`, and the run's events refreshed a thread that on CI (task `ready`)
+nothing announced — `task.message` now emits `task.changed` itself (`taskmessage.test.ts`).
 
 ⚠️ **Do not assert this with `document.visibilityState`**: a window created `show: false` and never
 shown reports `visible` to its own renderer, because nothing ever hid it (measured 2026-09-01). Only

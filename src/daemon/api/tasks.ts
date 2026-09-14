@@ -29,6 +29,7 @@ import { settings } from '../settings.js'
 import { compactionsForTask } from '../compaction.js'
 import { listConversations } from '../conversations.js'
 import { log } from '../log.js'
+import { emit } from '../events.js'
 import { clockTime } from '../threadline.js'
 import { dismissLooseEnd, resolveFinishPolicy, scanLooseEnds } from '../finish.js'
 import { withLanding } from '../landingstate.js'
@@ -434,7 +435,17 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       // ⛔ And a task that had stopped is started again — same task, same thread, a new run. Without
       // this the note reached a live process and produced nothing anybody could see: no run, no
       // metering, no status, no landing. See `continueTask`.
-      return { ok: true as const, outcome: continueTask(p.id) }
+      const outcome = continueTask(p.id)
+      // ⚠️ Announced unless the requeue's own `setStatus` already did. `addMessage` emits nothing, so
+      // a note to a `queued` or `ready` task reached no view but the one that sent it — measured on the
+      // Windows CI runner (run 34872370257), where the UI suite's task sat queued for 30s with its
+      // message in the store and not in the thread. On this machine the same task was `running`, and
+      // its run's own events refreshed the pane and hid it.
+      if (outcome !== 'requeued') {
+        const task = getTask(p.id)
+        if (task) emit({ type: 'task.changed', task })
+      }
+      return { ok: true as const, outcome }
     },
     'task.cancel': (p) =>
       cancelTask(p.id, {

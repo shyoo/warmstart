@@ -1,6 +1,6 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
@@ -58,6 +58,16 @@ try {
     WARMSTART_HEADLESS: '1'
   }
   delete env.ELECTRON_RUN_AS_NODE
+  // ⛔ **The size CI draws at, on every machine.** `createWindow()` opens at 1440×900, but the Windows
+  // runner's screen clamps that to a 1024×720 work area (viewport read back from run 34872370257),
+  // so a layout that only breaks narrow passed here and failed there — the reorder arrows landed on
+  // `main` green locally and red on the more expensive runner. `readWindowBounds` takes this file
+  // as a restored window, so the suite pins the smaller of the two rather than hoping the screens agree.
+  mkdirSync(join(dataDir, 'ui'), { recursive: true })
+  writeFileSync(
+    join(dataDir, 'ui', 'window-state.json'),
+    JSON.stringify({ x: 0, y: 0, width: 1024, height: 720 })
+  )
   app = spawn(electronBinary(), [REPO, `--remote-debugging-port=${PORT}`], {
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -3571,9 +3581,15 @@ try {
   // were painted over as well. The operator's report was "the button disappears when I hover and
   // moving up does nothing" (2026-09-13). `elementFromPoint` at the arrow's own centre is the only
   // form of this check that would have been red, because every DOM-level assertion above was green.
+  // ⚠️ Scrolled to first, as the operator would. `elementFromPoint` answers only for the visible
+  // viewport: at CI's 1024×720 the row sat at y=711 inside `.content`, below the status bar at 695,
+  // so the point read `statusbar` here and null on the runner (run 34872370257) — an off-screen
+  // point, not a covered button. Scrolled into view the same arrow hit-tests as itself, and with the
+  // cell's `z-index` removed it still reads as the worker cell.
   const topmostAtUpArrow = `(() => {
     const btn = ${upOnSecond}
     if (!btn) return 'no button'
+    btn.scrollIntoView({ block: 'center' })
     const r = btn.getBoundingClientRect()
     if (r.width < 1 || r.height < 1) return 'button has no box'
     const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
