@@ -3750,3 +3750,27 @@ so it is killed on every prepare. Both now `warn`. **Not proven**: why the sandb
 file — by its ACL it was writable, and a `codex sandbox` probe hung without a console. Delete-and-
 checkout of sandbox-owned files is the untried fix. Rejected: raising the cap (a per-dispatch cost,
 the owner's call) and committing hidden dirt on the branch (the revert problem above).
+
+## Two macOS runners spent on a password that was right (2026-09-14)
+
+The five Apple secrets went in and `platforms=macos` was dispatched twice. Run 34909163579 died on
+`security import … -P` with *MAC verification failed during PKCS12 import (wrong password?)* — and
+that one was a wrong password; a local `security import` into a throwaway keychain reproduced it in
+seconds and a re-export fixed it. Run 34910069869 got past the import and died one command later,
+`security set-key-partition-list … -k ***`, with *SecKeychainUnlock: The user name or passphrase you
+entered is not correct.*
+
+**Cause.** The `***` was the clue: GitHub masks an argument only when it equals a secret, so the
+value being passed as the *keychain* password was `MAC_CSC_KEY_PASSWORD`, the certificate's. Read out
+of `app-builder-lib` 26.15.3 `macCodeSign.js`: `createKeychain` makes the keychain with
+`randomBytes(32).toString("base64")` and never hands that to `importCerts`, which reuses the p12
+password for `-k`. An upstream regression present in 26.15.3–26.16.0 and fixed in 26.16.1 (published
+2026-09-07, the fix's own comment names the mistake). npm's `latest` still pointed at 26.15.3.
+
+**Fix.** `electron-builder` `^26.15.3 → ^26.16.1`; lock delta confined to its own family. Proven
+locally by `./scripts/build-mac.sh` on 26.16.1 — signed, `flags=0x10000(runtime)` — which exercises
+the new version's signing but not the temp-keychain path, since a local build finds the identity in
+the login keychain and never calls `createKeychain`. ⭐ What generalises: the local build and the CI
+build take **different code paths to the same certificate**, so a green `build-mac.sh` says nothing
+about `CSC_LINK`. Rejected: pre-importing the certificate in a workflow step and pointing
+`CSC_KEYCHAIN` at it, which would have worked on any version but duplicated what the library does.

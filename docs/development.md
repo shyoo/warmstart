@@ -143,9 +143,9 @@ tagging `v<version>`; the release workflow rejects a tag that does not name `ver
 
 ### macOS signing and the hardened runtime
 
-⛔ **Nothing in this section has been run on a Mac.** The settings are in the tree so that the
-first Mac session is debugging rather than configuration; every claim below is read out of
-`app-builder-lib` 26.15.3's own source, not out of a build log. Pinned by
+Every claim in the table below was read out of `app-builder-lib` 26.15.3's own source and re-checked
+against 26.16.1, not out of a build log; the owner's Mac has since built a bundle that `codesign`
+reports as signed with the hardened runtime (2026-09-14). Pinned by
 [`src/daemon/macsigning.test.ts`](../src/daemon/macsigning.test.ts), which runs everywhere and proves
 only what the configuration *asks for*.
 
@@ -179,10 +179,23 @@ fail on its own.
    `com.apple.security.cs.allow-dyld-environment-variables` — the plists say why it is deliberately
    absent.
 4. **`npm run test:pack`** against the signed bundle, then drive a real task end to end.
-5. **Only then** add the five release secrets (`MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`, `APPLE_ID`,
-   `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID`) and dispatch the release workflow with
-   `platforms=macos`. ⚠️ macOS runners bill at roughly ten times the Linux rate, so it is worth
-   having the answer before spending one.
+5. **Only then** dispatch the release workflow with `platforms=macos`. The five repository secrets
+   it reads (`MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`,
+   `APPLE_TEAM_ID`) are set (2026-09-14): `MAC_CSC_LINK` is the bare base64 of the exported `.p12`
+   (`base64 -i cert.p12 | gh secret set MAC_CSC_LINK`; `decodeCscLinkBase64` accepts anything over
+   2,048 chars), and the three `APPLE_*` values are all-or-nothing in `getNotarizeOptions`. ⚠️ macOS
+   runners bill at roughly ten times the Linux rate, so it is worth having the answer before spending
+   one.
+
+⛔ **electron-builder must be ≥ 26.16.1 for `CSC_LINK` to work at all.** Measured on runs
+34909163579 and 34910069869 (2026-09-14): 26.15.3–26.16.0 create the temporary keychain with a
+random password, then run `security set-key-partition-list -k <p12 password>` — the certificate's
+password where the *keychain's* is required — so every CI signing attempt died on `SecKeychainUnlock:
+The user name or passphrase you entered is not correct`, with the argument masked as `***` because it
+equalled the secret. The local build never sees this: it signs from the login keychain and skips
+`createKeychain`. npm's `latest` tag still pointed at 26.15.3 when this was found; the fix is in the
+`v26` tag. A password error on the `security import -P` line before it *is* a wrong
+`MAC_CSC_KEY_PASSWORD` — the first run was that.
 
 ⭐ **If the hardened runtime does break node-pty, that is a finding, not a defeat** — write down
 which binary failed validation and how, because it decides whether the fix is an entitlement, a

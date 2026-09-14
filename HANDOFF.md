@@ -7,13 +7,13 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-14, **Windows 11 x64**, measured on this branch's tip): typecheck, lint pass; L1
-**3,460 passed, 4 skipped** (199 files); L2 **203 checks** (5 skipped); L3 **436 passed, 4 skipped**,
-now at a pinned 1024×720 window (was 440 at 1440×900); L4 **19 checks** as of `3489bc0`, not rerun
-for t445.2. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
-`3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**; ⛔ the
-**Release** workflow is deliberately still disabled, so that the first macOS runner is spent only
-once the Mac has answered locally.
+Baseline (2026-09-14, **macOS 13 arm64**, measured on this branch's tip with electron-builder
+26.16.1): typecheck, lint pass; L1 **3,461 passed, 5 skipped** (200 files); L2 **203 checks** (5
+skipped); L3 **434 passed, 6 skipped** at the pinned 1024×720 window; L4 **17 checks** against a
+signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
+`3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
+**Release** workflow: it has been dispatched twice with `platforms=macos` (item 6 below), so a `v*`
+tag now builds both platforms.
 
 ## Closed in this cleanup
 
@@ -43,8 +43,8 @@ once the Mac has answered locally.
   with no certificate produces a bundle the flag was never applied to, identical in name and size to
   one that passed. `scripts/build-mac.sh` and the release workflow now read the bundle back with
   `codesign` and print which happened. ✅ The owner's Mac built it **signed with the hardened
-  runtime** (2026-09-14); not notarised, and nothing has yet been run under it. [`docs/development.md`](docs/development.md) §3 has the
-  first-session checklist, certificate first.
+  runtime** (2026-09-14, also on electron-builder 26.16.1); not notarised, and nothing has yet been
+  run under it. [`docs/development.md`](docs/development.md) §3 has the first-session checklist.
 - **The controller's label consult stopped dropping itself as "overtaken" (t440, 2026-09-14).**
   `questionStillStands` had no branch for the `title` kind and fell through to `triage`'s gate —
   `awaiting_human` or `failed` only — so a label asked about a task doing its ordinary work (`ready`,
@@ -137,11 +137,12 @@ a unit test.
    reports a build signed with the hardened runtime, and `npm run test:pack` passes on the Mac (all
    2026-09-14). Remaining: launch *that* bundle, open a PTY, and drive one real task. Still unverified either way: detached daemon startup without system Node
    under the hardened runtime, Application Support isolation, Antigravity's Keychain, Gatekeeper.
-6. **Execute the release pipeline for macOS.** The config is ready (item 5's entry above); the five
-   Apple secrets are not set and `platforms=macos` has never run — Windows was proven end to end
-   2026-09-12. ⚠️ The Release workflow is **disabled on purpose** so a macOS runner, ~10× the Linux
-   rate, is not spent before the answer is known locally. Windows stays unsigned initially. Release
-   notes must tell upgraders to uninstall the old app, because the `appId` changed.
+6. **Execute the release pipeline for macOS.** The five Apple secrets are set (2026-09-14) and
+   `platforms=macos` has run twice: 34909163579 (a wrong `.p12` password) and 34910069869, which
+   imported the certificate and then died in electron-builder 26.15.3's own keychain unlock — the
+   bump to 26.16.1 is the fix ([`docs/development.md`](docs/development.md) §3). ⏭ Re-dispatch;
+   notarisation is the first step nothing has reached yet. Windows stays unsigned. Release notes
+   must tell upgraders to uninstall the old app, because the `appId` changed.
 7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.
