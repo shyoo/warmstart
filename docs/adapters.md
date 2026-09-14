@@ -204,13 +204,13 @@ revived into a *different pool slot*, rename or no rename, which is a thing this
 a cold start. The worktree the dispatch claimed is the authority on where a run works; declining the
 resume instead would pay a full cold start for a prefix that is sitting right there.
 
-### Three faults behind one message: *"its usage panel did not appear"*
+### Four faults behind one message: *"its usage panel did not appear"*
 
 ⛔ **Measured 2026-09-07 on MuseFirst, commissioned and signed in that morning** (t266). The first
 probe reported *"`/usage ` was typed into MuseFirst but its usage panel did not appear"* and pointed
 at a folder-trust dialog. It had been typed, no dialog was in the way, and **three separate things
 were wrong** — each of which alone produces that same sentence, which is why the message had to stop
-being a guess.
+being a guess. A fourth arrived with Muse 1.2.1 (below).
 
 **1. The return must not travel with the command.** `driveScreenProbe` wrote `'/usage \r'` in one
 `write`; through this app's own PTY that leaves `/usage` sitting in the composer, unsent — four
@@ -257,6 +257,19 @@ its probes had read 5h values from **35% to 80%** and 7d values from **46% to 62
 window reset, the same accepted `/usage` command again read `Currently unavailable`. The provider
 publishes no reason and no local file contains these windows, so the app records an unknown reading
 and does not tell an operator to spend a turn as a remedy.
+
+**4. The TUI asks its terminal a question, and a probe PTY has nobody to answer it.** ⭐ Measured
+2026-09-13 on macOS against Muse Code 1.2.1 (t1, t3): every probe on a signed-in, folder-trusted
+worker read *"the probe session did not start"*, and the daemon log showed why — `session … exited
+with 0` **6.7s after the spawn**, before `readyMs` (14s) had elapsed, so `/usage` was typed into a
+process that was gone. Spawned the same way outside the app, muse wrote its colour, keyboard-protocol
+and device-attribute queries, then `ESC[6n` (*report cursor position*) at +2.3s and again at +4.3s,
+and exited at +6.4s having drawn nothing; run against the user's own config root it said so on the
+way out: *"The cursor position could not be read within a normal duration"*. 1.0.3, which this
+adapter was measured on, did not ask. A person's session never saw it because xterm.js answers the
+query itself. `termquery.ts` now answers that one request (`ESC[1;1R`) on `probe` PTYs, and the
+same spawn then started and drew the panel on the first `/usage `. ⚠️ The colour and DA queries are
+deliberately left unanswered: the TUI was measured to carry on without them.
 
 ⛔ So *"what did the screen say"* has a third answer, and adapters now have somewhere to put it:
 **`usageUnavailable(screen)`** returns the sentence a person is shown when the panel drew and said

@@ -194,7 +194,9 @@ const info: AdapterInfo = {
       'the fresh-root first-run screens, and the full Windows-spawn bridge end to end. ' +
       '⭐ `--image` flown 2026-09-07, in both directions: it answers a prompt carrying a real PNG ' +
       'with the XDG data home on ext4, and refuses with exit 1 — *asset directory permissions must ' +
-      'be 0700, got 0777* — with the data home on a Windows volume, which is how this fleet runs it.'
+      'be 0700, got 0777* — with the data home on a Windows volume, which is how this fleet runs it. ' +
+      '⚠️ 1.2.1 (macOS, 2026-09-13) asks its terminal for the cursor position at startup and exits ' +
+      'when unanswered; the probe PTY answers it (termquery.ts). Not re-measured on 1.0.3.'
   }
 }
 

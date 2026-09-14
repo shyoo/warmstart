@@ -16,6 +16,15 @@ code. ⚠️ L4 proves the *package*, not this change's screens — see remainin
 
 ## Closed in this cleanup
 
+- **A probe PTY answers the TUI's cursor-position query (t3, 2026-09-13).** Muse Code 1.2.1 writes
+  `ESC[6n` at startup and exits 0 at +6.4s unanswered — before `readyMs` — so every `/usage` probe
+  read *"the probe session did not start"* on a signed-in, trusted worker (t1's trust fix was in the
+  packaged app and was not the cause). `termquery.ts` answers that one request on `probe` PTYs only;
+  xterm.js answers it for a watched session. Proven through the real `spawnSession` in
+  [`probepty.test.ts`](src/daemon/probepty.test.ts) (red without the wiring). ⚠️ Not yet driven in
+  the packaged app: the running daemon hosts this task, so it could not be restarted from here —
+  rebuild, press **Refresh** on Muse, and expect *Currently unavailable* until the account completes
+  one turn (adapters.md, fault 3).
 - **Antigravity CLI commissioning and live quota probe on macOS (2026-09-13).** Standalone OAuth credentials
   live in `~/.gemini/jetski-standalone-oauth-token` and auth user emails in `antigravity-cli/cli.log`.
   `readAntigravityIdentity` previously checked only `google_accounts.json` and `oauth_creds.json`, falsely

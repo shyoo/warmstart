@@ -292,6 +292,12 @@ it nowhere (measured 2026-08-27; see [`adapters.md`](adapters.md)). ⛔ Such a p
 a rendering fails — return null rather than a partial reading. The first live run proved why: at 30
 rows the panel scrolled, a window fell below the fold, and three of four came back looking complete.
 
+⚠️ **Answering a terminal query is not reading state.** A probe PTY has no terminal on the other end,
+and a TUI that asks its terminal *where is the cursor?* (`ESC[6n`) and hears nothing may refuse to
+start — Muse Code 1.2.1 exits 0 at +6.4s, measured 2026-09-13. `termquery.ts` answers that one
+request, with a fixed stand-in, on `probe` sessions only; a session a person watches is answered by
+xterm.js. Nothing in the reply is ever read back as a fact about the session.
+
 ⛔ **And the rule runs the other way too: never write keystrokes into something that is not a
 keyboard.** A dispatched session's stdin is `stream-json`, not a terminal. Measured 2026-09-13 on
 claude 2.1.270, three raw characters ahead of the next message corrupted it and **exited the CLI 1**

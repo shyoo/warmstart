@@ -25,6 +25,7 @@ import { removeMcpConfig, writeMcpConfig } from './mcpconfig.js'
 import { StreamParser, describeStream, renderForHuman, type StreamEvent } from './stream.js'
 import { settings } from './settings.js'
 import { formatCmdInvocation, unwrapForPty } from './which.js'
+import { terminalAnswerer } from './termquery.js'
 import { appEnv } from '@shared/env.js'
 
 /**
@@ -1025,10 +1026,31 @@ export function spawnSession(opts: SpawnOptions): Session {
     )
   }
 
+  // ⛔ A probe PTY has no terminal on the other end. A person's session is drawn by xterm.js, which
+  // answers the TUI's *where is the cursor?* itself; the usage probe is watched by nobody, and a
+  // CLI that waits for that answer exits before `/usage` is ever typed — measured 2026-09-13 on
+  // Muse Code 1.2.1, gone at +6.4s with `readyMs` at 14s. See termquery.ts for what is answered.
+  const answerer = purpose === 'probe' && transport !== 'stream' ? terminalAnswerer() : null
+  const onPtyData = answerer
+    ? (data: string) => {
+        emitData(data)
+        const reply = answerer.push(data)
+        // ⚠️ The channel itself, not `live` — the first query can arrive before the row is
+        // registered. Called only from the PTY's own data path, so `channel` is assigned by then.
+        if (reply) {
+          try {
+            channel.write(reply)
+          } catch (err) {
+            log.debug('terminal reply ignored:', err)
+          }
+        }
+      }
+    : emitData
+
   const channel =
     transport === 'stream'
       ? openPipes(plan, cwd, emitData, handleExit)
-      : openPty(plan, cwd, opts.cols ?? 120, opts.rows ?? 30, emitData, handleExit)
+      : openPty(plan, cwd, opts.cols ?? 120, opts.rows ?? 30, onPtyData, handleExit)
 
   // Metered like anything else: a judgment call is not free, and the ledger reports what each one
   // cost from this transcript rather than from an estimate.
