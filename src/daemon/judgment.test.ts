@@ -8,12 +8,13 @@ import {
   applyConsult,
   fallbackFor,
   MAX_TITLE_SUMMARY,
+  questionStillStands,
   TITLE_SUMMARY_THRESHOLD,
   titleQuestion,
   validateRoute,
   validateTitleSummary
 } from './judgment.js'
-import { createTask, getTask, listTasks, messagesFor, updateTask } from './tasks.js'
+import { createTask, getTask, listTasks, messagesFor, setStatus, updateTask } from './tasks.js'
 
 /**
  * What actually happens to the board when the controller answers — and when it does not.
@@ -366,6 +367,29 @@ describe('the summarised title', () => {
     // a person needs to know; this would put a note on every long task about a question the operator
     // never saw the point of having asked.
     expect(messagesFor(task.id)).toHaveLength(before)
+  })
+
+  /**
+   * t440: `questionStillStands` had no branch for `title` and fell through to `triage`'s gate, which
+   * only accepts `awaiting_human` or `failed`. A label is asked about a task while it is doing its
+   * ordinary work — `ready`, `assigned`, `running` — so almost every title consult was dropped as
+   * "overtaken" before the controller was ever asked, and the ledger read as nearly every label
+   * failing.
+   */
+  it('still stands while the labelled task is doing its ordinary work', () => {
+    const task = createTask({ title: LONG })
+    for (const status of ['ready', 'assigned', 'running'] as const) {
+      setStatus(task.id, status)
+      expect(questionStillStands(consultFor('title', task.id))).toEqual({ ok: true, reason: '' })
+    }
+  })
+
+  it('is overtaken once the labelled task is actually finished', () => {
+    const task = createTask({ title: LONG })
+    for (const status of ['completed', 'cancelled', 'failed'] as const) {
+      setStatus(task.id, status)
+      expect(questionStillStands(consultFor('title', task.id)).ok).toBe(false)
+    }
   })
 
   /**

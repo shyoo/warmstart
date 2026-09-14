@@ -333,6 +333,14 @@ export function questionStillStands(consult: Consult): { ok: boolean; reason: st
       ? { ok: true, reason: '' }
       : { ok: false, reason: `the task is already ${task.status}` }
   }
+  if (consult.kind === 'title') {
+    // ⛔ A label is asked about a task that is very likely still running — that is the whole
+    // point of it. Falling through to triage's `awaiting_human`/`failed` gate dropped almost
+    // every title consult as "overtaken" before it was ever answered.
+    return ['completed', 'cancelled', 'failed'].includes(task.status)
+      ? { ok: false, reason: `the task is already ${task.status}` }
+      : { ok: true, reason: '' }
+  }
   // triage
   return task.status === 'awaiting_human' || task.status === 'failed'
     ? { ok: true, reason: '' }

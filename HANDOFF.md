@@ -19,6 +19,15 @@ two commits after `d27a282` have no runner counts.
 
 ## Closed in this cleanup
 
+- **The controller's label consult stopped dropping itself as "overtaken" (t440, 2026-09-14).**
+  `questionStillStands` had no branch for the `title` kind and fell through to `triage`'s gate —
+  `awaiting_human` or `failed` only — so a label asked about a task doing its ordinary work (`ready`,
+  `assigned`, `running`) was dropped before the controller was ever asked, reading as nearly every
+  label consult failing. It now stands until `completed`, `cancelled` or `failed`, matching
+  `askForTitle`. ⚠️ The Enter-key report in the same task was not a code bug: `isSubmitKey` is
+  correct and identically wired in every composer; the Ctrl+Enter preference had reset because
+  `ui-settings.json` only survives an `agentyard` → `Warmstart` productName change if the old
+  install's data directory is still on disk when the new build first runs — item 6's known cost.
 - **The live thread tail named landing correctly (t438, 2026-09-14).** A task with `task.landing`
   true still counted as `live` output because `showsLiveOutput` only looks at `status`, so the empty
   tail read *"waiting for the agent's first words…"* while the agent had already finished and the
@@ -53,21 +62,15 @@ two commits after `d27a282` have no runner counts.
 - **Muse reasoning-effort choices are available end to end (2026-09-14).** The catalogue offers
   `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `ultra`; controls pass them to Muse. ⚠️ The regression test rejects retired `max`.
 - **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).**
-  ⭐ *The reorder arrows could not be clicked, and vanished on hover.* The workers table re-lays its
-  rows out as cards where the order cell and the worker cell are given the **same grid area**; overlaps
-  paint in tree order, so the worker cell was on top for hit-testing, and `.tbl tr:hover td` gave it a
-  background that painted over the arrows too. The cell is now `position: relative; z-index: 1`.
-  ⛔ Every DOM-level check was green through all of it: a scripted `.click()` bypasses hit-testing, so
-  the new check asks `elementFromPoint` ([`docs/testing.md`](docs/testing.md) §3).
-  ⭐ *A sign-in runs beside the credential, not beside the operator.* Commissioning while driving
-  another computer opened the vendor's OAuth browser on **that** computer's screen while the Sign in
-  terminal here waited. `SignInLocationWarning` (above *Create and sign in*, and again in the Sign in
-  panel) names the machine when one is selected, and otherwise states the rule for an RDP/VNC operator
-  to apply — the app cannot detect that case. [`docs/remote.md`](docs/remote.md).
-  ⭐ *A host left running to take work slept mid-run.* `preventSleep` (`UiSettings`, **default on**,
-  the only App-behavior switch that is) holds a `powerSaveBlocker('prevent-app-suspension')`, applied
-  at launch as well as on change. ⚠️ Idle sleep only — not a closed lid, and the copy says so.
-  ⛔ Per-install, so the setting deciding whether a run survives the night is the **host's**. ⚠️ None of the three driven in the packaged app.
+  ⭐ The workers table's reorder arrows could not be clicked and vanished on hover — the order cell and
+  worker cell shared one grid area, so hover painted over the arrows; the order cell is now
+  `position: relative; z-index: 1`, caught only by `elementFromPoint`, since a scripted `.click()`
+  bypasses hit-testing ([`docs/testing.md`](docs/testing.md) §3).
+  ⭐ A sign-in run while driving another computer opened the vendor's OAuth browser on *that* screen;
+  `SignInLocationWarning` names the machine or states the rule for an RDP/VNC operator to apply.
+  ⭐ A host left running to take work could sleep mid-run; `preventSleep` (`UiSettings`, default on)
+  holds a `powerSaveBlocker`, per-install since the setting deciding whether a run survives the night
+  is the host's. ⚠️ None of the three driven in the packaged app.
 - **The thread ledger reads as one list (2026-09-13).** Operational facts lead, run prompt and
   activity references open compact dialogs, and the model row separates the latest run from
   next-run choices.
@@ -91,13 +94,12 @@ two commits after `d27a282` have no runner counts.
   PTYs only, proven through the real `spawnSession` in
   [`probepty.test.ts`](src/daemon/probepty.test.ts). ⚠️ Not yet driven in the packaged app: rebuild,
   press **Refresh** on Muse, and expect *Currently unavailable* until the account completes one turn.
-- **Antigravity CLI commissioning and live quota probe on macOS (2026-09-13).** `readAntigravityIdentity`
-  and `probeIdentity` now read the OAuth token and auth email the CLI writes instead of returning a
-  false `loggedIn: false` that locked the worker into `Antigravity: unknown`; the live packaged probe
-  reads all 4 quota windows in 6s.
+- **Antigravity CLI commissioning and live quota probe on macOS (2026-09-13).**
+  `readAntigravityIdentity`/`probeIdentity` read the OAuth token and auth email instead of a false
+  `loggedIn: false` that locked the worker into `Antigravity: unknown`; the live packaged probe reads
+  all 4 quota windows in 6s.
 - **The diff moved out of the thread into a Diff pane (t425, 2026-09-13).** `DiffPane` is a column of
-  the shell right of the work — its own drag handle, full height, one scroll, sticky file headers.
-  The inline **Changes in this task** keeps its file list and draws no patch.
+  the shell right of the work; the inline **Changes in this task** keeps its file list and draws no patch.
 - **Claude Code narrates its work, and the Session TUI stopped pretending to be one (t423, 2026-09-13).**
   Tool calls emit declared `StreamEvent.tool_use`; `liveNarration` (default `summary`) buys word-by-word
   prose; the Session TUI draws `SessionStream` for a piped session and xterm for a PTY one.
