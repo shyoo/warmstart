@@ -72,6 +72,23 @@ npm run pack         # electron-builder --dir → release/win-unpacked
 npm run dist         # installers for the current platform (dist:win / dist:mac / dist:linux)
 ```
 
+### `scripts/generate-readme-assets.mjs` — the README screenshots
+
+`node scripts/generate-readme-assets.mjs [scene …]` after `npm run build` writes `docs/images/*.png`
+from the real renderer, driving a fictional fleet: three invented accounts, a throwaway git project
+under `out/showcase/`, and tasks, runs and quota readings written straight into a scratch database.
+No real account, project or CLI is touched and no task is ever `ready`, so nothing dispatches.
+
+⛔ **A window appears for about a minute, and that is the mechanism.** Under `WARMSTART_HEADLESS=1`
+the window is never shown, Chromium paints nothing, and `Page.captureScreenshot` waits for ever —
+measured 2026-09-11 and again on 2026-09-14, when the first version of this script was found never
+to have produced an image. ⚠️ **Two launches.** Run prices are memoised in the daemon and nothing an
+outside process can call invalidates them, so finished history is seeded *before* the daemon that
+serves the screenshots starts; running tasks are seeded *after* it, because `reconcileTasks` at
+startup reaps every `running` task whose daemon died. ⛔ Each launch ends with `daemon.shutdown` and
+a wait on the lock file's pid: `Browser.close` alone leaves orchestratord running, and six of them
+were found holding six scratch databases before that was understood.
+
 ⚠️ **Type-aware lint rules are on.** They cost a TypeScript program per run and are the only rules
 that can see the mistakes this codebase actually makes — a floating promise in a process-spawning
 daemon, a `String(x)` on a value a vendor may send as an object, an `any` out of `JSON.parse`. ⛔ A

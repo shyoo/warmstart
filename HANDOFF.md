@@ -24,10 +24,8 @@ two commits after `d27a282` have no runner counts.
   tail read *"waiting for the agent's first words…"* while the agent had already finished and the
   branch was rebasing, verifying or merging. `Thread` now takes a `landing` prop and swaps the
   placeholder to *"landing — rebasing, verifying and merging…"* when it is set.
-- **Thread detail controls: Stop button layout and color, compact dependency remove, and Statistics toggle (t437, 2026-09-14).**
-  ⭐ *Stop button*: Replaced oversized `setting-btn-select` class with standalone `.task-stop`, aligning it horizontally beside status text without wrapping, styled in red danger state (`--state-danger`).
-  ⭐ *Depends on Remove button*: Scaled down `.dep-remove` by removing oversized `min-width: 76px; min-height: 30px` and setting compact padding (`1px 6px`) and `var(--text-meta)`.
-  ⭐ *Statistics toggle*: Replaced text button with standard `SettingSwitch` toggle matching global "Automatic compaction" setting.
+- **Thread controls (t437, 2026-09-14).** Stop is a compact red `.task-stop` beside the status;
+  `.dep-remove` lost its oversized minimums; the Statistics toggle is a `SettingSwitch`.
 - **Muse could not grade anything, and the app would not say why (t436, 2026-09-14).** Muse Code
   1.1.1 reads `<workspace>/.codex/skills` at startup and exits 1 in ~4.5s against a non-directory
   (`runtime host failed to start: … Not a directory (os error 20)`, stderr, stdout empty). This
@@ -39,8 +37,16 @@ two commits after `d27a282` have no runner counts.
   the reviewer and `onSessionExit` reported an unexplained death. `sessionDiagnostics` keeps a
   bounded tail and both now quote it. ⚠️ The retention *plumbing* has no L1 test — no declarative
   adapter decodes a stream — so it is proven only by the pure functions either side of it.
-- **README is now a concise, visual product tour (t435, 2026-09-14).** Nine isolated showcase
-  visuals lead; durable security detail moved to [`docs/security.md`](docs/security.md).
+- **The README is a user guide with real screenshots (t439, 2026-09-14).** t435 had replaced it with
+  nine hand-drawn SVG mock-ups and a capture script that never produced an image (it died on the
+  adapter id `codex`, and ran headless, where `Page.captureScreenshot` never returns). The README now
+  walks a first run — account, project, task, thread, landing, debate — around twelve PNGs that
+  `scripts/generate-readme-assets.mjs` captures from the built renderer against a fictional fleet
+  ([`docs/development.md`](docs/development.md) §2). ⭐ Two things the script had to learn: the
+  daemon memoises run prices and nothing outside can invalidate them, so history is seeded before
+  the capturing daemon starts and live state after; and `Browser.close` leaves orchestratord
+  running — six orphans were found on this machine — so every launch now ends with `daemon.shutdown`
+  and a wait on the lock file's pid.
 - **The status bar spans the full window as `.shell`'s own grid row (t434, 2026-09-14)** — it used
   to sit inside `.main`'s flex column, so its border stopped at the resizable sidebar's edge.
   **Global › Status no longer repeats Notice's warnings (t433):** only Notice lists them.
@@ -106,8 +112,6 @@ two commits after `d27a282` have no runner counts.
   replaces every path `icacls /reset` refuses (on **stderr**, which the old call discarded), 7.2 s for
   19.7k files. ⭐ *A Muse run bridged through WSL rewrote ws3's `.git` pointer*; pool pointers are now
   **relative**. ⚠️ Whether muse's `edit_file` accepts that is inferred, not measured.
-- **Database backups and trunk mode.** `backup.ts` copies `warmstart.db` daily (14-day prune); trunk mode allows working in the project checkout itself (`trunkmode.test.ts`).
-- **Compaction loops and thread diffs.** `cacheclock.ts` prevents compaction loops; `taskdiff.ts` shows commit diffs before landing.
 - **Security model and loose ends cleanup.** Unattended permission mode documented (`docs/security.md`); squash-merged PRs and report-only tasks cleanly retire under Loose ends.
 
 ## Remaining work — ordered by payoff
