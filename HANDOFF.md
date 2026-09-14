@@ -8,13 +8,29 @@ The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-14, **Windows 11 x64**, measured on this branch's tip): typecheck, lint, build
-pass; L1 **3,450 passed, 4 skipped** (197 files); L2 **203 checks** (5 skipped); L3 **440 checks**;
-L4 **19 checks** against `release/win-unpacked`. Last CI seen (HEAD `d27a282`, run 34798079433,
-green on all seven jobs): L2 198 on both runners; L3 **425** on Windows (4 skipped) and **424** on
-Linux (5 skipped) — the skips name the screen; L4 19 on Windows, 17 on Linux. ⚠️ CI was disabled by
-the owner around 2026-09-13; the commits after `d27a282` have no runner counts.
+pass; L1 **3,458 passed, 4 skipped** (198 files); L2 **203 checks** (5 skipped); L3 **440 checks**;
+L4 **19 checks** against a freshly packed `release/win-unpacked`. ⚠️ L1 was 3,450 in the previous
+handoff and is 3,458 here: **+6 are this branch's new `macsigning.test.ts`**, measured by running the
+suite with the change stashed (3,452 on the branch tip), and the other +2 predate it — the old figure
+was stale, not wrong about anything. Last CI green on all seven jobs: `397ef82`, run 34798606736. CI
+is **enabled**; ⛔ the **Release** workflow is deliberately still disabled, so that the first macOS
+runner is spent only once the Mac has answered locally.
 
 ## Closed in this cleanup
+
+- **macOS signing is configured, and the config now says which of three things a build did (t445,
+  2026-09-14).** `hardenedRuntime: true`, `identity` *absent* rather than `null`, `notarize: false`,
+  and explicit entitlements in `resources/entitlements.mac.*.plist`. ⛔ The measurement that changed
+  the shape of the fix, read out of `app-builder-lib` 26.15.3 rather than a vendor doc: notarisation
+  is called from **inside** `sign()`, so `identity: null` silently disabled signing, notarisation and
+  the hardened runtime in one line — and `hardenedRuntime` already *defaults to true* for a non-MAS
+  build, so `false` had been an explicit opt-out. ⭐ The half that generalises: **an unsigned build
+  proves nothing about the hardened runtime**, because the runtime is a signing flag — a machine
+  with no certificate produces a bundle the flag was never applied to, identical in name and size to
+  one that passed. `scripts/build-mac.sh` and the release workflow now read the bundle back with
+  `codesign` and print which happened. ⚠️ **None of it has run on a Mac**; `macsigning.test.ts`
+  pins only what the configuration asks for. [`docs/development.md`](docs/development.md) §3 has the
+  first-session checklist, certificate first.
 
 - **The controller's label consult stopped dropping itself as "overtaken" (t440, 2026-09-14).**
   `questionStillStands` had no branch for the `title` kind and fell through to `triage`'s gate —
@@ -69,16 +85,10 @@ the owner around 2026-09-13; the commits after `d27a282` have no runner counts.
   ⭐ A host left running to take work could sleep mid-run; `preventSleep` (`UiSettings`, default on)
   holds a `powerSaveBlocker`, per-install since the setting deciding whether a run survives the night
   is the host's. ⚠️ None of the three driven in the packaged app.
-- **The thread ledger reads as one list (2026-09-13).** Operational facts lead, run prompt and
-  activity references open compact dialogs, and the model row separates the latest run from
-  next-run choices.
-- **Quality Review's copy and tile labels read as one page (t430, 2026-09-13).** `.prose-note` holds
-  every paragraph on the page to the same 62ch, and the four count tiles are named for eligibility —
-  *Gradable tasks with 0 reviews / only 1 review / 2+ reviews* and *Non-gradable tasks*.
-- **The three-axis plot trusts its own data and remembers its filter (t429, 2026-09-13).**
-  `measuredModelPoints` drops any model whose weakest axis is under `MIN_TRUSTED_SAMPLES` (5); the
-  "Exclude API rate & mixed" checkbox persists via `lib/prefs.ts`; and each axis's low-end label moved
-  off the shared origin point, which had drawn three strings stacked into garbled text.
+- **Three reading passes over existing pages (t429/t430, 2026-09-13).** The thread ledger reads as
+  one list; Quality Review's paragraphs share a 62ch `.prose-note` and its tiles are named for
+  eligibility; the three-axis plot drops any model under `MIN_TRUSTED_SAMPLES` (5) and persists its
+  "Exclude API rate & mixed" filter.
 - **CI on `main` is green again (2026-09-13).** Six task-table checks failed on both runners after
   the ~30-commit merge `3ff9ffd`; three measured causes, all written up in
   [`docs/testing.md`](docs/testing.md) §3. Dep and Took now collapse together at a 660px panel.
@@ -96,23 +106,11 @@ the owner around 2026-09-13; the commits after `d27a282` have no runner counts.
   `readAntigravityIdentity`/`probeIdentity` read the OAuth token and auth email instead of a false
   `loggedIn: false` that locked the worker into `Antigravity: unknown`; the live packaged probe reads
   all 4 quota windows in 6s.
-- **The diff moved out of the thread into a Diff pane (t425, 2026-09-13).** `DiffPane` is a column of
-  the shell right of the work; the inline **Changes in this task** keeps its file list and draws no patch.
-- **Claude Code narrates its work, and the Session TUI stopped pretending to be one (t423, 2026-09-13).**
-  Tool calls emit declared `StreamEvent.tool_use`; `liveNarration` (default `summary`) buys word-by-word
-  prose; the Session TUI draws `SessionStream` for a piped session and xterm for a PTY one.
-- **t410–t422, all landed and all documented in [`docs/`](docs/README.md) (2026-09-13).** macOS
-  worktree symlink resolution and GUI-launch PATH search; Global settings split into task-oriented
-  tabs; *Later observed* reconciliation when a push lands after a local landing; one desktop driving
-  another computer's fleet (picker above Overview, TLS over the Tailnet hostname, RPC range ±1); the
-  92% high-water preemption guard, canonical `version.json`, retained locks in Flow's Awaiting, the
-  composer workspace pill, credit gauges and `sweepAcls`.
-- **Two dispatch faults measured off t408 and t410 (2026-09-13).** ⭐ *A sandboxed Codex run cannot
-  write a file a sandboxed run wrote* — a dead run's DACL; `sweepAcls` ([`acl.ts`](src/daemon/acl.ts))
-  replaces every path `icacls /reset` refuses (on **stderr**, which the old call discarded), 7.2 s for
-  19.7k files. ⭐ *A Muse run bridged through WSL rewrote ws3's `.git` pointer*; pool pointers are now
-  **relative**. ⚠️ Whether muse's `edit_file` accepts that is inferred, not measured.
-- **Security model and loose ends cleanup.** Unattended permission mode documented (`docs/security.md`); squash-merged PRs and report-only tasks cleanly retire under Loose ends.
+- **t408–t425, all landed and all documented in [`docs/`](docs/README.md) (2026-09-13).** The Diff
+  pane; Claude Code's `StreamEvent.tool_use` narration and the split Session TUI; macOS worktree
+  symlink resolution and GUI-launch PATH search; task-oriented Global settings; *Later observed*
+  reconciliation; one desktop driving another's fleet; the 92% preemption guard; `sweepAcls` for a
+  dead run's DACL; **relative** pool `.git` pointers; unattended permission mode in `docs/security.md`.
 
 ## Remaining work — ordered by payoff
 
@@ -133,14 +131,17 @@ a unit test.
    [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §7.
 4. **Run human-in-the-loop, `commit-and-merge`, and cross-task reuse with a real agent.** The code
    and L1–L3 checks exist, but this has not been demonstrated in flight.
-5. **Run on macOS with a real CLI; this is the launch gate.** Local build, packaged execution and
-   L1–L4 pass on macOS arm64; driving real agent tasks in flight does not. Still to verify: detached
-   daemon startup without system Node under hardened runtime, Application Support isolation,
-   Antigravity's Keychain interaction, and Gatekeeper. The signed arm64 release waits on it.
-6. **Execute the signing/release pipeline.** macOS signing and notarisation are decided; required
-   secrets are not configured and `.github/workflows/release.yml` has never run. Windows is
-   intentionally unsigned initially. Release notes must tell upgraders to uninstall the old app,
-   because the `appId` changed.
+5. **Run the *signed* app on macOS with a real CLI; this is the launch gate.** The owner confirmed
+   an unsigned macOS build compiles, runs and pairs in remote mode (2026-09-14) — ⛔ which is the
+   state immediately *before* the risky change, not after it. Install the Developer ID certificate,
+   run `./scripts/build-mac.sh`, and believe its signing line; then open a PTY, `npm run test:pack`,
+   and drive one real task. Still unverified either way: detached daemon startup without system Node
+   under the hardened runtime, Application Support isolation, Antigravity's Keychain, Gatekeeper.
+6. **Execute the release pipeline for macOS.** The config is ready (item 5's entry above); the five
+   Apple secrets are not set and `platforms=macos` has never run — Windows was proven end to end
+   2026-09-12. ⚠️ The Release workflow is **disabled on purpose** so a macOS runner, ~10× the Linux
+   rate, is not spent before the answer is known locally. Windows stays unsigned initially. Release
+   notes must tell upgraders to uninstall the old app, because the `appId` changed.
 7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.

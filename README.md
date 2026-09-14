@@ -219,6 +219,18 @@ What does bound an agent: the task's mandate (what it may ask the fleet to do), 
 every spawned CLI. Treat every prompt and every repository an agent reads as untrusted input.
 [docs/security.md](docs/security.md) is the full statement.
 
+### Accounts and your providers' terms
+
+Warmstart never reads, copies, stores or proxies a credential. It runs each vendor's own CLI, signed
+in through that vendor's own login flow, with each account in its own isolation directory — so a
+token is only ever used by the tool it was issued to. Warmstart also cannot give an account more
+capacity than its provider grants: it reads each account's own published usage figures, declines
+work an account cannot afford, and stops *before* a limit rather than after.
+
+**Every account you commission must be one you are separately and legitimately subscribed to and
+entitled to use.** Warmstart does not create accounts and does not share one between people. This is
+not legal advice, and your provider's current terms govern, not this page.
+
 ## Development
 
 ```bash
