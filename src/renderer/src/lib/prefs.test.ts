@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import type { TaskView } from '@shared/tasks'
 import {
+  readStatisticsExcludeApiMixed,
+  writeStatisticsExcludeApiMixed,
   readStatisticsWindow,
   writeStatisticsWindow,
   readFleetDensity,
@@ -322,5 +324,41 @@ describe('the statistics window', () => {
     stub({}, true)
     expect(readStatisticsWindow()).toBe('recent')
     expect(() => writeStatisticsWindow('all')).not.toThrow()
+  })
+})
+
+/** The three-axis plot's "Exclude API rate & mixed" checkbox has to survive a restart too. */
+describe('the statistics exclude-API-mixed filter', () => {
+  const stub = (store: Record<string, string> | null, throws = false): void => {
+    const storage = {
+      getItem: (k: string) => {
+        if (throws) throw new Error('site data disabled')
+        return store?.[k] ?? null
+      },
+      setItem: (k: string, v: string) => {
+        if (throws) throw new Error('site data disabled')
+        if (store) store[k] = v
+      }
+    }
+    ;(globalThis as { window?: unknown }).window = { localStorage: store === null ? null : storage }
+  }
+
+  afterEach(() => {
+    delete (globalThis as { window?: unknown }).window
+  })
+
+  it('defaults to off, and remembers a checked value across a restart', () => {
+    stub({})
+    expect(readStatisticsExcludeApiMixed()).toBe(false)
+    const store: Record<string, string> = {}
+    stub(store)
+    writeStatisticsExcludeApiMixed(true)
+    expect(readStatisticsExcludeApiMixed()).toBe(true)
+  })
+
+  it('is never worth a blank screen', () => {
+    stub({}, true)
+    expect(readStatisticsExcludeApiMixed()).toBe(false)
+    expect(() => writeStatisticsExcludeApiMixed(true)).not.toThrow()
   })
 })

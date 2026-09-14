@@ -11,7 +11,12 @@ import type {
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { duration, money, when } from '../lib/format'
 import { effortLabel, modelLabel } from '../lib/modelname'
-import { readStatisticsWindow, writeStatisticsWindow } from '../lib/prefs'
+import {
+  readStatisticsExcludeApiMixed,
+  readStatisticsWindow,
+  writeStatisticsExcludeApiMixed,
+  writeStatisticsWindow
+} from '../lib/prefs'
 import { errorMessage } from '@shared/errors.js'
 import { AgentIcon } from './AgentIcon'
 import { floorGrid, project3d, stemFor, type PlotPoint } from '../lib/plot3d'
@@ -563,17 +568,37 @@ type ModelPoint = {
   cost: number
   velocity: number
   quality: number
+  /** The fewest finished tasks backing any of the three axes. See `MIN_TRUSTED_SAMPLES`. */
+  samples: number
 }
 
 /**
- * Only models with measured values on every axis enter this comparison.
+ * ⛔ **A point weaker than this is not a measurement, it's a guess wearing one.** Below five
+ * finished tasks on an axis, `measuredModelPoints` drops the model from the comparison entirely
+ * rather than plot a bar nobody should read a trend into — the same floor `thin()` dims a table
+ * row at, applied here as an exclusion because a bubble has no column to dim.
+ */
+export const MIN_TRUSTED_SAMPLES = 5
+
+/**
+ * Only models with measured values on every axis, each resting on at least
+ * `MIN_TRUSTED_SAMPLES` finished tasks, enter this comparison.
  *
  * `excludeApiMixed` drops price rows billed at an API rate or mixed basis, so the cost axis folds
  * only amortised subscription dollars — the two kinds of dollar are not interchangeable (see the
  * price tab's own note), and a bubble is one point that cannot say which basis it is in.
  */
 export function measuredModelPoints(report: StatisticsReport, excludeApiMixed = false): ModelPoint[] {
-  type PartialPoint = { adapterId: string; model: string; cost?: number; velocity?: number; quality?: number }
+  type PartialPoint = {
+    adapterId: string
+    model: string
+    cost?: number
+    velocity?: number
+    quality?: number
+    costSamples?: number
+    velocitySamples?: number
+    qualitySamples?: number
+  }
   const points = new Map<string, PartialPoint>()
   const add = (
     rows: Array<StatRow & { basis?: PriceBasis }>,
@@ -593,7 +618,10 @@ export function measuredModelPoints(report: StatisticsReport, excludeApiMixed = 
     }
     for (const [key, value] of grouped) {
       const point = points.get(key)
-      if (point && value.samples > 0) point[axis] = value.total / value.samples
+      if (point && value.samples > 0) {
+        point[axis] = value.total / value.samples
+        point[`${axis}Samples`] = value.samples
+      }
     }
   }
   // Price can have one row per billing basis. Fold those measured rows back together for one point.
@@ -607,8 +635,12 @@ export function measuredModelPoints(report: StatisticsReport, excludeApiMixed = 
       key,
       label: `${agents.get(p.adapterId) ?? p.adapterId} · ${modelLabel(p.model) ?? p.model}`,
       adapterId: p.adapterId,
-      cost: p.cost!, velocity: p.velocity!, quality: p.quality!
+      cost: p.cost!,
+      velocity: p.velocity!,
+      quality: p.quality!,
+      samples: Math.min(p.costSamples!, p.velocitySamples!, p.qualitySamples!)
     }))
+    .filter((point) => point.samples >= MIN_TRUSTED_SAMPLES)
     .sort((a, b) => a.label.localeCompare(b.label))
 }
 
@@ -620,7 +652,14 @@ export function measuredModelPoints(report: StatisticsReport, excludeApiMixed = 
  * `lib/plot3d.ts`) can be checked at all.
  */
 export function ThreeAxisPlot({ report }: { report: StatisticsReport }): React.JSX.Element | null {
-  const [excludeApiMixed, setExcludeApiMixed] = useState(false)
+  // ⭐ Per-display preference, on the precedent `readStatisticsWindow` sets: whether this filter was
+  // on last time is remembered so leaving the page or restarting the app does not silently turn it
+  // back off (reported 2026-09-13).
+  const [excludeApiMixed, setExcludeApiMixed] = useState(() => readStatisticsExcludeApiMixed())
+  const toggleExcludeApiMixed = (value: boolean): void => {
+    writeStatisticsExcludeApiMixed(value)
+    setExcludeApiMixed(value)
+  }
   // ⛔ The gate on whether this section exists at all reads the unfiltered set: hiding the whole
   // plot (and its own toggle) the moment the filter empties it would leave no way back to "off".
   const everPoints = measuredModelPoints(report)
@@ -633,10 +672,15 @@ export function ThreeAxisPlot({ report }: { report: StatisticsReport }): React.J
   const maxVelocity = Math.max(...points.map((p) => p.velocity), 1)
   const project = (x: number, y: number, z: number): PlotPoint => project3d(view, x, y, z)
   const origin = project(0, 0, 0)
+  /**
+   * ⭐ Each axis's own low-end value, placed a short step back from the origin along that axis
+   * rather than all three stacked on `origin` itself (reported 2026-09-13: *weird garbled text
+   * around (0, 0, 0)*) — three different strings drawn at the same point read as noise, not labels.
+   */
   const axes = [
-    { end: project(1, 0, 0), label: 'Quality · 10.0', low: '0' },
-    { end: project(0, 1, 0), label: 'Cost · $0', low: money(maxCost) },
-    { end: project(0, 0, 1), label: 'Velocity · fastest', low: duration(maxVelocity) }
+    { end: project(1, 0, 0), lowAt: project(-0.14, 0, 0), label: 'Quality · 10.0', low: '0' },
+    { end: project(0, 1, 0), lowAt: project(0, -0.14, 0), label: 'Cost · $0', low: money(maxCost) },
+    { end: project(0, 0, 1), lowAt: project(0, 0, -0.14), label: 'Velocity · fastest', low: duration(maxVelocity) }
   ]
   /**
    * ⛔ **Every mark carries the cube coordinate it was drawn from, not only its screen position.**
@@ -662,7 +706,11 @@ export function ThreeAxisPlot({ report }: { report: StatisticsReport }): React.J
         <p>Drag to rotate. Farther from the origin is more favourable on every measured axis. Each mark is the icon of the agent that ran it, standing on a bar over its own place on the quality-and-cost floor.</p>
       </div>
       <label className="three-axis-filter" title="When on, the cost axis folds only amortised subscription dollars — API-rate and mixed-basis tasks are left out rather than averaged in as though they were the same kind of dollar.">
-        <input type="checkbox" checked={excludeApiMixed} onChange={(e) => setExcludeApiMixed(e.target.checked)} />
+        <input
+          type="checkbox"
+          checked={excludeApiMixed}
+          onChange={(e) => toggleExcludeApiMixed(e.target.checked)}
+        />
         Exclude API rate &amp; mixed
       </label>
       {active && <div className="three-axis-tooltip"><strong>{active.label}</strong><span>{money(active.cost)} · {active.quality.toFixed(1)} / 10 · {duration(active.velocity)}</span></div>}
@@ -696,7 +744,7 @@ export function ThreeAxisPlot({ report }: { report: StatisticsReport }): React.J
               </g>
             ))}
           </g>
-          {axes.map((axis) => <g key={axis.label}><line x1={origin.x} y1={origin.y} x2={axis.end.x} y2={axis.end.y} className="three-axis-line" /><text x={axis.end.x} y={axis.end.y - 8} className="three-axis-label">{axis.label}</text><text x={origin.x} y={origin.y + 15} className="three-axis-low">{axis.low}</text></g>)}
+          {axes.map((axis) => <g key={axis.label}><line x1={origin.x} y1={origin.y} x2={axis.end.x} y2={axis.end.y} className="three-axis-line" /><text x={axis.end.x} y={axis.end.y - 8} className="three-axis-label">{axis.label}</text><text x={axis.lowAt.x} y={axis.lowAt.y} className="three-axis-low">{axis.low}</text></g>)}
           <circle cx={origin.x} cy={origin.y} r="4" className="three-axis-origin" />
           {projected.map(({ point, at }) => {
             const r = (hovered === point.key ? iconSize + 4 : iconSize) / 2

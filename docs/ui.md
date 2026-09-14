@@ -217,7 +217,12 @@ checkbox in the head (`measuredModelPoints(report, excludeApiMixed)`) drops pric
 the flat subscription fee from the cost axis only — the same two-kinds-of-dollar distinction the price
 tab already makes — and a model left with no subscription-only price simply drops out of the plot
 rather than being priced from the wrong dollars; the section itself keeps showing (with the checkbox
-still reachable) as long as *something* measured has ever qualified unfiltered.
+still reachable) as long as *something* measured has ever qualified unfiltered. ⭐ The checkbox is a
+per-display preference (`readStatisticsExcludeApiMixed`/`writeStatisticsExcludeApiMixed` in
+`lib/prefs.ts`), so it survives a page change or an app restart rather than resetting to off. ⛔ A
+model whose weakest axis rests on fewer than `MIN_TRUSTED_SAMPLES` (5, the same floor the price
+table dims its `n` column at) is dropped from the plot entirely — a bubble has no column to dim a
+thin count in, so it is excluded rather than drawn as a confident point over a guess.
 
 ⛔ **The chart names the harness as well as the model, and the table does not have to.** Its bars are
 model rows, which in a table are indented under the agent row that owns them; a chart has no such

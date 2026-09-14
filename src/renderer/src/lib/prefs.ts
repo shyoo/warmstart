@@ -335,6 +335,33 @@ export function writeStatisticsWindow(value: StatisticsWindow): void {
   }
 }
 
+const STATISTICS_EXCLUDE_API_MIXED_KEY = appKey('statisticsExcludeApiMixed')
+
+/**
+ * Whether the three-axis plot's "Exclude API rate & mixed" filter was on last time.
+ *
+ * ⛔ Reported 2026-09-13: the checkbox reset to off on every navigation and app restart because it
+ * lived only in `ThreeAxisPlot`'s component state. Per-display preference stored in `localStorage`,
+ * consistent with every other checkbox on this page.
+ */
+export function readStatisticsExcludeApiMixed(): boolean {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return false
+    return window.localStorage.getItem(STATISTICS_EXCLUDE_API_MIXED_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+export function writeStatisticsExcludeApiMixed(value: boolean): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(STATISTICS_EXCLUDE_API_MIXED_KEY, String(value))
+  } catch {
+    // A preference that cannot be saved is not an error worth showing anybody.
+  }
+}
+
 const TASK_PAGE_KEY = appKey('taskPage')
 
 /** What the task list was showing, precise enough that restoring an offset onto it is honest. */

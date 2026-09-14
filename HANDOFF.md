@@ -33,6 +33,11 @@ screens — see remaining work 14.
   as `.panel-sub`. The four count tiles were named by review-count bucket (*"finished tasks with no
   review"*, *"cannot be graded"*) — the operator-relevant question is eligibility, so they now read
   *Gradable tasks with 0 reviews / only 1 review / 2+ reviews* and *Non-gradable tasks*.
+- **The three-axis plot trusts its own data and remembers its filter (t429, 2026-09-13).**
+  `measuredModelPoints` drops any model whose weakest axis is under `MIN_TRUSTED_SAMPLES` (5); the
+  "Exclude API rate & mixed" checkbox now persists via `lib/prefs.ts`, on `localStorage` like the
+  window control beside it; and each axis's low-end label moved off the shared origin point, which
+  had drawn three strings stacked into garbled text. Windows: typecheck, lint, build, L1 pass.
 - **CI on `main` is green again (2026-09-13).** The ~30-commit merge `3ff9ffd` never got a run, and
   the first push after it (run 34795442043) failed six task-table checks on both runners. Three
   causes, each measured: a *collapsed* column keeps its geometry and read as an overflow it never

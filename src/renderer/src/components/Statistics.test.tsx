@@ -63,7 +63,9 @@ describe('labelColumn', () => {
 })
 
 describe('measuredModelPoints', () => {
-  function distribution(average: number, samples = 1) {
+  // ⚠️ Five by default — the trust floor `MIN_TRUSTED_SAMPLES` sets — so every test below is about
+  // folding logic rather than accidentally tripping the sample-count filter tested on its own below.
+  function distribution(average: number, samples = 5) {
     return { samples, average, p50: average, p99: average, p100: average }
   }
 
@@ -128,6 +130,25 @@ describe('measuredModelPoints', () => {
     const points = measuredModelPoints(report([row('claude-sonnet-5', 'mixed')]), true)
     expect(points).toHaveLength(0)
   })
+
+  /**
+   * ⭐ Requested 2026-09-13: below five finished tasks on any axis, a model "cannot be much
+   * trusted" and drops off the plot entirely rather than draw a bar over a guess.
+   */
+  it('drops a model whose weakest axis has fewer than five samples', () => {
+    const rows = [row('claude-sonnet-5', 'subscription')]
+    rows[0]!.distribution = distribution(2, 4) // one axis under the floor
+    expect(measuredModelPoints(report(rows))).toHaveLength(0)
+  })
+
+  it('keeps a model once every axis reaches the floor, and reports its weakest count', () => {
+    const rows = [row('claude-sonnet-5', 'subscription')]
+    rows[0]!.distribution = distribution(2, 5)
+    const points = measuredModelPoints(report(rows))
+    expect(points).toHaveLength(1)
+    // velocityRow/qualityRow above both fold 5 samples; price folds 5 too, so the weakest is 5.
+    expect(points[0]!.samples).toBe(5)
+  })
 })
 
 /**
@@ -144,7 +165,9 @@ describe('measuredModelPoints', () => {
  * in `lib/plot3d.test.ts`; this is the wiring between the two.
  */
 describe('the three-axis plot draws an anchor under every mark', () => {
-  function distribution(average: number, samples = 1) {
+  // ⚠️ Five by default, at `MIN_TRUSTED_SAMPLES` — otherwise both models here would be dropped by
+  // the sample-count filter and this suite would be asserting properties of an empty plot.
+  function distribution(average: number, samples = 5) {
     return { samples, average, p50: average, p99: average, p100: average }
   }
 
