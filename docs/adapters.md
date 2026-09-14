@@ -172,8 +172,35 @@ through `hostPlan`, read that same account's windows in the same minute.** ⚠�
 lesson: a bridged CLI has to be reached the same way for a question about itself as for a turn.
 
 ⚠️ **Still unflown**: `--image`, for the 0700 reason above. The rest has now been through the
-scheduler — muse workers have taken real dispatches, and the two faults that found are in this
-section: the image asset store (t289) and the workspace-bound resume (t364).
+scheduler — muse workers have taken real dispatches, and the three faults that found are in this
+section: the image asset store (t289), the workspace-bound resume (t364) and the workspace it reads
+before it starts (t436).
+
+### muse reads `<workspace>/.codex/skills` before it starts, and dies on a non-directory (t436, 2026-09-14)
+
+⛔ **Measured 2026-09-14 against Muse Code 1.1.1 (1.1.1-R2514.1)**, three workspaces, one prompt
+file, one flag set — the exact argv the quality reviewer spawns:
+
+| `<workspace>/.codex` is… | what muse does |
+|---|---|
+| absent | starts normally |
+| a **directory** | starts normally |
+| a **regular file** | `runtime host failed to start: failed to read skill file at <workspace>/.codex/skills: Not a directory (os error 20)` on **stderr**, exit 1 at ~4.5s, **stdout empty** |
+
+⚠️ It is muse that opens *codex's* skill directory, not a mistake in the argv: the path is derived
+from the workspace root and read at startup, before the model is called.
+
+⛔ **This fleet produced the third row for a day, from its own repository.** `.codex` was committed
+as a symlink to `.claude` on 2026-09-13; git with `core.symlinks=false` — the default on most
+Windows checkouts — writes a symlink out as a *regular file containing its target*, so every
+workspace in this repo had a seven-byte `.codex`. Three quality reviews then failed as *the
+reviewer's session ended before it answered* (the batch of 2026-09-14 06:19), which was true and
+useless: the CLI had named the file on stderr, and the stream parser skipped it as the ordinary
+chatter non-JSON lines usually are. Two things changed: the link is
+[made locally and never committed](development.md#the-codex-link) (`scripts/link-agent-skills.mjs`),
+and a `stream` session now keeps a bounded tail of what its CLI said outside the protocol
+(`sessionDiagnostics` in [`../src/daemon/sessions.ts`](../src/daemon/sessions.ts)) so a session that
+dies without answering quotes the reason instead of reporting a bare exit code.
 
 ### A resumed conversation is bound to the directory it was opened in (t364, 2026-09-11)
 

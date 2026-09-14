@@ -19,6 +19,17 @@ two commits after `d27a282` have no runner counts.
 
 ## Closed in this cleanup
 
+- **Muse could not grade anything, and the app would not say why (t436, 2026-09-14).** Muse Code
+  1.1.1 reads `<workspace>/.codex/skills` at startup and exits 1 in ~4.5s against a non-directory
+  (`runtime host failed to start: … Not a directory (os error 20)`, stderr, stdout empty). This
+  repo's `.codex` symlink, added 2026-09-13, is a seven-byte **file** on a `core.symlinks=false`
+  checkout — so every Muse review in the 06:19 batch failed. ⭐ Measured three ways against the live
+  CLI: absent starts, directory starts, file dies. `.codex` is now local-only
+  (`scripts/link-agent-skills.mjs`, gitignored, junction on Windows). ⛔ The second half is the one
+  that generalises: a `stream` session's non-protocol stderr was dropped by `StreamParser`, so both
+  the reviewer and `onSessionExit` reported an unexplained death. `sessionDiagnostics` keeps a
+  bounded tail and both now quote it. ⚠️ The retention *plumbing* has no L1 test — no declarative
+  adapter decodes a stream — so it is proven only by the pure functions either side of it.
 - **README is now a concise, visual product tour (t435, 2026-09-14).** Nine isolated showcase
   visuals lead; durable security detail moved to [`docs/security.md`](docs/security.md).
 - **The status bar spans the full window as `.shell`'s own grid row (t434, 2026-09-14)** — it used
@@ -31,9 +42,8 @@ two commits after `d27a282` have no runner counts.
   rows out as cards where the order cell and the worker cell are given the **same grid area**; overlaps
   paint in tree order, so the worker cell was on top for hit-testing, and `.tbl tr:hover td` gave it a
   background that painted over the arrows too. The cell is now `position: relative; z-index: 1`.
-  ⛔ Every DOM-level check was green through all of it, including one that clicks the arrow and watches
-  the daemon reorder the fleet: a scripted `.click()` bypasses hit-testing. The new check asks
-  `elementFromPoint` and printed `worker-cell` before the fix ([`docs/testing.md`](docs/testing.md) §3).
+  ⛔ Every DOM-level check was green through all of it: a scripted `.click()` bypasses hit-testing, so
+  the new check asks `elementFromPoint` ([`docs/testing.md`](docs/testing.md) §3).
   ⭐ *A sign-in runs beside the credential, not beside the operator.* Commissioning while driving
   another computer opened the vendor's OAuth browser on **that** computer's screen while the Sign in
   terminal here waited. `SignInLocationWarning` (above *Create and sign in*, and again in the Sign in
@@ -43,39 +53,29 @@ two commits after `d27a282` have no runner counts.
   the only App-behavior switch that is) holds a `powerSaveBlocker('prevent-app-suspension')`, applied
   at launch as well as on change. ⚠️ Idle sleep only — not a closed lid, and the copy says so.
   ⛔ Per-install, so the setting deciding whether a run survives the night is the **host's**. ⚠️ None of the three driven in the packaged app.
-- **The thread ledger reads as one list (2026-09-13).** Operational facts lead;
-  created/directory/landing take clearer labels; the stopped-task control matches the small setting
-  controls; run prompt and activity references open compact dialogs rather than boxed disclosures; and
-  the model row separates the latest run from next-run choices, cache-risk copy behind its info control.
-- **Quality Review's copy and tile labels read as one page (t430, 2026-09-13).** The paragraphs under
-  *Commission a batch* had no width limit while the panel subtitle was capped at 62ch, so one page read
-  two widths of prose; a new `.prose-note` holds both to 62ch. The four count tiles were named by
-  review-count bucket, but the operator-relevant question is eligibility — they now read *Gradable
-  tasks with 0 reviews / only 1 review / 2+ reviews* and *Non-gradable tasks*.
+- **The thread ledger reads as one list (2026-09-13).** Operational facts lead, run prompt and
+  activity references open compact dialogs, and the model row separates the latest run from
+  next-run choices.
+- **Quality Review's copy and tile labels read as one page (t430, 2026-09-13).** `.prose-note` holds
+  every paragraph on the page to the same 62ch, and the four count tiles are named for eligibility —
+  *Gradable tasks with 0 reviews / only 1 review / 2+ reviews* and *Non-gradable tasks*.
 - **The three-axis plot trusts its own data and remembers its filter (t429, 2026-09-13).**
   `measuredModelPoints` drops any model whose weakest axis is under `MIN_TRUSTED_SAMPLES` (5); the
   "Exclude API rate & mixed" checkbox persists via `lib/prefs.ts`; and each axis's low-end label moved
   off the shared origin point, which had drawn three strings stacked into garbled text.
-- **CI on `main` is green again (2026-09-13).** The ~30-commit merge `3ff9ffd` never got a run, and
-  the first push after it (run 34795442043) failed six task-table checks on both runners. Three
-  causes, each measured: a *collapsed* column keeps its geometry and read as an overflow it never
-  paints ([`docs/testing.md`](docs/testing.md) §3); three columns sized on macOS were 1–2px under
-  their Linux headings, so every width is now the Linux need plus margin and no rung squeezes a
-  column; and a 1024px screen cannot stage the container-versus-viewport half of the narrow check,
-  which skips there by name. Dep and Took now collapse together at a 660px panel.
+- **CI on `main` is green again (2026-09-13).** Six task-table checks failed on both runners after
+  the ~30-commit merge `3ff9ffd`; three measured causes, all written up in
+  [`docs/testing.md`](docs/testing.md) §3. Dep and Took now collapse together at a 660px panel.
 - **Cross-platform adapter tests no longer create `C:` in POSIX checkouts (2026-09-13).** The
   cross-adapter API-key test passed `C:/tmp/root` to every adapter; Muse planning creates its prompt
   and XDG roots, and Node treats that spelling as relative on macOS/Linux. The writable fixture now
   lives under the suite's temporary directory and a regression asserts the checkout stays clean.
 - **A probe PTY answers the TUI's cursor-position query (t3, 2026-09-13).** Muse Code 1.2.1 writes
-  `ESC[6n` at startup and exits 0 at +6.4s unanswered — before `readyMs` — so every `/usage` probe
-  read *"the probe session did not start"* on a signed-in, trusted worker (t1's trust fix was in the
-  packaged app and was not the cause). `termquery.ts` answers that one request on `probe` PTYs only;
-  xterm.js answers it for a watched session. Proven through the real `spawnSession` in
-  [`probepty.test.ts`](src/daemon/probepty.test.ts) (red without the wiring). ⚠️ Not yet driven in
-  the packaged app: the running daemon hosts this task, so it could not be restarted from here —
-  rebuild, press **Refresh** on Muse, and expect *Currently unavailable* until the account completes
-  one turn (adapters.md, fault 3).
+  `ESC[6n` at startup and exits 0 at +6.4s unanswered, before `readyMs`, so every `/usage` probe read
+  *"the probe session did not start"* on a signed-in worker. `termquery.ts` answers it on `probe`
+  PTYs only, proven through the real `spawnSession` in
+  [`probepty.test.ts`](src/daemon/probepty.test.ts). ⚠️ Not yet driven in the packaged app: rebuild,
+  press **Refresh** on Muse, and expect *Currently unavailable* until the account completes one turn.
 - **Antigravity CLI commissioning and live quota probe on macOS (2026-09-13).** `readAntigravityIdentity`
   and `probeIdentity` now read the OAuth token and auth email the CLI writes instead of returning a
   false `loggedIn: false` that locked the worker into `Antigravity: unknown`; the live packaged probe

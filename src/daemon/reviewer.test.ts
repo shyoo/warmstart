@@ -406,6 +406,32 @@ describe('how long a reviewer is given to answer', () => {
   })
 })
 
+/**
+ * ⛔ **A reviewer blamed for a workspace its CLI refused to open.** Measured 2026-09-14 (t436):
+ * three reviews on Muse Code 1.1.1 died at ~4.5s and reported only *the reviewer's session ended
+ * before it answered*. The process had written the cause on stderr, where the stream parser dropped
+ * it as ordinary chatter, so the operator was handed a failure with no address on it.
+ */
+describe('a reviewer whose process died', () => {
+  it('names the exit code and quotes the CLI', () => {
+    const said = reviewer.sessionDiedReason(
+      1,
+      'runtime host failed to start: failed to read skill file at /repo/.codex/skills: Not a directory (os error 20)'
+    )
+    expect(said).toContain('ended before it answered')
+    expect(said).toContain('(exit 1)')
+    expect(said).toContain('.codex/skills')
+  })
+
+  it('says no more than it knows when the CLI said nothing', () => {
+    expect(reviewer.sessionDiedReason(null, null)).toBe(
+      'the reviewer’s session ended before it answered'
+    )
+    // ⚠️ A clean exit with no answer is still a failure, but "exit 0" adds nothing to it.
+    expect(reviewer.sessionDiedReason(0, null)).not.toContain('exit')
+  })
+})
+
 describe('stopping a grade', () => {
   it('cancels a stranded pending review and its run without changing the task', async () => {
     const reviewStore = await import('./review.js')

@@ -22,7 +22,7 @@ import { getWorker, refreshIdentity, requireWorker, watchReadiness } from './wor
 import { log } from './log.js'
 import { ensureDir, paths } from './paths.js'
 import { removeMcpConfig, writeMcpConfig } from './mcpconfig.js'
-import { StreamParser, describeStream, renderForHuman, type StreamEvent } from './stream.js'
+import { StreamParser, describeStream, renderForHuman, stripAnsi, type StreamEvent } from './stream.js'
 import { settings } from './settings.js'
 import { formatCmdInvocation, unwrapForPty } from './which.js'
 import { terminalAnswerer } from './termquery.js'
@@ -168,6 +168,60 @@ function retainScrollback(id: string, text: string): void {
     const oldest = finished.keys().next().value
     if (oldest === undefined) break
     finished.delete(oldest)
+  }
+}
+
+/**
+ * The last few things a `stream` session's CLI said in its own voice, rather than in its protocol.
+ *
+ * ⛔ **A process that explained why it died, into a pipe nobody kept.** Measured 2026-09-14 (t436):
+ * Muse Code 1.1.1 exited 1 at +4.5s with an empty stdout, having written
+ * `runtime host failed to start: failed to read skill file at C:\Dev\warmstart/.codex/skills: Not a
+ * directory (os error 20)` to stderr. `openPipes` already merges stderr into the same `onData`, and
+ * `StreamParser` already skipped it as the ordinary chatter it usually is — so three quality reviews
+ * were filed as *the reviewer's session ended before it answered*, which is true, uninformative, and
+ * blames the reviewer for a workspace the CLI refused to open. The cause was one grep away from the
+ * operator and nothing carried it there.
+ *
+ * ⚠️ **A tail, and only read when there is nothing better.** This is not a log: a healthy run's
+ * chatter (`muse: workspace root: …`, codex's `Reading additional input from stdin…`) lands here
+ * too, and quoting it at a session that answered normally would be noise. `sessionDiagnostics` is
+ * read on exactly one path — a session that ended with no answer — where the alternative is
+ * silence. Bounded on both axes, like `retainScrollback` and for the same reason.
+ */
+const DIAGNOSTIC_LINES = 5
+const DIAGNOSTIC_CHARS = 300
+const diagnostics = new Map<string, string[]>()
+
+function noteDiagnostic(id: string, line: string): void {
+  const said = stripAnsi(line).trim()
+  if (!said) return
+  const lines = diagnostics.get(id) ?? []
+  lines.push(said.length > DIAGNOSTIC_CHARS ? `${said.slice(0, DIAGNOSTIC_CHARS)}…` : said)
+  while (lines.length > DIAGNOSTIC_LINES) lines.shift()
+  diagnostics.set(id, lines)
+}
+
+/**
+ * What this session's CLI said outside its protocol, newest last, or null if it said nothing.
+ *
+ * ⛔ Reported verbatim. The vendor's own sentence names the file, the flag or the account, which no
+ * sentence written here could — the same reason `resultError` unwraps rather than classifies.
+ */
+export function sessionDiagnostics(id: string): string | null {
+  const lines = diagnostics.get(id)
+  return lines?.length ? lines.join(' / ') : null
+}
+
+/** Keep an exited session's last words, oldest session evicted first. See `retainStreamLog`. */
+function retainDiagnostics(id: string): void {
+  const lines = diagnostics.get(id)
+  if (!lines) return
+  diagnostics.delete(id)
+  diagnostics.set(id, lines)
+  for (const key of [...diagnostics.keys()]) {
+    if (diagnostics.size <= FINISHED_SESSIONS) break
+    if (!live.has(key)) diagnostics.delete(key)
   }
 }
 
@@ -997,6 +1051,9 @@ export function spawnSession(opts: SpawnOptions): Session {
     // somebody opens the pane to find out why, and a view that blanked itself on exit would clear
     // the screen at the moment it became worth reading. `retainStreamLog` bounds how many survive.
     retainStreamLog(id)
+    // ⛔ Before the end listeners, not after: the reviewer's wait and `onSessionExit` both ask what
+    // the CLI said *while* settling a session that has just died, which is the one moment it matters.
+    retainDiagnostics(id)
     removeMcpConfig(id)
     for (const listener of endListeners.get(id) ?? []) listener(exitCode)
     streamListeners.delete(id)
@@ -1111,7 +1168,7 @@ export function spawnSession(opts: SpawnOptions): Session {
     // rather than an error. An adapter that offers `stream` and no decoder gets nothing, loudly.
     parser:
       transport === 'stream' && ad.decodeStream
-        ? new StreamParser(ad.decodeStream, { partialMessages })
+        ? new StreamParser(ad.decodeStream, { partialMessages }, (line) => noteDiagnostic(id, line))
         : null,
     promptedOnce: false,
     promptedAt: null,

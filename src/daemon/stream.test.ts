@@ -431,6 +431,31 @@ describe('framing, which is the one thing they do share', () => {
     expect(parser.push('{"type":"result","result":"ok"}\n')).toHaveLength(1)
   })
 
+  it('hands the caller every line that is not a record, so a dying CLI is still heard', () => {
+    // ⛔ Verbatim from Muse Code 1.1.1 on 2026-09-14 (t436), the run that produced exactly this and
+    // nothing else before exiting 1: the whole diagnosis was a non-JSON line, and it used to be
+    // dropped here. Three quality reviews reported an unexplained death because of it.
+    const noise: string[] = []
+    const parser = new StreamParser(decoderFor('muse-code'), { partialMessages: false }, (line) =>
+      noise.push(line)
+    )
+    const fatal =
+      'runtime host failed to start: failed to read skill file at /mnt/c/Dev/warmstart/.codex/skills: ' +
+      'Not a directory (os error 20)'
+    parser.push(`muse: workspace root: /mnt/c/Dev/warmstart (explicit)\n${fatal}\n`)
+    expect(noise).toEqual(['muse: workspace root: /mnt/c/Dev/warmstart (explicit)', fatal])
+  })
+
+  it('keeps a truncated record as noise rather than losing it, and never reports blank lines', () => {
+    const noise: string[] = []
+    const parser = new StreamParser(decoderFor('openai-compatible'), { partialMessages: false }, (line) =>
+      noise.push(line)
+    )
+    // A CLI killed mid-write leaves half an envelope; that half is evidence, not a record.
+    expect(parser.push('\n   \n{"type":"thread.star\n')).toHaveLength(0)
+    expect(noise).toEqual(['{"type":"thread.star'])
+  })
+
   it('every adapter that offers the stream transport can decode it', () => {
     // ⛔ An adapter offering `stream` with no decoder produces an empty event list for every line -
     // no usage, no result, no rate limit - and nothing would fail. This is what catches that.

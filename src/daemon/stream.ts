@@ -312,13 +312,24 @@ export type StreamDecoder = (
  * opens with `Reading additional input from stdin...`, and `agy` prints a plain-English explanation
  * when a tool is auto-denied. Lines that are not JSON objects are skipped rather than logged as
  * errors, because they are normal.
+ *
+ * ⛔ **Skipped is not the same as thrown away, and it used to be.** Measured 2026-09-14 (t436): Muse
+ * Code 1.1.1 refused to start in this repo's own checkout and wrote *`runtime host failed to start:
+ * failed to read skill file at …/.codex/skills: Not a directory (os error 20)`* on stderr, then
+ * exited 1 with an empty stdout. That one sentence — the whole diagnosis — was dropped here, so
+ * three quality reviews reported only *the reviewer's session ended before it answered* and the
+ * operator was handed a failure with no cause attached. `onNoise` is what keeps the CLI's own words
+ * reachable; `sessions.ts` retains a bounded tail of them for the moment a session ends with
+ * nothing else to say.
  */
 export class StreamParser {
   private buffer = ''
 
   constructor(
     private readonly decode: StreamDecoder,
-    private readonly ctx: DecodeContext = { partialMessages: false }
+    private readonly ctx: DecodeContext = { partialMessages: false },
+    /** Every non-record line, in order. ⚠️ Called for normal chatter too — the caller bounds it. */
+    private readonly onNoise?: (line: string) => void
   ) {}
 
   push(chunk: string): StreamEvent[] {
@@ -330,11 +341,17 @@ export class StreamParser {
       const line = this.buffer.slice(0, newline).trim()
       this.buffer = this.buffer.slice(newline + 1)
       newline = this.buffer.indexOf('\n')
-      if (!line.startsWith('{')) continue
+      if (!line.startsWith('{')) {
+        if (line) this.onNoise?.(line)
+        continue
+      }
       let record: Record<string, unknown>
       try {
         record = JSON.parse(line) as Record<string, unknown>
       } catch {
+        // ⚠️ A line that opens like a record and does not parse is *more* likely to be a diagnostic
+        // worth keeping than less — a truncated envelope is how a CLI dying mid-write looks.
+        this.onNoise?.(line)
         continue
       }
       const decoded = this.decode(record, this.ctx)

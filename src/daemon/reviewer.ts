@@ -32,6 +32,7 @@ import {
   onSessionEnd,
   onSessionStream,
   sendPrompt,
+  sessionDiagnostics,
   sessionsForWorker,
   spawnSession
 } from './sessions.js'
@@ -717,6 +718,27 @@ export function resultError(text: string | null, terminalReason: string | null):
     : `the reviewer's turn ended in an error${where} and said nothing about it`
 }
 
+/**
+ * The sentence to file when the reviewer's process died without ever answering.
+ *
+ * ⛔ **Exit code and the CLI's own last words, because without them this reads as the reviewer's
+ * fault when it is not.** Measured 2026-09-14 (t436): three reviews on Muse Code 1.1.1 died at
+ * ~4.5s and reported only *the reviewer's session ended before it answered*. The process had said
+ * exactly what was wrong — `runtime host failed to start: failed to read skill file at
+ * <workspace>/.codex/skills: Not a directory (os error 20)`, this repo's own `.codex` symlink
+ * checked out as a plain file on Windows — into a pipe whose non-protocol lines were dropped. An
+ * operator reading the old sentence had nothing to act on; the new one names the file.
+ *
+ * ⚠️ Verbatim and unclassified, like `resultError`: the vendor's sentence names the path, the flag
+ * or the account, and nothing written here could.
+ */
+export function sessionDiedReason(exitCode: number | null, diagnostic: string | null): string {
+  const where = exitCode !== null && exitCode !== 0 ? ` (exit ${exitCode})` : ''
+  const said = (diagnostic ?? '').trim()
+  const base = `the reviewer’s session ended before it answered${where}`
+  return said ? `${base}: ${said.slice(0, 600)}` : base
+}
+
 /** The innermost human sentence in a vendor's JSON error envelope, or null if there is not one. */
 function vendorMessage(json: string): string | null {
   let node: unknown
@@ -822,8 +844,8 @@ function ask(sessionId: string, prompt: string, signal: AbortSignal): Promise<{ 
       }
       if (event.kind === 'result') finish(event.text ?? text ?? null, 'the turn ended')
     })
-    const offEnd = onSessionEnd(sessionId, () =>
-      finish(text || null, 'the reviewer’s session ended before it answered')
+    const offEnd = onSessionEnd(sessionId, (exitCode) =>
+      finish(text || null, sessionDiedReason(exitCode, sessionDiagnostics(sessionId)))
     )
     signal.addEventListener('abort', () => finish(null, 'cancelled by a person'), { once: true })
     const watch = setInterval(() => {

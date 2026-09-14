@@ -6,7 +6,7 @@ import { voidApprovalsForSession } from './approvals.js'
 import { fileParkedQuestion, parkQuestionsForSession } from './questions.js'
 import { compactionsForTask } from './compaction.js'
 import { creditRunListUsd, getTask, isIntegrationParent, runForSession, runsFor } from './tasks.js'
-import { backscroll, clearHousekeepingPrompt, closeSession } from './sessions.js'
+import { backscroll, clearHousekeepingPrompt, closeSession, sessionDiagnostics } from './sessions.js'
 import { stripAnsi } from './stream.js'
 import { log } from './log.js'
 import {
@@ -115,6 +115,28 @@ export function noteTurnStatus(sessionId: string, event: { category: string; det
 }
 
 /**
+ * What to tell a person when a run's process is gone and nothing said whether the work was done.
+ *
+ * ⛔ **"Nothing here can tell" stopped being true the moment the CLI said why.** Measured
+ * 2026-09-14 (t436) on the quality-review half of the same pipe: Muse Code 1.1.1 exited 1 at +4.5s
+ * having written `runtime host failed to start: failed to read skill file at
+ * <workspace>/.codex/skills: Not a directory (os error 20)` to stderr, and every consumer reported
+ * an unexplained exit because non-protocol lines were dropped by the parser. A dispatched run dies
+ * the same way and deserves the same sentence — a CLI that refused to open the workspace is a fault
+ * with an address, not an unknown to hand back to the operator.
+ *
+ * ⚠️ The unknown wording is kept for the case it was written for: a process that genuinely said
+ * nothing. See `sessionDiagnostics` for why this is the only path that reads that tail.
+ */
+export function endedWithoutCompletion(exitCode: number | null, diagnostic: string | null): string {
+  const said = (diagnostic ?? '').trim()
+  const base = `The session ended (exit ${exitCode}) without reporting completion. `
+  return said
+    ? `${base}The CLI's last words were: "${said.slice(0, 400)}"`
+    : `${base}Nothing here can tell whether the work was finished, so it is over to you.`
+}
+
+/**
  * A session ended without reporting completion.
  *
  * That is not a success and not necessarily a failure - it is an unknown, and the honest thing is to
@@ -171,8 +193,7 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
           ? 'The cache clock compacted this conversation and stopped the interrupted run. ' +
             'The compacted conversation is preserved, but the agent did not report completion; ' +
             'resume it to continue or inspect the work.'
-          : `The session ended (exit ${exitCode}) without reporting completion. ` +
-          'Nothing here can tell whether the work was finished, so it is over to you.'
+          : endedWithoutCompletion(exitCode, sessionDiagnostics(session.id))
     // ⛔ A planner that has just filed its split is the third case, and it is not a failure either.
     //    It was told to stop — the whole design is that the wait costs nothing, which means ending
     //    the process — so its run ended for the best possible reason. Recording `failed` here would

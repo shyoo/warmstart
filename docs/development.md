@@ -14,7 +14,8 @@ commit workflow.
 
 ```bash
 npm install
-node scripts/ensure-electron.mjs   # not optional — see below
+node scripts/ensure-electron.mjs     # not optional — see below
+node scripts/link-agent-skills.mjs   # .codex → .claude, per checkout — see below
 npm run dev
 ```
 
@@ -32,6 +33,23 @@ one agent CLI on `PATH` for anything beyond L1.
 run `npm ci` before building (or `npm install` only when deliberately changing the resolved dependencies),
 then run `node scripts/ensure-electron.mjs`. An existing `node_modules` otherwise lacks newly locked
 packages and TypeScript reports the misleading-looking `Cannot find module` error.
+
+### The `.codex` link
+
+`.codex` points at `.claude` so codex finds the same project skills, and it is **made locally and
+never committed**. ⛔ git with `core.symlinks=false` — the default wherever the user cannot create
+links, which is most Windows checkouts — writes a committed symlink out as a *regular file
+containing its target*. That bought codex nothing and cost this fleet every Muse run: Muse Code
+opens `<workspace>/.codex/skills` at startup and exits 1 in ~4.5s against a non-directory, which
+took out a whole quality-review batch on 2026-09-14 (t436; measured in
+[`adapters.md`](adapters.md#muse-reads-workspacecodexskills-before-it-starts-and-dies-on-a-non-directory-t436-2026-09-14)).
+
+`scripts/link-agent-skills.mjs` makes a junction on Windows and a symlink elsewhere, removes the
+placeholder file if one is there, and leaves a real `.codex` directory alone. It is idempotent, it
+takes an optional directory argument, and `src/daemon/skilllink.test.ts` fails if a placeholder file
+ever reappears in this checkout. ⚠️ A pooled worktree gets no `.codex` at all, which is a codex
+without the shared skills and a muse that starts — run the script in a slot if you need the skills
+there.
 
 ## 2. The scripts
 

@@ -50,6 +50,11 @@ release/
 # Editors / OS / Agent Aliases
 .agent/
 .agents/
+# ⛔ `.codex` points at `.claude` so codex finds the same skills, and it is **made locally, never
+# committed** — git with core.symlinks=false (most Windows checkouts) writes a symlink out as a
+# seven-byte text file, and Muse Code refuses to start when <workspace>/.codex is not a directory
+# (t436, 2026-09-14). `node scripts/link-agent-skills.mjs` makes the real link.
+.codex
 .vscode/*
 !.vscode/extensions.json
 .idea/

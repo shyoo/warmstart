@@ -363,6 +363,27 @@ describe('a run that produced nothing at all', () => {
   })
 })
 
+describe('a process that died having said why', () => {
+  it('quotes the CLI instead of claiming nothing here can tell', () => {
+    // ⛔ Measured 2026-09-14 (t436): Muse Code 1.1.1 exited 1 at +4.5s with an empty stdout, having
+    // written the whole diagnosis to stderr — where the stream parser skipped it as ordinary
+    // chatter. "Nothing here can tell whether the work was finished" was the sentence the operator
+    // got for a CLI that had refused to open the workspace and named the file it refused over.
+    const said = turnend.endedWithoutCompletion(
+      1,
+      'runtime host failed to start: failed to read skill file at /repo/.codex/skills: Not a directory (os error 20)'
+    )
+    expect(said).toContain('exit 1')
+    expect(said).toContain('.codex/skills')
+    expect(said).not.toContain('Nothing here can tell')
+  })
+
+  it('keeps the unknown wording for a process that genuinely said nothing', () => {
+    const said = turnend.endedWithoutCompletion(null, null)
+    expect(said).toContain('Nothing here can tell')
+  })
+})
+
 describe('a run that did work and then failed', () => {
   it('is the task’s problem, not the account’s', async () => {
     const { worker, task, session } = seedRunningTask({ metered: 4_200 })
