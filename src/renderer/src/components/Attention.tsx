@@ -39,11 +39,16 @@ type Item =
 
 /** Short enough to read on one line, few enough to fit beside the clock. Otherwise: open the task. */
 function answerableHere(question: Question): boolean {
+  const fullQuestion = (question.header ? `${question.header} — ` : '') + question.question
   return (
     question.kind === 'choice' &&
     question.options.length > 0 &&
     question.options.length <= 3 &&
-    question.options.every((o) => o.label.length <= 30)
+    question.options.every((o) => o.label.length <= 30) &&
+    // ⛔ The banner line truncates with an ellipsis (`.approvals-what`), so a long question is
+    // never actually readable there. Offering answer buttons beside an unreadable question would
+    // let the operator pick blind — this belongs on the task, where the full question is visible.
+    fullQuestion.length <= 100
   )
 }
 

@@ -8,14 +8,11 @@ The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-14, **Windows 11 x64**, measured on this branch's tip): typecheck, lint, build
-pass; L1 **3,450 passed, 4 skipped** (197 files); L2 **203 checks** (5 skipped); L3 **440 checks**.
-⚠️ L4 `test:pack` was **not run here** — the previous macOS reading (17 checks against
-`release/mac-arm64`, 2026-09-13 on `ac37ec7`) is the last one. ⚠️ One L3 flake seen and not reproduced: a stale
-`.git/worktrees/convo-ws1/index.lock` left by an interrupted run failed *the landing this section
-needs actually landed*; a clean re-run was green. Last CI seen (HEAD `d27a282`, run 34798079433, green on all seven jobs): L2 198
-on both runners; L3 **425** on Windows (4 skipped) and **424** on Linux (5 skipped) — the skips name
-the screen; L4 19 on Windows, 17 on Linux. ⚠️ CI was disabled by the owner around 2026-09-13; the
-two commits after `d27a282` have no runner counts.
+pass; L1 **3,450 passed, 4 skipped** (197 files); L2 **203 checks** (5 skipped); L3 **440 checks**;
+L4 **19 checks** against `release/win-unpacked`. Last CI seen (HEAD `d27a282`, run 34798079433,
+green on all seven jobs): L2 198 on both runners; L3 **425** on Windows (4 skipped) and **424** on
+Linux (5 skipped) — the skips name the screen; L4 19 on Windows, 17 on Linux. ⚠️ CI was disabled by
+the owner around 2026-09-13; the commits after `d27a282` have no runner counts.
 
 ## Closed in this cleanup
 
@@ -28,6 +25,10 @@ two commits after `d27a282` have no runner counts.
   correct and identically wired in every composer; the Ctrl+Enter preference had reset because
   `ui-settings.json` only survives an `agentyard` → `Warmstart` productName change if the old
   install's data directory is still on disk when the new build first runs — item 6's known cost.
+- **The Attention bar no longer offers answer buttons for a question it cannot show (t441, 2026-09-14).**
+  `answerableHere` checked only option count/length, so a long question with short options rendered
+  inline while `.approvals-what` truncated the text — answerable blind. It now also requires the
+  full question fit in 100 characters, else falls back to **Answer…**.
 - **The live thread tail named landing correctly (t438, 2026-09-14).** A task with `task.landing`
   true still counted as `live` output because `showsLiveOutput` only looks at `status`, so the empty
   tail read *"waiting for the agent's first words…"* while the agent had already finished and the
@@ -56,11 +57,8 @@ two commits after `d27a282` have no runner counts.
   the capturing daemon starts and live state after; and `Browser.close` leaves orchestratord
   running — six orphans were found on this machine — so every launch now ends with `daemon.shutdown`
   and a wait on the lock file's pid.
-- **The status bar spans the full window as `.shell`'s own grid row (t434, 2026-09-14)** — it used
-  to sit inside `.main`'s flex column, so its border stopped at the resizable sidebar's edge.
-  **Global › Status no longer repeats Notice's warnings (t433):** only Notice lists them.
-- **Muse reasoning-effort choices are available end to end (2026-09-14).** The catalogue offers
-  `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `ultra`; controls pass them to Muse. ⚠️ The regression test rejects retired `max`.
+- **The status bar spans the full window as `.shell`'s own grid row (t434, 2026-09-14)** — it used to sit inside `.main`'s flex column, so its border stopped at the resizable sidebar's edge. **Global › Status no longer repeats Notice's warnings (t433):** only Notice lists them.
+- **Muse reasoning-effort choices are available end to end (2026-09-14).** The catalogue offers `none`, `minimal`, `low`, `medium`, `high`, `xhigh` and `ultra`; controls pass them to Muse. ⚠️ The regression test rejects retired `max`.
 - **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).**
   ⭐ The workers table's reorder arrows could not be clicked and vanished on hover — the order cell and
   worker cell shared one grid area, so hover painted over the arrows; the order cell is now
