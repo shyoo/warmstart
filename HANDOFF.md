@@ -10,13 +10,18 @@ default between separate UI writes. The maintained reference in [`docs/`](docs/R
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-13, macOS arm64, measured on HEAD `6f22ea5` before the push): typecheck, lint,
-build pass; L1 **3,433 passed, 5 skipped** (197 files); L2 **203 checks** (5 skipped); L3 **426
+build pass; L1 **3,433 passed, 5 skipped** (197 files); L2 **203 checks** (5 skipped); L3 **427
 checks** (2 skipped); L4 `test:pack` **17 checks** against `release/mac-arm64`. Windows (measured
 after t425): L1 3,426 passed, 2 skipped; L3 428; L2 203; L4 19. ⚠️ L4 proves the *package*, not
 this change's screens — see remaining work 14.
 
 ## Closed in this cleanup
 
+- **CI on `main` is measured again (2026-09-13).** The ~30-commit merge `3ff9ffd` never got a run, and
+  the first push after it (run 34795442043) failed six UI checks on both runners: two task-table
+  checks written at 1440px read a *collapsed* date column as an overflow it never paints. Fixed in the
+  suite, recorded in [`docs/testing.md`](docs/testing.md) §3. ⚠️ Simulated here at 1440px by forcing
+  the sidebar wide; the runners' own run is the proof.
 - **A probe PTY answers the TUI's cursor-position query (t3, 2026-09-13).** Muse Code 1.2.1 writes
   `ESC[6n` at startup and exits 0 at +6.4s unanswered — before `readyMs` — so every `/usage` probe
   read *"the probe session did not start"* on a signed-in, trusted worker (t1's trust fix was in the

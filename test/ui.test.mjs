@@ -4482,6 +4482,46 @@ try {
   // The whole data directory goes in `finally`.
   void titleShown
 
+  // ⛔ **A collapsed column is not a narrow one, and it paints nothing.** Measured 2026-09-13 in
+  // Electron 44 on a `visibility: collapse; width: 0` <col>: its cell reads clientWidth 0 and
+  // scrollWidth 75, its computed visibility is still `visible`, and its nowrap span's right edge sits
+  // 75px past the next cell's left — the exact shape of an overflow and a collision — while a
+  // screenshot of the same table shows nothing of it. The two sections below were written at a
+  // 1440px window where every column is drawn, and read that shape as six faults across both CI
+  // runners (run 34795442043): Windows clamps the window to a 1024px screen and Xvfb leaves the panel
+  // under 1050px beside the default sidebar, so Created and Updated were collapsed by the very rule
+  // *the task table responds to its own width* proves.
+  //
+  // So first take the widest layout this screen allows — the sidebar at its own minimum, read off the
+  // separator rather than hard-coded — and measure only what is drawn there. A column still collapsed
+  // after that is a fact about the display, which is `skip`'s rule; a check over the collapsed cells
+  // would fail a layout nobody can see, and one over an empty list would pass while proving nothing.
+  const drawnDates = `[...document.querySelectorAll('.tbl--tasks tbody td.tbl-when')].filter((c) => c.clientWidth > 0).length`
+  const sidebarBefore = await evaluate(`document.documentElement.style.getPropertyValue('--sidebar-w')`)
+  const widened = (await evaluate(drawnDates)) === 0
+  if (widened) {
+    await evaluate(`(() => {
+      const min = document.querySelector('.resizer')?.getAttribute('aria-valuemin');
+      if (min) document.documentElement.style.setProperty('--sidebar-w', min + 'px');
+    })()`)
+    await wait(200)
+  }
+  const wideLayout = JSON.parse(
+    await evaluate(`
+      JSON.stringify({
+        viewport: window.innerWidth,
+        panel: Math.round(document.querySelector('.tbl--tasks')?.closest('.panel')?.getBoundingClientRect().width ?? 0),
+        sidebar: getComputedStyle(document.documentElement).getPropertyValue('--sidebar-w').trim(),
+        drawnDates: ${drawnDates}
+      })
+    `)
+  )
+  check(
+    'the widest layout this screen allows draws the date columns, or its panel is under the 1050px they collapse at',
+    wideLayout.drawnDates > 0 || wideLayout.panel <= 1050,
+    JSON.stringify({ ...wideLayout, widened })
+  )
+
   section('the table headings each fit on one line')
   // ⭐ Reported 2026-09-13: at 100% zoom *Took* was drawn as two rows, which makes the whole header
   // row two rows deep and pushes every label out of line with the numbers under it. The headings are
@@ -4529,18 +4569,21 @@ try {
               label: text.innerText.replace(/\\s+/g, ' ').trim(),
               lines,
               width: Math.ceil(box.width),
-              room: Math.round(room)
+              room: Math.round(room),
+              // A collapsed column's heading has no room and is never painted (see above).
+              drawn: th.clientWidth > 0
             };
           })())
         `)
       )
     )
   }
-  const headSizes = headRows.filter((r) => r !== null)
+  const headSizes = headRows.filter((r) => r !== null && r.drawn)
+  const collapsedHeads = headRows.filter((r) => r !== null && !r.drawn).map((r) => r.label)
   check(
     'the table draws its headings',
     headSizes.length > 0 && headSizes.some((r) => /^TOOK/i.test(r.label)),
-    JSON.stringify(headSizes.map((r) => r.label))
+    JSON.stringify({ drawn: headSizes.map((r) => r.label), collapsed: collapsedHeads })
   )
   check(
     '⛔ every heading is a single line, the sorted one included',
@@ -4548,11 +4591,12 @@ try {
     JSON.stringify(headSizes.filter((r) => r.lines !== 1))
   )
   // ⚠️ The measurement itself is the record: every label with what it needs and what it is given,
-  // so the next person to widen or rename a column can read the margin off a passing run.
+  // so the next person to widen or rename a column can read the margin off a passing run. A heading
+  // named under `collapsed` was not measured, because at this width it is not drawn.
   check(
     '⚠️ and each fits the room its column leaves it, so nothing is painted on a neighbour',
     headSizes.every((r) => r.width <= r.room + 1),
-    JSON.stringify(headSizes.map((r) => [r.label, r.width, r.room]))
+    JSON.stringify({ fit: headSizes.map((r) => [r.label, r.width, r.room]), collapsed: collapsedHeads })
   )
 
   section('the task table responds to its own width')
@@ -4620,7 +4664,9 @@ try {
       JSON.stringify((() => {
         const cells = [...document.querySelectorAll('.tbl--tasks tbody tr td.tbl-when')];
         if (!cells.length) return { cells: 0 };
-        const overflowing = cells.filter(c => c.scrollWidth > c.clientWidth + 1).length;
+        // Only what is painted: a collapsed cell is 0px wide with its content laid out past it.
+        const drawn = cells.filter(c => c.clientWidth > 0).length;
+        const overflowing = cells.filter(c => c.clientWidth > 0 && c.scrollWidth > c.clientWidth + 1).length;
         // The stamp is built from spans so the cell has an honest place to fold; a bare string
         // would break between the minutes and the meridiem.
         const parts = cells.filter(c => c.querySelector('span')).length;
@@ -4630,8 +4676,11 @@ try {
           const status = row.querySelector('td .status');
           if (!status) continue;
           const edge = status.getBoundingClientRect().left;
-          for (const span of row.querySelectorAll('td.tbl-when span')) {
-            if (span.getBoundingClientRect().right > edge + 1) collisions++;
+          for (const cell of row.querySelectorAll('td.tbl-when')) {
+            if (cell.clientWidth === 0) continue;
+            for (const span of cell.querySelectorAll('span')) {
+              if (span.getBoundingClientRect().right > edge + 1) collisions++;
+            }
           }
         }
         // What a 12-hour clock costs, measured in the cell's own font rather than guessed.
@@ -4644,7 +4693,7 @@ try {
         probe.remove();
         const style = getComputedStyle(host);
         const room = host.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
-        return { cells: cells.length, overflowing, parts, collisions, widest, room };
+        return { cells: cells.length, drawn, overflowing, parts, collisions, widest, room };
       })())
     `)
   )
@@ -4653,21 +4702,38 @@ try {
     stamps.cells > 0 && stamps.parts > 0,
     JSON.stringify(stamps)
   )
-  check(
-    '⛔ no date cell overflows its column',
-    stamps.overflowing === 0,
-    JSON.stringify({ cells: stamps.cells, overflowing: stamps.overflowing })
-  )
-  check(
-    '⛔ and nothing in one reaches the Status cell beside it',
-    stamps.collisions === 0,
-    JSON.stringify({ collisions: stamps.collisions })
-  )
-  check(
-    '⚠️ the column has room for `11:45 PM`, the widest single line a 12-hour locale draws',
-    stamps.room >= stamps.widest,
-    JSON.stringify({ room: stamps.room, widest: stamps.widest })
-  )
+  if (stamps.drawn > 0) {
+    check(
+      '⛔ no date cell overflows its column',
+      stamps.overflowing === 0,
+      JSON.stringify({ cells: stamps.cells, drawn: stamps.drawn, overflowing: stamps.overflowing })
+    )
+    check(
+      '⛔ and nothing in one reaches the Status cell beside it',
+      stamps.collisions === 0,
+      JSON.stringify({ collisions: stamps.collisions })
+    )
+    check(
+      '⚠️ the column has room for `11:45 PM`, the widest single line a 12-hour locale draws',
+      stamps.room >= stamps.widest,
+      JSON.stringify({ room: stamps.room, widest: stamps.widest })
+    )
+  } else {
+    // ⚠️ The display, not the code: the panel is under 1050px with the sidebar at its minimum, so
+    // the columns are collapsed by design and there is no drawn cell to measure. Windows CI's 1024px
+    // screen is the known case; the fit is measured wherever the screen allows it.
+    const why = `a ${wideLayout.viewport}px window leaves the panel ${wideLayout.panel}px with the sidebar at ${wideLayout.sidebar}, under the 1050px the date columns collapse at`
+    skip('⛔ no date cell overflows its column', why)
+    skip('⛔ and nothing in one reaches the Status cell beside it', why)
+    skip('⚠️ the column has room for `11:45 PM`, the widest single line a 12-hour locale draws', why)
+  }
+  if (widened) {
+    await evaluate(
+      sidebarBefore
+        ? `document.documentElement.style.setProperty('--sidebar-w', ${JSON.stringify(sidebarBefore)})`
+        : `document.documentElement.style.removeProperty('--sidebar-w')`
+    )
+  }
 
   section('settling a conversation from its thread')
   // ⭐ Reported 2026-09-07 against t280. The thread's own hold reason read *"use Finish, Stop or

@@ -116,6 +116,23 @@ sort arrow beside it is still one line. And take one line's height from a probe 
 element, because `getComputedStyle(el).lineHeight` is the string `normal` in most of this app and
 `parseFloat` of it is `NaN`, which every comparison reads as *fits*.
 
+### A collapsed column keeps its geometry, so it reads as a collision it never paints
+
+⛔ **A `<col>` at `visibility: collapse; width: 0` leaves its cells in layout with their content
+laid out past them.** Measured 2026-09-13 in Electron 44: the cell reads `clientWidth 0` and
+`scrollWidth 75`, its computed `visibility` is still `visible`, and a nowrap span inside it ends 75px
+into the neighbour — every number a *does this overflow* check looks for — while a screenshot of the
+same table shows none of it. Two task-table checks written at a 1440px window, where every column is
+drawn, read that shape as six faults on the CI runners (run 34795442043): Windows clamps the window
+to a 1024px screen and Xvfb leaves the panel under 1050px beside the default sidebar, so Created and
+Updated were collapsed by the very container query the next section proves.
+
+⚠️ Measure what is painted: take the widest layout the screen allows first (the sidebar at its own
+minimum, read off the separator's `aria-valuemin`), then measure only cells with `clientWidth > 0`,
+and where none is drawn `skip` with the window and panel width as the reason — a screen is a
+capability of the machine. ⛔ Not a check over the collapsed cells, which fails a layout nobody sees,
+and not one over an empty list, which passes while proving nothing.
+
 ### An `overflow: hidden` box still scrolls, so scrolling it proves nothing
 
 ⛔ **`scrollHeight > clientHeight` and an assignment to `scrollTop` are both true of a box the
