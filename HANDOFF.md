@@ -8,7 +8,7 @@ The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-14, **macOS 13 arm64**, measured on this branch's tip with electron-builder
-26.16.1): typecheck, lint pass; L1 **3,468 passed, 5 skipped** (200 files); L2 **203 checks** (5
+26.16.1): typecheck, lint pass; L1 **3,475 passed, 5 skipped** (202 files); L2 **203 checks** (5
 skipped); L3 **434 passed, 6 skipped** at the pinned 1024×720 window; L4 **17 checks** against a
 signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
