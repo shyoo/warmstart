@@ -22,6 +22,11 @@ replaced it — nothing else moved on either platform.
 
 ## Closed in this cleanup
 
+- **Statistics' trade-off scatters read "higher is better" on every axis, and hovering no longer
+  pushes the chart down (2026-09-14).** `axisPosition` inverts cost's and active time's plotted
+  position (`max - value`, ticks/tooltip unchanged) so a mark further from the origin is always
+  better; the hover legend moved from `.scatter-plot-head` into a reserved-height
+  `.scatter-plot-legend` strip below the chart instead of growing the head on hover.
 - **Reassigning a failed landing lost the message that said why it failed (t448, 2026-09-14).**
   `promptFor`'s thread filter kept only `human`/`controller` messages and the first `agent` one, so
   a `landing.failed`/`finish.held` `system` entry — written by the daemon *after* the agent's turn
@@ -69,11 +74,8 @@ replaced it — nothing else moved on either platform.
   `BASH_SOURCE` names the symlink, so repository discovery accepts both entry points; stopping never
   force-kills, and landing checks use `spawnEnv()` / `augmentPath()` so Finder-launched daemons find
   Homebrew tools like `npm`. **A minimal GUI launch PATH hit `xcrun`'s broken git shim (t12/t13):**
-  `which.ts`/`spawnEnv()` prepend extraDirs and skip broken xcrun shims; `git.ts` routes through
-  `which('git')`; `trunkOccupiedBy` resolves session holders via `taskOfSession` and sweeps stale claims.
-- **macOS text editing shortcuts work again (t446, 2026-09-14).** The native `appMenu`/`editMenu` roles restore Chromium's `⌘C`/`⌘V`/`⌘X` routing; Windows/Linux keep the menu disabled. Pinned by [`src/main/applicationmenu.test.ts`](src/main/applicationmenu.test.ts).
-- **Retire it / Delete it no longer refuse a branch sitting in an idle pool member (t444, 2026-09-14).**
-  `retireStrandedBranch` and `deleteUnlandedBranch` refused any branch a worktree held, even an idle pool member. The new `idlePoolHolder` in [`worktrees.ts`](src/daemon/worktrees.ts) steps off (`git switch --detach`) clean idle pool members.
+  `which.ts`/`spawnEnv()` prepend extraDirs and skip broken xcrun shims; `git.ts` routes through `which('git')`; `trunkOccupiedBy` resolves session holders via `taskOfSession` and sweeps stale claims.
+- **macOS text editing shortcuts work again (t446, 2026-09-14).** The native `appMenu`/`editMenu` roles restore Chromium's `⌘C`/`⌘V`/`⌘X` routing; Windows/Linux keep the menu disabled. Pinned by [`src/main/applicationmenu.test.ts`](src/main/applicationmenu.test.ts). **Retire it / Delete it no longer refuse a branch sitting in an idle pool member (t444):** the new `idlePoolHolder` in [`worktrees.ts`](src/daemon/worktrees.ts) steps off (`git switch --detach`) clean idle pool members first.
 - **`ui · windows-latest` went red on two checks the local suite could not see (t445.2, 2026-09-14).**
   ⭐ `test:ui` now pins its window to CI's 1024×720 via `ui/window-state.json`, and reproduced the
   reorder-arrow failure locally on the first run. The arrows were fine: at that height the row sat
@@ -88,10 +90,7 @@ replaced it — nothing else moved on either platform.
   `codesign`. ✅ The owner's Mac built it **signed with the hardened runtime** (electron-builder
   26.16.1); not notarised, nothing yet run under it. [`docs/development.md`](docs/development.md) §3.
 - **The controller's label consult stopped dropping itself as "overtaken" (t440, 2026-09-14).** `questionStillStands` had no branch for the `title` kind and fell through to `triage`'s gate — `awaiting_human` or `failed` only — so a label asked about a task doing its ordinary work (`ready`, `assigned`, `running`) was dropped before the controller was ever asked, reading as nearly every label consult failing. It now stands until `completed`, `cancelled` or `failed`, matching `askForTitle`. ⚠️ The Enter-key report in the same task was not a code bug: `isSubmitKey` is correct and identically wired in every composer; the Ctrl+Enter preference had reset because `ui-settings.json` only survives an `agentyard` → `Warmstart` productName change if the old install's data directory is still on disk when the new build first runs — item 6's known cost.
-- **The Attention bar no longer offers answer buttons for a question it cannot show (t441,
-  2026-09-14).** `answerableHere` checked only option count/length, so a long question with short
-  options rendered inline while `.approvals-what` truncated it — answerable blind. It now also
-  requires the full question fit in 100 characters, else falls back to **Answer…**.
+- **The Attention bar no longer offers answer buttons for a question it cannot show (t441, 2026-09-14).** `answerableHere` checked only option count/length, so a long question with short options rendered inline while `.approvals-what` truncated it — answerable blind. It now also requires the full question fit in 100 characters, else falls back to **Answer…**.
 - **Muse could not grade anything, and the app would not say why (t436, 2026-09-14).** Muse Code 1.1.1 exits 1 against this repo's `.codex` symlink, which was a seven-byte **file** on a `core.symlinks=false` checkout rather than a directory; `.codex` is now local-only (`scripts/link-agent-skills.mjs`, gitignored, junction on Windows). ⛔ The second half generalises: a `stream` session's non-protocol stderr was dropped by `StreamParser`, so both the reviewer and `onSessionExit` reported an unexplained death; `sessionDiagnostics` keeps a bounded tail and both now quote it.
 - **The README is a user guide with real screenshots (t439, 2026-09-14).** Twelve PNGs that `scripts/generate-readme-assets.mjs` captures from the built renderer against a fictional fleet ([`docs/development.md`](docs/development.md) §2); every launch ends with `daemon.shutdown`, because `Browser.close` had left six orphaned orchestratords on this machine.
 - **The status bar spans the full window as `.shell`'s own grid row (t434)** — it used to sit inside `.main`'s flex column, so its border stopped at the sidebar's edge. **Global › Status no longer repeats Notice's warnings (t433):** only Notice lists them.
@@ -101,7 +100,7 @@ replaced it — nothing else moved on either platform.
   bypasses hit-testing — [`docs/testing.md`](docs/testing.md) §3); a sign-in run while driving
   another computer opened the vendor's OAuth browser on *that* screen (`SignInLocationWarning` now
   names the machine); a host taking work could sleep mid-run (`preventSleep`, default on, holds a
-  `powerSaveBlocker`). ⚠️ None of the three driven in the packaged app.
+  `powerSaveBlocker`). None of the three driven in the packaged app.
 - **CI on `main` is green again (2026-09-13).** Six task-table checks failed on both runners after the ~30-commit merge `3ff9ffd`; three measured causes, all written up in [`docs/testing.md`](docs/testing.md) §3. Dep and Took now collapse together at a 660px panel.
 - **A probe PTY answers the TUI's cursor-position query (t3, 2026-09-13).** Muse Code 1.2.1 writes
   `ESC[6n` at startup and exits 0 at +6.4s unanswered, before `readyMs`, so every `/usage` probe read

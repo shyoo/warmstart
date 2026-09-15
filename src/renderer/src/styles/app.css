@@ -6920,11 +6920,11 @@ select:focus-visible,
 .scatter-plots-filter input { cursor: pointer; }
 .scatter-plots-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--sp-3); }
 .scatter-plot-box { border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: var(--sp-2); background: var(--color-surface); }
-.scatter-plot-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-1); }
+.scatter-plot-head { display: flex; justify-content: space-between; align-items: baseline; gap: var(--sp-2); margin-bottom: var(--sp-1); }
 .scatter-plot-title { font-size: var(--text-body); font-weight: 600; }
-.scatter-plot-tooltip { font-size: var(--text-meta); color: var(--color-text-dim); }
-.scatter-plot-tooltip strong { color: var(--color-text); }
 .scatter-plot-svg { width: 100%; height: auto; display: block; }
+.scatter-plot-legend { min-height: 2.6em; margin-top: var(--sp-1); font-size: var(--text-meta); color: var(--color-text-dim); line-height: 1.3; }
+.scatter-plot-legend strong { color: var(--color-text); }
 .scatter-plot-axis { stroke: var(--color-border-strong); stroke-width: 1; }
 /* ⚠️ Fainter than the axes and the marks, in that order: gridlines exist to say where a value falls,
    and a grid that competes with the icons for attention replaces one unreadable plot with another. */

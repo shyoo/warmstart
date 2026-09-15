@@ -227,7 +227,14 @@ measured has ever qualified unfiltered. ⭐ The checkbox is a per-display prefer
 page change or an app restart rather than resetting to off. ⛔ A model whose weakest axis rests on
 fewer than `MIN_TRUSTED_SAMPLES` (5, the same floor the price table dims its `n` column at) is dropped
 from all three scatters entirely — a mark has no column to dim a thin count in, so it is excluded
-rather than drawn as a confident point over a guess.
+rather than drawn as a confident point over a guess. ⭐ **Every axis reads "higher is better"
+(2026-09-14).** Cost and active time are measured such that a *smaller* number is the better outcome,
+so `axisPosition` plots them on an inverted position (`max - value`) while the tick labels and tooltip
+still show the real dollar/duration — a mark further from the origin is always the better outcome, on
+every axis, without needing to reverse quality too. ⭐ **The hover legend is a reserved-height strip
+below each chart, not a line in the head.** The head used to grow the tooltip inline and push the
+chart down on hover; `.scatter-plot-legend` always renders (a non-breaking space when nothing is
+hovered) so its height never changes and the chart above it never moves.
 
 ⛔ **The chart names the harness as well as the model, and the table does not have to.** Its bars are
 model rows, which in a table are indented under the agent row that owns them; a chart has no such

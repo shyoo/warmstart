@@ -660,8 +660,18 @@ const AXIS_RENDER: Record<Axis, (value: number) => string> = {
 
 const AXIS_HINT: Record<Axis, string> = {
   quality: 'higher is better',
-  cost: 'lower is better',
-  velocity: 'lower is better'
+  cost: 'higher is better',
+  velocity: 'higher is better'
+}
+
+/** Cost and active time are measured such that a *smaller* number is the better outcome; flipping
+ *  their plotted position (but not their displayed value) keeps "further from the origin" reading
+ *  as "better" on every axis, quality included. */
+const INVERTED_AXES: ReadonlySet<Axis> = new Set(['cost', 'velocity'])
+
+/** Maps a raw measured value to where it plots, and back again — the transform is its own inverse. */
+function axisPosition(axis: Axis, value: number, max: number): number {
+  return INVERTED_AXES.has(axis) ? max - value : value
 }
 
 /** ⛔ Quality is always read on its published 0..10 rubric scale; cost and active time have no
@@ -712,12 +722,6 @@ export function ScatterPlot({
         <span className="scatter-plot-title">
           {AXIS_TITLE[xAxis]} <span className="dim">vs</span> {AXIS_TITLE[yAxis]}
         </span>
-        {active && (
-          <span className="scatter-plot-tooltip">
-            <strong>{active.label}</strong> · {AXIS_TITLE[xAxis]} {AXIS_RENDER[xAxis](active[xAxis])} ·{' '}
-            {AXIS_TITLE[yAxis]} {AXIS_RENDER[yAxis](active[yAxis])}
-          </span>
-        )}
       </div>
       <svg
         className="scatter-plot-svg"
@@ -769,12 +773,12 @@ export function ScatterPlot({
             textAnchor="middle"
             className="scatter-plot-tick"
           >
-            {AXIS_RENDER[xAxis](t)}
+            {AXIS_RENDER[xAxis](axisPosition(xAxis, t, maxX))}
           </text>
         ))}
         {yTicks.map((t, i) => (
           <text key={`yl-${i}`} x={marginLeft - 6} y={scaleY(t) + 3} textAnchor="end" className="scatter-plot-tick">
-            {AXIS_RENDER[yAxis](t)}
+            {AXIS_RENDER[yAxis](axisPosition(yAxis, t, maxY))}
           </text>
         ))}
         <text
@@ -795,8 +799,8 @@ export function ScatterPlot({
           {AXIS_TITLE[yAxis]} ({AXIS_HINT[yAxis]})
         </text>
         {points.map((point) => {
-          const cx = scaleX(point[xAxis])
-          const cy = scaleY(point[yAxis])
+          const cx = scaleX(axisPosition(xAxis, point[xAxis], maxX))
+          const cy = scaleY(axisPosition(yAxis, point[yAxis], maxY))
           const r = (hovered === point.key ? iconSize + 4 : iconSize) / 2
           return (
             <g
@@ -815,6 +819,16 @@ export function ScatterPlot({
           )
         })}
       </svg>
+      <div className="scatter-plot-legend">
+        {active ? (
+          <>
+            <strong>{active.label}</strong> · {AXIS_TITLE[xAxis]} {AXIS_RENDER[xAxis](active[xAxis])} ·{' '}
+            {AXIS_TITLE[yAxis]} {AXIS_RENDER[yAxis](active[yAxis])}
+          </>
+        ) : (
+          ' '
+        )}
+      </div>
     </div>
   )
 }
