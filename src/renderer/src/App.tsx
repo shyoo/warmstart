@@ -383,12 +383,15 @@ export function App({
             <path d="M9.5 9.5 L13.5 13.5" />
             <path d="M4.5 6.5 L8.5 6.5" />
           </IconButton>
-          {/* Only once the zoom is off 100%, and it is the control that puts it back. */}
-          {zoom !== DEFAULT_ZOOM && (
-            <button className="zoom-badge" title="Reset zoom (Ctrl 0)" onClick={resetZoom}>
-              {Math.round(zoom * 100)}%
-            </button>
-          )}
+          {/* Always shown, at a fixed position, so it never pops up under the cursor mid zoom-click. */}
+          <button
+            className="zoom-badge"
+            title="Reset zoom (Ctrl 0)"
+            disabled={zoom === DEFAULT_ZOOM}
+            onClick={resetZoom}
+          >
+            {Math.round(zoom * 100)}%
+          </button>
           <IconButton label="Zoom in (Ctrl +)" disabled={zoom >= MAX_ZOOM} onClick={zoomIn}>
             <circle cx="6.5" cy="6.5" r="4" />
             <path d="M9.5 9.5 L13.5 13.5" />

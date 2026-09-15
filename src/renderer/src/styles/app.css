@@ -264,10 +264,17 @@ body {
   user-select: none;
 }
 
-.zoom-badge:hover {
+.zoom-badge:hover:not(:disabled) {
   background: var(--color-surface);
   color: var(--color-text);
   border-color: var(--color-border-strong);
+}
+
+/* ⛔ Still drawn, not hidden. It always sits between the two magnifiers, so a click that lands
+   right after a zoom-in never finds a reset button that just appeared under the cursor. */
+.zoom-badge:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .icon-btn {

@@ -526,8 +526,10 @@ try {
   )
   await evaluate(`document.querySelector('.zoom-badge')?.click()`)
   check(
-    'the zoom readout resets zoom to 100%',
-    (await zoomFactor()) === '1.00' && (await evaluate(`!document.querySelector('.zoom-badge')`)) === true,
+    'the zoom readout resets zoom to 100% and stays visible, disabled',
+    (await zoomFactor()) === '1.00' &&
+      (await evaluate(`document.querySelector('.zoom-badge')?.innerText ?? ''`)) === '100%' &&
+      (await evaluate(`document.querySelector('.zoom-badge')?.disabled`)) === true,
     String(await zoomFactor())
   )
   await evaluate(`document.querySelector('button[aria-label="Zoom out (Ctrl -)"]')?.click()`)
