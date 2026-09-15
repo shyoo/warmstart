@@ -519,13 +519,14 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   `task_complete`, and the run still open and the task still `running` **forty-five minutes later**,
   when an unrelated daemon restart reconciled it. So the `result` record now writes down *that the
   turn ended without a terminal signal* (`idleTurns`), and `runWatchdogs` acts on the note once
-  `quietSince` proves nothing has happened for `IDLE_TURN_AFTER_MS` (3m) — the grace exists because
-  everything the daemon does to an idle session (wrap-up, `/compact`, a reply) starts a request and
-  clears the note. ⚠️ The action is `parkForHuman`, i.e. the `await_human` verdict the agent should
-  have reached itself: run `blocked`, task at `awaiting_human` carrying the agent's own last words,
-  session kept warm, **nothing landed, committed, graded or discarded**. It reads no completion out of
-  prose — not even a literal `TASK COMPLETE:` line, which is a contract given to adapters that cannot
-  call the tool. Pinned by `idleturn.test.ts`.
+  `quietSince` proves nothing has happened for `IDLE_TURN_AFTER_MS` (3m) — checking the session's
+  process tree so active child processes (e.g. background tests) or advancing CPU defer parking — the
+  grace exists because everything the daemon does to an idle session (wrap-up, `/compact`, a reply)
+  starts a request and clears the note. ⚠️ The action is `parkForHuman`, i.e. the `await_human` verdict
+  the agent should have reached itself: run `blocked`, task at `awaiting_human` carrying the agent's
+  own last words, session kept warm, **nothing landed, committed, graded or discarded**. It reads no
+  completion out of prose — not even a literal `TASK COMPLETE:` line, which is a contract given to
+  adapters that cannot call the tool. Pinned by `idleturn.test.ts`.
 - ⛔ **`awaiting_human` must say what it wants and offer somewhere to answer.** Every hand-off to a
   person writes its reason onto the task, and `resolveTask()` records the answer.
 - ⛔ **Cancel is not delete.** Cancel winds a run down through the preemption protocol into a resting

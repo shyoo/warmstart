@@ -478,7 +478,9 @@ to the DAG, which rung and where the rung came from — and six of those under a
 was a wall nobody read. `Decide` now renders `.decide-actions`: `Finish · Stop · Commit ▼ · Land ▼`
 (plus *Resolve & retry* and *Retry landing* when a landing has failed), Commit and Land by the same
 `pendingWork` rules as before, and every paragraph moved verbatim into that button's `title`. The
-ordinary `awaiting_human` card takes the same shape with *Mark done · Stop here*. ⛔ **What stays
+ordinary `awaiting_human` card takes the same shape with *Mark done · Stop here* (plus *Land ▼*
+when unlanded commits are present on the branch, and *Resolve & retry* / *Retry landing* when a landing
+has failed). ⛔ **What stays
 inline is only what protects work**, one short `.decide-note` each: the uncommitted-file count
 Finish would release (*⚠️ 3 uncommitted files — press again to finish anyway* once armed), a
 workspace the card could not read, a refused commit or landing (`commitError`), and — on an

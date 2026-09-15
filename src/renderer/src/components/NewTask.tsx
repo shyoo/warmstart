@@ -1252,7 +1252,6 @@ export function NewTask({
                     ? `\n\nFollowing the project's default: ${inheritedWorkspace}.`
                     : '')
                 }
-                muted={workspaceMode === 'inherit'}
                 value={workspaceMode === 'inherit' ? inheritedWorkspace : workspaceMode}
                 options={[
                   { value: 'worktree', label: 'Worktree', title: WORKSPACE_MODE_LABELS.worktree },

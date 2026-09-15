@@ -485,7 +485,7 @@ export function Decide({
   const conversation = task.kind === 'conversation'
 
   const readPending = useCallback(async (): Promise<void> => {
-    if (!conversation) return
+    if (!task.projectId) return
     try {
       const answer = await rpc('task.pendingWork', { id: task.id })
       setPending(answer)
@@ -496,7 +496,7 @@ export function Decide({
       // ⚠️ A tree that cannot be read is not a tree with nothing in it. Leaving `pending` alone keeps
       // whatever the last successful read said rather than replacing it with a reassuring absence.
     }
-  }, [conversation, task.id])
+  }, [task.id, task.projectId])
 
   // ⚠️ Re-read when the task moves, because every action on this card changes the tree: a commit
   // empties it, a reply can fill it again. `updatedAt` is the cheapest honest trigger.
@@ -518,7 +518,7 @@ export function Decide({
    * offered no way to move them. This is where the tool does the last part.
    */
   const unlandedNow =
-    conversation && pending?.supported === true && !pending.hasDiff && pending.unlandedCommits > 0
+    pending?.supported === true && !pending.hasDiff && pending.unlandedCommits > 0
 
   /**
    * The rung each settle-it button starts on, and where that answer came from.
@@ -612,8 +612,25 @@ export function Decide({
   const handleLand = async (finishPolicy: FinishPolicy): Promise<void> => {
     setBusy(true)
     try {
-      const result = await rpc('task.landConversation', { id: task.id, finishPolicy })
-      setCommitError(result.ok ? null : (result.reason ?? 'the branch could not be landed'))
+      if (conversation) {
+        const result = await rpc('task.landConversation', { id: task.id, finishPolicy })
+        setCommitError(result.ok ? null : (result.reason ?? 'the branch could not be landed'))
+      } else {
+        if (finishPolicy !== task.finishPolicy) {
+          const update = await rpc('task.setFinishPolicy', { id: task.id, finishPolicy })
+          if (update.landed) {
+            setCommitError(null)
+          } else if (update.reason) {
+            setCommitError(update.reason)
+          } else if (finishPolicy !== 'commit-only') {
+            const result = await rpc('task.land', { id: task.id })
+            setCommitError(result.landed ? null : (result.reason ?? 'the branch could not be landed'))
+          }
+        } else {
+          const result = await rpc('task.land', { id: task.id })
+          setCommitError(result.landed ? null : (result.reason ?? 'the branch could not be landed'))
+        }
+      }
       await onRefresh()
       await readPending()
     } finally {
@@ -687,13 +704,18 @@ export function Decide({
     (cannotLook
       ? ` ⚠️ Could not read this task’s workspace (${pending?.reason}), so there is no telling what is uncommitted; the run checks the branch out again.`
       : '')
-  const landTitle =
-    `Lands ${pending?.unlandedCommits === 1 ? '1 commit' : `${pending?.unlandedCommits ?? 0} commits`} ` +
-    `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landRung]} (${landRungWhere}). ` +
-    'The tool rebases onto the landing target, runs the project’s checks where the rung asks for ' +
-    'them, and merges or pushes as the rung says; a refusal leaves the branch exactly where it is. ' +
-    'Landing does not finish this conversation — only Finish and Stop do — so the thread comes back ' +
-    'open on the next numbered branch, ready to land again. ▼ picks another rung for this press.'
+  const landTitle = conversation
+    ? `Lands ${pending?.unlandedCommits === 1 ? '1 commit' : `${pending?.unlandedCommits ?? 0} commits`} ` +
+      `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landRung]} (${landRungWhere}). ` +
+      'The tool rebases onto the landing target, runs the project’s checks where the rung asks for ' +
+      'them, and merges or pushes as the rung says; a refusal leaves the branch exactly where it is. ' +
+      'Landing does not finish this conversation — only Finish and Stop do — so the thread comes back ' +
+      'open on the next numbered branch, ready to land again. ▼ picks another rung for this press.'
+    : `Lands ${pending?.unlandedCommits === 1 ? '1 commit' : `${pending?.unlandedCommits ?? 0} commits`} ` +
+      `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landRung]} (${landRungWhere}). ` +
+      'The tool rebases onto the landing target, runs the project’s checks where the rung asks for ' +
+      'them, and merges or pushes as the rung says; a refusal leaves the branch exactly where it is. ' +
+      '▼ picks another rung for this press.'
   const resolveTitle =
     'Dispatches a landing-repair run on this thread with the worker and model selected below. It carries ' +
     'the landing failure, check output, branch and required landing procedure into that run, so the new ' +
@@ -788,7 +810,7 @@ export function Decide({
             value={landRung}
             disabled={busy}
             title={landTitle}
-            ariaLabel="Land this conversation"
+            ariaLabel={conversation ? 'Land this conversation' : 'Land this task'}
             menuAriaLabel="Landing strategy for this branch"
             options={LAND_RUNGS.map((rung) => ({
               value: rung,
@@ -809,7 +831,7 @@ export function Decide({
           </button>
         )}
 
-        {canReland && (
+        {canReland && !unlandedNow && (
           <button className="btn btn--primary" title={relandTitle} disabled={busy} onClick={() => void handleReland()}>
             Retry landing
           </button>

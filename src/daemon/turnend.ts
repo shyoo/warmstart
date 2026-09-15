@@ -60,7 +60,7 @@ export const blockedOn = new Map<string, string>()
  * ⚠️ Keyed by session and holding the run, so a note cannot outlive what it describes: a new run in
  * the same session, or a session that ends, makes it stale rather than wrong.
  */
-const idleTurns = new Map<string, { runId: string; at: number; said: string | null }>()
+const idleTurns = new Map<string, { runId: string; at: number; said: string | null; lastCpuSeconds?: number }>()
 
 /**
  * How long a work run may sit on a finished turn before it is handed to a person.
@@ -80,8 +80,19 @@ export function noteIdleTurn(session: Session, run: Run, said: string | null): v
 }
 
 /** What a session's last unreported turn ending was, if it has one. Exported for its test. */
-export function idleTurnFor(sessionId: string): { runId: string; at: number; said: string | null } | null {
+export function idleTurnFor(
+  sessionId: string
+): { runId: string; at: number; said: string | null; lastCpuSeconds?: number } | null {
   return idleTurns.get(sessionId) ?? null
+}
+
+/** Defer the idle turn timeout when active child processes or CPU progress is observed. */
+export function deferIdleTurn(sessionId: string, cpuSeconds?: number): void {
+  const current = idleTurns.get(sessionId)
+  if (current) {
+    current.at = Date.now()
+    if (cpuSeconds !== undefined) current.lastCpuSeconds = cpuSeconds
+  }
 }
 
 export function forgetIdleTurn(sessionId: string): void {

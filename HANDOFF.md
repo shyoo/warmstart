@@ -1,26 +1,31 @@
 # Warmstart — Session Handoff
 
-## Current state — 2026-09-14
+## Current state — 2026-09-15
 
 Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling, pooled worktrees,
 model-aware routing, quality review, remote access, packaging, and atomic worker/model reassignment.
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-14, **Windows 11**, after t449): typecheck, lint and build pass; L1 **3,495 passed,
+Baseline (2026-09-15, **Windows 11**, after t452): typecheck, lint and build pass; L1 **3,498 passed,
 5 skipped** (202 files + 2 platform skips); L2 **203 checks** (5
 skipped); L3 **436 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
 `release/win-unpacked`. The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17
 against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
 **Release** workflow: it has been dispatched twice with `platforms=macos` (item 6 below), so a `v*`
-tag now builds both platforms. ⚠️ **On top of that Mac baseline, t447 (Windows 11 x64, this rebase)
-adds a Routing Model / Statistics change** whose own L1 delta is measured against the pre-rebase
-Windows count of 3,458: `plot3d.test.ts` (−9) is deleted with the module it pinned, and
-`Statistics.test.tsx` loses one test net rewriting its 3D-plot suite for the flat scatters that
-replaced it — nothing else moved on either platform.
+tag now builds both platforms.
 
 ## Closed in this cleanup
+
+- **Active child processes defer idle turn parking, completion detects resting sessions, and Decide offers Land (t452, 2026-09-15).**
+  Claude Code waiting on background tests (`test:all` in t451) ended its turn without `task_complete`; the watchdog previously
+  checked elapsed time alone (>3m) and parked the task at `awaiting_human` while tests were still burning CPU under `session.pid`.
+  `runWatchdogs` now reads the tree via `sampleProcessTree` and defers parking when child processes or CPU progress are active.
+  For tasks resting at `awaiting_human`: `resumeIdleConversation` now resumes work tasks unprompted when words or tool calls arrive;
+  `completeTask` resumes resting sessions to allow `landCompletion`; `Decide` reads `pendingWork` across all tasks and renders
+  `Land ▼` whenever unlanded commits sit on the branch; and the composer's Worktree | Trunk `SegmentedControl` highlights selected
+  options in `--color-accent` consistently regardless of project default.
 
 - **Statistics' trade-off scatters read "higher is better" on every axis, and hovering no longer
   pushes the chart down (2026-09-14).** `axisPosition` inverts cost's and active time's plotted
@@ -103,17 +108,7 @@ replaced it — nothing else moved on either platform.
   another computer opened the vendor's OAuth browser on *that* screen (`SignInLocationWarning` now
   names the machine); a host taking work could sleep mid-run (`preventSleep`, default on, holds a
   `powerSaveBlocker`). None of the three driven in the packaged app.
-- **CI on `main` is green again (2026-09-13).** Six task-table checks failed on both runners after the ~30-commit merge `3ff9ffd`; three measured causes, all written up in [`docs/testing.md`](docs/testing.md) §3. Dep and Took now collapse together at a 660px panel.
-- **A probe PTY answers the TUI's cursor-position query (t3, 2026-09-13).** Muse Code 1.2.1 writes
-  `ESC[6n` at startup and exits 0 at +6.4s unanswered, before `readyMs`, so every `/usage` probe read
-  *"the probe session did not start"* on a signed-in worker. `termquery.ts` answers it on `probe`
-  PTYs only, proven through the real `spawnSession` in [`probepty.test.ts`](src/daemon/probepty.test.ts).
-  ⚠️ Not yet driven in the packaged app. **Antigravity CLI commissioning and live quota probe on
-  macOS:** `readAntigravityIdentity`/`probeIdentity` read the OAuth token and auth email instead of a
-  false `loggedIn: false` that locked the worker into `Antigravity: unknown`; the live packaged probe
-  reads all 4 quota windows in 6s.
-- **t408–t425, all landed and all documented in [`docs/`](docs/README.md) (2026-09-13)** — Diff
-  pane, split Session TUI, macOS worktree/PATH fixes, task-oriented Global settings, and the rest.
+- **t408–t436, landed and documented in docs/ (2026-09-13–14)** — probe PTY answers, live quota probe, remote settings fixes, CI table checks, Diff pane, split Session TUI.
 
 ## Remaining work — ordered by payoff
 

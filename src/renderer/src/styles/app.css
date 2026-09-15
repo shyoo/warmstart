@@ -6615,10 +6615,6 @@ select:focus-visible,
   color: var(--color-accent);
 }
 
-.seg--muted .seg-btn--on {
-  background: transparent;
-  color: var(--color-text-dim);
-}
 
 /* The clock sits with the send buttons rather than in the settings row, so it takes their height. */
 .pill--clock .pill {

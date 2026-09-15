@@ -148,15 +148,20 @@ describe('an agent that wakes itself up', () => {
     }
   })
 
-  it('refuses an ordinary task, which has a different contract entirely', () => {
-    // ⛔ A `work` run stays open until `task_complete`; there is no resting state to resume from and
-    //    nothing here may put one back into `running` behind the finish path's back.
+  it('resumes an ordinary work task resting at awaiting_human', () => {
+    // ⭐ An ordinary work task parked at awaiting_human (e.g. by idle turn watchdog)
+    // whose agent starts speaking or using tools unprompted resumes its session cleanly.
     const { task, session } = resting()
     db.db().prepare("update tasks set kind = 'work' where id = ?").run(task.id)
-    expect(scheduler.resumeIdleConversation(session)).toBeNull()
+    const run = scheduler.resumeIdleConversation(session)
+    expect(run).not.toBeNull()
+    expect(run?.taskId).toBe(task.id)
+    const after = tasks.requireTask(task.id)
+    expect(after.status).toBe('running')
+    expect(after.assignee).toBe(claude.id)
   })
 
-  it('refuses the tail of the turn that has just ended', () => {
+  it('refuses the tail of the turn that has just ended unless ignoreQuiet is set', () => {
     // ⚠️ `onStreamResult` closes the run on the vendor's `result`, and a trailing `assistant_text`
     //    milliseconds later belongs to that turn. Opening a run for it would leave an empty one
     //    sitting open until a watchdog noticed.
@@ -164,6 +169,7 @@ describe('an agent that wakes itself up', () => {
     const run = tasks.runsFor(task.id)[0] as { id: string }
     db.db().prepare('update runs set ended_at = ? where id = ?').run(Date.now(), run.id)
     expect(scheduler.resumeIdleConversation(session)).toBeNull()
+    expect(scheduler.resumeIdleConversation(session, { ignoreQuiet: true })).not.toBeNull()
   })
 
   it('refuses a session that has ended, which cannot be saying anything', () => {
@@ -171,5 +177,13 @@ describe('an agent that wakes itself up', () => {
     db.db().prepare("update sessions set state = 'closed' where id = ?").run(session.id)
     const closed = sessions.getSession(session.id) as Session
     expect(scheduler.resumeIdleConversation(closed)).toBeNull()
+  })
+
+  it('allows completeTask on a session resting at awaiting_human', async () => {
+    const { task, session } = resting()
+    db.db().prepare("update tasks set kind = 'work' where id = ?").run(task.id)
+    await scheduler.completeTask(session.id, 'all done')
+    const finished = tasks.requireTask(task.id)
+    expect(finished.status).toBe('completed')
   })
 })

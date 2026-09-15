@@ -972,6 +972,15 @@ describe('landing recovery actions and canRelandTask', () => {
     expect(canRelandTask({ branch: null, holdReason: 'landing failed: the trunk was busy' })).toBe(false)
   })
 
+  it('does not offer canReland for an idle turn timeout, which offers Land via unlandedNow instead', () => {
+    const t = {
+      branch: 'warmstart/t451',
+      holdReason:
+        'The agent finished its turn without calling `task_complete`, `await_human` or `ask_human`, and has done nothing for 3 minutes since. Nothing has been landed, committed or discarded — the work is exactly as the agent left it.'
+    }
+    expect(canRelandTask(t)).toBe(false)
+  })
+
   it('returns every matching retry cause so one button can carry them all (t289)', () => {
     // ⛔ Each cause used to draw its own identical "Resolve & retry" button calling the same RPC,
     // so a landing that failed two ways asked the same question twice. The card draws one button

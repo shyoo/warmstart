@@ -151,6 +151,7 @@ import {
   quietSince,
   sampleProcessTree,
   stallConfirmed,
+  MIN_PROGRESS_CPU_SECONDS,
   MIN_SAMPLE_GAP_MS,
   STALL_CONFIRM_AFTER_MS,
   type TreeSample
@@ -192,7 +193,7 @@ import { lastSpend } from './spend.js'
 import { settings } from './settings.js'
 import { overrunFactor } from './estimator.js'
 import type { Objective } from '@shared/tasks.js'
-import { isOpenConversation, resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
+import { resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
 import {
   DEFAULT_OBJECTIVE,
   policy,
@@ -229,6 +230,7 @@ import { evictableResidents, leastValuableResident, sessionLeaseId } from './res
 import {
   blockedOn,
   deadOnArrival,
+  deferIdleTurn,
   forgetIdleTurn,
   idleTurnFor,
   idleTurnOverdue,
@@ -2527,6 +2529,22 @@ async function runWatchdogs(): Promise<void> {
         lastActivityAt: lastRequestEvidenceAt(session.id)
       })
       if (idleTurnOverdue(idle.at, quiet)) {
+        if (session.pid) {
+          const sample = await sampleProcessTree(session.pid)
+          if (sample) {
+            const hasChildren = sample.processes.length > 1
+            const lastCpu = idle.lastCpuSeconds
+            const progress = lastCpu === undefined || sample.cpuSeconds > lastCpu + MIN_PROGRESS_CPU_SECONDS
+            if (hasChildren && progress) {
+              deferIdleTurn(session.id, sample.cpuSeconds)
+              log.info(
+                `t${task.seq} idle turn deferred: ${sample.processes.length} processes active under session ` +
+                  `(${sample.cpuSeconds.toFixed(1)}s CPU)`
+              )
+              continue
+            }
+          }
+        }
         const minutes = Math.round((Date.now() - idle.at) / 60000)
         log.warn(
           `t${task.seq} ended its turn ${minutes}m ago without reporting completion and nothing has ` +
@@ -3307,7 +3325,13 @@ export function continueTask(taskId: string): 'delivered' | 'requeued' | 'queued
 export const completing = new Set<string>()
 
 export async function completeTask(sessionId: string, summary: string): Promise<void> {
-  const run = runForSession(sessionId)
+  let run = runForSession(sessionId)
+  if (!run?.taskId || run.outcome) {
+    const session = getSession(sessionId)
+    if (session) {
+      run = resumeIdleConversation(session, { ignoreQuiet: true })
+    }
+  }
   if (!run?.taskId || run.outcome) return
   const task = getTask(run.taskId)
   if (!task) return
@@ -4617,14 +4641,14 @@ export function reconcileTasks(): number {
  */
 export const RESUME_QUIET_MS = 5000
 
-export function resumeIdleConversation(session: Session): Run | null {
+export function resumeIdleConversation(session: Session, opts?: { ignoreQuiet?: boolean }): Run | null {
   if (sessionEnded(session.state)) return null
   if (isHousekeepingTurn(session.id)) return null
   if (runForSession(session.id)) return null
 
   const last = lastRunForSession(session.id)
   const task = last?.taskId ? getTask(last.taskId) : null
-  if (!task || !isOpenConversation(task)) return null
+  if (!task) return null
   if (task.status !== 'awaiting_human') return null
   // ⚠️ **A quiet period, because the last word of a turn can arrive after the record that ended
   // it.** `onStreamResult` closes the run on the vendor's `result`, and a trailing `assistant_text`
@@ -4632,7 +4656,7 @@ export function resumeIdleConversation(session: Session): Run | null {
   // would leave an empty run sitting open until a watchdog noticed. An agent woken by its own
   // background tooling comes back seconds to minutes later, never in the same breath. ⚠️ The
   // threshold is chosen to sit between those two, not measured against a distribution of either.
-  if (last?.endedAt && Date.now() - last.endedAt < RESUME_QUIET_MS) return null
+  if (!opts?.ignoreQuiet && last?.endedAt && Date.now() - last.endedAt < RESUME_QUIET_MS) return null
 
   const worker = getWorker(session.workerId)
   if (!worker) return null
@@ -4657,16 +4681,17 @@ export function resumeIdleConversation(session: Session): Run | null {
   setRunQuota(run.id, 'before', runQuota(worker.id))
   clearActivity(task.id)
   setStatus(task.id, 'running', { assignee: worker.id })
+  const detail =
+    'Nobody prompted this turn. The agent’s own tooling woke it — a command it left running in ' +
+    'the background finished, most often — and it started speaking again in the session it was ' +
+    'already resting in. It is metered as an ordinary turn.' +
+    (task.kind === 'conversation' ? ' The task goes back to waiting on you when it ends.' : '')
   addMessage(task.id, 'system', 'The agent picked this up again by itself', run.id, [], {
     event: 'conversation.resumed',
-    detail:
-      'Nobody prompted this turn. The agent’s own tooling woke it — a command it left running in ' +
-      'the background finished, most often — and it started speaking again in the session it was ' +
-      'already resting in. It is metered as an ordinary turn, and the task goes back to waiting on ' +
-      'you when it ends.'
+    detail
   })
   log.info(
-    `t${task.seq}: ${worker.label} resumed its conversation unprompted (run ${run.id.slice(0, 8)})`
+    `t${task.seq}: ${worker.label} resumed its ${task.kind === 'conversation' ? 'conversation' : 'task'} unprompted (run ${run.id.slice(0, 8)})`
   )
   return run
 }

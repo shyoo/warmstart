@@ -44,6 +44,8 @@ let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
 let turnend: typeof import('./turnend.js')
 let compaction: typeof import('./compaction.js')
+let stall: typeof import('./stall.js')
+let sessions: typeof import('./sessions.js')
 
 let seq = 0
 
@@ -138,6 +140,8 @@ beforeAll(async () => {
   scheduler = await import('./scheduler.js')
   turnend = await import('./turnend.js')
   compaction = await import('./compaction.js')
+  stall = await import('./stall.js')
+  sessions = await import('./sessions.js')
   db.openDb(join(dir, 'idleturn.db'))
 })
 
@@ -275,6 +279,43 @@ describe('the turn that ended without reporting', () => {
 
     expect(tasks.requireRun(run.id).endedAt).toBeNull()
     expect(tasks.getTask(task.id)?.status).toBe('running')
+  })
+
+  it('defers parking when child processes are actively running under the session', async () => {
+    const { run, task, session } = seedRunningTask()
+    db.db().prepare('update sessions set pid = 54321 where id = ?').run(session.id)
+    const activeSession = sessions.getSession(session.id) as Session
+    const spy = vi.spyOn(stall, 'sampleProcessTree').mockResolvedValue({
+      at: Date.now(),
+      cpuSeconds: 15,
+      processes: [
+        { pid: 54321, ppid: 1, name: 'claude', command: 'claude', cpuSeconds: 2 },
+        { pid: 54322, ppid: 54321, name: 'vitest', command: 'vitest run test:all', cpuSeconds: 13 }
+      ]
+    })
+
+    await endTurn(activeSession, 'Still waiting for the test:all run to complete.')
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
+    await scheduler.tick()
+
+    // Active child processes: task stays running, not parked at awaiting_human
+    expect(tasks.requireRun(run.id).endedAt).toBeNull()
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+    expect(spy).toHaveBeenCalledWith(54321)
+
+    // Flat CPU on a subsequent sample allows parking
+    spy.mockResolvedValue({
+      at: Date.now(),
+      cpuSeconds: 15,
+      processes: [
+        { pid: 54321, ppid: 1, name: 'claude', command: 'claude', cpuSeconds: 2 },
+        { pid: 54322, ppid: 54321, name: 'vitest', command: 'vitest run test:all', cpuSeconds: 13 }
+      ]
+    })
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
+    await scheduler.tick()
+    expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+    spy.mockRestore()
   })
 
   it('acts once, however many ticks follow', async () => {
