@@ -117,7 +117,10 @@ export interface QualityReport {
  */
 export type ReviewFilter = 'all' | 'none' | 'one' | 'many'
 
-/** How many finished tasks sit in each bucket. ⚠️ Over the same universe the table pages through. */
+/**
+ * How many gradable finished tasks sit in each review-count bucket, plus the disjoint ungradable
+ * count. ⚠️ The table may still show both sets when its operator preference leaves refusals visible.
+ */
 export interface ReviewCounts {
   none: number
   one: number

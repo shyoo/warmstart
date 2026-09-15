@@ -171,7 +171,10 @@ describe('which finished work has been graded', () => {
     const page = await quality.reviewQueue('none', 1, 0)
     expect(page.rows).toHaveLength(1)
     expect(page.total).toBe(2)
-    expect(page.counts.one).toBe(1)
+    // The one reviewed task has used the fleet's only peer, so it remains a visible row in its
+    // bucket but is not represented as still gradable in the summary.
+    expect(page.counts.one).toBe(0)
+    expect(page.counts.ungradable).toBe(1)
   })
 
   it('names who has already graded a task, so the row says why nobody else may', async () => {
@@ -260,7 +263,19 @@ describe('an agent is asked about a task at most once', () => {
     const filtered = await quality.reviewQueue('one', 25, 0, true)
     expect(filtered.rows).toHaveLength(0)
     expect(filtered.total).toBe(0)
-    expect(filtered.counts.ungradable).toBe(1)
+    // ⛔ The summary labels these as *gradable* buckets. This exhausted task belongs only in the
+    // non-gradable tile, not in both "1 review" and "Non-gradable" (t459).
+    expect(filtered.counts).toEqual({ none: 0, one: 0, many: 0, total: 0, ungradable: 1 })
+  })
+
+  it('excludes an operator-marked refusal from every gradable bucket', async () => {
+    const id = task()
+    db.db().prepare('update tasks set non_gradable = 1 where id = ?').run(id)
+
+    const page = await quality.reviewQueue('none')
+    expect(page.rows).toHaveLength(1)
+    expect(page.rows[0]?.eligible).toBe(false)
+    expect(page.counts).toEqual({ none: 0, one: 0, many: 0, total: 0, ungradable: 1 })
   })
 })
 

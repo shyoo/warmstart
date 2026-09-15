@@ -299,7 +299,9 @@ for an impossible duration spent exactly what it spent.
 agent and model scores — and duplicating it here would leave two tables of the same numbers folded
 two ways and no way to tell which was authoritative. This page answers what that one cannot: which
 finished work carries **no** grade, exactly one, two or more, or **cannot be graded**; who has already graded each task;
-and whether both an exact diff and a peer remain so it can still be graded. A "Filter out cannot be graded" toggle
+and whether both an exact diff and a peer remain so it can still be graded. The 0/1/2+ tiles and tab
+badges count only gradable work; **Non-gradable tasks** is disjoint, so a permanent refusal is never
+claimed in both totals. A "Filter out cannot be graded" toggle
 persists in operator preferences, and permanent refusals are printed beside **no**, not deferred until a batch skips it.
 The two link to each other in both
 directions rather than repeating each other. ⛔ **It is also the only place a review is commissioned in bulk** —

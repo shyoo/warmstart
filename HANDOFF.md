@@ -18,6 +18,12 @@ tag now builds both platforms.
 
 ## Closed in this cleanup
 
+- **Quality Review's gradable totals now exclude tasks the same page says cannot be graded (t459,
+  2026-09-15).** `reviewQueue` previously calculated the non-gradable count from live eligibility but
+  left the 0/1/2+ tiles as raw finished-task counts, so every refusal appeared on both sides of the
+  summary (reported as 61 gradable tasks even though none remained). All five counts now come from
+  one eligibility map; refused rows remain visible unless the operator's filter hides them.
+
 - **The quota-preemption warning card's wrap-up buttons scattered across its two-column grid, and a
   hand-off can now redirect to another worker instead of only pausing (t458, 2026-09-15).**
   `.decide-option` is a two-column grid; "Compact & pause" and "Hand off & pause" were two separate

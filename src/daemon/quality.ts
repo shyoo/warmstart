@@ -489,8 +489,6 @@ export async function reviewQueue(
 ): Promise<ReviewQueuePage> {
   const take = Math.max(1, Math.min(200, Math.floor(limit)))
   const skip = Math.max(0, Math.floor(offset))
-  const counts = reviewCounts()
-
   const allFinished = queueRows('all', 1000, 0)
   // ⛔ One batched fetch, not `getTask` per row: `TASK_SELECT`'s correlated subqueries and its
   // timing lookup are each designed to run once for the whole page, and calling `getTask` in this
@@ -508,8 +506,20 @@ export async function reviewQueue(
     })
   )
 
-  const ungradable = allFinished.filter((r) => !gradableMap.get(r.id)?.ok).length
-  const fullCounts: ReviewCounts = { ...counts, ungradable }
+  // ⛔ These tiles and tab badges are labelled *gradable tasks*. Count from the same eligibility
+  // verdict that drives the rows and batch queue; adding `ungradable` beside the old raw buckets
+  // made every refused task appear on both sides of the summary (t459, 2026-09-15).
+  const gradable = allFinished.filter((r) => gradableMap.get(r.id)?.ok)
+  const none = gradable.filter((r) => r.quality_review_count === 0).length
+  const one = gradable.filter((r) => r.quality_review_count === 1).length
+  const many = gradable.filter((r) => r.quality_review_count >= 2).length
+  const fullCounts: ReviewCounts = {
+    none,
+    one,
+    many,
+    total: none + one + many,
+    ungradable: allFinished.length - gradable.length
+  }
 
   let filtered = allFinished
   if (filter === 'none') filtered = filtered.filter((r) => r.quality_review_count === 0)
