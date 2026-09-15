@@ -80,5 +80,4 @@ coverage/
 # Local dev/deploy scripts
 deploy-local.ps1
 scripts/deploy-local.ps1
-deploy-local.sh
 scripts/deploy-local.sh

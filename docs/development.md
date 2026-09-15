@@ -113,6 +113,12 @@ date the step last really ran. On macOS use `scripts/build-mac.sh`, on Windows u
 | `--stop-daemon` / `-StopDaemon` | stop this repo's app and daemon first. ⛔ Refuses while agent processes are under it |
 | `--stop-agents` / `-StopAgents` | implies `--stop-daemon` and stops the agents too. ⚠️ Ends real work on a real account |
 
+The local macOS installer is `deploy-local.sh`. A local symlink beneath the scripts directory is
+also supported; repository discovery accepts both entry points.
+
+Project verification checks inherit `spawnEnv()`, including its portable executable search paths;
+a daemon launched from Finder must still find Homebrew/local build tools such as `npm`.
+
 ⛔ **Never by image name, at either level.** A process is stopped only if it executes from a path this
 repo owns or is a verified descendant of one that does, and its `(pid, creation time)` pair is re-read
 at the moment of the kill. ⚠️ Windows has no SIGTERM: `Stop-Process` is `TerminateProcess`, so the

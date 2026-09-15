@@ -17,8 +17,9 @@ tag now builds both platforms.
 
 ## Closed in this cleanup
 
-- **macOS GUI launch missing Homebrew PATH in landing verification checks (t14, 2026-09-14).**
-  Minimal GUI launch PATH (`/usr/bin:...`) on macOS lacks `/opt/homebrew/bin`, failing project checks (`npm run typecheck`) during landing with `/bin/sh: npm: command not found`. `which.ts` exports `augmentPath()`, `orchestratord` augments `process.env.PATH` at startup, and `landing.ts`, `worktrees.ts`, and `deliveries.ts` use `spawnEnv()` so checks and tools resolve cleanly.
+- **The local macOS deploy launcher works through its scripts-directory symlink (t14, 2026-09-14).**
+  `BASH_SOURCE` names the symlink, so repository discovery accepts both entry points; stopping never
+  force-kills, and landing checks use `spawnEnv()` / `augmentPath()` so Finder-launched daemons find Homebrew tools like `npm`.
 - **macOS `xcrun` git resolution failure and trunk lock phantom blocking (t12/t13, 2026-09-14).**
   Minimal GUI launch PATH on macOS hit `/usr/bin/git`, an Apple `xcrun` shim failing when Command Line Tools are misconfigured. `which.ts` and `spawnEnv()` prepend extraDirs and `which()` skips broken xcrun shims. `git.ts` routes through `which('git')` and `spawnEnv()`. `trunkOccupiedBy` resolves session holders via `taskOfSession`, avoids self-blocking, and sweeps stale claims.
 - **macOS text editing shortcuts work again (t446, 2026-09-14).** The native `appMenu`/`editMenu` roles restore Chromium's `⌘C`/`⌘V`/`⌘X` routing; Windows/Linux keep the menu disabled. Pinned by [`src/main/applicationmenu.test.ts`](src/main/applicationmenu.test.ts).
