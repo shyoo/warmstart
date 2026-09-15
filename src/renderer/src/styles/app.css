@@ -535,6 +535,24 @@ body {
   color: var(--color-text-faint);
 }
 
+.welcome-tour {
+  width: min(680px, calc(100vw - 48px));
+  padding: var(--sp-5);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  box-shadow: 0 12px 36px rgb(0 0 0 / 0.55);
+}
+
+.welcome-tour h2 { margin: var(--sp-1) 0 var(--sp-2); font-size: var(--text-title); }
+.welcome-tour > p { color: var(--color-text-dim); line-height: 1.55; }
+.welcome-kicker { color: var(--color-accent); font-size: var(--text-meta); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
+.welcome-progress { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--sp-2); margin: var(--sp-4) 0; padding: 0; list-style: none; }
+.welcome-progress li { padding-top: var(--sp-2); border-top: 2px solid var(--color-border); color: var(--color-text-faint); font-size: var(--text-dense); }
+.welcome-progress li.welcome-progress--active { border-color: var(--color-accent); color: var(--color-text); }
+.welcome-actions { align-items: center; }
+.welcome-actions .btn:first-child { margin-right: auto; }
+
 .note {
   border: 1px solid var(--color-border);
   border-left: 2px solid var(--state-warn);

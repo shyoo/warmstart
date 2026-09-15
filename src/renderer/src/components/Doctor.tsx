@@ -97,6 +97,10 @@ export function Doctor({ now, view = 'status' }: { now: number; view?: 'notice' 
             </table>
           </Section>
 
+          <Section title="Host tools">
+            <ToolTable tools={report.tools} />
+          </Section>
+
           <Section title="Workers">
             {report.workers.length === 0 ? (
               <p className="dim">None commissioned yet.</p>
@@ -164,6 +168,26 @@ export function Doctor({ now, view = 'status' }: { now: number; view?: 'notice' 
         </>
       )}
     </div>
+  )
+}
+
+export function ToolTable({ tools }: { tools: DoctorReport['tools'] }): React.JSX.Element {
+  const need = { required: 'required', 'pull-request': 'for pull requests', remote: 'for remote access' }
+  return (
+    <table className="tbl">
+      <tbody>
+        {tools.map((tool) => (
+          <tr key={tool.id}>
+            <td className="tbl-strong">{tool.label}</td>
+            <td className={tool.found ? 'ok' : tool.need === 'remote' ? 'dim' : 'warn'}>
+              {tool.found ? 'found' : 'not on PATH'}
+            </td>
+            <td className="dim">{need[tool.need]}</td>
+            <td className="mono kv-path">{tool.path ?? ''}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   )
 }
 

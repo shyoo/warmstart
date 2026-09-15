@@ -17,9 +17,22 @@ import { refreshCreditStatus } from '../spend.js'
 import { log, logFiles, recentLog } from '../log.js'
 import type { Api, ApiContext } from './support.js'
 import { checkWorkerDefaults, describeAge } from './support.js'
+import { which } from '../which.js'
+
+export function supportTools(): DoctorReport['tools'] {
+  const tools: Array<Pick<DoctorReport['tools'][number], 'id' | 'label' | 'need'>> = [
+    { id: 'git', label: 'Git', need: 'required' },
+    { id: 'gh', label: 'GitHub CLI', need: 'pull-request' },
+    { id: 'tailscale', label: 'Tailscale', need: 'remote' }
+  ]
+  return tools.map((tool) => {
+    const path = which(tool.id)
+    return { ...tool, found: path !== null, path }
+  })
+}
 
 type WorkerMethod =
-  | 'health' | 'adapter.list' | 'adapter.detect' | 'fleet.list' | 'worker.create' | 'worker.update'
+  | 'health' | 'adapter.list' | 'adapter.detect' | 'tool.detect' | 'fleet.list' | 'worker.create' | 'worker.update'
   | 'worker.setCreditsIntent' | 'worker.reorder' | 'worker.retire' | 'worker.probe' | 'costmodel.list'
   | 'model.options' | 'daemon.shutdown' | 'doctor.run' | 'session.list' | 'session.spawn' | 'session.write'
   | 'session.resize' | 'session.close' | 'session.backscroll' | 'session.streamlog' | 'session.attach'
@@ -33,6 +46,7 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
     health: () => ({ ok: true as const, version: ctx.version, uptimeMs: uptime() }),
     'adapter.list': (): AdapterInfo[] => adapters().map((a) => a.info),
     'adapter.detect': () => Promise.all(adapters().map((a) => a.detect())),
+    'tool.detect': supportTools,
     // ⚠️ `lastQuotaReading`, not `lastQuota`: this is the display path, and it shows the newest
     // reading that has windows rather than the newest *attempt*. Nothing here gates anything.
     'fleet.list': () =>
@@ -155,6 +169,12 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
     'doctor.run': async (): Promise<DoctorReport> => {
       const detections = await Promise.all(adapters().map((a) => a.detect()))
       const warnings: string[] = []
+      const tools = supportTools()
+
+      for (const tool of tools) {
+        if (!tool.found && tool.need === 'required') warnings.push(`${tool.label}: required tool not found on PATH`)
+        if (!tool.found && tool.need === 'pull-request') warnings.push(`${tool.label}: not found on PATH; pull-request delivery is unavailable`)
+      }
 
       const workers = await Promise.all(
         listWorkers().map(async (w) => {
@@ -244,6 +264,7 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
           dbPath: paths.db
         },
         adapters: detections,
+        tools,
         workers,
         costModels: costModels().map((m) => m.summary()),
         warnings

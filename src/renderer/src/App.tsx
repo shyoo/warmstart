@@ -49,6 +49,8 @@ import { ProjectDot, projectWorkState } from './lib/taskview'
 import { useUiSettings } from './lib/uisettings'
 import { useTarget } from './lib/target'
 import { MachinePicker } from './components/MachinePicker'
+import { WelcomeTour } from './components/WelcomeTour'
+import { completeWelcome, welcomePending } from './lib/welcome'
 
 /**
  * The shell.
@@ -183,6 +185,7 @@ export function App({
    */
   const [addingProject, setAddingProject] = useState(false)
   const [addingTask, setAddingTask] = useState(false)
+  const [showWelcome, setShowWelcome] = useState(welcomePending)
   const [newTaskProjectId, setNewTaskProjectId] = useState<string | undefined>()
   const [sidebarHidden, setSidebarHidden] = useState(false)
 
@@ -573,6 +576,15 @@ export function App({
       </aside>
 
       <SidebarResizer />
+
+      {connected && showWelcome && (
+        <WelcomeTour
+          onClose={() => { completeWelcome(); setShowWelcome(false) }}
+          onAddProject={() => setAddingProject(true)}
+          onWorkers={() => setRoute({ kind: 'settings', page: 'workers' })}
+          onNewTask={() => openNewTask()}
+        />
+      )}
 
       {/* ⛔ Rendered at the shell, not inside whichever panel opened it. It is modal over the whole
           window, and a project created from the sidebar has to land the operator in the new project

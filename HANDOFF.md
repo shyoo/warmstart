@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-14, **Windows 11**, measured on this tree after t448's fix): typecheck,
-lint pass; L1 **3,493 passed, 5 skipped** (201 files + 2 platform skips); L2 **203 checks** (5
+Baseline (2026-09-14, **Windows 11**, after t449): typecheck, lint and build pass; L1 **3,495 passed,
+5 skipped** (202 files + 2 platform skips); L2 **203 checks** (5
 skipped); L3 **436 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
 `release/win-unpacked`. The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17
 against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
@@ -41,6 +41,13 @@ replaced it — nothing else moved on either platform.
   prefix is deliberate (`cacheclock.ts`, measured t130/t231). The composer's workspace control
   collapsed from three segments to two (`Worktree`, `Trunk`), the project's default one selected
   and muted rather than shown as its own option.
+- **A clean profile now explains its first three actions and reports missing host tools (t449,
+  2026-09-14).** A once-per-display welcome tour opens Add Project, Workers, and New Task directly;
+  Dashboard and Global → Status report Git (required), `gh` (pull-request delivery), and Tailscale
+  (remote access) from the daemon's actual PATH resolution. The README states the same dependency
+  boundaries. [`docs/external-task-debugging.md`](docs/external-task-debugging.md) gives an outside
+  agent read-only SQLite queries to resolve `t<number>` through its task, messages, runs, sessions,
+  workspace, branch, and logs without treating a live database as an API.
 - **t446 and t447 could not land: a leaked `GIT_DIR` had re-initialised the trunk (2026-09-14).**
   Both stopped on *the trunk could not be read … Invalid path '/mnt'*: the trunk's `.git/config`
   carried `core.worktree = /mnt/c/…/ws3`, written by every `git init` an `npm test` ran inside the
@@ -75,7 +82,6 @@ replaced it — nothing else moved on either platform.
   force-kills, and landing checks use `spawnEnv()` / `augmentPath()` so Finder-launched daemons find
   Homebrew tools like `npm`. **A minimal GUI launch PATH hit `xcrun`'s broken git shim (t12/t13):**
   `which.ts`/`spawnEnv()` prepend extraDirs and skip broken xcrun shims; `git.ts` routes through `which('git')`; `trunkOccupiedBy` resolves session holders via `taskOfSession` and sweeps stale claims.
-- **macOS text editing shortcuts work again (t446, 2026-09-14).** The native `appMenu`/`editMenu` roles restore Chromium's `⌘C`/`⌘V`/`⌘X` routing; Windows/Linux keep the menu disabled. Pinned by [`src/main/applicationmenu.test.ts`](src/main/applicationmenu.test.ts). **Retire it / Delete it no longer refuse a branch sitting in an idle pool member (t444):** the new `idlePoolHolder` in [`worktrees.ts`](src/daemon/worktrees.ts) steps off (`git switch --detach`) clean idle pool members first.
 - **`ui · windows-latest` went red on two checks the local suite could not see (t445.2, 2026-09-14).**
   ⭐ `test:ui` now pins its window to CI's 1024×720 via `ui/window-state.json`, and reproduced the
   reorder-arrow failure locally on the first run. The arrows were fine: at that height the row sat
@@ -89,11 +95,7 @@ replaced it — nothing else moved on either platform.
   runtime in one line; `scripts/build-mac.sh` and the release workflow now read the bundle back with
   `codesign`. ✅ The owner's Mac built it **signed with the hardened runtime** (electron-builder
   26.16.1); not notarised, nothing yet run under it. [`docs/development.md`](docs/development.md) §3.
-- **The controller's label consult stopped dropping itself as "overtaken" (t440, 2026-09-14).** `questionStillStands` had no branch for the `title` kind and fell through to `triage`'s gate — `awaiting_human` or `failed` only — so a label asked about a task doing its ordinary work (`ready`, `assigned`, `running`) was dropped before the controller was ever asked, reading as nearly every label consult failing. It now stands until `completed`, `cancelled` or `failed`, matching `askForTitle`. ⚠️ The Enter-key report in the same task was not a code bug: `isSubmitKey` is correct and identically wired in every composer; the Ctrl+Enter preference had reset because `ui-settings.json` only survives an `agentyard` → `Warmstart` productName change if the old install's data directory is still on disk when the new build first runs — item 6's known cost.
-- **The Attention bar no longer offers answer buttons for a question it cannot show (t441, 2026-09-14).** `answerableHere` checked only option count/length, so a long question with short options rendered inline while `.approvals-what` truncated it — answerable blind. It now also requires the full question fit in 100 characters, else falls back to **Answer…**.
 - **Muse could not grade anything, and the app would not say why (t436, 2026-09-14).** Muse Code 1.1.1 exits 1 against this repo's `.codex` symlink, which was a seven-byte **file** on a `core.symlinks=false` checkout rather than a directory; `.codex` is now local-only (`scripts/link-agent-skills.mjs`, gitignored, junction on Windows). ⛔ The second half generalises: a `stream` session's non-protocol stderr was dropped by `StreamParser`, so both the reviewer and `onSessionExit` reported an unexplained death; `sessionDiagnostics` keeps a bounded tail and both now quote it.
-- **The README is a user guide with real screenshots (t439, 2026-09-14).** Twelve PNGs that `scripts/generate-readme-assets.mjs` captures from the built renderer against a fictional fleet ([`docs/development.md`](docs/development.md) §2); every launch ends with `daemon.shutdown`, because `Browser.close` had left six orphaned orchestratords on this machine.
-- **The status bar spans the full window as `.shell`'s own grid row (t434)** — it used to sit inside `.main`'s flex column, so its border stopped at the sidebar's edge. **Global › Status no longer repeats Notice's warnings (t433):** only Notice lists them.
 - **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).** The
   workers table's reorder arrows could not be clicked (order cell and worker cell shared one grid
   area; now `position: relative; z-index: 1`, caught only by `elementFromPoint` since `.click()`

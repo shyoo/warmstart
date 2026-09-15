@@ -68,13 +68,14 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `TaskSettingPicker` | ⛔ **one component, seven uses** — the thread's finish, conversation, completion, compaction, objective, worker and priority settings |
 | `NewTask` `NewTaskModal` `Pill` | one shell-owned composer modal: the project and the prompt first, the rest as a row of **pills** under it — except the workspace, which is a joined `SegmentedControl` group (`Project · …` | `Worktree` | `Trunk`) with the answer pressed, because a two-way choice hiding one half in a menu is how a trunk job gets filed unseen; a project in view is selected but can always be changed |
 | `Attention` `Questions` | the approvals/questions/quota-gate bar — one keystroke above the operator's work |
-| `Overview` `Controller` `Conversations` | dashboard, the controller chat, and conversation history |
+| `Overview` `Controller` `Conversations` | dashboard, including a host-tool setup card when Git, GitHub CLI or Tailscale is absent; the controller chat; and conversation history |
 | `Project` `ProjectSettings` `Projects` | the project routes and the policy tier |
 | `NewProject` | the add-project wizard: three steps, one modal, `lib/newproject.ts` holds its rules |
 | `RoutingModel` `RoutingOverview` `QualityModel` `CostModel` `VelocityModel` `ModelsModel` `Math` | the routing model, written up as a paper: abstract, contents, five numbered sections, KaTeX for the arithmetic |
 | `Statistics` | what finished tasks actually cost, took and scored — three tabs, one RPC, a window control. ⭐ `TradeoffPlots` draws the three-way trade-off as three flat x/y scatters — (quality, velocity), (quality, cost), (velocity, cost) — replacing an earlier rotatable 3D plot reported confusing to read and hard to interact with (2026-09-14) |
 | `LooseEnds` | work that exists and is going nowhere → [`landing.md`](landing.md) |
-| `Doctor` | which CLIs were found, who is signed in, how old each reading is, what is unverifiable |
+| `Doctor` | which required/conditional host tools and agent CLIs were found, who is signed in, how old each reading is, what is unverifiable |
+| `WelcomeTour` | a per-display, first-launch three-step guide with direct actions to add a project, add a worker, and file a task; completing or skipping it records `warmstart.welcomeComplete` in guarded `localStorage` |
 | `Logs` | the daemon's log, live and filterable, ring-buffered so a late window sees the past |
 | `Terminal` | the real agent TUI over xterm.js, not a reconstruction. ⚠️ Only a `pty` session has one — see below |
 | `SessionStream` | the *decoded* stream of a dispatched agent: one row per tool call, thinking phase, rate-limit caution and message. ⛔ Openly a reconstruction, because there is no screen to mirror |

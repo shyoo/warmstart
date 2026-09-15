@@ -31,7 +31,12 @@ to one place.
 
 ## Requirements
 
-- **Node.js 22+** and **Git 2.40+** to build. The app itself runs on the Node inside Electron.
+- **Git 2.40+ is required** to create task branches and worktrees. Install it before running the
+  app. **Node.js 22+** is required only to build from source; packaged apps use Electron's Node.
+- **GitHub CLI (`gh`) is required for `pull-request` delivery.** Install it and run `gh auth login`
+  before choosing that finish policy. Other finish policies do not need it.
+- **Tailscale is optional.** Install it on both computers only when using paired remote-desktop
+  access; phone access on the host's local network does not require it.
 - At least one agent CLI on `PATH`, signed in to an account you own:
 
 | CLI | Install | Needs |
@@ -41,7 +46,8 @@ to one place.
 | **Antigravity** | `irm https://antigravity.google/cli/install.ps1 \| iex` | Google AI Pro or Ultra |
 
 One is enough to start. Several is the point: Warmstart treats each as a separate quota and moves
-work between them.
+work between them. **Overview → Dashboard** lists missing host tools, and **Settings → Global →
+Status** shows their resolved paths alongside every detected agent CLI.
 
 ## Install and run
 

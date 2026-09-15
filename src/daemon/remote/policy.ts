@@ -10,6 +10,7 @@ export const REMOTE_METHODS = {
   'health': 'read',
   'adapter.list': 'deny',
   'adapter.detect': 'deny',
+  'tool.detect': 'read',
   'fleet.list': 'read',
   'worker.create': 'deny',
   'worker.update': 'deny',
@@ -226,6 +227,7 @@ const byId = { by: 'task', param: 'id' } as const
  */
 export const REMOTE_SCOPES = {
   'health': fleet,
+  'tool.detect': fleet,
   'fleet.list': fleet,
   'model.options': fleet,
   'resource.list': fleet,

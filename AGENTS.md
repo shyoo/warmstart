@@ -183,8 +183,9 @@ falling spend series draws down a purse, where a rise is a top-up (baseline rese
 rate-limit signal names a *window*, and a caution is not a refusal. Changing tool
 definitions invalidates the whole prompt cache prefix.
 
-**Schema** — [`docs/data-model.md`](docs/data-model.md). Migrations are numbered, append-only and
-must be replay-safe; `versionBefore` matches on text, not number. **MCP** —
+**Schema** — [`docs/data-model.md`](docs/data-model.md); external `t<number>` investigation —
+[`docs/external-task-debugging.md`](docs/external-task-debugging.md). Migrations are numbered,
+append-only and replay-safe; `versionBefore` matches text, not number. **MCP** —
 [`docs/mcp.md`](docs/mcp.md): two tiers, and only the daemon writes `WARMSTART_TIER`.
 **Renderer** — [`docs/ui.md`](docs/ui.md): agent output is untrusted **text**. A thread message is
 parsed as a closed markdown subset by [`src/renderer/src/lib/markdown.ts`](src/renderer/src/lib/markdown.ts)

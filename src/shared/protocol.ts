@@ -1477,6 +1477,13 @@ export interface DoctorReport {
   generatedAt: number
   daemon: { version: string; pid: number; port: number; uptimeMs: number; dbPath: string }
   adapters: AdapterDetection[]
+  tools: Array<{
+    id: 'git' | 'gh' | 'tailscale'
+    label: string
+    found: boolean
+    path: string | null
+    need: 'required' | 'pull-request' | 'remote'
+  }>
   workers: Array<{
     workerId: string
     label: string
@@ -1526,6 +1533,7 @@ export interface RpcMap {
 
   'adapter.list': { params: void; result: AdapterInfo[] }
   'adapter.detect': { params: void; result: AdapterDetection[] }
+  'tool.detect': { params: void; result: DoctorReport['tools'] }
 
   'fleet.list': {
     params: void
