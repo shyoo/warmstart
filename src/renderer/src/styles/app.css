@@ -6363,6 +6363,40 @@ select:focus-visible,
   overflow-x: auto;
 }
 
+/* ⛔ The shape of a plan task, drawn. It sits directly under the settings that configure it, above
+   the notices, so the picture and the two rows of pills read as one thing. ⚠️ Fixed height: the two
+   diagrams have different topologies and a composer that jumped when the kind pill changed would be
+   moving the Send button under the cursor. */
+.composer-shape {
+  margin: var(--sp-2) 0 0;
+  padding: 0 var(--sp-1);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.composer-shape-svg {
+  width: 180px;
+  height: 48px;
+  flex: none;
+  overflow: visible;
+}
+
+/* ⚠️ Drawn through a class rather than SVG `font-*` attributes so it follows the app's own type
+   tokens, and stays legible in both themes. */
+.composer-shape-tag {
+  fill: var(--color-text-faint);
+  font-family: var(--font-ui);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.composer-shape figcaption {
+  font-size: var(--text-meta);
+  line-height: var(--leading-body);
+  color: var(--color-text-dim);
+}
+
 /* ⛔ Between the settings and the Send button, where the money is committed. A cost notice below
    the fold is a cost notice nobody read. */
 .composer-notices {

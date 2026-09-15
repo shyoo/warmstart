@@ -396,8 +396,8 @@ sits above the shade's z-index and not merely above the page: underneath it, eve
 modal opened behind the dialog that owns it and read as clipped away (t354 → t356).
 
 ⛔ **The attachment picker lives inside the prompt it enriches, beside Save as Draft, Send and the
-schedule clock.** Those actions apply to all four kinds: Single Task, Plan & Split, Conversation and
-Debate.
+schedule clock.** Those actions apply to all five kinds: Single Task, Plan & Split, Plan & Execute,
+Conversation and Debate.
 In Plan & Split the composer draws two labelled rows of pills, and this is decision D5. The first is
 **Planner** — priority, dependencies, reuse, finish, worker, model and effort — which is what the
 *planning turn* runs as. The second is **Executor**, plus a fan-out pill, which is what every subtask
@@ -413,6 +413,20 @@ before it reaches the planner.
 ⚠️ The captions are not decoration. Two identical rows of pills with nothing to tell them apart is the
 failure they buy, and it is worse than one row. The fan-out pill's number is written into the task's
 **mandate**, so the number shown is the number enforced — never a second, invisible cap.
+
+⭐ **Plan & Execute draws the same two rows with three things removed and two added.** It is the same
+kind (`plan`) and the same `task.plan` call; what makes it the other shape is that the fan-out is
+filed as **1**, on the mandate and on `childDefaults` alike, which `planModeOf` reads back. So the
+fan-out pill is **absent** rather than reading `<=1` — a control with one option is not a choice, and
+changing it is changing the kind — and the Planner row's finish pill is absent too, because a planner
+that writes no code and abandons its branch at the handoff can only be `report-only`. Added: a small
+inline **diagram** of the dispatch (`PlanShape`, drawn for both plan shapes so the three-turn and
+two-turn topologies can be compared at a glance, and deliberately not a mockup of any screen), and a
+**notice** pair from `executornotice.ts`. ⛔ The notice is the whole guardrail on executor choice —
+decision D2 was *inherit as today, plus a notice that states the trade* — so it says when nobody named
+an executor (the scheduler may hand the work back to the account that just planned, and then the only
+saving is the review turn), and quotes the published trade with the fact that it was **not** measured
+on this fleet. ⛔ It never ranks two models: this module can see two ids and nothing else.
 
 ⛔ **The accounts named on the Each piece row are a gate, and they reach the pieces.** The Workers
 control there is a multi-select with a model and effort per account, and what it sets is `workerIds` on

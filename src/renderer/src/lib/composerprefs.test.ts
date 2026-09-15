@@ -139,6 +139,14 @@ describe('what the new-task composer was left set to', () => {
     expect(readComposerPrefs().kind).toBe('conversation')
   })
 
+  // ⚠️ The fifth kind, remembered on the same last-selected rule as the other four. A kind this
+  //    reader did not know would silently reset somebody to Single Task on the next open — which is
+  //    a different task than the one they meant to file, with no UI saying anything changed.
+  it('remembers Plan & Execute, which is the fifth kind', () => {
+    stub({ 'warmstart.composer': JSON.stringify({ kind: 'execute' }) })
+    expect(readComposerPrefs().kind).toBe('execute')
+  })
+
   it('drops only the field it cannot read, never the record around it', () => {
     stub({
       'warmstart.composer': JSON.stringify({

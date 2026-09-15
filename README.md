@@ -104,6 +104,7 @@ Four kinds of task:
 |---|---|
 | **Single task** | One thread of work, dispatched to one agent. |
 | **Plan & Split** | An agent plans it with you, then files and delegates the pieces as dependent tasks. |
+| **Plan & Execute** | The same planning turn, handed to **one** executor — two turns instead of three, and no review turn to pay for. |
 | **Conversation** | A thread you keep talking in — stops after each turn, commits when you say so. |
 | **Debate** | Several agents answer independently and blind; an organizer argues it out. |
 

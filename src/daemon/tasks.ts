@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import {
   PRIORITY_ORDER,
   ROOT_MANDATE,
+  isPlanExecute,
   readDebateState,
   statusesForViews,
   viewForStatus,
@@ -671,6 +672,27 @@ export function isIntegrationParent(task: Pick<Task, 'kind'> | null | undefined)
   return task?.kind === 'plan' || task?.kind === 'debate'
 }
 
+/**
+ * A parent whose children's work has to come back to **it** before it reaches the trunk.
+ *
+ * ⛔ **Where a child is cut from and where it lands are two questions, and Plan & Execute answers
+ * them differently.** Its one executor is still cut from the planner's branch — that costs nothing,
+ * and anything the planner did leave behind travels with the work instead of being stranded on a
+ * branch nobody will ever land. But it lands onto the *project's* target, because there is no
+ * resolution turn to carry a plan branch the rest of the way, and a piece that merged into a branch
+ * no one will ever land is work that has quietly gone nowhere.
+ *
+ * ⚠️ So `plannerBranchFor` keeps asking `isIntegrationParent` (the base) and `createTask` asks this
+ * one (the target). ⭐ `strategyFor` then picks the project's ordinary landing strategy rather than
+ * `merge-branch`, because it chooses **from data** — the task's resolved target against the
+ * project's — and never from a task kind. See `docs/landing.md`.
+ */
+export function integratesChildren(
+  task: Pick<Task, 'kind' | 'mandate' | 'childDefaults'> | null | undefined
+): boolean {
+  return isIntegrationParent(task) && !isPlanExecute(task)
+}
+
 export function isSplitWork(task: Task): boolean {
   if (!task.parentTaskId) return false
   return isIntegrationParent(getTask(task.parentTaskId))
@@ -736,9 +758,12 @@ export function createTask(input: CreateTaskInput): Task {
   const now = Date.now()
   const effectiveProjectId = input.projectId ?? parent?.projectId ?? null
   const project = effectiveProjectId ? getProject(effectiveProjectId) : null
+  // ⛔ `integratesChildren`, not `isIntegrationParent`: a Plan & Execute executor is cut from its
+  //    planner's branch and lands onto the project's target, because no third turn exists to take a
+  //    plan branch any further. See that function.
   const effectiveLandingTarget =
     input.landingTarget ??
-    (parent && isIntegrationParent(parent)
+    (parent && integratesChildren(parent)
       ? (parent.branch ?? (project && project.vcs === 'git' ? branchNameFor(parent.seq, parent.title, parent.branchUnit) : null))
       : null)
 

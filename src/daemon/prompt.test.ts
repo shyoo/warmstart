@@ -1055,6 +1055,42 @@ describe('a resumed run into the session that already has the framing', () => {
   })
 
   /**
+   * ⛔ **A Plan & Execute planner is told a different thing, and never told the resolving thing.**
+   * The two shapes share a kind, a tool and a dispatch path; what separates them is the child cap,
+   * and this is where that has to become words. A planner told it will be woken to review the result
+   * would stop expecting to finish — and one that reached the resolution instruction would be asked
+   * to review an integration that never happened, on a branch nothing merged into.
+   *
+   * ⚠️ The second half is not hypothetical: a person replying to the finished task opens a new run
+   * on the same thread, and `planPhaseOf` is what decides what that run is told.
+   */
+  it('tells a Plan & Execute planner to hand over once, and never to resolve', () => {
+    const handoff = tasks.createTask({
+      title: 'Plan then hand over',
+      kind: 'plan',
+      status: 'ready',
+      mandate: { maxChildren: 1 },
+      childDefaults: { maxChildren: 1 }
+    })
+    const first = promptText(handoff, 'claude-code', false, { markDelivered: true })
+    expect(first).toContain('call `task_split` ONCE with exactly ONE piece')
+    expect(first).toContain('may be a SMALLER, cheaper model')
+    expect(first).toContain('the task is complete and you will not be started again on it')
+    expect(first).not.toContain('you will be started again once every piece has settled')
+
+    // ⛔ Even with a child on the thread and a `settled` edge — the exact state that flips a split
+    //    into its resolution turn — this shape has no resolution turn to flip into.
+    const child = tasks.createTask({ title: 'The whole job', status: 'ready', parentTaskId: handoff.id })
+    tasks.addDependency(handoff.id, child.id, 'settled')
+    tasks.addMessage(handoff.id, 'human', 'one more thing')
+    const second = promptText(tasks.requireTask(handoff.id), 'claude-code', false, {
+      markDelivered: false
+    })
+    expect(second).not.toContain('Every piece of your plan has settled')
+    expect(second).toContain('call `task_split` ONCE with exactly ONE piece')
+  })
+
+  /**
    * ⛔ A notice is a **new fact about the world**, not framing, so it travels on a resumed turn like
    * any other new thing. The whole reason it exists is that the agent cannot see what changed while
    * it was not running.

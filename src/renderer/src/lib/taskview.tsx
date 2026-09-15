@@ -1,4 +1,5 @@
 import {
+  isPlanExecute,
   resolveModelChoice,
   resolveRetryCauses,
   type Compaction,
@@ -483,8 +484,10 @@ export function modelFacts(input: {
  * way to tell which of the two they were looking at, and the settings that only apply to one of them
  * were drawn for both.
  */
-export function kindLabel(task: Pick<Task, 'kind'>): string {
-  if (task.kind === 'plan') return 'Plan & Split'
+export function kindLabel(task: Pick<Task, 'kind' | 'mandate' | 'childDefaults'>): string {
+  // ⛔ Through `planModeOf`, never a second reading of the cap. The pane that names the shape and
+  //    the daemon that enforces it have to agree, and the only way to be sure is one function.
+  if (task.kind === 'plan') return isPlanExecute(task) ? 'Plan & Execute' : 'Plan & Split'
   if (task.kind === 'conversation') return 'Conversation'
   // ⚠️ The organizer's page, for the same reason: a debate files seats, waits on all of them,
   // arbitrates and then asks a person what to do. None of that is visible from an ordinary header.
@@ -505,7 +508,7 @@ export function kindLabel(task: Pick<Task, 'kind'>): string {
  * and model is the thing being checked when somebody opens this at all.
  */
 export function pieceSettings(
-  task: Pick<Task, 'kind' | 'childDefaults' | 'constraints' | 'priority'>,
+  task: Pick<Task, 'kind' | 'mandate' | 'childDefaults' | 'constraints' | 'priority'>,
   fleet: FleetEntry[]
 ): Array<{ label: string; value: string }> {
   if (task.kind !== 'plan') return []
@@ -550,7 +553,11 @@ export function pieceSettings(
   rows.push({ label: 'priority', value: defaults.priority ?? task.priority })
   if (defaults.finishPolicy) rows.push({ label: 'finish', value: defaults.finishPolicy })
   if (defaults.sessionSharing) rows.push({ label: 'conversation', value: defaults.sessionSharing })
-  if (defaults.maxChildren) rows.push({ label: 'fan-out', value: `up to ${defaults.maxChildren} pieces` })
+  // ⚠️ Absent in execute mode rather than reading "up to 1 piece". The cap there is not a fan-out
+  //    setting somebody chose — it is the shape of the task, and the type row above already says it.
+  if (defaults.maxChildren && !isPlanExecute(task)) {
+    rows.push({ label: 'fan-out', value: `up to ${defaults.maxChildren} pieces` })
+  }
   return rows
 }
 
@@ -566,7 +573,7 @@ export function pieceSettings(
  * and `pieceSettings` resolves those two fields the same way. Empty for anything not a piece.
  */
 export function plannedAssignment(
-  parent: Pick<Task, 'kind' | 'childDefaults' | 'constraints' | 'priority'> | null,
+  parent: Pick<Task, 'kind' | 'mandate' | 'childDefaults' | 'constraints' | 'priority'> | null,
   fleet: FleetEntry[]
 ): Array<{ label: string; value: string }> {
   if (!parent) return []

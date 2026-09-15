@@ -601,15 +601,16 @@ server.registerTool(
   {
     title: 'Break this plan into subtasks and delegate them',
     description:
-      'File the whole plan in one call: two or more concrete pieces, each with its own full ' +
-      'instruction. The operator approves the entire split before anything is filed, so make each ' +
-      'piece legible on a card. Each piece must be completable by an agent that has NOT read this ' +
-      'conversation, so its instruction has to carry its own context: what to change, where, and ' +
-      'what done looks like. Pieces without dependency edges may run in parallel. If the plan calls ' +
-      'for sequential execution or landing, encode that order with depends_on; otherwise add an ' +
-      'edge only where it is genuinely needed, because it costs a subtask’s wait. After this ' +
-      'returns, STOP: the work is ' +
-      'delegated and you will be woken again when every piece has settled.',
+      'File the whole plan in one call, as concrete pieces each with its own full instruction. The ' +
+      'operator approves the entire plan before anything is filed, so make each piece legible on a ' +
+      'card. Each piece must be completable by an agent that has NOT read this conversation, so its ' +
+      'instruction has to carry its own context: what to change, where, and what done looks like. ' +
+      'Pieces without dependency edges may run in parallel. If the plan calls for sequential ' +
+      'execution or landing, encode that order with depends_on; otherwise add an edge only where it ' +
+      'is genuinely needed, because it costs a subtask’s wait. HOW MANY PIECES is decided by the ' +
+      'task, not by you, and your own instructions say which: a Plan & Split files two or more and ' +
+      'you are woken again when every piece has settled; a Plan & Execute files exactly one and is ' +
+      'complete at the handoff. After this returns, STOP either way — the work is delegated.',
     inputSchema: {
       pieces: z
         .array(
@@ -630,7 +631,10 @@ server.registerTool(
               )
           })
         )
-        .describe('Two or more pieces. A split of one is refused.')
+        .describe(
+          'As many pieces as this task allows: two or more for a Plan & Split, exactly one for a ' +
+            'Plan & Execute. Anything else is refused with the reason.'
+        )
     }
   },
   async (args) => {

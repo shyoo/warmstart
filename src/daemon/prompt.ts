@@ -1,5 +1,5 @@
 import type { Attachment, DebateVerdict, MessageEvent, Task } from '@shared/tasks.js'
-import { isOpenConversation, policyVerifies, resolveWorkspaceMode } from '@shared/tasks.js'
+import { isOpenConversation, isPlanExecute, policyVerifies, resolveWorkspaceMode } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { describeAttachment } from './attachments.js'
 import { adapter } from './adapters/index.js'
@@ -52,19 +52,63 @@ const NL = '\n'
  * `inline` one puts the bytes in the envelope, and neither can be recovered from a sentence.
  */
 /**
- * Which turn of a Plan & Split task this is.
+ * Which turn of a plan task this is.
  *
  * ⛔ Derived from whether the plan has pieces yet, not from a stored phase. A phase column would be a
  * second copy of a fact the edges already carry, and the two would disagree the first time a split
  * half-failed. ⚠️ `planning` is also the answer for a planner whose split was refused, which is
- * correct: it is being asked to plan again.
+ * correct: it is being asked to plan again — and for a Plan & Execute task in every case, which has
+ * only ever had one turn.
  */
 export function planPhaseOf(task: Task): 'planning' | 'resolving' {
+  // ⛔ **A Plan & Execute task has no resolving phase at all**, so it is `planning` however many
+  //    children it has. It is completed at the handoff and never woken by one; the case this closes
+  //    is a person *replying* to the finished task, which opens a new run on the same thread, and a
+  //    resolution instruction there would tell the agent to review an integration that never
+  //    happened and to look at a branch nothing merged into.
+  if (isPlanExecute(task)) return 'planning'
   return splitChildrenOf(task.id).length > 0 ? 'resolving' : 'planning'
 }
 
 /**
- * What the planner is told on its first turn.
+ * What a Plan & Execute planner is told on its only turn.
+ *
+ * ⛔ **"Do not write code" is load-bearing here for a second reason.** In a split, a planner that
+ * builds the first piece has merely spent the expensive context on the cheapest part of the job.
+ * Here it would also be building it on a branch this task will never land — the executor is what
+ * reaches the trunk — so the work would be done, paid for, and then quietly left behind.
+ *
+ * ⛔ **The instruction is the whole deliverable, and it is read by a model that may be smaller than
+ * this one.** That is the point of the shape: published measurement puts a compact executor around
+ * twenty points of pass rate below a strong one at roughly a sixth of the cost
+ * (`transient_docs/plan_and_execute_2026-09-15.md` §1). What buys that back is the planner having
+ * already done the reading, so the instruction names files rather than asking for them to be found.
+ */
+function handoffInstruction(): string {
+  return [
+    'You are PLANNING this work, not doing it. One other agent will carry it out from your ' +
+      'instruction alone, and this task is finished the moment you hand it over — there is no ' +
+      'review turn afterwards.',
+    '',
+    'Read enough of the repository to be concrete — real file names, real functions, real ' +
+      'constraints. Use `ask_human` for anything that changes what gets built; that is what this ' +
+      'phase is for, and a question now is far cheaper than work built on a guess.',
+    '',
+    'When the requirement is settled, call `task_split` ONCE with exactly ONE piece: the whole job, ' +
+      'as a single self-contained instruction. ⛔ It will be read by an agent that has NOT seen this ' +
+      'conversation and that may be a SMALLER, cheaper model than you, so it has to carry everything ' +
+      'it needs — which files to change, what to change in them, what to leave alone, what "done" ' +
+      'looks like, and how to check it. Anything you worked out by reading, write down; anything you ' +
+      'would have had to look up, name. Do not hand over a restatement of the request.',
+    '',
+    'The operator approves the instruction before it is filed, and that is the only look anybody ' +
+      'gets at it before it runs. Do NOT write code and do NOT start the work yourself. After the ' +
+      'handoff returns, stop — the task is complete and you will not be started again on it.'
+  ].join('\n')
+}
+
+/**
+ * What a Plan & Split planner is told on its first turn.
  *
  * ⛔ **"Do not write code" is the load-bearing sentence.** An agent handed a repository and a
  * requirement will start building it, and a planner that builds the first piece itself has spent the
@@ -734,7 +778,9 @@ export function promptFor(
       // ⚠️ Withheld only on a follow-up into the session that was already told it — see `followUp`.
       if (!followUp) parts.push(conversationInstruction(false))
     } else if (planPhase === 'planning') {
-      parts.push(planningInstruction(checkLead))
+      // ⛔ Two shapes of plan, and `planModeOf` is the one place that tells them apart — derived from
+      //    the child cap, so the instruction cannot promise a review turn the mandate will not allow.
+      parts.push(isPlanExecute(task) ? handoffInstruction() : planningInstruction(checkLead))
     } else if (planPhase === 'resolving') {
       parts.push(resolutionInstruction(task, checkLead, commitHygiene, integration))
     } else if (debatePhase === 'arbitrating') {

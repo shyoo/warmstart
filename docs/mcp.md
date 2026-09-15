@@ -88,7 +88,7 @@ any of them — it runs the identical bar and hands the same reason back, verbat
 | `checkpoint` | report a finished phase and wait for the go-ahead. `checkpointed` completion mode |
 | `task_create` | file a follow-up, inheriting a **narrowed** mandate and a share of the budget |
 | `handoff` | leave a note for whoever continues; prepended to the next run's prompt |
-| `task_split` | file a whole Plan & Split at once — 2 to N pieces with dependency edges encoding every required execution or landing order; edge-free pieces may run in parallel. ⛔ Raises **one** approval and blocks on it; atomic |
+| `task_split` | file a whole plan at once — 2 to N pieces for a Plan & Split, with dependency edges encoding every required execution or landing order (edge-free pieces may run in parallel); **exactly one** for a Plan & Execute. ⛔ How many is decided by the task's own child cap (`planModeOf`), not by the agent, and the refusal names the shape. ⛔ Raises **one** approval and blocks on it; atomic |
 | `task_depend` | add one edge between two pieces of **this task's own** split. ⛔ never an arbitrary task in the fleet |
 | `debate_round` | ⛔ **a debate organizer's only move, called once per round.** Either `continue` with one brief per seat — the seats are re-queued and the organizer is stopped until they answer — or `converged` with the agreement, the dissent, the confidence and what is unresolved, which raises the five-verdict card and **blocks until a person answers**. ⛔ An empty dissent is refused |
 | `land_work` | ⛔ **conversations only.** Rebase, check and land what this conversation has committed, because the person asked. Refuses anything else. Ends nothing — the reply names the branch to keep working on |

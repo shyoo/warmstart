@@ -14,7 +14,12 @@ import {
 import { cancelTask } from '../cancel.js'
 import { completeTask, continueTask, endPlannerForSplit, parkForHuman } from '../scheduler.js'
 import { updateTask } from '../tasks.js'
-import { DEBATE_VERDICT_DETAILS, DEBATE_VERDICT_LABELS, DEBATE_VERDICTS } from '@shared/tasks.js'
+import {
+  DEBATE_VERDICT_DETAILS,
+  DEBATE_VERDICT_LABELS,
+  DEBATE_VERDICTS,
+  isPlanExecute
+} from '@shared/tasks.js'
 import type { DebateVerdict } from '@shared/tasks.js'
 import { verdictInstruction } from '../prompt.js'
 import { errorMessage } from '@shared/errors.js'
@@ -162,18 +167,32 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
         })
         .join('\n')
 
+      // ⛔ **The gate is the same gate; only the sentence about what happens next changes.** A Plan &
+      //    Execute approval is the one and only time a person sees the instruction before the
+      //    executor runs against it — there is no review turn behind it — and telling them it will be
+      //    reviewed would be describing a turn this shape does not have.
+      const handoff = isPlanExecute(parent)
       const resolution = await askQuestion({
         sessionId: p.sessionId,
         origin: 'task_split',
         kind: 'choice',
-        header: `Split t${parent.seq} into ${pieces.length}?`,
-        question:
-          `t${parent.seq} wants to split into ${pieces.length} pieces and delegate them:\n\n${listed}\n\n` +
-          'Approving files all of them at once and starts them; they branch off this plan’s branch ' +
-          'and merge back into it, and nothing reaches the trunk until the whole plan is reviewed. ' +
-          'Refusing sends your note back to the planner so it can revise.',
+        header: handoff
+          ? `Hand t${parent.seq} to an executor?`
+          : `Split t${parent.seq} into ${pieces.length}?`,
+        question: handoff
+          ? `t${parent.seq} has finished planning and wants to hand the whole job to one executor:\n\n${listed}\n\n` +
+            'Approving files it and starts it as soon as an account is free. It lands on the ' +
+            'project’s own target when it is done — this plan does not come back to review it, which ' +
+            'is what makes this two turns instead of three, so this is your look at the ' +
+            'instruction. Refusing sends your note back to the planner so it can revise.'
+          : `t${parent.seq} wants to split into ${pieces.length} pieces and delegate them:\n\n${listed}\n\n` +
+            'Approving files all of them at once and starts them; they branch off this plan’s branch ' +
+            'and merge back into it, and nothing reaches the trunk until the whole plan is reviewed. ' +
+            'Refusing sends your note back to the planner so it can revise.',
         options: [
-          { id: 'approve', label: `File all ${pieces.length}`, detail: 'They start as soon as an account is free' },
+          handoff
+            ? { id: 'approve', label: 'Hand it over', detail: 'It starts as soon as an account is free' }
+            : { id: 'approve', label: `File all ${pieces.length}`, detail: 'They start as soon as an account is free' },
           { id: 'refuse', label: 'Not like this', detail: 'Add a note and the planner revises the plan' }
         ]
       })
@@ -201,12 +220,33 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
       )
       if (!result.ok) return { ok: false, reply: `That split was not filed: ${result.reason}` }
 
+      const seqs = result.children.map((c) => c.seq)
+      const named = seqs.map((s) => `t${s}`).join(', ')
+
+      if (handoff) {
+        // ⛔ **Completed here, not asked for.** A planner told in its reply to call `task_complete`
+        //    can forget, and an agent that forgets leaves the run open, the task reading `running`
+        //    and the worker slot reserved for as long as the daemon lives — the t226 failure. This
+        //    goes through the ordinary completion path rather than writing a status, so the finish
+        //    policy, the run's end, the workspace release and the quota reading are the same ones
+        //    every other completed task gets. ⚠️ The planner's own policy is `report-only`: it wrote
+        //    no code, and there is nothing of its own to land.
+        await completeTask(p.sessionId, `Planned and handed to ${named}`)
+        return {
+          ok: true,
+          seqs,
+          reply:
+            `Filed ${named} and handed the work over. THIS TASK IS NOW COMPLETE — stop here, and do ` +
+            'not start any of the work yourself. You will not be started again on it: there is one ' +
+            'piece, so there is nothing for a review turn to integrate.'
+        }
+      }
+
       // ⛔ The split's wait costs neither agent time nor a run-held claim.  Do not rely on the
       // planner following the reply below and exiting: the run must stop at the durable transition
       // to `blocked`, while its children are still running.
       await endPlannerForSplit(p.sessionId)
 
-      const seqs = result.children.map((c) => c.seq)
       return {
         ok: true,
         seqs,
@@ -214,7 +254,7 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
         // working after splitting is spending a billed turn on work it has just delegated — and it
         // says what will wake it, so stopping does not read as abandoning the task.
         reply:
-          `Filed ${seqs.length} pieces: ${seqs.map((s) => `t${s}`).join(', ')}. This task now waits ` +
+          `Filed ${seqs.length} pieces: ${named}. This task now waits ` +
           'for all of them to settle. STOP NOW — do not start any of this work yourself. You will be ' +
           'started again automatically, with a summary of how every piece turned out, and your job ' +
           'then is to review the result as a whole and finish the task.'

@@ -345,6 +345,28 @@ A plan task therefore routes and dispatches like any other, and takes **two** tu
    back with a table of how every piece turned out, reviews the integrated branch as a whole, and
    finishes the task normally.
 
+⭐ **Plan & Execute is the same kind with the second turn removed, and one fact decides it.** A
+`plan` task whose child cap is **1** is a Plan & Execute (`planModeOf` in
+[`src/shared/tasks.ts`](../src/shared/tasks.ts)) — derived from `mandate.maxChildren` and
+`childDefaults.maxChildren`, never stored beside them, because the mandate is what `createTask`
+actually enforces and a second copy would disagree with it. Everything else follows from having no
+fan-out: one piece has no seams, so there is nothing for a third turn to integrate.
+
+1. **Planning.** The same dispatch, a different closing instruction (`handoffInstruction`), and
+   `task_split` accepting **exactly one** piece instead of at least two. The same blocking approval is
+   raised — it is the only look anybody gets at the instruction, because no review turn follows it.
+2. **Handoff.** `applySplit` writes **no** `settled` edge back onto the planner and leaves its status
+   alone; `agent.split` then completes the planner through the ordinary `completeTask` path. ⛔ Not
+   by asking the agent to call `task_complete` — an agent that forgets leaves the run open, the task
+   reading `running` and the worker slot reserved, which is t226. The planner is filed `report-only`:
+   it wrote no code and its branch is abandoned at the handoff.
+3. **The executor** is an ordinary `work` task, cut from the planner's branch and landing onto the
+   **project's** own target (`integratesChildren`, `docs/landing.md`). It is what reaches the trunk.
+
+⚠️ So a Plan & Execute planner never reaches `blocked`, never reaches the resolution instruction, and
+`planPhaseOf` answers `planning` for it in every case — including a person replying to the finished
+task, which opens a new run on the same thread.
+
 ⚠️ The controller `decompose` consult survives as the fallback for the one case that still cannot be
 given an agent turn: a plan task with **no project**, which has no workspace to read and nothing to
 split work across.

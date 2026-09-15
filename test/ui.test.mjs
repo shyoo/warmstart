@@ -1434,7 +1434,9 @@ try {
           clock: !!composer.querySelector('.composer-send .pill--clock button')
         },
         sendLabel: ([...composer.querySelectorAll('.composer-send button')]
-          .find(b => b.classList.contains('btn--primary'))?.innerText ?? '').trim()
+          .find(b => b.classList.contains('btn--primary'))?.innerText ?? '').trim(),
+        shape: composer.querySelector('.composer-shape svg')?.getAttribute('aria-label') ?? null,
+        notices: composer.querySelectorAll('.composer-notices .composer-notice').length
       };
     })())
   `)
@@ -1478,6 +1480,98 @@ try {
     'a plan can also be saved as a draft or scheduled from its prompt box',
     p.controlsInsideTheBox?.draft === true && p.controlsInsideTheBox?.clock === true,
     planned
+  )
+  // ⛔ **The shape is drawn, not described (t456).** Plan & Split and Plan & Execute differ in a
+  // topology — three turns against two — and a sentence has to say a topology in the order the words
+  // come. The picture is what somebody choosing between the two options actually reads, so its
+  // absence is a regression the prefs module cannot see.
+  check(
+    'Plan & Split draws its three-turn shape beside the settings',
+    typeof p.shape === 'string' && p.shape.includes('several executors'),
+    planned
+  )
+
+  // ⛔ **Plan & Execute, which is the whole of t456.** The same `plan` kind and the same two rows,
+  // with the fan-out filed as one — so no review turn, no plan branch to merge into, and a planner
+  // that can only report. What the built app alone can say is which controls are *not* drawn: a
+  // fan-out pill reading `<=1` and a planner finish pill offering five landings that will never
+  // happen are both choices that are not on the table, and a unit test on the prefs module would
+  // pass with either of them on screen.
+  await evaluate(
+    `[...document.querySelectorAll('button.pill')].find(p => p.getAttribute('aria-label') === 'What this files')?.click()`
+  )
+  await wait(300)
+  const kindsOffered = await evaluate(
+    `JSON.stringify([...document.querySelectorAll('.pill-menu [role="option"]')].map(o => o.dataset.value))`
+  )
+  check(
+    'the kind pill offers Plan & Execute between Plan & Split and Conversation',
+    JSON.parse(kindsOffered).join('|') === 'task|plan|execute|conversation|debate',
+    kindsOffered
+  )
+  await evaluate(
+    `[...document.querySelectorAll('.pill-menu [role="option"]')].find(o => o.dataset.value === 'execute')?.click()`
+  )
+  await wait(500)
+  const handed = await evaluate(`
+    JSON.stringify((() => {
+      const composer = document.querySelector('.composer');
+      const bars = [...composer.querySelectorAll('.composer-bar')];
+      const names = bars.flatMap(bar =>
+        [...bar.querySelectorAll('button.pill')].map(p => p.getAttribute('aria-label'))
+      ).filter(Boolean);
+      return {
+        planner: names.filter(n => !n.startsWith('Piece')),
+        pieces: names.filter(n => n.startsWith('Piece')),
+        labels: [...composer.querySelectorAll('.composer-plan-label')].map(e => e.innerText.trim()),
+        kindFirst: composer.querySelector('.composer-plan-table tr:first-child td:first-child button')?.innerText.trim(),
+        sendLabel: ([...composer.querySelectorAll('.composer-send button')]
+          .find(b => b.classList.contains('btn--primary'))?.innerText ?? '').trim(),
+        shape: composer.querySelector('.composer-shape svg')?.getAttribute('aria-label') ?? null,
+        caption: composer.querySelector('.composer-shape figcaption')?.innerText.trim() ?? null,
+        notices: [...composer.querySelectorAll('.composer-notices .composer-notice')].map(n => n.innerText.trim())
+      };
+    })())
+  `)
+  const h = JSON.parse(handed)
+  check('the send button says Plan & Execute', h.sendLabel === 'Plan & Execute', handed)
+  check(
+    'Plan & Execute keeps the Planner and Executor rows, with the kind first',
+    h.kindFirst?.includes('Plan&Execute') && h.labels?.join('|') === 'Planner|Executor',
+    handed
+  )
+  check(
+    'the planner row keeps its account, model and priority',
+    ['Worker', 'Model', 'Priority'].every((n) => h.planner?.includes(n)),
+    handed
+  )
+  // ⛔ Absence is the assertion, both times. A planner that writes no code and abandons its branch at
+  // the handoff is `report-only` and nothing else; a fan-out of one is the *kind*, not a setting.
+  check(
+    '⛔ and loses the planner finish pill — report-only is the only answer, so it is not a choice',
+    h.planner?.length > 0 && !h.planner.includes('Finish policy'),
+    handed
+  )
+  check(
+    '⛔ the executor row loses the fan-out pill — one piece is the shape, not a setting',
+    ['Piece workers', 'Piece Priority', 'Piece Finish Policy'].every((n) => h.pieces?.includes(n)) &&
+      !h.pieces.includes('Piece Limit'),
+    handed
+  )
+  check(
+    'the diagram swaps to the two-turn shape and its caption says so',
+    typeof h.shape === 'string' && h.shape.includes('one executor') && /Two turns/.test(h.caption ?? ''),
+    handed
+  )
+  // ⛔ Two notices, and every notice carries its basis: the pairing (nobody named an executor on this
+  // profile, so the scheduler picks) and the shape (no review turn; the executor lands). Neither is a
+  // gate — the send button above is enabled with nothing named.
+  check(
+    'and two notices say what the shape trades, with their basis',
+    h.notices?.length === 2 &&
+      h.notices.some((n) => /review turn/.test(n)) &&
+      h.notices.some((n) => /lands on the project/.test(n)),
+    handed
   )
 
   // ⛔ **Conversation, and what it *removes* from the row.** A conversation is `Reuse` + `await

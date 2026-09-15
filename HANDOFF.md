@@ -7,16 +7,37 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-15, **Windows 11**, after t451): typecheck, lint and build pass; L1 **3,511 passed,
-5 skipped** (203 files + 2 platform skips); L2 **203 checks** (5
-skipped); L3 **437 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
-`release/win-unpacked`. The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17
+Baseline (2026-09-15, **Windows 11**, after t456): typecheck, lint and build pass; L1 **3,530 passed,
+5 skipped** (205 files + 2 platform skips); L2 **203 checks** (5
+skipped, after t451); L3 **446 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
+`release/win-unpacked` (after t451). The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17
 against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
 **Release** workflow: it has been dispatched twice with `platforms=macos` (item 6 below), so a `v*`
 tag now builds both platforms.
 
 ## Closed in this cleanup
+
+- **Plan & Execute: the same `plan` kind with the fan-out capped at one and no review turn (t456,
+  2026-09-15).** Plan & Split pays a third planner turn to integrate pieces built by agents that could
+  not see each other; with one piece there are no seams, so that turn is a second full read of work
+  already done to the planner's own instruction. The shape is derived, never stored: `planModeOf`
+  (`src/shared/tasks.ts`) reads `min(mandate.maxChildren, childDefaults.maxChildren) <= 1`, and
+  everything follows from it — `validateSplit` wants exactly one piece, `applySplit` writes no
+  `settled` edge and leaves the planner's status alone, `agent.split` completes the planner through
+  `completeTask` (⛔ not by asking the agent to call `task_complete`, t226), and the executor is cut
+  from the planner's branch but lands onto the **project's** target (`integratesChildren`, so
+  `strategyFor` picks from data). The composer's fifth kind pill draws a small inline SVG of each plan
+  shape (`PlanShape`) and, in execute mode, two advisory notices (`executornotice.ts`) — decision D2
+  was *inherit the executor model as today, plus a notice that states the trade*; neither is a gate.
+  Design, the published measurements and the two operator decisions:
+  [`transient_docs/plan_and_execute_2026-09-15.md`](transient_docs/plan_and_execute_2026-09-15.md).
+  ⚠️ **Not run against a real agent**, and the cost claim — that removing the third turn is the
+  measurable win — is unmeasured on this fleet (item 2 below). Pinned: L1 in `split.test.ts`,
+  `prompt.test.ts`, `tasks.test.ts` (shared), `executornotice.test.ts`, `composerprefs.test.ts`,
+  `taskview.test.ts`; L3 in `test/ui.test.mjs` (fifth option, both diagrams, the absent fan-out and
+  planner-finish pills, the two notices) — that suite reaches the composer from the title bar, so the
+  composer never needed a project tab. Diagrams checked by eye in the built app on 2026-09-15.
 
 - **The new user tour modal now includes SVG mockups and prev/next onboarding navigation (t455, 2026-09-15).**
   The first-launch welcome tour previously displayed only text with an action button that closed the modal to jump away mid-tour. It now displays vector SVG mockups of the Add Project inspection, Workers & Quota fleet, and Task Composer for each onboarding step, and provides Back / Next / Get Started controls alongside keyboard navigation (Left/Right/Esc) and clickable progress steps without navigating away early.
@@ -62,52 +83,16 @@ tag now builds both platforms.
   `Land ▼` whenever unlanded commits sit on the branch; and the composer's Worktree | Trunk `SegmentedControl` highlights selected
   options in `--color-accent` consistently regardless of project default.
 
-- **Statistics' trade-off scatters read "higher is better" on every axis, and hovering no longer
-  pushes the chart down (2026-09-14).** `axisPosition` inverts cost's and active time's plotted
-  position (`max - value`); the hover legend moved into a reserved-height `.scatter-plot-legend`.
-- **Reassigning a failed landing lost the message that said why it failed (t448, 2026-09-14).**
-  `promptFor`'s thread filter kept only `human`/`controller` messages and the first `agent` one, so
-  a `landing.failed`/`finish.held` `system` entry — written by the daemon *after* the agent's turn
-  ended — never reached a reassigned run; `resolveRetryOnTask` covers four named causes with its
-  own corrective message, but anything else (no commits produced, work in a stash, a refused
-  `canLand`…) fell through to a plain reassign with nothing carried over. Undelivered outcome
-  messages now travel on the next prompt, cold or resumed. ⭐ `worktreeArrivalNotice` (the worktree
-  twin of `trunkArrivalNotice`) names both directories and the branch that connects them on every
-  cold dispatch — t446's agent worked that out by trial. `dispatchDetail` now carries
-  `compactOnResume`'s own reason on the *Conversation: resumed* line, so a lapsed-cache resume
-  (t447) states its basis rather than leaving it to be re-derived — declining to compact a lapsed
-  prefix is deliberate (`cacheclock.ts`, measured t130/t231). The composer's workspace control
-  collapsed from three segments to two (`Worktree`, `Trunk`), the project's default one selected
-  and muted rather than shown as its own option.
-- **A clean profile now explains its first three actions and reports missing host tools (t449,
-  2026-09-14).** A once-per-display welcome tour opens Add Project, Workers, and New Task directly;
-  Dashboard and Global → Status report Git (required), `gh` (pull-request delivery), and Tailscale
-  (remote access) from the daemon's actual PATH resolution. The README states the same dependency
-  boundaries. [`docs/external-task-debugging.md`](docs/external-task-debugging.md) gives an outside
-  agent read-only SQLite queries to resolve `t<number>` through its task, messages, runs, sessions,
-  workspace, branch, and logs without treating a live database as an API.
-- **t446 and t447 could not land: a leaked `GIT_DIR` had re-initialised the trunk (2026-09-14).**
-  Both stopped on *the trunk could not be read … Invalid path '/mnt'*: the trunk's `.git/config`
-  carried `core.worktree = /mnt/c/…/ws3`, written by every `git init` an `npm test` ran inside the
-  WSL-bridged muse run, because `GIT_DIR`/`GIT_WORK_TREE` reached the agent's whole environment.
-  ⭐ A relative pointer needs neither (measured against WSL git 2.53), so `gitEnvFor` exports nothing
-  for one; `repairTrunkConfig` takes a foreign `core.worktree` back out before every base lookup,
-  prepare, park and landing; on Windows `worktree repair --relative-paths` fixes the back-pointer
-  WSL called *prunable*. ⚠️ Found beside it: `spawnEnv()` handed Windows children an **empty PATH**
-  when the block spelled it `Path` — a real regression from the macOS PATH work, masked in the
-  installed app by main's re-spelling. `pathKey`/`withAugmentedPath` fix it; all four pinned with
-  real git in `worktrees.test.ts`, `landing.test.ts`, `muse-code.test.ts`, `which.test.ts`.
-  t446 landed in that commit; t447 rebased onto the repaired trunk and lands in this one.
-- **t445's "failed" compaction was a dead ask beside a landed one nobody could see (t446, 2026-09-14).**
-  Preemption's 17:14 `/compact` reached a mid-turn stream session as prose; the agent wrapped up
-  instead of compacting and the run ended on its own, so `park()` returned early with no verdict.
-  The clock's 17:18 retry landed at 17:21 but recorded `task_id` null and never appeared on the
-  thread. Now: clock asks name the session's latest run (migration 72 backfills eleven orphans);
-  the wrap-up posts *did not land* while its ask is still outstanding; a dead ask a landed sibling
-  supersedes reads *superseded*. Beside it: a `SegmentedControl` workspace group, 920px settings.
-- **t445–t447 landed and documented in docs/ (2026-09-14).** Accented summary headers, `TradeoffPlots` 2D scatters, macOS deploy launcher `xcrun` shim, `test:ui` 1024×720 window pin, signed hardened runtime build verification.
-- **t408–t436, landed and documented in docs/ (2026-09-13–14)** — probe PTY answers, live quota probe,
-  remote settings fixes, Muse `.codex` symlink, CI table checks, Diff pane, split Session TUI.
+- **t408–t449, landed and documented in docs/ (2026-09-13–14).** Statistics' scatters read higher-is-better
+  on every axis (`axisPosition`); a reassigned failed landing now carries the `landing.failed`/`finish.held`
+  message that said why (t448, `worktreeArrivalNotice`, `dispatchDetail`); a clean profile gets a welcome tour
+  and reports Git/`gh`/Tailscale from the daemon's PATH (t449, [`docs/external-task-debugging.md`](docs/external-task-debugging.md));
+  a leaked `GIT_DIR` re-initialising the trunk is repaired before every base lookup (`repairTrunkConfig`) and
+  `spawnEnv()` no longer hands Windows children an empty PATH (`pathKey`); a compaction ask names the
+  session's latest run and a dead ask a landed sibling supersedes reads *superseded* (t446, migration 72);
+  plus t445–t447 (`TradeoffPlots`, macOS `xcrun` shim, `test:ui` window pin, signed hardened-runtime build)
+  and t408–t436 (probe PTY answers, live quota probe, remote settings, Muse `.codex` symlink, CI table
+  checks, Diff pane, split Session TUI). Detail is in the docs/ pages each one owed.
 
 ## Remaining work — ordered by payoff
 
@@ -119,9 +104,11 @@ a unit test.
    conflict while a worktree task finishes under `commit-and-merge`; confirm the worktree task sits at
    `landing_queued` and lands by itself when the trunk frees, and drive the Flow trunk row, composer
    pill and Project Settings row in the packaged app. None of the UI is covered by `test/ui.test.mjs`.
-2. **Run one more live Plan & Split.** Exercise a `merge-branch` landing while a sibling is genuinely
-   mid-run, and an organizer resolution turn where some pieces fail. This is the highest-value
-   scheduler integration check.
+2. **Run one more live Plan & Split, and the first live Plan & Execute.** Exercise a `merge-branch`
+   landing while a sibling is genuinely mid-run, and an organizer resolution turn where some pieces
+   fail. Then file the same job as a Plan & Execute with a cheaper executor: confirm the planner's
+   card completes at the handoff, the executor lands on the project's target, and record both
+   tasks' total run cost side by side — the one measurement t456's design rests on and does not have.
 3. **Run a real debate and record its measurements.** Compare total tokens/cost against a strong
    single-agent answer; record cache reads, resolved/unresolved citations, and whether the organizer
    changed the operator's decision. The evidence format is in

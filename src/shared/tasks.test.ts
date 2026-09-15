@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { Task } from './tasks.js'
 import {
   DEBATE_VERDICTS,
   DEBATE_VERDICT_DETAILS,
@@ -11,7 +12,11 @@ import {
   ROOT_MANDATE,
   SHARING_LABELS,
   SHARING_SHORT,
+  PLAN_EXECUTE_CHILDREN,
   adapterSpread,
+  isPlanExecute,
+  planChildCap,
+  planModeOf,
   policyLands,
   policyVerifies,
   readDebateState
@@ -182,5 +187,64 @@ describe('reading a debate blob written by any version of this tool', () => {
     // ⛔ An unrecognised verdict is *no verdict*, never a guessed one: a verdict decides what the
     // organizer does next, and inventing one would act on a choice nobody made.
     expect(readDebateState({ seats: [{ workerId: 'w-a' }], verdict: 'land' })?.verdict).toBeNull()
+  })
+})
+
+/**
+ * Which of the two plan shapes a task is — the one fact Plan & Execute rests on entirely.
+ *
+ * ⛔ **Derived, and it has to stay derived.** A `plan_mode` column would be a second copy of what
+ * `mandate.maxChildren` already carries, and `mandate` is what `createTask` enforces — so the first
+ * time somebody wrote one and not the other, the prompt would promise a review turn the mandate
+ * refuses to allow. These pin the derivation rather than the storage, which is the point.
+ */
+describe('planModeOf', () => {
+  const plan = (
+    mandate?: number,
+    child?: number
+  ): Pick<Task, 'kind' | 'mandate' | 'childDefaults'> => ({
+    kind: 'plan',
+    mandate: { ...ROOT_MANDATE, ...(mandate === undefined ? {} : { maxChildren: mandate }) },
+    childDefaults: child === undefined ? null : { maxChildren: child }
+  })
+
+  it('reads a cap of one as Plan & Execute and anything above it as Plan & Split', () => {
+    expect(planModeOf(plan(PLAN_EXECUTE_CHILDREN, PLAN_EXECUTE_CHILDREN))).toBe('execute')
+    expect(planModeOf(plan(5, 5))).toBe('split')
+    expect(isPlanExecute(plan(1, 1))).toBe(true)
+  })
+
+  /**
+   * ⚠️ **Every plan filed before this existed reads as `split`, and that is the compatibility
+   * claim.** The composer's fan-out pill has never offered below `MIN_PIECES` (2), and a plan task
+   * with no `childDefaults` at all falls back to `ROOT_MANDATE.maxChildren`.
+   */
+  it('reads every plan task that predates the feature as a split', () => {
+    expect(planModeOf(plan())).toBe('split')
+    expect(planModeOf(plan(8))).toBe('split')
+    expect(planChildCap(plan())).toBe(ROOT_MANDATE.maxChildren)
+  })
+
+  /**
+   * ⛔ **The mandate is the authority and `childDefaults` may only narrow it**, so the cap is the
+   * minimum of the two — the same resolution `validateSplit` performs. Taking either one alone
+   * would let a shape pass here and be refused halfway through filing.
+   */
+  it('takes the narrower of the mandate and the child defaults', () => {
+    expect(planChildCap(plan(5, 1))).toBe(1)
+    expect(planChildCap(plan(1, 5))).toBe(1)
+    expect(planModeOf(plan(5, 1))).toBe('execute')
+    expect(planModeOf(plan(1, 5))).toBe('execute')
+  })
+
+  /**
+   * ⚠️ Nothing but a plan task has a plan mode, and the honest answer for everything else is the
+   * one that changes no behaviour anywhere — a debate organizer files two or more seats, a `work`
+   * task files nothing at all, and neither should start reading as a handoff because of its cap.
+   */
+  it('answers split for anything that is not a plan task', () => {
+    expect(planModeOf({ ...plan(1, 1), kind: 'debate' })).toBe('split')
+    expect(planModeOf({ ...plan(1, 1), kind: 'work' })).toBe('split')
+    expect(planModeOf(null)).toBe('split')
   })
 })

@@ -38,13 +38,26 @@ const KEY = appKey('composer')
 /**
  * What the composer files, as far as the *shape* of the thing goes.
  *
- * ⚠️ Four. `plan` is the existing goal-decomposition path (`task.plan`) wearing its real name,
- * `conversation` files an ordinary task of kind `conversation` — the same dispatch, with the
+ * ⚠️ Five. `plan` is the existing goal-decomposition path (`task.plan`) wearing its real name;
+ * `execute` is the *same* call with the fan-out capped at one — one planner, one executor, no review
+ * turn; `conversation` files an ordinary task of kind `conversation` — the same dispatch, with the
  * single-turn closing contract removed — and `debate` files one through `task.debate`, which seats
  * its roster in the same call. Multi-task is still deliberately not stubbed in here: an option that
  * files nothing is worse than a missing one, because somebody picks it.
  */
-export type ComposerKind = 'task' | 'plan' | 'conversation' | 'debate'
+export type ComposerKind = 'task' | 'plan' | 'execute' | 'conversation' | 'debate'
+
+/**
+ * The two plan shapes this composer can file, and the **only** thing that separates them on the
+ * wire.
+ *
+ * ⛔ **A Plan & Execute is a plan whose fan-out cap is one**, which is what `planModeOf` reads on
+ * the other side. There is no second field saying so: the cap is already written into the task's
+ * mandate and into `childDefaults`, it is what `createTask` enforces, and a flag beside it would be a
+ * second copy of the same answer for the two to disagree about. ⚠️ So the fan-out pill is absent in
+ * execute mode rather than set to 1 — a control offering one option is not a choice.
+ */
+export const PLAN_EXECUTE_PIECES = 1
 
 /** Model and effort, as last chosen for one account. Empty string means *whatever it inherits*. */
 export interface ModelChoice {
@@ -267,7 +280,11 @@ export function readComposerPrefs(): ComposerPrefs {
     return {
       priority: isPriority(p.priority) ? p.priority : DEFAULT_COMPOSER_PREFS.priority,
       kind:
-        p.kind === 'plan' || p.kind === 'task' || p.kind === 'conversation' || p.kind === 'debate'
+        p.kind === 'plan' ||
+        p.kind === 'task' ||
+        p.kind === 'execute' ||
+        p.kind === 'conversation' ||
+        p.kind === 'debate'
           ? p.kind
           : DEFAULT_COMPOSER_PREFS.kind,
       // ⚠️ Through `readFinishPolicy`, so a config written before `agent-lands` was renamed still
