@@ -52,15 +52,7 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
           the paper's, and the objective it stated is stated once in §1.3. */}
       <section className="doc-section">
         <p className="panel-sub">
-          <strong>The Cost Model.</strong> The cost axis of the score: the economics of layered
-          money (subscription allocation + overage spend), token normalization, agent efficiency
-          multipliers, and quota preservation across the fleet. The objective in force is{' '}
-          <span className="num">
-            cost {objective.cost.toFixed(2)} · velocity {objective.velocity.toFixed(2)} · quality{' '}
-            {objective.quality.toFixed(2)}
-          </span>
-          ; the cost axis ({objective.cost.toFixed(2)}) is what balances billable dollars and quota
-          against speed in every weight of Table 1.
+          The Cost Model balances billable dollars and quota consumption against latency according to the configured objective weights: cost {objective.cost.toFixed(2)} · velocity {objective.velocity.toFixed(2)} · quality {objective.quality.toFixed(2)}.
         </p>
       </section>
 
@@ -433,7 +425,7 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
                       and the number alone cannot tell them apart. */}
                   <td>
                     {k.learnedFrom === 'usd' ? (
-                      <span className="tag tag--ok" title={`Measured in dollars, over the ${k.usdSamples} run(s) on this rung that could be priced.`}>
+                      <span className="tag tag--ok" title={`Measured in dollars, over the ${k.usdSamples} run(s) on this worker/model that could be priced.`}>
                         USD
                       </span>
                     ) : (
@@ -441,8 +433,8 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
                         className="tag"
                         title={
                           k.usdSamples > 0
-                            ? `Only ${k.usdSamples} run(s) on this rung could be priced — too few to learn a dollar ratio from, so the multiplier falls back to priced tokens.`
-                            : 'No run on this rung could be priced in money, so the multiplier falls back to priced tokens.'
+                            ? `Only ${k.usdSamples} run(s) on this worker/model could be priced — too few to learn a dollar ratio from, so the multiplier falls back to priced tokens.`
+                            : 'No run on this worker/model could be priced in money, so the multiplier falls back to priced tokens.'
                         }
                       >
                         tokens
@@ -469,15 +461,15 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
 
         <div className="card" style={{ padding: 'var(--sp-3)', background: 'var(--color-surface)', marginTop: 'var(--sp-3)' }}>
           <h4 style={{ margin: '0 0 var(--sp-2)', fontSize: 'var(--text-body)', fontWeight: 600 }}>
-            How efficiency multipliers and dollar costs are calculated in plain English:
+            How efficiency multipliers and dollar costs are calculated:
           </h4>
           <ol style={{ margin: '0 0 var(--sp-2)', paddingLeft: 'var(--sp-4)', fontSize: 'var(--text-dense)', color: 'var(--color-text-dim)', lineHeight: 1.6 }}>
             <li>
               <strong>Layered Money &amp; Token Normalization:</strong> Runs record billable dollars (subscription share + overage cash) alongside normalized priced tokens (input-token-equivalents).
             </li>
             <li>
-              <strong>Fleet Baseline Comparison:</strong> Each rung is divided by the fleet&rsquo;s median run to
-              get a raw ratio. That comparison is made <strong>in dollars</strong> once a rung has three
+              <strong>Fleet Baseline Comparison:</strong> Each worker/model pair is divided by the fleet&rsquo;s median run to
+              get a raw ratio. That comparison is made <strong>in dollars</strong> once a configuration has three
               priced runs (fleet median{' '}
               {report.costFactors.neutralUsd !== null ? money(report.costFactors.neutralUsd) : <span className="dim">n/a</span>}
               ), and falls back to priced tokens below that ({tokens(report.costFactors.neutralPriced)}). The
@@ -497,13 +489,13 @@ export function CostModel({ now }: { now: number }): React.JSX.Element {
 }
 
 const MOVE_LABEL: Record<string, string> = {
-  dispatch: 'send it work',
-  keepalive: 'keep alive',
-  compact: 'compact',
-  revive_compact: 'wake it to compact',
-  let_expire: 'let it expire',
-  handoff_close: 'hand off and close',
-  none: 'nothing yet'
+  dispatch: 'Dispatch work',
+  keepalive: 'Keep alive',
+  compact: 'Compact',
+  revive_compact: 'Resume to compact',
+  let_expire: 'Let expire',
+  handoff_close: 'Handoff and close',
+  none: 'No action'
 }
 
 const MOVE_TONE: Record<string, string> = {

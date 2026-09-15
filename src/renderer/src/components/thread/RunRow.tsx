@@ -311,9 +311,8 @@ export function ReviewRow({
             <span
               className="side-run-val warn"
               title={
-                'A score carrying either of these is not clean evidence about one agent. Mixed ' +
-                'authorship means more than one agent contributed work; a blinding leak means a ' +
-                'name survived in the prose that could not be redacted without destroying the text.'
+                'Review may not be fully blinded. Mixed authorship means multiple agents contributed; ' +
+                'a blinding leak indicates vendor or model names remained in commit text.'
               }
             >
               {[review.mixedAuthorship ? 'mixed authorship' : '', review.blindingLeak ? 'blinding leak' : '']

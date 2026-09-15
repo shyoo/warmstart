@@ -57,8 +57,8 @@ export function ModelsModel(): React.JSX.Element {
           Every other axis on this tab scores <em>accounts</em> — which one is free, which one is
           fast, which one has a warm cache. This one exists because an account is not one thing:
           <code> claude-code</code> alone prices three models eight times apart, and a scheduler that
-          could only choose the account had no way to prefer the cheap one for a typo fix and the dear
-          one for an architectural rewrite.
+          could only choose the account had no way to prefer an economical model for a typo fix and a
+          more capable model for an architectural rewrite.
         </p>
         <p className="panel-sub">
           <strong>Opt-in, and inert until touched.</strong> Every worker&rsquo;s <em>routable
@@ -129,10 +129,10 @@ export function ModelsModel(): React.JSX.Element {
         </table>
         <p className="panel-sub">
           Clearing the bar earns the full bonus; a model at 0.95 fitness on a task that needed 0.35
-          earns exactly what a model at 0.40 does. That is deliberate: a dearer model cannot out-earn a
-          sufficient cheap one on this term, so <code>price</code> is what decides between two models
-          that both clear the bar. Falling short costs proportionally, reaching 0 at a quarter-point
-          under the bar.
+          earns exactly what a model at 0.40 does. A more expensive model receives no additional fitness
+          bonus over a lower-cost model that satisfies the task requirements, allowing <code>price</code> to
+          arbitrate between candidates that clear the sufficiency bar. Falling short costs proportionally,
+          reaching 0 at a quarter-point under the bar.
         </p>
         <Eq
           n="8"
@@ -285,9 +285,8 @@ export function ModelsModel(): React.JSX.Element {
           </tbody>
         </table>
         <p className="dim">
-          Hover a row for the prior&rsquo;s and the fitness blend&rsquo;s derivation in words. A dimmed
-          row is priceable but not on that worker&rsquo;s allowlist — a candidate for widening it, not
-          a fault.
+          Hover over any row to view the benchmark prior and blended fitness derivation. A dimmed
+          row indicates a model supported by the provider that is not currently enabled on the worker allowlist.
         </p>
       </section>
     </div>

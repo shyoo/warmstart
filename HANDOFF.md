@@ -7,15 +7,25 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-15, **Windows 11**, after t462): typecheck, lint and build pass; L1 **3,548 passed,
-5 skipped** (205 files + 2 platform skips); L2 **203 checks** (5 skipped); L3 **452 passed, 4 skipped** at 1024×720; L4 **19 checks** against `release/win-unpacked` (after t451, not re-run since).
-The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17 against a signed,
+Baseline (2026-09-15, **Windows 11**, after t464): typecheck, lint and build pass; L1 **3,548 passed,
+5 skipped** (205 files + 2 platform skips); L2 **203 checks** (5 skipped); L3 **452 passed, 4 skipped**
+at the pinned 1024×720 window; L4 **19 checks** against `release/win-unpacked` (after t451, not re-run
+since). The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17 against a signed,
 hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
 **Release** workflow: it has been dispatched twice with `platforms=macos` (item 6 below), so a `v*`
 tag now builds both platforms.
 
 ## Closed in this cleanup
+
+- **Rephrase all user-facing UI copy and analytics descriptions into direct, concise developer style (t464, 2026-09-15).**
+  Cleaned up all user-facing sentences, tooltips, placeholders, section intros, and flavor text across 21 components
+  in `src/renderer/src/components` (Tasks, LooseEnds, Flow, NewTask, NewProject, FleetSettings, CostModel, RoutingOverview,
+  RoutingModel, QualityModel, VelocityModel, ModelsModel, Statistics, QualityReview, Questions, Workers, and thread components
+  DebateBoard, Decide, DiffPanel, Facts, RunRow). Eliminated Claude-specific idioms ("comes to rest", "load-bearing", "prose",
+  "rung", "dearest model") and pseudo-academic paper jargon while strictly preserving test-invariant assertions and RPC contracts.
+  Net reduction of 112 lines of verbose text. Verified: typecheck, lint, `npm test` (3,548 passed), `npm run build`, and `ui.test.mjs`
+  (all 452 checks passed).
 
 - **`warmstart-site`'s `tasks.png` had no backdrop; the generator now refuses to write a shot that
   looks like it is missing one (t468, 2026-09-15).** t465's failed regeneration was worked around by
@@ -34,41 +44,18 @@ tag now builds both platforms.
   `runfailure.test.ts` and real-git `landingcorners.test.ts`.
 
 - **A folder an operator attaches is now granted to every task downstream of it, and on every run
-  (t462, 2026-09-15).** ⭐ **The measurement this exists for:** on t460 → t461 the operator attached
-  `C:\Dev\warmstart-site` to a *planner* whose single piece was to edit that repository. The piece
-  was a new task with no attachments of its own, so codex was spawned in its worktree under
-  `--sandbox workspace-write` with no `--add-dir` for the site and came back *“separate-site changes
-  were blocked by filesystem permissions”* having done everything else — the grant did not travel the
-  one hop the plan itself created. It also did not survive a *second run of the same task*: an
-  attachment travels only while its message is undelivered, which is right for an image that costs
-  tokens to replay and wrong for a flag that costs none. `grantedDirsFor` (`daemon/attachments.ts`)
-  now resolves every folder attachment on a task **and on its ancestors**, filtered to what is a
-  directory on disk; `SpawnRequest.grantDirs` carries it, and `spawnSession` falls back to the task
-  behind a resumed or forked conversation so the cache clock cannot drop a grant. The three
-  sandboxing adapters spell it `--add-dir` (on codex, ahead of the `resume` subcommand, where the
-  flag is declared); the cold prompt names the directories, because a grant nobody is told about is
-  one the agent never uses. ⚠️ **Argv- and unit-proven only** (item 4). Pinned:
-  `attachments.test.ts` (inheritance down, not up; survives delivery; drops a folder that moved),
-  `adapters.test.ts` (all three adapters, the codex ordering, no duplicate grant), `prompt.test.ts`.
+  (t462, 2026-09-15).** `grantedDirsFor` (`daemon/attachments.ts`) resolves folder attachments on a
+  task and ancestors, filtered to disk directories; `SpawnRequest.grantDirs` passes `--add-dir` to
+  sandboxing adapters. Cold prompt names directories; survives delivery and resumes. Unit-pinned in
+  `attachments.test.ts`, `adapters.test.ts`, `prompt.test.ts`.
 
-- **README and first-run documentation lead with Warmstart's subscription-CLI control-room pitch
-  (t461, 2026-09-15; screenshots finished in t462).** The root README has the public links and
-  badges, feature-led sections, task-kind table, pricing language and roadmap; the six-step
-  walkthrough lives in `docs/getting-started.md` and is indexed. Public badges will show “not found”
-  until the repository is public and a `v*` tag exists.
+- **README, docs, and warmstart.dev marketing pitch (t461 / t462, 2026-09-15).** Root README and
+  `docs/getting-started.md` lead with subscription-CLI control-room story, task kinds, pricing, and
+  roadmap. Regenerated all 10 documentation screenshots (7.5 MB total) from a single real run with
+  clean scratch profile, real peer reviews, and trade-off scatters. Updated warmstart-site locally.
 
-  ⛔ **t461 wrote the generator's new code but never ran it, and `docs/images/tradeoffs.png` was
-  committed as a byte-identical copy of `statistics.png`.** All ten images were regenerated from one
-  real run (7.5 MB total); the welcome tour, a renamed task title, and a `tradeoffs` section that
-  needed real `quality_reviews` rows all had to be fixed first. Mechanics, the `MIN_SHOT_BYTES`
-  backdrop guard, and t465/t468's follow-on incident are in
-  [`docs/development.md`](docs/development.md).
-
-- **Quality Review's gradable totals now exclude tasks the same page says cannot be graded (t459,
-  2026-09-15).** `reviewQueue` previously calculated the non-gradable count from live eligibility but
-  left the 0/1/2+ tiles as raw finished-task counts, so every refusal appeared on both sides of the
-  summary (reported as 61 gradable tasks even though none remained). All five counts now come from
-  one eligibility map; refused rows remain visible unless the operator's filter hides them.
+- **Quality Review gradable totals exclude non-gradable tasks (t459, 2026-09-15).** `reviewQueue`
+  computes all five counts from a single eligibility map so refused tasks do not count as gradable.
 
 - **The quota-preemption card's wrap-up buttons, and hand-off with a destination (t458,
   2026-09-15).** Every option with more than one button now wraps them in `.decide-buttons`, one

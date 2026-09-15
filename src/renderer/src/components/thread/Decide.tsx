@@ -508,16 +508,16 @@ export function Decide({
   // sentence somebody stops reading, and this one is load-bearing.
   const releases =
     blocking === 0
-      ? 'Nothing is waiting on this one, so it just comes to rest as done.'
+      ? 'No tasks depend on this one. It marks as completed.'
       : blocking === 1
-        ? 'Releases the one task waiting on it — it becomes ready and can be dispatched.'
-        : `Releases the ${blocking} tasks waiting on it — they become ready and can be dispatched.`
+        ? 'Releases the 1 dependent task to become ready for dispatch.'
+        : `Releases the ${blocking} dependent tasks to become ready for dispatch.`
   const holds =
     blocking === 0
-      ? 'Nothing is waiting on it either way.'
+      ? 'No dependent tasks are waiting on this.'
       : blocking === 1
-        ? 'The one task waiting on it stays blocked — only a completed task releases it.'
-        : `The ${blocking} tasks waiting on it stay blocked — only a completed task releases them.`
+        ? 'The 1 dependent task stays blocked until completed.'
+        : `The ${blocking} dependent tasks stay blocked until completed.`
 
   /**
    * What is sitting uncommitted in this task's workspace, for a conversation.

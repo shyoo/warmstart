@@ -74,30 +74,22 @@ export function RoutingModel({
       <header className="paper-head">
         <h2 className="paper-title">Routing Model v{ROUTING_MODEL_VERSION}</h2>
         <p className="paper-subtitle">
-          Choosing the account, the model and the moment for every coding-agent task
+          Account, model, and timing selection for every agent task
         </p>
         <p className="paper-byline">
-          Warmstart · a technical description of the scheduler this build runs · every number below is
-          read back from this fleet&rsquo;s own ledger or evaluated from the published constants
+          Warmstart · Scheduler architecture and routing mechanics · Metrics reflect live fleet state and configured constants
         </p>
       </header>
 
       <section className="paper-abstract">
         <h4>Summary</h4>
         <p>
-          An operator running several coding agents on several subscriptions faces a scheduling
-          problem that is small in size and large in consequence: which account, which model and
-          which effort should take each task, whether to reuse a conversation or start a fresh one,
-          and when to compact rather than let a prompt cache lapse. Each answer trades{' '}
-          <em>quality</em>, <em>cost</em> and <em>velocity</em> against one another, the numbers the
-          trade-off rests on are only partly known and drift as vendors change prices, windows and
-          models, and the right weighting differs from one project to the next. We describe the
-          routing model Warmstart runs: a deterministic, token-free score over every eligible
-          (account, model) pair, whose weights are affine functions of a three-number objective the
-          operator sets once, whose values are measured live from prompt caches, quota windows,
-          context sizes and this fleet&rsquo;s own history, and whose every decision is stored with its
-          full derivation. The operator states what matters; the scheduler does the arithmetic on
-          every tick and keeps the receipts.
+          Dispatching coding agents across multiple subscriptions balances three competing factors:{' '}
+          <em>quality</em>, <em>cost</em>, and <em>velocity</em>. Choosing the right account, model, and session context
+          depends on live prompt caches, quota window resets, and per-project objectives.
+          Warmstart evaluates every eligible (account, model) pair using a deterministic scoring formula with zero token overhead.
+          Weights are calculated from your configured quality, cost, and velocity objectives, while metrics update continuously
+          from active cache state, quota limits, and execution history. Every routing decision is logged with its full calculation.
         </p>
       </section>
 

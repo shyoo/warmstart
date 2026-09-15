@@ -343,17 +343,15 @@ export function DiffPanel({
         {/* ⛔ The banner that keeps the two answers apart. */}
         {summary && summary.workspaceReadable && summary.uncommittedFiles > 0 && (
           <p className="diff-warn">
-            {summary.uncommittedFiles} file{summary.uncommittedFiles === 1 ? '' : 's'} in the
-            workspace {summary.uncommittedFiles === 1 ? 'is' : 'are'} not committed and{' '}
-            <strong>will not land</strong>. Commit first if you want{' '}
-            {summary.uncommittedFiles === 1 ? 'it' : 'them'} included.
+            {summary.uncommittedFiles} uncommitted file{summary.uncommittedFiles === 1 ? '' : 's'} in the
+            workspace <strong>will not land</strong>. Commit these changes first to include them.
           </p>
         )}
         {/* ⚠️ Only where it matters: on a task still holding a workspace. A finished task has no
             workspace to read, and saying so there would report a release as a failure. */}
         {atGate && summary && !summary.workspaceReadable && (
           <p className="diff-note">
-            The workspace could not be read, so whether anything is uncommitted is unknown.
+            Workspace could not be read; uncommitted status is unknown.
           </p>
         )}
 

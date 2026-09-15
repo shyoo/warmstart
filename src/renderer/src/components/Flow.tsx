@@ -472,7 +472,7 @@ export function Flow({ projectId, fleet, onOpenTask }: {
       <header className="panel-head">
         <div>
           <h2>Flow</h2>
-          <p className="panel-sub">The live shape of this project: work enters from the left, runs through a worker workspace, and comes to rest on the right. The running column names the ticket, the workspace and the account handling it.</p>
+          <p className="panel-sub">Visual pipeline for project tasks: queued on the left, active in worker workspaces in the middle, and completed on the right.</p>
         </div>
         <span className="tag">{tasks.length} tasks</span>
       </header>
@@ -493,7 +493,7 @@ export function Flow({ projectId, fleet, onOpenTask }: {
                       {runningRows.length > 0 ? (
                         runningRows.map(renderWorkspaceRow)
                       ) : (
-                        <span className="dim flow-binds-empty">This project has no workspace pool yet. One is built on its first dispatch.</span>
+                        <span className="dim flow-binds-empty">No active workspaces. Workspaces are allocated automatically on task dispatch.</span>
                       )}
                       {unbound.length > 0 ? (
                         <div className="flow-bind flow-bind--unbound" title="Running with no workspace claim the daemon can resolve.">

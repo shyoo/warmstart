@@ -77,7 +77,7 @@ const SCHEDULE_DELAYS: Record<Exclude<ScheduleOption, 'now' | 'custom'>, number>
 }
 
 const SCHEDULE_OPTIONS: PillOption[] = [
-  { value: 'now', label: 'Send now', hint: 'routed as soon as an account is free' },
+  { value: 'now', label: 'Send now', hint: 'Dispatched immediately when a worker is available' },
   { value: '30m', label: 'In 30 minutes' },
   { value: '1h', label: 'In 1 hour' },
   { value: '2h', label: 'In 2 hours' },
@@ -86,10 +86,10 @@ const SCHEDULE_OPTIONS: PillOption[] = [
 ]
 
 const PRIORITY_OPTIONS: PillOption[] = [
-  { value: 'P0', label: 'P0', hint: 'ahead of everything' },
-  { value: 'P1', label: 'P1', hint: 'before the ordinary queue' },
-  { value: 'P2', label: 'P2', hint: 'the default' },
-  { value: 'P3', label: 'P3', hint: 'whenever there is room' }
+  { value: 'P0', label: 'P0', hint: 'Highest priority' },
+  { value: 'P1', label: 'P1', hint: 'High priority' },
+  { value: 'P2', label: 'P2', hint: 'Normal priority (default)' },
+  { value: 'P3', label: 'P3', hint: 'Low / background priority' }
 ]
 
 /**
@@ -103,27 +103,27 @@ const KIND_OPTIONS: PillOption[] = [
   {
     value: 'task',
     label: 'Single Task',
-    hint: 'follows your prompt and completes the task autonomously in one turn, including landing — asking you a question if it needs to'
+    hint: 'Completes the task autonomously in one run, including verification and landing, asking questions if needed.'
   },
   {
     value: 'conversation',
     label: 'Conversation',
-    hint: 'a thread you keep talking in — it stops after each turn and commits when you say so'
+    hint: 'Interactive multi-turn session. Pauses after each turn and commits only when requested.'
   },
   {
     value: 'execute',
     label: 'Plan&Execute',
-    hint: 'one planner, one executor — two turns, and no review turn to pay for'
+    hint: 'Generates an implementation plan, then executes it in a single focused run.'
   },
   {
     value: 'plan',
     label: 'Plan&Split',
-    hint: 'an agent plans it with you, then files and delegates the pieces'
+    hint: 'Plans the task and decomposes it into independent subtasks run in parallel.'
   },
   {
     value: 'debate',
     label: 'Debate',
-    hint: 'several agents answer independently, then argue it out under an organizer'
+    hint: 'Multiple agents propose solutions independently, followed by an organizer synthesis.'
   }
 ]
 
@@ -145,15 +145,15 @@ const ROUND_OPTIONS: PillOption[] = Array.from(
     return {
       value: String(n),
       label: n === 1 ? '1 round' : `up to ${n} rounds`,
-      ...(n > 3 ? { hint: 'published gains flatten past about 3–4 rounds' } : {})
+      ...(n > 3 ? { hint: 'Returns typically diminish beyond 3–4 rounds' } : {})
     }
   }
 )
 
 /** D4, the operator's pill. ⚠️ Data in `debate_json`, never a branch on a seat count. */
 const EXCHANGE_OPTIONS: PillOption[] = [
-  { value: 'full', label: 'Verbatim', hint: 'each seat reads every other position word for word' },
-  { value: 'digest', label: 'Organizer’s digest', hint: 'each seat reads only the brief written for it' }
+  { value: 'full', label: 'Verbatim', hint: 'Each seat reads complete responses from all seats' },
+  { value: 'digest', label: 'Organizer’s digest', hint: 'Each seat reads only the organizer’s summary brief' }
 ]
 
 /**
@@ -182,8 +182,8 @@ const MODEL_AUTO = 'policy:auto'
 const MODEL_INHERIT = 'policy:inherit'
 
 const ATTACH_OPTIONS: PillOption[] = [
-  { value: 'file', label: 'Add a file or photo' },
-  { value: 'folder', label: 'Add a folder' }
+  { value: 'file', label: 'Add file or image' },
+  { value: 'folder', label: 'Add folder' }
 ]
 
 const KIND_SHORT: Record<ComposerKind, string> = {
@@ -573,15 +573,15 @@ export function NewTask({
       value: MODEL_AUTO,
       label: 'Auto Model',
       hint: pinned
-        ? `the scheduler scores each of ${pinned.label}’s routable models and dispatches the winner`
-        : 'the scheduler picks the account, then scores that account’s routable models'
+        ? `Scheduler selects the optimal routable model for ${pinned.label}`
+        : 'Scheduler selects the worker account and its optimal model'
     },
     {
       value: MODEL_INHERIT,
       label: `Inherit — ${inheritedModelLabel}`,
       hint: pinned
-        ? 'this account’s own default model; the router is not asked'
-        : 'whichever account is chosen uses its own default model'
+        ? 'Use this account’s configured default model'
+        : 'Use default model of the dispatched account'
     },
     // ⚠️ Named for reading, valued by id — what is sent is the exact string the CLI takes.
     ...(forAdapter?.models ?? []).map((m) => ({
@@ -700,7 +700,7 @@ export function NewTask({
     return scores.length > 0 ? Math.max(...scores) : null
   }
   const organizerOptions: PillOption[] = [
-    { value: '', label: 'Auto Worker', hint: 'the scheduler picks' },
+    { value: '', label: 'Auto Worker', hint: 'Routed by scheduler' },
     ...[...pinnable]
       .sort((a, b) => (bestFitnessFor(b.id) ?? -1) - (bestFitnessFor(a.id) ?? -1))
       .map((w) => {
@@ -711,7 +711,7 @@ export function NewTask({
           hint:
             fitness !== null
               ? `fitness ${fitness.toFixed(2)} · ${w.adapterId}`
-              : `not measured yet · ${w.adapterId}`
+              : `unmeasured · ${w.adapterId}`
         }
       })
   ]
@@ -755,7 +755,7 @@ export function NewTask({
       if (isPlan) {
         const notBefore = plannedStart(scheduleOption, customTime, readClock())
         if (notBefore === 'invalid') {
-          onError('Pick a date and time for the scheduled send, or set the clock back to Send now')
+          onError('Select a valid date and time for the scheduled run, or select "Send now".')
           setSaving(null)
           return
         }
@@ -822,7 +822,7 @@ export function NewTask({
       } else if (isDebate) {
         const notBefore = plannedStart(scheduleOption, customTime, readClock())
         if (notBefore === 'invalid') {
-          onError('Pick a date and time for the scheduled send, or set the clock back to Send now')
+          onError('Select a valid date and time for the scheduled run, or select "Send now".')
           setSaving(null)
           return
         }
@@ -861,14 +861,14 @@ export function NewTask({
             : {})
         })
         if (!filed.ok) {
-          onError(filed.reason ?? 'This debate could not be filed.')
+          onError(filed.reason ?? 'Failed to create debate task.')
           setSaving(null)
           return
         }
       } else {
         const notBefore = plannedStart(scheduleOption, customTime, readClock())
         if (notBefore === 'invalid') {
-          onError('Pick a date and time for the scheduled send, or set the clock back to Send now')
+          onError('Select a valid date and time for the scheduled run, or select "Send now".')
           setSaving(null)
           return
         }
@@ -962,7 +962,7 @@ export function NewTask({
         <PillSelect
           className="composer-head-project"
           ariaLabel="Project"
-          title="The project this task belongs to. It supplies the workspace, branch and project policy. Preselected from the project you were looking at, and always changeable."
+          title="Target project for this task. Determines workspace, default branch, and execution policies."
           muted={!projectId}
           value={projectId}
           label={
@@ -975,7 +975,7 @@ export function NewTask({
             {
               value: '',
               label: 'Choose project',
-              hint: 'required before this task can be saved or sent'
+              hint: 'Required to save or dispatch task'
             },
             ...projects.map((p) => ({ value: p.id, label: p.name }))
           ]}
@@ -1008,14 +1008,14 @@ export function NewTask({
           aria-label="Prompt"
           placeholder={
             isExecute
-              ? 'Describe the outcome. An agent plans it with you, then hands one executor the whole job.'
+              ? 'Describe the task. A planner will draft the implementation plan, then an executor will complete the work.'
               : isPlan
-              ? 'Describe the outcome. An agent plans it with you, then files and delegates the pieces.'
+              ? 'Describe the goal. A planner will decompose it into subtasks for execution.'
               : isDebate
-              ? 'Ask the question. Every seat answers it independently first, then reads the others under an organizer.'
+              ? 'Enter question or design topic for multi-agent debate.'
               : isConversation
-                ? 'Start the conversation. The agent answers and stops; you reply in the same thread, and commit when you are ready.'
-                : 'Describe the work as you would to a colleague. You can paste an image in here as well.'
+                ? 'Start an interactive session. Send messages to the agent and commit changes when ready.'
+                : 'Describe what needs to be done. You can paste images or attach files.'
           }
           onChange={(e) => setPrompt(e.target.value)}
           onPaste={paste.onPaste}
@@ -1044,7 +1044,7 @@ export function NewTask({
           <Pill
             className="composer-attachment"
             ariaLabel="Add attachment"
-            title="Add a file, photo, or folder"
+            title="Attach file, image, or folder"
             label="+"
             menu={(close) => (
               <PillOptions
@@ -1064,7 +1064,7 @@ export function NewTask({
           <button
             className="btn btn--quiet"
             disabled={!canSend}
-            title="File it without dispatching. A draft sits still until you promote it."
+            title="Save without running. Drafts remain queued until manually started."
             onClick={() => void submit('draft')}
           >
             {saving === 'draft' ? '…' : 'Save as Draft'}
@@ -1079,8 +1079,8 @@ export function NewTask({
             ariaLabel="When to send"
             title={
               armed
-                ? 'This task waits at scheduled until its time arrives, then is routed and dispatched.'
-                : 'Send now, or pick a time to file it as scheduled.'
+                ? 'Task remains scheduled until the selected time, then dispatches automatically.'
+                : 'Dispatch immediately or schedule for later execution.'
             }
             label={scheduleLabel(scheduleOption, customTime)}
             menu={(close) => (
@@ -1144,7 +1144,7 @@ export function NewTask({
                 <td>
                   <PillSelect
                     ariaLabel="What this files"
-                    title="A debate seats several agents on one question, then arbitrates them."
+                    title="Select task execution workflow."
                     muted={false}
                     value={kind}
                     label={KIND_SHORT[kind]}
@@ -1156,7 +1156,7 @@ export function NewTask({
                 <td>
                   <PillSelect
                     ariaLabel="Priority"
-                    title="Priority orders the queue. It does not jump a task past its dependencies."
+                    title="Queue priority (P0-P3). Dependencies always take precedence."
                     muted={prefs.priority === 'P2'}
                     value={prefs.priority}
                     label={prefs.priority}
@@ -1167,7 +1167,7 @@ export function NewTask({
                 <td>
                   <Pill
                     ariaLabel="Wait for other tasks"
-                    title="This debate is held at blocked until every task named here has completed."
+                    title="Blocks this debate until all prerequisite tasks complete."
                     muted={dependsOn.length === 0}
                     label={
                       dependsOn.length === 0
@@ -1189,10 +1189,7 @@ export function NewTask({
                 <td>
                   <PillSelect
                     ariaLabel="Finish policy"
-                    title={
-                      'What happens if you send this organizer on to do the work. A debate that ' +
-                      'stops at its agreement commits nothing whatever this says.'
-                    }
+                    title="Finish policy if organizer is prompted to implement the outcome."
                     muted={prefs.finishPolicy === 'inherit'}
                     value={prefs.finishPolicy}
                     label={
@@ -1204,7 +1201,7 @@ export function NewTask({
                       {
                         value: 'inherit',
                         label: `Inherit — ${inheritedFinishLong}`,
-                        hint: `from the ${inheritedFinish.source}, and follows it as it changes`
+                        hint: `Inherited from ${inheritedFinish.source}`
                       },
                       ...FINISH_ORDER.map((p) => ({ value: p, label: FINISH_LABELS[p] }))
                     ]}
@@ -1216,11 +1213,7 @@ export function NewTask({
                     <PillSelect
                       ariaLabel="Worker"
                       align="right"
-                      title={
-                        'Who arbitrates. Sorted by the fitness this fleet has measured, and an ' +
-                        'organizer whose adapter is not the only one in the room is the stronger ' +
-                        'choice — both advisory, neither a gate.'
-                      }
+                      title="Organizer worker for synthesizing debate arguments. Workers are ranked by fitness."
                       muted={!prefs.workerId}
                       value={prefs.workerId}
                       label={pinned?.label ?? 'Auto Worker'}
@@ -1259,7 +1252,7 @@ export function NewTask({
                 <td>
                   <PillSelect
                     ariaLabel="Seats"
-                    title="How many agents answer this question. Two to five — five is the fan-out cap this task is filed with, so the number here is the number that will be allowed."
+                    title="Number of independent agent participants (2-5)."
                     value={String(debatePrefs.seats.length)}
                     label={`${debatePrefs.seats.length} seats`}
                     options={SEAT_OPTIONS}
@@ -1271,7 +1264,7 @@ export function NewTask({
                 <td>
                   <PillSelect
                     ariaLabel="Rounds"
-                    title="The round budget you authorise. The organizer may converge early — that only saves money — and may never ask for more."
+                    title="Maximum number of debate rounds. The organizer may stop earlier upon reaching consensus."
                     muted={debatePrefs.rounds === 3}
                     value={String(debatePrefs.rounds)}
                     label={debatePrefs.rounds === 1 ? '1 round' : `≤${debatePrefs.rounds} rounds`}
@@ -1282,7 +1275,7 @@ export function NewTask({
                 <td>
                   <PillSelect
                     ariaLabel="Exchange"
-                    title="What each seat reads from round 2 on: every other position word for word, or only the brief the organizer wrote for it."
+                    title="Context shared between rounds: Verbatim shares full transcripts, Digest shares an organizer summary."
                     muted={debatePrefs.exchange === 'full'}
                     value={debatePrefs.exchange}
                     label={debatePrefs.exchange === 'full' ? 'Verbatim' : 'Digest'}
@@ -1306,7 +1299,7 @@ export function NewTask({
           <>
             <PillSelect
               ariaLabel="What this files"
-              title="A task is dispatched to an agent. A plan is decomposed into drafts first."
+              title="Select task execution workflow."
               muted={kind === 'task'}
               value={kind}
               label={KIND_SHORT[kind]}
@@ -1316,7 +1309,7 @@ export function NewTask({
 
             <PillSelect
               ariaLabel="Priority"
-              title="Priority orders the queue. It does not jump a task past its dependencies."
+              title="Queue priority (P0-P3). Dependencies always take precedence."
               muted={prefs.priority === 'P2'}
               value={prefs.priority}
               label={prefs.priority}
@@ -1326,7 +1319,7 @@ export function NewTask({
 
             <Pill
               ariaLabel="Wait for other tasks"
-              title="This task is held at blocked until every task named here has completed. You can add or drop a prerequisite later from its thread."
+              title="Task will wait until all prerequisite tasks complete. Prerequisites can also be modified in the thread."
               muted={dependsOn.length === 0}
               label={
                 dependsOn.length === 0
@@ -1350,12 +1343,11 @@ export function NewTask({
               <SegmentedControl
                 ariaLabel="Workspace"
                 title={
-                  'Where the agent works. Worktree: a pooled checkout on a branch of its own, landed ' +
-                  'by the finish policy. Trunk: the project checkout itself, committing straight onto ' +
-                  'the landing target — for trunk work, like pulling and resolving a conflict. One ' +
-                  'trunk task runs at a time, and worktree landings into the trunk wait for it.' +
+                  'Where the agent executes. Worktree: an isolated checkout on a dedicated task branch. ' +
+                  'Trunk: the main project checkout, committing directly to the landing target. ' +
+                  'Only one trunk task runs at a time.' +
                   (workspaceMode === 'inherit'
-                    ? `\n\nFollowing the project's default: ${inheritedWorkspace}.`
+                    ? `\n\nDefault from project: ${inheritedWorkspace}.`
                     : '')
                 }
                 value={workspaceMode === 'inherit' ? inheritedWorkspace : workspaceMode}
@@ -1373,11 +1365,10 @@ export function NewTask({
               <PillSelect
                 ariaLabel="Conversation policy"
                 title={
-                  'Whether this task may continue in a conversation another task in this project has ' +
-                  'already been having. Cheaper — a cold start rebuilt 41,542 tokens of prefix that a ' +
-                  'reused one read back for 65 — but the agent sees everything said in that conversation.' +
+                  'Allow this task to reuse an existing conversation context in this project. ' +
+                  'Reusing context saves tokens and reduces startup latency, but the agent retains prior conversation history.' +
                   (prefs.sessionSharing === 'inherit'
-                    ? `\n\nInherited from the ${inheritedSharing.source}: ${inheritedSharingLong}.`
+                    ? `\n\nInherited from ${inheritedSharing.source}: ${inheritedSharingLong}.`
                     : '')
                 }
                 muted={prefs.sessionSharing === 'inherit'}
@@ -1404,10 +1395,9 @@ export function NewTask({
               <PillSelect
                 ariaLabel="Finish policy"
                 title={
-                  'What happens when the agent says it is done. Each rung does everything the one ' +
-                  'below does plus one thing.' +
+                  'Action taken when the agent completes. Each policy adds an automated step (commit, verify, merge, or push).' +
                   (prefs.finishPolicy === 'inherit'
-                    ? `\n\nInherited from the ${inheritedFinish.source}: ${inheritedFinishLong}.`
+                    ? `\n\nInherited from ${inheritedFinish.source}: ${inheritedFinishLong}.`
                     : '')
                 }
                 muted={prefs.finishPolicy === 'inherit'}
@@ -1436,8 +1426,7 @@ export function NewTask({
               ariaLabel="Worker"
               align="right"
               title={
-                'Auto weighs quota, cache warmth and what each account has proved. Choosing one ' +
-                'pins the task: it waits for that account rather than routing around it.'
+                'Auto routes based on quota, cache warmth, and model capability. Selecting an account pins the task to that worker.'
               }
               muted={!prefs.workerId}
               value={prefs.workerId}
@@ -1461,11 +1450,8 @@ export function NewTask({
               align="right"
               title={
                 forAdapter
-                  ? 'Only models this account’s cost model can price are offered — one it cannot ' +
-                    'price is one that cannot be gated, estimated for, or reasoned about the ' +
-                    'context window of.'
-                  : 'Pin an account to choose a model by name — a model list belongs to one CLI. ' +
-                    'Auto and the account default are answerable either way.'
+                  ? 'Only models supported by this account’s cost model are shown for quota and context estimation.'
+                  : 'Select an account to view available models for its CLI, or use Auto/default.'
               }
               muted={!model}
               value={modelPillValue}
@@ -1480,7 +1466,7 @@ export function NewTask({
               <PillSelect
                 ariaLabel="Effort"
                 align="right"
-                title="How hard this account is asked to think. Sent as its own flag, so it resolves independently of the model."
+                title="Reasoning effort level passed to the model CLI."
                 muted={!effort}
                 value={effort}
                 label={effort ? (effortLabel(effort) ?? effort) : inheritedEffortLabel}
@@ -1500,7 +1486,7 @@ export function NewTask({
                   <td>
                     <PillSelect
                       ariaLabel="What this files"
-                      title="A task is dispatched to an agent. A plan is decomposed into drafts first."
+                      title="Select task execution workflow."
                       muted={false}
                       value={kind}
                       label={KIND_SHORT[kind]}
@@ -1512,7 +1498,7 @@ export function NewTask({
                   <td>
                     <PillSelect
                       ariaLabel="Priority"
-                      title="Priority orders the queue. It does not jump a task past its dependencies."
+                      title="Queue priority (P0-P3). Dependencies always take precedence."
                       muted={prefs.priority === 'P2'}
                       value={prefs.priority}
                       label={prefs.priority}
@@ -1523,7 +1509,7 @@ export function NewTask({
                   <td>
                     <Pill
                       ariaLabel="Wait for other tasks"
-                      title="This task is held at blocked until every task named here has completed."
+                      title="Blocks this task until all prerequisite tasks complete."
                       muted={dependsOn.length === 0}
                       label={
                         dependsOn.length === 0
@@ -1545,7 +1531,7 @@ export function NewTask({
                   <td>
                     <PillSelect
                       ariaLabel="Conversation policy"
-                      title="Whether this task may continue in a conversation another task in this project has already been having."
+                      title="Allow this planner to reuse an existing conversation context."
                       muted={prefs.sessionSharing === 'inherit'}
                       value={prefs.sessionSharing}
                       label={
@@ -1557,7 +1543,7 @@ export function NewTask({
                         {
                           value: 'inherit',
                           label: `Inherit — ${inheritedSharingLong}`,
-                          hint: `from the ${inheritedSharing.source}, and follows it as it changes`
+                          hint: `Inherited from ${inheritedSharing.source}`
                         },
                         { value: 'on', label: SHARING_LABELS.on },
                         { value: 'off', label: SHARING_LABELS.off }
@@ -1576,7 +1562,7 @@ export function NewTask({
                     {isExecute ? null : (
                     <PillSelect
                       ariaLabel="Finish policy"
-                      title="What happens when the agent says it is done."
+                      title="Action taken when the agent completes."
                       muted={plannerFinishPolicy === 'commit-and-merge'}
                       value={plannerFinishPolicy}
                       label={
@@ -1604,7 +1590,7 @@ export function NewTask({
                         value={prefs.workerId}
                         label={pinned?.label ?? 'Auto Worker'}
                         options={[
-                          { value: '', label: 'Auto Worker', hint: 'the scheduler picks' },
+                          { value: '', label: 'Auto Worker', hint: 'Routed by scheduler' },
                           ...pinnable.map((w) => ({ value: w.id, label: w.label }))
                         ]}
                         onChange={chooseWorker}
@@ -1641,7 +1627,7 @@ export function NewTask({
                   <td>
                     <PillSelect
                       ariaLabel="Piece Priority"
-                      title="Priority applied to each decomposed piece."
+                      title="Queue priority applied to each decomposed subtask."
                       muted={piecePriority === 'P2'}
                       value={piecePriority}
                       label={piecePriority}
@@ -1659,7 +1645,7 @@ export function NewTask({
                     {isExecute ? null : (
                     <PillSelect
                       ariaLabel="Piece Limit"
-                      title="Maximum number of pieces to decompose the goal into."
+                      title="Maximum number of subtasks to generate."
                       value={String(pieceLimit)}
                       label={`<=${pieceLimit}`}
                       options={FANOUT_OPTIONS}
@@ -1670,7 +1656,7 @@ export function NewTask({
                   <td>
                     <PillSelect
                       ariaLabel="Piece Session Sharing"
-                      title="Session sharing policy for each decomposed piece."
+                      title="Session sharing policy for each subtask."
                       muted={pieceSessionSharing === 'on'}
                       value={pieceSessionSharing}
                       label={
@@ -1684,7 +1670,7 @@ export function NewTask({
                         {
                           value: 'inherit',
                           label: `Inherit — ${inheritedSharingLong}`,
-                          hint: `from the ${inheritedSharing.source}`
+                          hint: `Inherited from ${inheritedSharing.source}`
                         }
                       ]}
                       onChange={(v) => setPieceSessionSharing(v as SessionSharingChoice)}
@@ -1695,8 +1681,8 @@ export function NewTask({
                       ariaLabel="Piece Finish Policy"
                       title={
                         isExecute
-                          ? 'Finish policy for the executor. It lands on the project’s own target — there is no plan branch to merge into, because nothing comes back to review it.'
-                          : 'Finish policy for each decomposed piece. Split work merges into the Planner branch.'
+                          ? 'Finish policy for the executor branch.'
+                          : 'Finish policy for each subtask branch. Changes merge into the planner branch.'
                       }
                       muted={pieceFinishPolicy === 'commit-and-merge'}
                       value={pieceFinishPolicy}
@@ -1750,8 +1736,8 @@ export function NewTask({
           <PlanShape mode={isExecute ? 'execute' : 'split'} />
           <figcaption>
             {isExecute
-              ? 'Two turns. One planner, one executor, and the executor lands.'
-              : 'Three turns. One planner fans out, the pieces merge back, the planner reviews and lands.'}
+              ? 'Two turns: planner generates the instruction, executor completes and lands the work.'
+              : 'Three steps: planner decomposes the goal, subtasks run in parallel and merge back, planner reviews.'}
           </figcaption>
         </figure>
       )}
@@ -1783,7 +1769,7 @@ export function NewTask({
           second provider, and a gate that cannot be satisfied on a one-account fleet is a feature
           that cannot be used.
         */
-        <ul className="composer-notices" aria-label="What this debate will cost and what to expect">
+        <ul className="composer-notices" aria-label="Debate cost and configuration notices">
           {rosterComplete && preview ? (
             debateNotices(preview, debatePrefs.rounds).map((notice) => (
               <li key={notice.id} className={`composer-notice composer-notice--${notice.tone}`}>
@@ -1792,8 +1778,7 @@ export function NewTask({
             ))
           ) : (
             <li className="composer-notice composer-notice--caution">
-              Name an account for every seat. A debate needs at least {MIN_DEBATE_SEATS} of them, and the
-              cost is only knowable once they are named.
+              Assign a worker account to each seat. A debate requires at least {MIN_DEBATE_SEATS} seats to calculate cost estimates.
             </li>
           )}
         </ul>
@@ -1801,21 +1786,12 @@ export function NewTask({
 
       <p className="composer-hint">
         {isExecute
-          ? 'An agent plans this with you first — it reads the repository and asks what it needs to ' +
-            'know — and then hands the whole job to one executor as a single self-contained ' +
-            'instruction, which you approve. Two turns rather than three: the planner does not come ' +
-            'back to review the result, and the executor lands its own work.'
+          ? 'A planner agent analyzes the workspace and formulates a plan with you. Once approved, a single executor run performs the work and lands the changes.'
           : isPlan
-          ? 'An agent plans this with you first — it reads the repository and asks what it needs to ' +
-            'know. You approve the whole split before anything is filed. The pieces branch off this ' +
-            'plan’s branch and merge back into it, and only the finished plan reaches the trunk.'
+          ? 'A planner agent analyzes the workspace and proposes subtasks. After your approval, subtasks execute on isolated branches and merge back into the plan branch.'
           : isDebate
-            ? 'Each seat answers blind, in its own session — none of them can see another’s answer. The ' +
-              'organizer then reads all of them, may send each a brief for another round, and finally ' +
-              'reports an agreement with its dissent and asks you what happens next. Seats read and ' +
-              'argue; they never commit.'
-            : 'Sent to the agent as written, after any handoff from an earlier run. These settings are ' +
-              'remembered for the next task; dimmed ones are inherited.'}
+            ? 'Candidate agents propose independent solutions in isolated sessions. An organizer synthesizes the findings and highlights points of consensus and disagreement.'
+            : 'Sent directly to the agent. Form settings persist across tasks; dimmed values are inherited from project defaults.'}
       </p>
     </div>
   )
@@ -1886,7 +1862,7 @@ function DependencyMenu({
     <div className="pill-picker">
       <input
         className="pill-filter"
-        placeholder="wait on a task…"
+        placeholder="Search prerequisite tasks…"
         aria-label="Filter tasks"
         value={query}
         autoFocus
@@ -1897,7 +1873,7 @@ function DependencyMenu({
         {shown.slice(0, 40).map((t) => row(t, false))}
         {picked.length === 0 && shown.length === 0 && (
           <p className="pill-empty">
-            {all.length === 0 ? 'No other tasks to wait for yet.' : 'Nothing matches that.'}
+            {all.length === 0 ? 'No available tasks to depend on.' : 'No matching tasks.'}
           </p>
         )}
       </div>
@@ -1967,7 +1943,7 @@ function WorkersPicker({
   return (
     <Pill
       ariaLabel="Piece workers"
-      title="Select which workers may run decomposed pieces, and their models"
+      title="Select workers and models permitted to run subtasks"
       align="right"
       muted={selectedWorkerIds.length === 0}
       label={label}
@@ -2095,7 +2071,7 @@ function DebateRoster({
   return (
     <Pill
       ariaLabel="Debate roster"
-      title="Who sits in each seat. A seat is exactly one account, model and effort — not a list the scheduler chooses from."
+      title="Assign an account, model, and reasoning effort to each seat."
       align="right"
       muted={named < seats.length}
       label={label}
@@ -2179,8 +2155,8 @@ function DebateRoster({
                         aria-label={`Lens for seat ${i + 1}`}
                         className="workers-menu-model-select"
                         type="text"
-                        placeholder="Lens: what this seat examines first (optional)"
-                        title="An evidence base, never a stance: what this seat is asked to read first and most carefully. It may still reach the answer every other seat reaches. Offered because every seat here is one model family."
+                        placeholder="Focus area / lens (optional)"
+                        title="Specific code or topics this seat prioritizes during analysis."
                         value={seat.lens ?? ''}
                         onChange={(e) => set(i, { lens: e.target.value || null })}
                       />
@@ -2192,8 +2168,7 @@ function DebateRoster({
           </div>
           {lensesOffered && (
             <div className="workers-menu-note">
-              One model family in every seat, so a lens per seat is the diversity left to buy: an
-              evidence base to examine first, never a position to hold.
+              All seats use the same model family. Assigning different lenses helps broaden perspectives across seats.
             </div>
           )}
         </div>

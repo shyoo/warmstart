@@ -359,8 +359,7 @@ export function Tasks({
         <div>
           <h2>Tasks</h2>
           <p className="panel-sub">
-            Each task can be a question or something to implement, left for the AI agents — it is
-            effectively a prompt. Anyone can file one: you, the controller, or an agent mid-run.
+            Track and manage tasks for your AI agents. You, the controller, or an agent mid-run can create tasks.
           </p>
         </div>
         <button
@@ -421,7 +420,7 @@ export function Tasks({
               setViews([])
               writeViews([])
             }}
-            title="Every task in this project, in whatever state"
+            title="All tasks in this project"
           >
             All
             {counts && <span className="chip-n">{Object.values(counts).reduce((a, b) => a + b, 0)}</span>}
@@ -489,7 +488,7 @@ export function Tasks({
             <>
               <p>No tasks in {views.length === 1 ? 'that view' : 'those views'}.</p>
               <p className="dim">
-                The filter is hiding the rest — the counts above say where they are.
+                The selected filter is hiding other tasks. Use the counts above to navigate.
               </p>
               <button
                 className="btn"
@@ -505,8 +504,7 @@ export function Tasks({
             <>
               <p>No tasks yet.</p>
               <p className="dim">
-                File one and the scheduler will route it to a worker that can afford it, in a
-                workspace of its own, on a branch named after the task.
+                Create a task to have the scheduler automatically route it to an available worker in an isolated worktree branch.
               </p>
             </>
           )}
@@ -536,7 +534,7 @@ export function Tasks({
                 sort={sort}
                 asc={asc}
                 onSort={sortBy}
-                title="Who filed the task: you, the controller, or an agent."
+                title="Task author: operator, controller, or agent."
               />
               )}
               {/* ⛔ On the table, not only in the detail pane. Which account is spending on a task is

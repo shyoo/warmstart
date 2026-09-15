@@ -121,7 +121,7 @@ export function QuestionCard({
   return (
     <div className={`question-card${question.parkedAt ? ' question-card--parked' : ''}`}>
       <div className="question-head">
-        <span className="tag tag--human">{question.header ?? 'a decision is wanted'}</span>
+        <span className="tag tag--human">{question.header ?? 'Decision needed'}</span>
         {hasOptions && (
           <button
             type="button"
@@ -134,7 +134,7 @@ export function QuestionCard({
         )}
         {question.parkedAt && (
           <span className="dim question-parked">
-            The session that asked this has ended. Answering it starts the work again.
+            The previous session ended. Answering will resume execution on a new run.
           </span>
         )}
       </div>
@@ -173,13 +173,13 @@ export function QuestionCard({
               {other ? '✓' : ''}
             </span>
             <span className="question-option-body">
-              <span className="question-option-label">Other — write your own answer</span>
+              <span className="question-option-label">Other — custom response</span>
               <span className="question-option-detail">
-                None of these fits. What you type below is sent on its own, with no option attached.
+                Specify a custom response below without selecting a predefined option.
               </span>
             </span>
           </button>
-          {isMulti && !other && <p className="question-hint dim">Choose as many as apply.</p>}
+          {isMulti && !other && <p className="question-hint dim">Choose all that apply.</p>}
         </div>
       )}
 
@@ -190,8 +190,8 @@ export function QuestionCard({
         value={text}
         placeholder={
           !hasOptions || other
-            ? 'Your answer — this goes back to the agent as it is.'
-            : 'Anything to add? A choice plus a caveat is a better answer than either alone.'
+            ? 'Type your response here...'
+            : 'Optional comment or instructions for the agent...'
         }
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
@@ -212,10 +212,10 @@ export function QuestionCard({
         </button>
         <span className="dim question-hint">
           {other && !text.trim()
-            ? 'Write the answer above — Other sends what you type and nothing else.'
+            ? 'Enter your response in the text field above.'
             : question.parkedAt
-              ? 'Recorded on the thread, and carried into the next run’s prompt.'
-              : 'The agent is holding for this.'}
+              ? 'Saved to thread and included in the next agent turn.'
+              : 'Agent is waiting for your response.'}
         </span>
       </div>
     </div>

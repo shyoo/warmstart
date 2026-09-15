@@ -83,8 +83,7 @@ export function DebateBoard({ task }: { task: Task }): React.JSX.Element | null 
                     {missing.length > 0 && (
                       <p className="debate-seat-citations">
                         ⚠️ Cites {missing.length} path{missing.length === 1 ? '' : 's'} that do not
-                        resolve in this repository: {missing.map((c) => c.path).join(', ')}. A report,
-                        not a penalty.
+                        resolve in this repository: {missing.map((c) => c.path).join(', ')}.
                       </p>
                     )}
                     {position ? (

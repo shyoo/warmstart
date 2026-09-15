@@ -237,17 +237,13 @@ export function QualityReview({
           )}
         </div>
         <p className="dim prose-note">
-          ⚠️ Each one spends a real turn on a real peer account and takes minutes, not seconds.{' '}
-          <strong>ALL</strong> is exactly that — every finished task matching the filter, up to 500 —
-          so on a fleet with a backlog it is hours of grading, not a longer press of the same button.
-          Reviews run one per account at a time; a two-account fleet grades two tasks at once.
+          ⚠️ Each review spends a real turn on an eligible peer account. Selecting <strong>ALL</strong> queues
+          every finished task matching the filter (up to 500), running one concurrent review per eligible account.
         </p>
         <p className="dim prose-note">
           ⛔ No agent is asked to grade a task twice, and none is ever asked to grade its own work.
-          Once an agent has produced a score for a task it stops being a candidate for that task — a
-          second grade from the same judge costs a turn to reproduce a number that is already stored.
-          A task with nobody left says so in the table below, and the batch skips it rather than
-          quietly substituting the next one.
+          Once an agent evaluates a task, it is excluded from grading that task again. If no eligible peer
+          remains for a task, it is skipped in the batch.
         </p>
 
         {batch && <BatchProgress batch={batch} labels={labels} onOpenTask={onOpenTask} />}
@@ -293,12 +289,11 @@ export function QualityReview({
       </div>
 
       {!page ? (
-        <p className="dim">Reading what peer review has covered…</p>
+        <p className="dim">Reading peer review coverage…</p>
       ) : page.rows.length === 0 ? (
         <div className="notice">
-          Nothing in this bucket. ⚠️ Only <strong>completed</strong> tasks that an agent actually ran
-          on are counted at all — a cancelled task has no result to judge, and one somebody finished
-          by hand has no agent work to grade.
+          Nothing in this bucket. Only <strong>completed</strong> tasks with agent work runs
+          can be reviewed; cancelled or manually closed tasks are excluded.
         </div>
       ) : (
         <table className="tbl">

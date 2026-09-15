@@ -1084,13 +1084,11 @@ function PriceTab({ report }: { report: StatisticsReport }): React.JSX.Element {
   return (
     <div className="stack">
       <section className="doc-section">
-        <h3>What a finished task has cost</h3>
+        <h3>Historical task costs</h3>
         <p className="panel-sub">
-          The measured distribution, unshrunk. ⛔ This is deliberately <em>not</em> the number the
-          router reads: <code>estimate</code> publishes a median with a confidence and pulls a sparse
-          key toward the fleet&rsquo;s centre, because a factor learned from two tasks that says ×4
-          would otherwise route the whole fleet on an accident. Budgeting is the opposite question —
-          the tail is the point — so nothing on this page is shrunk.
+          The measured distribution, not shrunk. This is deliberately not the number the router reads:
+          routing estimates apply statistical shrinkage to sparse samples, whereas budgeting requires
+          raw observed distributions.
         </p>
         <Window report={report} />
         <div className="notice">
@@ -1162,13 +1160,10 @@ function VelocityTab({ report }: { report: StatisticsReport }): React.JSX.Elemen
   return (
     <div className="stack">
       <section className="doc-section">
-        <h3>How long a finished task has taken</h3>
+        <h3>Historical task duration</h3>
         <p className="panel-sub">
-          <strong>Active time, never wall-clock.</strong> A task dispatched at 09:00, blocked on a
-          question at 09:04 and answered at 17:00 took four minutes of agent work and eight hours of
-          your day. Only the four minutes are here — every stretch spent waiting on a person is
-          subtracted, including the stretches <em>inside</em> a run, which a naive{' '}
-          <code>ended − started</code> misses entirely.
+          <strong>Active time, never wall-clock.</strong> Measures active agent compute duration. Any
+          time spent waiting for user feedback, external approvals, or paused runs is excluded.
         </p>
         <Window report={report} />
         <div className="notice">

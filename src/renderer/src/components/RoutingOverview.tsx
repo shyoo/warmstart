@@ -135,7 +135,7 @@ export function RoutingOverview(): React.JSX.Element {
             account is cheapest per token and knows nothing.
           </li>
           <li>
-            <strong>Which model, at which effort?</strong> The rename does not need the dearest model
+            <strong>Which model, at which effort?</strong> The rename does not need the most expensive model
             and the migration might; but the price gap between two models on the same subscription is
             not a number the developer was ever shown, and a benchmark that ranks them was measured on
             somebody else&rsquo;s code.
@@ -176,50 +176,42 @@ export function RoutingOverview(): React.JSX.Element {
       <section className="doc-section">
         <h3>1.2 The dilemma: quality, cost and velocity</h3>
         <p className="panel-sub">
-          Every one of those questions is an instance of one trade-off. A dispatch can be judged on
-          three axes — the <strong>quality</strong> of what comes back, the <strong>cost</strong> of
-          getting it (tokens, dollars, and the quota that the next task will need), and the{' '}
-          <strong>velocity</strong> with which it lands — and no candidate is best on all three. The
-          dearest model on a fresh conversation is the most likely to get a migration right and the
-          most expensive way to rename a symbol; the cheapest account is the one that has never seen
-          the repository; the fastest way to start is a cold start, which is the most expensive one.
-          The candidates the operator can choose between lie on a <em>Pareto frontier</em>: moving
-          along it buys one axis with another, and the only way to do better than the frontier is to
-          pick a different point on it for a different task.
+          Each dispatch balances three competing factors: the <strong>quality</strong> of the output,
+          the <strong>cost</strong> incurred (tokens, subscription quota, and dollars), and the{' '}
+          <strong>velocity</strong> of completion. No single candidate is optimal across all three.
+          The most capable model in a fresh conversation may excel at a complex migration but is
+          inefficient for a trivial rename; the cheapest account may lack cached context for the
+          repository; starting immediately in parallel may be faster, but cold-starting wastes prompt cache.
+          Candidate options lie on an efficiency trade-off frontier: improving one metric typically
+          impacts another.
         </p>
         <p className="panel-sub">
-          The right point depends on the task, and it depends on the moment. Three things make the
-          choice harder than a fixed preference could handle:
+          The optimal choice varies by task and timing due to three dynamics:
         </p>
         <ol className="doc-list">
           <li>
-            <strong>The values move.</strong> A prompt cache is an asset with an expiry: the same
-            conversation is the cheapest candidate at ten minutes idle and an ordinary one at
-            sixty-one. A quota window fills through the afternoon and resets on a clock. A
-            conversation&rsquo;s context only ever grows until somebody compacts it. The best
-            candidate for a task at 16:40 is not the best candidate for the same task at 17:30.
+            <strong>Values change over time.</strong> Prompt caches expire, turning an economical
+            session into an unprimed one after an hour of inactivity. Quota windows refill on set
+            intervals, and context sizes grow until compacted. The ideal candidate for a task now may
+            not be ideal an hour later.
           </li>
           <li>
-            <strong>The basis numbers are only partly known, and they drift.</strong> What a task
-            costs on a subscription is an amortised share of a flat fee, not a bill. How good a model
-            is at <em>this</em> codebase is a benchmark prior measured elsewhere, corrected only slowly
-            by the fleet&rsquo;s own reviews. How fast an agent is cannot be separated from which tasks
-            it happened to get. And vendors reprice models, resize windows and ship new models
-            without asking; a rule that was calibrated in August is uncalibrated in September.
+            <strong>Metrics drift and update incrementally.</strong> Per-task subscription costs are
+            amortized estimates. Codebase familiarity starts from external benchmarks and refines
+            gradually through local reviews. Agent velocity depends on task complexity, and provider
+            rate limits or pricing can update at any time.
           </li>
           <li>
-            <strong>The weighting is the operator&rsquo;s, and it differs by project.</strong> A
-            side project on a shared subscription wants the cheapest sufficient answer; a launch
-            branch two days from a deadline wants the fastest good one; a security fix wants the best
-            one at any price. The same fleet serves all three at once, so the trade-off cannot be a
-            global constant.
+            <strong>Priorities depend on the project.</strong> A side project may prioritize minimal
+            cost; a release branch near a deadline prioritizes speed; a critical security fix warrants
+            maximum quality regardless of cost. Because the fleet serves multiple projects
+            simultaneously, trade-offs must be configurable per project rather than global.
           </li>
         </ol>
         <p className="panel-sub">
-          So the problem is not to find <em>the</em> best model or <em>the</em> best account. It is to
-          pick the right point on a moving frontier, for each task, under a per-project objective,
-          from numbers that carry their own uncertainty — and to do it without the operator having to
-          look.
+          Rather than searching for a single best model or account, the scheduler identifies the
+          appropriate point on the trade-off frontier for each task based on your configured objective
+          and current fleet state.
         </p>
       </section>
 
@@ -242,13 +234,12 @@ export function RoutingOverview(): React.JSX.Element {
           — what was measured about this account, for this task, right now: minutes of prompt cache
           left, percent of a quota window used, how full a conversation&rsquo;s context is; and{' '}
           <M tex="\lambda_t(\mathbf{o})" /> is the <strong>weight</strong> — how much that measurement
-          is worth to the operator. The weight is identical for every candidate being compared,
-          because it comes from the objective alone. The sum is plain: no normalisation, no cap and no
-          logarithm anywhere in it, so a gap of 0.2 is exactly twice a gap of 0.1 and means only that
-          one candidate is preferred by that much.
+          is worth based on the objective. The weight is identical for every candidate being compared,
+          because it comes from the objective alone. The sum is direct: no hidden normalisation, artificial cap, or
+          logarithm, so a gap of 0.2 represents twice the preference of a gap of 0.1.
         </p>
         <p className="panel-sub">
-          <strong>The objective.</strong> The operator does not set weights. They set three numbers
+          <strong>The objective.</strong> You do not configure individual weights directly. You specify three numbers
           that sum to one — in Settings &rsaquo; Global, or per project, or per task:
         </p>
         <Eq n="2" tex="\mathbf{o} = (q, c, v), \qquad q + c + v = 1, \qquad q, c, v \ge 0" />
@@ -331,9 +322,9 @@ export function RoutingOverview(): React.JSX.Element {
           <em>shrunk</em> toward a neutral value by how little evidence stands behind them —{' '}
           <code>fitness</code> toward a benchmark prior (§5), <code>pace</code> toward the fleet median
           (§4), the cost estimate toward the fleet&rsquo;s own centre (§3) — and a term that cannot be
-          measured at all scores 0 with its absence printed beside it, never a guess. And the
-          weighting is the operator&rsquo;s, once, per project: the objective is the only input a
-          person supplies, and everything else is measured.
+          measured at all scores 0 with its absence printed beside it, never a guess. And priorities
+          are configured per project: the objective is the only developer input required, while everything
+          else is measured from live state.
         </p>
         <p className="dim">
           <code>cacheWarmth</code> and <code>contextHeld</code> are not the same term twice.{' '}

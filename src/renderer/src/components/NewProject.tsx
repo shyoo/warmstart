@@ -268,9 +268,8 @@ export function NewProject({
           <div>
             <h3 id="new-project-title">Add a project</h3>
             <p className="wizard-sub">
-              A project is a directory plus policy. Everything you choose here is written to{' '}
-              <span className="mono">.warmstart/project.json</span> in that directory,
-              so a second machine or a fresh clone behaves the same way.
+              Configure project settings and workspace policies. Settings are saved to{' '}
+              <span className="mono">.warmstart/project.json</span> in the project root.
             </p>
           </div>
           <button className="btn btn--ghost" aria-label="Close" onClick={onClose}>
@@ -465,7 +464,7 @@ function DirectoryStep({
       <PathField
         label="Project directory"
         value={draft.root}
-        placeholder="the directory the repository lives in"
+        placeholder="Path to project root directory"
         onChange={(root) => patch({ root })}
       />
 
@@ -473,7 +472,7 @@ function DirectoryStep({
 
       {inspection && (
         <div className="wizard-findings">
-          <h4>What is there</h4>
+          <h4>Directory inspection</h4>
           <dl className="wizard-facts">
             <div>
               <dt>Path</dt>
@@ -487,9 +486,9 @@ function DirectoryStep({
                 ) : !inspection.isDirectory ? (
                   <span className="warn">a file, not a directory</span>
                 ) : inspection.empty ? (
-                  'empty — a new project'
+                  'Empty directory'
                 ) : (
-                  'an existing project'
+                  'Existing files detected'
                 )}
               </dd>
             </div>
@@ -507,9 +506,9 @@ function DirectoryStep({
               <dt>Config</dt>
               <dd>
                 {inspection.hasConfig ? (
-                  <span className="ok">committed — its policy is loaded below</span>
+                  <span className="ok">Found existing project.json</span>
                 ) : (
-                  <span className="dim">none yet — this will write one</span>
+                  <span className="dim">Not found — will create .warmstart/project.json</span>
                 )}
               </dd>
             </div>
@@ -517,7 +516,7 @@ function DirectoryStep({
               <dt>Orientation docs</dt>
               <dd className="dim">
                 {missingDocs.length === 0
-                  ? 'README.md, AGENTS.md and HANDOFF.md are all there'
+                  ? 'All standard project docs present (README.md, AGENTS.md, HANDOFF.md)'
                   : `missing ${missingDocs.join(', ')}`}
               </dd>
             </div>
@@ -525,15 +524,14 @@ function DirectoryStep({
 
           {inspection.alreadyAdded && (
             <p className="warn">
-              This directory is already the project “{inspection.alreadyAdded.name}”. Open it from
-              the sidebar to change its settings.
+              This directory is already registered as project &ldquo;{inspection.alreadyAdded.name}&rdquo;. Select it from the sidebar to modify settings.
             </p>
           )}
 
           {!inspection.exists && (
             <Checkbox
               label="Create it"
-              hint="The directory does not exist. Nothing is created unless you ask."
+              hint="Directory does not exist. Check to create it."
               checked={draft.createDirectory}
               onChange={(createDirectory) => patch({ createDirectory })}
             />
@@ -542,7 +540,7 @@ function DirectoryStep({
           {inspection.vcs !== 'git' && (
             <Checkbox
               label="Initialise a git repository"
-              hint="Without one this project gets a single workspace, no branches, and nothing to land onto."
+              hint="Initializes a git repository for worktree branching and landing."
               checked={draft.gitInit}
               onChange={(gitInit) => patch({ gitInit })}
             />
@@ -558,7 +556,7 @@ function DirectoryStep({
           id="new-project-name"
           className="text-input"
           value={draft.name}
-          placeholder="what to call it in the sidebar"
+          placeholder="Project display name"
           aria-label="Project name"
           onChange={(e) => patch({ name: e.target.value })}
         />
@@ -596,22 +594,20 @@ function SetupStep({
       <div className="wizard-section">
         <h4>Workspace directory</h4>
         <p className="wizard-sub">
-          Agents never run in the project directory. Each task gets a pooled git worktree, and they
-          live here — beside the project rather than inside it, so nothing an agent does can appear
-          as an untracked directory in your repository.
+          Directory where isolated git worktrees are stored for parallel task execution.
         </p>
         <PathField
           label="Workspace directory"
           value={draft.workspaceRoot}
-          placeholder={workspace?.path ?? 'recommended: alongside the project, named <project>_workspaces'}
+          placeholder={workspace?.path ?? 'Default: ../<project>_workspaces'}
           onChange={(workspaceRoot) => patch({ workspaceRoot })}
         />
         {workspace && (
           <p className={workspace.usable ? 'note' : 'warn'}>
             <span className="mono">{workspace.path}</span>
             {' — '}
-            {workspace.state === 'free' && 'does not exist yet; it is created on the first task.'}
-            {workspace.state === 'empty' && 'exists and is empty.'}
+            {workspace.state === 'free' && 'Directory does not exist yet; will be created when first task runs.'}
+            {workspace.state === 'empty' && 'Directory exists and is empty.'}
             {workspace.state !== 'free' && workspace.state !== 'empty' && workspace.note}
             {draft.workspaceRoot.trim() && workspace.relative && (
               <>
@@ -626,14 +622,12 @@ function SetupStep({
       <div className="wizard-section">
         <h4>Policy</h4>
         <p className="wizard-sub">
-          Defaults for this project&rsquo;s tasks. A task may override any of them; <em>inherit</em>{' '}
-          follows the fleet setting, and all of this is changeable later on the project&rsquo;s own
-          Settings tab.
+          Default policies for tasks in this project. Can be overridden per task or updated in Project Settings.
         </p>
         <div className="setting-list">
           <SettingRow
             title="Finish policy"
-            description="What happens to a task's work when it is done. Work that cannot land stays in Loose ends."
+            description="Action taken upon task completion. Unmerged work remains in Loose Ends."
             control={
               <SettingButtonSelect
                 className="finish-picker setting-row-control-select"
@@ -648,8 +642,8 @@ function SetupStep({
             title="Landing target"
             description={
               repo
-                ? `New task branches start from ${draft.landingTarget.trim() || 'main'}, and landing is measured against origin/${draft.landingTarget.trim() || 'main'}.`
-                : 'With no repository nothing lands, but the name is recorded for when there is one.'
+                ? `Base branch for new tasks, landing changes against origin/${draft.landingTarget.trim() || 'main'}.`
+                : 'Target git branch for landings once a repository is initialized.'
             }
             control={
               <input
@@ -663,7 +657,7 @@ function SetupStep({
           />
           <SettingRow
             title="Session sharing"
-            description="May a task here join a conversation another task in this project already has open?"
+            description="Allow tasks to reuse existing conversation sessions in this project to save tokens."
             control={
               <SettingButtonSelect
                 className="finish-picker setting-row-control-select"
@@ -680,7 +674,7 @@ function SetupStep({
           />
           <SettingRow
             title="Completion mode"
-            description="How far an agent goes before it stops. Tasks still ask when they need direction."
+            description="Determines whether tasks run autonomously to completion or pause at checkpoints."
             control={
               <SettingButtonSelect
                 className="finish-picker setting-row-control-select"
@@ -705,8 +699,8 @@ function SetupStep({
             title="Unattended authority"
             description={
               draft.unattendedAuthority === 'sandboxed-only'
-                ? 'Only adapters that sandbox unattended work may be given tasks here (today: Codex). A task no sandboxed account can take will hold rather than run.'
-                : '⛔ Any adapter. Unattended Claude Code and Antigravity work runs with permission checks bypassed, as your OS user — it can read and write anything you can, including ~/.ssh.'
+                ? 'Restricts unattended execution to sandboxed adapters. Tasks requiring other adapters are held.'
+                : 'Allows any adapter to run unattended with full user OS permissions.'
             }
             control={
               <SettingButtonSelect
@@ -728,8 +722,8 @@ function SetupStep({
             title="Workspace pool"
             description={
               repo
-                ? `${draft.poolSize} task${draft.poolSize === 1 ? '' : 's'} can run at once. A full pool holds new tasks rather than failing them.`
-                : 'One workspace — a project with no repository cannot have a pool.'
+                ? `Maximum concurrent task workspaces (${draft.poolSize}). Additional tasks wait in queue.`
+                : 'Requires a git repository to support concurrent worktree workspaces.'
             }
             control={
               <input
@@ -750,8 +744,7 @@ function SetupStep({
       <div className="wizard-section">
         <h4>Verification</h4>
         <p className="wizard-sub">
-          Run in the task&rsquo;s workspace after the agent commits, in this order, stopping at the
-          first failure. One command per line, cheap ones first.
+          Commands executed in the workspace after agent commits. Executes line by line, stopping on first error.
         </p>
         {verificationWarning(
           draft.finish === 'inherit' ? fleetFinish : draft.finish,
@@ -774,7 +767,7 @@ function SetupStep({
           <button
             className="btn btn--ghost"
             disabled={suggested.join('\n') === checks.join('\n')}
-            title={`Read from this project’s own manifests: ${suggested.join(', ')}`}
+            title={`Detected from project manifests: ${suggested.join(', ')}`}
             onClick={() => patch({ checksText: suggested.join('\n') })}
           >
             Use suggested ({suggested.length})
@@ -814,17 +807,12 @@ function ReviewStep({
         <h4>Starter files</h4>
         {draft.docs.length === 0 ? (
           <p className="dim">
-            This project already has README.md, AGENTS.md and HANDOFF.md. Nothing will be written
-            over them.
+            Standard documentation files (README.md, AGENTS.md, HANDOFF.md) already exist and will not be overwritten.
           </p>
         ) : (
           <>
             <p className="wizard-sub">
-              Three files orient a person and an agent in a project: <strong>README.md</strong> for
-              what it is and how to run it, <strong>AGENTS.md</strong> for how agents work here and
-              what to do when they commit, and <strong>HANDOFF.md</strong> for what is done and what
-              is next. These are starter templates — everything that would need reading the code to
-              know is marked TODO. Edit them here or later.
+              Scaffold standard project documentation files: <strong>README.md</strong> (overview and setup), <strong>AGENTS.md</strong> (agent guidelines and architecture invariants), and <strong>HANDOFF.md</strong> (current progress and next steps).
             </p>
             {draft.docs.map((doc) => (
               <div key={doc.name} className="wizard-doc">
@@ -858,7 +846,7 @@ function ReviewStep({
       </div>
 
       <div className="wizard-section">
-        <h4>What Create will do</h4>
+        <h4>Actions on create</h4>
         <ol className="wizard-plan">
           {plan.map((line) => (
             <li key={line}>{line}</li>

@@ -92,11 +92,9 @@ function modelChoices(models: Array<{ id: string }>): SettingOption[] {
  * header ends up describing a different setting from the box underneath it.
  */
 const MAX_HELP =
-  'How many tasks this account may run at once. Raising it is what lets one worker do parallel ' +
-  'work — a second task on a busy account waits as `queued` until a slot frees. ⚠️ Not free: ' +
-  'parallel requests against one cached prefix each pay a cache write, and both sessions spend the ' +
-  'same quota window. Lowering it never interrupts work already running; it only holds later tasks ' +
-  'until capacity frees.'
+  'Maximum concurrent tasks this account may run simultaneously. Additional tasks queue until a slot frees. ' +
+  'Note: parallel sessions against the same prefix duplicate cache writes and share the quota window. ' +
+  'Decreasing this value does not interrupt running tasks; it only pauses dispatch of subsequent tasks.'
 
 /**
  * The (i) beside `Routable models` — the sentence behind why an empty box is not "nothing routes
@@ -109,9 +107,8 @@ const MAX_HELP =
  * default, which is still the `Model` column beside it.
  */
 const ROUTABLE_MODELS_HELP =
-  "Which models this account may be routed to, beyond the one it uses by default. Leave every box " +
-  "unchecked to route this worker only to its current default model — that is the safe, inert " +
-  'starting point, not a missing setting. Only models this account\'s adapter can price appear here.'
+  'Allowed models for automated task routing on this worker. If none are selected, tasks will route ' +
+  'only to the default model configured above. Only models supported and priced by this adapter are listed.'
 
 /**
  * What the **Routable models** pill reads. Pure so the L1 suite can pin it without a table.
@@ -444,10 +441,10 @@ export function Workers({
 
       {fleet.length === 0 && !adding ? (
         <div className="empty-inline">
-          <p>No workers yet.</p>
+          <p>No workers configured.</p>
           <p className="dim">
-            Add one to point Warmstart at an account. It creates an isolation directory, runs the
-            vendor&rsquo;s own login in a terminal, and never sees the credential itself.
+            Add a worker to connect an AI coding CLI account. Warmstart manages CLI sessions in isolated workspaces
+            without storing user credentials directly.
           </p>
         </div>
       ) : (
@@ -556,17 +553,10 @@ export function Workers({
                 notes.push({
                   key: 'setup',
                   tone: 'warn',
-                  label: 'setup unfinished',
+                  label: 'Setup unfinished',
                   text:
-                    'The CLI’s own first-run screens have never been answered on this account. ' +
-                    'Scheduled work still runs — print mode never sees them — but a terminal here ' +
-                    'lands on onboarding. This answers them once.',
-                  // ⛔ On the note, not in the actions column. It is the only action here that
-                  // exists because of a condition, and it was being appended to the three that are
-                  // always there — so the one row in the fleet with something wrong with it was
-                  // also the only row whose buttons wrapped onto a second line. Beside the sentence
-                  // explaining why it is needed, it reads as an answer rather than as a fourth
-                  // permanent control.
+                    'First-run onboarding has not completed for this CLI account. ' +
+                    'Interactive terminal sessions may stall on initial setup prompts. Complete onboarding once to resolve.',
                   fix: {
                     label: 'Finish setup',
                     busyKey: `setup:${worker.id}`,
@@ -581,24 +571,17 @@ export function Workers({
                     tone: 'danger',
                     label: 'Subscription Expired',
                     text:
-                      `${suspect.reason} — not probed in the background while it is held out. ` +
-                      'Renew the subscription to restore access; Recheck reads the account again once renewed.'
+                      `${suspect.reason} — background usage polling paused while held out. ` +
+                      'Renew subscription to restore access; use Recheck to verify after renewal.'
                   })
                 } else {
                   notes.push({
                     key: 'suspect',
                     tone: 'danger',
-                    // ⛔ The instruction first, the evidence after. `held out of dispatch` describes
-                    // what this app did; `re-sign-in required` is the only part that tells the
-                    // operator what to do about it.
-                    label: suspect.needsReauth ? 're-sign-in required' : 'held out of dispatch',
-                    // ⚠️ It *is* probed in the background now (t309), and saying so is the point:
-                    // this note used to read as a dead end an operator had to clear by hand, which
-                    // is how a hold with an automatic exit got reported as a deadlock.
+                    label: suspect.needsReauth ? 'Authentication required' : 'Dispatch paused',
                     text:
-                      `${suspect.reason} — a background usage probe still runs, and a reading with ` +
-                      'real windows in it lifts this on its own, as does one metered turn. ' +
-                      'Recheck reads the account again and offers it work immediately.'
+                      `${suspect.reason} — background usage polling will clear this automatically ` +
+                      'once valid quota windows or metered turns are confirmed. Use Recheck to poll immediately.'
                   })
                 }
               } else if (isSubscriptionExpired) {

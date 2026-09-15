@@ -78,17 +78,15 @@ export function CacheCost({
       <div className="warn tbl-sub">
       {changing === 'model' ? (
         <>
-          This conversation holds {tokens(held)} of cached context. Prompt caches belong to one model,
-          so switching discards all of it — the next turn rebuilds the prefix at 2.0·C instead of
-          reading it at 0.1·C.
+          This session holds {tokens(held)} of cached context. Switching models discards the cache,
+          requiring the prompt prefix to be rebuilt on the next turn.
         </>
       ) : (
         <>
-          Changing effort invalidates this conversation’s {tokens(held)} of message cache. Cheaper
-          than a model switch, which also discards the tools and system prefix — but not free.
+          Changing effort level invalidates {tokens(held)} of cached message history.
         </>
       )}{' '}
-      Applies to the next run; this session keeps what it started with.
+      Applies to subsequent runs; the active session retains current settings.
       </div>
     </details>
   )

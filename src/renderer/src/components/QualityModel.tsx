@@ -95,10 +95,9 @@ export function QualityModel({
             to one agent for a task another did most of is not evidence about either.
           </li>
           <li>
-            <strong>The commit range is resolved, or the review is refused.</strong> First the range
-            the task actually landed, then its branch; if neither resolves, no review happens. There
-            is no third rung. Reviewing the wrong commits is worse than not reviewing, because it
-            produces a number indistinguishable from a real one.
+            <strong>The commit range is resolved, or the review is skipped.</strong> The review checks the
+            landed commit range first, then the task branch. If neither resolves, the review is skipped.
+            Evaluating the wrong commits would produce invalid ratings.
           </li>
           <li>
             <strong>A peer is chosen — never the author.</strong> Excluded by <em>adapter</em>, not by
@@ -109,9 +108,9 @@ export function QualityModel({
           </li>
           <li>
             <strong>The diff is blinded.</strong> Commit trailers, tool footers, model ids, worker
-            labels and vendor dotfile directories come out mechanically. Prose does not — a commit
-            body explaining an agent-specific sandbox bug cannot be redacted without destroying its
-            meaning — so a review whose prose still names a vendor is flagged{' '}
+            labels and vendor dotfile directories come out mechanically. Unstructured commit messages
+            cannot always be safely redacted without losing context, so any review where commit
+            text still mentions a vendor is flagged{' '}
             <span className="tag">leak</span> and excluded from the clean comparison rather than
             being claimed as blind.
           </li>
@@ -149,8 +148,8 @@ export function QualityModel({
           . ⚠️ Whether a small model can hold a seven-dimension rubric and produce calibrated,
           non-clustered scores is <em>unmeasured</em>. The reviewing model is stored on every review,
           so the experiment is available: grade the same tasks on a small and a large model of one
-          provider and compare the spread. If the small model clusters everything at 7–8 it is not a
-          judge, and the choice moves up a rung. Each account&rsquo;s grading model is set in Settings
+          provider and compare the spread. If the small model clusters scores too narrowly, a larger
+          model should be configured instead. Each account&rsquo;s grading model is set in Settings
           &rsaquo; Workers.
         </div>
       </section>
@@ -266,10 +265,10 @@ export function QualityModel({
               </tbody>
             </table>
             <p className="dim">
-              <strong>Clean mean</strong> is the number to compare agents on: it excludes reviews of
-              tasks more than one adapter worked on, and reviews whose blinding leaked a vendor name
-              into the prose. Where <em>clean</em> is far below <em>all</em>, the difference is the
-              measurement telling you it is not yet a comparison.
+              <strong>Clean mean</strong> is the primary comparison metric: it excludes reviews of tasks
+              with multiple contributing adapters and reviews where commit messages leaked a vendor name.
+              When <em>clean</em> is substantially lower than <em>all</em>, the sample size is still too
+              small for an unbiased comparison.
             </p>
           </>
         )}

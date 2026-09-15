@@ -199,8 +199,8 @@ export function FleetSettings(): React.JSX.Element {
           title="Automatic compaction"
           description={
             autoCompact
-              ? 'The clock may compact a session when the arithmetic favours it.'
-              : 'The clock never compacts on its own; a session that would have been compacted hands off and closes instead.'
+              ? 'Automatically compacts session context when cost/token efficiency thresholds are met.'
+              : 'The clock never compacts on its own; a session that reaches token limits hands off and closes instead.'
           }
           control={
             <SettingSwitch
@@ -216,8 +216,8 @@ export function FleetSettings(): React.JSX.Element {
           title="Wrap up before a quota window closes"
           description={
             autoPreempt
-              ? 'A run inside the margin commits and hands off, then resumes itself at the measured reset. Nothing is cancelled.'
-              : 'Runs are left alone at a window boundary and are cut off mid-thought when it closes, losing uncommitted work.'
+              ? 'Commits and pauses runs approaching quota reset window, resuming automatically after reset.'
+              : 'Runs continue until window resets, risking abrupt termination and uncommitted changes.'
           }
           control={
             <SettingSwitch
@@ -274,8 +274,8 @@ export function FleetSettings(): React.JSX.Element {
           title="Stop a run that is far past its estimate"
           description={
             autoRunawayStop
-              ? 'A run past 3× the median estimate is wrapped up and handed back to you.'
-              : 'A long run is never stopped for cost alone.'
+              ? 'Automatically terminates and flags runs exceeding 3× median token estimates.'
+              : 'Runs are not stopped based on token overrun estimates.'
           }
           control={
             <SettingSwitch
@@ -293,8 +293,8 @@ export function FleetSettings(): React.JSX.Element {
           title="Ask the controller to name long tasks"
           description={
             summariseTitles
-              ? 'A task whose prompt runs long gets a one-line label, one short turn each, once per task. The prompt is unchanged.'
-              : 'The board shows the first line of each prompt. Nothing is spent on labels.'
+              ? 'Generates a concise task title for long prompts using a short background model call.'
+              : 'Displays the first line of the prompt as the task title.'
           }
           control={
             <SettingSwitch
@@ -347,8 +347,8 @@ export function FleetSettings(): React.JSX.Element {
           title="Live narration"
           description={
             liveNarration === 'streaming'
-              ? 'Prose appears word by word as the agent writes it, on CLIs that can stream a turn. About ten times as many stream records per turn; no extra tokens.'
-              : 'Whole messages as they are finished, one line per tool call, one line per thinking phase. What a CLI cannot say is still not said.'
+              ? 'Streams agent output word by word in real time on supported CLIs. Uses more stream events; consumes no extra tokens.'
+              : 'Displays completed messages, tool calls, and thinking phases.'
           }
           control={
             <SettingButtonSelect
@@ -371,7 +371,7 @@ export function FleetSettings(): React.JSX.Element {
             minutes while the reading behind it could be two hours old. */}
         <SettingRow
           title="Quota probe while running"
-          description="Refreshes the CLI’s usage cache on accounts with a run in flight — a background subprocess, no tokens."
+          description="Polls CLI usage cache for active worker accounts via background process (zero tokens consumed)."
           control={
             <select
               className="finish-picker setting-row-control-select"
@@ -395,9 +395,7 @@ export function FleetSettings(): React.JSX.Element {
           title="Quota probe when idle"
           description={
             <>
-              Re-reads what each CLI has already written. Never faster than the running cadence, and
-              two things ignore it: a worker is read <strong>within 30 seconds of the reset time</strong>{' '}
-              any task is parked on, and immediately on a rate-limit warning.
+              Polls CLI usage cache when workers are idle. Always runs <strong>within 30 seconds of the reset time</strong> for parked tasks and immediately after a rate-limit warning.
             </>
           }
           control={

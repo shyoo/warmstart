@@ -48,10 +48,9 @@ export function VelocityModel(): React.JSX.Element {
       <section className="doc-section">
         <h3>4.1 How the scheduler finds an available worker</h3>
         <p className="panel-sub">
-          Availability is a <strong>gate</strong>, not a score. Before anything is weighed, every
-          account is asked a series of yes/no questions, and failing one discards it outright rather
-          than merely making it less attractive — a task that cannot run on account A may run on
-          account B <em>right now</em>, and queueing behind A would be the wrong answer.
+          Availability is an eligibility <strong>gate</strong>, not a preference score. Before calculating
+          scores, each account is verified against core operational constraints. An account that fails any gate
+          is disqualified immediately so the task can dispatch to an available candidate without delay.
         </p>
         <table className="tbl tbl--paper">
           <caption>
@@ -105,31 +104,28 @@ export function VelocityModel(): React.JSX.Element {
           </tbody>
         </table>
         <p className="panel-sub">
-          Only the survivors are scored. Being <em>available</em> earns an account nothing on its own;
-          it earns the right to be compared.
+          Only the surviving accounts are scored. Being <em>available</em> earns an account no bonus
+          points; it qualifies the candidate to be evaluated.
         </p>
       </section>
 
       <section className="doc-section">
-        <h3>4.2 What velocity buys you in the score</h3>
+        <h3>4.2 Velocity score impact</h3>
         <p className="panel-sub">
-          Raising <code>velocity</code> in your objective vector does three separate things, none of
-          them a switch:
+          Increasing the <code>velocity</code> weight in your objective influences routing in three ways:
         </p>
         <ul className="doc-list">
           <li>
-            <strong>It makes a cold start cheap.</strong>{' '}
-            <M tex="\lambda_{\mathrm{cold}} = 0.8 + 2.0\,c - 0.7\,v" />. Velocity-weighted work
-            stops waiting for the account holding a warm prompt cache and takes whichever one is
-            free.
+            <strong>It lowers the penalty on cold starts.</strong>{' '}
+            <M tex="\lambda_{\mathrm{cold}} = 0.8 + 2.0\,c - 0.7\,v" />. High-velocity routing stops
+            waiting for accounts with warm caches and prefers immediate dispatch to any idle worker.
           </li>
           <li>
-            <strong>It doubles effective concurrency.</strong> Above 0.5 velocity, a worker&rsquo;s
-            configured concurrency is multiplied by two — cost-weighted work serialises onto warm
-            sessions instead.
+            <strong>It raises effective concurrency.</strong> Above 0.5 velocity, configured worker
+            concurrency doubles to favor parallel throughput over serial cache reuse.
           </li>
           <li>
-            <strong>It makes measured pace matter.</strong>{' '}
+            <strong>It increases the weight of measured pace.</strong>{' '}
             <M tex={`\\lambda_{\\mathrm{pace}} = ${weightFormulaTex(report.paceFormula)}`} />,
             currently <span className="num">{report.paceWeight.toFixed(3)}</span> at velocity{' '}
             {objective.velocity.toFixed(2)}.
@@ -138,30 +134,25 @@ export function VelocityModel(): React.JSX.Element {
       </section>
 
       <section className="doc-section">
-        <h3>4.3 The pace term — learned from what tasks actually took</h3>
+        <h3>4.3 The pace term — learned from task completion history</h3>
         <p className="panel-sub">
-          The scheduler keeps a per-agent, per-model median of how long a finished task has actually
-          taken, and prefers the faster account when nothing else separates two candidates. Three
-          things make that number honest:
+          The scheduler tracks historical task completion durations per agent and model, favoring faster
+          accounts when other factors are balanced:
         </p>
         <ul className="doc-list">
           <li>
-            <strong>Active time, never wall-clock.</strong> A task dispatched at 09:00, blocked on a
-            question at 09:04 and answered at 17:00 took four minutes of agent work and eight hours of
-            your day. Only the four minutes are counted — every stretch spent waiting on a person is
-            subtracted, including the stretches <em>inside</em> a run, which a naive{' '}
-            <code>ended − started</code> misses entirely.
+            <strong>Active time, never wall-clock.</strong> If a task starts, pauses waiting for user input,
+            and resumes later, only the active agent execution time is counted. All elapsed wall-clock
+            duration waiting for external input is excluded.
           </li>
           <li>
-            <strong>A ratio against the fleet&rsquo;s own centre, not an absolute.</strong> The middle
-            is the geometric mean of every finished task&rsquo;s active time — not the median, because
-            run counts are wildly uneven and a pooled median lands inside whichever agent has done the
-            most work.
+            <strong>Normalized against the fleet baseline.</strong> The baseline is the geometric mean of
+            active time across all finished tasks, preventing disproportionate skew from uneven task counts.
           </li>
           <li>
-            <strong>Shrunk towards 1 by how few samples it rests on.</strong>{' '}
-            <M tex="f = r^{\,n/(n+4)}" />, in log space so that ×4 and ×¼ are pulled by the same
-            proportion. One finished task can never mint a 4× multiplier.
+            <strong>Bayesian shrinkage based on sample count.</strong>{' '}
+            <M tex="f = r^{\,n/(n+4)}" /> in log space, ensuring equal moderation for both fast and slow outliers.
+            A single finished task cannot produce an ungrounded multiplier.
           </li>
         </ul>
         <Eq
@@ -266,8 +257,8 @@ export function VelocityModel(): React.JSX.Element {
           </tbody>
         </table>
         <p className="dim">
-          Hover a row for the derivation in words. A factor above ×1 is slower than this
-          fleet&rsquo;s centre and costs the account score; below ×1 is faster and earns it.
+          Hover over any row to view its derivation. A factor above ×1 is slower than the fleet median,
+          while a factor below ×1 indicates faster execution.
         </p>
       </section>
     </div>

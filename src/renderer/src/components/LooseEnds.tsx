@@ -75,10 +75,8 @@ export function LooseEnds(): React.JSX.Element | null {
         <div>
           <h2>Loose ends</h2>
           <p className="panel-sub">
-            Work that exists and is going nowhere: files an agent never committed, branches that
-            finished but never landed, and stashes taken to free a workspace. Nothing here has been
-            discarded, and nothing on this page discards anything unless you press Delete it and
-            say so.
+            Uncommitted edits, unmerged branches, and temporary workspace stashes.
+            No files are deleted unless you explicitly click Delete.
           </p>
         </div>
         <div className="tbl-actions">
@@ -146,9 +144,9 @@ export function LooseEnds(): React.JSX.Element | null {
                         void act(async () => {
                           setBusy(end.id)
                           const task = (await rpc('task.list', {})).find((t) => t.seq === end.taskSeq)
-                          if (!task) return 'that task no longer exists'
+                          if (!task) return 'Task no longer exists'
                           const r = await rpc('task.land', { id: task.id })
-                          return r.landed ? `landed t${end.taskSeq}` : `not landed — ${r.reason}`
+                          return r.landed ? `Landed t${end.taskSeq}` : `Not landed — ${r.reason}`
                         })
                       }
                     >
