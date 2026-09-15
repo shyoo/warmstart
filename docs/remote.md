@@ -37,7 +37,21 @@ The four fixed bottom tabs are **Overview**, **Quota**, **Tasks**, and **Setting
 visible while the screen content scrolls. Overview combines actionable Attention cards with the
 latest 200 durable task/run events for the selected project, newest first; a completed entry names
 its active time and priced cost. Write actions explain and confirm their effect before the RPC is
-sent. The selected project is retained in a same-site browser cookie, and Tasks requests that project directly
+sent.
+
+⛔ **A question is answered on the task, and the Attention card is a door to it.** An approval is a
+verdict from a closed set and is answered in the list; a question's answer set was written by
+whoever asked, so the list takes only a short closed `choice` inline and every card carries an
+**Answer…** button that opens the task. A task resting at `awaiting_human` whose question is still
+open is drawn once — as the question — rather than twice, and it no longer offers **Resolve** from a
+row that never showed what was asked. The task page draws each open question in full: options with
+the asker's own `detail` on each, a single/multiple toggle, an **Other** row, and a free-text box on
+every kind, because the useful answer is very often a choice plus a caveat. Beneath it, **What now**
+draws what the task itself permits — Override & continue, Send back to an agent, Retry landing,
+Resume, Mark done, Stop, and an atomic worker/model/effort **Reassign** that dispatches a resting
+task again — and shows the daemon's refusal where one is refused.
+
+The selected project is retained in a same-site browser cookie, and Tasks requests that project directly
 so rows from one remote project never appear under another. Quota shows enabled workers only, with
 one state-coloured utilisation bar and reset countdown per reported window. Tasks shows ten
 newest-updated rows per page, preferring `titleSummary` and otherwise shortening the prompt for the

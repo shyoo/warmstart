@@ -42,7 +42,17 @@ const TITLES: Record<Route['name'], string> = {
   pair: 'Pair'
 }
 
-const REFRESH_EVENTS = new Set(['question.opened', 'approval.opened', 'task.changed', 'quota.changed'])
+// ⚠️ The answered and parked halves too: a question answered on the desktop must stop being
+// offered here, and a parked one rests its task without changing what it is waiting for.
+const REFRESH_EVENTS = new Set([
+  'question.opened',
+  'question.answered',
+  'question.parked',
+  'approval.opened',
+  'approval.answered',
+  'task.changed',
+  'quota.changed'
+])
 
 export function App(): React.JSX.Element {
   const [route, setRoute] = useState<Route>(() => routeFromHash(location.hash))

@@ -59,6 +59,17 @@ describe('buildAttentionItems', () => {
     const items = buildAttentionItems([], [], [task({ id: 'g1', status: 'paused_quota' })], NOW)
     expect(items.map((i) => i.kind)).toEqual(['quota'])
   })
+
+  it('a task resting on an open question is the question, not a second bare row', () => {
+    const parked = question({ parkedAt: NOW - 100 })
+    const items = buildAttentionItems([], [parked], [task({ id: 't1', status: 'awaiting_human' })], NOW)
+    expect(items.map((i) => i.kind)).toEqual(['question'])
+  })
+
+  it('still lists a resting task that asked nothing', () => {
+    const items = buildAttentionItems([], [question()], [task({ id: 'other', status: 'awaiting_human' })], NOW)
+    expect(items.map((i) => i.kind).sort()).toEqual(['human', 'question'])
+  })
 })
 
 describe('answerableInline', () => {
@@ -79,22 +90,25 @@ describe('actionsFor', () => {
     expect(acts.map((a) => a.label)).toEqual(['Allow', 'Always', 'Deny'])
   })
 
-  it('puts inline buttons on an answerable question, a door on any other', () => {
+  it('puts inline buttons on an answerable question, and a door on every one', () => {
     const inline = actionsFor({ kind: 'question', at: 0, question: question() })
     expect(inline).toEqual([
       { type: 'answer', optionIds: ['o1'], label: 'straw' },
-      { type: 'answer', optionIds: ['o2'], label: 'push' }
+      { type: 'answer', optionIds: ['o2'], label: 'push' },
+      { type: 'open-task', taskId: 't1', label: 'Answer…' }
     ])
     const door = actionsFor({ kind: 'question', at: 0, question: question({ kind: 'text', options: [], taskId: null }) })
     expect(door).toEqual([{ type: 'open-task', taskId: null, label: 'Answer…' }])
   })
 
-  it('offers the quota actions and the two human ones', () => {
+  it('offers the quota actions, and a resting task only the door to its answer', () => {
     expect(actionsFor({ kind: 'quota', at: 0, task: task({}) }).map((a) => a.type)).toEqual([
       'override', 'stop', 'resume', 'open-task'
     ])
-    expect(actionsFor({ kind: 'human', at: 0, task: task({}) }).map((a) => a.type)).toEqual([
-      'resolve', 'open-task'
+    // ⛔ Resolve is not on this row: marking a task done from a list that never showed the
+    // question is the one thing it must not make easy.
+    expect(actionsFor({ kind: 'human', at: 0, task: task({}) })).toEqual([
+      { type: 'open-task', taskId: 't1', label: 'Answer…' }
     ])
   })
 })

@@ -25,6 +25,14 @@ export function buildAttentionItems(
     ...approvals.map((approval) => ({ kind: 'approval' as const, at: approval.askedAt, approval })),
     ...questions.map((question) => ({ kind: 'question' as const, at: question.askedAt, question }))
   ]
+  /**
+   * ⛔ **A task with an open question is not also a bare "resting" row.** Parking a question rests
+   * its task at `awaiting_human` without answering anything (see `Question.parkedAt`), so the same
+   * wait arrived here twice: once as the question somebody can answer, and once as a task whose only
+   * offer was *Resolve* — the button that marks it done and throws the question away. The question
+   * is the more specific and more useful of the two, so it is the one that is kept.
+   */
+  const asked = new Set(questions.map((question) => question.taskId).filter((id): id is string => !!id))
   for (const task of tasks) {
     if (task.deletedAt) continue
     if (isQuotaGated(task, now)) {
@@ -33,7 +41,7 @@ export function buildAttentionItems(
         at: task.quotaPreemptWarning ? task.quotaPreemptWarning.preemptAt - 60_000 : task.updatedAt,
         task
       })
-    } else if (task.status === 'awaiting_human') {
+    } else if (task.status === 'awaiting_human' && !asked.has(task.id)) {
       items.push({ kind: 'human', at: task.updatedAt, task })
     }
   }
@@ -60,7 +68,6 @@ export type AttentionAction =
   | { type: 'override'; taskId: string; label: string }
   | { type: 'stop'; taskId: string; label: string }
   | { type: 'resume'; taskId: string; label: string }
-  | { type: 'resolve'; taskId: string; label: string }
   | { type: 'open-task'; taskId: string | null; label: string }
 
 /**
@@ -78,7 +85,12 @@ export function actionsFor(item: AttentionItem): AttentionAction[] {
       ]
     case 'question':
       if (answerableInline(item.question)) {
-        return item.question.options.map((o) => ({ type: 'answer' as const, optionIds: [o.id], label: o.label }))
+        return [
+          ...item.question.options.map((o) => ({ type: 'answer' as const, optionIds: [o.id], label: o.label })),
+          // ⛔ A door even where the options fit. Answering a question well is very often *a choice
+          // plus a caveat*, and a strip of option buttons is the one shape that cannot carry one.
+          { type: 'open-task', taskId: item.question.taskId, label: 'Answer…' }
+        ]
       }
       return [{ type: 'open-task', taskId: item.question.taskId, label: 'Answer…' }]
     case 'quota':
@@ -89,10 +101,14 @@ export function actionsFor(item: AttentionItem): AttentionAction[] {
         { type: 'open-task', taskId: item.task.id, label: 'Reassign…' }
       ]
     case 'human':
-      return [
-        { type: 'resolve', taskId: item.task.id, label: 'Resolve' },
-        { type: 'open-task', taskId: item.task.id, label: 'Reply…' }
-      ]
+      /**
+       * ⛔ **One door, and Resolve is not on it.** This row used to lead with *Resolve* — the
+       * button that marks the task done — beside a *Reply…* that opened the thread. A task resting
+       * at `awaiting_human` is asking a person something; the answer to it is on the task, next to
+       * what was said and next to Stop, Reassign and the rest. Marking it done from a list that
+       * never showed the question is the one action this row should not make easy.
+       */
+      return [{ type: 'open-task', taskId: item.task.id, label: 'Answer…' }]
   }
 }
 

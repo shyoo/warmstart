@@ -204,3 +204,29 @@ html, body, #root { height: 100%; margin: 0; }
 @media (max-width: 390px) {
   .m-task-facts { grid-template-columns: 1fr 1fr; }
 }
+
+/* The answer card: option rows big enough to hit, with the asker's own prose kept on each. */
+.m-question-text { margin: 12px 0 0; font-size: 16px; line-height: 1.4; white-space: pre-wrap; }
+.m-question-options { display: grid; gap: 8px; margin-top: 14px; }
+.m-question-option {
+  display: flex; gap: 10px; align-items: flex-start; width: 100%; text-align: left;
+  padding: 12px; border: 1px solid var(--color-border); border-radius: 12px;
+  background: var(--color-bg); color: inherit; font: inherit;
+}
+.m-question-option--on { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg)); }
+.m-question-mark {
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  border: 1px solid var(--color-border); display: inline-flex; align-items: center;
+  justify-content: center; font-size: 13px; line-height: 1;
+}
+.m-question-mark--multi { border-radius: 6px; }
+.m-question-option--on .m-question-mark { border-color: var(--color-accent); color: var(--color-accent); }
+.m-question-option-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.m-question-option-label { font-size: 15px; font-weight: 600; }
+.m-question-option-detail { color: var(--color-text-dim); font-size: 13px; line-height: 1.35; }
+.m-question-mode { display: inline-block; margin-top: 12px; font-size: 13px; }
+.m-question-field { margin-top: 14px; margin-bottom: 0; }
+.m-question .m-actions { margin-top: 12px; }
+
+.m-reassign { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--color-border); }
+.m-reassign .m-btn { width: 100%; }

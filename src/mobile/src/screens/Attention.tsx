@@ -8,7 +8,9 @@ import { duration, price, relTime } from '../lib/format.js'
 /**
  * The reason this app exists: everything waiting on a person, newest first, answerable in place.
  * Approvals answer from the closed set; short choice questions answer inline; quota holds offer
- * override/stop/resume; resting tasks offer resolve. Anything needing context opens the thread.
+ * override/stop/resume. Anything that needs the question in full — a `text` or `multi` question, an
+ * option whose detail is the point, a task resting on a person — opens the task and is answered
+ * there, beside the thread and beside Stop, Reassign and the rest.
  */
 export function AttentionScreen({ refreshKey, projectId, openTask }: { refreshKey: number; projectId: string; openTask: (id: string) => void }): React.JSX.Element {
   const now = useNow()
@@ -66,8 +68,6 @@ export function AttentionScreen({ refreshKey, projectId, openTask }: { refreshKe
         return run(`${action.taskId}:stop`, () => rpc('task.cancel', { id: action.taskId }))
       case 'resume':
         return run(`${action.taskId}:resume`, () => rpc('task.resume', { id: action.taskId }))
-      case 'resolve':
-        return run(`${action.taskId}:resolve`, () => rpc('task.resolve', { id: action.taskId }))
       case 'open-task':
         if (action.taskId) openTask(action.taskId)
         return Promise.resolve()
@@ -96,7 +96,6 @@ export function AttentionScreen({ refreshKey, projectId, openTask }: { refreshKe
 
 function actionConfirmation(action: AttentionAction): string {
   switch (action.type) {
-    case 'resolve': return 'Resolve this task? This marks it complete.'
     case 'stop': return 'Stop this task? It will be wound down into a resting state.'
     case 'override': return 'Override this quota gate and let the task continue?'
     case 'resume': return 'Resume this task now?'
@@ -161,6 +160,7 @@ function AttentionCard({
           <ActionButton
             key={action.label}
             action={action}
+            only={actions.length === 1}
             disabled={busy !== null || (action.type === 'open-task' && !action.taskId)}
             onPress={() => onAct(action)}
           />
@@ -182,13 +182,18 @@ function ActivityRow({ entry, now, openTask }: { entry: ProjectActivity; now: nu
 function ActionButton({
   action,
   disabled,
+  only,
   onPress
 }: {
   action: AttentionAction
   disabled: boolean
+  /** This card offers exactly one thing to press. */
+  only: boolean
   onPress: () => void
 }): React.JSX.Element {
-  const primary = action.type === 'approve' || action.type === 'answer' || action.type === 'override' || action.type === 'resolve'
+  // ⚠️ `only` carries the resting-task card, where the door *is* the action: nothing else on it
+  // can be pressed, so drawing it as a secondary control would leave the card with no primary.
+  const primary = only || action.type === 'approve' || action.type === 'answer' || action.type === 'override'
   const danger = (action.type === 'approve' && action.decision === 'deny') || action.type === 'stop'
   return (
     <button

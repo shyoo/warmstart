@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-15, **Windows 11**, after t452): typecheck, lint and build pass; L1 **3,498 passed,
-5 skipped** (202 files + 2 platform skips); L2 **203 checks** (5
+Baseline (2026-09-15, **Windows 11**, after t454): typecheck, lint and build pass; L1 **3,511 passed,
+5 skipped** (203 files + 2 platform skips); L2 **203 checks** (5
 skipped); L3 **436 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
 `release/win-unpacked`. The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17
 against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
@@ -17,6 +17,19 @@ against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c90
 tag now builds both platforms.
 
 ## Closed in this cleanup
+
+- **The phone could see a question was waiting and had nowhere to answer it (t454, 2026-09-15).**
+  An `ask_human` question rests its task at `awaiting_human`, so Attention drew the *same* wait twice
+  — once as the question, once as a task row whose only offer was **Resolve**, which marks it done
+  and throws the question away — and the task page repeated that single Resolve. The resting row is
+  now suppressed where an open question already covers the task, every Attention card carries an
+  **Answer…** door, and `screens/TaskDetail` draws each open question in full
+  (`components/QuestionCard`: the asker's own `detail` per option, a single/multiple toggle, an
+  **Other** row, a text box on every kind) beside a **What now** card (`components/Decide`):
+  Override & continue, Send back to an agent, Retry landing, Resume, Mark done, Stop and an atomic
+  worker/model/effort **Reassign**, drawn from what the task permits and showing the daemon's
+  refusal rather than a success. ⚠️ No new RPC — every call was already on the remote allowlist;
+  `lib/question.ts` holds the rules `question.test.ts` pins.
 
 - **The Quality Review page's slow load was an N+1 query, not a missing index (t453, 2026-09-15).**
   `reviewQueue` called `getTask` once per finished task (up to 1,000, every 3s poll); `getTask` runs
@@ -38,9 +51,7 @@ tag now builds both platforms.
 
 - **Statistics' trade-off scatters read "higher is better" on every axis, and hovering no longer
   pushes the chart down (2026-09-14).** `axisPosition` inverts cost's and active time's plotted
-  position (`max - value`, ticks/tooltip unchanged) so a mark further from the origin is always
-  better; the hover legend moved from `.scatter-plot-head` into a reserved-height
-  `.scatter-plot-legend` strip below the chart instead of growing the head on hover.
+  position (`max - value`); the hover legend moved into a reserved-height `.scatter-plot-legend`.
 - **Reassigning a failed landing lost the message that said why it failed (t448, 2026-09-14).**
   `promptFor`'s thread filter kept only `human`/`controller` messages and the first `agent` one, so
   a `landing.failed`/`finish.held` `system` entry — written by the daemon *after* the agent's turn
@@ -91,19 +102,10 @@ tag now builds both platforms.
   `lib/plot3d.ts` is deleted; each scatter is a plain x/y projection with the same `AgentIcon` marks,
   the same `MIN_TRUSTED_SAMPLES` (5) floor and the same per-display "Exclude API rate & mixed" filter
   the old plot had.
-- **The local macOS deploy launcher works through its scripts-directory symlink (t14, 2026-09-14).**
-  `BASH_SOURCE` names the symlink, so repository discovery accepts both entry points; stopping never
-  force-kills, and landing checks use `spawnEnv()` / `augmentPath()` so Finder-launched daemons find
-  Homebrew tools like `npm`. **A minimal GUI launch PATH hit `xcrun`'s broken git shim (t12/t13):**
-  `which.ts`/`spawnEnv()` prepend extraDirs and skip broken xcrun shims; `git.ts` routes through `which('git')`; `trunkOccupiedBy` resolves session holders via `taskOfSession` and sweeps stale claims.
-- **`ui · windows-latest` went red on two checks the local suite could not see (t445.2, 2026-09-14).**
-  ⭐ `test:ui` now pins its window to CI's 1024×720 via `ui/window-state.json`, and reproduced the
-  reorder-arrow failure locally on the first run. The arrows were fine: at that height the row sat
-  below `.content`'s fold and `elementFromPoint` hit-tested an off-screen point, so the check scrolls
-  first; mutating the cell's `z-index` away still turns it red. ⛔ The second was a product bug:
-  `task.message` on a `ready` task emitted nothing, so no other view saw the note. Locally the task
-  was `running` (a CLI on `PATH`) and run events hid it. Now emits `task.changed`, pinned by
-  `taskmessage.test.ts`. [`docs/testing.md`](docs/testing.md) §3 and the headless section.
+- **The macOS deploy launcher, its `xcrun` git shim, and `ui · windows-latest`'s two red checks
+  (t14/t12/t13, t445.2, 2026-09-14)** — symlinked entry points, `which.ts` skipping broken xcrun
+  shims, `test:ui` pinned to CI's 1024×720, and `task.message` on a `ready` task emitting
+  `task.changed`. In [`docs/testing.md`](docs/testing.md) §3 and `docs/development.md`.
 - **macOS signing is configured, and the build says which of three things it did (t445,
   2026-09-14).** `identity: null` had silently disabled signing, notarisation and the hardened
   runtime in one line; `scripts/build-mac.sh` and the release workflow now read the bundle back with
