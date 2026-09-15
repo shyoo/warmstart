@@ -21,6 +21,7 @@ import { errorMessage } from '@shared/errors.js'
 import { run } from './spawn.js'
 import { sweepAcls } from './acl.js'
 import { appEnvName } from '@shared/env.js'
+import { spawnEnv } from './which.js'
 
 /**
  * Workspaces: pooled git worktrees.
@@ -732,8 +733,7 @@ export function workspaceEnv(
   workspace: Workspace,
   projectEnv: Record<string, string | number>
 ): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
+  const env: Record<string, string> = spawnEnv()
   env[appEnvName('WORKSPACE_INDEX')] = String(workspace.index)
   env[appEnvName('WORKSPACE_PATH')] = workspace.path
 

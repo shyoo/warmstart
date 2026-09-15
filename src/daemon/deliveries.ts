@@ -4,7 +4,7 @@ import { db, row, rows } from './db.js'
 import { getProject, landingTargetFor } from './projects.js'
 import { addMessage, getTask } from './tasks.js'
 import { git, tryGit } from './git.js'
-import { launchArgs, which } from './which.js'
+import { launchArgs, spawnEnv, which } from './which.js'
 import * as spawn from './spawn.js'
 import { errorMessage } from '@shared/errors.js'
 import { log } from './log.js'
@@ -296,7 +296,11 @@ async function observe(delivery: PullRequestDelivery): Promise<PullRequestDelive
       'state,baseRefName,headRefName,headRefOid,mergeCommit,mergedAt'
     ])
     try {
-      const { stdout } = await spawn.run(call.command, call.args, { maxBuffer: 1024 * 1024, timeout: 30_000 })
+      const { stdout } = await spawn.run(call.command, call.args, {
+        env: spawnEnv(),
+        maxBuffer: 1024 * 1024,
+        timeout: 30_000
+      })
       const fact = normalizePullRequest(JSON.parse(stdout) as GhPullRequest)
       // Exact identity is monotonic: a changed base or head branch means this is no longer the
       // delivery Warmstart opened, so retain the last good fact and surface the mismatch as an error.

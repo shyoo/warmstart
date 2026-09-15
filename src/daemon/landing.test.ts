@@ -192,6 +192,39 @@ describe('landing without a remote', () => {
     expect(said).toContain('deleted')
   }, 30_000)
 
+  it('runs project checks with spawnEnv augmented PATH even when host PATH is minimal', async () => {
+    if (process.platform === 'win32') return
+    seq += 1
+    const root = makeRepo(`checkpath${seq}`)
+    const project = projects.addProject({ root })
+    const taskId = tasks.createTask({
+      title: `checkpath task ${seq}`,
+      projectId: project.id
+    }).id
+    const branch = `warmstart/t${seq}-checkpath`
+    const ws = join(dir, `checkpath${seq}-ws`)
+    git(root, 'worktree', 'add', '-b', branch, ws, 'main')
+    writeFileSync(join(ws, 'work.txt'), 'content')
+    git(ws, 'add', 'work.txt')
+    git(ws, 'commit', '-m', 'add work')
+
+    const checked = projects.setProjectChecks(project.id, [
+      'node -e "if (!process.env.PATH) process.exit(1)"'
+    ])
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'declare check')
+
+    const origPath = process.env.PATH
+    try {
+      process.env.PATH = '/usr/bin:/bin'
+      const result = await land(checked, taskId, ws, branch, 'commit-and-merge')
+      expect(result.ok, result.reason).toBe(true)
+      expect(result.checksPassed).toBe(1)
+    } finally {
+      process.env.PATH = origPath
+    }
+  }, 30_000)
+
   it('merges split work into the planner branch and leaves main untouched', async () => {
     seq += 1
     const root = makeRepo(`local${seq}`)

@@ -21,19 +21,7 @@ export function which(command: string): string | null {
       ? (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
       : ['']
 
-  const raw = process.env.PATH ?? ''
-  const dirs = raw.split(delimiter).filter(Boolean)
-
-  if (process.platform !== 'win32') {
-    const extraDirs = [
-      join(homedir(), '.local', 'bin'),
-      '/opt/homebrew/bin',
-      '/opt/homebrew/sbin',
-      '/usr/local/bin'
-    ]
-    const prepend = extraDirs.filter((d) => !dirs.includes(d))
-    dirs.unshift(...prepend)
-  }
+  const dirs = augmentPath(process.env.PATH).split(delimiter).filter(Boolean)
 
   for (const dir of dirs) {
     for (const ext of pathext) {
@@ -212,6 +200,30 @@ export function unwrapForPty(
 const HOST_SESSION = /^(CLAUDE|ANTHROPIC_)/i
 
 /**
+ * Augment a PATH string on POSIX platforms so user/Homebrew bin directories are searched first.
+ *
+ * ⛔ macOS GUI launches inherit a minimal system PATH (/usr/bin:/bin:/usr/sbin:/sbin) from launchd.
+ * User-installed and package-manager binaries (Homebrew, ~/.local/bin, etc.) are missing from that
+ * environment unless explicitly prepended.
+ */
+export function augmentPath(envPath?: string): string {
+  const dirs = (envPath ?? '').split(delimiter).filter(Boolean)
+  if (process.platform !== 'win32') {
+    const extraDirs = [
+      join(homedir(), '.local', 'bin'),
+      '/opt/homebrew/bin',
+      '/opt/homebrew/sbin',
+      '/usr/local/bin'
+    ]
+    const prepend = extraDirs.filter((d) => !dirs.includes(d) && existsSync(d))
+    if (prepend.length > 0) {
+      dirs.unshift(...prepend)
+    }
+  }
+  return dirs.join(delimiter)
+}
+
+/**
  * The base environment for any spawned agent CLI.
  *
  * ⛔ A deny by **prefix**, not a whitelist of what to keep, and the choice is deliberate. A whitelist
@@ -231,20 +243,6 @@ export function spawnEnv(): Record<string, string> {
     if (value === undefined || HOST_SESSION.test(key)) continue
     env[key] = value
   }
-  if (process.platform !== 'win32') {
-    const current = env.PATH ?? ''
-    const dirs = current.split(delimiter).filter(Boolean)
-    const extraDirs = [
-      join(homedir(), '.local', 'bin'),
-      '/opt/homebrew/bin',
-      '/opt/homebrew/sbin',
-      '/usr/local/bin'
-    ]
-    const prepend = extraDirs.filter((d) => !dirs.includes(d) && existsSync(d))
-    if (prepend.length > 0) {
-      dirs.unshift(...prepend)
-      env.PATH = dirs.join(delimiter)
-    }
-  }
+  env.PATH = augmentPath(env.PATH)
   return env
 }

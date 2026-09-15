@@ -26,7 +26,7 @@ import {
 import { getSession } from './sessions.js'
 import { claimedByAnotherTask, landedCommits, recordTaskCommits } from './taskcommits.js'
 import { landedRef, parkOtherHolders, parkPooledHolders, rescueAtTip, trunkHolder } from './worktrees.js'
-import { launchArgs, which } from './which.js'
+import { launchArgs, spawnEnv, which } from './which.js'
 import { log } from './log.js'
 import { git } from './git.js'
 import { errorMessage } from '@shared/errors.js'
@@ -479,7 +479,8 @@ async function runChecks(
   project: Project,
   cwd: string
 ): Promise<{ ok: boolean; output: string; passed: number }> {
-  const commands = policyFor(project).check
+  const policy = policyFor(project)
+  const commands = policy.check
   let output = ''
   let passed = 0
   // ⛔ **No colour, asked for twice.** A check's output is read by a person in the thread and by an
@@ -488,7 +489,12 @@ async function runChecks(
   // colour bytes (t344/t347, 2026-09-11). `NO_COLOR`/`FORCE_COLOR=0` is the convention most tools
   // honour, and `stripAnsi` catches the ones that do not. Nothing here reads a colour to decide
   // anything; see `stripAnsi`.
-  const env = { ...process.env, NO_COLOR: '1', FORCE_COLOR: '0' }
+  // GUI launches commonly inherit only the system PATH. Use spawnEnv() so checks can find
+  // Homebrew/local Node, npm, and other project tools.
+  const env: Record<string, string> = { ...spawnEnv(), NO_COLOR: '1', FORCE_COLOR: '0' }
+  for (const [k, v] of Object.entries(policy.env)) {
+    env[k] = String(v)
+  }
   for (const command of commands) {
     try {
       const result = await spawn.run(command, {
@@ -1429,6 +1435,7 @@ export const pullRequest: LandingStrategy = {
       try {
         const { stdout } = await spawn.run(call.command, call.args, {
           cwd: ctx.workspacePath,
+          env: spawnEnv(),
           maxBuffer: 4 * 1024 * 1024,
           timeout: 120_000
         })
@@ -1455,6 +1462,7 @@ export const pullRequest: LandingStrategy = {
               ])
               const { stdout: viewOut } = await spawn.run(viewCall.command, viewCall.args, {
                 cwd: ctx.workspacePath,
+                env: spawnEnv(),
                 maxBuffer: 4 * 1024 * 1024,
                 timeout: 15_000
               })
@@ -1477,6 +1485,7 @@ export const pullRequest: LandingStrategy = {
         ])
         const { stdout: viewOut } = await spawn.run(viewCall.command, viewCall.args, {
           cwd: ctx.workspacePath,
+          env: spawnEnv(),
           maxBuffer: 4 * 1024 * 1024,
           timeout: 15_000
         })

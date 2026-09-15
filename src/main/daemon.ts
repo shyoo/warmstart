@@ -12,6 +12,7 @@ import type {
   RpcResult
 } from '@shared/protocol.js'
 import { readEndpoint } from '../daemon/lock.js'
+import { augmentPath } from '../daemon/which.js'
 import { errorMessage } from '@shared/errors.js'
 
 /**
@@ -111,7 +112,7 @@ export class DaemonClient extends EventEmitter {
     // no system Node and native modules match the ABI already shipped. detached + unref is what lets
     // the fleet outlive the window that started it.
     const child = spawn(process.execPath, [daemonScript], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      env: { ...process.env, PATH: augmentPath(process.env.PATH), ELECTRON_RUN_AS_NODE: '1' },
       detached: true,
       stdio: 'ignore',
       windowsHide: true

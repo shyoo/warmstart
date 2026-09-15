@@ -17,16 +17,13 @@ tag now builds both platforms.
 
 ## Closed in this cleanup
 
+- **macOS GUI launch missing Homebrew PATH in landing verification checks (t14, 2026-09-14).**
+  Minimal GUI launch PATH (`/usr/bin:...`) on macOS lacks `/opt/homebrew/bin`, failing project checks (`npm run typecheck`) during landing with `/bin/sh: npm: command not found`. `which.ts` exports `augmentPath()`, `orchestratord` augments `process.env.PATH` at startup, and `landing.ts`, `worktrees.ts`, and `deliveries.ts` use `spawnEnv()` so checks and tools resolve cleanly.
 - **macOS `xcrun` git resolution failure and trunk lock phantom blocking (t12/t13, 2026-09-14).**
-  Minimal GUI launch PATH (`/usr/bin:...`) on macOS hit `/usr/bin/git`, an Apple `xcrun` shim failing when Command Line Tools are misconfigured. `which.ts` and `spawnEnv()` now prepend extraDirs (`~/.local/bin`, `/opt/homebrew/bin`, etc.) before system dirs and `which()` skips broken xcrun shims. `git.ts` routes through `which('git')` and `spawnEnv()`. `trunkOccupiedBy` resolves session holders via `taskOfSession`, avoids self-blocking, and sweeps stale claims from settled tasks/sessions. `retryQueuedLandings` treats fatal git read errors as `awaiting_human`.
+  Minimal GUI launch PATH on macOS hit `/usr/bin/git`, an Apple `xcrun` shim failing when Command Line Tools are misconfigured. `which.ts` and `spawnEnv()` prepend extraDirs and `which()` skips broken xcrun shims. `git.ts` routes through `which('git')` and `spawnEnv()`. `trunkOccupiedBy` resolves session holders via `taskOfSession`, avoids self-blocking, and sweeps stale claims.
 - **macOS text editing shortcuts work again (t446, 2026-09-14).** The native `appMenu`/`editMenu` roles restore Chromium's `⌘C`/`⌘V`/`⌘X` routing; Windows/Linux keep the menu disabled. Pinned by [`src/main/applicationmenu.test.ts`](src/main/applicationmenu.test.ts).
 - **Retire it / Delete it no longer refuse a branch sitting in an idle pool member (t444, 2026-09-14).**
-  `retireStrandedBranch` and `deleteUnlandedBranch` refused any branch a worktree held, full stop —
-  even a finished task's own unclaimed, clean pool-member slot, which is exactly what `parkWorkspace`
-  would detach anyway. The merged-PR sweep (`deliveries.ts`) already had this exception; the new
-  `idlePoolHolder` in [`worktrees.ts`](src/daemon/worktrees.ts) is the shared question both now ask —
-  still refusing the operator's own trunk, a claimed slot, or a dirty one, stepping off (`git switch
-  --detach`) only what a park would.
+  `retireStrandedBranch` and `deleteUnlandedBranch` refused any branch a worktree held, even an idle pool member. The new `idlePoolHolder` in [`worktrees.ts`](src/daemon/worktrees.ts) steps off (`git switch --detach`) clean idle pool members.
 - **`ui · windows-latest` went red on two checks the local suite could not see (t445.2, 2026-09-14).**
   ⭐ `test:ui` now pins its window to CI's 1024×720 via `ui/window-state.json`, and reproduced the
   reorder-arrow failure locally on the first run. The arrows were fine: at that height the row sat

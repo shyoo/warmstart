@@ -48,7 +48,12 @@ import { noteActivity } from './activity.js'
 import { onSettingChange } from './settings.js'
 import { paths } from './paths.js'
 import { reconcilePullRequestDeliveries } from './deliveries.js'
+import { augmentPath } from './which.js'
 import { APP_VERSION } from '@shared/version.js'
+
+// On macOS/Linux GUI launches, process.env.PATH is minimal (/usr/bin:/bin:...).
+// Augment it so orchestratord and any subprocesses reading process.env find Homebrew/local tools.
+process.env.PATH = augmentPath(process.env.PATH)
 
 /**
  * orchestratord.

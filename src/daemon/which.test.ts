@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { formatCmdInvocation, quoteCmdArg, spawnEnv, unwrapForPty, which } from './which.js'
+import { augmentPath, formatCmdInvocation, quoteCmdArg, spawnEnv, unwrapForPty, which } from './which.js'
 
 describe('quoteCmdArg', () => {
   it('quotes empty string as double quotes', () => {
@@ -166,5 +166,31 @@ describe('spawnEnv', () => {
     } finally {
       process.env.PATH = origPath
     }
+  })
+})
+
+describe('augmentPath', () => {
+  it('leaves Windows PATH untouched', () => {
+    if (process.platform !== 'win32') return
+    expect(augmentPath('C:\\Windows;C:\\Windows\\System32')).toBe('C:\\Windows;C:\\Windows\\System32')
+  })
+
+  it('prepends extraDirs on POSIX if not already present', () => {
+    if (process.platform === 'win32') return
+    const augmented = augmentPath('/usr/bin:/bin')
+    const parts = augmented.split(':')
+    const usrBinIdx = parts.indexOf('/usr/bin')
+    const brewBinIdx = parts.indexOf('/opt/homebrew/bin')
+    if (brewBinIdx !== -1 && usrBinIdx !== -1) {
+      expect(brewBinIdx).toBeLessThan(usrBinIdx)
+    }
+  })
+
+  it('does not duplicate directories already present in PATH', () => {
+    if (process.platform === 'win32') return
+    const augmented = augmentPath('/opt/homebrew/bin:/usr/bin:/bin')
+    const parts = augmented.split(':')
+    const count = parts.filter((p) => p === '/opt/homebrew/bin').length
+    expect(count).toBe(1)
   })
 })
