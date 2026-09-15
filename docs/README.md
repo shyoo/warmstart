@@ -11,6 +11,7 @@ correction below the wrong sentence. `AGENTS.md` is the short entry point that p
 | Before you… | Read |
 |---|---|
 | do anything at all | [`../HANDOFF.md`](../HANDOFF.md) — current state and what to pick up next. ⛔ The **only** file that carries status |
+| install and run it for the first time | [`getting-started.md`](getting-started.md) — add an account, add a project and file a task |
 | touch any code | [`architecture.md`](architecture.md) — the four processes, the loops, and the invariants that break the product if broken |
 | use a domain word (worker, session, workspace, resource, mandate, objective) | [`glossary.md`](glossary.md) — these terms are load-bearing and mean specific things |
 | reason about cost, caching, quota or compaction | [`cost-model.md`](cost-model.md) — the measured numbers and where each came from. ⛔ Do not re-derive from memory; several are counter-intuitive |
@@ -49,6 +50,7 @@ correction below the wrong sentence. `AGENTS.md` is the short entry point that p
 | [`ui.md`](ui.md) | Renderer structure, routes, styling tokens and the UI's own conventions |
 | [`remote.md`](remote.md) | Phone and remote-desktop access, pairing, protocol versions, Tailscale setup and notifications |
 | [`security.md`](security.md) | Unattended agent authority, credential separation, landing gates and current containment limits |
+| [`getting-started.md`](getting-started.md) | First-run walkthrough, task kinds and finish policies |
 
 ## Where a fact belongs
 

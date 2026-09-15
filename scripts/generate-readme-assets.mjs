@@ -65,28 +65,34 @@ const WebSocket = require('ws')
 const H = 3_600_000
 const D = 24 * H
 
-/** Three accounts on three vendors. `windows[1]` is the billing window a run is priced against. */
+/** Five invented accounts. `windows[1]` is the billing window a run is priced against. */
 const WORKERS = [
-  { adapterId: 'claude-code', label: 'Claude · personal', account: 'dana@example.com', plan: 'max', model: 'claude-opus-5', cost: 'anthropic.subscription.2026-08', windows: [['session', 'Claude 5h', 38, 2.4 * H], ['weekly_all', 'Claude 7d', 61, 3.7 * D]] },
-  { adapterId: 'openai-compatible', label: 'Codex · work', account: 'dana@acme.example', plan: 'pro', model: 'gpt-5.6-sol', cost: 'openai.codex.2026-08', windows: [['5h', 'GPT 5h', 54, 1.1 * H], ['7d', 'GPT 7d', 27, 5.2 * D]] },
-  { adapterId: 'antigravity-cli', label: 'Antigravity', account: 'dana.k@gmail.example', plan: 'ultra', model: 'gemini-3.1-pro-high', cost: 'google.antigravity.2026-08', windows: [['5h', 'Gemini 5h', 18, 4.1 * H], ['weekly:gemini-models', 'Gemini weekly', 43, 2.1 * D]] }
+  { adapterId: 'claude-code', label: 'Claude · personal', account: 'alex@example.invalid', plan: 'max_5x', model: 'claude-opus-5', cost: 'anthropic.subscription.2026-08', windows: [['session', 'Claude 5h', 38, 2.4 * H], ['weekly_all', 'Claude 7d', 61, 3.7 * D]] },
+  { adapterId: 'claude-code', label: 'Claude · work', account: 'work@example.invalid', plan: 'pro', model: 'claude-sonnet-5', cost: 'anthropic.subscription.2026-08', windows: [['session', 'Claude 5h', 44, 1.7 * H], ['weekly_all', 'Claude 7d', 52, 4.1 * D]] },
+  { adapterId: 'openai-compatible', label: 'Codex · work', account: 'codex@example.invalid', plan: 'pro', model: 'gpt-5.6-sol', cost: 'openai.codex.2026-08', windows: [['5h', 'GPT 5h', 54, 1.1 * H], ['7d', 'GPT 7d', 27, 5.2 * D]] },
+  { adapterId: 'antigravity-cli', label: 'Antigravity', account: 'gravity@example.invalid', plan: 'ultra', model: 'gemini-3.1-pro-high', cost: 'google.antigravity.2026-08', windows: [['5h', 'Gemini 5h', 18, 4.1 * H], ['weekly:gemini-models', 'Gemini weekly', 43, 2.1 * D]] },
+  { adapterId: 'muse-code', label: 'Muse', account: 'muse@example.invalid', plan: 'high', model: 'muse-spark-1.3', cost: 'meta.muse.2026-09', windows: [['5h', 'Muse 5h', 31, 3.4 * H], ['7d', 'Muse 7d', 48, 4.4 * D]] }
 ]
 
 /** The board. Never `ready`, so nothing here is ever dispatched. `age` is how long ago it was filed. */
 const TASKS = [
-  { title: 'Polish the first-run experience: empty states and a path to the first task', priority: 'P1', status: 'running', worker: 0, age: 14 * 60_000 },
-  { title: 'Investigate flaky Windows packaging test in CI', priority: 'P1', status: 'running', worker: 1, age: 41 * 60_000 },
-  { title: 'Keep backward compatibility with the legacy config format?', priority: 'P2', status: 'awaiting_human', worker: 2, age: 2 * H, hold: 'The agent asked whether the v1 config loader should stay: dropping it simplifies 400 lines but breaks installs older than March.' },
-  { title: 'Add a keyboard shortcuts palette', priority: 'P2', status: 'blocked', dependsOn: 0, age: 3 * H },
-  { title: 'Write the plugin integration guide', priority: 'P3', status: 'scheduled', notBefore: 16 * H, age: 5 * H },
-  { title: 'Ship mobile approval notifications', priority: 'P2', status: 'completed', worker: 0, age: 1 * D, minutes: 37 },
-  { title: 'Review routing cost calibration against last month', priority: 'P2', status: 'completed', worker: 1, age: 2 * D, minutes: 22 },
-  { title: 'Move the diff into its own pane', priority: 'P2', status: 'completed', worker: 2, age: 3 * D, minutes: 48 }
+  { title: 'Polish the storefront first-run experience', priority: 'P1', status: 'running', worker: 0, age: 14 * 60_000 },
+  { title: 'Add saved carts to the storefront', priority: 'P1', status: 'running', worker: 1, age: 41 * 60_000 },
+  { title: 'Improve checkout address validation', priority: 'P1', status: 'running', worker: 2, age: 27 * 60_000 },
+  { title: 'Build the inventory alert panel', priority: 'P1', status: 'running', worker: 3, age: 19 * 60_000 },
+  { title: 'Choose a returns policy for marketplace sellers', priority: 'P2', status: 'awaiting_human', worker: 4, age: 2 * H, hold: 'Choose whether marketplace returns use the seller policy or a storefront-wide policy.' },
+  { title: 'Approve the new product-card copy', priority: 'P2', status: 'awaiting_human', worker: 1, age: 3 * H, hold: 'The draft is ready for a product decision before the agent lands it.' },
+  { title: 'Add gift notes after cart rules land', priority: 'P2', status: 'blocked', dependsOn: 1, age: 3 * H },
+  { title: 'Schedule the autumn catalogue import', priority: 'P3', status: 'scheduled', notBefore: 16 * H, age: 5 * H },
+  { title: 'Ship mobile order-status notifications', priority: 'P2', status: 'completed', worker: 0, age: 1 * D, minutes: 37 },
+  { title: 'Review storefront search relevance', priority: 'P2', status: 'completed', worker: 2, age: 2 * D, minutes: 22 },
+  { title: 'Move recommendations into their own pane', priority: 'P2', status: 'completed', worker: 3, age: 3 * D, minutes: 48 },
+  { title: 'Add accessible size-selector labels', priority: 'P3', status: 'completed', worker: 4, age: 4 * D, minutes: 31 }
 ]
 
 /** Older finished work, enough per model for Statistics and the routing pages to trust it. */
-const HISTORY = 24
-const HISTORY_TITLES = ['Tighten the checkout form validation', 'Cache the catalogue index', 'Add retries to the payment webhook', 'Split the settings page into tabs', 'Fix the cart badge count', 'Migrate the image pipeline to WebP']
+const HISTORY = 40
+const HISTORY_TITLES = ['Tighten the checkout form validation', 'Cache the catalogue index', 'Add retries to the payment webhook', 'Split the settings page into tabs', 'Fix the cart badge count', 'Migrate the image pipeline to WebP', 'Add stock filters', 'Improve receipt emails']
 
 const THREAD = [
   ['human', 'Please make the first-run experience feel obvious. Focus on the empty state, progressive disclosure, and a path to filing the first task. Keep the scheduler contract unchanged.'],
@@ -204,8 +210,8 @@ function seedHistory(db, ids, now) {
   const series = WORKERS.map((w) => ({ at: w.windows[1][2] * 0.35, step: (w.windows[1][2] * 0.6) / (finished.length / WORKERS.length) }))
   for (const f of finished) {
     const w = WORKERS[f.wi]
-    const score = Math.round(([8.6, 7.7, 8.1][f.wi] + ((f.n % 5) - 2) * 0.3) * 10) / 10
-    const reviewer = ids.workers[(f.wi + 1) % WORKERS.length]
+    const score = Math.round(([8.6, 8.2, 7.7, 8.1, 7.9][f.wi] + ((f.n % 5) - 2) * 0.3) * 10) / 10
+    const reviewer = ids.workers.find((_, candidate) => WORKERS[candidate].adapterId !== WORKERS[f.wi].adapterId)
     if (f.insert) {
       insertTask.run(f.id, f.seq, ids.project, f.title, mandate, ids.workers[f.wi], branchFor(f.seq, f.title), f.started - 20 * 60_000, f.ended, score, reviewer)
     } else {
@@ -273,6 +279,8 @@ async function launch() {
   const port = await freePort()
   // ⛔ No WARMSTART_HEADLESS here: see the file comment. Everything else matches the L3 harness.
   const env = { ...process.env, WARMSTART_DATA_DIR: DATA }
+  mkdirSync(join(DATA, 'ui'), { recursive: true })
+  writeFileSync(join(DATA, 'ui', 'window-state.json'), JSON.stringify({ x: 0, y: 0, width: 1440, height: 900 }))
   delete env.ELECTRON_RUN_AS_NODE
   delete env.WARMSTART_HEADLESS
   const app = spawn(electronBinary(), [ROOT, `--remote-debugging-port=${port}`], { env, stdio: 'ignore', windowsHide: true })
@@ -417,8 +425,20 @@ async function launch() {
     await wait(400)
     const reply = await send('Page.captureScreenshot', { format: 'png' }, 20_000)
     if (!reply.result?.data) throw new Error(`no image data for ${name}: ${JSON.stringify(reply.error ?? reply)}`)
-    writeFileSync(join(ASSETS, `${name}.png`), Buffer.from(reply.result.data, 'base64'))
+    const composite = await evaluate(`(async () => { const img = new Image(); img.src = 'data:image/png;base64,${reply.result.data}'; await img.decode(); const pad = Math.round(img.width * 0.06), r = 18, W = img.width + pad * 2, H = img.height + pad * 2; const c = document.createElement('canvas'); c.width = W; c.height = H; const ctx = c.getContext('2d'); const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#0f1218'); g.addColorStop(1, '#1a2036'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); const glow = (x,y,rad,color) => { const rg = ctx.createRadialGradient(x,y,0,x,y,rad); rg.addColorStop(0,color); rg.addColorStop(1,'rgba(0,0,0,0)'); ctx.fillStyle=rg; ctx.fillRect(0,0,W,H) }; glow(0,0,W*.65,'rgba(122,162,247,.28)'); glow(W,H,W*.6,'rgba(240,163,94,.22)'); ctx.save(); ctx.shadowColor='rgba(0,0,0,.65)'; ctx.shadowBlur=pad*.7; ctx.shadowOffsetY=pad*.25; ctx.fillStyle='#0e1013'; ctx.beginPath(); ctx.roundRect(pad,pad,img.width,img.height,r); ctx.fill(); ctx.restore(); ctx.save(); ctx.beginPath(); ctx.roundRect(pad,pad,img.width,img.height,r); ctx.clip(); ctx.drawImage(img,pad,pad); ctx.restore(); ctx.strokeStyle='rgba(255,255,255,.10)'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.roundRect(pad+.75,pad+.75,img.width-1.5,img.height-1.5,r); ctx.stroke(); return c.toDataURL('image/png').split(',')[1] })()`)
+    writeFileSync(join(ASSETS, `${name}.png`), Buffer.from(composite, 'base64'))
     console.log(`wrote docs/images/${name}.png`)
+  }
+
+  const shotElement = async (name, selector) => {
+    await evaluate(`document.querySelector(${JSON.stringify(selector)})?.scrollIntoView({ block: 'start' })`)
+    await wait(400)
+    const box = await evaluate(`(() => { const r = document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect(); return r && { x: Math.max(0,r.x-12), y: Math.max(0,r.y-12), width: r.width+24, height: r.height+24 } })()`)
+    if (!box) throw new Error(`no element matches ${selector}`)
+    const reply = await send('Page.captureScreenshot', { format: 'png', clip: { ...box, scale: 1 } }, 20_000)
+    if (!reply.result?.data) throw new Error(`no image data for ${name}`)
+    const composite = await evaluate(`(async () => { const img = new Image(); img.src='data:image/png;base64,${reply.result.data}'; await img.decode(); const p=Math.round(img.width*.06), W=img.width+p*2,H=img.height+p*2,c=document.createElement('canvas'); c.width=W;c.height=H;const x=c.getContext('2d'),g=x.createLinearGradient(0,0,W,H);g.addColorStop(0,'#0f1218');g.addColorStop(1,'#1a2036');x.fillStyle=g;x.fillRect(0,0,W,H);x.save();x.shadowColor='rgba(0,0,0,.65)';x.shadowBlur=p*.7;x.fillStyle='#0e1013';x.beginPath();x.roundRect(p,p,img.width,img.height,18);x.fill();x.restore();x.save();x.beginPath();x.roundRect(p,p,img.width,img.height,18);x.clip();x.drawImage(img,p,p);x.restore();return c.toDataURL('image/png').split(',')[1] })()`)
+    writeFileSync(join(ASSETS, `${name}.png`), Buffer.from(composite, 'base64'))
   }
 
   return {
@@ -429,6 +449,7 @@ async function launch() {
     click,
     type,
     shot,
+    shotElement,
     nav: (text) => clickText('.nav-item', text),
     tab: (text) => clickText('.tab', text)
   }
@@ -493,21 +514,15 @@ const SCENES = {
     await wait(800)
     await ui.shot('flow')
   },
-  routing: async (ui) => {
-    await ui.nav('Routing Model')
-    await wait(800)
-    // The paper's abstract leads every section; the section itself starts under the contents bar.
-    await ui.tab('Quality')
-    await ui.shot('routing-quality', '.paper-contents')
-    await ui.tab('Cost')
-    await ui.shot('routing-cost', '.paper-contents')
-    await ui.tab('Velocity')
-    await ui.shot('routing-velocity', '.paper-contents')
-  },
   statistics: async (ui) => {
     await ui.nav('Statistics')
     await wait(1200)
-    await ui.shot('statistics', '.stat-graph-box')
+    await ui.shotElement('statistics', '.stat-graph-box')
+  },
+  tradeoffs: async (ui) => {
+    await ui.nav('Statistics')
+    await wait(1200)
+    await ui.shotElement('tradeoffs', '.scatter-plots')
   }
 }
 
@@ -527,7 +542,7 @@ const deadline = setTimeout(() => {
 
 try {
   mkdirSync(ASSETS, { recursive: true })
-  makeProject(PROJECT_ROOT, { name: 'storefront', poolSize: 3, check: ['npm test', 'npm run lint'] })
+  makeProject(PROJECT_ROOT, { name: 'storefront', poolSize: 4, check: ['npm test', 'npm run lint'] })
   makeWizardRepo(WIZARD_ROOT)
 
   // Phase one. What the real RPCs can create, they create — so ids, seqs and defaults are the
@@ -540,8 +555,8 @@ try {
       workers.push((await r('worker.create', { ...w, enabled: false })).id)
     }
     const project = await r('project.add', { root: ${JSON.stringify(PROJECT_ROOT)}, name: 'storefront' })
-    // Builds the three real worktrees now, so Flow has a pool for the running tasks to hold.
-    await r('project.setPolicy', { id: project.id, poolSize: 3 })
+    // Builds the four real worktrees now, so Flow has a pool for the running tasks to hold.
+    await r('project.setPolicy', { id: project.id, poolSize: 4 })
     const tasks = []
     for (const t of ${JSON.stringify(TASKS.map((t) => ({ title: t.title, priority: t.priority, dependsOn: t.dependsOn })))}) {
       tasks.push((await r('task.create', {

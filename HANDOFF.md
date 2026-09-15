@@ -18,6 +18,14 @@ tag now builds both platforms.
 
 ## Closed in this cleanup
 
+- **README and first-run documentation now lead with Warmstart's subscription-CLI control-room
+  pitch (t461, 2026-09-15).** The root README has the public links and badges, feature-led sections,
+  task-kind table, pricing language and roadmap; the six-step walkthrough lives in
+  `docs/getting-started.md` and is indexed. The screenshot generator now seeds five fictional
+  accounts, forty completed runs, four live sessions, and chart element captures with a branded
+  backdrop. Public badges will show “not found” until the repository is public and a `v*` tag
+  exists. The image set totals 1.9 MB before regeneration.
+
 - **Quality Review's gradable totals now exclude tasks the same page says cannot be graded (t459,
   2026-09-15).** `reviewQueue` previously calculated the non-gradable count from live eligibility but
   left the 0/1/2+ tiles as raw finished-task counts, so every refusal appeared on both sides of the

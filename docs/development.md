@@ -75,7 +75,7 @@ npm run dist         # installers for the current platform (dist:win / dist:mac 
 ### `scripts/generate-readme-assets.mjs` — the README screenshots
 
 `node scripts/generate-readme-assets.mjs [scene …]` after `npm run build` writes `docs/images/*.png`
-from the real renderer, driving a fictional fleet: three invented accounts, a throwaway git project
+from the real renderer, driving a fictional fleet: five invented accounts, a throwaway git project
 under `out/showcase/`, and tasks, runs and quota readings written straight into a scratch database.
 No real account, project or CLI is touched and no task is ever `ready`, so nothing dispatches.
 
@@ -88,6 +88,9 @@ serves the screenshots starts; running tasks are seeded *after* it, because `rec
 startup reaps every `running` task whose daemon died. ⛔ Each launch ends with `daemon.shutdown` and
 a wait on the lock file's pid: `Browser.close` alone leaves orchestratord running, and six of them
 were found holding six scratch databases before that was understood.
+
+Every capture is composited in the renderer onto a dark brand-gradient backdrop. The chart scenes
+capture their elements with padded DevTools clips, so the statistics and trade-off charts do not clip.
 
 ⚠️ **Type-aware lint rules are on.** They cost a TypeScript program per run and are the only rules
 that can see the mistakes this codebase actually makes — a floating promise in a process-spawning
