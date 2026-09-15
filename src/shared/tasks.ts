@@ -554,6 +554,8 @@ export type TaskStatus =
   | 'completed'
   | 'failed'
 
+export const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>(['completed', 'cancelled', 'failed'])
+
 /**
  * The buckets the task list can be filtered by.
  *

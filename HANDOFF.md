@@ -8,7 +8,7 @@ The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-14, **macOS 13 arm64**, measured on this branch's tip with electron-builder
-26.16.1): typecheck, lint pass; L1 **3,461 passed, 5 skipped** (200 files); L2 **203 checks** (5
+26.16.1): typecheck, lint pass; L1 **3,468 passed, 5 skipped** (200 files); L2 **203 checks** (5
 skipped); L3 **434 passed, 6 skipped** at the pinned 1024×720 window; L4 **17 checks** against a
 signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
@@ -17,6 +17,8 @@ tag now builds both platforms.
 
 ## Closed in this cleanup
 
+- **macOS `xcrun` git resolution failure and trunk lock phantom blocking (t12/t13, 2026-09-14).**
+  Minimal GUI launch PATH (`/usr/bin:...`) on macOS hit `/usr/bin/git`, an Apple `xcrun` shim failing when Command Line Tools are misconfigured. `which.ts` and `spawnEnv()` now prepend extraDirs (`~/.local/bin`, `/opt/homebrew/bin`, etc.) before system dirs and `which()` skips broken xcrun shims. `git.ts` routes through `which('git')` and `spawnEnv()`. `trunkOccupiedBy` resolves session holders via `taskOfSession`, avoids self-blocking, and sweeps stale claims from settled tasks/sessions. `retryQueuedLandings` treats fatal git read errors as `awaiting_human`.
 - **Retire it / Delete it no longer refuse a branch sitting in an idle pool member (t444, 2026-09-14).**
   `retireStrandedBranch` and `deleteUnlandedBranch` refused any branch a worktree held, full stop —
   even a finished task's own unclaimed, clean pool-member slot, which is exactly what `parkWorkspace`
@@ -93,10 +95,6 @@ tag now builds both platforms.
 - **CI on `main` is green again (2026-09-13).** Six task-table checks failed on both runners after
   the ~30-commit merge `3ff9ffd`; three measured causes, all written up in
   [`docs/testing.md`](docs/testing.md) §3. Dep and Took now collapse together at a 660px panel.
-- **Cross-platform adapter tests no longer create `C:` in POSIX checkouts (2026-09-13).** The
-  cross-adapter API-key test passed `C:/tmp/root` to every adapter; Muse planning creates its prompt
-  and XDG roots, and Node treats that spelling as relative on macOS/Linux. The writable fixture now
-  lives under the suite's temporary directory and a regression asserts the checkout stays clean.
 - **A probe PTY answers the TUI's cursor-position query (t3, 2026-09-13).** Muse Code 1.2.1 writes
   `ESC[6n` at startup and exits 0 at +6.4s unanswered, before `readyMs`, so every `/usage` probe read
   *"the probe session did not start"* on a signed-in worker. `termquery.ts` answers it on `probe`

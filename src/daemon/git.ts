@@ -1,4 +1,5 @@
 import { run } from './spawn.js'
+import { spawnEnv, which } from './which.js'
 
 /**
  * The one way this daemon shells out to git.
@@ -25,7 +26,8 @@ export const GIT_MAX_BUFFER = 64 * 1024 * 1024
 
 /** Run git in `cwd` and return stdout with trailing whitespace removed. Throws if git does. */
 export async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await run('git', args, { cwd, maxBuffer: GIT_MAX_BUFFER })
+  const binary = which('git') ?? 'git'
+  const { stdout } = await run(binary, args, { cwd, env: spawnEnv(), maxBuffer: GIT_MAX_BUFFER })
   return stdout.replace(/\s+$/, '')
 }
 

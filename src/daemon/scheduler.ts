@@ -12,7 +12,8 @@ import type {
 import {
   WINDOW_HIGH_WATER,
   windowHighWater,
-  resolveModelChoice
+  resolveModelChoice,
+  TERMINAL_STATUSES
 } from '@shared/tasks.js'
 import type { Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
@@ -71,7 +72,8 @@ import {
   markFinishAsked,
   setRunQuota,
   setStatus,
-  startRun
+  startRun,
+  taskOfSession
 } from './tasks.js'
 import { claimedByAnotherTask, landedCommits, recordTaskCommits, taskCommitShas } from './taskcommits.js'
 import { openDebate, seatsOf } from './debate.js'
@@ -4303,9 +4305,6 @@ async function switchBorrowedTree(
   }
 }
 
-/** Statuses after which a task's thread is a record rather than a place to leave notes. */
-const TERMINAL_STATUSES = new Set<TaskStatus>(['completed', 'cancelled', 'failed'])
-
 /** Whose branch is this? ⚠️ By name, because the branch *is* the task's name — see `branchNameFor`. */
 function taskOnBranch(branch: string): Task | null {
   return listTasks().find((t) => t.branch === branch) ?? null
@@ -4348,12 +4347,6 @@ async function recordTrunkRunCommits(project: Project, task: Task, before: strin
   } catch (err) {
     log.warn(`could not record t${task.seq}'s trunk commits: ${String(err)}`)
   }
-}
-
-/** The task whose conversation this is: the open run's, else the last one's. */
-function taskOfSession(sessionId: string): Task | null {
-  const run = runForSession(sessionId) ?? lastRunForSession(sessionId)
-  return run?.taskId ? getTask(run.taskId) : null
 }
 
 /** `t402` for a task or a session working on one, for a sentence a person reads. */

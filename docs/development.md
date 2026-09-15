@@ -249,7 +249,8 @@ if one path traversed the symlink and the other was canonicalized. Always canoni
   `daemon/which.ts`, which also routes `.cmd`/`.bat` shims through the command processor.
 - **GUI apps on macOS/Linux do not inherit shell profile PATH.** App bundles launched via desktop shells
   inherit a minimal system PATH missing `~/.local/bin`, `/opt/homebrew/bin`, and `/usr/local/bin`.
-  `which.ts` appends standard user bin directories on non-Windows platforms.
+  `which.ts` and `spawnEnv()` prepend standard user bin directories on non-Windows platforms, and
+  `which()` verifies macOS `/usr/bin` candidates to skip broken Apple xcrun shims.
 - ⛔ **`cmd /d /s /c <shim>` splits any path containing a space.** `/s` makes cmd strip the outer
   quotes and take the rest literally, and the Windows default home has a space in it. Use `/d /c` and
   let Node quote the argument; do **not** add quotes yourself. Latent since M1 and invisible until a

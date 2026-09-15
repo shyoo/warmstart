@@ -9,6 +9,8 @@ import type {
   ResourceClaim,
   Task
 } from '@shared/tasks.js'
+import { TERMINAL_STATUSES } from '@shared/tasks.js'
+import { sessionEnded } from '@shared/protocol.js'
 import { landingBaseFor, landingStrategyIdFor } from './landingbase.js'
 import { landingTargetFor, policyFor } from './projects.js'
 import { claim, landResourceId, openClaims, release, upsertResource } from './resources.js'
@@ -18,8 +20,10 @@ import {
   getTask,
   mandateAllows,
   recordLandedRange,
-  setStatus
+  setStatus,
+  taskOfSession
 } from './tasks.js'
+import { getSession } from './sessions.js'
 import { claimedByAnotherTask, landedCommits, recordTaskCommits } from './taskcommits.js'
 import { landedRef, parkOtherHolders, parkPooledHolders, rescueAtTip, trunkHolder } from './worktrees.js'
 import { launchArgs, which } from './which.js'
@@ -595,12 +599,14 @@ export const mergeLocal: LandingStrategy = {
         trunkOccupiedBy(ctx.project, ctx.task.id) ??
         (await trunkNotReady(ctx.project.root, landingTargetFor(ctx.task, ctx.project)))
       if (blocked) {
+        const isError = blocked.startsWith('the trunk could not be read:')
         return {
           ok: false,
-          trunkBusy: true,
-          reason:
-            `the trunk is not ready to receive this: ${blocked}. ` +
-            'The branch is intact — it will land by itself once the trunk is free.'
+          trunkBusy: !isError,
+          reason: isError
+            ? blocked
+            : `the trunk is not ready to receive this: ${blocked}. ` +
+              'The branch is intact — it will land by itself once the trunk is free.'
         }
       }
     }
@@ -641,14 +647,16 @@ export const mergeLocal: LandingStrategy = {
         const blockedEarly =
           trunkOccupiedBy(ctx.project, ctx.task.id) ?? (await trunkNotReady(ctx.project.root, target))
         if (blockedEarly) {
+          const isError = blockedEarly.startsWith('the trunk could not be read:')
           return {
             strategy: 'merge-local',
             ok: false,
-            trunkBusy: true,
+            trunkBusy: !isError,
             branch: ctx.branch,
-            reason:
-              `not merged: ${blockedEarly}. ` +
-              'The branch is intact — merge it when the trunk is free.'
+            reason: isError
+              ? blockedEarly
+              : `not merged: ${blockedEarly}. ` +
+                'The branch is intact — merge it when the trunk is free.'
           }
         }
       }
@@ -696,15 +704,17 @@ export const mergeLocal: LandingStrategy = {
         const blocked =
           trunkOccupiedBy(ctx.project, ctx.task.id) ?? (await trunkNotReady(ctx.project.root, target))
         if (blocked) {
+          const isError = blocked.startsWith('the trunk could not be read:')
           return {
             strategy: 'merge-local',
             ok: false,
-            trunkBusy: true,
+            trunkBusy: !isError,
             branch: ctx.branch,
             commit,
-            reason:
-              `committed and verified on \`${ctx.branch}\`, but not merged: ${blocked}. ` +
-              'The branch is intact — merge it when the trunk is free.'
+            reason: isError
+              ? blocked
+              : `committed and verified on \`${ctx.branch}\`, but not merged: ${blocked}. ` +
+                'The branch is intact — merge it when the trunk is free.'
           }
         }
 
@@ -1050,9 +1060,20 @@ function porcelainNames(out: string): string[] {
  */
 export function trunkOccupiedBy(project: Project, self: string): string | null {
   const holder = trunkHolder(project)
-  if (!holder || holder.holder === self) return null
+  if (!holder) return null
   const id = holder.holder.startsWith('reland:') ? holder.holder.slice('reland:'.length) : holder.holder
-  const task = getTask(id)
+  if (id === self) return null
+  const task = getTask(id) ?? taskOfSession(id)
+  if (task && task.id === self) return null
+
+  // If the holder has settled or ended, the lease is stale and can be released.
+  const session = task ? null : getSession(id)
+  const dead = (task && TERMINAL_STATUSES.has(task.status)) || (session && sessionEnded(session.state))
+  if (dead) {
+    release(holder.id)
+    return null
+  }
+
   return task ? `t${task.seq} is working in the trunk` : 'a trunk task is working in the trunk'
 }
 

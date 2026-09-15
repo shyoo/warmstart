@@ -764,6 +764,13 @@ export async function retryQueuedLandings(): Promise<number> {
     const busy =
       trunkOccupiedBy(project, task.id) ?? (await trunkNotReady(project.root, landingTargetFor(task, project)))
     if (busy) {
+      if (busy.startsWith('the trunk could not be read:')) {
+        setStatus(task.id, 'awaiting_human', {
+          assignee: 'human',
+          holdReason: busy
+        })
+        continue
+      }
       setHoldReason(task.id, `the trunk is not ready to receive this: ${busy}. It will land by itself once the trunk is free.`)
       continue
     }

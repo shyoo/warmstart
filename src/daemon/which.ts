@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { accessSync, constants, existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { delimiter, extname, isAbsolute, join } from 'node:path'
@@ -30,9 +31,8 @@ export function which(command: string): string | null {
       '/opt/homebrew/sbin',
       '/usr/local/bin'
     ]
-    for (const d of extraDirs) {
-      if (!dirs.includes(d)) dirs.push(d)
-    }
+    const prepend = extraDirs.filter((d) => !dirs.includes(d))
+    dirs.unshift(...prepend)
   }
 
   for (const dir of dirs) {
@@ -41,6 +41,13 @@ export function which(command: string): string | null {
       try {
         if (!statSync(candidate).isFile()) continue
         if (process.platform !== 'win32') accessSync(candidate, constants.X_OK)
+        if (process.platform === 'darwin' && dir === '/usr/bin' && (command === 'git' || command === 'xcrun')) {
+          try {
+            execFileSync(candidate, ['--version'], { stdio: 'ignore' })
+          } catch {
+            continue
+          }
+        }
         return candidate
       } catch {
         // Not here; keep looking.
@@ -233,14 +240,9 @@ export function spawnEnv(): Record<string, string> {
       '/opt/homebrew/sbin',
       '/usr/local/bin'
     ]
-    let changed = false
-    for (const d of extraDirs) {
-      if (!dirs.includes(d) && existsSync(d)) {
-        dirs.push(d)
-        changed = true
-      }
-    }
-    if (changed) {
+    const prepend = extraDirs.filter((d) => !dirs.includes(d) && existsSync(d))
+    if (prepend.length > 0) {
+      dirs.unshift(...prepend)
       env.PATH = dirs.join(delimiter)
     }
   }

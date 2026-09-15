@@ -26,6 +26,7 @@ let landing: typeof import('./landing.js')
 let landingbase: typeof import('./landingbase.js')
 let resources: typeof import('./resources.js')
 let scheduler: typeof import('./scheduler.js')
+let resolutions: typeof import('./resolutions.js')
 
 let root: string
 let project: Project
@@ -59,6 +60,7 @@ beforeAll(async () => {
   landingbase = await import('./landingbase.js')
   resources = await import('./resources.js')
   scheduler = await import('./scheduler.js')
+  resolutions = await import('./resolutions.js')
   db.openDb(join(dir, 'trunk.db'))
   root = freshRepo()
   project = projects.addProject({ root, name: 'trunky' })
@@ -66,6 +68,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   db.db().exec('delete from resource_claims')
+  db.db().exec("update tasks set status = 'completed' where status = 'landing_queued'")
 })
 
 afterAll(() => {
@@ -228,6 +231,84 @@ describe('a busy trunk queues a worktree landing', () => {
       rmSync(join(root, 'wip.txt'))
     }
     expect(await landing.trunkNotReady(root, 'main')).toBeNull()
+  })
+
+  it('resolves taskOfSession when trunk claim holder is a session ID', async () => {
+    const holder = tasks.createTask({ title: 'session holder trunk task', projectId: project.id, workspaceMode: 'trunk' })
+    const claim = worktrees.claimTrunk(project, holder.id)
+    expect(claim).not.toBeNull()
+    const sessionId = 'session-' + holder.id
+    tasks.startRun({ taskId: holder.id, projectId: project.id, sessionId, workerId: 'w1', quotaUnverified: false, costModelId: 'claude-3-5-sonnet' })
+    resources.reassignClaim(claim!.claimId, sessionId)
+
+    const branchTask = tasks.createTask({ title: 'worktree branch task', projectId: project.id })
+    const verdict = await landing.mergeLocal.canLand({
+      project,
+      task: branchTask,
+      workspacePath: root,
+      branch: 'warmstart/t1-y',
+      policy: 'commit-and-merge'
+    })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.trunkBusy).toBe(true)
+    expect(verdict.reason).toMatch(new RegExp(`t${holder.seq} is working in the trunk`))
+  })
+
+  it('does not self-block when checking trunk occupancy for the holder task itself', async () => {
+    const holder = tasks.createTask({ title: 'self trunk task', projectId: project.id, workspaceMode: 'trunk' })
+    const claim = worktrees.claimTrunk(project, holder.id)
+    expect(claim).not.toBeNull()
+    const sessionId = 'session-' + holder.id
+    tasks.startRun({ taskId: holder.id, projectId: project.id, sessionId, workerId: 'w1', quotaUnverified: false, costModelId: 'claude-3-5-sonnet' })
+    resources.reassignClaim(claim!.claimId, sessionId)
+
+    expect(landing.trunkOccupiedBy(project, holder.id)).toBeNull()
+  })
+
+  it('cleans up stale lease and reports trunk free when holder task has settled', async () => {
+    const holder = tasks.createTask({ title: 'settling trunk task', projectId: project.id, workspaceMode: 'trunk' })
+    const claim = worktrees.claimTrunk(project, holder.id)
+    expect(claim).not.toBeNull()
+    const sessionId = 'session-' + holder.id
+    const run = tasks.startRun({ taskId: holder.id, projectId: project.id, sessionId, workerId: 'w1', quotaUnverified: false, costModelId: 'claude-3-5-sonnet' })
+    resources.reassignClaim(claim!.claimId, sessionId)
+
+    tasks.finishRun(run.id, 'completed')
+    tasks.setStatus(holder.id, 'completed')
+
+    expect(landing.trunkOccupiedBy(project, 'other-task-id')).toBeNull()
+    expect(worktrees.trunkHolder(project)).toBeNull()
+  })
+
+  it('retries queued landings once the trunk is free', async () => {
+    const queuedTask = tasks.createTask({
+      title: 'queued work',
+      projectId: project.id
+    })
+    tasks.setTaskBranch(queuedTask.id, 'warmstart/t-queued', 1)
+    tasks.setStatus(queuedTask.id, 'landing_queued')
+
+    const started = await resolutions.retryQueuedLandings()
+    expect(started).toBe(1)
+  })
+
+  it('moves task to awaiting_human if trunk cannot be read', async () => {
+    const brokenDir = mkdtempSync(join(tmpdir(), 'agentyard-broken-'))
+    const brokenProject = projects.addProject({ root: brokenDir, name: 'broken' })
+    rmSync(brokenDir, { recursive: true, force: true })
+
+    const queuedTask = tasks.createTask({
+      title: 'queued on broken',
+      projectId: brokenProject.id
+    })
+    tasks.setTaskBranch(queuedTask.id, 'warmstart/t-broken', 1)
+    tasks.setStatus(queuedTask.id, 'landing_queued')
+
+    const started = await resolutions.retryQueuedLandings()
+    expect(started).toBe(0)
+    const reloaded = tasks.getTask(queuedTask.id)
+    expect(reloaded?.status).toBe('awaiting_human')
+    expect(reloaded?.holdReason).toMatch(/the trunk could not be read/)
   })
 })
 

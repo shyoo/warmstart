@@ -117,6 +117,20 @@ describe('which', () => {
       process.env.PATH = origPath
     }
   })
+
+  it('prefers Homebrew git over /usr/bin/git when PATH has /usr/bin first', () => {
+    if (process.platform === 'win32') return
+    const origPath = process.env.PATH
+    try {
+      process.env.PATH = '/usr/bin:/bin'
+      const brewGit = '/opt/homebrew/bin/git'
+      if (existsSync(brewGit)) {
+        expect(which('git')).toBe(brewGit)
+      }
+    } finally {
+      process.env.PATH = origPath
+    }
+  })
 })
 
 describe('spawnEnv', () => {
@@ -134,6 +148,23 @@ describe('spawnEnv', () => {
       else delete process.env.CLAUDE_TEST_VAR
       if (origAnthropic !== undefined) process.env.ANTHROPIC_API_KEY = origAnthropic
       else delete process.env.ANTHROPIC_API_KEY
+    }
+  })
+
+  it('prepends extraDirs to PATH before system /usr/bin', () => {
+    if (process.platform === 'win32') return
+    const origPath = process.env.PATH
+    try {
+      process.env.PATH = '/usr/bin:/bin'
+      const env = spawnEnv()
+      const parts = (env.PATH ?? '').split(':')
+      const usrBinIdx = parts.indexOf('/usr/bin')
+      const brewBinIdx = parts.indexOf('/opt/homebrew/bin')
+      if (brewBinIdx !== -1 && usrBinIdx !== -1) {
+        expect(brewBinIdx).toBeLessThan(usrBinIdx)
+      }
+    } finally {
+      process.env.PATH = origPath
     }
   })
 })

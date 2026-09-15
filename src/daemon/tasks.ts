@@ -1930,6 +1930,12 @@ export function runForSession(sessionId: string): Run | null {
   return r ? toRun(r) : null
 }
 
+/** The task whose conversation this is: the open run's, else the last one's. */
+export function taskOfSession(sessionId: string): Task | null {
+  const run = runForSession(sessionId) ?? lastRunForSession(sessionId)
+  return run?.taskId ? getTask(run.taskId) : null
+}
+
 /**
  * Record what this run's work would have cost at the vendor's list price.
  *

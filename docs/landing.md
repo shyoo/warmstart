@@ -718,11 +718,13 @@ Five decisions were taken with the operator and each is enforced in code:
    holds, visibly, exactly as a task waiting for a pool member does.
 2. **A worktree landing into a busy trunk queues, and lands by itself.** `merge-local` refuses a trunk
    that a trunk task holds (`trunkOccupiedBy`, asked *before* `git status`, because a clean moment
-   between an agent's edits is not a free trunk) or that is dirty or off-target. That refusal carries
+   between an agent's edits is not a free trunk; resolves session holders via `taskOfSession`, never
+   self-blocks, and sweeps dead leases from settled tasks) or that is dirty or off-target. That refusal carries
    `trunkBusy`, and `landTask` rests the task at **`landing_queued`** — not `awaiting_human` — with one
    thread line. `retryQueuedLandings` on the tick re-runs the landing in the background once the trunk
    is free. ⚠️ A conflict or a red check on that retry rests at `awaiting_human` as any landing would,
-   with **Resolve & retry**; no agent is dispatched for a queue alone.
+   with **Resolve & retry**; no agent is dispatched for a queue alone. Fatal trunk read errors also
+   rest at `awaiting_human` instead of looping in queue.
 3. **A trunk task is dispatched onto whatever the checkout holds, and told.** `surveyTrunk` reads the
    branch, uncommitted files and a merge/rebase/cherry-pick in progress; the first prompt says each
    (`trunkArrivalNotice`), and the files already there are stored on the run
