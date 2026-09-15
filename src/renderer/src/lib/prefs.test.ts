@@ -327,7 +327,7 @@ describe('the statistics window', () => {
   })
 })
 
-/** The three-axis plot's "Exclude API rate & mixed" checkbox has to survive a restart too. */
+/** The trade-off scatters' "Exclude API rate & mixed" checkbox has to survive a restart too. */
 describe('the statistics exclude-API-mixed filter', () => {
   const stub = (store: Record<string, string> | null, throws = false): void => {
     const storage = {

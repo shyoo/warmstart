@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type {
   Distribution,
   PriceBasis,
@@ -19,7 +19,6 @@ import {
 } from '../lib/prefs'
 import { errorMessage } from '@shared/errors.js'
 import { AgentIcon } from './AgentIcon'
-import { floorGrid, project3d, stemFor, type PlotPoint } from '../lib/plot3d'
 
 /**
  * Analytics › Statistics.
@@ -644,14 +643,194 @@ export function measuredModelPoints(report: StatisticsReport, excludeApiMixed = 
     .sort((a, b) => a.label.localeCompare(b.label))
 }
 
+/** The three measured axes a model point carries. Field names match `ModelPoint`'s own keys. */
+type Axis = 'quality' | 'cost' | 'velocity'
+
+const AXIS_TITLE: Record<Axis, string> = {
+  quality: 'Quality',
+  cost: 'Cost',
+  velocity: 'Active time'
+}
+
+const AXIS_RENDER: Record<Axis, (value: number) => string> = {
+  quality: (v) => v.toFixed(1),
+  cost: money,
+  velocity: duration
+}
+
+const AXIS_HINT: Record<Axis, string> = {
+  quality: 'higher is better',
+  cost: 'lower is better',
+  velocity: 'lower is better'
+}
+
+/** ⛔ Quality is always read on its published 0..10 rubric scale; cost and active time have no
+ *  fixed ceiling, so their axis stretches to the worst measured point instead. */
+function axisMax(points: ModelPoint[], axis: Axis): number {
+  if (axis === 'quality') return 10
+  return Math.max(...points.map((p) => p[axis]), axis === 'cost' ? 0.01 : 1)
+}
+
 /**
- * A compact dependency-free 3D scatter plot. Drag it to inspect the model trade-offs.
+ * One 2D scatter of every measured model over a pair of axes.
  *
  * ⚠️ Exported for its own test, which renders it with `renderToStaticMarkup` — the suites run in a
- * `node` environment with no DOM, and this is the one way the *drawing* (rather than the arithmetic in
- * `lib/plot3d.ts`) can be checked at all.
+ * `node` environment with no DOM, and this is the one way the drawing can be checked at all.
  */
-export function ThreeAxisPlot({ report }: { report: StatisticsReport }): React.JSX.Element | null {
+export function ScatterPlot({
+  points,
+  xAxis,
+  yAxis
+}: {
+  points: ModelPoint[]
+  xAxis: Axis
+  yAxis: Axis
+}): React.JSX.Element {
+  const [hovered, setHovered] = useState<string | null>(null)
+  const width = 300
+  const height = 220
+  const marginLeft = 46
+  const marginRight = 14
+  const marginTop = 12
+  const marginBottom = 30
+  const plotW = width - marginLeft - marginRight
+  const plotH = height - marginTop - marginBottom
+  const maxX = axisMax(points, xAxis)
+  const maxY = axisMax(points, yAxis)
+  const scaleX = (v: number): number => marginLeft + (v / maxX) * plotW
+  const scaleY = (v: number): number => height - marginBottom - (v / maxY) * plotH
+  const tickCount = 4
+  const xTicks = Array.from({ length: tickCount + 1 }, (_, i) => (maxX / tickCount) * i)
+  const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => (maxY / tickCount) * i)
+  const active = points.find((p) => p.key === hovered)
+  const iconSize = 14
+  const midY = (marginTop + height - marginBottom) / 2
+
+  return (
+    <div className="scatter-plot-box">
+      <div className="scatter-plot-head">
+        <span className="scatter-plot-title">
+          {AXIS_TITLE[xAxis]} <span className="dim">vs</span> {AXIS_TITLE[yAxis]}
+        </span>
+        {active && (
+          <span className="scatter-plot-tooltip">
+            <strong>{active.label}</strong> · {AXIS_TITLE[xAxis]} {AXIS_RENDER[xAxis](active[xAxis])} ·{' '}
+            {AXIS_TITLE[yAxis]} {AXIS_RENDER[yAxis](active[yAxis])}
+          </span>
+        )}
+      </div>
+      <svg
+        className="scatter-plot-svg"
+        viewBox={`0 0 ${width} ${height}`}
+        role="img"
+        aria-label={`${AXIS_TITLE[xAxis]} against ${AXIS_TITLE[yAxis]}, one mark per model`}
+      >
+        <g aria-hidden>
+          {xTicks.map((t, i) => (
+            <line
+              key={`gx-${i}`}
+              x1={scaleX(t)}
+              y1={marginTop}
+              x2={scaleX(t)}
+              y2={height - marginBottom}
+              className="scatter-plot-grid"
+            />
+          ))}
+          {yTicks.map((t, i) => (
+            <line
+              key={`gy-${i}`}
+              x1={marginLeft}
+              y1={scaleY(t)}
+              x2={width - marginRight}
+              y2={scaleY(t)}
+              className="scatter-plot-grid"
+            />
+          ))}
+        </g>
+        <line
+          x1={marginLeft}
+          y1={height - marginBottom}
+          x2={width - marginRight}
+          y2={height - marginBottom}
+          className="scatter-plot-axis"
+        />
+        <line
+          x1={marginLeft}
+          y1={marginTop}
+          x2={marginLeft}
+          y2={height - marginBottom}
+          className="scatter-plot-axis"
+        />
+        {xTicks.map((t, i) => (
+          <text
+            key={`xl-${i}`}
+            x={scaleX(t)}
+            y={height - marginBottom + 12}
+            textAnchor="middle"
+            className="scatter-plot-tick"
+          >
+            {AXIS_RENDER[xAxis](t)}
+          </text>
+        ))}
+        {yTicks.map((t, i) => (
+          <text key={`yl-${i}`} x={marginLeft - 6} y={scaleY(t) + 3} textAnchor="end" className="scatter-plot-tick">
+            {AXIS_RENDER[yAxis](t)}
+          </text>
+        ))}
+        <text
+          x={(marginLeft + width - marginRight) / 2}
+          y={height - 4}
+          textAnchor="middle"
+          className="scatter-plot-axis-label"
+        >
+          {AXIS_TITLE[xAxis]} ({AXIS_HINT[xAxis]})
+        </text>
+        <text
+          x={10}
+          y={midY}
+          textAnchor="middle"
+          className="scatter-plot-axis-label"
+          transform={`rotate(-90, 10, ${midY})`}
+        >
+          {AXIS_TITLE[yAxis]} ({AXIS_HINT[yAxis]})
+        </text>
+        {points.map((point) => {
+          const cx = scaleX(point[xAxis])
+          const cy = scaleY(point[yAxis])
+          const r = (hovered === point.key ? iconSize + 4 : iconSize) / 2
+          return (
+            <g
+              key={point.key}
+              onPointerEnter={() => setHovered(point.key)}
+              onPointerLeave={() => setHovered(null)}
+            >
+              <circle cx={cx} cy={cy} r={r + 3} className="scatter-plot-point-halo" />
+              <g transform={`translate(${cx - r}, ${cy - r})`}>
+                <AgentIcon adapterId={point.adapterId} size={r * 2} title={point.label} />
+              </g>
+              <title>
+                {`${point.label}\n${AXIS_TITLE[xAxis]} ${AXIS_RENDER[xAxis](point[xAxis])} · ${AXIS_TITLE[yAxis]} ${AXIS_RENDER[yAxis](point[yAxis])}`}
+              </title>
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
+const SCATTER_PAIRS: Array<{ x: Axis; y: Axis }> = [
+  { x: 'quality', y: 'velocity' },
+  { x: 'quality', y: 'cost' },
+  { x: 'velocity', y: 'cost' }
+]
+
+/**
+ * Three 2D scatters, one per pair of measured axes, replacing the earlier rotatable 3D plot —
+ * reported 2026-09-14 as confusing to read and hard to interact with. A flat x/y plot has a
+ * position a reader can recover without dragging anything.
+ */
+export function TradeoffPlots({ report }: { report: StatisticsReport }): React.JSX.Element | null {
   // ⭐ Per-display preference, on the precedent `readStatisticsWindow` sets: whether this filter was
   // on last time is remembered so leaving the page or restarting the app does not silently turn it
   // back off (reported 2026-09-13).
@@ -661,108 +840,48 @@ export function ThreeAxisPlot({ report }: { report: StatisticsReport }): React.J
     setExcludeApiMixed(value)
   }
   // ⛔ The gate on whether this section exists at all reads the unfiltered set: hiding the whole
-  // plot (and its own toggle) the moment the filter empties it would leave no way back to "off".
+  // section (and its own toggle) the moment the filter empties it would leave no way back to "off".
   const everPoints = measuredModelPoints(report)
   const points = measuredModelPoints(report, excludeApiMixed)
-  const [view, setView] = useState({ yaw: -0.7, pitch: 0.5 })
-  const drag = useRef<{ x: number; y: number } | null>(null)
-  const [hovered, setHovered] = useState<string | null>(null)
   if (everPoints.length === 0) return null
-  const maxCost = Math.max(...points.map((p) => p.cost), 0.01)
-  const maxVelocity = Math.max(...points.map((p) => p.velocity), 1)
-  const project = (x: number, y: number, z: number): PlotPoint => project3d(view, x, y, z)
-  const origin = project(0, 0, 0)
-  /**
-   * ⭐ Each axis's own low-end value, placed a short step back from the origin along that axis
-   * rather than all three stacked on `origin` itself (reported 2026-09-13: *weird garbled text
-   * around (0, 0, 0)*) — three different strings drawn at the same point read as noise, not labels.
-   */
-  const axes = [
-    { end: project(1, 0, 0), lowAt: project(-0.14, 0, 0), label: 'Quality · 10.0', low: '0' },
-    { end: project(0, 1, 0), lowAt: project(0, -0.14, 0), label: 'Cost · $0', low: money(maxCost) },
-    { end: project(0, 0, 1), lowAt: project(0, 0, -0.14), label: 'Velocity · fastest', low: duration(maxVelocity) }
-  ]
-  /**
-   * ⛔ **Every mark carries the cube coordinate it was drawn from, not only its screen position.**
-   * The stem under it has to be computed from the same three numbers — see `stemFor` — and
-   * recovering them from a projected `x, y` is not possible.
-   */
-  const projected = points
-    .map((point) => {
-      const cube = {
-        x: point.quality / 10,
-        y: 1 - point.cost / maxCost,
-        z: 1 - point.velocity / maxVelocity
-      }
-      return { point, cube, at: project(cube.x, cube.y, cube.z), ...stemFor(view, cube.x, cube.y, cube.z) }
-    })
-    .sort((a, b) => a.at.depth - b.at.depth)
-  const active = projected.find((p) => p.point.key === hovered)?.point
-  const iconSize = 16
-  return <section className="three-axis-plot" aria-label="Cost, quality and velocity model comparison">
-    <div className="three-axis-plot-head">
-      <div>
-        <h3>Measured model trade-offs</h3>
-        <p>Drag to rotate. Farther from the origin is more favourable on every measured axis. Each mark is the icon of the agent that ran it, standing on a bar over its own place on the quality-and-cost floor.</p>
+  return (
+    <section className="scatter-plots" aria-label="Quality, cost and velocity model comparison">
+      <div className="scatter-plots-head">
+        <div>
+          <h3>Measured model trade-offs</h3>
+          <p>
+            Each mark is the icon of the agent that ran it, one model per mark, measured on at least{' '}
+            {MIN_TRUSTED_SAMPLES} finished tasks on every axis. Hover a mark for its exact numbers.
+          </p>
+        </div>
+        <label
+          className="scatter-plots-filter"
+          title="When on, the cost axis folds only amortised subscription dollars — API-rate and mixed-basis tasks are left out rather than averaged in as though they were the same kind of dollar."
+        >
+          <input
+            type="checkbox"
+            checked={excludeApiMixed}
+            onChange={(e) => toggleExcludeApiMixed(e.target.checked)}
+          />
+          Exclude API rate &amp; mixed
+        </label>
       </div>
-      <label className="three-axis-filter" title="When on, the cost axis folds only amortised subscription dollars — API-rate and mixed-basis tasks are left out rather than averaged in as though they were the same kind of dollar.">
-        <input
-          type="checkbox"
-          checked={excludeApiMixed}
-          onChange={(e) => toggleExcludeApiMixed(e.target.checked)}
-        />
-        Exclude API rate &amp; mixed
-      </label>
-      {active && <div className="three-axis-tooltip"><strong>{active.label}</strong><span>{money(active.cost)} · {active.quality.toFixed(1)} / 10 · {duration(active.velocity)}</span></div>}
-    </div>
-    {points.length === 0 ? (
-      <p className="notice">No model has a subscription-only price under this filter. Uncheck it to see every measured model again.</p>
-    ) : (
-      <>
-        <svg className="three-axis-svg" viewBox="0 0 500 280" role="img"
-          onPointerDown={(e) => { drag.current = { x: e.clientX, y: e.clientY }; e.currentTarget.setPointerCapture(e.pointerId) }}
-          onPointerMove={(e) => { if (!drag.current) return; const dx = e.clientX - drag.current.x, dy = e.clientY - drag.current.y; drag.current = { x: e.clientX, y: e.clientY }; setView((v) => ({ yaw: v.yaw + dx / 180, pitch: Math.max(-1.2, Math.min(1.2, v.pitch + dy / 180)) })) }}
-          onPointerUp={() => { drag.current = null }} onPointerCancel={() => { drag.current = null }}>
-          {/* ⭐ **The floor, and a bar down to it from every mark** (reported 2026-09-13: it was
-              *challenging to see where the pareto planes exist*). A mark floating in an isometric box
-              has no readable position — two icons a centimetre apart on screen can be anywhere along
-              each other's line of sight — so the plane the flat axes span is ruled, and each mark
-              stands on a bar over its own place on it. Drawn before the axes and the marks, so
-              nothing structural is ever obscured by the scaffolding under it. */}
-          <g className="three-axis-floor" aria-hidden>
-            {floorGrid(view).map((seg, i) => (
-              <line key={i} x1={seg.from.x} y1={seg.from.y} x2={seg.to.x} y2={seg.to.y} className="three-axis-grid" />
+      {points.length === 0 ? (
+        <p className="notice">No model has a subscription-only price under this filter. Uncheck it to see every measured model again.</p>
+      ) : (
+        <>
+          <div className="scatter-plots-grid">
+            {SCATTER_PAIRS.map((pair) => (
+              <ScatterPlot key={`${pair.x}-${pair.y}`} points={points} xAxis={pair.x} yAxis={pair.y} />
             ))}
-          </g>
-          <g className="three-axis-stems" aria-hidden>
-            {projected.map(({ point, foot, top }) => (
-              <g key={point.key} className={hovered === point.key ? 'three-axis-stem--on' : undefined}>
-                <line x1={foot.x} y1={foot.y} x2={top.x} y2={top.y} className="three-axis-stem" />
-                {/* ⚠️ The foot is drawn even where the bar has no length: a mark sitting on the floor
-                    is anchored at zero, which is a reading, not a missing stem. */}
-                <circle cx={foot.x} cy={foot.y} r="2" className="three-axis-foot" />
-              </g>
-            ))}
-          </g>
-          {axes.map((axis) => <g key={axis.label}><line x1={origin.x} y1={origin.y} x2={axis.end.x} y2={axis.end.y} className="three-axis-line" /><text x={axis.end.x} y={axis.end.y - 8} className="three-axis-label">{axis.label}</text><text x={axis.lowAt.x} y={axis.lowAt.y} className="three-axis-low">{axis.low}</text></g>)}
-          <circle cx={origin.x} cy={origin.y} r="4" className="three-axis-origin" />
-          {projected.map(({ point, at }) => {
-            const r = (hovered === point.key ? iconSize + 4 : iconSize) / 2
-            return (
-              <g key={point.key} onPointerEnter={() => setHovered(point.key)} onPointerLeave={() => setHovered(null)}>
-                <circle cx={at.x} cy={at.y} r={r + 3} className="three-axis-point-halo" />
-                <g transform={`translate(${at.x - r}, ${at.y - r})`}>
-                  <AgentIcon adapterId={point.adapterId} size={r * 2} title={point.label} />
-                </g>
-                <title>{`${point.label}\nCost ${money(point.cost)} · Quality ${point.quality.toFixed(1)} / 10 · Active time ${duration(point.velocity)}`}</title>
-              </g>
-            )
-          })}
-        </svg>
-        <p className="dim">{points.length} model{points.length === 1 ? '' : 's'} with all three measurements. Cost and active time are reversed so $0 and fastest are the favourable ends.</p>
-      </>
-    )}
-  </section>
+          </div>
+          <p className="dim">
+            {points.length} model{points.length === 1 ? '' : 's'} with all three measurements.
+          </p>
+        </>
+      )}
+    </section>
+  )
 }
 
 function DistributionTable({
@@ -904,7 +1023,7 @@ export function Statistics({
         ))}
       </div>
 
-      {report && <ThreeAxisPlot report={report} />}
+      {report && <TradeoffPlots report={report} />}
 
       {error ? (
         <div className="alert">{error}</div>

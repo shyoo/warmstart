@@ -15,7 +15,7 @@ import { VelocityModel } from './VelocityModel'
  * numbered sections is not a layout choice: a single page could only ever say what the score *is*,
  * while a reader asking "why did it pick that account" is asking about one axis at a time.
  *
- * ⚠️ The page is a **paper**, not a dashboard: a title, an abstract, a table of contents, and
+ * ⚠️ The page is a **paper**, not a dashboard: a title, a summary, a table of contents, and
  * numbered sections in a single measured column, with the arithmetic typeset rather than drawn in
  * ASCII. That is deliberate. The routing model is the core of the product and the page is where an
  * operator decides whether to trust it; a scoreboard invites a glance, a paper invites checking.
@@ -83,7 +83,7 @@ export function RoutingModel({
       </header>
 
       <section className="paper-abstract">
-        <h4>Abstract</h4>
+        <h4>Summary</h4>
         <p>
           An operator running several coding agents on several subscriptions faces a scheduling
           problem that is small in size and large in consequence: which account, which model and

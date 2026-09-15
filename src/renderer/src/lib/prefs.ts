@@ -338,11 +338,11 @@ export function writeStatisticsWindow(value: StatisticsWindow): void {
 const STATISTICS_EXCLUDE_API_MIXED_KEY = appKey('statisticsExcludeApiMixed')
 
 /**
- * Whether the three-axis plot's "Exclude API rate & mixed" filter was on last time.
+ * Whether the trade-off scatters' "Exclude API rate & mixed" filter was on last time.
  *
  * ⛔ Reported 2026-09-13: the checkbox reset to off on every navigation and app restart because it
- * lived only in `ThreeAxisPlot`'s component state. Per-display preference stored in `localStorage`,
- * consistent with every other checkbox on this page.
+ * lived only in the plot's own component state (`ThreeAxisPlot` at the time; now `TradeoffPlots`).
+ * Per-display preference stored in `localStorage`, consistent with every other checkbox on this page.
  */
 export function readStatisticsExcludeApiMixed(): boolean {
   try {

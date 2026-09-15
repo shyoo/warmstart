@@ -14,7 +14,11 @@ skipped); L3 **436 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 c
 against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
 **Release** workflow: it has been dispatched twice with `platforms=macos` (item 6 below), so a `v*`
-tag now builds both platforms.
+tag now builds both platforms. ⚠️ **On top of that Mac baseline, t447 (Windows 11 x64, this rebase)
+adds a Routing Model / Statistics change** whose own L1 delta is measured against the pre-rebase
+Windows count of 3,458: `plot3d.test.ts` (−9) is deleted with the module it pinned, and
+`Statistics.test.tsx` loses one test net rewriting its 3D-plot suite for the flat scatters that
+replaced it — nothing else moved on either platform.
 
 ## Closed in this cleanup
 
@@ -29,8 +33,7 @@ tag now builds both platforms.
   when the block spelled it `Path` — a real regression from the macOS PATH work, masked in the
   installed app by main's re-spelling. `pathKey`/`withAugmentedPath` fix it; all four pinned with
   real git in `worktrees.test.ts`, `landing.test.ts`, `muse-code.test.ts`, `which.test.ts`.
-  ⏭ **The trunk config was repaired by hand; deploy this build** (`deploy-local.sh`) before
-  the next muse run, then re-land t447 from the UI — its branch is intact. t446 lands in this commit.
+  t446 landed in that commit; t447 rebased onto the repaired trunk and lands in this one.
 - **t445's "failed" compaction was a dead ask beside a landed one nobody could see (t446, 2026-09-14).**
   Preemption's 17:14 `/compact` reached a mid-turn stream session as prose; the agent wrapped up
   instead of compacting and the run ended on its own, so `park()` returned early with no verdict.
@@ -38,6 +41,16 @@ tag now builds both platforms.
   thread. Now: clock asks name the session's latest run (migration 72 backfills eleven orphans);
   the wrap-up posts *did not land* while its ask is still outstanding; a dead ask a landed sibling
   supersedes reads *superseded*. Beside it: a `SegmentedControl` workspace group, 920px settings.
+- **The Routing Model page reads as a summary, not a paper's abstract, and its section headers no
+  longer look like body text (t447, 2026-09-14).** The "Abstract" heading is now "Summary" — this is
+  a product page, not a paper — and every `.doc-section h3` / summary `h4` is set in
+  `--color-accent` instead of the paper ink, so a column of otherwise-uniform serif prose shows its
+  own structure at a glance. ⭐ **Statistics' three-way trade-off is now three flat 2D scatters**
+  (`TradeoffPlots`, replacing `ThreeAxisPlot`) — (quality, velocity), (quality, cost) and
+  (velocity, cost) — reported confusing to read and hard to interact with as a rotatable 3D plot.
+  `lib/plot3d.ts` is deleted; each scatter is a plain x/y projection with the same `AgentIcon` marks,
+  the same `MIN_TRUSTED_SAMPLES` (5) floor and the same per-display "Exclude API rate & mixed" filter
+  the old plot had.
 - **The local macOS deploy launcher works through its scripts-directory symlink (t14, 2026-09-14).**
   `BASH_SOURCE` names the symlink, so repository discovery accepts both entry points; stopping never
   force-kills, and landing checks use `spawnEnv()` / `augmentPath()` so Finder-launched daemons find Homebrew tools like `npm`.
@@ -59,30 +72,12 @@ tag now builds both platforms.
   runtime in one line; `scripts/build-mac.sh` and the release workflow now read the bundle back with
   `codesign`. ✅ The owner's Mac built it **signed with the hardened runtime** (electron-builder
   26.16.1); not notarised, nothing yet run under it. [`docs/development.md`](docs/development.md) §3.
-- **The controller's label consult stopped dropping itself as "overtaken" (t440, 2026-09-14).**
-  `questionStillStands` had no branch for the `title` kind and fell through to `triage`'s gate —
-  `awaiting_human` or `failed` only — so a label asked about a task doing its ordinary work (`ready`,
-  `assigned`, `running`) was dropped before the controller was ever asked, reading as nearly every
-  label consult failing. It now stands until `completed`, `cancelled` or `failed`, matching
-  `askForTitle`. ⚠️ The Enter-key report in the same task was not a code bug: `isSubmitKey` is
-  correct and identically wired in every composer; the Ctrl+Enter preference had reset because
-  `ui-settings.json` only survives an `agentyard` → `Warmstart` productName change if the old
-  install's data directory is still on disk when the new build first runs — item 6's known cost.
+- **The controller's label consult stopped dropping itself as "overtaken" (t440, 2026-09-14).** `questionStillStands` had no branch for the `title` kind and fell through to `triage`'s gate — `awaiting_human` or `failed` only — so a label asked about a task doing its ordinary work (`ready`, `assigned`, `running`) was dropped before the controller was ever asked, reading as nearly every label consult failing. It now stands until `completed`, `cancelled` or `failed`, matching `askForTitle`. ⚠️ The Enter-key report in the same task was not a code bug: `isSubmitKey` is correct and identically wired in every composer; the Ctrl+Enter preference had reset because `ui-settings.json` only survives an `agentyard` → `Warmstart` productName change if the old install's data directory is still on disk when the new build first runs — item 6's known cost.
 - **The Attention bar no longer offers answer buttons for a question it cannot show (t441, 2026-09-14).**
   `answerableHere` checked only option count/length, so a long question with short options rendered
   inline while `.approvals-what` truncated the text — answerable blind. It now also requires the
   full question fit in 100 characters, else falls back to **Answer…**.
-- **Muse could not grade anything, and the app would not say why (t436, 2026-09-14).** Muse Code
-  1.1.1 reads `<workspace>/.codex/skills` at startup and exits 1 in ~4.5s against a non-directory
-  (`runtime host failed to start: … Not a directory (os error 20)`, stderr, stdout empty). This
-  repo's `.codex` symlink, added 2026-09-13, is a seven-byte **file** on a `core.symlinks=false`
-  checkout — so every Muse review in the 06:19 batch failed. ⭐ Measured three ways against the live
-  CLI: absent starts, directory starts, file dies. `.codex` is now local-only
-  (`scripts/link-agent-skills.mjs`, gitignored, junction on Windows). ⛔ The second half is the one
-  that generalises: a `stream` session's non-protocol stderr was dropped by `StreamParser`, so both
-  the reviewer and `onSessionExit` reported an unexplained death. `sessionDiagnostics` keeps a
-  bounded tail and both now quote it. ⚠️ The retention *plumbing* has no L1 test — no declarative
-  adapter decodes a stream — so it is proven only by the pure functions either side of it.
+- **Muse could not grade anything, and the app would not say why (t436, 2026-09-14).** Muse Code 1.1.1 exits 1 against this repo's `.codex` symlink, which was a seven-byte **file** on a `core.symlinks=false` checkout rather than a directory; `.codex` is now local-only (`scripts/link-agent-skills.mjs`, gitignored, junction on Windows). ⛔ The second half generalises: a `stream` session's non-protocol stderr was dropped by `StreamParser`, so both the reviewer and `onSessionExit` reported an unexplained death; `sessionDiagnostics` keeps a bounded tail and both now quote it.
 - **The README is a user guide with real screenshots (t439, 2026-09-14).** Twelve PNGs that
   `scripts/generate-readme-assets.mjs` captures from the built renderer against a fictional fleet
   ([`docs/development.md`](docs/development.md) §2); every launch ends with `daemon.shutdown`,

@@ -6910,31 +6910,29 @@ select:focus-visible,
 .statistics-paper .stat-tbl { border-top: 2px solid var(--color-border-strong); border-bottom: 2px solid var(--color-border-strong); }
 .statistics-paper .stat-tbl th { border-bottom: 1px solid var(--color-border-strong); letter-spacing: 0.02em; }
 
-.three-axis-plot { margin: var(--sp-4) 0; padding: var(--sp-3); border-top: 1px solid var(--color-border-strong); border-bottom: 1px solid var(--color-border-strong); }
-.three-axis-plot-head { display: flex; justify-content: space-between; gap: var(--sp-3); align-items: start; }
-.three-axis-plot h3 { margin: 0 0 var(--sp-1); font-size: 17px; }
-.three-axis-plot-head p { margin: 0; color: var(--color-text-dim); max-width: 66ch; }
-.three-axis-tooltip { display: grid; gap: 2px; min-width: 210px; font-size: var(--text-meta); color: var(--color-text-dim); }
-.three-axis-tooltip strong { color: var(--color-text); }
-.three-axis-svg { width: 100%; max-height: 350px; touch-action: none; cursor: grab; user-select: none; }
-.three-axis-svg:active { cursor: grabbing; }
-.three-axis-line { stroke: var(--color-border-strong); stroke-width: 1.5; }
-.three-axis-label { fill: var(--color-text); font-size: 12px; font-weight: 600; }
-.three-axis-low { fill: var(--color-text-faint); font-size: 10px; }
-.three-axis-origin { fill: var(--color-text-faint); }
-/* ⭐ The floor and the bars that stand on it. ⚠️ Fainter than the axes and the marks, in that order:
-   they exist to say *where* a mark is, and a grid that competes with the icons for attention has
-   replaced one unreadable plot with another. */
-.three-axis-grid { stroke: var(--color-border); stroke-width: 1; opacity: 0.55; }
-.three-axis-stem { stroke: var(--color-text-faint); stroke-width: 1.25; opacity: 0.7; }
-.three-axis-foot { fill: var(--color-text-faint); opacity: 0.8; }
-/* The hovered mark's own bar, so pointing at an icon says which spot on the floor is its. */
-.three-axis-stem--on .three-axis-stem { stroke: var(--color-accent); stroke-width: 2; opacity: 1; }
-.three-axis-stem--on .three-axis-foot { fill: var(--color-accent); opacity: 1; }
-.three-axis-point-halo { fill: var(--color-bg); stroke: var(--color-border-strong); stroke-width: 1; cursor: pointer; }
-.three-axis-filter { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-meta); color: var(--color-text-dim); white-space: nowrap; cursor: pointer; }
-.three-axis-filter input { cursor: pointer; }
-@media (max-width: 700px) { .three-axis-plot-head { display: block; } .three-axis-tooltip { margin-top: var(--sp-2); } }
+/* ⭐ Three flat x/y scatters replaced the earlier rotatable 3D plot (retired 2026-09-14: reported
+   confusing to read and hard to interact with). A position on a 2D plot needs no dragging to read. */
+.scatter-plots { margin: var(--sp-4) 0; padding: var(--sp-3); border-top: 1px solid var(--color-border-strong); border-bottom: 1px solid var(--color-border-strong); }
+.scatter-plots-head { display: flex; justify-content: space-between; gap: var(--sp-3); align-items: start; margin-bottom: var(--sp-3); }
+.scatter-plots-head h3 { margin: 0 0 var(--sp-1); font-size: 17px; }
+.scatter-plots-head p { margin: 0; color: var(--color-text-dim); max-width: 66ch; }
+.scatter-plots-filter { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-meta); color: var(--color-text-dim); white-space: nowrap; cursor: pointer; }
+.scatter-plots-filter input { cursor: pointer; }
+.scatter-plots-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--sp-3); }
+.scatter-plot-box { border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: var(--sp-2); background: var(--color-surface); }
+.scatter-plot-head { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); margin-bottom: var(--sp-1); }
+.scatter-plot-title { font-size: var(--text-body); font-weight: 600; }
+.scatter-plot-tooltip { font-size: var(--text-meta); color: var(--color-text-dim); }
+.scatter-plot-tooltip strong { color: var(--color-text); }
+.scatter-plot-svg { width: 100%; height: auto; display: block; }
+.scatter-plot-axis { stroke: var(--color-border-strong); stroke-width: 1; }
+/* ⚠️ Fainter than the axes and the marks, in that order: gridlines exist to say where a value falls,
+   and a grid that competes with the icons for attention replaces one unreadable plot with another. */
+.scatter-plot-grid { stroke: var(--color-border); stroke-width: 1; opacity: 0.5; }
+.scatter-plot-tick { fill: var(--color-text-faint); font-size: 9px; font-family: var(--font-mono); }
+.scatter-plot-axis-label { fill: var(--color-text-dim); font-size: 10px; }
+.scatter-plot-point-halo { fill: var(--color-bg); stroke: var(--color-border-strong); stroke-width: 1; cursor: pointer; }
+@media (max-width: 700px) { .scatter-plots-head { display: block; } }
 
 /* ---- the routing model, as a paper ------------------------------------- */
 
@@ -7024,6 +7022,7 @@ select:focus-visible,
   text-transform: uppercase;
   text-align: center;
   margin: 0 0 var(--sp-2);
+  color: var(--color-accent);
 }
 
 .paper-abstract p {
@@ -7087,7 +7086,7 @@ select:focus-visible,
   font-weight: 700;
   letter-spacing: 0;
   text-transform: none;
-  color: var(--paper-ink);
+  color: var(--color-accent);
   margin: var(--sp-4) 0 var(--sp-3);
 }
 

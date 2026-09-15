@@ -72,7 +72,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Project` `ProjectSettings` `Projects` | the project routes and the policy tier |
 | `NewProject` | the add-project wizard: three steps, one modal, `lib/newproject.ts` holds its rules |
 | `RoutingModel` `RoutingOverview` `QualityModel` `CostModel` `VelocityModel` `ModelsModel` `Math` | the routing model, written up as a paper: abstract, contents, five numbered sections, KaTeX for the arithmetic |
-| `Statistics` | what finished tasks actually cost, took and scored — three tabs, one RPC, a window control. ⭐ `ThreeAxisPlot` draws the three-way trade-off as a rotatable scatter: `lib/plot3d.ts` projects it, and every mark stands on a **bar down to a ruled floor**, because an unanchored mark in an isometric box has no position a reader can recover |
+| `Statistics` | what finished tasks actually cost, took and scored — three tabs, one RPC, a window control. ⭐ `TradeoffPlots` draws the three-way trade-off as three flat x/y scatters — (quality, velocity), (quality, cost), (velocity, cost) — replacing an earlier rotatable 3D plot reported confusing to read and hard to interact with (2026-09-14) |
 | `LooseEnds` | work that exists and is going nowhere → [`landing.md`](landing.md) |
 | `Doctor` | which CLIs were found, who is signed in, how old each reading is, what is unverifiable |
 | `Logs` | the daemon's log, live and filterable, ring-buffered so a late window sees the past |
@@ -206,26 +206,28 @@ composites (`QualityStatRow.distribution`, whose `average` *is* `cleanComposite`
 clean has graded has an empty distribution and no bar — an ungraded model has no distribution, not
 a short one.
 
-⭐ **Statistics also has one interactive three-axis view** (`Statistics.tsx`), above its three tabs:
-it plots only an adapter/model pair with measured price, active time and clean quality evidence, so a
-missing value is never drawn as a deliberate coordinate. The origin is least favourable; the three
-axes run outward to quality 10, $0 cost, and fastest active time — price and time are consequently
-reversed before projection. Dragging the SVG rotates the view. This is a comparison aid, not routing
-input, and the tabular distributions remain the authoritative evidence behind every point. Model
-rows group the stable display identity, so dated Claude ids such as `claude-haiku-4-5-20251001` fold
-into the same *Haiku 4.5* row; missing model ids remain in the agent total but have no phantom child.
-Each point draws the agent's own `AgentIcon` rather than a plain dot, so the Claude, Antigravity and
-Codex marks are told apart at a glance without reading the tooltip. An **Exclude API rate & mixed**
-checkbox in the head (`measuredModelPoints(report, excludeApiMixed)`) drops price rows billed outside
-the flat subscription fee from the cost axis only — the same two-kinds-of-dollar distinction the price
-tab already makes — and a model left with no subscription-only price simply drops out of the plot
-rather than being priced from the wrong dollars; the section itself keeps showing (with the checkbox
-still reachable) as long as *something* measured has ever qualified unfiltered. ⭐ The checkbox is a
-per-display preference (`readStatisticsExcludeApiMixed`/`writeStatisticsExcludeApiMixed` in
-`lib/prefs.ts`), so it survives a page change or an app restart rather than resetting to off. ⛔ A
-model whose weakest axis rests on fewer than `MIN_TRUSTED_SAMPLES` (5, the same floor the price
-table dims its `n` column at) is dropped from the plot entirely — a bubble has no column to dim a
-thin count in, so it is excluded rather than drawn as a confident point over a guess.
+⭐ **Statistics also has a trade-off section, `TradeoffPlots`** (`Statistics.tsx`), above its three
+tabs: three flat x/y scatters — quality against active time, quality against cost, and active time
+against cost — each plotting only an adapter/model pair with measured price, active time and clean
+quality evidence, so a missing value is never drawn as a deliberate coordinate. ⭐ This replaces an
+earlier single rotatable 3D scatter (retired 2026-09-14, reported confusing to read and hard to
+interact with); a flat scatter has a position a reader can recover without dragging anything. This is
+a comparison aid, not routing input, and the tabular distributions remain the authoritative evidence
+behind every point. Model rows group the stable display identity, so dated Claude ids such as
+`claude-haiku-4-5-20251001` fold into the same *Haiku 4.5* row; missing model ids remain in the agent
+total but have no phantom child. Each mark draws the agent's own `AgentIcon` rather than a plain dot,
+so the Claude, Antigravity and Codex marks are told apart at a glance without reading the tooltip. An
+**Exclude API rate & mixed** checkbox in the head (`measuredModelPoints(report, excludeApiMixed)`)
+drops price rows billed outside the flat subscription fee from the cost axis only — the same
+two-kinds-of-dollar distinction the price tab already makes — and a model left with no
+subscription-only price simply drops out of every scatter rather than being priced from the wrong
+dollars; the section itself keeps showing (with the checkbox still reachable) as long as *something*
+measured has ever qualified unfiltered. ⭐ The checkbox is a per-display preference
+(`readStatisticsExcludeApiMixed`/`writeStatisticsExcludeApiMixed` in `lib/prefs.ts`), so it survives a
+page change or an app restart rather than resetting to off. ⛔ A model whose weakest axis rests on
+fewer than `MIN_TRUSTED_SAMPLES` (5, the same floor the price table dims its `n` column at) is dropped
+from all three scatters entirely — a mark has no column to dim a thin count in, so it is excluded
+rather than drawn as a confident point over a guess.
 
 ⛔ **The chart names the harness as well as the model, and the table does not have to.** Its bars are
 model rows, which in a table are indented under the agent row that owns them; a chart has no such
@@ -243,7 +245,7 @@ because a chart whose labels cannot be read is not a comparison, whatever its ba
 ⭐ **Routing Model is a paper, and is set as one** (t361; `components/RoutingModel.tsx`, `.paper` in
 `app.css`). It is the page where an operator decides whether to trust the scheduler, and a scoreboard
 invites a glance where a paper invites checking: a title (*Routing Model v1.0*, `ROUTING_MODEL_VERSION`
-in `@shared/routing.ts`), an abstract, a contents strip, and five numbered sections — §1 the
+in `@shared/routing.ts`), a summary, a contents strip, and five numbered sections — §1 the
 introduction, motivation and the model itself, §2–§4 one per axis, §5 models — in a single measured
 serif column with captioned, booktabs-ruled tables and the arithmetic typeset by **KaTeX**
 (`components/Math.tsx`: `<M>` inline, `<Eq>` display with a caller-set number). ⭐ **The setting
@@ -251,7 +253,10 @@ serif column with captioned, booktabs-ruled tables and the arithmetic typeset by
 macOS, system fonts only, ordered by width because a wide serif reads better on a screen than a book
 face (Georgia is kept out of the front of the stack for its old-style figures); the ink is
 `--color-paper-ink`, one step below `--color-text` on the dark theme, so a column of serif does not
-glare; the measure is 80ch (764px on Windows, up from 570px). Tables are content-width and centred
+glare; the measure is 80ch (764px on Windows, up from 570px). ⭐ Every section heading — the summary's
+own `h4` and each `.doc-section h3` — is set in `--color-accent` rather than the paper ink, so a page
+of otherwise all-prose column reads its own structure at a glance instead of as one undifferentiated
+block of text. Tables are content-width and centred
 in the column, every column but the first centred (the Statistics convention) and a prose column
 (`.tbl-wide`) left; and each section ends in a **Previous / Next** pager (`.paper-pager`) that
 turns to the neighbouring section from its top. ⛔ **Only program
@@ -698,7 +703,6 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 | `streamview.ts` | `mergeStreamLines(rows, line)` — one `session.stream` event folded into a live view. ⛔ Keyed on `seq`, because the backfill and the live feed **always** overlap: a pane asks for `session.streamlog` and starts receiving events in the same breath, so every line published in between arrives twice |
 | `diffline.ts` | `patchLineKind(line)` — how a patch line is classified for display, from its **first character and nothing else** |
 | `sidebyside.ts` | `splitPatch(patch)` — a unified patch as two-column rows. ⚠️ The pairing is **positional**: a removed run and an added run are zipped top-to-top and the surplus stands alone, so a line that moved across a large edit can sit opposite an unrelated one — which is what the single-column view beside the toggle is for |
-| `plot3d.ts` | `project3d` / `stemFor` / `floorGrid` — the three-axis plot's projection, the bar under each mark, and the ruled floor it stands on |
 | `notify.ts` | `notifiableTransition(before, task)` — when a task's movement is worth an OS notification. ⛔ A *transition*, never a state: first sight is always silent |
 | `menuposition.ts` | where a pill's portalled menu goes: flip above, clamp to the window, never clip |
 | `newproject.ts` | the add-project wizard's step blockers, its creation plan, and the template signature |
