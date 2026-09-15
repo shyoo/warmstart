@@ -1556,6 +1556,56 @@ describe('an image, and the three channels it can travel down', () => {
   })
 
   /**
+   * ⭐ t461, 2026-09-15. A piece filed by a planner that held a folder grant came back having done
+   * everything except the part the grant was for: *"separate-site changes were blocked by
+   * filesystem permissions"*. The grant is resolved by `grantedDirsFor` and arrives here as
+   * `grantDirs`; this is the argv half of it, on every adapter that sandboxes.
+   */
+  it('grants an inherited directory to each sandboxing agent', () => {
+    const inherited = process.cwd()
+    for (const adapterId of ['claude-code', 'antigravity-cli', 'openai-compatible'] as const) {
+      const plan = adapter(adapterId).plan({
+        sessionId: 'ignored',
+        isolationRoot: 'C:/tmp/root',
+        cwd: dirname(process.cwd()),
+        transport: 'stream',
+        grantDirs: [inherited]
+      })
+      expect(plan.args[plan.args.indexOf(inherited) - 1], adapterId).toBe('--add-dir')
+    }
+  })
+
+  /**
+   * ⛔ codex declares `--add-dir` on `exec` and **not** on `resume`, so a grant written after the
+   * subcommand is an argument error rather than a grant — the same rule the git roots follow.
+   */
+  it('puts an inherited grant ahead of codex’s resume subcommand', () => {
+    const inherited = process.cwd()
+    const plan = adapter('openai-compatible').plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: dirname(process.cwd()),
+      transport: 'stream',
+      resumeFrom: 'vendor-session-id',
+      grantDirs: [inherited]
+    })
+    expect(plan.args.indexOf(inherited)).toBeLessThan(plan.args.indexOf('resume'))
+  })
+
+  /** ⚠️ One directory, one flag. A folder attached here and inherited from a parent is one grant. */
+  it('names a directory once when it arrives by both routes', () => {
+    const plan = adapter('claude-code').plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: process.cwd(),
+      transport: 'stream',
+      attachments: [folder],
+      grantDirs: [folder.file]
+    })
+    expect(plan.args.filter((a) => a === folder.file)).toHaveLength(1)
+  })
+
+  /**
    * ⛔ The gate one layer above the encoder, and the one that decides whether a turn survives. The
    * encoder tests above prove antigravity's envelope is clean if it is called; this proves it is
    * never offered the bytes in the first place, which is what keeps the rule a capability rather

@@ -421,6 +421,16 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   happen; `mandate.allowed ⊇ 'land'` says what *may*. The mandate is inherited down a lineage so an
   agent-spawned subtask cannot grant itself more than its parent had — so nothing settable in a UI may
   touch it. A dropdown that could would be a privilege escalation with a nice label.
+- ⛔ **A sandbox is widened only by what the operator or the workspace actually needs, and a
+  widening inherits the same direction a mandate does.** `adapters/grants.ts` derives the two the
+  *workspace* forces — a worktree's git metadata, and whatever a link inside it points out at — and
+  `grantedDirsFor` (`attachments.ts`) resolves the one the *operator* chose: the folders attached to
+  this task and to its ancestors. ⚠️ **Downwards only, and per task, never per adapter.** A piece a
+  planner files inherits the planner's folders because the planner held them; a parent never gains
+  one only its child was given; and no adapter decides what it may reach — it is handed a resolved
+  list and spells it as its own grant flag. ⭐ Both halves exist because the same failure was measured
+  twice: t56 (a worktree that could edit and never commit) and t461 (a piece told to edit a second
+  repository, spawned with no grant for it, reporting the work done and that part blocked).
 - ⛔ **Unattended judgment gets no tools.** A consult is asked a question and replies with JSON
   validated against a **closed set**: a worker id must be a candidate that was offered, a model one
   the cost model can price, a dependency index must point backwards. If a real reply keeps failing

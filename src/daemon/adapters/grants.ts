@@ -143,7 +143,7 @@ export function linkedWritableRoots(cwd: string): string[] {
     log.warn(`could not work out the link targets under ${cwd}:`, err)
     return []
   }
-  return unique(roots)
+  return uniquePaths(roots)
 }
 
 /**
@@ -154,11 +154,17 @@ export function linkedWritableRoots(cwd: string): string[] {
  * and repeating it would say this function had found something when it had not.
  */
 export function workspaceGrants(cwd: string): string[] {
-  return unique([...gitWritableRoots(cwd), ...linkedWritableRoots(cwd)])
+  return uniquePaths([...gitWritableRoots(cwd), ...linkedWritableRoots(cwd)])
 }
 
-/** ⛔ `samePath`, not a `Set`: one directory has more than one spelling. See `fspath.ts`. */
-function unique(paths: string[]): string[] {
+/**
+ * ⛔ `samePath`, not a `Set`: one directory has more than one spelling. See `fspath.ts`.
+ *
+ * Exported because every adapter that grants directories assembles its list from more than one
+ * source — the workspace's own, the operator's `grantDirs`, and the attachment store — and two of
+ * them can name the same directory.
+ */
+export function uniquePaths(paths: string[]): string[] {
   const out: string[] = []
   for (const path of paths) if (!out.some((seen) => samePath(seen, path))) out.push(path)
   return out

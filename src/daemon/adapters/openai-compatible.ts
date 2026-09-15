@@ -12,7 +12,7 @@ import type {
   SpawnRequest,
   WrittenPermissions
 } from './types.js'
-import { gitWritableRoots, linkedWritableRoots } from './grants.js'
+import { gitWritableRoots, linkedWritableRoots, uniquePaths } from './grants.js'
 import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
 import { formatCmdInvocation, launchArgs, launchable, spawnEnv, which } from '../which.js'
@@ -1229,7 +1229,18 @@ export const openaiCompatible: AgentAdapter = {
       // ⚠️ No `icacls` reset for these, and the asymmetry is deliberate: the grant above is for
       // worktrees this fleet created, which can inherit ACLs the sandbox cannot read past. The
       // attachment store is ours and was never made by a sandboxed process.
-      for (const dir of attachmentDirs(req.attachments ?? [])) args.push('--add-dir', dir)
+      //
+      // ⭐ **And the folders the operator attached to this task or to one of its ancestors**
+      // (`req.grantDirs`, resolved by `grantedDirsFor`). t461, 2026-09-15, is the run this exists
+      // for: a piece filed by a planner that held a folder grant was told to edit a second
+      // repository, arrived with no grant of its own, and came back having done everything except
+      // the part the grant was for — *"separate-site changes were blocked by filesystem
+      // permissions"*. ⚠️ No `icacls` reset, for the reason below and one more: these directories
+      // are the operator's, not worktrees this fleet created, and resetting ACLs on somebody's own
+      // repository is not a thing a spawn may do.
+      for (const dir of uniquePaths([...(req.grantDirs ?? []), ...attachmentDirs(req.attachments ?? [])])) {
+        args.push('--add-dir', dir)
+      }
       // `exec` refuses to start outside a git repository. agentyard's pooled worktrees are git, but a
       // project declared `vcs: none` is not, and refusing to start is a worse failure than running.
       args.push('--skip-git-repo-check')

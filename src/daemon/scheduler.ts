@@ -1,4 +1,5 @@
 import { sessionEnded } from '@shared/protocol.js'
+import { grantedDirsFor } from './attachments.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
@@ -1771,6 +1772,12 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     transport: 'stream',
     projectId: project?.id ?? null,
     attachments: prompt.attachments,
+    // ⛔ **Every folder this task or an ancestor was given, on every run — not only the ones riding
+    // an undelivered message.** An image travels with its message because replaying it costs tokens;
+    // a folder grant is an argv flag that costs none and is the only reason the directory is
+    // writable, so scoping it the same way would take write access away on the second run and from
+    // every piece a planner files. See `grantedDirsFor` for the t461 measurement.
+    grantDirs: grantedDirsFor(task.id),
     ...(revive ? { resume: revive } : {}),
     ...(picked.model ? { model: picked.model } : {}),
     ...(picked.effort ? { effort: picked.effort } : {})

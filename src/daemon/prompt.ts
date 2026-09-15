@@ -1,7 +1,7 @@
 import type { Attachment, DebateVerdict, MessageEvent, Task } from '@shared/tasks.js'
 import { isOpenConversation, isPlanExecute, policyVerifies, resolveWorkspaceMode } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/policy.js'
-import { describeAttachment } from './attachments.js'
+import { describeAttachment, grantedDirsFor } from './attachments.js'
 import { adapter } from './adapters/index.js'
 import { getProject, landingTargetFor } from './projects.js'
 import { coldStartBlock } from './orientation.js'
@@ -673,6 +673,23 @@ export function promptFor(
         attachments.map(describeAttachment).join('; ') +
         '. Open the file if you need to see it.'
     )
+  }
+
+  // ⛔ **A grant the agent is never told about is a grant it does not have.** `grantedDirsFor`
+  // widens the sandbox for every folder attached to this task or to one of its ancestors, but the
+  // argv says nothing an agent reads — so a piece filed by a planner that held the grant arrives
+  // able to write somewhere it has no reason to look. ⚠️ Only the directories the attachment
+  // sentence above does not already name, and only on a cold prompt, for `coldStartBlock`'s reason:
+  // a session already holding this task's context was told this when it opened.
+  if (!holdsPrompt) {
+    const named = new Set(attachments.filter((a) => a.kind === 'folder').map((a) => a.file))
+    const unnamed = grantedDirsFor(task.id).filter((dir) => !named.has(dir))
+    if (unnamed.length > 0) {
+      parts.push(
+        `Directories outside this workspace you have been granted: ${unnamed.join('; ')}. ` +
+          'You may read and write there; nothing else outside the workspace is granted.'
+      )
+    }
   }
 
   // ⛔ Only name tools this adapter actually gets. `mcp: false` means the daemon spawns it with no

@@ -14,6 +14,7 @@ import type {
 } from './types.js'
 import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
 import { attachmentDirs } from '../attachments.js'
+import { uniquePaths } from './grants.js'
 import { log } from '../log.js'
 import { launchArgs, launchable, spawnEnv, which } from '../which.js'
 import { errorMessage } from '@shared/errors.js'
@@ -1210,7 +1211,14 @@ export const antigravityCli: AgentAdapter = {
      * depend on the CLI cooperating.
      */
     if (req.cwd) args.push('--add-dir', req.cwd)
-    for (const dir of attachmentDirs(req.attachments ?? [])) args.push('--add-dir', dir)
+    // ⚠️ On this CLI the flag above *names the workspace*, and these widen it — the same spelling
+    // doing two jobs, which `docs/adapters.md` warns about. The operator's own folders
+    // (`req.grantDirs`, inherited down a lineage by `grantedDirsFor`) go in beside the attachment
+    // store for the same reason the attachment store does: the path is in the prompt text either
+    // way, and a path the agent may not open is worse than no path at all.
+    for (const dir of uniquePaths([...(req.grantDirs ?? []), ...attachmentDirs(req.attachments ?? [])])) {
+      args.push('--add-dir', dir)
+    }
 
     // ⛔ `--conversation`, not `--continue`. Measured on agy 1.1.21: `-c` / `--continue` resumes
     // *the most recent* conversation on this machine, which on a fleet running several worktrees at

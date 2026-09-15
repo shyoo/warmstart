@@ -7,24 +7,60 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-15, **Windows 11**, after t458): typecheck, lint and build pass; L1 **3,536 passed,
-5 skipped** (205 files + 2 platform skips); L2 **203 checks** (5
-skipped, after t451); L3 **452 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
-`release/win-unpacked` (after t451). The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17
-against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
+Baseline (2026-09-15, **Windows 11**, after t462): typecheck, lint and build pass; L1 **3,548 passed,
+5 skipped** (205 files + 2 platform skips); L2 **203 checks** (5 skipped); L3 **452 passed, 4 skipped**
+at the pinned 1024×720 window; L4 **19 checks** against `release/win-unpacked` (after t451, not re-run
+since). The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17 against a signed,
+hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
 **Release** workflow: it has been dispatched twice with `platforms=macos` (item 6 below), so a `v*`
 tag now builds both platforms.
 
 ## Closed in this cleanup
 
-- **README and first-run documentation now lead with Warmstart's subscription-CLI control-room
-  pitch (t461, 2026-09-15).** The root README has the public links and badges, feature-led sections,
-  task-kind table, pricing language and roadmap; the six-step walkthrough lives in
-  `docs/getting-started.md` and is indexed. The screenshot generator now seeds five fictional
-  accounts, forty completed runs, four live sessions, and chart element captures with a branded
-  backdrop. Public badges will show “not found” until the repository is public and a `v*` tag
-  exists. The image set totals 1.9 MB before regeneration.
+- **A folder an operator attaches is now granted to every task downstream of it, and on every run
+  (t462, 2026-09-15).** ⭐ **The measurement this exists for:** on t460 → t461 the operator attached
+  `C:\Dev\warmstart-site` to a *planner* whose single piece was to edit that repository. The piece
+  was a new task with no attachments of its own, so codex was spawned in its worktree under
+  `--sandbox workspace-write` with no `--add-dir` for the site and came back *“separate-site changes
+  were blocked by filesystem permissions”* having done everything else — the grant did not travel the
+  one hop the plan itself created. It also did not survive a *second run of the same task*: an
+  attachment travels only while its message is undelivered, which is right for an image that costs
+  tokens to replay and wrong for a flag that costs none. `grantedDirsFor` (`daemon/attachments.ts`)
+  now resolves every folder attachment on a task **and on its ancestors**, filtered to what is a
+  directory on disk; `SpawnRequest.grantDirs` carries it, and `spawnSession` falls back to the task
+  behind a resumed or forked conversation so the cache clock cannot drop a grant. The three
+  sandboxing adapters spell it `--add-dir` (on codex, ahead of the `resume` subcommand, where the
+  flag is declared); the cold prompt names the directories, because a grant nobody is told about is
+  one the agent never uses. ⚠️ **Argv- and unit-proven only** (item 4). Pinned:
+  `attachments.test.ts` (inheritance down, not up; survives delivery; drops a folder that moved),
+  `adapters.test.ts` (all three adapters, the codex ordering, no duplicate grant), `prompt.test.ts`.
+
+- **README and first-run documentation lead with Warmstart's subscription-CLI control-room pitch
+  (t461, 2026-09-15; screenshots finished in t462).** The root README has the public links and
+  badges, feature-led sections, task-kind table, pricing language and roadmap; the six-step
+  walkthrough lives in `docs/getting-started.md` and is indexed. Public badges will show “not found”
+  until the repository is public and a `v*` tag exists.
+
+  ⛔ **t461 wrote the generator's new code but never ran it, and `docs/images/tradeoffs.png` was
+  committed as a byte-identical copy of `statistics.png`.** All ten images are now regenerated from
+  one real run and total **7.5 MB** (600–870 kB each; the backdrop's gradients are what PNG
+  compresses worst, and `MAX_SHOT_WIDTH` caps the raw DPR-1.5 capture at 1,800 px). Three things had
+  to be fixed before a run produced anything: the **welcome tour** opens on the always-clean scratch
+  profile and landed in all ten captures; the `thread` scene still clicked a task title t461 had
+  renamed; and the `tradeoffs` section did not exist at all, because the quality axis folds
+  `quality_reviews` rows and the seed only wrote `tasks.quality_review_score` — it now seeds two real
+  peer grades per finished task, from a *different-vendor* reviewer, with dimension scores whose
+  weighted mean is the stored composite. ⚠️ Anything jittered by `n % WORKERS.length` is constant per
+  worker, so the grades were identical within each model and the quality whiskers drew a point.
+
+- **warmstart.dev carries the same story, committed locally in `C:\Dev\warmstart-site` and not
+  pushed (t462, 2026-09-15).** New *Five ways to file a task* and *Roadmap* sections, a seven-block
+  feature grid, the trade-off scatters in place of the retired Routing Model shot, and `.shot img`
+  loses its border and drop shadow because each PNG now carries its own frame. Measured at 1,280 px
+  and at a real 390 px phone viewport: nothing extends past the viewport. ⚠️ `--window-size=390` is
+  **not** a phone — headless Chrome on Windows will not go below ~500 px and crops instead, which
+  reads exactly like an overflow that is not there. That repo's own `HANDOFF.md` has the rest.
 
 - **Quality Review's gradable totals now exclude tasks the same page says cannot be graded (t459,
   2026-09-15).** `reviewQueue` previously calculated the non-gradable count from live eligibility but
@@ -32,56 +68,26 @@ tag now builds both platforms.
   summary (reported as 61 gradable tasks even though none remained). All five counts now come from
   one eligibility map; refused rows remain visible unless the operator's filter hides them.
 
-- **The quota-preemption warning card's wrap-up buttons scattered across its two-column grid, and a
-  hand-off can now redirect to another worker instead of only pausing (t458, 2026-09-15).**
-  `.decide-option` is a two-column grid; "Compact & pause" and "Hand off & pause" were two separate
-  grid items, so the second auto-placed into the description's own column and the description that
-  followed both auto-placed into the *button* column on the row under it — reported against the t457
-  screenshot. Every option with more than one button now wraps them in `.decide-buttons`, a flex
-  column that is itself the grid's one button-column item (`app.css`). ⭐ **Also folded in, since the
-  same card was already open:** a hand-off chosen during the warning can now name a destination —
-  `quotaPreemptWarning.reassignWorkerId` (`shared/tasks.ts`), set by `task.overrideQuota`'s
-  `reassignWorkerId` param (`api/tasks.ts`, refused beside `preemptionAction: 'compact'` — a compacted
-  context belongs to the session that built it, never to another account) and read by `preempt()` in
-  `scheduler.ts` at expiry: it reassigns the task's worker/adapter constraints, clears `not_before`
-  instead of waiting for the original account's window, and falls back to pausing here if the chosen
-  worker is gone by the time the wrap-up lands. "Hand off & reassign" sits beside "Hand off & pause" in
-  the card whether or not the worker can compact — previously a non-compacting worker (everything but
-  Claude) offered no wrap-up choice at all. Pinned: L1 in `quotaoverride.test.ts` (the RPC's
-  validation) and `preemption.test.ts` (the scheduler executing a redirect, and the vanished-worker
-  fallback); L3 in `test/ui.test.mjs` ("a quota preemption warning" — the layout regression by bounding
-  rect, and choosing a destination through the real RPC). ⚠️ **Not run against a real preemption**;
-  the scenario is seeded through the store, as the other quota states in that suite are.
+- **The quota-preemption card's wrap-up buttons, and hand-off with a destination (t458,
+  2026-09-15).** Every option with more than one button now wraps them in `.decide-buttons`, one
+  grid item in `.decide-option`'s two-column grid, so a second button stops auto-placing into the
+  description's column. ⭐ A hand-off chosen during the warning can now name where the work goes:
+  `quotaPreemptWarning.reassignWorkerId`, set by `task.overrideQuota` (refused beside
+  `preemptionAction: 'compact'` — a compacted context belongs to the session that built it) and read
+  by `preempt()` at expiry, which reassigns the constraints, clears `not_before`, and falls back to
+  pausing if the chosen worker is gone. Pinned in `quotaoverride.test.ts`, `preemption.test.ts` and
+  `test/ui.test.mjs`. ⚠️ **Not run against a real preemption**; the scenario is seeded through the
+  store, as the other quota states in that suite are.
 
-- **The composer's kind pill now offers its five shapes in the order they are taught (t458,
-  2026-09-15).** Single Task, Conversation, Plan & Execute, Plan & Split, Debate — previously
-  Plan & Split and Plan & Execute sat ahead of Conversation, which read as if planning were the default
-  path rather than the exception. `NewTask.tsx`'s `KIND_OPTIONS` is the only source of the order — the
-  pill, the menu and this list all draw from it. Single Task's hint now also states what the kind
-  actually does (autonomous single turn including landing, can still ask a question) rather than the
-  generic "one thread of work, dispatched to an agent". `README.md` and `docs/ui.md` reordered to
-  match; `test/ui.test.mjs`'s kind-pill-order check updated.
-
-- **Plan & Execute: the same `plan` kind with the fan-out capped at one and no review turn (t456,
-  2026-09-15).** Plan & Split pays a third planner turn to integrate pieces built by agents that could
-  not see each other; with one piece there are no seams, so that turn is a second full read of work
-  already done to the planner's own instruction. The shape is derived, never stored: `planModeOf`
-  (`src/shared/tasks.ts`) reads `min(mandate.maxChildren, childDefaults.maxChildren) <= 1`, and
-  everything follows from it — `validateSplit` wants exactly one piece, `applySplit` writes no
-  `settled` edge and leaves the planner's status alone, `agent.split` completes the planner through
-  `completeTask` (⛔ not by asking the agent to call `task_complete`, t226), and the executor is cut
-  from the planner's branch but lands onto the **project's** target (`integratesChildren`, so
-  `strategyFor` picks from data). The composer's fifth kind pill draws a small inline SVG of each plan
-  shape (`PlanShape`) and, in execute mode, two advisory notices (`executornotice.ts`) — decision D2
-  was *inherit the executor model as today, plus a notice that states the trade*; neither is a gate.
-  Design, the published measurements and the two operator decisions:
+- **Plan & Execute, and the composer pill's teaching order (t456 / t458, 2026-09-15).** Plan & Execute
+  is the same `plan` kind with the fan-out capped at one and no integration turn; the shape is
+  *derived*, never stored — `planModeOf` (`shared/tasks.ts`) reads
+  `min(mandate.maxChildren, childDefaults.maxChildren) <= 1` and everything follows, including the
+  executor landing onto the **project's** target rather than the planner's branch. The pill now reads
+  Single Task, Conversation, Plan & Execute, Plan & Split, Debate, from the single `KIND_OPTIONS`
+  order. Design, measurements and the two operator decisions:
   [`transient_docs/plan_and_execute_2026-09-15.md`](transient_docs/plan_and_execute_2026-09-15.md).
-  ⚠️ **Not run against a real agent**, and the cost claim — that removing the third turn is the
-  measurable win — is unmeasured on this fleet (item 2 below). Pinned: L1 in `split.test.ts`,
-  `prompt.test.ts`, `tasks.test.ts` (shared), `executornotice.test.ts`, `composerprefs.test.ts`,
-  `taskview.test.ts`; L3 in `test/ui.test.mjs` (fifth option, both diagrams, the absent fan-out and
-  planner-finish pills, the two notices) — that suite reaches the composer from the title bar, so the
-  composer never needed a project tab. Diagrams checked by eye in the built app on 2026-09-15.
+  ⚠️ **Not run against a real agent**, and the cost claim is unmeasured on this fleet (item 2).
 
 - **t451–t455, landed and documented in docs/ (2026-09-15).** The Changes-in-this-task panel no
   longer springs open on its own at the gate (t451, `atGate`); active child processes now defer idle
@@ -123,8 +129,10 @@ a unit test.
    single-agent answer; record cache reads, resolved/unresolved citations, and whether the organizer
    changed the operator's decision. The evidence format is in
    [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §7.
-4. **Run human-in-the-loop, `commit-and-merge`, and cross-task reuse with a real agent.** The code
-   and L1–L3 checks exist, but this has not been demonstrated in flight.
+4. **Run human-in-the-loop, `commit-and-merge`, cross-task reuse and an inherited directory grant
+   with a real agent.** The code and L1–L3 checks exist; none has been demonstrated in flight. For
+   the grant (t462): attach a second repository to a **planner**, let it file one piece that must
+   edit there, and watch a sandboxed codex actually write and commit in it.
 5. **Run the *signed* app on macOS with a real CLI; this is the launch gate.** The owner confirmed
    an unsigned build compiles, runs and pairs in remote mode, and `./scripts/build-mac.sh` now
    reports a build signed with the hardened runtime, and `npm run test:pack` passes on the Mac (all

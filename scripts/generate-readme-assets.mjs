@@ -40,6 +40,15 @@ const ROOT = resolve(import.meta.dirname, '..')
 const ASSETS = join(ROOT, 'docs', 'images')
 const only = new Set(process.argv.slice(2))
 
+/**
+ * The widest a written PNG may be, including its backdrop padding.
+ *
+ * ⚠️ A README image is read at about 900 CSS pixels on GitHub and 1,120 on warmstart.dev, so 1,800
+ * is still two device pixels per CSS pixel on a retina display — and roughly half the bytes of the
+ * raw capture.
+ */
+const MAX_SHOT_WIDTH = 1800
+
 if (!existsSync(join(ROOT, 'out', 'renderer', 'index.html'))) {
   console.error('out/renderer is missing: run `npm run build` first')
   process.exit(1)
@@ -148,8 +157,70 @@ function statements(db) {
          cache_read_tokens, cache_write_tokens, cost_model_id, adapter_id, model, kind, prompt, quota_before_json, quota_after_json)
        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'work', ?, ?, ?)`
     ),
-    task: db.prepare('update tasks set status = ?, assignee = ?, branch = ?, hold_reason = ?, not_before = ?, created_at = ?, updated_at = ?, quality_review_score = ?, quality_review_count = ?, quality_reviewer = ? where id = ?')
+    task: db.prepare('update tasks set status = ?, assignee = ?, branch = ?, hold_reason = ?, not_before = ?, created_at = ?, updated_at = ?, quality_review_score = ?, quality_review_count = ?, quality_reviewer = ? where id = ?'),
+    // ⛔ **The grade lives here, not on the task.** `tasks.quality_review_score` is the headline the
+    // board prints; `Statistics`' quality axis and the Quality Review page both fold *these* rows,
+    // and a task carrying a score with no review behind it reads as ungraded everywhere that
+    // matters — which is why the trade-off scatters drew nothing until this existed.
+    review: db.prepare(
+      `insert into quality_reviews(id, task_id, run_id, reviewer_worker_id, reviewer_adapter, reviewer_model,
+         subject_adapter, subject_model, mixed_authorship, authorship_json, base_sha, head_sha,
+         diff_files, diff_insertions, diff_deletions, diff_truncated, scores_json, composite, summary,
+         notable_json, status, rubric_version, blinded, blinding_leak, created_at, completed_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, '[]', 'complete', '1.0', 1, 0, ?, ?)`
+    )
   }
+}
+
+/**
+ * The rubric the app grades against, copied rather than imported.
+ *
+ * ⚠️ This script is plain `.mjs` run by node with no bundler, so it cannot reach
+ * `src/shared/review.ts`'s `RUBRIC_WEIGHTS`. ⛔ Keep the seven dimensions and the weights in step
+ * with that file: a seeded review whose stored composite disagrees with its own dimension bars is
+ * a screenshot of the product contradicting itself.
+ */
+const RUBRIC = [
+  ['requirement_fidelity', 0.2],
+  ['correctness', 0.2],
+  ['tests', 0.15],
+  ['codebase_fit', 0.15],
+  ['scope_discipline', 0.1],
+  ['maintainability', 0.1],
+  ['self_sufficiency', 0.1]
+]
+
+/** How each seeded review's dimensions sit around its own mean. Deterministic, and sums to zero. */
+const DIMENSION_OFFSETS = [0.4, 0.2, -0.5, 0.1, -0.2, 0.3, -0.3]
+
+const REVIEW_NOTES = [
+  'Does what was asked and nothing beside it.',
+  'Edge cases are covered and the failure path is explicit.',
+  'Tests would have failed before this change.',
+  'Reads like the code around it.',
+  'Stays inside the brief.',
+  'Names are clear and the comments say why, not what.',
+  'Checked its own work before handing back.'
+]
+
+/**
+ * One peer grade, with dimension scores whose weighted mean **is** the stored composite.
+ *
+ * ⛔ Computed, never asserted. `Statistics` folds `quality_reviews.composite` and the Quality Review
+ * page draws the dimensions; seeding the two independently would put a headline on screen that its
+ * own bars disagree with.
+ */
+function seededReview(mean) {
+  const scores = {}
+  let weighted = 0
+  let total = 0
+  RUBRIC.forEach(([dimension, weight], i) => {
+    const score = Math.round(Math.min(10, Math.max(0, mean + DIMENSION_OFFSETS[i])) * 10) / 10
+    scores[dimension] = { score, rationale: REVIEW_NOTES[i] }
+    weighted += weight * score
+    total += weight
+  })
+  return { scores, composite: Math.round((weighted / total) * 10) / 10 }
 }
 
 /** One reading of every window of one worker, with the billing window at `percent`. */
@@ -210,13 +281,34 @@ function seedHistory(db, ids, now) {
   const series = WORKERS.map((w) => ({ at: w.windows[1][2] * 0.35, step: (w.windows[1][2] * 0.6) / (finished.length / WORKERS.length) }))
   for (const f of finished) {
     const w = WORKERS[f.wi]
-    const score = Math.round(([8.6, 8.2, 7.7, 8.1, 7.9][f.wi] + ((f.n % 5) - 2) * 0.3) * 10) / 10
-    const reviewer = ids.workers.find((_, candidate) => WORKERS[candidate].adapterId !== WORKERS[f.wi].adapterId)
+    // ⚠️ `(n * 3) % 7`, not `n % 5`. A history task's worker is `i % WORKERS.length`, so any jitter
+    // taken modulo the worker count is constant *per worker* — every grade for one model came out
+    // identical and the quality whiskers drew a point instead of a spread. 3 and 7 are coprime with
+    // 5, so this varies within a worker while staying deterministic.
+    const mean = Math.round(([8.6, 8.2, 7.7, 8.1, 7.9][f.wi] + (((f.n * 3) % 7) - 3) * 0.2) * 10) / 10
+    // ⛔ **A quality review never grades its own vendor**, so the two reviewers are picked by
+    // `adapterId`, not by account: one Claude grading another Claude is Claude grading Claude.
+    const peers = WORKERS.map((_, i) => i).filter((i) => WORKERS[i].adapterId !== WORKERS[f.wi].adapterId)
+    const graders = [peers[f.n % peers.length], peers[(f.n + 1) % peers.length]]
+    // Two grades a tenth either side of the target, so the task's headline is exactly `mean`.
+    const grades = graders.map((gi, k) => ({ gi, ...seededReview(mean + (k === 0 ? -0.1 : 0.1)) }))
+    const score = Math.round((grades.reduce((sum, g) => sum + g.composite, 0) / grades.length) * 10) / 10
+    const reviewer = ids.workers[grades[0].gi]
     if (f.insert) {
       insertTask.run(f.id, f.seq, ids.project, f.title, mandate, ids.workers[f.wi], branchFor(f.seq, f.title), f.started - 20 * 60_000, f.ended, score, reviewer)
     } else {
       s.task.run('completed', ids.workers[f.wi], branchFor(f.seq, f.title), null, null, f.started - 20 * 60_000, f.ended, score, 2, reviewer, f.id)
     }
+    grades.forEach((g, k) => {
+      const grader = WORKERS[g.gi]
+      s.review.run(
+        `showcase-review-${f.id}-${k}`, f.id, `showcase-review-run-${f.id}-${k}`, ids.workers[g.gi], grader.adapterId, grader.model,
+        w.adapterId, w.model, JSON.stringify([{ adapterId: w.adapterId, model: w.model }]),
+        `showcase${f.n}base`, `showcase${f.n}head`, 3 + (f.n % 7), 40 + (f.n % 90), 8 + (f.n % 30),
+        JSON.stringify(g.scores), g.composite, `Reviewed against the rubric; ${g.composite >= 8 ? 'no blocking findings' : 'two findings worth a follow-up'}.`,
+        f.ended + 60_000, f.ended + 4 * 60_000
+      )
+    })
     const q = series[f.wi]
     const before = q.at
     q.at += q.step * 0.4 * (0.7 + (f.n % 4) * 0.2)
@@ -385,6 +477,15 @@ async function launch() {
       socket.once('error', reject)
     })
     await until(() => evaluate("!!document.querySelector('.dot--ok')"), 'the daemon to connect', 45_000)
+    // ⛔ **A clean profile has never completed the welcome tour**, and this runs on nothing else: the
+    // scratch data directory is made fresh on every invocation. The tour opens as a modal shade over
+    // the whole window, so without this every scene captures the tour rather than the app — measured
+    // 2026-09-15, when it landed in all ten images at once. `test/ui.test.mjs` dismisses it the same
+    // way and for the same reason; this is the second harness that needed it.
+    await evaluate(
+      `[...document.querySelectorAll('.welcome-actions button')].find(b => /Skip tour/i.test(b.textContent))?.click()`
+    )
+    await until(() => evaluate('!document.querySelector(".welcome-tour")'), 'the welcome tour to close', 15_000)
   } catch (error) {
     await close()
     throw error
@@ -415,6 +516,45 @@ async function launch() {
     if (!ok) throw new Error(`no field matches ${selector}`)
     await wait(700)
   }
+  /**
+   * A capture on the product backdrop: brand gradient, two corner glows, a rounded drop-shadowed
+   * frame, and a hairline edge. ⛔ On a `<canvas>` in the renderer rather than in node, because the
+   * alternative is an image dependency for six lines of drawing — the CSP already allows
+   * `img-src data:`, which is the whole reason this is possible here.
+   *
+   * ⚠️ **Capped at `MAX_SHOT_WIDTH`.** The window is captured at this display's DPR, which on a
+   * 1440-wide window is 2,160 device pixels before the padding — and ten of those are 11 MB of PNG
+   * in a repository, on a README that has to load over a phone connection. Downscaled after the
+   * frame is drawn so the frame scales with it, and only ever *down*.
+   */
+  const composite = async (data) =>
+    evaluate(`(async () => {
+      const img = new Image(); img.src = 'data:image/png;base64,${data}'; await img.decode();
+      const pad = Math.round(img.width * 0.06), r = 18;
+      const W = img.width + pad * 2, H = img.height + pad * 2;
+      const c = document.createElement('canvas'); c.width = W; c.height = H;
+      const ctx = c.getContext('2d');
+      const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#0f1218'); g.addColorStop(1, '#1a2036');
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+      const glow = (x, y, rad, color) => { const rg = ctx.createRadialGradient(x, y, 0, x, y, rad); rg.addColorStop(0, color); rg.addColorStop(1, 'rgba(0,0,0,0)'); ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H) };
+      glow(0, 0, W * 0.65, 'rgba(122,162,247,0.28)'); glow(W, H, W * 0.6, 'rgba(240,163,94,0.22)');
+      ctx.save(); ctx.shadowColor = 'rgba(0,0,0,0.65)'; ctx.shadowBlur = pad * 0.7; ctx.shadowOffsetY = pad * 0.25;
+      ctx.fillStyle = '#0e1013'; ctx.beginPath(); ctx.roundRect(pad, pad, img.width, img.height, r); ctx.fill(); ctx.restore();
+      ctx.save(); ctx.beginPath(); ctx.roundRect(pad, pad, img.width, img.height, r); ctx.clip(); ctx.drawImage(img, pad, pad); ctx.restore();
+      ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.roundRect(pad + 0.75, pad + 0.75, img.width - 1.5, img.height - 1.5, r); ctx.stroke();
+      const max = ${MAX_SHOT_WIDTH};
+      // ⚠️ A tenth of slack, because resampling is not free in either direction: an element capture
+      // a few per cent over the cap came back *softer and larger* than its original, the noise a
+      // non-integer scale adds costing more bytes than the pixels it removed.
+      if (W <= max * 1.1) return c.toDataURL('image/png').split(',')[1];
+      const out = document.createElement('canvas');
+      out.width = max; out.height = Math.round((H * max) / W);
+      const o = out.getContext('2d'); o.imageSmoothingQuality = 'high';
+      o.drawImage(c, 0, 0, out.width, out.height);
+      return out.toDataURL('image/png').split(',')[1];
+    })()`)
+
   /** Capture the window; with `focus`, scrolled so that element sits at the top of the pane. */
   const shot = async (name, focus = null) => {
     await evaluate(
@@ -425,8 +565,8 @@ async function launch() {
     await wait(400)
     const reply = await send('Page.captureScreenshot', { format: 'png' }, 20_000)
     if (!reply.result?.data) throw new Error(`no image data for ${name}: ${JSON.stringify(reply.error ?? reply)}`)
-    const composite = await evaluate(`(async () => { const img = new Image(); img.src = 'data:image/png;base64,${reply.result.data}'; await img.decode(); const pad = Math.round(img.width * 0.06), r = 18, W = img.width + pad * 2, H = img.height + pad * 2; const c = document.createElement('canvas'); c.width = W; c.height = H; const ctx = c.getContext('2d'); const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#0f1218'); g.addColorStop(1, '#1a2036'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); const glow = (x,y,rad,color) => { const rg = ctx.createRadialGradient(x,y,0,x,y,rad); rg.addColorStop(0,color); rg.addColorStop(1,'rgba(0,0,0,0)'); ctx.fillStyle=rg; ctx.fillRect(0,0,W,H) }; glow(0,0,W*.65,'rgba(122,162,247,.28)'); glow(W,H,W*.6,'rgba(240,163,94,.22)'); ctx.save(); ctx.shadowColor='rgba(0,0,0,.65)'; ctx.shadowBlur=pad*.7; ctx.shadowOffsetY=pad*.25; ctx.fillStyle='#0e1013'; ctx.beginPath(); ctx.roundRect(pad,pad,img.width,img.height,r); ctx.fill(); ctx.restore(); ctx.save(); ctx.beginPath(); ctx.roundRect(pad,pad,img.width,img.height,r); ctx.clip(); ctx.drawImage(img,pad,pad); ctx.restore(); ctx.strokeStyle='rgba(255,255,255,.10)'; ctx.lineWidth=1.5; ctx.beginPath(); ctx.roundRect(pad+.75,pad+.75,img.width-1.5,img.height-1.5,r); ctx.stroke(); return c.toDataURL('image/png').split(',')[1] })()`)
-    writeFileSync(join(ASSETS, `${name}.png`), Buffer.from(composite, 'base64'))
+    const framed = await composite(reply.result.data)
+    writeFileSync(join(ASSETS, `${name}.png`), Buffer.from(framed, 'base64'))
     console.log(`wrote docs/images/${name}.png`)
   }
 
@@ -437,8 +577,8 @@ async function launch() {
     if (!box) throw new Error(`no element matches ${selector}`)
     const reply = await send('Page.captureScreenshot', { format: 'png', clip: { ...box, scale: 1 } }, 20_000)
     if (!reply.result?.data) throw new Error(`no image data for ${name}`)
-    const composite = await evaluate(`(async () => { const img = new Image(); img.src='data:image/png;base64,${reply.result.data}'; await img.decode(); const p=Math.round(img.width*.06), W=img.width+p*2,H=img.height+p*2,c=document.createElement('canvas'); c.width=W;c.height=H;const x=c.getContext('2d'),g=x.createLinearGradient(0,0,W,H);g.addColorStop(0,'#0f1218');g.addColorStop(1,'#1a2036');x.fillStyle=g;x.fillRect(0,0,W,H);x.save();x.shadowColor='rgba(0,0,0,.65)';x.shadowBlur=p*.7;x.fillStyle='#0e1013';x.beginPath();x.roundRect(p,p,img.width,img.height,18);x.fill();x.restore();x.save();x.beginPath();x.roundRect(p,p,img.width,img.height,18);x.clip();x.drawImage(img,p,p);x.restore();return c.toDataURL('image/png').split(',')[1] })()`)
-    writeFileSync(join(ASSETS, `${name}.png`), Buffer.from(composite, 'base64'))
+    const framed = await composite(reply.result.data)
+    writeFileSync(join(ASSETS, `${name}.png`), Buffer.from(framed, 'base64'))
   }
 
   return {
@@ -464,6 +604,12 @@ const DEBATE_PROMPT = 'Should the catalogue move from REST to GraphQL for the mo
 const SCENES = {
   dashboard: async (ui) => {
     await ui.nav('Dashboard')
+    // ⚠️ Five accounts do not fit the fleet strip at this window width, and a hero image with the
+    // fifth card half off the right edge says the app cannot show your fleet. `Narrow` is the app's
+    // own answer to exactly that; the button's label is what it will switch *to*.
+    await ui.evaluate(
+      `[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Narrow')?.click()`
+    )
     await wait(800)
     await ui.shot('dashboard')
   },
@@ -504,7 +650,9 @@ const SCENES = {
   thread: async (ui) => {
     await ui.nav('storefront')
     await ui.tab('Tasks')
-    await ui.clickText('.tbl-title', 'Polish the first-run')
+    // ⚠️ A prefix of TASKS[0].title, and it has to stay one: a scene is a click path through the
+    // real UI, so renaming the fictional task without renaming this is a run that dies here.
+    await ui.clickText('.tbl-title', 'Polish the storefront first-run')
     await wait(1200)
     await ui.shot('thread')
   },

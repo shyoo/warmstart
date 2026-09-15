@@ -198,3 +198,94 @@ describe('the sentence the agent is given', () => {
     expect(attachments.attachmentDirs(bound)).toHaveLength(1)
   })
 })
+
+/**
+ * ⭐ The t461 regression, in the shape it actually failed: the grant was on the *planner*, the work
+ * was on the piece, and the piece was spawned into a sandbox that had never heard of the directory.
+ */
+describe('directories granted to a task and to what it spawns', () => {
+  it('grants a folder attached to the task itself', () => {
+    const task = tasks.createTask({ title: 'Edit the site', status: 'draft' })
+    const folder = join(dir, 'granted-own')
+    mkdirSync(folder, { recursive: true })
+    const made = attachments.createFolderAttachment(folder)
+    tasks.addMessage(task.id, 'human', 'here it is', null, [made.id])
+
+    expect(attachments.grantedDirsFor(task.id)).toEqual([folder])
+  })
+
+  /**
+   * ⛔ The measured failure. Nothing about the child names the directory, so this is the only place
+   * the grant can come from — and without it codex reports the work done and the site untouched.
+   */
+  it('grants a child the folder its parent was given', () => {
+    const planner = tasks.createTask({ title: 'Plan the site work', status: 'draft' })
+    const folder = join(dir, 'granted-inherited')
+    mkdirSync(folder, { recursive: true })
+    const made = attachments.createFolderAttachment(folder)
+    tasks.addMessage(planner.id, 'human', 'the site lives here', null, [made.id])
+
+    const piece = tasks.createTask({
+      title: 'Do the site work',
+      status: 'draft',
+      parentTaskId: planner.id
+    })
+    const grandchild = tasks.createTask({
+      title: 'A piece of the piece',
+      status: 'draft',
+      parentTaskId: piece.id
+    })
+
+    expect(attachments.grantedDirsFor(piece.id)).toEqual([folder])
+    expect(attachments.grantedDirsFor(grandchild.id)).toEqual([folder])
+  })
+
+  /** ⛔ Downwards only. A parent may not reach into a directory only its child was given. */
+  it('does not carry a child’s grant back up to its parent', () => {
+    const planner = tasks.createTask({ title: 'Plan without a folder', status: 'draft' })
+    const piece = tasks.createTask({ title: 'A piece with one', status: 'draft', parentTaskId: planner.id })
+    const folder = join(dir, 'granted-child-only')
+    mkdirSync(folder, { recursive: true })
+    const made = attachments.createFolderAttachment(folder)
+    tasks.addMessage(piece.id, 'human', 'mine', null, [made.id])
+
+    expect(attachments.grantedDirsFor(piece.id)).toEqual([folder])
+    expect(attachments.grantedDirsFor(planner.id)).toEqual([])
+  })
+
+  /**
+   * ⛔ Unlike an image, which travels only while its message is undelivered. A grant that expired
+   * with the first run would take write access away on every run after it.
+   */
+  it('keeps granting after the message that carried it has been delivered', () => {
+    const task = tasks.createTask({ title: 'Two runs', status: 'draft' })
+    const folder = join(dir, 'granted-twice')
+    mkdirSync(folder, { recursive: true })
+    const made = attachments.createFolderAttachment(folder)
+    const messageId = tasks.addMessage(task.id, 'human', 'once', null, [made.id])
+
+    tasks.markDelivered([messageId])
+    expect(attachments.grantedDirsFor(task.id)).toEqual([folder])
+  })
+
+  /** An image's directory is the attachment store, and it is granted by the message, not by this. */
+  it('grants nothing for an image', () => {
+    const task = tasks.createTask({ title: 'Just a screenshot', status: 'draft' })
+    const made = attachments.createAttachment(PNG, 'image/png')
+    tasks.addMessage(task.id, 'human', 'look', null, [made.id])
+
+    expect(attachments.grantedDirsFor(task.id)).toEqual([])
+  })
+
+  /** ⛔ A flag naming a directory that is gone is an argument error, not a grant. */
+  it('drops a grant whose folder has since been removed', () => {
+    const task = tasks.createTask({ title: 'A folder that moved', status: 'draft' })
+    const folder = join(dir, 'granted-then-gone')
+    mkdirSync(folder, { recursive: true })
+    const made = attachments.createFolderAttachment(folder)
+    tasks.addMessage(task.id, 'human', 'here', null, [made.id])
+    rmSync(folder, { recursive: true, force: true })
+
+    expect(attachments.grantedDirsFor(task.id)).toEqual([])
+  })
+})

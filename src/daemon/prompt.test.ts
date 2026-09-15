@@ -874,6 +874,46 @@ describe('an attachment and the message it belongs to', () => {
     expect(built.attachments).toEqual([])
     expect(built.text).not.toContain('Attached context')
   })
+
+  /**
+   * ⭐ t461. The argv half of an inherited grant is invisible to the agent, so a piece that was
+   * never told about the directory does not go and look at it — which is the same outcome as not
+   * granting it. ⛔ Cold prompts only, for `coldStartBlock`'s reason.
+   */
+  it('names a directory the task inherited from its parent, once', () => {
+    const folder = join(dir, 'prompt-granted')
+    mkdirSync(folder, { recursive: true })
+    const grant = attachments.createFolderAttachment(folder)
+    const planner = tasks.createTask({ title: 'Plan it', status: 'ready', attachmentIds: [grant.id] })
+    const piece = tasks.createTask({
+      title: 'Edit the other repository',
+      status: 'ready',
+      parentTaskId: planner.id
+    })
+
+    const cold = prompt.promptFor(piece, 'openai-compatible', false, { markDelivered: true })
+    expect(cold.text).toContain(folder)
+    expect(cold.text).toContain('Directories outside this workspace you have been granted')
+
+    // ⚠️ And not again into the session that was already told. The grant on the argv does not lapse;
+    // the sentence about it is worth exactly one telling, like the orientation block above it.
+    const warm = prompt.promptFor(tasks.requireTask(piece.id), 'openai-compatible', true, {
+      markDelivered: true
+    })
+    expect(warm.text).not.toContain('Directories outside this workspace')
+  })
+
+  /** ⚠️ The folder is already in the attachment sentence on the task that holds it; once is enough. */
+  it('does not repeat a folder the attachment sentence already named', () => {
+    const folder = join(dir, 'prompt-granted-own')
+    mkdirSync(folder, { recursive: true })
+    const grant = attachments.createFolderAttachment(folder)
+    const task = tasks.createTask({ title: 'Mine', status: 'ready', attachmentIds: [grant.id] })
+
+    const built = prompt.promptFor(task, 'openai-compatible', false, { markDelivered: false })
+    expect(built.text).toContain('Attached context:')
+    expect(built.text).not.toContain('Directories outside this workspace')
+  })
 })
 
 /**

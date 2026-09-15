@@ -92,6 +92,21 @@ export interface SpawnRequest {
    */
   attachments?: Attachment[] | undefined
   /**
+   * Directories outside `cwd` that this session's operator has explicitly granted it.
+   *
+   * ⛔ **Resolved by the daemon, never by an adapter.** These come from the folder attachments on
+   * this task and on its ancestors (`grantedDirsFor`), already filtered to absolute paths that are
+   * directories on this disk right now — an adapter's only job is to spell them as its CLI's grant
+   * flag. ⚠️ Not the same thing as `attachments`: a folder grant survives the message that carried
+   * it and is inherited by a child task, because it costs no tokens and is the only reason the
+   * agent can write there at all.
+   *
+   * ⚠️ A request to a CLI, not a boundary — the caveat `grants.ts` opens with applies here too. An
+   * adapter that sandboxes nothing gets nothing new by reading this, which is why the declarative
+   * adapters do not.
+   */
+  grantDirs?: string[] | undefined
+  /**
    * Stream this turn as it is written, rather than a message at a time.
    *
    * ⛔ Set only when the adapter declares `streamsPartialOutput` **and** the operator asked for it

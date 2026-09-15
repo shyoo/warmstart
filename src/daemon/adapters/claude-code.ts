@@ -14,7 +14,7 @@ import type {
   SpendSnapshot
 } from '@shared/protocol.js'
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
-import { workspaceGrants } from './grants.js'
+import { uniquePaths, workspaceGrants } from './grants.js'
 import {
   asRecord,
   num,
@@ -1112,8 +1112,16 @@ export const claudeCode: AgentAdapter = {
     // platform — `--add-dir` on this CLI *widens tool access* rather than naming a workspace
     // (`docs/adapters.md`), so the cost is a wider grant and the benefit is that the same worktree
     // stops behaving differently depending on which account drew it.
-    for (const dir of workspaceGrants(req.cwd)) args.push('--add-dir', dir)
-    for (const dir of attachmentDirs(req.attachments ?? [])) args.push('--add-dir', dir)
+    //
+    // ⭐ `req.grantDirs` is the operator's own list — the folders attached to this task or to one of
+    // its ancestors (`grantedDirsFor`). It is the same flag because it is the same question: a
+    // directory the work genuinely needs and that nothing about the workspace would reveal.
+    const granted = uniquePaths([
+      ...workspaceGrants(req.cwd),
+      ...(req.grantDirs ?? []),
+      ...attachmentDirs(req.attachments ?? [])
+    ])
+    for (const dir of granted) args.push('--add-dir', dir)
     if (req.mcpConfig) {
       args.push('--mcp-config', req.mcpConfig)
       if (req.transport === 'stream') {

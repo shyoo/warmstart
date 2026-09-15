@@ -89,8 +89,22 @@ startup reaps every `running` task whose daemon died. ⛔ Each launch ends with 
 a wait on the lock file's pid: `Browser.close` alone leaves orchestratord running, and six of them
 were found holding six scratch databases before that was understood.
 
-Every capture is composited in the renderer onto a dark brand-gradient backdrop. The chart scenes
-capture their elements with padded DevTools clips, so the statistics and trade-off charts do not clip.
+Every capture is composited in the renderer onto a dark brand-gradient backdrop and written no wider
+than `MAX_SHOT_WIDTH` (1,800 px including the padding); the chart scenes capture their elements with
+padded DevTools clips, so the statistics and trade-off charts do not clip. The ten files total
+**7.5 MB** (2026-09-15) — the backdrop's gradients and glows are what PNG compresses worst, and the
+cap roughly halves what the raw DPR-1.5 capture would cost.
+
+⛔ **A scene is a click path, and three things have silently emptied one.** The scratch profile is
+always *clean*, so the welcome tour opens as a modal shade over every capture unless it is dismissed
+first — exactly what `test/ui.test.mjs` does, and this was the second harness to need it (it landed
+in all ten images at once, 2026-09-15). A fictional task renamed without renaming the `clickText`
+prefix that opens it kills the `thread` scene outright. And **`tradeoffs` draws only when a model has
+all three axes measured**: quality is folded from `quality_reviews` rows, not from
+`tasks.quality_review_score`, so seeding the headline without the reviews behind it produced a
+section that did not exist. ⚠️ Anything jittered by `n % WORKERS.length` is constant per worker,
+because a history task's worker *is* `i % WORKERS.length` — the seeded grades were identical within
+each model and the quality whiskers drew a point.
 
 ⚠️ **Type-aware lint rules are on.** They cost a TypeScript program per run and are the only rules
 that can see the mistakes this codebase actually makes — a floating promise in a process-spawning

@@ -221,8 +221,19 @@ why this is a gate in `sendPrompt` rather than a courtesy each adapter keeps for
 died that way would read as the agent having failed the task. ⚠️ It replaced `multimodalInput`,
 which was `true` on all three built-ins, read by nothing, and wrong about one of them. ⛔ **The
 absolute path goes into the prompt text on every adapter regardless** — all three also receive the
-attachment directory through `--add-dir`, so a sandbox is allowed to open the path it was told. A
-selected folder itself is granted this way; on Antigravity that is the only channel for images too.
+attachment directory through `--add-dir`, so a sandbox is allowed to open the path it was told. On
+Antigravity that is the only channel for images too.
+
+**Directory grant** — *a folder an operator attached, and every task downstream of it.* ⛔ **A
+folder attachment is not a message, and the two have opposite lifetimes.** An image travels with the
+message that carried it and stops when that message is delivered, because replaying it pays for the
+picture again. A folder carries no bytes: it becomes `--add-dir` on the argv, which is the only
+reason the directory is writable at all. So `grantedDirsFor` (`daemon/attachments.ts`) resolves it on
+**every** run of the task that holds it **and of every task in its lineage** — the piece a planner
+files inherits what the planner was given, and a resumed or forked conversation keeps it. ⚠️ Downwards
+only, which is `narrowMandate`'s rule one storey down: inheriting a directory the parent already held
+widens nothing, and a parent never sees a grant only its child was given. ⚠️ Filtered to what is a
+directory on this disk at spawn time, because codex refuses to start when `--add-dir` names nothing.
 
 **Thread** — *a task's messages*, human and agent, in the order they were said. ⛔ **Not a
 conversation.** A conversation is the agent's own session — it has a vendor id, you resume it with

@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, extname, join } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join } from 'node:path'
 import type { Attachment } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
+import { samePath } from './fspath.js'
 import { log } from './log.js'
 import { paths } from './paths.js'
 
@@ -24,6 +25,15 @@ const MAX_BYTES = 10 * 1024 * 1024
 
 /** Per message. Refused at the door with a real reason, never silently truncated. */
 export const MAX_PER_MESSAGE = 8
+
+/**
+ * How far up a lineage `grantedDirsFor` will walk.
+ *
+ * ⚠️ A backstop, not the policy. `mandate.maxLineageDepth` is what actually bounds a tree (3 from
+ * `ROOT_MANDATE`); this exists so that a `parent_task_id` cycle written by something other than
+ * `createTask` cannot turn a per-spawn query into a loop.
+ */
+const MAX_GRANT_DEPTH = 16
 
 /** An unbound upload older than this was pasted into a form nobody ever submitted. */
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000
@@ -320,6 +330,66 @@ export function attachmentDirs(attachments: Attachment[]): string[] {
   const seen = new Set<string>()
   for (const a of attachments) seen.add(a.kind === 'folder' ? a.file : dirname(a.file))
   return [...seen]
+}
+
+/**
+ * Every directory a task's agent may reach outside its workspace, including the ones its ancestors
+ * were given.
+ *
+ * ⛔ **A folder attachment is a grant, not a message, and the two have opposite lifetimes.** An
+ * image travels with the message that carried it — replaying it on every run would pay for the
+ * picture again — and `buildPrompt` follows that rule for everything on a message. A folder carries
+ * no bytes and no tokens: it becomes `--add-dir` on the argv, which is the only thing that makes the
+ * directory writable at all. Scoping it to one undelivered message means the second run of the same
+ * task silently loses write access to a directory the first run had.
+ *
+ * ⛔ **And a child inherits it.** Measured on t460 → t461, 2026-09-15: the operator attached
+ * `C:\Dev\warmstart-site` to the *planner*, which filed one piece whose instruction was to edit that
+ * repository. The piece was a new task with no attachments of its own, so codex was spawned in its
+ * worktree under `--sandbox workspace-write` with no grant for the site, and reported back
+ * *"separate-site changes were blocked by filesystem permissions"* after doing the rest of the work.
+ * Nothing was wrong with the CLI, the plan or the piece — the grant simply did not travel the one
+ * hop the plan itself had created.
+ *
+ * ⚠️ **Inheriting downwards never widens anything**, which is the test `narrowMandate` sets for a
+ * child: the parent held this directory, and a piece of the parent's own work is the only thing that
+ * can be on the far end of the edge. Bounded by `mandate.maxLineageDepth` in practice and by
+ * `MAX_GRANT_DEPTH` here regardless, so a cycle in bad data cannot spin.
+ *
+ * ⚠️ Filtered to what is on disk *now*. A grant naming a directory that has been moved or deleted
+ * would be handed to a CLI as a flag, and codex refuses to start when `--add-dir` names nothing.
+ */
+export function grantedDirsFor(taskId: string): string[] {
+  const found = rows<{ file: string }>(
+    db()
+      .prepare(
+        `with recursive lineage(id, depth) as (
+           select ?, 0
+           union all
+           select t.parent_task_id, l.depth + 1 from tasks t
+             join lineage l on t.id = l.id
+            where t.parent_task_id is not null and l.depth < ?
+         )
+         select distinct a.file as file from attachments a
+           join lineage l on a.task_id = l.id
+          where a.kind = 'folder'
+          order by a.file`
+      )
+      .all(taskId, MAX_GRANT_DEPTH)
+  )
+  const out: string[] = []
+  for (const { file } of found) {
+    if (!isAbsolute(file)) continue
+    try {
+      if (!statSync(file).isDirectory()) continue
+    } catch {
+      // Moved, deleted, or on a drive that is not mounted. Naming it would be worse than omitting it.
+      log.warn(`granted directory '${file}' is no longer a directory; not granting it`)
+      continue
+    }
+    if (!out.some((seen) => samePath(seen, file))) out.push(file)
+  }
+  return out
 }
 
 /** Human-facing size, for the sentence the agent is given. */

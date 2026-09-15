@@ -14,6 +14,7 @@ import type {
 } from '@shared/protocol.js'
 import { sessionEnded } from '@shared/protocol.js'
 import type { Attachment, CacheMove } from '@shared/tasks.js'
+import { grantedDirsFor } from './attachments.js'
 import { db, row, rows } from './db.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
@@ -802,6 +803,36 @@ export interface SpawnOptions {
    * why `promptFor` is called before `spawnSession` rather than after it.
    */
   attachments?: Attachment[] | undefined
+  /**
+   * Directories outside `cwd` this session may write to, because an operator said so.
+   *
+   * ⛔ **State it when you know the task; otherwise it is inherited from the conversation.** A
+   * dispatch names the task, so `dispatch` resolves `grantedDirsFor(task.id)` and passes it here. A
+   * revive, a compaction and a forked terminal name only a session — and a grant that evaporated the
+   * first time a conversation was resumed would be a grant that works until the cache clock touches
+   * it, which is the worst of both. `grantedDirsForSession` below closes that by reading the task
+   * back off the session's own latest run.
+   *
+   * ⚠️ An empty array is a different statement from absent: it says *this caller looked and there
+   * are none*, and suppresses the inheritance below.
+   */
+  grantDirs?: string[] | undefined
+}
+
+/**
+ * The directories granted to whatever task last ran in this conversation.
+ *
+ * ⚠️ Raw SQL rather than `lastRunForSession`: `tasks.ts` imports this module, so reading the run
+ * back through it would close an import cycle for one column.
+ */
+function grantedDirsForSession(sessionId: string | null): string[] {
+  if (!sessionId) return []
+  const found = row<{ task_id: string }>(
+    db()
+      .prepare('select task_id from runs where session_id = ? order by started_at desc limit 1')
+      .get(sessionId)
+  )
+  return found?.task_id ? grantedDirsFor(found.task_id) : []
 }
 
 /**
@@ -988,6 +1019,9 @@ export function spawnSession(opts: SpawnOptions): Session {
     mcpConfig,
     argv: opts.argv,
     attachments: opts.attachments,
+    // ⛔ The caller's list where it had one, the conversation's where it did not. See
+    // `SpawnOptions.grantDirs` for why a resume may not be allowed to quietly drop a grant.
+    grantDirs: opts.grantDirs ?? grantedDirsForSession(resuming?.id ?? forking?.id ?? null),
     // ⛔ The vendor's handle where it gave us one, ours where it took ours. `mintsSessionId` is
     // exactly the question of which, and getting it backwards means handing a CLI an id it has never
     // heard of - which resumes nothing and says nothing about it.
