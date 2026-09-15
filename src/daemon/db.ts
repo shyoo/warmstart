@@ -1949,6 +1949,27 @@ const MIGRATIONS: Migration[] = [
       where task_id is null and trigger = 'clock'
         and exists (select 1 from runs where session_id = compactions.session_id);
     `)
+  },
+  // 73 - the Quality Review page's own index, so its scan of every finished task is a seek, not a sort.
+  //
+  // ⛔ **Measured, not guessed** (t453): every read `quality.ts` runs to draw or page the review
+  // queue — `queueRows`, `reviewCounts`, `ungradedTasks`, `batchCandidates` — filters `tasks` by
+  // `status = 'completed'` and orders by `updated_at desc`. `tasks_status` (migration 20) covers the
+  // filter but not the order, so SQLite fell back to `USE TEMP B-TREE FOR ORDER BY` over every
+  // matching row; `explain query plan` against 8,000 seeded rows confirmed both the sort step and
+  // its disappearance once this index exists. Partial on `deleted_at is null` because that is the
+  // one predicate every one of those callers shares; `stats_excluded` is not, since a few `n = 0`
+  // counts want to see excluded rows too, so it stays a post-filter.
+  //
+  // ⚠️ This was never the loading time's largest cost — see the N+1 fix in `tasks.ts`
+  // (`getTasksByIds`) and `reviewQueue`'s call site, landed in the same commit — but it is real, it
+  // compounds as the fleet's task history grows, and it costs nothing this table wasn't already
+  // paying to maintain.
+  (conn) => {
+    conn.exec(`
+      create index if not exists tasks_review_queue on tasks(status, updated_at desc)
+        where deleted_at is null;
+    `)
   }
 ]
 

@@ -18,6 +18,15 @@ tag now builds both platforms.
 
 ## Closed in this cleanup
 
+- **The Quality Review page's slow load was an N+1 query, not a missing index (t453, 2026-09-15).**
+  `reviewQueue` called `getTask` once per finished task (up to 1,000, every 3s poll); `getTask` runs
+  `TASK_SELECT`'s five correlated subqueries plus its own single-row `timingForTasks` call, so the
+  batching that function exists for never engaged. `getTasksByIds` (`tasks.ts`) fetches the whole page
+  in a bounded number of queries; `reviewQueue`/`batchCandidates` now use it. ⭐ Migration 73 also adds
+  the index the report asked about — `tasks_status` covered `status` but not `order by updated_at
+  desc`, so those reads sorted with a temp b-tree — a real but smaller win, confirmed with `explain
+  query plan` at 8,000 synthetic rows, not the real fleet.
+
 - **Active child processes defer idle turn parking, completion detects resting sessions, and Decide offers Land (t452, 2026-09-15).**
   Claude Code waiting on background tests (`test:all` in t451) ended its turn without `task_complete`; the watchdog previously
   checked elapsed time alone (>3m) and parked the task at `awaiting_human` while tests were still burning CPU under `session.pid`.
@@ -100,15 +109,9 @@ tag now builds both platforms.
   runtime in one line; `scripts/build-mac.sh` and the release workflow now read the bundle back with
   `codesign`. ✅ The owner's Mac built it **signed with the hardened runtime** (electron-builder
   26.16.1); not notarised, nothing yet run under it. [`docs/development.md`](docs/development.md) §3.
-- **Muse could not grade anything, and the app would not say why (t436, 2026-09-14).** Muse Code 1.1.1 exits 1 against this repo's `.codex` symlink, which was a seven-byte **file** on a `core.symlinks=false` checkout rather than a directory; `.codex` is now local-only (`scripts/link-agent-skills.mjs`, gitignored, junction on Windows). ⛔ The second half generalises: a `stream` session's non-protocol stderr was dropped by `StreamParser`, so both the reviewer and `onSessionExit` reported an unexplained death; `sessionDiagnostics` keeps a bounded tail and both now quote it.
-- **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).** The
-  workers table's reorder arrows could not be clicked (order cell and worker cell shared one grid
-  area; now `position: relative; z-index: 1`, caught only by `elementFromPoint` since `.click()`
-  bypasses hit-testing — [`docs/testing.md`](docs/testing.md) §3); a sign-in run while driving
-  another computer opened the vendor's OAuth browser on *that* screen (`SignInLocationWarning` now
-  names the machine); a host taking work could sleep mid-run (`preventSleep`, default on, holds a
-  `powerSaveBlocker`). None of the three driven in the packaged app.
-- **t408–t436, landed and documented in docs/ (2026-09-13–14)** — probe PTY answers, live quota probe, remote settings fixes, CI table checks, Diff pane, split Session TUI.
+- **t408–t436, landed and documented in docs/ (2026-09-13–14)** — probe PTY answers, live quota probe,
+  remote settings fixes (reorder arrows, sign-in location, sleep prevention), Muse's `.codex` symlink
+  and dropped-stderr fixes, CI table checks, Diff pane, split Session TUI.
 
 ## Remaining work — ordered by payoff
 

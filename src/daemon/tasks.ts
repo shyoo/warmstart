@@ -533,6 +533,28 @@ export function getTask(id: string): Task | null {
   return r ? (toTasks([r])[0] ?? null) : null
 }
 
+/**
+ * `getTask`, for a whole list, in a bounded number of queries rather than one per id.
+ *
+ * ⛔ **Exists because a caller looped `getTask` over a page of ids.** Each call re-runs
+ * `TASK_SELECT`'s five correlated subqueries *and* its own single-id `timingForTasks` — the batching
+ * `toTasks` exists for never engages when it is handed one row at a time. `quality.ts`'s review queue
+ * did exactly this over every finished task on every 3s poll; this is the batched replacement.
+ */
+export function getTasksByIds(ids: string[]): Map<string, Task> {
+  const out = new Map<string, Task>()
+  const unique = Array.from(new Set(ids))
+  if (unique.length === 0) return out
+  const found: TaskRow[] = []
+  for (let i = 0; i < unique.length; i += 400) {
+    const chunk = unique.slice(i, i + 400)
+    const marks = chunk.map(() => '?').join(', ')
+    found.push(...rows<TaskRow>(db().prepare(`${TASK_SELECT} where t.id in (${marks})`).all(...chunk)))
+  }
+  for (const task of toTasks(found)) out.set(task.id, task)
+  return out
+}
+
 export function requireTask(id: string): Task {
   const t = getTask(id)
   if (!t) throw new Error(`no task '${id}'`)

@@ -18,7 +18,7 @@ import type {
 import { db, rows } from './db.js'
 import { adapter, adapterLabels } from './adapters/index.js'
 import { pendingReviews } from './review.js'
-import { getTask } from './tasks.js'
+import { getTasksByIds } from './tasks.js'
 import type { Task } from '@shared/tasks.js'
 import { defaultGradingModel, listWorkers } from './workers.js'
 import { hasBatchReviewer, reviewRange, reviewerAvailability } from './reviewer.js'
@@ -492,11 +492,15 @@ export async function reviewQueue(
   const counts = reviewCounts()
 
   const allFinished = queueRows('all', 1000, 0)
+  // ⛔ One batched fetch, not `getTask` per row: `TASK_SELECT`'s correlated subqueries and its
+  // timing lookup are each designed to run once for the whole page, and calling `getTask` in this
+  // loop paid for both of them per task instead — up to 1000 times on every poll. See `getTasksByIds`.
+  const tasksById = getTasksByIds(allFinished.map((r) => r.id))
   const gradableMap = new Map<string, { ok: boolean; reason: string }>()
 
   await Promise.all(
     allFinished.map(async (r) => {
-      const task = getTask(r.id)
+      const task = tasksById.get(r.id) ?? null
       const gradable = task
         ? await isTaskGradable(task)
         : { ok: false, reason: 'this task is no longer readable' }
@@ -575,10 +579,11 @@ export async function batchCandidates(threshold: number, count: number | null): 
       .all(under)
   )
 
+  const tasksById = getTasksByIds(candidateRows.map((r) => r.id))
   const result: UngradedTask[] = []
   for (const r of candidateRows) {
     if (result.length >= targetCount) break
-    const task = getTask(r.id)
+    const task = tasksById.get(r.id) ?? null
     if (!task) continue
     const gradable = await isTaskGradable(task)
     if (!gradable.ok) continue
