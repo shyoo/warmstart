@@ -29,8 +29,15 @@ tag now builds both platforms.
   when the block spelled it `Path` — a real regression from the macOS PATH work, masked in the
   installed app by main's re-spelling. `pathKey`/`withAugmentedPath` fix it; all four pinned with
   real git in `worktrees.test.ts`, `landing.test.ts`, `muse-code.test.ts`, `which.test.ts`.
-  ⏭ **The trunk config was repaired by hand; deploy this build** (`scripts/deploy-local.ps1`) before
-  the next muse run, then re-land t446 and t447 from the UI — their branches are intact.
+  ⏭ **The trunk config was repaired by hand; deploy this build** (`deploy-local.sh`) before
+  the next muse run, then re-land t447 from the UI — its branch is intact. t446 lands in this commit.
+- **t445's "failed" compaction was a dead ask beside a landed one nobody could see (t446, 2026-09-14).**
+  Preemption's 17:14 `/compact` reached a mid-turn stream session as prose; the agent wrapped up
+  instead of compacting and the run ended on its own, so `park()` returned early with no verdict.
+  The clock's 17:18 retry landed at 17:21 but recorded `task_id` null and never appeared on the
+  thread. Now: clock asks name the session's latest run (migration 72 backfills eleven orphans);
+  the wrap-up posts *did not land* while its ask is still outstanding; a dead ask a landed sibling
+  supersedes reads *superseded*. Beside it: a `SegmentedControl` workspace group, 920px settings.
 - **The local macOS deploy launcher works through its scripts-directory symlink (t14, 2026-09-14).**
   `BASH_SOURCE` names the symlink, so repository discovery accepts both entry points; stopping never
   force-kills, and landing checks use `spawnEnv()` / `augmentPath()` so Finder-launched daemons find Homebrew tools like `npm`.
@@ -104,11 +111,8 @@ tag now builds both platforms.
   `readAntigravityIdentity`/`probeIdentity` read the OAuth token and auth email instead of a false
   `loggedIn: false` that locked the worker into `Antigravity: unknown`; the live packaged probe reads
   all 4 quota windows in 6s.
-- **t408–t425, all landed and all documented in [`docs/`](docs/README.md) (2026-09-13).** The Diff
-  pane; Claude Code's `StreamEvent.tool_use` narration and the split Session TUI; macOS worktree
-  symlink resolution and GUI-launch PATH search; task-oriented Global settings; *Later observed*
-  reconciliation; one desktop driving another's fleet; the 92% preemption guard; `sweepAcls` for a
-  dead run's DACL; **relative** pool `.git` pointers; unattended permission mode in `docs/security.md`.
+- **t408–t425, all landed and all documented in [`docs/`](docs/README.md) (2026-09-13)** — Diff
+  pane, split Session TUI, macOS worktree/PATH fixes, task-oriented Global settings, and the rest.
 
 ## Remaining work — ordered by payoff
 

@@ -1373,6 +1373,10 @@ try {
     f.saysInherited === false && (f.pills ?? []).some((p) => p.muted),
     filing
   )
+  // ⚠️ The workspace choice is a joined `.seg` button group, not a pill — but it only renders
+  // once a git project is selected, and no project exists yet at this point in the suite (the
+  // `ui project` fixture arrives later), so there is nothing to assert here. Drive it by hand
+  // with a git project selected: three segments, one pressed, Trunk filing onto the checkout.
   check(
     'draft, send and the scheduled send sit together inside the box',
     f.sendsInsideTheBox === true && f.attachmentInsideTheBox === true && f.clock === true && f.buttons?.includes('Send'),

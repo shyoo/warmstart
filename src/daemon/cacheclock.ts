@@ -1348,7 +1348,11 @@ async function executeMove(session: Session, decision: ClockDecision): Promise<v
       // ⛔ Written down *before* it is known to have worked, and that is the point: a request that
       // was never honoured is the finding, and a ledger that only recorded successes could not
       // report it. `landedAt` stays null until a boundary record arrives.
-      const run = runForSession(session.id)
+      // ⛔ The open run's task, else the last run's. Between runs there is no open run, and that
+      // is exactly when this move fires — t446's 17:18 ask on t445's idle session recorded
+      // `task_id` null and never appeared on the task's thread, while the visible preemption ask
+      // read as failed forever. The same fallback `reviveAndCompact` already uses.
+      const run = runForSession(session.id) ?? lastRunForSession(session.id)
       noteCompactionAsked({
         sessionId: session.id,
         taskId: run?.taskId ?? null,

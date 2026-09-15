@@ -362,3 +362,43 @@ describe('knowing a session is mid-compaction', () => {
     expect(compaction.compactionInFlight('11111111-1111-1111-1111-111111111111')).toBe(false)
   })
 })
+
+/**
+ * Which ask a session is still waiting on.
+ *
+ * ⛔ t446: preemption asked at 17:14:37, the run ended on its own 26s later, and the wrap-up owed
+ * the thread a verdict on *that* ask. By the time the deadline fired the clock had asked again,
+ * so "any open ask" would have blamed the wrong row — the check has to name the latest one.
+ */
+describe('the latest outstanding ask', () => {
+  const ask = (taskId: string): number =>
+    compaction.noteCompactionAsked({
+      sessionId: SESSION,
+      taskId,
+      reason: 'quota preemption',
+      preTokens: 174_732
+    })
+
+  it('is null when nothing was ever asked', () => {
+    expect(compaction.latestOpenCompactionId(SESSION)).toBeNull()
+  })
+
+  it('names the ask until its boundary lands', () => {
+    const id = ask('t446')
+    expect(compaction.latestOpenCompactionId(SESSION)).toBe(id)
+    compaction.noteCompactionLanded(SESSION, { preTokens: 174_732, durationMs: 200_000 })
+    expect(compaction.latestOpenCompactionId(SESSION)).toBeNull()
+  })
+
+  it('moves to the superseding ask, so the dead one stays silent', () => {
+    const first = ask('t446')
+    const second = ask('t446')
+    expect(compaction.latestOpenCompactionId(SESSION)).toBe(second)
+    expect(compaction.latestOpenCompactionId(SESSION)).not.toBe(first)
+  })
+
+  it('ignores asks on other sessions', () => {
+    ask('t446')
+    expect(compaction.latestOpenCompactionId('11111111-1111-1111-1111-111111111111')).toBeNull()
+  })
+})

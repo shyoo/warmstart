@@ -211,6 +211,7 @@ import {
   COMPACTION_GRACE_MS,
   compactionInFlight,
   lastCompactionLandedAt,
+  latestOpenCompactionId,
   noteCompactionAsked,
   onCompactionLanded
 } from './compaction.js'
@@ -2918,10 +2919,14 @@ async function preempt(
     ? `You have roughly ${minutes} minute(s) of window left and no more. `
     : ''
 
+  // ⛔ The row id, not just the fact of the ask. If the run ends on its own before the boundary
+  // (t446: the agent answered the `/compact` with a prose wrap-up and stopped), `park` still owes
+  // the thread a verdict on *this* ask — but only if no newer ask has since taken over the story.
+  let askId: number | null = null
   if (action === 'compact') {
     try {
       sendPrompt(session.id, '/compact', [], { housekeeping: true })
-      noteCompactionAsked({
+      askId = noteCompactionAsked({
         sessionId: session.id,
         taskId: task.id,
         reason: `quota preemption: ${because}`,
@@ -3000,7 +3005,18 @@ async function preempt(
         // took the instruction, committed, and called `task_complete` - and parking a task that has
         // since moved on would close a session somebody else's run is now holding.
         const current = run ? runsFor(task.id).find((r) => r.id === run.id) : null
-        if (run && (!current || current.endedAt)) return
+        if (run && (!current || current.endedAt)) {
+          // The pause is moot, but the compaction verdict is still owed when this ask is the one
+          // still outstanding: t446's preemption ask sat unlanded with no message because the run
+          // ended 26s after it was asked. A superseding ask owns the story instead, so stay silent.
+          if (action === 'compact' && !landed && askId !== null && latestOpenCompactionId(session.id) === askId) {
+            addMessage(task.id, 'system', 'Compaction did not land before the run ended', null, [], {
+              event: 'compaction',
+              detail: 'The run ended on its own before a compaction boundary arrived, so this compaction request remains recorded as unlanded and the session was not compacted by it.'
+            })
+          }
+          return
+        }
         if (action === 'compact' && !landed) {
           addMessage(task.id, 'system', 'Compaction did not land before the wrap-up deadline', null, [], {
             event: 'compaction',

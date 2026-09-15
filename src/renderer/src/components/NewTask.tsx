@@ -32,7 +32,7 @@ import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { candidatesFor, useTaskCandidates } from './Dependencies'
 import { effortLabel, modelLabel } from '../lib/modelname'
 import { taskLabelShort } from '../lib/taskview'
-import { Pill, PillOptions, PillSelect, type PillOption } from './Pill'
+import { Pill, PillOptions, PillSelect, SegmentedControl, type PillOption } from './Pill'
 import {
   MAX_PIECES,
   MIN_PIECES,
@@ -1241,7 +1241,7 @@ export function NewTask({
 
             <span className="composer-gap" aria-hidden="true" />
             {selectedProject?.vcs === 'git' && (
-              <PillSelect
+              <SegmentedControl
                 ariaLabel="Workspace"
                 title={
                   'Where the agent works. Worktree: a pooled checkout on a branch of its own, landed ' +
@@ -1252,11 +1252,14 @@ export function NewTask({
                 }
                 muted={workspaceMode === 'inherit'}
                 value={workspaceMode}
-                label={workspaceMode === 'inherit' ? inheritedWorkspace : workspaceMode}
                 options={[
-                  { value: 'inherit', label: `Inherit — ${WORKSPACE_MODE_LABELS[inheritedWorkspace]}`, hint: 'from the project' },
-                  { value: 'worktree', label: WORKSPACE_MODE_LABELS.worktree },
-                  { value: 'trunk', label: WORKSPACE_MODE_LABELS.trunk }
+                  {
+                    value: 'inherit',
+                    label: `Project · ${inheritedWorkspace}`,
+                    title: `Follow the project setting: ${WORKSPACE_MODE_LABELS[inheritedWorkspace]}`
+                  },
+                  { value: 'worktree', label: 'Worktree', title: WORKSPACE_MODE_LABELS.worktree },
+                  { value: 'trunk', label: 'Trunk', title: WORKSPACE_MODE_LABELS.trunk }
                 ]}
                 onChange={(v) => setWorkspaceMode(v as WorkspaceModeChoice)}
               />

@@ -266,6 +266,72 @@ export function PillSelect({
   )
 }
 
+export interface SegmentOption {
+  value: string
+  /** Short: every option is visible at once, so all of them share the composer's one line. */
+  label: string
+  title?: string
+}
+
+/**
+ * One setting out of two or three, drawn as a joined button group with the answer highlighted.
+ *
+ * ⛔ **Not a `PillSelect`.** A pill shows only the current answer and hides the rest in a menu,
+ * which is right for eight options and wrong for two: the choice the operator is really making on
+ * the new-task composer is *worktree or trunk*, and hiding one half of it behind a click is how a
+ * trunk job gets filed by someone who never saw the alternative. Every option stays visible; the
+ * selected one carries `aria-pressed` and the highlight.
+ *
+ * ⛔ No portal, no menu, no keyboard handling to duplicate: the options are buttons in a group,
+ * so Tab and Space already do the whole job.
+ */
+export function SegmentedControl({
+  ariaLabel,
+  title,
+  value,
+  options,
+  onChange,
+  muted
+}: {
+  ariaLabel: string
+  title?: string
+  value: string
+  options: SegmentOption[]
+  onChange: (value: string) => void
+  /**
+   * The shown answer is a default rather than a choice — same colour rule as `Pill`'s `muted`,
+   * and the tooltip still names the tier it came from.
+   */
+  muted?: boolean
+}): React.JSX.Element {
+  return (
+    <div
+      className={`seg${muted ? ' seg--muted' : ''}`}
+      role="group"
+      aria-label={ariaLabel}
+      title={title}
+    >
+      {options.map((opt) => {
+        const on = opt.value === value
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            className={`seg-btn${on ? ' seg-btn--on' : ''}`}
+            aria-pressed={on}
+            title={opt.title}
+            onClick={() => {
+              if (!on) onChange(opt.value)
+            }}
+          >
+            {opt.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 /**
  * The list inside a menu, with the arrow keys wired up.
  *

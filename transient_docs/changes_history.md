@@ -3825,3 +3825,47 @@ every git the agent runs, not only tests); `git config --unset` for the repair (
 poisoned repository); `worktree.useRelativePaths` in the trunk config (a config edit the flag makes
 unnecessary). The trunk's config was repaired by hand this session; t446 and t447 are still
 `awaiting_human` with their branches intact and can be re-landed as they are.
+
+## t446: the compaction that failed twice, once visibly (2026-09-14)
+
+**What the operator saw.** t445's timeline showed a compaction reading *failed*. The ledger told a
+two-row story: preemption asked `/compact` at 17:14:37 (row 88, `pre_tokens` 174,732) and the clock
+asked again at 17:18:37 (row 89, `pre_tokens` 180,273), which landed at 17:21:31 — but row 89
+carried `task_id` null, so no thread ever showed it and row 88 read as failed forever.
+
+**Why the first ask died.** The 17:14 `/compact` went down a mid-turn `stream` session
+(claude-code, Opus 5) as a user message. The agent answered with prose — *"Pausing here for the
+compact"* plus a state dump — and ended its turn; the task went `awaiting_human`, the run closed
+`completed`, and `preempt()`'s `park()` saw the run already ended and returned early: no
+*Compaction did not land* message, no `paused_quota`, session left open. This is HANDOFF R6 in the
+wild — `/compact` honoured or not is model behaviour the daemon cannot force; what it can do is
+record the verdict, which it did not.
+
+**Why the second ask was invisible.** The clock compacts between runs, when `runForSession` (open
+runs only) finds nothing. `executeMove`'s `compact` case attributed with it, so the ask recorded
+null — while `reviveAndCompact`, two screens down in the same file, already used
+`lastRunForSession`. One-word inconsistency, eleven orphaned asks fleet-wide.
+
+**Fix.** The clock attributes to the session's latest run; migration 72 backfills the eleven
+orphans (verified against a copy of the live database: row 89 lands on t445, zero nulls left).
+`preempt()` keeps its ask id and `park()` posts *Compaction did not land before the run ended*
+when the run died on its own — but only while its ask is still the latest outstanding one
+(`latestOpenCompactionId`), so a superseding ask owns the story instead of getting a stale
+obituary. The timeline reads a dead ask with a landed younger sibling as *superseded*
+(`lib/compactionstatus.ts`), because "failed" alone said the session was never compacted when it
+was — just not by that ask.
+
+**Beside it.** The new-task workspace pill (which hid trunk/worktree in a menu) is a joined
+`SegmentedControl` group — `Project · …` | `Worktree` | `Trunk` — with the answer pressed; the
+project default avoids the word "inherit" on the row, per the pill convention and the UI check
+that pins it. Global settings panels keep a 920px measure: the 1371px/120% capture showed a
+hand's width of dead space between each label and its control.
+
+**Incident inside the incident.** The agent's shell exported `GIT_DIR`/`GIT_WORK_TREE` for the
+workspace, and three full-suite runs inherited them — so `testkit`'s `git init/config/add/commit`
+ran against the worktree repo: three junk `initial` commits on the task branch, the repo config
+rewritten to the test identity, and 228 red suites all failing at `git commit`. Recovery was
+`git reset --mixed` to the base with the worktree intact (content verified identical), the branch
+ref restored, the config identity removed, and two skill files a foreign stash pop had deleted
+checked back out. Recorded in `docs/testing.md` §3: strip the workspace git env before any
+git-shelling suite, and read `git log` before `git stash`.

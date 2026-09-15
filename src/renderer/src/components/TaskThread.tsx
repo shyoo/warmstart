@@ -33,6 +33,7 @@ import { SettingSwitch } from './SettingRow'
 import { TaskQuestions } from './Questions'
 import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
+import { supersededAskIds } from '../lib/compactionstatus'
 import { codeSpans } from '../lib/codespans'
 import { bubbleSide, buildThreadItems, promptMessageId } from '../lib/threadbubble'
 import { duration, tokens, when } from '../lib/format'
@@ -278,6 +279,10 @@ function TaskDetail({
     commits = []
   } = detail
   const timeline = chronologicalTimeline(runs, compactions, reviews)
+  // ⛔ An ask that died while a newer one on the same session landed reads "failed" by default,
+  // which is what t446's preemption ask did for a day while the retry that compacted the session
+  // sat orphaned. The dead one is superseded, and says so (see `compactionstatus.ts`).
+  const superseded = useMemo(() => supersededAskIds(compactions), [compactions])
   // ⛔ Served, never compiled in — the renderer holds no cost models, and the capability flags that
   // decide whether an effort control exists at all live with the adapter, not here.
   const [modelOptions, setModelOptions] = useState<ModelOptions[]>([])
@@ -1139,6 +1144,7 @@ function TaskDetail({
                     key={`compact-${item.compaction.id}`}
                     index={idx + 1}
                     compaction={item.compaction}
+                    superseded={superseded.has(item.compaction.id)}
                     sessions={sessions}
                     fleet={fleet}
                     now={now}

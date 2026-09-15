@@ -387,18 +387,22 @@ export function ReviewRow({
 export function CompactionRow({
   index,
   compaction: c,
+  superseded = false,
   sessions,
   fleet,
   now
 }: {
   index: number
   compaction: Compaction
+  /** A newer ask on this session landed: this one died superseded, not merely failed. */
+  superseded?: boolean
   sessions: Session[]
   fleet: FleetEntry[]
   now: number
 }): React.JSX.Element {
   const landed = c.landedAt !== null
   const pending = !landed && now - (c.askedAt ?? c.ts) < 4 * 60 * 1000
+  const dead = !landed && !pending && superseded
   const saved =
     c.preTokens !== null && c.postTokens !== null && c.preTokens > c.postTokens
       ? c.preTokens - c.postTokens
@@ -443,16 +447,18 @@ export function CompactionRow({
           <span className="side-run-key">result:</span>
           <span className="side-run-val">
             <span
-              className={landed ? 'ok' : pending ? 'dim' : 'warn'}
+              className={landed ? 'ok' : pending || dead ? 'dim' : 'warn'}
               title={
                 landed
                   ? undefined
                   : pending
                     ? 'Asked for, and not yet confirmed by a compaction boundary in the transcript.'
-                    : 'Asked for and never confirmed. The session did not honour it, and the clock falls back to a handoff rather than asking a third time.'
+                    : dead
+                      ? 'Asked for and never honoured — but a newer ask on this same session did land, so the session was compacted after all, just not by this ask.'
+                      : 'Asked for and never confirmed. The session did not honour it, and the clock falls back to a handoff rather than asking a third time.'
               }
             >
-              {landed ? 'compacted' : pending ? 'asked' : 'failed'}
+              {landed ? 'compacted' : pending ? 'asked' : dead ? 'superseded' : 'failed'}
             </span>
             {c.durationMs !== null && <span className="num dim"> · {duration(c.durationMs)}</span>}
           </span>

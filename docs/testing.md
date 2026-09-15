@@ -324,6 +324,28 @@ env -u LOCALAPPDATA PATH=/c/Windows/System32:/c/Apps/nodejs:/usr/bin \
   node node_modules/vitest/vitest.mjs run <file>
 ```
 
+### A leaked `GIT_DIR` turns the git-shelling suites into commits on your branch
+
+⛔ **A sandbox that exports `GIT_DIR`/`GIT_WORK_TREE` redirects every `git` a suite shells out to.**
+t446, 2026-09-14: the agent's shell carried both, so `testkit`'s `git init` re-initialised the
+workspace repo instead of the fixture, `git config user.name` wrote `agentyard test` into the real
+repo config, and `git add -A` + `git commit -m initial` committed the agent's own uncommitted work
+three times onto its task branch — while 228 suites failed with `Command failed: git commit`,
+because each fixture was committing a stranger's tree. The branch, the config and two skill files
+deleted by an unrelated stash pop all had to be restored by hand.
+
+⚠️ Run every git-shelling suite with the workspace's git env stripped, and treat a red
+`testkit.ts > git` line as environmental until proven otherwise:
+
+```bash
+env -u GIT_DIR -u GIT_WORK_TREE npx vitest run <file>
+```
+
+⛔ Never `git stash` to compare against the base while that env is set: the stash sees a clean
+tree (your work is already committed into the junk) and the pop that follows can apply a stranger's
+leftover stash. Check `git log` and `git show --stat HEAD` first — junk commits named `initial`
+authored by the test identity are the signature.
+
 ### A fixture with nothing to vary tests nothing, and still looks like a test
 
 ⛔ `expect(withinPath(root.toLowerCase(), at('ws1'))).toBe(win)` reads as a platform-split

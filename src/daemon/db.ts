@@ -1928,6 +1928,27 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'remote_devices', 'kind')) {
       conn.exec("alter table remote_devices add column kind text not null default 'phone';")
     }
+  },
+  // 72 - clock-asked compactions that named no task get their session's own back (t446).
+  //
+  // ⛔ The clock compacts between runs, when there is no open run, and the ask was attributed with
+  // `runForSession` — open runs only — so eleven asks fleet-wide (2026-09-14) recorded `task_id`
+  // null. The landed ones never appeared on any task's thread, and the visible preemption ask read
+  // as failed forever while the retry that actually compacted the session sat orphaned beside it.
+  // The owner is the session's latest run, the same fallback the ask uses from here on.
+  //
+  // ⚠️ Data-only and idempotent: re-running matches no null rows. The `exists` keeps rows whose
+  // session never served a run untouched rather than writing null over null.
+  (conn) => {
+    conn.exec(`
+      update compactions set task_id = (
+        select task_id from runs
+        where session_id = compactions.session_id
+        order by started_at desc limit 1
+      )
+      where task_id is null and trigger = 'clock'
+        and exists (select 1 from runs where session_id = compactions.session_id);
+    `)
   }
 ]
 

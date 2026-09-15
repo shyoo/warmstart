@@ -66,7 +66,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `thread/DiffPanel` | **Changes in this task**: a file list with counts, drawn wherever the change resolves and **open** only at the `awaiting_human` gate. ⭐ Since t425 it draws **no patch**: a file row, or *Open in Diff pane*, opens the pane at that file. The two patch renderers (`PatchBody`, `SplitBody`) live in this file because its rule governs them: ⛔ every line is a **text node** — in `<pre>` for the single column, in a `<td>` for the split (`lib/sidebyside.ts`) — and the only thing derived from its content is a CSS class from the first character (`lib/diffline.ts`): no markdown, no highlighter, no linkified paths |
 | `DiffPane` | the **Diff pane**: one task's change, every file stacked in one scroll under a sticky path header, in a shell column right of the work (t425). A branch reads `task.diffSummary` + `task.diffFile`; one recorded commit — pressed from the ledger's sha — reads `task.commitDiff` + `task.commitFile`, `<sha>^!`. ⛔ Owned by `App.tsx` as one `DiffPaneRequest` behind `DiffPaneContext` (`lib/diffpane.ts`) and it **follows the route**: it closes the moment the route stops naming its task, survives that task's tabs, and is never a history entry. ⚠️ `initialExpansion` opens files from the top until 12 files or 1,500 counted lines, one `git` call each; the rest open on a press. Between hunks a `⋯ N unmodified lines` row is arithmetic on the `@@` headers (`lib/hunks.ts`), never a read of the file. Decisions: `transient_docs/diff_pane_2026-09-13.md` |
 | `TaskSettingPicker` | ⛔ **one component, seven uses** — the thread's finish, conversation, completion, compaction, objective, worker and priority settings |
-| `NewTask` `NewTaskModal` `Pill` | one shell-owned composer modal: the project and the prompt first, the rest as a row of **pills** under it; a project in view is selected but can always be changed |
+| `NewTask` `NewTaskModal` `Pill` | one shell-owned composer modal: the project and the prompt first, the rest as a row of **pills** under it — except the workspace, which is a joined `SegmentedControl` group (`Project · …` | `Worktree` | `Trunk`) with the answer pressed, because a two-way choice hiding one half in a menu is how a trunk job gets filed unseen; a project in view is selected but can always be changed |
 | `Attention` `Questions` | the approvals/questions/quota-gate bar — one keystroke above the operator's work |
 | `Overview` `Controller` `Conversations` | dashboard, the controller chat, and conversation history |
 | `Project` `ProjectSettings` `Projects` | the project routes and the policy tier |
@@ -79,7 +79,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Terminal` | the real agent TUI over xterm.js, not a reconstruction. ⚠️ Only a `pty` session has one — see below |
 | `SessionStream` | the *decoded* stream of a dispatched agent: one row per tool call, thinking phase, rate-limit caution and message. ⛔ Openly a reconstruction, because there is no screen to mirror |
 | `AppSettings` `SettingRow` `SettingButtonSelect` `PaneResizer` | chrome. `PaneResizer` is the one drag handle, specified per pane: `SidebarResizer` writes `--sidebar-w` from the left edge, `DiffPaneResizer` writes `--diffpane-w` from the right, both remembered per display in `localStorage` |
-| `GlobalSettings` | the five in-page Global tabs: Notice (doctor warnings), Status (daemon, CLIs, workers, cost models and projects), Fleet settings (the default), App behavior and Remote connection. |
+| `GlobalSettings` | the five in-page Global tabs: Notice (doctor warnings), Status (daemon, CLIs, workers, cost models and projects), Fleet settings (the default), App behavior and Remote connection. The settings panels keep a 920px measure, so a maximised window cannot strand a hand's width of dead space between a label and its control. |
 | `RemoteAccess` | the shown computer's listener: Tailscale state, project enablement, phone and desktop switches, pairing material and host-paired devices. It renders in Global → Remote connection, with the per-project half in `ProjectSettings`. See [`remote.md`](remote.md) |
 | `Root` `MachinePicker` `RemoteMachines` | which computer the window shows. `Root` keys `App` by the selected computer so a switch re-mounts everything, and owns notifications so they survive the switch; `MachinePicker` sits above Overview; `RemoteMachines` lists remotes and opens a modal to add one from Global → Remote connection. `lib/target.ts` holds the id every `rpc()` names. See [`remote.md`](remote.md#remote-desktops) |
 | `src/mobile` | fixed-tab phone PWA: project-scoped Overview (Attention + 200-entry timeline), quota gauges, paginated task cards with a `+` composer, and read-only Settings. See [`remote.md`](remote.md) |
@@ -178,7 +178,10 @@ share an end. Measured on t231, 2026-09-05: run 2 ran 16:44:24–16:55:19 and it
 16:44:26–16:47:06, so start-time order printed a compaction that had visibly finished at 16:47
 *below* a run still going at 16:55. ⚠️ An entry that has not finished sorts last, which is not a
 fallback but the answer — it has not ended, so it ends after everything that has. The start time
-breaks ties, so two open entries still have a stable order.
+breaks ties, so two open entries still have a stable order. A dead ask a newer landed sibling on
+the same session supersedes reads *superseded* rather than *failed* (`lib/compactionstatus.ts`) —
+t446's preemption ask died unhonoured at 17:14 while the clock's 17:18 retry landed at 17:21, and
+"failed" alone read as though the session had never been compacted.
 
 ⛔ **Analytics holds three pages, and they answer different questions.** *Routing Model* explains a
 choice: every number on it is shrunk toward a prior, blended or clamped, because it is about to be

@@ -122,6 +122,26 @@ export function noteCompactionLanded(
  */
 const waitingForCompaction = new Map<string, Set<() => void>>()
 
+/**
+ * The latest compaction asked for on this session that no boundary has answered.
+ *
+ * ⛔ Asked-for order, not row order: a superseding ask owns the story going forward, so a path
+ * deciding whether its own ask died quietly (the preemption wrap-up, t446) must check that its
+ * ask is still the outstanding one rather than any open one. Null when nothing is outstanding.
+ */
+export function latestOpenCompactionId(sessionId: string): number | null {
+  const open = row<{ id: number }>(
+    db()
+      .prepare(
+        `select id from compactions
+          where session_id = ? and landed_at is null and asked_at is not null
+          order by asked_at desc, id desc limit 1`
+      )
+      .get(sessionId)
+  )
+  return open?.id ?? null
+}
+
 /** Is another lifecycle path waiting for this boundary and therefore responsible for what follows? */
 export function compactionAwaited(sessionId: string): boolean {
   return (waitingForCompaction.get(sessionId)?.size ?? 0) > 0
