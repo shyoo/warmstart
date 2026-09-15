@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { which } from '../which.js'
 
 /**
@@ -24,9 +24,10 @@ import { which } from '../which.js'
  *  3. ⛔ **A Windows-made git worktree is unreadable by WSL git.** `<worktree>/.git` is a file
  *     holding `gitdir: C:/Dev/…`, which git inside the distribution resolves *relatively*:
  *     `fatal: not a git repository: /mnt/c/…/ws1/C:/Dev/…`. Since every workspace this app hands out
- *     is such a worktree, a bridged agent could not run one git command. `gitEnvFor()` fixes it with
- *     `GIT_DIR`/`GIT_WORK_TREE` and **modifies no file** — measured working, and needing no
- *     `safe.directory`.
+ *     is such a worktree, a bridged agent could not run one git command. The fix that lasted is a
+ *     **relative** pointer, written by `ensureWorktreePointer` in worktrees.ts, which both gits
+ *     follow with no environment at all. `gitEnvFor()` — `GIT_DIR`/`GIT_WORK_TREE` — is what it was
+ *     before that, and is now only for a pointer that cannot be made relative; see the ⛔ on it.
  *  4. ⚠️ **A Linux CLI cannot be handed a Windows path.** `hostPath` is the translation, and every
  *     path crossing the boundary — cwd, isolation root, attachments, the prompt file — goes through
  *     it. On a native host it is the identity function.
@@ -144,16 +145,28 @@ export function shQuote(value: string): string {
 }
 
 /**
- * The environment a git inside the distribution needs so a Windows-made worktree works.
+ * The environment a git inside the distribution needs so a Windows-made worktree works — **only**
+ * when the worktree's `.git` pointer is an absolute Windows path, which the bridged git cannot open.
  *
  * ⛔ Returns `{}` for an ordinary clone — where `.git` is a directory already inside the workspace
- * and nothing is broken — and for a directory that is no repository at all.
+ * and nothing is broken — for a directory that is no repository at all, and for a **relative**
+ * pointer (`gitdir: ../../warmstart/.git/worktrees/ws3`), which git 2.53 inside WSL follows with no
+ * environment at all: measured 2026-09-14 on ws3 — toplevel, git-dir, common-dir, branch, status and
+ * a commit all right, and visible from the Windows side. Every pool member is rewritten to that
+ * form by `ensureWorktreePointer`, so on a same-drive pool this returns `{}` for every run.
  *
- * ⚠️ `GIT_DIR` is sticky: an agent that changes directory into a *different* repository is still
- * talking to this one. That is the accepted cost and it is the smaller one. The alternative is
- * rewriting the vendor's `.git` pointer to a `/mnt/c` path, which would break the Windows side that
- * runs the project's checks and does the landing — the two have to agree, and only one of them can
- * be right about the spelling.
+ * ⛔ **`GIT_DIR` is sticky, and that stickiness cost two landings (t446, t447, 2026-09-14).** These
+ * two variables are exported into the agent's *whole* environment, so every git the agent starts
+ * anywhere talks to this worktree — including the hundreds of `git init` an `npm test` in the
+ * workspace runs in temporary directories. `git init` under a foreign `GIT_DIR`+`GIT_WORK_TREE`
+ * writes `core.worktree = <the work tree>` into the repository's **common** config, i.e. the
+ * operator's trunk `.git/config` — with the `/mnt/c/…` spelling — and from then on every Windows git
+ * in the trunk dies with *fatal: Invalid path '/mnt'*; test commits landed on the task branch, and
+ * `git config user.name` from a test fixture landed in the trunk's config. Reproduced 2026-09-14 in
+ * a scratch repository with one `git init` and read back out of the t446 transcript. The trunk now
+ * repairs its own config (`repairTrunkConfig`), but the only real fix is not exporting these at all,
+ * which the relative pointer allows. What remains here is for a pool on a different drive from its
+ * trunk, where no relative path exists; that pool still carries the hazard, and says so.
  */
 export function gitEnvFor(host: CliHost, cwd: string): Record<string, string> {
   if (host.kind === 'native') return {}
@@ -163,7 +176,9 @@ export function gitEnvFor(host: CliHost, cwd: string): Record<string, string> {
     const pointer = readFileSync(dotGit, 'utf8').trim()
     const match = /^gitdir:\s*(.+)$/m.exec(pointer)
     if (!match?.[1]) return {}
-    const gitDir = resolve(cwd, match[1].trim())
+    const target = match[1].trim()
+    if (!isAbsolute(target)) return {}
+    const gitDir = resolve(cwd, target)
     if (!existsSync(gitDir)) return {}
     return { GIT_DIR: hostPath(host, gitDir), GIT_WORK_TREE: hostPath(host, cwd) }
   } catch {

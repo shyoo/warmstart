@@ -815,3 +815,137 @@ describe('a pool member whose .git pointer an agent rewrote', () => {
     worktrees.releaseWorkspace(second!.claimId)
   }, 20_000)
 })
+
+/**
+ * The trunk's own config, and the two landings a leaked `GIT_DIR` cost.
+ *
+ * ⛔ Measured on t446 and t447, 2026-09-14. Both finished their work and both stopped at *"the trunk
+ * could not be read: … fatal: Invalid path '/mnt': No such file or directory"*. The trunk's
+ * `.git/config` had grown `[core] worktree = /mnt/c/Dev/warmstart_workspaces/ws3`, written by an
+ * `npm test` a bridged Muse Code run made in ws3: the daemon exported `GIT_DIR`/`GIT_WORK_TREE` into
+ * that agent's whole environment, and every `git init` the suite's fixtures ran in a temporary
+ * directory re-initialised *this* repository instead — `git init` under a foreign `GIT_DIR` writes
+ * `core.worktree = $GIT_WORK_TREE` into the common config, which for a linked worktree is the
+ * trunk's. Test commits landed on the task branch and a fixture's `user.name` in the trunk config
+ * the same way. Reproduced here with one `git init`, exactly as the transcript showed it.
+ *
+ * ⚠️ Real git: the defect is what git does with a `core.worktree` it cannot enter, and the recovery
+ * is the file, because git will not answer `git config --unset` about such a repository either.
+ */
+describe('a trunk whose config a leaked GIT_DIR poisoned', () => {
+  const config = (root: string): string => readFileSync(join(root, '.git', 'config'), 'utf8')
+  const gitDirOf = (workspace: string): string => git(workspace, 'rev-parse', '--absolute-git-dir')
+
+  /** What the agent's `npm test` did: a fixture's `git init`, with this worktree's variables leaked. */
+  const initElsewhereUnder = (workspace: string): void => {
+    const elsewhere = mkdtempSync(join(dir, 'fixture-'))
+    const env = { ...process.env, GIT_DIR: gitDirOf(workspace), GIT_WORK_TREE: workspace }
+    execFileSync('git', ['init', '-q'], { cwd: elsewhere, env, stdio: 'ignore' })
+    execFileSync('git', ['config', 'user.name', 'fixture'], { cwd: elsewhere, env, stdio: 'ignore' })
+  }
+
+  it('is what one git init under the leaked variables does to it', async () => {
+    const project = makeProject(1)
+    const ws = await worktrees.claimWorkspace(project, 'run-1')
+    expect((await worktrees.prepareWorkspace(project, ws!, 'warmstart/t446-multiple-things-to-fix')).ok).toBe(true)
+    initElsewhereUnder(ws!.path)
+    // The trunk now believes its work tree is the pool member, and carries the fixture's identity.
+    expect(config(project.root)).toMatch(/^\s*worktree = /m)
+    expect(git(project.root, 'rev-parse', '--show-toplevel').toLowerCase()).toBe(
+      git(ws!.path, 'rev-parse', '--show-toplevel').toLowerCase()
+    )
+    const removed = worktrees.repairTrunkConfig(project)
+    expect(removed).not.toBeNull()
+    expect(config(project.root)).not.toMatch(/worktree = /)
+    // Only the one key: the identity it also wrote is the operator's to judge, and stays.
+    expect(config(project.root)).toMatch(/name = fixture/)
+    expect(git(project.root, 'rev-parse', '--show-toplevel').toLowerCase()).not.toBe(
+      git(ws!.path, 'rev-parse', '--show-toplevel').toLowerCase()
+    )
+    expect(git(project.root, 'status', '--porcelain')).toBe('')
+    expect(worktrees.repairTrunkConfig(project)).toBeNull()
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+
+  it('is repaired before a prepare, a park, or a base lookup asks the trunk anything', async () => {
+    const project = makeProject(2)
+    const branch = 'warmstart/t447-rename-abstract-to-summary'
+    const first = await worktrees.claimWorkspace(project, 'run-1')
+    expect((await worktrees.prepareWorkspace(project, first!, branch)).ok).toBe(true)
+
+    // The spelling t446 actually left: a path from the other side of a WSL boundary, which git on
+    // this side cannot enter at all — `rev-parse` itself fails, so nothing downstream could recover.
+    const poisoned = config(project.root).replace('[core]', '[core]\n\tworktree = /mnt/c/somewhere/ws1')
+    writeFileSync(join(project.root, '.git', 'config'), poisoned)
+    expect(() => git(project.root, 'rev-parse', '--abbrev-ref', 'HEAD')).toThrow()
+
+    // The base lookup is the first thing a dispatch does, and it used to answer HEAD to a trunk it
+    // could not read, as if that were a fact.
+    expect(await worktrees.trunkBaseRef(project)).toBe('main')
+    expect(config(project.root)).not.toMatch(/worktree = /)
+
+    writeFileSync(join(project.root, '.git', 'config'), poisoned)
+    const rescue = await worktrees.parkWorkspace(project, first!.path)
+    expect(rescue).toBeNull()
+    expect(git(first!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD')
+    expect(config(project.root)).not.toMatch(/worktree = /)
+
+    writeFileSync(join(project.root, '.git', 'config'), poisoned)
+    const second = await worktrees.claimWorkspace(project, 'run-2')
+    worktrees.releaseWorkspace(first!.claimId)
+    const prepared = await worktrees.prepareWorkspace(project, second!, branch)
+    expect(prepared.ok).toBe(true)
+    expect(git(second!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(branch)
+    expect(config(project.root)).not.toMatch(/worktree = /)
+    worktrees.releaseWorkspace(second!.claimId)
+  }, 20_000)
+
+  it('keeps a core.worktree that names the trunk itself, and leaves a trunk that is a worktree alone', async () => {
+    const project = makeProject(1)
+    const own = config(project.root).replace('[core]', `[core]\n\tworktree = ${project.root.split('\\').join('/')}`)
+    writeFileSync(join(project.root, '.git', 'config'), own)
+    expect(worktrees.repairTrunkConfig(project)).toBeNull()
+    expect(config(project.root)).toBe(own)
+    expect(git(project.root, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main')
+    // `..` is how git itself spells it for a separate git directory: relative to the git dir.
+    const relativeOwn = config(project.root).replace(/worktree = .*/, 'worktree = ..')
+    writeFileSync(join(project.root, '.git', 'config'), relativeOwn)
+    expect(worktrees.repairTrunkConfig(project)).toBeNull()
+    expect(config(project.root)).toBe(relativeOwn)
+    writeFileSync(join(project.root, '.git', 'config'), own.replace(/\n\tworktree = .*/, ''))
+
+    // A project whose root is itself a linked worktree has no config of its own to repair.
+    const ws = await worktrees.claimWorkspace(project, 'run-1')
+    expect(worktrees.repairTrunkConfig({ root: ws!.path, vcs: 'git' })).toBeNull()
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+})
+
+/**
+ * The second pointer file. `worktree add` writes `.git/worktrees/ws1/gitdir` as an absolute path to
+ * `<worktree>/.git`, and WSL git, which cannot open `C:/…`, called every pool member **prunable** on
+ * 2026-09-14 — one `git worktree prune` from that side away from losing the pool's admin directories.
+ * `git worktree repair --relative-paths` (git ≥ 2.48) rewrites both files; measured against
+ * git 2.54 (Windows) and 2.53 (WSL), the listing is clean afterwards on both sides and a commit made
+ * from WSL is visible from Windows. Windows only: it is the platform with two gits reading one pool,
+ * and git records the choice in the trunk's config as an extension a git older than 2.48 refuses.
+ */
+describe('the back-pointer a pool member leaves in the trunk', () => {
+  it('is relative on Windows, so a git on either side of WSL lists the pool as healthy', async () => {
+    const project = makeProject(1)
+    const ws = await worktrees.claimWorkspace(project, 'run-1')
+    const gitDir = git(ws!.path, 'rev-parse', '--absolute-git-dir')
+    const back = readFileSync(join(gitDir, 'gitdir'), 'utf8').trim()
+    if (process.platform === 'win32') {
+      expect(back).toMatch(/^\.\.\//)
+      expect(readFileSync(join(project.root, '.git', 'config'), 'utf8')).toMatch(/relativeWorktrees = true/i)
+    } else {
+      // Elsewhere the pointer alone is rewritten, and the trunk's config is not touched.
+      expect(readFileSync(join(project.root, '.git', 'config'), 'utf8')).not.toMatch(/relativeWorktrees/i)
+    }
+    expect(readFileSync(join(ws!.path, '.git'), 'utf8').trim()).toMatch(/^gitdir: \.\.\//)
+    expect(git(project.root, 'worktree', 'list', '--porcelain')).not.toMatch(/prunable/)
+    expect(() => git(ws!.path, 'status', '--porcelain')).not.toThrow()
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+})

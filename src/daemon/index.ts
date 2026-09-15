@@ -53,7 +53,8 @@ import { APP_VERSION } from '@shared/version.js'
 
 // On macOS/Linux GUI launches, process.env.PATH is minimal (/usr/bin:/bin:...).
 // Augment it so orchestratord and any subprocesses reading process.env find Homebrew/local tools.
-process.env.PATH = augmentPath(process.env.PATH)
+// ⚠️ Not on Windows, where there is nothing to add and the key is spelled `Path` — see `pathKey`.
+if (process.platform !== 'win32') process.env.PATH = augmentPath(process.env.PATH)
 
 /**
  * orchestratord.

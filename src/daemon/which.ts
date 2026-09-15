@@ -224,6 +224,29 @@ export function augmentPath(envPath?: string): string {
 }
 
 /**
+ * The key `PATH` is spelled under in a plain environment object — and on Windows that is `Path`.
+ *
+ * ⛔ **Measured 2026-09-14, a process started from Explorer or `cmd`: the block holds `Path`, not
+ * `PATH`.** Node's `process.env` hides this (a read of `process.env.PATH` finds `Path`), but a copy
+ * made with `Object.entries` is an ordinary object, and `env.PATH` on it is `undefined`. The first
+ * cut of `augmentPath` did `env.PATH = augmentPath(env.PATH)` on such a copy — `PATH=''` beside the
+ * real `Path` — and the child was handed **an empty PATH**: libuv keeps one of two keys that differ
+ * only in case, and it kept the empty one. `cmd.exe` was then `ENOENT` to every spawn. The installed
+ * app was spared by accident — main re-spells it `PATH` when it starts orchestratord — and a daemon
+ * started any other way was not. `PATH` is answered when no key is there, and always off Windows.
+ */
+export function pathKey(env: Record<string, string | undefined>): string {
+  if (process.platform !== 'win32') return 'PATH'
+  return Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH'
+}
+
+/** `env` with its search path augmented **under the key it already uses**; see `pathKey`. */
+export function withAugmentedPath<T extends Record<string, string | undefined>>(env: T): T {
+  const key = pathKey(env) as keyof T
+  return { ...env, [key]: augmentPath(env[key]) }
+}
+
+/**
  * The base environment for any spawned agent CLI.
  *
  * ⛔ A deny by **prefix**, not a whitelist of what to keep, and the choice is deliberate. A whitelist
@@ -243,6 +266,6 @@ export function spawnEnv(): Record<string, string> {
     if (value === undefined || HOST_SESSION.test(key)) continue
     env[key] = value
   }
-  env.PATH = augmentPath(env.PATH)
-  return env
+  // ⛔ Under whichever key is there, never a second one: see `pathKey`.
+  return withAugmentedPath(env)
 }

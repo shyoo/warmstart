@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Attachment } from '@shared/tasks.js'
@@ -136,7 +136,14 @@ describe('gitEnvFor', () => {
   /**
    * ⛔ The one that would have stopped every dispatch. A Windows-made worktree's `.git` holds
    * `gitdir: C:/…`, which git inside WSL resolves *relatively* and cannot find. Measured on this
-   * repository, and the fix is two variables and no file touched.
+   * repository, and the first fix was two variables and no file touched.
+   *
+   * ⛔ **And the one that stopped two landings (t446, t447, 2026-09-14).** Those two variables reach
+   * the agent's *whole* environment, so an `npm test` it runs — hundreds of `git init` in temporary
+   * directories — re-initialises the trunk instead and writes `core.worktree = /mnt/c/…/ws3` into
+   * the trunk's config; every Windows git there then dies with *Invalid path '/mnt'*. A **relative**
+   * pointer needs neither variable (measured against WSL git 2.53 the same day), so a workspace
+   * carrying one gets nothing, and only a pointer that cannot be made relative still does.
    *
    * ⚠️ Native hosts get nothing: there is no boundary and the pointer is already right.
    */
@@ -146,6 +153,33 @@ describe('gitEnvFor', () => {
 
   it('is empty for a directory that is not a repository', () => {
     expect(gitEnvFor(WSL, 'C:\\definitely\\not\\here')).toEqual({})
+  })
+
+  /** A trunk beside a pool member, the way `ensureWorkspacePool` lays them out. */
+  const layout = (pointer: (gitDir: string) => string): { cwd: string; gitDir: string } => {
+    const base = mkdtempSync(join(tmpdir(), 'muse-gitenv-'))
+    const gitDir = join(base, 'trunk', '.git', 'worktrees', 'ws1')
+    const cwd = join(base, 'pool', 'ws1')
+    mkdirSync(gitDir, { recursive: true })
+    mkdirSync(cwd, { recursive: true })
+    writeFileSync(join(cwd, '.git'), `gitdir: ${pointer(gitDir)}\n`)
+    return { cwd, gitDir }
+  }
+
+  it('is empty for a relative pointer, which git on both sides follows with no environment', () => {
+    const { cwd } = layout(() => '../../trunk/.git/worktrees/ws1')
+    expect(gitEnvFor(WSL, cwd)).toEqual({})
+  })
+
+  it('still names the git directory for an absolute pointer, the one spelling WSL cannot open', () => {
+    const { cwd, gitDir } = layout((dir) => dir.split('\\').join('/'))
+    expect(gitEnvFor(WSL, cwd)).toEqual({ GIT_DIR: hostPath(WSL, gitDir), GIT_WORK_TREE: hostPath(WSL, cwd) })
+  })
+
+  it('is empty for an ordinary clone, whose .git is a directory', () => {
+    const base = mkdtempSync(join(tmpdir(), 'muse-gitenv-'))
+    mkdirSync(join(base, '.git'))
+    expect(gitEnvFor(WSL, base)).toEqual({})
   })
 })
 

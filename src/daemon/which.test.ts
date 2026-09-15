@@ -2,7 +2,16 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { augmentPath, formatCmdInvocation, quoteCmdArg, spawnEnv, unwrapForPty, which } from './which.js'
+import {
+  augmentPath,
+  formatCmdInvocation,
+  pathKey,
+  quoteCmdArg,
+  spawnEnv,
+  unwrapForPty,
+  which,
+  withAugmentedPath
+} from './which.js'
 
 describe('quoteCmdArg', () => {
   it('quotes empty string as double quotes', () => {
@@ -166,6 +175,54 @@ describe('spawnEnv', () => {
     } finally {
       process.env.PATH = origPath
     }
+  })
+})
+
+/**
+ * The search path under the key the platform actually uses.
+ *
+ * ⛔ Measured 2026-09-14. A Windows process started from Explorer or `cmd` carries `Path`, not
+ * `PATH`; a copy of `process.env` made with `Object.entries` keeps that spelling, and the first
+ * `spawnEnv` after the macOS PATH work set `env.PATH = augmentPath(env.PATH)` on that copy —
+ * `PATH=''` beside the real `Path`. The child got the empty one (libuv keeps one of two keys that
+ * differ only in case) and `cmd.exe` was ENOENT to every spawn. Nothing on macOS could have caught
+ * it, which is why these run on every platform against a plain object rather than `process.env`.
+ */
+describe('the key PATH is spelled under', () => {
+  it('is whatever the block already has on Windows, and PATH everywhere else', () => {
+    if (process.platform === 'win32') {
+      expect(pathKey({ Path: 'C:\\x' })).toBe('Path')
+      expect(pathKey({ PATH: 'C:\\x' })).toBe('PATH')
+      expect(pathKey({ SystemRoot: 'C:\\Windows' })).toBe('PATH')
+    } else {
+      expect(pathKey({ Path: '/x' })).toBe('PATH')
+      expect(pathKey({ PATH: '/x' })).toBe('PATH')
+    }
+  })
+
+  it('augments under that key and never adds a second spelling', () => {
+    const before: Record<string, string> =
+      process.platform === 'win32'
+        ? { Path: 'C:\\Windows;C:\\Git\\cmd', SystemRoot: 'C:\\Windows' }
+        : { PATH: '/usr/bin:/bin' }
+    const after = withAugmentedPath(before)
+    const keys = Object.keys(after).filter((k) => k.toUpperCase() === 'PATH')
+    expect(keys).toEqual([pathKey(before)])
+    // Never empty, and on Windows byte-for-byte what came in.
+    const value = after[pathKey(before)] ?? ''
+    expect(value.length).toBeGreaterThan(0)
+    if (process.platform === 'win32') expect(after).toEqual(before)
+    else expect(value.endsWith('/usr/bin:/bin')).toBe(true)
+    // A copy, not an edit of the caller's object.
+    expect(before).not.toBe(after)
+  })
+
+  it('spawnEnv hands a child exactly one search path, and it is not empty', () => {
+    const env = spawnEnv()
+    const keys = Object.keys(env).filter((k) => k.toUpperCase() === 'PATH')
+    expect(keys).toHaveLength(1)
+    expect(env[keys[0] ?? 'PATH']).toBe(augmentPath(process.env.PATH))
+    expect((env[keys[0] ?? 'PATH'] ?? '').length).toBeGreaterThan(0)
   })
 })
 

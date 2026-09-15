@@ -7,16 +7,30 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-14, **macOS 13 arm64**, measured on this branch's tip with electron-builder
-26.16.1): typecheck, lint pass; L1 **3,475 passed, 5 skipped** (202 files); L2 **203 checks** (5
-skipped); L3 **434 passed, 6 skipped** at the pinned 1024×720 window; L4 **17 checks** against a
-signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
+Baseline (2026-09-14, **Windows 11**, measured on this tree after the t446/t447 fix): typecheck,
+lint pass; L1 **3,486 passed, 5 skipped** (200 files + 2 platform skips); L2 **203 checks** (5
+skipped); L3 **436 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
+`release/win-unpacked`. The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17
+against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
 **Release** workflow: it has been dispatched twice with `platforms=macos` (item 6 below), so a `v*`
 tag now builds both platforms.
 
 ## Closed in this cleanup
 
+- **t446 and t447 could not land: a leaked `GIT_DIR` had re-initialised the trunk (2026-09-14).**
+  Both stopped on *the trunk could not be read … Invalid path '/mnt'*: the trunk's `.git/config`
+  carried `core.worktree = /mnt/c/…/ws3`, written by every `git init` an `npm test` ran inside the
+  WSL-bridged muse run, because `GIT_DIR`/`GIT_WORK_TREE` reached the agent's whole environment.
+  ⭐ A relative pointer needs neither (measured against WSL git 2.53), so `gitEnvFor` exports nothing
+  for one; `repairTrunkConfig` takes a foreign `core.worktree` back out before every base lookup,
+  prepare, park and landing; on Windows `worktree repair --relative-paths` fixes the back-pointer
+  WSL called *prunable*. ⚠️ Found beside it: `spawnEnv()` handed Windows children an **empty PATH**
+  when the block spelled it `Path` — a real regression from the macOS PATH work, masked in the
+  installed app by main's re-spelling. `pathKey`/`withAugmentedPath` fix it; all four pinned with
+  real git in `worktrees.test.ts`, `landing.test.ts`, `muse-code.test.ts`, `which.test.ts`.
+  ⏭ **The trunk config was repaired by hand; deploy this build** (`scripts/deploy-local.ps1`) before
+  the next muse run, then re-land t446 and t447 from the UI — their branches are intact.
 - **The local macOS deploy launcher works through its scripts-directory symlink (t14, 2026-09-14).**
   `BASH_SOURCE` names the symlink, so repository discovery accepts both entry points; stopping never
   force-kills, and landing checks use `spawnEnv()` / `augmentPath()` so Finder-launched daemons find Homebrew tools like `npm`.
@@ -33,19 +47,11 @@ tag now builds both platforms.
   `task.message` on a `ready` task emitted nothing, so no other view saw the note. Locally the task
   was `running` (a CLI on `PATH`) and run events hid it. Now emits `task.changed`, pinned by
   `taskmessage.test.ts`. [`docs/testing.md`](docs/testing.md) §3 and the headless section.
-- **macOS signing is configured, and the config now says which of three things a build did (t445,
-  2026-09-14).** `hardenedRuntime: true`, `identity` *absent* rather than `null`, `notarize: false`,
-  and explicit entitlements in `resources/entitlements.mac.*.plist`. ⛔ The measurement that changed
-  the shape of the fix, read out of `app-builder-lib` 26.15.3 rather than a vendor doc: notarisation
-  is called from **inside** `sign()`, so `identity: null` silently disabled signing, notarisation and
-  the hardened runtime in one line — and `hardenedRuntime` already *defaults to true* for a non-MAS
-  build, so `false` had been an explicit opt-out. ⭐ The half that generalises: **an unsigned build
-  proves nothing about the hardened runtime**, because the runtime is a signing flag — a machine
-  with no certificate produces a bundle the flag was never applied to, identical in name and size to
-  one that passed. `scripts/build-mac.sh` and the release workflow now read the bundle back with
-  `codesign` and print which happened. ✅ The owner's Mac built it **signed with the hardened
-  runtime** (2026-09-14, also on electron-builder 26.16.1); not notarised, and nothing has yet been
-  run under it. [`docs/development.md`](docs/development.md) §3 has the first-session checklist.
+- **macOS signing is configured, and the build says which of three things it did (t445,
+  2026-09-14).** `identity: null` had silently disabled signing, notarisation and the hardened
+  runtime in one line; `scripts/build-mac.sh` and the release workflow now read the bundle back with
+  `codesign`. ✅ The owner's Mac built it **signed with the hardened runtime** (electron-builder
+  26.16.1); not notarised, nothing yet run under it. [`docs/development.md`](docs/development.md) §3.
 - **The controller's label consult stopped dropping itself as "overtaken" (t440, 2026-09-14).**
   `questionStillStands` had no branch for the `title` kind and fell through to `triage`'s gate —
   `awaiting_human` or `failed` only — so a label asked about a task doing its ordinary work (`ready`,
@@ -70,16 +76,10 @@ tag now builds both platforms.
   the reviewer and `onSessionExit` reported an unexplained death. `sessionDiagnostics` keeps a
   bounded tail and both now quote it. ⚠️ The retention *plumbing* has no L1 test — no declarative
   adapter decodes a stream — so it is proven only by the pure functions either side of it.
-- **The README is a user guide with real screenshots (t439, 2026-09-14).** t435 had replaced it with
-  nine hand-drawn SVG mock-ups and a capture script that never produced an image (it died on the
-  adapter id `codex`, and ran headless, where `Page.captureScreenshot` never returns). The README now
-  walks a first run — account, project, task, thread, landing, debate — around twelve PNGs that
+- **The README is a user guide with real screenshots (t439, 2026-09-14).** Twelve PNGs that
   `scripts/generate-readme-assets.mjs` captures from the built renderer against a fictional fleet
-  ([`docs/development.md`](docs/development.md) §2). ⭐ Two things the script had to learn: the
-  daemon memoises run prices and nothing outside can invalidate them, so history is seeded before
-  the capturing daemon starts and live state after; and `Browser.close` leaves orchestratord
-  running — six orphans were found on this machine — so every launch now ends with `daemon.shutdown`
-  and a wait on the lock file's pid.
+  ([`docs/development.md`](docs/development.md) §2); every launch ends with `daemon.shutdown`,
+  because `Browser.close` had left six orphaned orchestratords on this machine.
 - **The status bar spans the full window as `.shell`'s own grid row (t434, 2026-09-14)** — it used to sit inside `.main`'s flex column, so its border stopped at the resizable sidebar's edge. **Global › Status no longer repeats Notice's warnings (t433):** only Notice lists them.
 - **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).**
   ⭐ The workers table's reorder arrows could not be clicked and vanished on hover — the order cell and

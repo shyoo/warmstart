@@ -432,6 +432,16 @@ trunk can become dirty while the checks run). A dirty trunk names its files — 
 modified/tracked versus untracked, the first five by name — and says to commit, stash, or clear them
 in the trunk checkout.
 
+⛔ **A fourth answer, *the trunk could not be read*, is git refusing to start there at all — and the
+one time it happened it was not the operator's doing.** t446 and t447 (2026-09-14) both finished and
+both stopped on `fatal: Invalid path '/mnt'`: the trunk's `.git/config` carried
+`core.worktree = /mnt/c/…/ws3`, written by an `npm test` a WSL-bridged agent ran with `GIT_DIR`
+leaked into its environment (`docs/adapters.md`, the muse table). The landing now runs
+`repairTrunkConfig` before it asks the trunk anything, which removes a `core.worktree` naming
+anywhere but the trunk and logs what it removed; the same repair runs before a dispatch's base
+lookup, a prepare and a park. Only that one key: a `[user]` the same leak wrote is left for the
+operator to judge.
+
 ⭐ **Split work merges into the planner's branch, not the trunk.** When a task is a child of a plan task,
 its target ref is the planner's branch (`plannerBranchFor()`). Merging updates the planner branch directly
 via `git branch -f <planner-branch> <commit>` without touching the trunk, keeping `main` clean until the planner

@@ -91,6 +91,9 @@ export async function trunkBaseRef(
   policy?: FinishPolicy,
   task?: Pick<Task, 'landingTarget'> | null
 ): Promise<string> {
+  // ⛔ Before the first `gitOk`: every one of them answers *no* to a trunk whose config names a work
+  // tree git cannot enter, and this function would then answer `HEAD` as though that were a fact.
+  repairTrunkConfig(project)
   const target = landingTargetFor(task, project)
   const remote = await gitOk(project.root, ['rev-parse', '--verify', `refs/remotes/origin/${target}`])
   const wanted = landingBaseFor(project, policy, remote, task)
@@ -593,7 +596,7 @@ export function worktreePointer(
  * could not be parked when it was released, the branch stayed registered to it, and the next
  * dispatch of the task died on *`'<branch>' is already used by worktree at ws3`*.
  *
- * ⭐ Two things, both measured against git 2.54 (Windows) and 2.53 (WSL):
+ * ⭐ Three things, all measured against git 2.54 (Windows) and 2.53 (WSL):
  *  1. `git worktree repair <path>` rewrites a pointer whose target does not resolve — it said
  *     *".git file broken"* and put the Windows spelling back — so a slot an agent has broken is
  *     mended before anything tries to switch it, rather than being lost until a person notices.
@@ -603,6 +606,19 @@ export function worktreePointer(
  *     Muse's `edit_file` accepts it is *inferred* from its error (an `os error 2` on the resolved
  *     path) and not yet measured against a live run. Only ever relative when the two share a drive;
  *     `relative()` answers an absolute path otherwise and that is kept as it is.
+ *  3. ⛔ **The pointer is one of two files, and on Windows both are rewritten.** The admin directory
+ *     carries a back-pointer, `.git/worktrees/ws3/gitdir`, which `worktree add` writes as
+ *     `C:/Dev/…/ws3/.git`. WSL git cannot open that spelling either, so its `git worktree list`
+ *     called every pool member **prunable** (measured 2026-09-14) — and a `git worktree prune`, or
+ *     the one `git gc` runs on entries older than `gc.worktreePruneExpire`, would delete the admin
+ *     directories of the whole pool from that side. `git worktree repair --relative-paths <path>`
+ *     (git ≥ 2.48) rewrites both files relatively, after which the WSL listing is clean and a commit
+ *     made there is visible here. ⚠️ Git records that choice in the trunk's config —
+ *     `extensions.relativeWorktrees = true` and `repositoryformatversion = 1` — which a git older
+ *     than 2.48 refuses to open. That is why this is **win32 only**: it is the platform with two gits
+ *     reading one pool, and the one where both are known to be new enough. Elsewhere the pointer
+ *     alone is rewritten by hand, as before, and the config is not touched. A git without the flag
+ *     falls back to the hand rewrite.
  */
 export async function ensureWorktreePointer(project: Project, workspacePath: string): Promise<void> {
   if (project.vcs !== 'git' || samePath(workspacePath, project.root)) return
@@ -623,7 +639,9 @@ export async function ensureWorktreePointer(project: Project, workspacePath: str
     }
     log.warn(`repaired the .git pointer of ${workspacePath}, which read ${broken}`)
   }
-  if (!isAbsolute(pointer.target)) return
+  const back = worktreeBackPointer(pointer.resolved)
+  const bothSides = process.platform === 'win32'
+  if (!isAbsolute(pointer.target) && !(bothSides && back !== null && isAbsolute(back))) return
   let rel: string
   try {
     const realWorkspace = realpathSync(workspacePath)
@@ -633,11 +651,98 @@ export async function ensureWorktreePointer(project: Project, workspacePath: str
     rel = relative(workspacePath, pointer.resolved)
   }
   if (isAbsolute(rel)) return
+  if (bothSides) {
+    try {
+      await git(project.root, ['worktree', 'repair', '--relative-paths', workspacePath])
+      const after = worktreePointer(workspacePath)
+      if (after && !isAbsolute(after.target) && existsSync(after.resolved)) return
+    } catch (err) {
+      log.warn(`git could not rewrite the pointers of ${workspacePath} relatively (git 2.48 has --relative-paths); writing .git by hand:`, err)
+    }
+  }
+  if (!isAbsolute(pointer.target)) return
   try {
     overwriteInPlace(pointer.file, `gitdir: ${rel.split(sep).join('/')}\n`)
   } catch (err) {
     log.warn(`could not rewrite the .git pointer of ${workspacePath} as a relative path:`, err)
   }
+}
+
+/** The back-pointer a linked worktree's admin directory carries: `<gitdir>/gitdir`, naming `<worktree>/.git`. */
+export function worktreeBackPointer(gitDir: string): string | null {
+  try {
+    return readFileSync(join(gitDir, 'gitdir'), 'utf8').trim() || null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Take a `core.worktree` that names somewhere other than the trunk out of the trunk's `.git/config`,
+ * and say what it named. Null when there was nothing to remove.
+ *
+ * ⛔ **Measured on t446 and t447 (2026-09-14): both landed nothing, with *"the trunk could not be
+ * read: … fatal: Invalid path '/mnt': No such file or directory"*.** The trunk's config had grown
+ * `[core] worktree = /mnt/c/Dev/warmstart_workspaces/ws3`. Nobody typed it: a Muse Code run in ws3,
+ * bridged through WSL with `GIT_DIR`/`GIT_WORK_TREE` exported into its whole environment, ran
+ * `npm test`, and each `git init` the suite's fixtures ran in a temporary directory re-initialised
+ * *this* repository instead — `git init` under a foreign `GIT_DIR` writes `core.worktree = $GIT_WORK_TREE`
+ * into the **common** config, which for a linked worktree is the trunk's. From then on every Windows
+ * git in the trunk refused to start, so no task could land and the operator's own shell could not
+ * run `git status`. Reproduced in a scratch repository with one `git init`; the leak itself is closed
+ * in `gitEnvFor`, and this is the net for the next thing that writes it.
+ *
+ * ⚠️ Read and written as text, not through `git config`: git will not answer *anything* about a
+ * repository whose `core.worktree` it cannot enter — `git config --unset` fails with the same
+ * *Invalid path* — so the file is the only way in. Only the one key is touched; a `[user]` section the
+ * same leak wrote is the operator's to judge. A `core.worktree` that resolves to the trunk itself is
+ * legitimate and kept, and a trunk that is itself a linked worktree (`.git` is a file) is left alone,
+ * because its common config belongs to somebody else's checkout.
+ */
+export function repairTrunkConfig(project: Pick<Project, 'root' | 'vcs'>): string | null {
+  if (project.vcs !== 'git') return null
+  const gitDir = join(project.root, '.git')
+  const file = join(gitDir, 'config')
+  let text: string
+  try {
+    if (!statSync(gitDir).isDirectory()) return null
+    text = readFileSync(file, 'utf8')
+  } catch {
+    return null
+  }
+  let section = ''
+  let removed: string | null = null
+  const kept: string[] = []
+  for (const line of text.split('\n')) {
+    const header = /^\s*\[([^\]]+)\]/.exec(line)
+    if (header) section = (header[1] ?? '').trim().toLowerCase()
+    const entry = header || section !== 'core' ? null : /^\s*worktree\s*=\s*(.*?)\s*$/i.exec(line)
+    if (entry) {
+      const raw = entry[1] ?? ''
+      const value = raw.startsWith('"') && raw.endsWith('"') && raw.length >= 2 ? raw.slice(1, -1) : raw
+      // A POSIX spelling on Windows can only have come from the other side of a WSL boundary.
+      const foreign =
+        (process.platform === 'win32' && value.startsWith('/')) ||
+        !samePath(isAbsolute(value) ? value : resolve(gitDir, value), project.root)
+      if (foreign) {
+        removed = value
+        continue
+      }
+    }
+    kept.push(line)
+  }
+  if (removed === null) return null
+  try {
+    overwriteInPlace(file, kept.join('\n'))
+    log.warn(
+      `removed core.worktree = ${removed} from ${file}: it named somewhere other than the trunk, so every git ` +
+        `in ${project.root} was refusing to start; a git run under a leaked GIT_DIR writes that`
+    )
+  } catch (err) {
+    log.warn(`could not remove core.worktree = ${removed} from ${file}:`, err)
+    return null
+  }
+  return removed
 }
 
 export async function ensurePlannerBranch(project: Project, branchName: string): Promise<void> {
@@ -656,8 +761,10 @@ export async function prepareWorkspace(
   /** ⛔ The task, so the base can be its parent's branch when it is a subtask. See `baseRef`. */
   task?: Task | null
 ): Promise<PrepareResult> {
-  // ⛔ The pointer first: a slot whose `.git` an agent has rewritten is not a repository to anything
-  // below, the ACL sweep included.
+  // ⛔ The trunk's config first, then the pointer: a trunk whose config names a work tree git cannot
+  // enter is not a repository to anything below, and a slot whose `.git` an agent has rewritten is
+  // not one either, the ACL sweep included.
+  repairTrunkConfig(project)
   await ensureWorktreePointer(project, workspace.path)
   await cleanWorkspaceAcls(workspace.path)
   const policy = policyFor(project)
@@ -1054,7 +1161,9 @@ export async function parkWorkspace(project: Project, path: string): Promise<Res
   try {
     // ⛔ Before anything asks git about this directory. t410 left ws3's pointer unreadable to
     // Windows git, so the park failed, the slot was released holding its branch, and the task's next
-    // dispatch could not take the branch anywhere. See `ensureWorktreePointer`.
+    // dispatch could not take the branch anywhere. See `ensureWorktreePointer`. The trunk's config
+    // the same way: a park reads the trunk for its base, and t446 left it unreadable.
+    repairTrunkConfig(project)
     await ensureWorktreePointer(project, path)
     const base = await trunkBaseRef(project)
     // ⛔ Blind, and deliberately first. `git switch` **refuses** while a rebase is in progress, so a

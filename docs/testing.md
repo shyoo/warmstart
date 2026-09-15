@@ -260,6 +260,22 @@ reporting on the workspace, not on the change.** An agent has no way to tell tho
 inside, and the honest move when a suite cannot start is to say which workspace it was and what the
 error was — not to conclude the change is broken, and not to commit as though the suite had run.
 
+### A suite run under a leaked `GIT_DIR` tests the trunk, and damages it
+
+⛔ **On t446 (2026-09-14) `npm test` in ws3 — a WSL-bridged muse run — failed its git fixtures and
+re-initialised the trunk.** The daemon had exported `GIT_DIR`/`GIT_WORK_TREE` into the agent's
+environment, so every `git init` a fixture ran in a temporary directory ran against ws3's admin
+directory instead: fixture commits landed on the task branch, a fixture's `user.name` in the trunk's
+config, and `core.worktree = /mnt/c/…/ws3` beside it — after which no Windows git in the trunk
+started, and neither t446 nor t447 could land. The agent noticed (`env -u GIT_DIR -u GIT_WORK_TREE
+npm test` passed) and cleaned up what it could see; it could not see the trunk config.
+
+⚠️ The lesson: **a git fixture that fails with the repository "already" having commits, or a
+`git init` that changes a repository somewhere else, is reporting on the environment, not on the
+change.** `env | grep ^GIT` is the first thing to read. The leak is closed — `gitEnvFor` exports
+nothing for a relative pointer, and `repairTrunkConfig` takes the key back out — and
+`worktrees.test.ts` reproduces the `git init` with real git.
+
 ### A suite that fails because of what previous suites left in `%TEMP%`
 
 ⛔ **These suites leak their scratch directories, and the leak eventually fails the suite.** Every

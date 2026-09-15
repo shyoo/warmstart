@@ -25,7 +25,7 @@ import {
 } from './tasks.js'
 import { getSession } from './sessions.js'
 import { claimedByAnotherTask, landedCommits, recordTaskCommits } from './taskcommits.js'
-import { landedRef, parkOtherHolders, parkPooledHolders, rescueAtTip, trunkHolder } from './worktrees.js'
+import { landedRef, parkOtherHolders, parkPooledHolders, repairTrunkConfig, rescueAtTip, trunkHolder } from './worktrees.js'
 import { launchArgs, spawnEnv, which } from './which.js'
 import { log } from './log.js'
 import { git } from './git.js'
@@ -1084,6 +1084,9 @@ export function trunkOccupiedBy(project: Project, self: string): string | null {
 }
 
 export async function trunkNotReady(root: string, target: string): Promise<string | null> {
+  // ⛔ t446 and t447 both stopped here with *fatal: Invalid path '/mnt'*: a `core.worktree` a bridged
+  // agent's test run had written into the trunk's config. See `repairTrunkConfig`.
+  repairTrunkConfig({ root, vcs: 'git' })
   try {
     const head = await git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])
     if (head !== target) {

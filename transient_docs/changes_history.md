@@ -3774,3 +3774,54 @@ the login keychain and never calls `createKeychain`. ⭐ What generalises: the l
 build take **different code paths to the same certificate**, so a green `build-mac.sh` says nothing
 about `CSC_LINK`. Rejected: pre-importing the certificate in a workflow step and pointing
 `CSC_KEYCHAIN` at it, which would have worked on any version but duplicated what the library does.
+
+## Two landings the trunk refused, and the `git init` that wrote it (2026-09-14, t446 → t447)
+
+t446 (Muse Code, ws3) and t447 (Claude Code, ws1) both finished their work and both went to
+`awaiting_human` with *the work is done but did not land: the trunk could not be read: Command
+failed: `git.EXE rev-parse --abbrev-ref HEAD` — fatal: Invalid path '/mnt': No such file or
+directory*. The operator's own shell in the trunk answered the same. The trunk's `.git/config` had
+grown `[core] worktree = /mnt/c/Dev/warmstart_workspaces/ws3`, mtime 20:41:25 — during t446's run.
+
+**Cause.** Read out of t446's session log. The daemon exports `GIT_DIR`/`GIT_WORK_TREE` into a
+WSL-bridged agent's whole environment so WSL git can open a Windows-made worktree (the 2026-09-06
+fix, whose comment already called the stickiness "the accepted cost"). At 03:30Z the agent ran
+`npm test` in ws3. Every `git init` the L1 fixtures run in a temporary directory then re-initialised
+*ws3's admin directory* instead — and `git init` under a foreign `GIT_DIR` writes
+`core.worktree = $GIT_WORK_TREE` into the repository's **common** config, which for a linked worktree
+is the trunk's `.git/config`, spelled the way WSL spells it. Fixture commits landed on the task
+branch ("junk commits", the agent called them) and a fixture's `user.name` in the trunk config; the
+agent noticed (`env -u GIT_DIR -u GIT_WORK_TREE npm test` passed), reset the branch, and at 03:41:25
+ran `git config --file /mnt/c/Dev/warmstart/.git/config --unset user.name` to clean up — the write
+that stamped the mtime, and one that could not see `core.worktree`. Reproduced in a scratch
+repository with a single `git init`. The macOS PATH commits of the same evening were suspected
+first and were not the cause; `which('git')` had resolved `C:\Program Files\Git\cmd\git.EXE`
+correctly, which is why the error names it.
+
+**Fix.** Three parts, each with a real-git test. (1) `gitEnvFor` exports nothing for a relative
+pointer — measured the same day that WSL git 2.53 in ws3 with no environment reads toplevel,
+git-dir, common-dir, branch and status right and its commit is visible from Windows — and keeps the
+pair only for a pointer that cannot be made relative (a pool on another drive). (2)
+`repairTrunkConfig` removes a `core.worktree` naming anywhere but the trunk before every base
+lookup, prepare, park and landing, as text, because `git config --unset` refuses the same
+repository; only that key, and only when the trunk's `.git` is a directory. `trunkBaseRef` used to
+answer `HEAD` to such a trunk as if it were a fact, since every `gitOk` was false. (3) On Windows
+`ensureWorktreePointer` now runs `git worktree repair --relative-paths`, which also makes the admin
+directory's back-pointer relative: WSL had listed every pool member as *prunable*, one `git worktree
+prune` from that side away from deleting the pool's admin directories. Git records that as
+`extensions.relativeWorktrees` in the trunk config, which a git older than 2.48 refuses, so it is
+win32-only and falls back to the hand rewrite.
+
+**Beside it, a real Windows regression from the macOS work, found while looking.** `spawnEnv()` did
+`env.PATH = augmentPath(env.PATH)` on an `Object.entries` copy of `process.env`; a Windows block
+started from Explorer or `cmd` spells it `Path`, so the copy got `PATH=''` beside `Path`, and a child
+spawned with it saw an empty PATH (`cmd.exe` ENOENT). The installed app was spared only because main
+re-spells the key when it starts orchestratord. `pathKey`/`withAugmentedPath` write under the key
+that is there; `which.test.ts` pins it against a plain `{ Path }` object on every platform.
+
+**Not proven.** That Muse's own `edit_file` accepts the relative pointer (inferred since t410).
+**Rejected**: keeping the environment and scrubbing `GIT_DIR` from `npm test` (the leak reaches
+every git the agent runs, not only tests); `git config --unset` for the repair (fails on the
+poisoned repository); `worktree.useRelativePaths` in the trunk config (a config edit the flag makes
+unnecessary). The trunk's config was repaired by hand this session; t446 and t447 are still
+`awaiting_human` with their branches intact and can be re-landed as they are.

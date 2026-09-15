@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -1592,5 +1592,25 @@ describe('pull-request landing strategy', () => {
     expect(commits.taskCommits(task.id)).toMatchObject([
       { sha: mergeSha, target: 'main', source: 'pull-request' }
     ])
+  })
+})
+
+/**
+ * The trunk read that stopped t446 and t447 (2026-09-14): *"the trunk could not be read: … fatal:
+ * Invalid path '/mnt': No such file or directory"*. A bridged agent's test run had written
+ * `core.worktree = /mnt/c/…/ws3` into the trunk's config — see `repairTrunkConfig` in worktrees.ts —
+ * and both tasks went to `awaiting_human` with their work intact on the branch and nothing landed.
+ * The landing now repairs the config before it asks, so the same trunk answers *ready*.
+ */
+describe('a trunk that cannot be read because its config names a work tree git cannot enter', () => {
+  it('is repaired before the landing asks, rather than sent to a person', async () => {
+    seq += 1
+    const root = makeRepo(`poisoned${seq}`)
+    const config = join(root, '.git', 'config')
+    writeFileSync(config, readFileSync(config, 'utf8').replace('[core]', '[core]\n\tworktree = /mnt/c/somewhere/ws3'))
+    expect(() => git(root, 'rev-parse', '--abbrev-ref', 'HEAD')).toThrow()
+    expect(await landing.trunkNotReady(root, 'main')).toBeNull()
+    expect(readFileSync(config, 'utf8')).not.toMatch(/worktree = /)
+    expect(git(root, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main')
   })
 })

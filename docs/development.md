@@ -260,6 +260,15 @@ if one path traversed the symlink and the other was canonicalized. Always canoni
   `landing.ts`) and workspace environments (`workspaceEnv` in `worktrees.ts`) inherit `spawnEnv()`
   so tools like `npm` are reachable from GUI-launched daemons. `which()` also verifies macOS `/usr/bin`
   candidates to skip broken Apple xcrun shims.
+- ⛔ **On Windows the variable is spelled `Path`, and a copy of `process.env` keeps that spelling.**
+  `process.env.PATH` reads it either way; `env.PATH` on an `Object.entries` copy is `undefined`. The
+  first `spawnEnv()` after the macOS work set `env.PATH = augmentPath(env.PATH)` on such a copy —
+  `PATH=''` beside the real `Path` — and a child spawned with it got an **empty PATH** (libuv keeps
+  one of two keys differing only in case, and kept the empty one): `cmd.exe` was ENOENT to every
+  spawn. Measured 2026-09-14 from a process started outside a shell; the installed app was spared
+  only because main re-spells the key when it starts orchestratord. `pathKey()` /
+  `withAugmentedPath()` in `which.ts` write under whichever key is there, and `which.test.ts` pins
+  it against a plain `{ Path }` object so a macOS-side edit cannot reintroduce it unseen.
 - ⛔ **`cmd /d /s /c <shim>` splits any path containing a space.** `/s` makes cmd strip the outer
   quotes and take the rest literally, and the Windows default home has a space in it. Use `/d /c` and
   let Node quote the argument; do **not** add quotes yourself. Latent since M1 and invisible until a
@@ -328,6 +337,22 @@ and was killed before it finished): a full pass of a 19.7k-file workspace takes 
 dispatch, and nothing else waits. ⚠️ `icacls` prints its refusals on **stderr**; the old
 `stdio: 'ignore'` dropped them. What it cannot name — a handful of empty directories with
 unspellable names that a sandbox leaves at the workspace root — is not re-owned and does not matter.
+
+⛔ **A leaked `GIT_DIR` re-initialises the trunk, and the trunk repairs itself.** Exported into a
+WSL-bridged agent's environment, `GIT_DIR`+`GIT_WORK_TREE` make every git the agent starts —
+including each `git init` an `npm test` runs in a temporary directory — operate on its worktree, and
+`git init` then writes `core.worktree = $GIT_WORK_TREE` (spelled `/mnt/c/…`) into the **common**
+config, the trunk's `.git/config`. Every Windows git in the trunk answers `fatal: Invalid path
+'/mnt'` from then on, and so does the operator's own shell; t446 and t447 (2026-09-14) both finished
+into *the trunk could not be read*. The variables are no longer exported for a relative pointer
+(`gitEnvFor` in `adapters/clihost.ts`; both gits follow one with no environment), and
+`repairTrunkConfig` (`worktrees.ts`) drops a `core.worktree` naming anywhere but the trunk before
+every base lookup, prepare, park and landing — as text, because `git config --unset` refuses the same
+repository. ⚠️ On Windows the pool's pointers are made relative with `git worktree repair
+--relative-paths`, which also fixes the admin directory's back-pointer (WSL listed every slot
+*prunable* without it) and records `extensions.relativeWorktrees` in the trunk config — a git older
+than 2.48 refuses that repository, so it is not done elsewhere. `worktrees.test.ts` reproduces the
+`git init` and the `/mnt` spelling with real git.
 
 ⛔ **A worktree is where an agent *starts*, not a boundary it is held inside.** For `antigravity-cli`
 the workspace must be named with `--add-dir <cwd>` on **every** spawn, resume included — cwd alone let
