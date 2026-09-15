@@ -18,6 +18,9 @@ tag now builds both platforms.
 
 ## Closed in this cleanup
 
+- **The new user tour modal now includes SVG mockups and prev/next onboarding navigation (t455, 2026-09-15).**
+  The first-launch welcome tour previously displayed only text with an action button that closed the modal to jump away mid-tour. It now displays vector SVG mockups of the Add Project inspection, Workers & Quota fleet, and Task Composer for each onboarding step, and provides Back / Next / Get Started controls alongside keyboard navigation (Left/Right/Esc) and clickable progress steps without navigating away early.
+
 - **Changes in this task no longer springs open on its own (t451, 2026-09-15).** The panel used to
   set `open` whenever the task sat at `awaiting_human` with files to show, which read as a surprise
   rather than a nudge; `<details className="diff-panel">` now carries no `open` prop at all, so the
@@ -102,18 +105,9 @@ tag now builds both platforms.
   thread. Now: clock asks name the session's latest run (migration 72 backfills eleven orphans);
   the wrap-up posts *did not land* while its ask is still outstanding; a dead ask a landed sibling
   supersedes reads *superseded*. Beside it: a `SegmentedControl` workspace group, 920px settings.
-- **Routing Model reads as a product page, and the three-way trade-off is three flat 2D scatters
-  (t447, 2026-09-14).** "Abstract" → "Summary", accented section headers; `TradeoffPlots` replaces
-  `ThreeAxisPlot` and `lib/plot3d.ts` is deleted. In [`docs/ui.md`](docs/ui.md).
-- **The macOS deploy launcher, its `xcrun` git shim, and `ui · windows-latest`'s two red checks
-  (t14/t12/t13, t445.2, 2026-09-14)** — symlinked entry points, `which.ts` skipping broken xcrun
-  shims, `test:ui` pinned to CI's 1024×720, and `task.message` on a `ready` task emitting
-  `task.changed`. In [`docs/testing.md`](docs/testing.md) §3 and `docs/development.md`.
-- **macOS signing is configured, and the build reads the bundle back with `codesign` (t445,
-  2026-09-14).** Built **signed, hardened runtime**; not notarised. `docs/development.md` §3.
+- **t445–t447 landed and documented in docs/ (2026-09-14).** Accented summary headers, `TradeoffPlots` 2D scatters, macOS deploy launcher `xcrun` shim, `test:ui` 1024×720 window pin, signed hardened runtime build verification.
 - **t408–t436, landed and documented in docs/ (2026-09-13–14)** — probe PTY answers, live quota probe,
-  remote settings fixes (reorder arrows, sign-in location, sleep prevention), Muse's `.codex` symlink
-  and dropped-stderr fixes, CI table checks, Diff pane, split Session TUI.
+  remote settings fixes, Muse `.codex` symlink, CI table checks, Diff pane, split Session TUI.
 
 ## Remaining work — ordered by payoff
 

@@ -75,7 +75,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Statistics` | what finished tasks actually cost, took and scored — three tabs, one RPC, a window control. ⭐ `TradeoffPlots` draws the three-way trade-off as three flat x/y scatters — (quality, velocity), (quality, cost), (velocity, cost) — replacing an earlier rotatable 3D plot reported confusing to read and hard to interact with (2026-09-14) |
 | `LooseEnds` | work that exists and is going nowhere → [`landing.md`](landing.md) |
 | `Doctor` | which required/conditional host tools and agent CLIs were found, who is signed in, how old each reading is, what is unverifiable |
-| `WelcomeTour` | a per-display, first-launch three-step guide with direct actions to add a project, add a worker, and file a task; completing or skipping it records `warmstart.welcomeComplete` in guarded `localStorage` |
+| `WelcomeTour` | a per-display, first-launch three-step guide with SVG mockup guidance and prev/next onboarding navigation to introduce adding a project, adding a worker, and filing a task; completing or skipping it records `warmstart.welcomeComplete` in guarded `localStorage` |
 | `Logs` | the daemon's log, live and filterable, ring-buffered so a late window sees the past |
 | `Terminal` | the real agent TUI over xterm.js, not a reconstruction. ⚠️ Only a `pty` session has one — see below |
 | `SessionStream` | the *decoded* stream of a dispatched agent: one row per tool call, thinking phase, rate-limit caution and message. ⛔ Openly a reconstruction, because there is no screen to mirror |
