@@ -7,9 +7,9 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-15, **Windows 11**, after t454): typecheck, lint and build pass; L1 **3,511 passed,
+Baseline (2026-09-15, **Windows 11**, after t451): typecheck, lint and build pass; L1 **3,511 passed,
 5 skipped** (203 files + 2 platform skips); L2 **203 checks** (5
-skipped); L3 **436 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
+skipped); L3 **437 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
 `release/win-unpacked`. The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17
 against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
@@ -17,6 +17,16 @@ against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c90
 tag now builds both platforms.
 
 ## Closed in this cleanup
+
+- **Changes in this task no longer springs open on its own (t451, 2026-09-15).** The panel used to
+  set `open` whenever the task sat at `awaiting_human` with files to show, which read as a surprise
+  rather than a nudge; `<details className="diff-panel">` now carries no `open` prop at all, so the
+  open/closed state is only ever the person's own and survives the task settling under them.
+  `atGate` still decides one thing — whether an unreadable change says so — and nothing else.
+  Pinned in `test/ui.test.mjs` (L3, the renderer's tier): collapsed at the gate with a file listed,
+  and still open after a resolve if that is how it was left. ⚠️ Beside it, that suite now dismisses
+  t449's welcome tour up front — on a clean profile it is a modal shade over everything the suite
+  then clicks, which surfaced as unexplained `elementFromPoint` misses rather than as itself.
 
 - **The phone could see a question was waiting and had nowhere to answer it (t454, 2026-09-15).**
   An `ask_human` question rests its task at `awaiting_human`, so Attention drew the *same* wait twice
@@ -92,25 +102,15 @@ tag now builds both platforms.
   thread. Now: clock asks name the session's latest run (migration 72 backfills eleven orphans);
   the wrap-up posts *did not land* while its ask is still outstanding; a dead ask a landed sibling
   supersedes reads *superseded*. Beside it: a `SegmentedControl` workspace group, 920px settings.
-- **The Routing Model page reads as a summary, not a paper's abstract, and its section headers no
-  longer look like body text (t447, 2026-09-14).** The "Abstract" heading is now "Summary" — this is
-  a product page, not a paper — and every `.doc-section h3` / summary `h4` is set in
-  `--color-accent` instead of the paper ink, so a column of otherwise-uniform serif prose shows its
-  own structure at a glance. ⭐ **Statistics' three-way trade-off is now three flat 2D scatters**
-  (`TradeoffPlots`, replacing `ThreeAxisPlot`) — (quality, velocity), (quality, cost) and
-  (velocity, cost) — reported confusing to read and hard to interact with as a rotatable 3D plot.
-  `lib/plot3d.ts` is deleted; each scatter is a plain x/y projection with the same `AgentIcon` marks,
-  the same `MIN_TRUSTED_SAMPLES` (5) floor and the same per-display "Exclude API rate & mixed" filter
-  the old plot had.
+- **Routing Model reads as a product page, and the three-way trade-off is three flat 2D scatters
+  (t447, 2026-09-14).** "Abstract" → "Summary", accented section headers; `TradeoffPlots` replaces
+  `ThreeAxisPlot` and `lib/plot3d.ts` is deleted. In [`docs/ui.md`](docs/ui.md).
 - **The macOS deploy launcher, its `xcrun` git shim, and `ui · windows-latest`'s two red checks
   (t14/t12/t13, t445.2, 2026-09-14)** — symlinked entry points, `which.ts` skipping broken xcrun
   shims, `test:ui` pinned to CI's 1024×720, and `task.message` on a `ready` task emitting
   `task.changed`. In [`docs/testing.md`](docs/testing.md) §3 and `docs/development.md`.
-- **macOS signing is configured, and the build says which of three things it did (t445,
-  2026-09-14).** `identity: null` had silently disabled signing, notarisation and the hardened
-  runtime in one line; `scripts/build-mac.sh` and the release workflow now read the bundle back with
-  `codesign`. ✅ The owner's Mac built it **signed with the hardened runtime** (electron-builder
-  26.16.1); not notarised, nothing yet run under it. [`docs/development.md`](docs/development.md) §3.
+- **macOS signing is configured, and the build reads the bundle back with `codesign` (t445,
+  2026-09-14).** Built **signed, hardened runtime**; not notarised. `docs/development.md` §3.
 - **t408–t436, landed and documented in docs/ (2026-09-13–14)** — probe PTY answers, live quota probe,
   remote settings fixes (reorder arrows, sign-in location, sleep prevention), Muse's `.codex` symlink
   and dropped-stderr fixes, CI table checks, Diff pane, split Session TUI.

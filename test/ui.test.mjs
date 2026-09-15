@@ -183,6 +183,14 @@ try {
   const connected = await until(() => evaluate('!!document.querySelector(".dot--ok")'))
   check('the daemon connected', connected, connected ? '' : 'no .dot--ok within 30s')
 
+  // ⛔ A clean profile has never completed the welcome tour, so it opens as a modal shade over
+  // everything else this suite is about to click. Dismissed once, up front, rather than letting
+  // every later section rediscover it as an unexplained miss on `elementFromPoint`.
+  await evaluate(
+    `[...document.querySelectorAll('.welcome-actions button')].find(b => /Skip tour/i.test(b.textContent))?.click()`
+  )
+  await waitFor(() => evaluate('!document.querySelector(".welcome-tour")'), 'the welcome tour to close')
+
   /*
    * ⛔ **Driven, never displayed.** Asked of the OS, and asked *here* — after the shell has rendered
    * and the daemon has connected, which is long past both of `createWindow`'s show paths, so a
@@ -5111,10 +5119,17 @@ try {
     diffTitle === 'Changes in this task',
     diffTitle
   )
+  // ⭐ Collapsed by default even at the gate (reported 2026-09-14): it used to spring open on its
+  // own the moment a task landed at `awaiting_human`, which read as a surprise rather than a nudge.
+  const diffOpenAtGate = await evaluate(`document.querySelector('.diff-panel')?.hasAttribute('open') ?? null`)
+  check(
+    'the panel stays collapsed at the gate until pressed, even with files to show',
+    diffOpenAtGate === false,
+    diffOpenAtGate
+  )
   // Press a file: since t425 the patch is drawn in the **Diff pane** at the right of the window,
   // fetched one file at a time, on demand — the inline list only names the files.
-  // ⚠️ The panel opens itself when there is a change to read; force it open anyway so this check
-  // does not quietly depend on that default.
+  // ⚠️ No longer opens itself; open it explicitly before pressing a file inside it.
   await evaluate(`document.querySelector('.diff-panel')?.setAttribute('open', '')`)
   await wait(200)
   await evaluate(
@@ -5406,8 +5421,7 @@ try {
   )
   // ⛔ **The other half of the report, and it needs the task actually settled.** Landing a
   // conversation deliberately leaves it open for another turn, so the panel is still at its gate
-  // here; only once the task is *finished* does the old `status === 'awaiting_human'` condition go
-  // false — which is the moment the diff used to disappear. So: finish it, then look again.
+  // here. So: finish it, then look again.
   await evaluate(
     `window.agentyard.rpc('task.resolve', { id: ${JSON.stringify(settleTask.id)} })`
   )
@@ -5435,8 +5449,8 @@ try {
     JSON.stringify(afterSettled)
   )
   check(
-    '⚠️ but closed, because away from the gate it is history rather than a decision',
-    afterSettled.open === false,
+    '⚠️ open state is the person\'s own, not the task\'s: it stays as they left it across the settle',
+    afterSettled.open === true,
     JSON.stringify(afterSettled)
   )
   // ⛔ The pane follows the route. Back to the Tasks tab keeps the open task on the route — that is

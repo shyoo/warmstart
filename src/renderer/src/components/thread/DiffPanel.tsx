@@ -267,9 +267,10 @@ export function DiffPanel({
   /**
    * Is this the screen that asks whether the change should land?
    *
-   * ⛔ Decides two things, and both are about not crying wolf: the panel opens itself only at the
-   * gate, and only at the gate does an unresolvable change say so. On a finished task a refusal
-   * would be a red line under every task whose branch is long gone.
+   * ⛔ Decides whether an unresolvable change says so: only at the gate, because that is the one
+   * screen where *I could not look* answers the question being asked. On a finished task a refusal
+   * would be a red line under every task whose branch is long gone. ⚠️ It does **not** decide
+   * whether the panel is open — nothing does; see the `<details>` below.
    */
   atGate: boolean
 }): React.JSX.Element | null {
@@ -307,13 +308,11 @@ export function DiffPanel({
     pane.open({ taskId, source: { kind: 'branch' }, ...(focusPath ? { focusPath } : {}) })
   const shownInPane = pane.request?.taskId === taskId && pane.request.source.kind === 'branch'
 
-  /**
-   * ⛔ **Open when there is something to read and a decision to make.** At the gate a collapsed
-   * panel is the same answer as no panel: the person presses Land without looking, which is what
-   * this exists to stop. Elsewhere it is history, and history does not unfold itself.
-   */
+  // ⚠️ Collapsed by default everywhere, including at the gate (reported 2026-09-14: it used to
+  // spring open on its own whenever a task landed at `awaiting_human`, which read as a surprise
+  // rather than a nudge). The person still presses it themselves before deciding.
   return (
-    <details className="diff-panel" open={atGate && summary?.ok === true && summary.files.length > 0}>
+    <details className="diff-panel">
       <summary className="diff-panel-summary">
         {/* ⛔ Not *Review the change*: the panel is drawn on finished tasks too, where there is
             nothing left to review and the words read as an instruction that no longer applies. */}
