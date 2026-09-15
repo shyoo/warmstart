@@ -1248,20 +1248,19 @@ export function NewTask({
                   'by the finish policy. Trunk: the project checkout itself, committing straight onto ' +
                   'the landing target — for trunk work, like pulling and resolving a conflict. One ' +
                   'trunk task runs at a time, and worktree landings into the trunk wait for it.' +
-                  (workspaceMode === 'inherit' ? `\n\nInherited from the project: ${inheritedWorkspace}.` : '')
+                  (workspaceMode === 'inherit'
+                    ? `\n\nFollowing the project's default: ${inheritedWorkspace}.`
+                    : '')
                 }
                 muted={workspaceMode === 'inherit'}
-                value={workspaceMode}
+                value={workspaceMode === 'inherit' ? inheritedWorkspace : workspaceMode}
                 options={[
-                  {
-                    value: 'inherit',
-                    label: `Project · ${inheritedWorkspace}`,
-                    title: `Follow the project setting: ${WORKSPACE_MODE_LABELS[inheritedWorkspace]}`
-                  },
                   { value: 'worktree', label: 'Worktree', title: WORKSPACE_MODE_LABELS.worktree },
                   { value: 'trunk', label: 'Trunk', title: WORKSPACE_MODE_LABELS.trunk }
                 ]}
-                onChange={(v) => setWorkspaceMode(v as WorkspaceModeChoice)}
+                onChange={(v) =>
+                  setWorkspaceMode(v === inheritedWorkspace ? 'inherit' : (v as WorkspaceModeChoice))
+                }
               />
             )}
 

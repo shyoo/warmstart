@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-14, **Windows 11**, measured on this tree after the t446/t447 fix): typecheck,
-lint pass; L1 **3,486 passed, 5 skipped** (200 files + 2 platform skips); L2 **203 checks** (5
+Baseline (2026-09-14, **Windows 11**, measured on this tree after t448's fix): typecheck,
+lint pass; L1 **3,493 passed, 5 skipped** (201 files + 2 platform skips); L2 **203 checks** (5
 skipped); L3 **436 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
 `release/win-unpacked`. The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17
 against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
@@ -22,6 +22,20 @@ replaced it — nothing else moved on either platform.
 
 ## Closed in this cleanup
 
+- **Reassigning a failed landing lost the message that said why it failed (t448, 2026-09-14).**
+  `promptFor`'s thread filter kept only `human`/`controller` messages and the first `agent` one, so
+  a `landing.failed`/`finish.held` `system` entry — written by the daemon *after* the agent's turn
+  ended — never reached a reassigned run; `resolveRetryOnTask` covers four named causes with its
+  own corrective message, but anything else (no commits produced, work in a stash, a refused
+  `canLand`…) fell through to a plain reassign with nothing carried over. Undelivered outcome
+  messages now travel on the next prompt, cold or resumed. ⭐ `worktreeArrivalNotice` (the worktree
+  twin of `trunkArrivalNotice`) names both directories and the branch that connects them on every
+  cold dispatch — t446's agent worked that out by trial. `dispatchDetail` now carries
+  `compactOnResume`'s own reason on the *Conversation: resumed* line, so a lapsed-cache resume
+  (t447) states its basis rather than leaving it to be re-derived — declining to compact a lapsed
+  prefix is deliberate (`cacheclock.ts`, measured t130/t231). The composer's workspace control
+  collapsed from three segments to two (`Worktree`, `Trunk`), the project's default one selected
+  and muted rather than shown as its own option.
 - **t446 and t447 could not land: a leaked `GIT_DIR` had re-initialised the trunk (2026-09-14).**
   Both stopped on *the trunk could not be read … Invalid path '/mnt'*: the trunk's `.git/config`
   carried `core.worktree = /mnt/c/…/ws3`, written by every `git init` an `npm test` ran inside the
@@ -53,9 +67,10 @@ replaced it — nothing else moved on either platform.
   the old plot had.
 - **The local macOS deploy launcher works through its scripts-directory symlink (t14, 2026-09-14).**
   `BASH_SOURCE` names the symlink, so repository discovery accepts both entry points; stopping never
-  force-kills, and landing checks use `spawnEnv()` / `augmentPath()` so Finder-launched daemons find Homebrew tools like `npm`.
-- **macOS `xcrun` git resolution failure and trunk lock phantom blocking (t12/t13, 2026-09-14).**
-  Minimal GUI launch PATH on macOS hit `/usr/bin/git`, an Apple `xcrun` shim failing when Command Line Tools are misconfigured. `which.ts` and `spawnEnv()` prepend extraDirs and `which()` skips broken xcrun shims. `git.ts` routes through `which('git')` and `spawnEnv()`. `trunkOccupiedBy` resolves session holders via `taskOfSession`, avoids self-blocking, and sweeps stale claims.
+  force-kills, and landing checks use `spawnEnv()` / `augmentPath()` so Finder-launched daemons find
+  Homebrew tools like `npm`. **A minimal GUI launch PATH hit `xcrun`'s broken git shim (t12/t13):**
+  `which.ts`/`spawnEnv()` prepend extraDirs and skip broken xcrun shims; `git.ts` routes through
+  `which('git')`; `trunkOccupiedBy` resolves session holders via `taskOfSession` and sweeps stale claims.
 - **macOS text editing shortcuts work again (t446, 2026-09-14).** The native `appMenu`/`editMenu` roles restore Chromium's `⌘C`/`⌘V`/`⌘X` routing; Windows/Linux keep the menu disabled. Pinned by [`src/main/applicationmenu.test.ts`](src/main/applicationmenu.test.ts).
 - **Retire it / Delete it no longer refuse a branch sitting in an idle pool member (t444, 2026-09-14).**
   `retireStrandedBranch` and `deleteUnlandedBranch` refused any branch a worktree held, even an idle pool member. The new `idlePoolHolder` in [`worktrees.ts`](src/daemon/worktrees.ts) steps off (`git switch --detach`) clean idle pool members.
@@ -73,39 +88,29 @@ replaced it — nothing else moved on either platform.
   `codesign`. ✅ The owner's Mac built it **signed with the hardened runtime** (electron-builder
   26.16.1); not notarised, nothing yet run under it. [`docs/development.md`](docs/development.md) §3.
 - **The controller's label consult stopped dropping itself as "overtaken" (t440, 2026-09-14).** `questionStillStands` had no branch for the `title` kind and fell through to `triage`'s gate — `awaiting_human` or `failed` only — so a label asked about a task doing its ordinary work (`ready`, `assigned`, `running`) was dropped before the controller was ever asked, reading as nearly every label consult failing. It now stands until `completed`, `cancelled` or `failed`, matching `askForTitle`. ⚠️ The Enter-key report in the same task was not a code bug: `isSubmitKey` is correct and identically wired in every composer; the Ctrl+Enter preference had reset because `ui-settings.json` only survives an `agentyard` → `Warmstart` productName change if the old install's data directory is still on disk when the new build first runs — item 6's known cost.
-- **The Attention bar no longer offers answer buttons for a question it cannot show (t441, 2026-09-14).**
-  `answerableHere` checked only option count/length, so a long question with short options rendered
-  inline while `.approvals-what` truncated the text — answerable blind. It now also requires the
-  full question fit in 100 characters, else falls back to **Answer…**.
+- **The Attention bar no longer offers answer buttons for a question it cannot show (t441,
+  2026-09-14).** `answerableHere` checked only option count/length, so a long question with short
+  options rendered inline while `.approvals-what` truncated it — answerable blind. It now also
+  requires the full question fit in 100 characters, else falls back to **Answer…**.
 - **Muse could not grade anything, and the app would not say why (t436, 2026-09-14).** Muse Code 1.1.1 exits 1 against this repo's `.codex` symlink, which was a seven-byte **file** on a `core.symlinks=false` checkout rather than a directory; `.codex` is now local-only (`scripts/link-agent-skills.mjs`, gitignored, junction on Windows). ⛔ The second half generalises: a `stream` session's non-protocol stderr was dropped by `StreamParser`, so both the reviewer and `onSessionExit` reported an unexplained death; `sessionDiagnostics` keeps a bounded tail and both now quote it.
-- **The README is a user guide with real screenshots (t439, 2026-09-14).** Twelve PNGs that
-  `scripts/generate-readme-assets.mjs` captures from the built renderer against a fictional fleet
-  ([`docs/development.md`](docs/development.md) §2); every launch ends with `daemon.shutdown`,
-  because `Browser.close` had left six orphaned orchestratords on this machine.
-- **The status bar spans the full window as `.shell`'s own grid row (t434, 2026-09-14)** — it used to sit inside `.main`'s flex column, so its border stopped at the resizable sidebar's edge. **Global › Status no longer repeats Notice's warnings (t433):** only Notice lists them.
-- **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).**
-  ⭐ The workers table's reorder arrows could not be clicked and vanished on hover — the order cell and
-  worker cell shared one grid area, so hover painted over the arrows; the order cell is now
-  `position: relative; z-index: 1`, caught only by `elementFromPoint`, since a scripted `.click()`
-  bypasses hit-testing ([`docs/testing.md`](docs/testing.md) §3).
-  ⭐ A sign-in run while driving another computer opened the vendor's OAuth browser on *that* screen;
-  `SignInLocationWarning` names the machine or states the rule for an RDP/VNC operator to apply.
-  ⭐ A host left running to take work could sleep mid-run; `preventSleep` (`UiSettings`, default on)
-  holds a `powerSaveBlocker`, per-install since the setting deciding whether a run survives the night
-  is the host's. ⚠️ None of the three driven in the packaged app.
-- **CI on `main` is green again (2026-09-13).** Six task-table checks failed on both runners after
-  the ~30-commit merge `3ff9ffd`; three measured causes, all written up in
-  [`docs/testing.md`](docs/testing.md) §3. Dep and Took now collapse together at a 660px panel.
+- **The README is a user guide with real screenshots (t439, 2026-09-14).** Twelve PNGs that `scripts/generate-readme-assets.mjs` captures from the built renderer against a fictional fleet ([`docs/development.md`](docs/development.md) §2); every launch ends with `daemon.shutdown`, because `Browser.close` had left six orphaned orchestratords on this machine.
+- **The status bar spans the full window as `.shell`'s own grid row (t434)** — it used to sit inside `.main`'s flex column, so its border stopped at the sidebar's edge. **Global › Status no longer repeats Notice's warnings (t433):** only Notice lists them.
+- **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).** The
+  workers table's reorder arrows could not be clicked (order cell and worker cell shared one grid
+  area; now `position: relative; z-index: 1`, caught only by `elementFromPoint` since `.click()`
+  bypasses hit-testing — [`docs/testing.md`](docs/testing.md) §3); a sign-in run while driving
+  another computer opened the vendor's OAuth browser on *that* screen (`SignInLocationWarning` now
+  names the machine); a host taking work could sleep mid-run (`preventSleep`, default on, holds a
+  `powerSaveBlocker`). ⚠️ None of the three driven in the packaged app.
+- **CI on `main` is green again (2026-09-13).** Six task-table checks failed on both runners after the ~30-commit merge `3ff9ffd`; three measured causes, all written up in [`docs/testing.md`](docs/testing.md) §3. Dep and Took now collapse together at a 660px panel.
 - **A probe PTY answers the TUI's cursor-position query (t3, 2026-09-13).** Muse Code 1.2.1 writes
   `ESC[6n` at startup and exits 0 at +6.4s unanswered, before `readyMs`, so every `/usage` probe read
   *"the probe session did not start"* on a signed-in worker. `termquery.ts` answers it on `probe`
-  PTYs only, proven through the real `spawnSession` in
-  [`probepty.test.ts`](src/daemon/probepty.test.ts). ⚠️ Not yet driven in the packaged app: rebuild,
-  press **Refresh** on Muse, and expect *Currently unavailable* until the account completes one turn.
-- **Antigravity CLI commissioning and live quota probe on macOS (2026-09-13).**
-  `readAntigravityIdentity`/`probeIdentity` read the OAuth token and auth email instead of a false
-  `loggedIn: false` that locked the worker into `Antigravity: unknown`; the live packaged probe reads
-  all 4 quota windows in 6s.
+  PTYs only, proven through the real `spawnSession` in [`probepty.test.ts`](src/daemon/probepty.test.ts).
+  ⚠️ Not yet driven in the packaged app. **Antigravity CLI commissioning and live quota probe on
+  macOS:** `readAntigravityIdentity`/`probeIdentity` read the OAuth token and auth email instead of a
+  false `loggedIn: false` that locked the worker into `Antigravity: unknown`; the live packaged probe
+  reads all 4 quota windows in 6s.
 - **t408–t425, all landed and all documented in [`docs/`](docs/README.md) (2026-09-13)** — Diff
   pane, split Session TUI, macOS worktree/PATH fixes, task-oriented Global settings, and the rest.
 

@@ -194,6 +194,26 @@ describe('what a trunk task walks into', () => {
   })
 })
 
+describe('what a worktree task is told about where it is', () => {
+  it('names both directories and the branch that connects them', () => {
+    const notice = scheduler.worktreeArrivalNotice(
+      'C:\\Dev\\warmstart_workspaces\\ws1',
+      'C:\\Dev\\warmstart',
+      'warmstart/t446-x',
+      'main'
+    )
+    expect(notice).toContain('C:\\Dev\\warmstart_workspaces\\ws1')
+    expect(notice).toContain('not its main checkout, which lives at `C:\\Dev\\warmstart`')
+    expect(notice).toContain('warmstart/t446-x` lands')
+    expect(notice).toContain('onto `main`')
+  })
+
+  it('still says where the target lives for a task with no branch of its own', () => {
+    const notice = scheduler.worktreeArrivalNotice('C:\\ws1', 'C:\\repo', null, 'main')
+    expect(notice).toContain('Your work lands onto `main`')
+  })
+})
+
 describe('landing a trunk task', () => {
   it('verifies in place for every rung that would move work, and keeps the others', () => {
     const t = { landingTarget: null, workspaceMode: 'trunk' as const }

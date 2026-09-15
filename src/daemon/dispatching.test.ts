@@ -599,6 +599,30 @@ describe('the worker line a run writes to the thread', () => {
       .toContain('Controller: First holds the warmer cache for this repository.')
   })
 
+  /**
+   * ⛔ **Whether reusing a lapsed-cache session was the right call is a question the detail should
+   * already answer**, not one that sends the operator to read `cacheclock.ts`. `compactOnResume`
+   * declines to compact a lapsed prefix on purpose (resuming still pays the cold rebuild once,
+   * compacting would pay it and then throw the context away) — `dispatchDetail` now carries that
+   * reason on the line that says the session was resumed.
+   */
+  it('names why a resumed session was not compacted, cache lapsed or not', () => {
+    const choice = { reason: 'sticky account' }
+    const lapsed = scheduler.dispatchDetail({
+      choice,
+      workspace: 'C:\\ws',
+      branch: 'warmstart/t1-x',
+      revive: true,
+      quotaUnverified: false,
+      resumeCompaction: { reason: 'prefix lapsed 42m ago - compacting now would pay a cold rebuild' }
+    })
+    expect(lapsed).toContain('Conversation: resumed.')
+    expect(lapsed).toContain('prefix lapsed 42m ago')
+
+    const cold = scheduler.dispatchDetail({ choice, workspace: 'C:\\ws', branch: null, revive: false, quotaUnverified: false })
+    expect(cold).toBe('Routing: sticky account.\nWorkspace: C:\\ws.\nConversation: cold start.')
+  })
+
   it('migration 62: task-message event columns replay without losing concise detail', () => {
     const file = join(dir, 'replay_m62.db')
     db.openDb(file)

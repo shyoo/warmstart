@@ -1702,6 +1702,10 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   }
   const trunkNotice =
     trunkSurvey && project ? trunkArrivalNotice(trunkSurvey, landingTargetFor(task, project)) : null
+  const worktreeNotice =
+    !trunkMode && project && project.vcs === 'git' && workspace && !samePath(workspace.path, project.root)
+      ? worktreeArrivalNotice(workspace.path, project.root, branch, landingTargetFor(task, project))
+      : null
   const rescueNotice = rescued
     ? `⚠️ The tip of \`${branch}\` is commit ${rescued.sha.slice(0, 8)}, holding ${rescued.files} ` +
       'file(s) an interrupted earlier run left uncommitted. This tool made that commit, not you: ' +
@@ -1741,7 +1745,9 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // conversation that was about to be compacted anyway.
   const resumeCompaction = revive ? compactOnResume(revive, settings()) : null
   const prompt = promptFor(task, worker.adapterId, revive !== null && !borrowed, {
-    branchNotice: [borrowNotice, branchNotice, rescueNotice, trunkNotice].filter(Boolean).join('\n\n') || null,
+    branchNotice:
+      [borrowNotice, branchNotice, rescueNotice, trunkNotice, worktreeNotice].filter(Boolean).join('\n\n') ||
+      null,
     markDelivered: true,
     // ⚠️ Either compaction counts: the one about to happen, and any that already landed in this
     // conversation since this task last spoke in it.
@@ -1841,7 +1847,14 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     worker,
     picked.model ?? worker.defaultModel,
     run,
-    dispatchDetail({ choice, workspace: workspace?.path ?? cwd, branch, revive: !!revive, quotaUnverified }),
+    dispatchDetail({
+      choice,
+      workspace: workspace?.path ?? cwd,
+      branch,
+      revive: !!revive,
+      quotaUnverified,
+      resumeCompaction
+    }),
     choice
   )
 
@@ -1882,13 +1895,23 @@ export function dispatchDetail(input: {
   branch: string | null
   revive: boolean
   quotaUnverified: boolean
+  /**
+   * Why the revived conversation was or was not compacted before this prompt went in — the basis
+   * for reusing it rather than starting cold. ⛔ Named here rather than left in the log line: the
+   * operator asking *"was reusing this session the right call"* (a lapsed prefix pays the same cold
+   * rebuild either way — see `compactOnResume`) is asking a question this detail already had the
+   * answer to and was not saying.
+   */
+  resumeCompaction?: Pick<ResumeCompaction, 'reason'> | null
 }): string {
   const { choice } = input
   return [
     choice.controllerWhy ? `Controller: ${choice.controllerWhy}` : null,
     `Routing: ${choice.reason}${choice.score === undefined ? '' : ` (score ${choice.score.toFixed(2)})`}.`,
     `Workspace: ${input.workspace}${input.branch ? ` on ${input.branch}` : ''}.`,
-    input.revive ? 'Conversation: resumed.' : 'Conversation: cold start.',
+    input.revive
+      ? `Conversation: resumed.${input.resumeCompaction ? ` ${input.resumeCompaction.reason}.` : ''}`
+      : 'Conversation: cold start.',
     input.quotaUnverified ? 'Quota reading was not trustworthy; this run is marked unverified.' : null
   ]
     .filter(Boolean)
@@ -4407,6 +4430,26 @@ export function trunkArrivalNotice(survey: TrunkSurvey, target: string): string 
     )
   }
   return lines.join('\n\n')
+}
+
+/**
+ * What a worktree task is told about the checkout it has just been given.
+ *
+ * ⭐ **Said once, at the moment an agent has the least idea where it is.** t446's Sonnet agent read
+ * itself into a pooled worktree with no sentence anywhere naming what that meant, and worked out the
+ * relationship to the project's own checkout by trial — the same thing `trunkArrivalNotice` exists to
+ * save a trunk task from. A worktree is a full working copy: reading `cwd` alone cannot tell an agent
+ * that a *different* directory is where `target` actually lives, or that nothing here is visible
+ * there until something lands.
+ */
+export function worktreeArrivalNotice(cwd: string, root: string, branch: string | null, target: string): string {
+  return (
+    `You are working in a pooled git worktree at \`${cwd}\` — a separate checkout of this project, ` +
+    `not its main checkout, which lives at \`${root}\`. ` +
+    (branch ? `Your branch \`${branch}\` lands` : 'Your work lands') +
+    ` onto \`${target}\` in that main checkout when the finish policy runs. Nothing committed here ` +
+    'is visible there, or the reverse, until that landing happens.'
+  )
 }
 
 /**

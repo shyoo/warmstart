@@ -1,4 +1,4 @@
-import type { Attachment, DebateVerdict, Task } from '@shared/tasks.js'
+import type { Attachment, DebateVerdict, MessageEvent, Task } from '@shared/tasks.js'
 import { isOpenConversation, policyVerifies, resolveWorkspaceMode } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { describeAttachment } from './attachments.js'
@@ -549,8 +549,23 @@ export function promptFor(
   // Restating it there reads as being asked to do the work a second time, which is the failure the
   // delivery bookkeeping exists to prevent - it would just be arriving through the one message the
   // bookkeeping deliberately exempts.
+  //
+  // ⛔ **An outcome event is never "in the session", even the one that is being resumed.** These
+  // `system` entries — a landing that failed, a finish that stopped short of landing — are written
+  // by the daemon *after* the agent's turn already ended, into the thread and nothing the CLI reads.
+  // `holdsPrompt`/`resumed` answers "does this session's own transcript already hold it", which a
+  // landing failure never can: no live process was there to receive it. Reassigning to a new agent
+  // was measured losing exactly this (the run that reported why the last attempt failed), because the
+  // ordinary filter below keeps only `human`/`controller` messages and the first `agent` one.
+  // ⚠️ Delivery-tracked like everything else — `outstanding` still gates these on `deliveredAt`, so
+  // one already carried into a run does not repeat on the next.
+  const OUTCOME_EVENTS: readonly MessageEvent[] = ['landing.failed', 'finish.held']
   const thread = messagesFor(task.id).filter(
-    (m, i) => m.role === 'human' || m.role === 'controller' || (m.role === 'agent' && i === 0)
+    (m, i) =>
+      m.role === 'human' ||
+      m.role === 'controller' ||
+      (m.role === 'agent' && i === 0) ||
+      (m.role === 'system' && m.event !== null && OUTCOME_EVENTS.includes(m.event))
   )
   const outstanding = thread.filter((m, i) => (i === 0 && !holdsPrompt) || m.deliveredAt === null)
   // ⛔ **A follow-up typed into a conversation that is still live is sent as it was typed, and
@@ -583,7 +598,14 @@ export function promptFor(
         parts.push(task.title)
       }
       opened = true
-      parts.push(message.text)
+      // ⚠️ A system outcome's `detail` carries the reason a person would otherwise have to expand
+      // it to read — the failing check's output, where the work still is. `text` alone is the
+      // one-line headline the thread shows collapsed; the next agent needs the rest of it.
+      parts.push(
+        message.role === 'system' && message.detail
+          ? `From an earlier run: ${message.text}\n${message.detail}`
+          : message.text
+      )
     }
   }
   // ⛔ **The attachments that travel are the attachments of the messages that travel**, and this is

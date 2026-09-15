@@ -99,6 +99,47 @@ describe('promptFor prompt construction', () => {
     expect(await handlers['agent.taskRead']({ sessionId: 'not-a-live-session' })).toBeNull()
   })
 
+  /**
+   * ⛔ **A reassign is a cold start**, and the ordinary thread filter keeps only `human`/`controller`
+   * messages plus the first `agent` one — so the `system` entry `landTask` writes when a landing
+   * fails never reached the agent taking over, even though it is the one fact that explains why
+   * there is a second run at all (t446, 2026-09-14). Covers the failures `resolveRetryOnTask`'s
+   * classifier does not recognise, where reassigning is the operator's only route back to a retry.
+   */
+  it('carries an unresolved landing failure into a freshly dispatched (reassigned) prompt', () => {
+    const task = tasks.createTask({ title: 'Land this', status: 'ready' })
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(
+      task.id,
+      'system',
+      'Not landed: no commits were produced',
+      null,
+      [],
+      {
+        event: 'landing.failed',
+        detail: '`t1` carries no commits that `main` does not already have and no work landed.'
+      }
+    )
+
+    const reassigned = promptText(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: false })
+    expect(reassigned).toContain('Not landed: no commits were produced')
+    expect(reassigned).toContain('carries no commits that `main` does not already have')
+  })
+
+  /** ⛔ Delivered once, like every other message — a second reassign must not resend it. */
+  it('does not repeat a landing failure that a previous run already carried', () => {
+    const task = tasks.createTask({ title: 'Land this twice', status: 'ready' })
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(task.id, 'system', 'Not landed: no commits were produced', null, [], {
+      event: 'landing.failed',
+      detail: 'no commits were produced'
+    })
+    promptText(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: true })
+
+    const again = promptText(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: false })
+    expect(again).not.toContain('Not landed: no commits were produced')
+  })
+
   it('tells an autonomous agent to run to the end', () => {
     const task = tasks.createTask({ title: 'Autonomous by default', status: 'ready' })
     const prompt = promptText(task, 'claude-code', false, { markDelivered: false })
