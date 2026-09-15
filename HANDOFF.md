@@ -19,6 +19,7 @@ tag now builds both platforms.
 
 - **macOS `xcrun` git resolution failure and trunk lock phantom blocking (t12/t13, 2026-09-14).**
   Minimal GUI launch PATH (`/usr/bin:...`) on macOS hit `/usr/bin/git`, an Apple `xcrun` shim failing when Command Line Tools are misconfigured. `which.ts` and `spawnEnv()` now prepend extraDirs (`~/.local/bin`, `/opt/homebrew/bin`, etc.) before system dirs and `which()` skips broken xcrun shims. `git.ts` routes through `which('git')` and `spawnEnv()`. `trunkOccupiedBy` resolves session holders via `taskOfSession`, avoids self-blocking, and sweeps stale claims from settled tasks/sessions. `retryQueuedLandings` treats fatal git read errors as `awaiting_human`.
+- **macOS text editing shortcuts work again (t446, 2026-09-14).** The native `appMenu`/`editMenu` roles restore Chromium's `⌘C`/`⌘V`/`⌘X` routing; Windows/Linux keep the menu disabled. Pinned by [`src/main/applicationmenu.test.ts`](src/main/applicationmenu.test.ts).
 - **Retire it / Delete it no longer refuse a branch sitting in an idle pool member (t444, 2026-09-14).**
   `retireStrandedBranch` and `deleteUnlandedBranch` refused any branch a worktree held, full stop —
   even a finished task's own unclaimed, clean pool-member slot, which is exactly what `parkWorkspace`
@@ -192,6 +193,4 @@ row. R5 is dropped: cross-account transplant needs a second subscription.
 - The scheduler spends zero tokens; model judgment is asynchronous and has a deterministic fallback.
 - Agents use pooled worktrees, never the trunk — unless the task's workspace mode is `trunk`, which
   holds the single trunk lease. Nothing kills a process by image name or bare PID.
-- The renderer treats agent output as untrusted text. No raw HTML.
-- Do not trust an agent-session view of `%APPDATA%`: packaged hosts can redirect it. See
-  [`docs/development.md`](docs/development.md) §4.
+- The renderer treats agent output as untrusted text; no raw HTML. Do not trust an agent-session view of `%APPDATA%`: packaged hosts can redirect it. See [`docs/development.md`](docs/development.md) §4.

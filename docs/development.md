@@ -270,6 +270,11 @@ if one path traversed the symlink and the other was canonicalized. Always canoni
 
 ### Electron
 
+On macOS, keep the native `appMenu` and `editMenu` roles in the application menu. Chromium routes
+the standard `⌘C`, `⌘V` and `⌘X` editing commands through those roles; setting the application menu
+to `null` leaves fields typable but disables copy, paste and cut. Windows and Linux may keep the
+application menu disabled because their editing shortcuts are handled by the window directly.
+
 - **A sandboxed preload must be CommonJS.** `package.json` sets `"type": "module"`, so the preload is
   built to `index.cjs` via an explicit rollup output override in `electron.vite.config.ts`. If you see
   *"Cannot use import statement outside a module"* from the preload, that override was lost. ⛔ Do not

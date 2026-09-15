@@ -28,6 +28,7 @@ import { dataDir } from '../daemon/paths.js'
 import { appEnv } from '@shared/env.js'
 import { APP_VERSION, RELEASE_REPOSITORY } from '@shared/version.js'
 import { UpdateManager } from './updates.js'
+import { applicationMenuTemplate } from './applicationmenu.js'
 
 const dirname = join(fileURLToPath(import.meta.url), '..')
 
@@ -106,10 +107,10 @@ if (!headless) {
   }
 }
 
-// This app has no menu-driven features, so the default File/Edit/View/Window bar Electron
-// generates automatically is just noise. Windows/Linux lose the bar entirely; macOS keeps its
-// required minimal app menu (Quit, etc.) since the OS enforces one.
-Menu.setApplicationMenu(null)
+// This app has no menu-driven features, so Windows/Linux lose the bar entirely. macOS must retain
+// the native application and Edit menus: Chromium routes ⌘C/⌘V/⌘X through Edit menu roles.
+const applicationMenu = applicationMenuTemplate(process.platform)
+Menu.setApplicationMenu(applicationMenu ? Menu.buildFromTemplate(applicationMenu) : null)
 
 function broadcast(channel: string, ...payload: unknown[]): void {
   for (const wc of windows) {
