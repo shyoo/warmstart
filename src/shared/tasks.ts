@@ -1051,6 +1051,13 @@ export interface Task {
     action?: 'compact' | 'handoff'
     /** True when the live adapter can compact, so the operator may choose either safe action. */
     canCompact?: boolean
+    /**
+     * Set only on a `handoff` chosen to redirect rather than to wait. `null` means the scheduler
+     * picks the destination; a worker id names one. Undefined (the default) means "hand off and pause
+     * here, resuming this same account when its window reopens" — compaction can never carry this,
+     * because a compacted context belongs to the session that built it, not to another account.
+     */
+    reassignWorkerId?: string | null
   } | null
   branch: string | null
   /**

@@ -297,6 +297,51 @@ describe('the switches that gate all of this', () => {
     expect(tasks.getTask(task.id)?.notBefore).not.toBeNull()
   })
 
+  it('reassigns to another worker instead of waiting here when the operator chose hand off & reassign', async () => {
+    const { task, run } = seedRunawayTask(0)
+    seedClosingWindow(tasks.requireRun(run.id).workerId)
+    const other = seedWorker()
+
+    await scheduler.tick()
+    const warning = tasks.requireTask(task.id).quotaPreemptWarning
+    expect(warning?.action).toBe('handoff')
+    // ⛔ What the operator's click writes: the same warning, with a destination attached. The RPC
+    // path is `task.overrideQuota`'s own test in quotaoverride.test.ts; this exercises what the
+    // scheduler does with it once the countdown actually expires.
+    tasks.setQuotaPreemptWarning(task.id, { ...warning!, reassignWorkerId: other })
+
+    await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS)
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(130_000)
+
+    expect(tasks.requireRun(run.id).outcome).toBe('preempted')
+    const after = tasks.getTask(task.id)
+    expect(after?.status).toBe('paused_quota')
+    // ⛔ Immediate, not the original account's reset time — waiting for a window on the account this
+    // task is no longer pinned to would strand it exactly as long as if reassignment had done nothing.
+    expect(after?.notBefore).toBeNull()
+    expect(after?.constraints.workerId).toBe(other)
+  })
+
+  it('falls back to pausing here when the chosen destination is gone by the time the wrap-up lands', async () => {
+    const { task, run } = seedRunawayTask(0)
+    const workerId = tasks.requireRun(run.id).workerId
+    seedClosingWindow(workerId)
+
+    await scheduler.tick()
+    const warning = tasks.requireTask(task.id).quotaPreemptWarning
+    tasks.setQuotaPreemptWarning(task.id, { ...warning!, reassignWorkerId: 'no-such-worker' })
+
+    await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS)
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(130_000)
+
+    const after = tasks.getTask(task.id)
+    expect(after?.status).toBe('paused_quota')
+    expect(after?.notBefore).not.toBeNull()
+    expect(after?.constraints.workerId ?? null).not.toBe('no-such-worker')
+  })
+
   it('does not preempt a healthy run merely because its config-cache reset is near (t418)', async () => {
     const { task, run } = seedRunawayTask(0)
     // The reported CodexFirst state: the cached five-hour window had 59% usage with 12m45s to

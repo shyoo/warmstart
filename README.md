@@ -98,14 +98,14 @@ inherited from the project, and your choices are remembered for the next task.
 
 ![The task composer with its settings pills](docs/images/new-task.png)
 
-Four kinds of task:
+Five kinds of task:
 
 | Kind | What it does |
 |---|---|
-| **Single task** | One thread of work, dispatched to one agent. |
-| **Plan & Split** | An agent plans it with you, then files and delegates the pieces as dependent tasks. |
-| **Plan & Execute** | The same planning turn, handed to **one** executor — two turns instead of three, and no review turn to pay for. |
+| **Single task** | Follows your prompt and completes the task autonomously in one turn, including landing — the agent can ask you a question if it needs to. |
 | **Conversation** | A thread you keep talking in — stops after each turn, commits when you say so. |
+| **Plan & Execute** | One planner, handed to **one** executor — two turns, and no review turn to pay for. |
+| **Plan & Split** | An agent plans it with you, then files and delegates the pieces as dependent tasks. |
 | **Debate** | Several agents answer independently and blind; an organizer argues it out. |
 
 ### 4. Watch it work

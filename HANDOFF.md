@@ -7,9 +7,9 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-15, **Windows 11**, after t456): typecheck, lint and build pass; L1 **3,530 passed,
+Baseline (2026-09-15, **Windows 11**, after t458): typecheck, lint and build pass; L1 **3,536 passed,
 5 skipped** (205 files + 2 platform skips); L2 **203 checks** (5
-skipped, after t451); L3 **446 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
+skipped, after t451); L3 **452 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
 `release/win-unpacked` (after t451). The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17
 against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
@@ -17,6 +17,36 @@ against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c90
 tag now builds both platforms.
 
 ## Closed in this cleanup
+
+- **The quota-preemption warning card's wrap-up buttons scattered across its two-column grid, and a
+  hand-off can now redirect to another worker instead of only pausing (t458, 2026-09-15).**
+  `.decide-option` is a two-column grid; "Compact & pause" and "Hand off & pause" were two separate
+  grid items, so the second auto-placed into the description's own column and the description that
+  followed both auto-placed into the *button* column on the row under it — reported against the t457
+  screenshot. Every option with more than one button now wraps them in `.decide-buttons`, a flex
+  column that is itself the grid's one button-column item (`app.css`). ⭐ **Also folded in, since the
+  same card was already open:** a hand-off chosen during the warning can now name a destination —
+  `quotaPreemptWarning.reassignWorkerId` (`shared/tasks.ts`), set by `task.overrideQuota`'s
+  `reassignWorkerId` param (`api/tasks.ts`, refused beside `preemptionAction: 'compact'` — a compacted
+  context belongs to the session that built it, never to another account) and read by `preempt()` in
+  `scheduler.ts` at expiry: it reassigns the task's worker/adapter constraints, clears `not_before`
+  instead of waiting for the original account's window, and falls back to pausing here if the chosen
+  worker is gone by the time the wrap-up lands. "Hand off & reassign" sits beside "Hand off & pause" in
+  the card whether or not the worker can compact — previously a non-compacting worker (everything but
+  Claude) offered no wrap-up choice at all. Pinned: L1 in `quotaoverride.test.ts` (the RPC's
+  validation) and `preemption.test.ts` (the scheduler executing a redirect, and the vanished-worker
+  fallback); L3 in `test/ui.test.mjs` ("a quota preemption warning" — the layout regression by bounding
+  rect, and choosing a destination through the real RPC). ⚠️ **Not run against a real preemption**;
+  the scenario is seeded through the store, as the other quota states in that suite are.
+
+- **The composer's kind pill now offers its five shapes in the order they are taught (t458,
+  2026-09-15).** Single Task, Conversation, Plan & Execute, Plan & Split, Debate — previously
+  Plan & Split and Plan & Execute sat ahead of Conversation, which read as if planning were the default
+  path rather than the exception. `NewTask.tsx`'s `KIND_OPTIONS` is the only source of the order — the
+  pill, the menu and this list all draw from it. Single Task's hint now also states what the kind
+  actually does (autonomous single turn including landing, can still ask a question) rather than the
+  generic "one thread of work, dispatched to an agent". `README.md` and `docs/ui.md` reordered to
+  match; `test/ui.test.mjs`'s kind-pill-order check updated.
 
 - **Plan & Execute: the same `plan` kind with the fan-out capped at one and no review turn (t456,
   2026-09-15).** Plan & Split pays a third planner turn to integrate pieces built by agents that could
@@ -39,49 +69,15 @@ tag now builds both platforms.
   planner-finish pills, the two notices) — that suite reaches the composer from the title bar, so the
   composer never needed a project tab. Diagrams checked by eye in the built app on 2026-09-15.
 
-- **The new user tour modal now includes SVG mockups and prev/next onboarding navigation (t455, 2026-09-15).**
-  The first-launch welcome tour previously displayed only text with an action button that closed the modal to jump away mid-tour. It now displays vector SVG mockups of the Add Project inspection, Workers & Quota fleet, and Task Composer for each onboarding step, and provides Back / Next / Get Started controls alongside keyboard navigation (Left/Right/Esc) and clickable progress steps without navigating away early.
-
-- **Changes in this task no longer springs open on its own (t451, 2026-09-15).** The panel used to
-  set `open` whenever the task sat at `awaiting_human` with files to show, which read as a surprise
-  rather than a nudge; `<details className="diff-panel">` now carries no `open` prop at all, so the
-  open/closed state is only ever the person's own and survives the task settling under them.
-  `atGate` still decides one thing — whether an unreadable change says so — and nothing else.
-  Pinned in `test/ui.test.mjs` (L3, the renderer's tier): collapsed at the gate with a file listed,
-  and still open after a resolve if that is how it was left. ⚠️ Beside it, that suite now dismisses
-  t449's welcome tour up front — on a clean profile it is a modal shade over everything the suite
-  then clicks, which surfaced as unexplained `elementFromPoint` misses rather than as itself.
-
-- **The phone could see a question was waiting and had nowhere to answer it (t454, 2026-09-15).**
-  An `ask_human` question rests its task at `awaiting_human`, so Attention drew the *same* wait twice
-  — once as the question, once as a task row whose only offer was **Resolve**, which marks it done
-  and throws the question away — and the task page repeated that single Resolve. The resting row is
-  now suppressed where an open question already covers the task, every Attention card carries an
-  **Answer…** door, and `screens/TaskDetail` draws each open question in full
-  (`components/QuestionCard`: the asker's own `detail` per option, a single/multiple toggle, an
-  **Other** row, a text box on every kind) beside a **What now** card (`components/Decide`):
-  Override & continue, Send back to an agent, Retry landing, Resume, Mark done, Stop and an atomic
-  worker/model/effort **Reassign**, drawn from what the task permits and showing the daemon's
-  refusal rather than a success. ⚠️ No new RPC — every call was already on the remote allowlist;
-  `lib/question.ts` holds the rules `question.test.ts` pins.
-
-- **The Quality Review page's slow load was an N+1 query, not a missing index (t453, 2026-09-15).**
-  `reviewQueue` called `getTask` once per finished task (up to 1,000, every 3s poll); `getTask` runs
-  `TASK_SELECT`'s five correlated subqueries plus its own single-row `timingForTasks` call, so the
-  batching that function exists for never engaged. `getTasksByIds` (`tasks.ts`) fetches the whole page
-  in a bounded number of queries; `reviewQueue`/`batchCandidates` now use it. ⭐ Migration 73 also adds
-  the index the report asked about — `tasks_status` covered `status` but not `order by updated_at
-  desc`, so those reads sorted with a temp b-tree — a real but smaller win, confirmed with `explain
-  query plan` at 8,000 synthetic rows, not the real fleet.
-
-- **Active child processes defer idle turn parking, completion detects resting sessions, and Decide offers Land (t452, 2026-09-15).**
-  Claude Code waiting on background tests (`test:all` in t451) ended its turn without `task_complete`; the watchdog previously
-  checked elapsed time alone (>3m) and parked the task at `awaiting_human` while tests were still burning CPU under `session.pid`.
-  `runWatchdogs` now reads the tree via `sampleProcessTree` and defers parking when child processes or CPU progress are active.
-  For tasks resting at `awaiting_human`: `resumeIdleConversation` now resumes work tasks unprompted when words or tool calls arrive;
-  `completeTask` resumes resting sessions to allow `landCompletion`; `Decide` reads `pendingWork` across all tasks and renders
-  `Land ▼` whenever unlanded commits sit on the branch; and the composer's Worktree | Trunk `SegmentedControl` highlights selected
-  options in `--color-accent` consistently regardless of project default.
+- **t451–t455, landed and documented in docs/ (2026-09-15).** The Changes-in-this-task panel no
+  longer springs open on its own at the gate (t451, `atGate`); active child processes now defer idle
+  turn parking and a resting session with unlanded commits offers **Land ▼** (t452,
+  `sampleProcessTree`, `pendingWork`); the Quality Review page's N+1 `getTask`-per-row load became one
+  bounded `getTasksByIds` fetch, plus the `tasks_status` index the report asked about (t453, migration
+  73); a phone-visible `ask_human` question draws in full beside a **What now** decision card instead
+  of one bare **Resolve** row (t454, `components/QuestionCard`, `components/Decide`); and the
+  first-launch welcome tour gained SVG mockups per step and Back/Next/Esc navigation instead of a
+  single action button that jumped away mid-tour (t455).
 
 - **t408–t449, landed and documented in docs/ (2026-09-13–14).** Statistics' scatters read higher-is-better
   on every axis (`axisPosition`); a reassigned failed landing now carries the `landing.failed`/`finish.held`

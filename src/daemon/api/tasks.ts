@@ -480,13 +480,31 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         if (p.preemptionAction === 'compact' && !warning.canCompact) {
           throw new Error('this worker cannot compact its conversation')
         }
-        const task = setQuotaPreemptWarning(p.id, { ...warning, action: p.preemptionAction })
-        log.info(`t${task.seq}: preemption action changed by hand to ${p.preemptionAction}`)
+        // ⛔ Only a handoff can be redirected — a compacted context belongs to the session that built
+        // it, never to another account. Absence of the key (rather than `undefined` on purpose) is
+        // what clears an earlier redirect: "Hand off & pause" and "Hand off & reassign" are the same
+        // RPC with the same `preemptionAction`, told apart only by whether this key rode along.
+        if ('reassignWorkerId' in p && p.preemptionAction !== 'handoff') {
+          throw new Error('only a hand-off can be redirected to another worker')
+        }
+        if (p.reassignWorkerId) requireWorker(p.reassignWorkerId)
+        const reassignWorkerId =
+          p.preemptionAction === 'handoff' && 'reassignWorkerId' in p ? p.reassignWorkerId : undefined
+        const task = setQuotaPreemptWarning(p.id, { ...warning, action: p.preemptionAction, reassignWorkerId })
+        log.info(
+          `t${task.seq}: preemption action changed by hand to ${p.preemptionAction}` +
+            (reassignWorkerId !== undefined
+              ? `, redirecting to ${reassignWorkerId ? reassignWorkerId.slice(0, 8) : 'auto'} instead of waiting`
+              : '')
+        )
         return {
           task,
           until: warning.resumeAt,
           applies: true,
-          reason: `will ${p.preemptionAction} when the preemption countdown expires`
+          reason:
+            reassignWorkerId !== undefined
+              ? 'will hand off, then reassign instead of waiting for this account’s window'
+              : `will ${p.preemptionAction} when the preemption countdown expires`
         }
       }
       if ('until' in p && p.until === null) {

@@ -312,6 +312,85 @@ describe('task.overrideQuota', () => {
     expect(result.task.quotaOverrideUntil).toBeNull()
   })
 
+  it('redirects a hand-off to another worker instead of waiting on this one', async () => {
+    const worker = seedWorker('ClaudeThird')
+    const other = seedWorker('CodexFirst')
+    const task = pinnedTask(worker.id, ADAPTER)
+    tasks.setStatus(task.id, 'running', { assignee: worker.id })
+    tasks.setQuotaPreemptWarning(task.id, {
+      trigger: 'window',
+      reason: 'Claude 5h resets soon',
+      preemptAt: Date.now() + 60_000,
+      resumeAt: Date.now() + RESET_IN_MS,
+      action: 'handoff',
+      canCompact: false
+    })
+
+    const result = await handlers()['task.overrideQuota']({
+      id: task.id,
+      preemptionAction: 'handoff',
+      reassignWorkerId: other.id
+    })
+    expect(result.task.quotaPreemptWarning?.action).toBe('handoff')
+    expect(result.task.quotaPreemptWarning?.reassignWorkerId).toBe(other.id)
+  })
+
+  it('clears an earlier redirect when handoff & pause is chosen again', async () => {
+    const worker = seedWorker('ClaudeThird')
+    const other = seedWorker('CodexFirst')
+    const task = pinnedTask(worker.id, ADAPTER)
+    tasks.setStatus(task.id, 'running', { assignee: worker.id })
+    tasks.setQuotaPreemptWarning(task.id, {
+      trigger: 'window',
+      reason: 'Claude 5h resets soon',
+      preemptAt: Date.now() + 60_000,
+      resumeAt: Date.now() + RESET_IN_MS,
+      action: 'handoff',
+      canCompact: false,
+      reassignWorkerId: other.id
+    })
+
+    const result = await handlers()['task.overrideQuota']({ id: task.id, preemptionAction: 'handoff' })
+    expect(result.task.quotaPreemptWarning?.reassignWorkerId).toBeUndefined()
+  })
+
+  it('refuses to redirect a compaction, because a compacted context belongs to the session that built it', async () => {
+    const worker = seedWorker('ClaudeThird')
+    const other = seedWorker('CodexFirst')
+    const task = pinnedTask(worker.id, ADAPTER)
+    tasks.setStatus(task.id, 'running', { assignee: worker.id })
+    tasks.setQuotaPreemptWarning(task.id, {
+      trigger: 'window',
+      reason: 'Claude 5h resets soon',
+      preemptAt: Date.now() + 60_000,
+      resumeAt: Date.now() + RESET_IN_MS,
+      action: 'compact',
+      canCompact: true
+    })
+
+    expect(() =>
+      handlers()['task.overrideQuota']({ id: task.id, preemptionAction: 'compact', reassignWorkerId: other.id })
+    ).toThrow(/redirected/)
+  })
+
+  it('refuses a redirect to a worker that does not exist', async () => {
+    const worker = seedWorker('ClaudeThird')
+    const task = pinnedTask(worker.id, ADAPTER)
+    tasks.setStatus(task.id, 'running', { assignee: worker.id })
+    tasks.setQuotaPreemptWarning(task.id, {
+      trigger: 'window',
+      reason: 'Claude 5h resets soon',
+      preemptAt: Date.now() + 60_000,
+      resumeAt: Date.now() + RESET_IN_MS,
+      action: 'handoff',
+      canCompact: false
+    })
+
+    expect(() =>
+      handlers()['task.overrideQuota']({ id: task.id, preemptionAction: 'handoff', reassignWorkerId: 'no-such-worker' })
+    ).toThrow()
+  })
+
   it('says so plainly when the grant changes nothing right now', async () => {
     const worker = seedWorker('ClaudeThird')
     seedQuota(worker.id, 5)

@@ -4636,6 +4636,20 @@ select:focus-visible,
   margin-bottom: var(--sp-2);
 }
 
+/*
+ * ⛔ **Every button an option offers is one grid item, never several.** `.decide-option` is a
+ * two-column grid; a second `<button>` sibling landed itself in the description's own column instead
+ * of stacking under the first, and the description that followed both auto-placed into the *button*
+ * column on the row below — "Hand off & pause" drew to the right of "Compact & pause" and "Choose the
+ * wrap-up" drew under it on the left (t458). A choice with more than one button wraps them in this so
+ * the grid only ever sees one item per column.
+ */
+.decide-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
 .decide-option .btn {
   width: 100%;
   justify-content: center;

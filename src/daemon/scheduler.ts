@@ -73,7 +73,8 @@ import {
   setRunQuota,
   setStatus,
   startRun,
-  taskOfSession
+  taskOfSession,
+  updateTask
 } from './tasks.js'
 import { claimedByAnotherTask, landedCommits, recordTaskCommits, taskCommitShas } from './taskcommits.js'
 import { openDebate, seatsOf } from './debate.js'
@@ -2420,7 +2421,7 @@ async function warnBeforeQuotaPreempt(
 
   setQuotaPreemptWarning(task.id, null)
   log.warn(`t${task.seq} preempted after its quota override window elapsed (${reason})`)
-  await preempt(task, session, resumeAt, reason, warning.action)
+  await preempt(task, session, resumeAt, reason, warning.action, warning.reassignWorkerId)
   return true
 }
 
@@ -2931,7 +2932,9 @@ async function preempt(
   session: Session,
   resumeAt: number,
   because: string,
-  requestedAction?: 'compact' | 'handoff'
+  requestedAction?: 'compact' | 'handoff',
+  /** Set only beside a `handoff` the operator chose to redirect rather than to wait out. */
+  reassignWorkerId?: string | null
 ): Promise<void> {
   const run = runsFor(task.id).find((r) => !r.endedAt)
   // ⛔ Claimed before anything is sent, and never re-entered. A second wrap-up prompt is not a
@@ -3007,12 +3010,15 @@ async function preempt(
         'fleet card may show a lower number than the one that stopped this run; a fresh reading has ' +
         'been asked for.'
       : ''
+  const reassigning = action === 'handoff' && reassignWorkerId !== undefined
   addMessage(
     task.id,
     'system',
     because === 'runaway'
       ? `Preempted: ${action === 'compact' ? 'compacting' : 'wrapping up'} — well past its estimate`
-      : `Preempted for quota — ${action === 'compact' ? 'compacting' : 'wrapping up'}, resumes ${clockTime(resumeAt)}`,
+      : reassigning
+        ? 'Preempted for quota — wrapping up, then moving to another account'
+        : `Preempted for quota — ${action === 'compact' ? 'compacting' : 'wrapping up'}, resumes ${clockTime(resumeAt)}`,
     null,
     [],
     {
@@ -3020,8 +3026,12 @@ async function preempt(
       detail:
         because === 'runaway'
           ? `This run was well past its estimate and is ${action === 'compact' ? 'compacting' : 'writing a handoff'} before it stops.`
-          : `Preempting before the quota window closes (${because}) by ${action === 'compact' ? 'compacting the conversation' : 'committing and writing a handoff'}. Resuming automatically after the ` +
-             `reset, expected ${new Date(resumeAt).toISOString()}.${shownLine}`
+          : reassigning
+            ? `Preempting before the quota window closes (${because}) by committing and writing a handoff, then reassigning to ` +
+              `${reassignWorkerId ? 'the chosen account' : 'whichever account the scheduler picks'} instead of waiting for this ` +
+              `account's window to reset.${shownLine}`
+            : `Preempting before the quota window closes (${because}) by ${action === 'compact' ? 'compacting the conversation' : 'committing and writing a handoff'}. Resuming automatically after the ` +
+               `reset, expected ${new Date(resumeAt).toISOString()}.${shownLine}`
     }
   )
   // ⭐ Go and make the displayed number true. The probe itself is the poller's job and its gates
@@ -3068,10 +3078,30 @@ async function preempt(
           setTaskHandoff(task.id, 'Preemption closed the session before the agent recorded a handoff. Inspect the branch and workspace before continuing.')
         }
         if (run) finishRun(run.id, 'preempted', because)
-        db()
-          .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
-          .run(because === 'runaway' ? null : resumeAt, Date.now(), task.id)
-        setStatus(task.id, because === 'runaway' ? 'awaiting_human' : 'paused_quota')
+        // ⛔ A destination named when the operator chose "hand off & reassign" but gone by the time
+        // the wrap-up lands (deleted, disabled) is not silently dropped: `destination` stays
+        // undefined, `reassigning` reads false below, and the task falls back to pausing here exactly
+        // as an ordinary "hand off & pause" would.
+        const destination =
+          reassigning && reassignWorkerId ? getWorker(reassignWorkerId) : undefined
+        const reassigningNow = reassigning && (reassignWorkerId === null || !!destination)
+        if (reassigningNow) {
+          const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...rest } =
+            requireTask(task.id).constraints
+          updateTask(task.id, {
+            constraints: destination
+              ? { ...rest, workerId: destination.id, adapterId: destination.adapterId, modelPolicy: 'inherit' }
+              : rest,
+            notBefore: null,
+            assigneeHint: destination?.id ?? null
+          })
+          setStatus(task.id, 'paused_quota', { assignee: null })
+        } else {
+          db()
+            .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
+            .run(because === 'runaway' ? null : resumeAt, Date.now(), task.id)
+          setStatus(task.id, because === 'runaway' ? 'awaiting_human' : 'paused_quota')
+        }
         closeSession(session.id)
         if (run) {
           await releaseFor(run.id, task.id, task.projectId)

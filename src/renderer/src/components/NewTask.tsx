@@ -100,11 +100,15 @@ const KIND_OPTIONS: PillOption[] = [
   // ⚠️ Named for what it is *not*. Beside Plan&Split, which files several tasks, plain "Task"
   // read as the category rather than as one of three shapes — "Single Task" says the difference the
   // option next to it is offering.
-  { value: 'task', label: 'Single Task', hint: 'one thread of work, dispatched to an agent' },
   {
-    value: 'plan',
-    label: 'Plan&Split',
-    hint: 'an agent plans it with you, then files and delegates the pieces'
+    value: 'task',
+    label: 'Single Task',
+    hint: 'follows your prompt and completes the task autonomously in one turn, including landing — asking you a question if it needs to'
+  },
+  {
+    value: 'conversation',
+    label: 'Conversation',
+    hint: 'a thread you keep talking in — it stops after each turn and commits when you say so'
   },
   {
     value: 'execute',
@@ -112,9 +116,9 @@ const KIND_OPTIONS: PillOption[] = [
     hint: 'one planner, one executor — two turns, and no review turn to pay for'
   },
   {
-    value: 'conversation',
-    label: 'Conversation',
-    hint: 'a thread you keep talking in — it stops after each turn and commits when you say so'
+    value: 'plan',
+    label: 'Plan&Split',
+    hint: 'an agent plans it with you, then files and delegates the pieces'
   },
   {
     value: 'debate',

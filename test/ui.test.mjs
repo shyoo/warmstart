@@ -1507,8 +1507,8 @@ try {
     `JSON.stringify([...document.querySelectorAll('.pill-menu [role="option"]')].map(o => o.dataset.value))`
   )
   check(
-    'the kind pill offers Plan & Execute between Plan & Split and Conversation',
-    JSON.parse(kindsOffered).join('|') === 'task|plan|execute|conversation|debate',
+    'the kind pill offers the five shapes in the order the composer teaches them',
+    JSON.parse(kindsOffered).join('|') === 'task|conversation|execute|plan|debate',
     kindsOffered
   )
   await evaluate(
@@ -3932,6 +3932,113 @@ try {
     row.height < 40,
     `${row.height}px - three stacked selectors ran to about 80`
   )
+
+  section('a quota preemption warning')
+  // ⛔ t458: `.decide-option` is a two-column grid, and "Compact & pause" / "Hand off & pause" were
+  // two separate grid items rather than one — so the second button auto-placed into the
+  // *description's* column and the description that followed both auto-placed into the *button*
+  // column on the row under it. Seeded through the store like the other quota states above: this
+  // suite spends nothing and cannot make a real vendor warn.
+  const warnFixtureTitle = 'Preemption warning UI fixture'
+  const warnFixtureId = await evaluate(`
+    (async () => {
+      const task = await window.agentyard.rpc('task.create', { title: ${JSON.stringify(warnFixtureTitle)} });
+      return task.id;
+    })()
+  `)
+  const redirectWorkerId = await evaluate(
+    `window.agentyard.rpc('worker.create', { adapterId: 'claude-code', label: 'redirect target', enabled: true }).then(w => w.id)`
+  )
+  const runningWorkerId = await evaluate(
+    `window.agentyard.rpc('fleet.list').then(fs => (fs.find(f => f.worker.label === 'ui worker') ?? fs[0])?.worker.id ?? '')`
+  )
+  await wait(300)
+  {
+    const store = new DatabaseSync(join(dataDir, 'warmstart.db'))
+    store
+      .prepare('update tasks set status = ?, assignee = ?, quota_preempt_json = ? where id = ?')
+      .run(
+        'running',
+        runningWorkerId,
+        JSON.stringify({
+          trigger: 'window',
+          reason: 'Claude 5h resets soon',
+          preemptAt: Date.now() + 5 * 60_000,
+          resumeAt: Date.now() + 60 * 60_000,
+          action: 'handoff',
+          canCompact: false
+        }),
+        warnFixtureId
+      )
+    store.close()
+  }
+  await evaluate(`document.querySelector('.back-to-list')?.click()`)
+  await wait(600)
+  await evaluate(
+    `[...document.querySelectorAll('.tbl tbody tr')].find(r => r.innerText.includes(${JSON.stringify(warnFixtureTitle)}))?.click()`
+  )
+  await wait(1200)
+  const layout = JSON.parse(
+    await evaluate(`
+      JSON.stringify((() => {
+        const wrap = document.querySelector('.decide--quota .decide-buttons');
+        const desc = wrap?.closest('.decide-option')?.querySelector('.decide-what');
+        const buttons = [...(wrap?.querySelectorAll('button') ?? [])];
+        return {
+          labels: buttons.map(b => b.innerText.trim()),
+          lefts: buttons.map(b => Math.round(b.getBoundingClientRect().left)),
+          tops: buttons.map(b => Math.round(b.getBoundingClientRect().top)),
+          wrapRight: wrap ? Math.round(wrap.getBoundingClientRect().right) : null,
+          descLeft: desc ? Math.round(desc.getBoundingClientRect().left) : null
+        };
+      })())
+    `)
+  )
+  check(
+    'compaction is not offered on a worker that cannot do it',
+    !layout.labels.some((l) => /Compact/.test(l)),
+    JSON.stringify(layout)
+  )
+  check(
+    'both wrap-up buttons render in the same column',
+    layout.lefts.length === 2 && new Set(layout.lefts).size === 1,
+    JSON.stringify(layout)
+  )
+  check(
+    'the two buttons stack rather than one straying beside the description',
+    layout.tops.length === 2 && layout.tops[1] > layout.tops[0],
+    JSON.stringify(layout)
+  )
+  check(
+    'the description sits beside the button column, not under half of it',
+    layout.wrapRight !== null && layout.descLeft !== null && layout.wrapRight <= layout.descLeft,
+    JSON.stringify(layout)
+  )
+  // Choose a destination, then ask to hand off and reassign rather than pause here.
+  await evaluate(`document.querySelector('.decide--quota .reassign-row .setting-btn-select')?.click()`)
+  await wait(400)
+  await evaluate(
+    `[...document.querySelectorAll('.decide--quota .setting-btn-select-option')].find(o => o.innerText.includes('redirect target'))?.click()`
+  )
+  await wait(400)
+  await evaluate(
+    `[...document.querySelectorAll('.decide--quota .decide-buttons button')].find(b => b.innerText.trim() === 'Hand off & reassign')?.click()`
+  )
+  await wait(1000)
+  const warningAfter = JSON.parse(
+    await evaluate(
+      `window.agentyard.rpc('task.list', {}).then(ts => JSON.stringify(ts.find(t => t.id === ${JSON.stringify(warnFixtureId)})?.quotaPreemptWarning ?? null))`
+    )
+  )
+  check(
+    'choosing a destination and Hand off & reassign records the redirect',
+    warningAfter?.action === 'handoff' && warningAfter?.reassignWorkerId === redirectWorkerId,
+    JSON.stringify(warningAfter)
+  )
+  const primaryLabel = await evaluate(
+    `document.querySelector('.decide--quota .decide-buttons .btn--primary')?.innerText.trim() ?? ''`
+  )
+  check('the chosen wrap-up highlights', primaryLabel === 'Hand off & reassign', primaryLabel)
 
   section('an answer that is not on the list')
   // ⭐ A question's options are one agent's guess at what you might say, and the answer set is

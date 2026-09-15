@@ -2052,7 +2052,17 @@ export interface RpcMap {
    * reading as though it had unstuck something.
    */
   'task.overrideQuota': {
-    params: { id: string; until?: number | null; preemptionAction?: 'compact' | 'handoff' }
+    params: {
+      id: string
+      until?: number | null
+      preemptionAction?: 'compact' | 'handoff'
+      /**
+       * Only meaningful beside `preemptionAction: 'handoff'`. Present (a worker id, or `null` for
+       * auto) means "hand off, then redirect there instead of waiting"; omitted clears any earlier
+       * redirect and goes back to "hand off and pause here".
+       */
+      reassignWorkerId?: string | null
+    }
     result: { task: Task; until: number | null; applies: boolean; reason: string }
   }
   /**

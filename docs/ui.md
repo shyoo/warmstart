@@ -396,8 +396,8 @@ sits above the shade's z-index and not merely above the page: underneath it, eve
 modal opened behind the dialog that owns it and read as clipped away (t354 → t356).
 
 ⛔ **The attachment picker lives inside the prompt it enriches, beside Save as Draft, Send and the
-schedule clock.** Those actions apply to all five kinds: Single Task, Plan & Split, Plan & Execute,
-Conversation and Debate.
+schedule clock.** Those actions apply to all five kinds, in the order the kind pill offers them:
+Single Task, Conversation, Plan & Execute, Plan & Split and Debate.
 In Plan & Split the composer draws two labelled rows of pills, and this is decision D5. The first is
 **Planner** — priority, dependencies, reuse, finish, worker, model and effort — which is what the
 *planning turn* runs as. The second is **Executor**, plus a fan-out pill, which is what every subtask
@@ -645,7 +645,7 @@ memory: `composerprefs` is how this operator files *every* task, the scratch is 
 the middle of.
 
 ⚠️ The first kind option is **Single Task**, not *Task*. Beside *Plan&Split*, which files several,
-plain “Task” read as the category rather than as one of four shapes.
+plain “Task” read as the category rather than as one of five shapes.
 
 ### The Debate row, and the three notices under it
 

@@ -91,6 +91,14 @@ export function QuotaDecide({
 
   if (!isPaused && !isReadyHeld && !warning && !live) return null
 
+  // ⛔ Same `action: 'handoff'` either way — "pause" and "reassign" are told apart only by whether a
+  // redirect destination rode along, never by a second action value. See `reassignWorkerId` on
+  // `quotaPreemptWarning` (shared/tasks.ts).
+  const handoffPauseActive = warning?.action === 'handoff' && warning.reassignWorkerId === undefined
+  const handoffReassignActive = warning?.action === 'handoff' && warning.reassignWorkerId !== undefined
+  const reassignMatchesSelection =
+    handoffReassignActive && (warning?.reassignWorkerId ?? '') === selectedWorkerId
+
   const handleOverride = async (withdraw = false) => {
     setBusy(true)
     try {
@@ -111,10 +119,14 @@ export function QuotaDecide({
     }
   }
 
-  const handlePreemptionAction = async (action: 'compact' | 'handoff') => {
+  const handlePreemptionAction = async (action: 'compact' | 'handoff', reassignWorkerId?: string | null) => {
     setBusy(true)
     try {
-      await rpc('task.overrideQuota', { id: task.id, preemptionAction: action })
+      await rpc('task.overrideQuota', {
+        id: task.id,
+        preemptionAction: action,
+        ...(reassignWorkerId !== undefined ? { reassignWorkerId } : {})
+      })
       await onRefresh()
     } finally {
       setBusy(false)
@@ -184,29 +196,66 @@ export function QuotaDecide({
         </div>
       ) : (
         <>
-          {warning?.canCompact && (
+          {warning && (
             <div className="decide-option">
-              <button
-                type="button"
-                className={warning.action === 'compact' ? 'btn btn--primary' : 'btn'}
-                disabled={busy || warning.action === 'compact'}
-                onClick={() => void handlePreemptionAction('compact')}
-              >
-                Compact & pause
-              </button>{' '}
-              <button
-                type="button"
-                className={warning.action === 'handoff' ? 'btn btn--primary' : 'btn'}
-                disabled={busy || warning.action === 'handoff'}
-                onClick={() => void handlePreemptionAction('handoff')}
-              >
-                Hand off & pause
-              </button>
-              <span className="decide-what">
-                <strong>Choose the wrap-up.</strong> Compact preserves this conversation for its next run;
-                handoff commits safe work and prepares another agent to continue. The highlighted action
-                happens when the countdown expires.
-              </span>
+              <div className="decide-buttons">
+                {warning.canCompact && (
+                  <button
+                    type="button"
+                    className={warning.action === 'compact' ? 'btn btn--primary' : 'btn'}
+                    disabled={busy || warning.action === 'compact'}
+                    onClick={() => void handlePreemptionAction('compact')}
+                  >
+                    Compact & pause
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className={handoffPauseActive ? 'btn btn--primary' : 'btn'}
+                  disabled={busy || handoffPauseActive}
+                  onClick={() => void handlePreemptionAction('handoff')}
+                >
+                  Hand off & pause
+                </button>
+                <button
+                  type="button"
+                  className={handoffReassignActive ? 'btn btn--primary' : 'btn'}
+                  disabled={busy || (handoffReassignActive && reassignMatchesSelection)}
+                  title="Writes the same handoff, then moves this task to the account below (or lets the scheduler pick) instead of waiting for this account's own window."
+                  onClick={() => void handlePreemptionAction('handoff', selectedWorkerId || null)}
+                >
+                  Hand off & reassign
+                </button>
+              </div>
+              <div className="decide-what">
+                <strong>Choose the wrap-up.</strong>{' '}
+                {warning.canCompact
+                  ? 'Compact preserves this conversation for its next run; either hand-off commits safe ' +
+                    'work and briefs whichever agent picks it up next. '
+                  : 'This account cannot compact, so the wrap-up is always a hand-off that commits safe ' +
+                    'work and briefs whichever agent picks it up next. '}
+                Pause waits for this account's own window to reopen; reassign moves on immediately to the
+                account chosen below instead. The highlighted choice is the one that runs when the
+                countdown expires.
+                <div className="reassign-row">
+                  <SettingButtonSelect
+                    className="reassign-select"
+                    value={selectedWorkerId}
+                    disabled={busy}
+                    ariaLabel="Redirect the hand-off to"
+                    options={[
+                      { value: '', label: 'Auto (scheduler decides)' },
+                      ...fleet
+                        .filter((e) => (e.worker.enabled && canWork(e.worker.role)) || e.worker.id === selectedWorkerId)
+                        .map((e) => ({
+                          value: e.worker.id,
+                          label: `${e.worker.label} (${e.worker.adapterId})`
+                        }))
+                    ]}
+                    onChange={setSelectedWorkerId}
+                  />
+                </div>
+              </div>
             </div>
           )}
           <div className="decide-option">
