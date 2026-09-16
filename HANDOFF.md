@@ -7,22 +7,20 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-15, **Windows 11**, measured on t474.2's tip over the merge of t446–t473, at
-`0.1.0-rc.1`): typecheck, lint and build pass; L1 **3,570 passed, 5 skipped** (210 files); L2
+Baseline (2026-09-15, **Windows 11**, measured on t474.3's tip over the merge of t446–t473, at
+`0.1.0-rc.1`, unchanged by the `rc.2` bump): typecheck, lint and build pass; L1 **3,570 passed, 5 skipped** (210 files); L2
 **203 checks** (5 skipped); L3 **452 passed, 4 skipped** at the pinned 1024×720 window; L4 **19
 checks** against `release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
 signed, hardened-runtime bundle. Last CI green on all seven jobs: `593e5c6`, run 35058132724 — the
 merge commit itself. CI is **enabled**, and so is the **Release** workflow, now proven end to end.
 
-⛔ **`v0.1.0-rc.1` is tagged at `eefbbbd`, one commit *before* that merge, so the six published
-artifacts contain none of t446–t473** — not the `.git` directory grant, not Plan & Execute, not the
-trunk `GIT_DIR` repair. Release run 35055712204 succeeded and the pre-release is public with both
-`.dmg`s, both `.exe`s and `SHA256SUMS.txt`, which closes item 6; what it does *not* do is ship this
-tree. ⏭ **Cut `rc.2` from the merge before installing anything on a second machine**, or items 5
-and 8 get demonstrated against a build 25 commits behind the repository. The rest of the
-go-public order stands: install *that* artifact → items 5 and 8 → delete draft
-`untagged-34911447448` → flip the repository public → `/release patch` for the bare `0.1.0`, the
-first release an installed app can see.
+**Version is `0.1.0-rc.2`, prepared by `/release rc` (t474.4, 2026-09-15): committed, untagged.**
+`v0.1.0-rc.1` was tagged at `eefbbbd`, before the t446–t473 merge, and understood schema v71; the
+operator's trunk-built app had already taken the live database to v73, so `rc.1` refused it on
+first install. `rc.2` is cut from this tree (v73) with the release-base gate green.
+⏭ `/push` → CI green → `git tag v0.1.0-rc.2 && git push origin v0.1.0-rc.2` → install *that*
+artifact on both machines → items 5 and 8 → delete draft `untagged-34911447448` → flip the
+repository public → `/release patch` for the bare `0.1.0`, the first release an installed app can see.
 
 ## Closed in this cleanup
 
@@ -143,8 +141,8 @@ judgement. Do not replace the missing evidence with a unit test.
    reports a build signed with the hardened runtime, and `npm run test:pack` passes on the Mac (all
    2026-09-14). Remaining: launch *that* bundle, open a PTY, and drive one real task. Still unverified either way: detached daemon startup without system Node
    under the hardened runtime, Application Support isolation, Antigravity's Keychain, Gatekeeper.
-6. **Cut `rc.2` from this tree** (`/release rc` → `/push` → tag). `rc.1`'s tag build (35055712204)
-   proved the pipeline end to end, but was tagged at `eefbbbd`, before the merge — see the top.
+6. **Tag `v0.1.0-rc.2`** once this commit is on `main` with CI green — see the top. `rc.1`'s tag
+   build (35055712204) proved the pipeline end to end; `rc.2` is the first build worth installing.
 7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.
