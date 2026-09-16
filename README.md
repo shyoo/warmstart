@@ -13,73 +13,81 @@
   <p><a href="https://warmstart.dev">warmstart.dev</a> · <a href="docs/getting-started.md">Getting started</a> · <a href="docs/README.md">Documentation</a> · <a href="https://github.com/shyoo/warmstart/releases">Releases</a></p>
 </div>
 
-Give Warmstart the subscription CLIs you already pay for — Claude Code, Codex and Antigravity — and a list of things to do. It runs each task in its own git worktree, routes it to the account and model that can afford it and best suits it, keeps expensive context warm, and brings every question, approval and finished change back to one place.
+Give Warmstart the Claude Code, Codex, and Antigravity accounts you already use. It runs tasks in parallel git worktrees, assigns each task to the right agent and model by live quota, cost, speed, and quality, and keeps expensive context warm. **You get one board for the work, the decisions, and the cost.**
 
-> **Status: pre-alpha.** Windows is where it is used every day; the macOS build is signed and notarised and has driven real agents. Linux is not supported. Unattended Claude Code and Antigravity agents run with **your full OS-user authority** — read [Security in brief](#security-in-brief) before pointing Warmstart at a machine that has anything else on it.
+> **Status: pre-alpha.** Windows is used every day; the macOS build is signed and notarised and has driven real agents. Linux is not supported. Unattended Claude Code and Antigravity agents run with **your full OS-user authority** — read [Security in brief](#security-in-brief) before pointing Warmstart at a machine that has anything else on it.
 
 ![The Warmstart dashboard](docs/images/dashboard.png)
 
 ## Why Warmstart
 
-Flat-rate subscription CLIs are the best value for agentic coding, but each has its own 5-hour and weekly windows, resets, prompt cache and terminal. Running several at once becomes a job of remembering which account still has room and which conversation still has context. Warmstart does that job.
+Flat-rate subscription CLIs are the best value in AI coding, but each comes with rolling 5-hour and weekly windows, reset schedules, prompt cache lifetimes, and separate terminals. Running multiple accounts or models quickly turns into manual bookkeeping: remembering which account has available quota, which terminal holds the context, and what finished where. Warmstart handles all of that for you.
 
 ## What Warmstart does for you
 
-### Smart routing
+### Right agent and the right model, without thinking twice
 
-Every dispatch scores eligible account, model and session candidates on your quality, cost and velocity weights. It counts live quota, a warm session for the project, and how that model has scored here before; the arithmetic is stored beside the decision.
+Warmstart assigns every task itself, weighing live capacity, cost, speed, and measured quality. You describe the work; Warmstart picks who should do it.
 
-### Token-aware session reuse and early compaction
+- **Checks rolling quota windows:** Reads live capacity per account and holds work when an account cannot afford both the task and its active sessions.
+- **Scores eligible candidates:** Ranks account, model, and session options on eleven terms, including cache age, preserved context, time until quota reset, and historical quality scores.
+- **Transparent arithmetic:** Every dispatch records its score and reasoning right beside the decision, with unmeasured attributes kept explicit rather than guessed.
 
-A stopped conversation is resumed, not restarted. A session is reused only while its prompt cache is warm: cache reads are 0.1× while rebuilding is 2.0×. The scheduler decides whether to send, keep warm, compact or let go, and shows which.
+### Continue where the agent left off
+
+Starting over forces an agent to reload instructions, tools, and repo context from scratch. Warmstart resumes the live session that already knows the work while its prompt cache is warm — saving up to 99.8% of new prefix tokens (cache reads cost 0.1× base price, while rebuilding an expired cache costs 2.0×). When a conversation grows too long, Warmstart compacts it into a concise summary before continuing.
 
 ![Workers and their live sessions](docs/images/workers.png)
 
 ### Every account's usage in one strip
 
-See 5-hour and weekly windows per account with their age and reset countdown, live sessions, and a switch to hold an account out. The dashboard above keeps the fleet in one place.
+See every account's rolling 5-hour and weekly windows, reading age, reset countdown, and active sessions. Hold an account out of rotation with a single click without signing out.
 
-### Parallel work in pooled worktrees, with dependencies and schedules
+### Parallel work in pooled worktrees
 
-Each project has a pool of git worktrees; each task takes one and a branch named after itself. Tasks can depend on each other, be scheduled and carry priorities; the trunk is available for one-at-a-time trunk work.
+Each project maintains a pool of isolated git worktrees. Every task automatically claims a worktree and a dedicated task branch. Tasks can depend on each other, run on schedules, or carry priorities, while the main trunk remains available for work that must run there serially.
 
 ![Flow through the workspace pool](docs/images/flow.png)
 
-### Prompts are tasks
+### Prompts are tracked tasks
 
-The Tasks board is the to-do list: every prompt has a status, worker, model, branch, duration and price. Questions, approvals, quota holds and finished diffs come back as items you answer with one click, here or from your phone.
+Every prompt becomes a tracked task with a status, worker, model, branch, duration, and price. Questions, approvals, quota holds, and finished diffs return to the same board as items you answer with one click, on desktop or from your phone.
 
 ![The Tasks board](docs/images/tasks.png)
 
 ### Hand-off between agents
 
-When an account window is about to close, or a run cannot finish, work is wrapped up and re-queued for the reset or handed to another account, including one on a different vendor, which resumes from the thread.
+When an account's quota window is nearly full or a run cannot finish, Warmstart commits what was done, wraps up the state, and either re-queues the task for the quota reset or hands it off to another account — even across different providers — to resume from the existing thread.
 
 ### Every task and run is priced
 
-Each price is a share of the subscription it ran on plus any overage. Where nothing knew the price, Warmstart says `unpriced` rather than a quiet zero.
+Every task records the share of subscription capacity and overage it consumed. Where pricing cannot be determined, Warmstart explicitly reports `unpriced` rather than showing a misleading zero.
 
 ![Statistics price comparison](docs/images/statistics.png)
 
 ### Quality review feeds routing
 
-A finished task is graded by a peer agent from a different vendor against a fixed rubric, never its own author. The score is one routing-fitness term and can never exclude a candidate. Statistics plots measured models on quality, cost and velocity.
+A peer agent from a *different* provider grades finished work against a fixed rubric — never the author itself. The score feeds into future routing decisions as a quality signal, without ever excluding candidates on its own. Statistics plots your fleet's measured trade-offs across quality, cost, and speed.
 
 ![Measured model trade-offs](docs/images/tradeoffs.png)
 
 ### Your phone, or another desktop (beta)
 
-Pair a phone by QR code to see quota, answer what is waiting and file tasks; pair another Warmstart desktop over Tailscale to drive that computer's fleet.
+Pair a phone by QR code to check quota, answer questions, and dispatch tasks from anywhere. Pair another desktop over Tailscale to control that machine's fleet remotely.
+
+### Nothing is lost quietly
+
+Warmstart never commits on an agent's behalf without explicit instruction, and cancel never destroys work. Branches with unmerged work or uncommitted changes surface under *Loose ends*, where you can inspect, merge, or delete them on your own terms.
 
 ## Five ways to file a task
 
-| Kind | What happens | Best for |
+| Kind | How it runs | Best for |
 |---|---|---|
-| **Single Task** | Autonomous one turn including landing; it can still ask a question. | Bugs, features and docs with a tangible outcome. |
-| **Conversation** | A thread you keep talking in; it stops after each turn and commits when you say. | Ambiguous ideas and human-in-the-loop work. |
-| **Plan & Execute** | One planner hands to one executor, with no review turn to pay for. | A strong model planning and a cheaper one implementing. |
-| **Plan & Split** | A planner files dependent pieces, several agents implement, and the planner integrates. | Large work. |
-| **Debate** | Two to five seats answer blind; an organizer exchanges positions and reports agreement with dissent. | Hard or ambiguous problems; mixed vendors are recommended. |
+| **Single Task** | One autonomous turn including verification and landing. It can pause to ask questions when needed. | Bugs, features, and docs with a concrete outcome. |
+| **Conversation** | An ongoing thread. The agent pauses after each turn and commits only when you approve. | Ambiguous ideas, design discussions, and guided tasks. |
+| **Plan & Execute** | One planner hands a written instruction to one executor, with no review turn to pay for. | A strong model planning and a cheaper one implementing. |
+| **Plan & Split** | A planner breaks work into dependent tasks, multiple agents implement them in parallel, and the planner integrates at the end. | Large work with clear architectural seams. |
+| **Debate** | Two to five seats answer blind; an organizer exchanges positions across rounds and synthesizes consensus and dissent. | Hard or ambiguous problems. Mixed providers beat multiple models from one vendor. |
 
 ![The Debate composer](docs/images/debate.png)
 
@@ -103,9 +111,9 @@ Pair a phone by QR code to see quota, answer what is waiting and file tasks; pai
 Installers are on the [Releases page](https://github.com/shyoo/warmstart/releases), with a `SHA256SUMS.txt` beside them.
 
 - **macOS** — `warmstart-<version>-mac-arm64.dmg` (Apple Silicon) or `-mac-x64.dmg` (Intel). Signed with a Developer ID and notarised, so Gatekeeper opens it without ceremony.
-- **Windows** — `warmstart-<version>-win-x64.exe` (or `-win-arm64.exe`). Per-user install, no administrator prompt. The build is **unsigned**, so SmartScreen shows *Windows protected your PC* on first run: click *More info* → *Run anyway*, and check the SHA-256 against `SHA256SUMS.txt` if you would rather not take it on trust.
+- **Windows** — `warmstart-<version>-win-x64.exe` (or `-win-arm64.exe`). Per-user install, no administrator prompt. The build is **unsigned**, so SmartScreen shows *Windows protected your PC* on first run: click *More info* → *Run anyway*, and verify against `SHA256SUMS.txt` if you prefer.
 
-Warmstart never installs an update by itself. It tells you when a newer release exists and downloads the verified installer to a folder; running it is your action.
+Warmstart never installs an update on its own. It notifies you when a newer release is available and downloads the verified installer; launching it is always your choice.
 
 ### Build from source
 
@@ -117,34 +125,36 @@ node scripts/ensure-electron.mjs
 npm run dev
 ```
 
-`npm run dist` builds an installer for the current platform. Then follow [Getting started](docs/getting-started.md): add an account, add a project, file a task. Muse and the local-LLM bridge are also available; see [the adapter reference](docs/adapters.md).
+`npm run dist` builds an installer for the current platform. Then follow [Getting started](docs/getting-started.md): add an account, add a project, and file a task. Muse and the local-LLM bridge are also available; see [the adapter reference](docs/adapters.md).
 
 ## Providers are not interchangeable
 
-| | Claude Code | Antigravity | Codex |
-|---|---|---|---|
-| Accounts per machine | unlimited | **one** (OS keyring) | unlimited |
-| Can compact a long session | ✔ | — | — |
-| Something reviews each action | ✔ | — | — |
-| Warmstart can meter its cost | exactly | from the live stream | from the live stream |
+Different CLIs expose different capabilities to the scheduler:
 
-Each difference is a capability the scheduler reads. A CLI Warmstart does not know can be declared as JSON in `<data dir>/adapters/`; it runs, but cannot be metered, gets no Warmstart tools and its orphans are never reaped.
+| Capability | Claude Code | Antigravity | Codex |
+|---|---|---|---|
+| Accounts per machine | Unlimited | **One** (OS keyring) | Unlimited |
+| Session compaction | Supported | — | — |
+| Built-in action review | Supported | — | — |
+| Cost metering | Exact token accounting | Live stream sampling | Live stream sampling |
+
+Each difference is a declared capability that the scheduler evaluates during routing. Custom or unsupported CLIs can be declared via JSON in `<data dir>/adapters/`; they will run, but cannot be metered, receive no Warmstart MCP tools, and orphaned processes cannot be reaped automatically.
 
 ## Security in brief
 
-Unattended Claude Code and Antigravity work runs with permission checks bypassed, as your OS user. Codex runs in its own sandbox, widened only to reach the repository's shared `.git`. A project can be set to **Sandboxed only**. The task mandate, landing gate, credential separation and restricted spawned environment bound an agent; read [docs/security.md](docs/security.md).
+Unattended Claude Code and Antigravity agents run with permission prompts bypassed, executing with **your full OS-user authority**. Codex executes inside its native sandbox, widened only to access the repository's shared `.git` directory. Projects can enforce a **Sandboxed only** policy to prevent unsandboxed dispatches. Task mandates, landing gates, credential separation, and a scrubbed process environment strictly bound agent activity; read [docs/security.md](docs/security.md).
 
-### Accounts and your providers' terms
+### Accounts and provider terms
 
-Warmstart never reads, copies, stores or proxies a credential. It runs each vendor's own CLI, signed in through that vendor's login flow, with each account in its own isolation directory. It reads published usage, declines work an account cannot afford, and stops before a limit rather than after. **Every account you commission must be one you are separately and legitimately subscribed to and entitled to use.** This is not legal advice; your provider's current terms govern.
+Warmstart never reads, copies, stores, or proxies credentials. It invokes each provider's official CLI, authenticated through that vendor's standard login flow, keeping each account isolated in its own data directory. Warmstart monitors published quota usage, declines dispatches an account cannot afford, and pauses work before rate limits are hit. **Every account configured in Warmstart must be one you are legitimately subscribed to and authorized to use.** This does not constitute legal advice; your provider's terms of service govern.
 
 ## Roadmap
 
-- API-based models alongside subscription CLIs.
-- A first-class OpenCode adapter and other harnesses.
-- Pull-request review by agents and code review.
+- Direct API-based model support alongside subscription CLIs.
+- A first-class OpenCode adapter and additional CLI harnesses.
+- Automated pull request review and code review workflows.
 - A signed Windows release.
-- Linux.
+- Linux support.
 
 ## Documentation
 
@@ -152,23 +162,23 @@ Warmstart never reads, copies, stores or proxies a credential. It runs each vend
 
 | Page | Authority on |
 |---|---|
-| [architecture](docs/architecture.md) | topology and invariants |
-| [glossary](docs/glossary.md) | domain words |
-| [cost model](docs/cost-model.md) | caching, quota and metering |
-| [routing](docs/routing.md) | eligibility and scoring |
-| [adapters](docs/adapters.md) | measured CLI capabilities |
-| [sessions](docs/sessions.md) | continuation and reuse |
-| [landing](docs/landing.md) | finish policies and Loose ends |
+| [architecture](docs/architecture.md) | Topology and invariants |
+| [glossary](docs/glossary.md) | Domain words and concepts |
+| [cost model](docs/cost-model.md) | Caching, quota, and metering |
+| [routing](docs/routing.md) | Eligibility, scoring, and candidate selection |
+| [adapters](docs/adapters.md) | Measured CLI capabilities and verified behaviors |
+| [sessions](docs/sessions.md) | Continuation, compaction, and session reuse |
+| [landing](docs/landing.md) | Finish policies, verification, and Loose ends cleanup |
 | [data model](docs/data-model.md) | SQLite schema and enums |
-| [external task debugging](docs/external-task-debugging.md) | read-only task tracing |
-| [MCP](docs/mcp.md) | MCP tiers and tools |
-| [testing](docs/testing.md) | test tiers |
-| [development](docs/development.md) | setup and packaging |
-| [UI](docs/ui.md) | renderer conventions |
-| [remote](docs/remote.md) | phone and remote desktop (beta) |
-| [security](docs/security.md) | unattended authority |
-| [getting started](docs/getting-started.md) | first run walkthrough |
-| [documentation index](docs/README.md) | what to read before changing things |
+| [external task debugging](docs/external-task-debugging.md) | Read-only task tracing and diagnostics |
+| [MCP](docs/mcp.md) | MCP server tiers and integrated tools |
+| [testing](docs/testing.md) | Test tiers (L1–L4) and verification invariants |
+| [development](docs/development.md) | Environment setup, packaging, and CI |
+| [UI](docs/ui.md) | Renderer architecture and design conventions |
+| [remote](docs/remote.md) | Mobile companion app and Tailscale remote desktop |
+| [security](docs/security.md) | Sandbox boundaries, grants, and unattended authority |
+| [getting started](docs/getting-started.md) | First-run setup and walkthrough |
+| [documentation index](docs/README.md) | What to read before changing things |
 
 ## Development
 
@@ -188,7 +198,7 @@ After `npm run build`, `node scripts/generate-readme-assets.mjs [scene …]` cap
 |---|---|
 | `src/main`, `src/preload` | Electron shell. |
 | `src/renderer` | React UI. |
-| `src/daemon` | scheduler, cache clock, controller, PTYs, store and MCP server. |
+| `src/daemon` | Scheduler, cache clock, controller, PTYs, store, and MCP server. |
 | `src/shared` | Types crossing a process boundary. |
 | `costmodels/` | Versioned pricing data. |
 | `docs/` | Maintained reference. |

@@ -24,6 +24,12 @@ channels), all off-repo.
 
 ## Closed in this cleanup
 
+- **README.md rephrased with clear tone and warmstart.dev pitch phrases (t476, 2026-09-16).** Rephrased
+  core value proposition, provider capabilities, worktree workflow, and feature sections to use direct
+  developer tone and pitch phrases aligned with warmstart.dev ("Right agent and the right model, without
+  thinking twice" replacing "Smart routing"). Maintained all verified facts, security boundaries, and
+  documentation links.
+
 - **The window now says why orchestratord died, within a second (t474.2, 2026-09-15).** The
   operator installed `rc.1` beside the trunk-built app they run daily; the trunk had migrated the
   live database to v73 and the release understood v71, so the daemon logged one actionable line and
@@ -61,16 +67,11 @@ channels), all off-repo.
   null-effort session from the per-effort breakdown rather than bucketing it as unknown.
 
 - **User-facing copy rewritten in direct developer style (t464, 2026-09-15).** Sentences, tooltips,
-  placeholders and section intros across 21 components in `src/renderer/src/components`; 112 lines
-  shorter, with test-invariant assertions and RPC contracts untouched.
-
-- **Finishing a conversation no longer races Retire it (t467, 2026-09-15).** Read-only evidence from
-  the live database showed t466 `completed` with its run closed while session `753261d2` remained
-  `live` and still claimed its workspace, so Loose ends offered an empty branch and retirement then
-  refused the checkout. `resolveTask` now waits (bounded, 15s) for the session process to exit and
-  parks/releases its workspace before the Finish RPC returns; a process that misses the wait keeps
-  its claim and is never reused. Refusals say **Could not retire/delete/clean up** and what to do.
-  Pinned by `runfailure.test.ts` and real-git `landingcorners.test.ts`.
+  placeholders and section intros across 21 components in `src/renderer/src/components`; 112 lines shorter.
+- **Finishing a conversation no longer races Retire it (t467, 2026-09-15).** `resolveTask` now waits
+  (bounded, 15s) for the session process to exit and parks/releases its workspace before the Finish RPC
+  returns, preventing race conditions with empty branch retirement. Pinned by `runfailure.test.ts` and
+  `landingcorners.test.ts`.
 
 - **A granted directory can now be committed in, and an agent can ask for one that works (t470,
   2026-09-15).** ⛔ The t469 grant was *not* dropped: `--add-dir C:\Dev\warmstart-site` was on the
