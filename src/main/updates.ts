@@ -25,6 +25,16 @@ export function parseVersion(raw: string): readonly [number, number, number] | n
   return found ? [Number(found[1]), Number(found[2]), Number(found[3])] : null
 }
 
+/** `0.1.0-rc.1` is a pre-release; `0.1.0` and `0.1.0+build` are not. */
+function isPrerelease(raw: string): boolean {
+  return /^v?\d+\.\d+\.\d+-/.test(raw.trim())
+}
+
+/**
+ * Only the numeric triple is ordered. The one pre-release rule: the bare version is newer than any
+ * pre-release of the same triple, so an installed `-rc` sees the final it was rehearsing. Two
+ * pre-releases of one triple are never ordered — GitHub's `latest` never serves one anyway.
+ */
 export function isNewerVersion(candidate: string, current: string): boolean {
   const next = parseVersion(candidate)
   const installed = parseVersion(current)
@@ -32,7 +42,7 @@ export function isNewerVersion(candidate: string, current: string): boolean {
   for (let i = 0; i < next.length; i++) {
     if (next[i]! !== installed[i]!) return next[i]! > installed[i]!
   }
-  return false
+  return isPrerelease(current) && !isPrerelease(candidate)
 }
 
 function platformName(platform: NodeJS.Platform): string | null {

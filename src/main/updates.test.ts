@@ -32,6 +32,9 @@ describe('release update selection', () => {
     expect(parseVersion('nightly-1')).toBeNull()
     expect(isNewerVersion('0.1.1', '0.1.0')).toBe(true)
     expect(isNewerVersion('0.1.0-beta.1', '0.1.0')).toBe(false)
+    expect(isNewerVersion('0.1.0', '0.1.0-rc.1')).toBe(true)
+    expect(isNewerVersion('0.1.0-rc.2', '0.1.0-rc.1')).toBe(false)
+    expect(isNewerVersion('0.1.0+build.2', '0.1.0')).toBe(false)
   })
 
   it('accepts only the exact platform and architecture installer name', () => {

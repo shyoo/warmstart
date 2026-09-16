@@ -10,9 +10,9 @@ work already in flight, and that wastes your time more than mine.
 
 ## The CLA, and why it exists
 
-Warmstart asks first-time contributors to sign a [Contributor License Agreement](CLA.md). It takes one
-click on your first pull request — a bot posts the link, and it covers everything you contribute
-afterwards.
+Warmstart asks first-time contributors to sign a [Contributor License Agreement](CLA.md). It is one
+comment on your first pull request (the wording is at the end of `CLA.md`), and it covers everything
+you contribute afterwards.
 
 **Two paragraphs on why**, because an unexplained CLA is a reasonable thing to be annoyed by.
 

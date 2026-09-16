@@ -214,12 +214,12 @@ artefact predates `src/` — but the order above is still the order: build, then
 Then the installer, when the user wants an artifact rather than a check:
 
 ```bash
-npm run dist:win    # → "release/Warmstart Setup <version>.exe"
+npm run dist:win    # → release/warmstart-<version>-win-{x64,arm64}.exe
 ```
 
 - `release/` is **gitignored**. The artifact is a build product; it is never committed and step 6
   does not carry it. Report its **path, size and mtime** as evidence it was built, and say which
-  version string it carries (`package.json` → `version`; `0.0.1` as of 2026-08-26).
+  version string it carries (`version.json` → `version`, mirrored in `package.json`).
 - ⛔ **Bumping the version is the owner's call, not yours.** Ask; never edit `version` to make a
   filename look right.
 - ⚠️ Unsigned by design — SmartScreen warns on the installer, and macOS is un-notarised. That is the

@@ -7,16 +7,34 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-15, **Windows 11**, after t470): typecheck, lint and build pass; L1 **3,558 passed,
-5 skipped** (206 files + 2 platform skips); L2 **203 checks** (5 skipped); L3 **452 passed, 4 skipped**
-at the pinned 1024×720 window; L4 **19 checks** against `release/win-unpacked` (after t451, not re-run
-since). The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17 against a signed,
-hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
+Baseline (2026-09-15, **Windows 11**, measured on this merge of t446–t473 with t474's release prep,
+at `0.1.0-rc.1`): typecheck, lint and build pass; L1 **3,558 passed, 5 skipped** (208 files); L2
+**203 checks** (5 skipped); L3 **452 passed, 4 skipped** at the pinned 1024×720 window; L4 **19
+checks** against `release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
+signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
-**Release** workflow: it has been dispatched twice with `platforms=macos` (item 6 below), so a `v*`
-tag now builds both platforms.
+**Release** workflow, proven on both platforms (item 6 below).
+
+**Version is `0.1.0-rc.1`, committed and untagged (t474, 2026-09-15).** The repository is still
+private. The go-public order, from `internal_docs/` (not citable) reduced to what the tree can
+check: `/push` this → CI green → `git tag v0.1.0-rc.1 && git push origin v0.1.0-rc.1` → install
+*that* artifact on both machines and do items 5 and 8 → delete draft `untagged-34911447448` → flip
+the repository public → re-tag or cut `rc.2` so the artifacts carry attestations → `/release patch`
+for the bare `0.1.0`, which is the first release an installed app can see.
 
 ## Closed in this cleanup
+
+- **A release now carries notes written at bump time, and an rc cannot become `latest` (t474,
+  2026-09-15).** `/release` (`.claude/skills/release/`) bumps the three version files, writes
+  `releases/v<version>.md` and commits; it never tags, because the tag is the publish trigger.
+  `release.yml` reads that file as the first part of the release body, rejects a tag without one
+  before `npm ci`, and derives `--prerelease` from a `-` in the version — ⛔ which matters because
+  `src/main/updates.ts` polls `/releases/latest`, an endpoint GitHub never answers with a pre-release
+  or draft, so every release this workflow had ever published (always `--prerelease`) was invisible
+  to installed apps. `isNewerVersion` now lets an installed rc see its bare final. O9 closed by
+  wording: `CONTRIBUTING.md`/`CLA.md` promised a CLA bot that does not exist; signing is now a
+  comment on the first PR. ⚠️ The tag build has not been run yet; the `publish` job's checkout and
+  notes read are proven only by YAML parsing and a read of the script.
 
 - **Codex's reasoning effort is now selectable, matching Claude and Muse (t473, 2026-09-15).**
   `selectableEffort` had been `false` since 2026-08-27 pending a real run — AGENTS.md forbids
@@ -26,26 +44,19 @@ tag now builds both platforms.
   level back in the rollout's `turn_context` (`"effort":"high"`/`"medium"`), and an invalid level
   failed the turn with the API's own enum error rather than being silently dropped. `plan()` in
   `openai-compatible.ts` now sends the flag beside `--model`; `constraints.test.ts` and
-  `docs/adapters.md` updated to match. ⛔ Past Codex runs' `effort` column stays `null`, deliberately
-  not backfilled: `null` already reads as "CLI default" everywhere (RunRow, TaskThread, Facts,
-  NewTask), and `statistics.ts` already excludes a null-effort session from the per-effort breakdown
-  rather than bucketing it as unknown — there was never a "?" to fix.
+  `docs/adapters.md` updated to match. ⛔ Past Codex runs' `effort` stays `null`, not backfilled:
+  `null` already reads as "CLI default" everywhere, and `statistics.ts` already excludes a
+  null-effort session from the per-effort breakdown rather than bucketing it as unknown.
 
-- **`warmstart-site` polish: task diagrams read `--color-ok` for done, Debate draws three seats
-  exchanging positions over rounds, the five task kinds get dispatch diagrams matching the composer's
-  own schematic language, and a backdrop-less `tasks.png` was replaced with the sha256-verified
-  composite (t468/t469/t471, 2026-09-15).** `generate-readme-assets.mjs` now refuses to write a shot
-  under `MIN_SHOT_BYTES` (400,000); see `docs/development.md`. ⚠️ **Committed in that repo, not
-  pushed** — a push to its `main` deploys Cloudflare Pages.
+- **`warmstart-site` polish (t468/t469/t471, 2026-09-15).** Task diagrams read `--color-ok` for done,
+  Debate draws three seats exchanging positions over rounds, the five task kinds get dispatch diagrams
+  in the composer's schematic language, and a backdrop-less `tasks.png` became the sha256-verified
+  composite. `generate-readme-assets.mjs` now refuses a shot under `MIN_SHOT_BYTES` (400,000); see
+  `docs/development.md`. ⚠️ **Committed in that repo, not pushed** — a push there deploys Cloudflare Pages.
 
-- **Rephrase all user-facing UI copy and analytics descriptions into direct, concise developer style (t464, 2026-09-15).**
-  Cleaned up all user-facing sentences, tooltips, placeholders, section intros, and flavor text across 21 components
-  in `src/renderer/src/components` (Tasks, LooseEnds, Flow, NewTask, NewProject, FleetSettings, CostModel, RoutingOverview,
-  RoutingModel, QualityModel, VelocityModel, ModelsModel, Statistics, QualityReview, Questions, Workers, and thread components
-  DebateBoard, Decide, DiffPanel, Facts, RunRow). Eliminated Claude-specific idioms ("comes to rest", "load-bearing", "prose",
-  "rung", "dearest model") and pseudo-academic paper jargon while strictly preserving test-invariant assertions and RPC contracts.
-  Net reduction of 112 lines of verbose text. Verified: typecheck, lint, `npm test` (3,548 passed), `npm run build`, and `ui.test.mjs`
-  (all 452 checks passed).
+- **User-facing copy rewritten in direct developer style (t464, 2026-09-15).** Sentences, tooltips,
+  placeholders and section intros across 21 components in `src/renderer/src/components`; 112 lines
+  shorter, with test-invariant assertions and RPC contracts untouched.
 
 - **Finishing a conversation no longer races Retire it (t467, 2026-09-15).** Read-only evidence from
   the live database showed t466 `completed` with its run closed while session `753261d2` remained
@@ -129,12 +140,11 @@ a unit test.
    reports a build signed with the hardened runtime, and `npm run test:pack` passes on the Mac (all
    2026-09-14). Remaining: launch *that* bundle, open a PTY, and drive one real task. Still unverified either way: detached daemon startup without system Node
    under the hardened runtime, Application Support isolation, Antigravity's Keychain, Gatekeeper.
-6. **Execute the release pipeline for macOS.** The five Apple secrets are set (2026-09-14) and
-   `platforms=macos` has run twice: 34909163579 (a wrong `.p12` password) and 34910069869, which
-   imported the certificate and then died in electron-builder 26.15.3's own keychain unlock — the
-   bump to 26.16.1 is the fix ([`docs/development.md`](docs/development.md) §3). ⏭ Re-dispatch;
-   notarisation is the first step nothing has reached yet. Windows stays unsigned. Release notes
-   must tell upgraders to uninstall the old app, because the `appId` changed.
+6. **Tag `v0.1.0-rc.1` and watch the first tag build.** ✅ The macOS half is proven: run
+   34911447448 (2026-09-15, electron-builder 26.16.1) notarised, stapled, `spctl` accepted, draft
+   `untagged-34911447448` holds both `.dmg`s. A tag builds Windows too, reads
+   `releases/v0.1.0-rc.1.md` (which carries the uninstall line for the `appId` change) and
+   publishes a pre-release. ⏭ Unproven until it runs: the `publish` job's checkout and notes step.
 7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.
