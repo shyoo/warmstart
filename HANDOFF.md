@@ -8,7 +8,7 @@ The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-15, **Windows 11**, measured on t474.2's tip over the merge of t446–t473, at
-`0.1.0-rc.1`): typecheck, lint and build pass; L1 **3,565 passed, 5 skipped** (209 files); L2
+`0.1.0-rc.1`): typecheck, lint and build pass; L1 **3,570 passed, 5 skipped** (210 files); L2
 **203 checks** (5 skipped); L3 **452 passed, 4 skipped** at the pinned 1024×720 window; L4 **19
 checks** against `release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
 signed, hardened-runtime bundle. Last CI green on all seven jobs: `593e5c6`, run 35058132724 — the
@@ -33,10 +33,12 @@ first release an installed app can see.
   `ensure()` now listens for the child's `exit` and stops polling at once, and `main/daemonexit.ts`
   reads the `failed to start` line back from the day's log into the status message. ⭐ Driven from
   `out/` against a `user_version = 999` database: the panel read the full refusal **+508ms** after
-  the page was reachable. `docs/architecture.md` § startup. ⛔ The lesson for releasing: a tag cut
-  from `origin/main` while the trunk carries unpushed migrations ships a build the operator's own
-  data refuses — `/release` should refuse when the trunk is ahead of origin, not yet done.
-
+  the page was reachable. `docs/architecture.md` § startup. ⛔ The release-side lesson is now a
+  gate: `npm run release:check` (`scripts/check-release-base.mjs`, step 0 of `/release`) refuses
+  a trunk ahead of `origin/main`, a branch behind it, or a dirty trunk; real-git
+  `releasebase.test.ts` reproduces the 25-commit trap. ⛔ Found on the way: unanchored `release/`
+  in `.gitignore` had swallowed `.claude/skills/release/`, so the skill was never in `57e6747`.
+- **`warmstart-site` polish (t468/t469/t471).** ⚠️ Committed there, **not pushed** — a push deploys.
 - **A release now carries notes written at bump time, and an rc cannot become `latest` (t474,
   2026-09-15).** `/release` (`.claude/skills/release/`) bumps the three version files, writes
   `releases/v<version>.md` and commits; it never tags, because the tag is the publish trigger.
@@ -59,8 +61,6 @@ first release an installed app can see.
   `docs/adapters.md` updated to match. ⛔ Past Codex runs' `effort` stays `null`, not backfilled:
   `null` already reads as "CLI default" everywhere, and `statistics.ts` already excludes a
   null-effort session from the per-effort breakdown rather than bucketing it as unknown.
-
-- **`warmstart-site` polish (t468/t469/t471).** ⚠️ Committed there, **not pushed** — a push deploys.
 
 - **User-facing copy rewritten in direct developer style (t464, 2026-09-15).** Sentences, tooltips,
   placeholders and section intros across 21 components in `src/renderer/src/components`; 112 lines

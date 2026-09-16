@@ -237,9 +237,15 @@ signing-order change, or `asarUnpack`.
 
 ### Cutting a release
 
-`/release [major|minor|patch|rc|<version>]` bumps `version.json`, `package.json` and the lock
-together, writes `releases/v<version>.md` (shape in [`../releases/README.md`](../releases/README.md))
-and commits. It never tags. The tag is the publish trigger, made by hand once the commit is on
+`/release [major|minor|patch|rc|<version>]` first runs `npm run release:check`
+([`scripts/check-release-base.mjs`](../scripts/check-release-base.mjs)), which refuses when the
+trunk's `main` is ahead of `origin/main`, when the branch is behind it, or when the trunk has
+uncommitted tracked changes — ⛔ `v0.1.0-rc.1` (2026-09-15) was cut while the trunk held 25
+unpushed commits and two migrations, so the operator's own database (v73) refused the release
+(v71) on first install. Pinned by [`src/daemon/releasebase.test.ts`](../src/daemon/releasebase.test.ts)
+with real git. Then it bumps `version.json`, `package.json` and the lock together, writes
+`releases/v<version>.md` (shape in [`../releases/README.md`](../releases/README.md)) and commits.
+It never tags. The tag is the publish trigger, made by hand once the commit is on
 `main` and CI is green:
 
 ```bash

@@ -15,7 +15,9 @@ build/
 
 # Electron / native
 .electron-builder-cache/
-release/
+# ⛔ Anchored. Unanchored `release/` also swallowed `.claude/skills/release/`, and the /release
+# skill went uncommitted for a day while its commit message said otherwise (2026-09-15).
+/release/
 
 # scripts/build-win.ps1's step stamps: a SHA-256 of each step's inputs, so an unchanged
 # step is skipped. Machine-local by definition - it describes this checkout's out\ and release\.

@@ -24,6 +24,7 @@
     "start": "electron-vite preview",
     "typecheck": "npm run version:check && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "version:check": "node scripts/check-version.mjs",
+    "release:check": "node scripts/check-release-base.mjs",
     "lint": "eslint .",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
