@@ -18,6 +18,18 @@ tag now builds both platforms.
 
 ## Closed in this cleanup
 
+- **`warmstart-site`'s task diagrams mark landing green, Debate now draws its rounds, and `#proof`
+  adds a bad cache-expiry case (t471, 2026-09-15).** The done/check state in every `TaskDiagram.astro`
+  kind now reads `--color-ok` (green) instead of the accent blue, so it reads apart from in-flight
+  agent nodes; Plan & Split's middle label is now "executors" to match the composer's own wording.
+  Debate's diagram draws three seats exchanging positions over rounds (an X marks the exchange
+  between rows) before converging through an organizer to done, instead of a single merge. The reuse
+  example in `#proof` now pairs its measured good case (green) with a bad one (red: resumed after the
+  cache expires, paying `cacheWrite1h` instead of `cacheRead`), built only from facts already in
+  `site.ts`, and links Anthropic's prompt-caching documentation as a source. `--color-ok`/`--color-danger`
+  (and their `-dim` variants) were added to `global.css`, mirroring the app's `--state-ok`/`--state-danger`.
+  ⚠️ **Committed in that repo, not pushed** — a push to its `main` deploys Cloudflare Pages.
+
 - **Rephrase all user-facing UI copy and analytics descriptions into direct, concise developer style (t464, 2026-09-15).**
   Cleaned up all user-facing sentences, tooltips, placeholders, section intros, and flavor text across 21 components
   in `src/renderer/src/components` (Tasks, LooseEnds, Flow, NewTask, NewProject, FleetSettings, CostModel, RoutingOverview,
@@ -89,25 +101,10 @@ tag now builds both platforms.
   [`transient_docs/plan_and_execute_2026-09-15.md`](transient_docs/plan_and_execute_2026-09-15.md).
   ⚠️ **Not run against a real agent**, and the cost claim is unmeasured on this fleet (item 2).
 
-- **t451–t455, landed and documented in docs/ (2026-09-15).** The Changes-in-this-task panel no
-  longer springs open on its own at the gate (t451, `atGate`); active child processes now defer idle
-  turn parking and a resting session with unlanded commits offers **Land ▼** (t452,
-  `sampleProcessTree`, `pendingWork`); the Quality Review page's N+1 `getTask`-per-row load became one
-  bounded `getTasksByIds` fetch, plus the `tasks_status` index the report asked about (t453, migration
-  73); a phone-visible `ask_human` question draws in full beside a **What now** decision card instead
-  of one bare **Resolve** row (t454, `components/QuestionCard`, `components/Decide`); and the
-  first-launch welcome tour gained SVG mockups per step and Back/Next/Esc navigation instead of a
-  single action button that jumped away mid-tour (t455).
-
-- **t408–t449, landed and documented in docs/ (2026-09-13–14).** Statistics' scatters read higher-is-better
-  on every axis; a reassigned failed landing carries the `landing.failed`/`finish.held` message that said why
-  (t448); a clean profile gets a welcome tour and reports Git/`gh`/Tailscale from the daemon's PATH (t449,
-  [`docs/external-task-debugging.md`](docs/external-task-debugging.md)); a leaked `GIT_DIR` re-initialising
-  the trunk is repaired before every base lookup and `spawnEnv()` no longer hands Windows children an empty
-  PATH; a compaction ask names the session's latest run and a dead ask a landed sibling supersedes reads
-  *superseded* (t446, migration 72); plus t445–t447 and t408–t436 (probe PTY answers, live quota probe,
-  remote settings, Muse `.codex` symlink, CI table checks, Diff pane, split Session TUI). Detail is in the
-  docs/ pages each one owed.
+- **t408–t455, landed and documented in docs/ (2026-09-13–15).** Earlier cleanup items now fully
+  covered by the docs/ pages they owed; see git history for t408–t449 (probe PTY answers, live quota
+  probe, remote settings, Statistics axes, landing messages, welcome tour) and t451–t455 (gate panel,
+  idle-turn deferral, Quality Review's N+1 fetch, phone `ask_human` decision card, tour navigation).
 
 ## Remaining work — ordered by payoff
 
