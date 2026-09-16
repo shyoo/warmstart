@@ -12,7 +12,7 @@ import type {
   SpawnRequest,
   WrittenPermissions
 } from './types.js'
-import { gitWritableRoots, linkedWritableRoots, uniquePaths } from './grants.js'
+import { externalGitRoots, gitMetadataRoots, grantedWritableRoots, linkedWritableRoots } from './grants.js'
 import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
 import { formatCmdInvocation, launchArgs, launchable, spawnEnv, which } from '../which.js'
@@ -1196,9 +1196,16 @@ export const openaiCompatible: AgentAdapter = {
       // ⛔ Without this the agent can edit and can never commit. `workspace-write` makes `cwd`
       // writable, and a pooled worktree keeps its index, objects and refs in the trunk's `.git`
       // — outside it. Measured on t56, 2026-08-30: three runs, ~1.8M tokens, every commit refused
-      // at `.git/worktrees/ws1/index.lock`. See `gitWritableRoots` for what this grants and why
+      // at `.git/worktrees/ws1/index.lock`. See `gitMetadataRoots` for what this grants and why
       // there is no narrower grant.
-      for (const root of gitWritableRoots(req.cwd)) {
+      //
+      // ⛔ **`externalGitRoots` for the ACL reset, `gitMetadataRoots` for the flag, and the two
+      // lists differ by exactly one path.** The reset exists for worktrees *this fleet created under
+      // a sandbox*, which can inherit an ACL the next sandbox cannot read past; an ordinary clone's
+      // `.git` — a `trunk`-mode workspace, or a project root that is a plain checkout — belongs to
+      // the operator, and rewriting its ACLs is not a thing a spawn may do. It still needs the flag,
+      // because this sandbox denies `<root>/.git` unless that path is a root in its own right.
+      for (const root of externalGitRoots(req.cwd)) {
         if (process.platform === 'win32') {
           try {
             execFileSync('icacls', [root, '/reset', '/t', '/c'], {
@@ -1210,8 +1217,8 @@ export const openaiCompatible: AgentAdapter = {
             // Resetting inherited ACLs is a best-effort workaround for sandbox-created worktrees.
           }
         }
-        args.push('--add-dir', root)
       }
+      for (const root of gitMetadataRoots(req.cwd)) args.push('--add-dir', root)
       // ⛔ And the directories a link inside the workspace points *out* of it at — a
       // `node_modules` junction to the trunk's is the one this install has. Measured on t171,
       // 2026-09-03: `npm test` in `ws2` died at `EPERM` writing `node_modules/.vite-temp/…`, before
@@ -1238,7 +1245,15 @@ export const openaiCompatible: AgentAdapter = {
       // permissions"*. ⚠️ No `icacls` reset, for the reason below and one more: these directories
       // are the operator's, not worktrees this fleet created, and resetting ACLs on somebody's own
       // repository is not a thing a spawn may do.
-      for (const dir of uniquePaths([...(req.grantDirs ?? []), ...attachmentDirs(req.attachments ?? [])])) {
+      //
+      // ⭐ **`grantedWritableRoots`, not the raw list: an attached repository's `.git` is granted
+      // beside it.** t469, 2026-09-15 — the grant arrived, codex edited the site, and the commit
+      // died at `.git/index.lock: Permission denied` because this sandbox carves `.git` back out of
+      // every root it grants. `gitMetadataRoots` carries the audit-log evidence and the probe.
+      for (const dir of grantedWritableRoots([
+        ...(req.grantDirs ?? []),
+        ...attachmentDirs(req.attachments ?? [])
+      ])) {
         args.push('--add-dir', dir)
       }
       // `exec` refuses to start outside a git repository. agentyard's pooled worktrees are git, but a

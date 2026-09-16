@@ -2614,6 +2614,26 @@ export interface RpcMap {
     result: { ok: boolean; reply: string }
   }
   /**
+   * The agent needs a directory outside its workspace, and asks the operator for it.
+   *
+   * ⛔ **Granting one cannot help the process that asked, and that is the whole shape of this
+   * call.** A sandbox's writable set is fixed when the process starts: codex reads its roots off
+   * the `exec` argv and re-applies the ACLs from that frozen payload before every command, and the
+   * stream transport has no mid-flight channel to widen anything. So an approval has to reach a
+   * *new* run. It does: the folder is recorded on the task exactly as one attached in the composer
+   * is, this run ends `blocked`, and the task is requeued at once so the next dispatch resumes the
+   * same conversation warm with `--add-dir` on the argv.
+   *
+   * ⭐ t469, 2026-09-15, is the run that had nowhere to go. The agent asked *"grant write access to
+   * `C:\Dev\warmstart-site\.git` so the completed changes can be committed"*, the operator answered
+   * *"Continue."*, and no answer they could type was capable of changing a sandbox. `ok: false`
+   * means nothing was granted and the run carries on; `ok: true` means the run is over.
+   */
+  'agent.requestDirectory': {
+    params: { sessionId: string; path: string; reason: string; state?: string }
+    result: { ok: boolean; reply: string }
+  }
+  /**
    * File a whole Plan & Split at once, blocking until the operator approves or refuses it.
    *
    * ⚠️ `reply` is what the agent is shown, and it is load-bearing either way: on approval it names

@@ -1650,7 +1650,14 @@ export type QuestionKind = 'text' | 'choice' | 'multi'
  * exists. `ask_human` is one the agent asked for deliberately. Worth keeping apart: the first says
  * something about the CLI, the second about the prompt.
  */
-export type QuestionOrigin = 'ask_human' | 'native_tool' | 'checkpoint' | 'task_split' | 'debate'
+export type QuestionOrigin =
+  | 'ask_human'
+  | 'native_tool'
+  | 'checkpoint'
+  | 'task_split'
+  | 'debate'
+  /** An agent asking for a directory outside its workspace. See `daemon/dirgrants.ts`. */
+  | 'request_directory'
 
 export interface QuestionOption {
   id: string

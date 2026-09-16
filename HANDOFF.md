@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-15, **Windows 11**, after t464): typecheck, lint and build pass; L1 **3,548 passed,
-5 skipped** (205 files + 2 platform skips); L2 **203 checks** (5 skipped); L3 **452 passed, 4 skipped**
+Baseline (2026-09-15, **Windows 11**, after t470): typecheck, lint and build pass; L1 **3,558 passed,
+5 skipped** (206 files + 2 platform skips); L2 **203 checks** (5 skipped); L3 **452 passed, 4 skipped**
 at the pinned 1024×720 window; L4 **19 checks** against `release/win-unpacked` (after t451, not re-run
 since). The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17 against a signed,
 hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
@@ -52,19 +52,21 @@ tag now builds both platforms.
   operator whether to switch a checkout, finish work, or handle uncommitted files. Pinned by
   `runfailure.test.ts` and real-git `landingcorners.test.ts`.
 
-- **A folder an operator attaches is now granted to every task downstream of it, and on every run
-  (t462, 2026-09-15).** `grantedDirsFor` (`daemon/attachments.ts`) resolves folder attachments on a
-  task and ancestors, filtered to disk directories; `SpawnRequest.grantDirs` passes `--add-dir` to
-  sandboxing adapters. Cold prompt names directories; survives delivery and resumes. Unit-pinned in
-  `attachments.test.ts`, `adapters.test.ts`, `prompt.test.ts`.
-
-- **README, docs, and warmstart.dev marketing pitch (t461 / t462, 2026-09-15).** Root README and
-  `docs/getting-started.md` lead with subscription-CLI control-room story, task kinds, pricing, and
-  roadmap. Regenerated all 10 documentation screenshots (7.5 MB total) from a single real run with
-  clean scratch profile, real peer reviews, and trade-off scatters. Updated warmstart-site locally.
-
-- **Quality Review gradable totals exclude non-gradable tasks (t459, 2026-09-15).** `reviewQueue`
-  computes all five counts from a single eligibility map so refused tasks do not count as gradable.
+- **A granted directory can now be committed in, and an agent can ask for one that works (t470,
+  2026-09-15).** ⛔ The t469 grant was *not* dropped: `--add-dir C:\Dev\warmstart-site` was on the
+  argv of both runs (daemon log, 02:14:44 and 02:23:16). Codex's elevated Windows sandbox grants each
+  `--add-dir` root a write ACE and then writes an explicit **deny** ACE on that root's `.git` — its
+  own audit log, `granting write ACE to …warmstart-site` then `applied deny ACE to protect
+  …warmstart-site\.git` — so every edit landed and `git commit` died at `.git/index.lock: Permission
+  denied`. ⭐ Probed against codex-cli 0.151.0: passing `<dir>/.git` as a root of its own draws a
+  grant and **no** deny, and the commit succeeds. `gitMetadataRoots` (was `gitWritableRoots`) returns
+  it now, for the workspace and every granted folder; `externalGitRoots` keeps the `icacls` reset to
+  worktrees this fleet made. ⚠️ It silently hit any plain-clone workspace too — a `trunk`-mode task
+  could not commit at all. ⭐ New MCP tool **`request_directory`**
+  (`daemon/dirgrants.ts`): the operator's **Grant** attaches the folder to the task, ends the run and
+  requeues it, so the grant arrives on a warm resume — the card says the restart costs tokens, and
+  the agent's `state` becomes the handoff. Refusals never end a turn. ⚠️ `claude-code` only (the one
+  adapter with MCP); the rest name the path after `NEEDS DECISION:`. See `docs/mcp.md`, `adapters.md`.
 
 - **The quota-preemption card's wrap-up buttons, and hand-off with a destination (t458,
   2026-09-15).** Every option with more than one button now wraps them in `.decide-buttons`, one
@@ -128,8 +130,10 @@ a unit test.
    [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §7.
 4. **Run human-in-the-loop, `commit-and-merge`, cross-task reuse and an inherited directory grant
    with a real agent.** The code and L1–L3 checks exist; none has been demonstrated in flight. For
-   the grant (t462): attach a second repository to a **planner**, let it file one piece that must
-   edit there, and watch a sandboxed codex actually write and commit in it.
+   the grant (t462/t470): attach a second repository to a **planner**, let it file one piece that
+   must edit there, and watch a sandboxed codex **commit** in it — the `.git` grant is proven by a
+   throwaway-repo probe and has not yet carried a real task's work. Then, on `claude-code`, have an
+   agent call `request_directory` for a folder nobody attached and confirm the restart resumes warm.
 5. **Run the *signed* app on macOS with a real CLI; this is the launch gate.** The owner confirmed
    an unsigned build compiles, runs and pairs in remote mode, and `./scripts/build-mac.sh` now
    reports a build signed with the hardened runtime, and `npm run test:pack` passes on the Mac (all

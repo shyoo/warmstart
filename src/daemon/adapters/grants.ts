@@ -19,7 +19,7 @@ import { log } from '../log.js'
  */
 
 /**
- * The directories a `git commit` in `cwd` has to write to, other than `cwd` itself.
+ * Every directory a `git commit` in `dir` writes to that a sandbox has to be told about **by name**.
  *
  * ⛔ **A worktree keeps none of its git metadata inside itself.** `<worktree>/.git` is a *file*
  * holding `gitdir: <trunk>/.git/worktrees/<slot>`, and a commit writes the index there, the new
@@ -31,22 +31,44 @@ import { log } from '../log.js'
  * staging both failed."* The agent edited the files it was asked to and could not commit them — not
  * a t56 fault and not a codex fault, but every pooled worktree on this adapter, for every task.
  *
- * ⚠️ This returns the **common** `.git`, which is wider than the one slot: it holds every branch's
- * refs and every task's objects, so a worker given it could rewrite refs belonging to another task.
- * That is not an oversight and there is no narrower grant — a worktree commit genuinely needs all
- * three paths, and two of them are shared by construction. The narrow fix is a different
- * architecture (a real clone per worker, `.git` inside the workspace), not a smaller flag.
+ * ⛔ **And an ordinary clone's own `.git` needs naming too, which is the opposite of what this
+ * returned until t470.** The old reasoning — *the metadata is inside `cwd`, so the sandbox already
+ * covers it* — was true of the sandbox as it was, and codex changed. Its elevated Windows backend
+ * grants each writable root a write ACE and then writes an explicit **deny** ACE on that root's
+ * `.git`, so the one directory a commit must have is the one directory it takes away. Its own audit
+ * log, 2026-09-16 (`<CODEX_HOME>/.sandbox/sandbox-<date>.log`):
  *
- * ⚠️ Returns empty for an ordinary clone, where `.git` is a directory already inside `cwd` and
- * nothing needs widening, and for a directory that is not a repository at all — a project declared
- * `vcs: none` runs here too, under `--skip-git-repo-check`.
+ * ```
+ * granting write ACE to C:\Dev\warmstart-site for sandbox group and capability SID
+ * applied deny ACE to protect C:\Dev\warmstart-site\.git
+ * ```
+ *
+ * and the run it broke, verbatim: `fatal: Unable to create
+ * 'C:/Dev/warmstart-site/.git/index.lock': Permission denied` — an agent that had made every edit it
+ * was asked for and could not commit one of them (t469).
+ *
+ * ⭐ **Naming it is the whole fix, and it was measured rather than reasoned.** Probed against
+ * codex-cli 0.151.0 on 2026-09-16 with a throwaway repository: passing `<dir>/.git` as its own
+ * `--add-dir` root makes codex grant it `(OI)(CI)(M)` and apply **no** deny ACE at all — two
+ * `granting write ACE` lines and nothing else in the audit log — and `git commit` inside that
+ * external repository then succeeds.
+ *
+ * ⚠️ The worktree case returns the **common** `.git`, which is wider than the one slot: it holds
+ * every branch's refs and every task's objects, so a worker given it could rewrite refs belonging to
+ * another task. That is not an oversight and there is no narrower grant — a worktree commit
+ * genuinely needs all three paths, and two of them are shared by construction. The narrow fix is a
+ * different architecture (a real clone per worker, `.git` inside the workspace), not a smaller flag.
+ *
+ * ⚠️ Returns empty for a directory that is not a repository at all — a project declared `vcs: none`
+ * runs here too, under `--skip-git-repo-check`.
  */
-export function gitWritableRoots(cwd: string): string[] {
+export function gitMetadataRoots(dir: string): string[] {
+  const cwd = dir
   try {
     const dotGit = join(cwd, '.git')
     if (!existsSync(dotGit)) return []
-    // A directory means an ordinary clone: the metadata is already inside the workspace.
-    if (statSync(dotGit).isDirectory()) return []
+    // ⛔ A directory means an ordinary clone, and it is granted rather than assumed: see above.
+    if (statSync(dotGit).isDirectory()) return [dotGit]
 
     const pointer = readFileSync(dotGit, 'utf8').trim()
     const match = /^gitdir:\s*(.+)$/m.exec(pointer)
@@ -72,6 +94,31 @@ export function gitWritableRoots(cwd: string): string[] {
     log.warn(`could not work out git metadata roots for ${cwd}:`, err)
     return []
   }
+}
+
+/**
+ * The git metadata of `dir` that lives **outside** `dir` — the worktree case, and only it.
+ *
+ * ⛔ **This is the `icacls` set, and that is the only reason it is separate from
+ * `gitMetadataRoots`.** The codex adapter resets inherited ACLs on the roots it grants, because a
+ * worktree *this fleet created under a sandbox* can inherit an ACL the next sandbox cannot read
+ * past. That is a statement about directories this tool made; it is not a licence to rewrite the
+ * ACLs on a repository the operator attached, or on their own project checkout. An ordinary clone's
+ * `.git` is theirs, so it is granted (`gitMetadataRoots`) and never touched.
+ */
+export function externalGitRoots(dir: string): string[] {
+  // ⚠️ Both sides resolved, never the spelling they were joined from. On macOS a temporary
+  // directory is reached through `/var` → `/private/var`, so a child of it resolves to a different
+  // string than its parent was passed as — the same trap `linkedWritableRoots` documents.
+  const real = (path: string): string => {
+    try {
+      return realpathSync.native(path)
+    } catch {
+      return resolve(path)
+    }
+  }
+  const inside = real(dir)
+  return gitMetadataRoots(dir).filter((root) => !withinPath(inside, real(root)))
 }
 
 /**
@@ -138,7 +185,7 @@ export function linkedWritableRoots(cwd: string): string[] {
       }
     }
   } catch (err) {
-    // ⚠️ Never fatal, for `gitWritableRoots`' reason: failing to widen is the old behaviour, and
+    // ⚠️ Never fatal, for `gitMetadataRoots`' reason: failing to widen is the old behaviour, and
     // refusing to spawn is worse than it.
     log.warn(`could not work out the link targets under ${cwd}:`, err)
     return []
@@ -147,14 +194,41 @@ export function linkedWritableRoots(cwd: string): string[] {
 }
 
 /**
- * Everything outside `cwd` that a session working in `cwd` should be allowed to write.
+ * Everything beyond `cwd` that a session working in `cwd` should be allowed to write.
  *
  * ⛔ `cwd` itself is never in it. Every adapter here already grants its own working directory —
  * codex through `--sandbox workspace-write`, Claude Code through the directory it is started in —
  * and repeating it would say this function had found something when it had not.
+ *
+ * ⚠️ `<cwd>/.git` *is* in it when `cwd` is an ordinary clone, and that is not a contradiction of the
+ * line above: a sandbox that grants `cwd` can still carve that one directory back out, and codex's
+ * does. See `gitMetadataRoots`. It matters wherever the workspace is a checkout rather than a
+ * pooled worktree — a `trunk`-mode task, or a project whose root is a plain clone.
  */
 export function workspaceGrants(cwd: string): string[] {
-  return uniquePaths([...gitWritableRoots(cwd), ...linkedWritableRoots(cwd)])
+  return uniquePaths([...gitMetadataRoots(cwd), ...linkedWritableRoots(cwd)])
+}
+
+/**
+ * A directory the operator handed this task, and whatever else writing in it actually needs.
+ *
+ * ⛔ **A grant that cannot commit is half a grant, and it fails in the most expensive shape there
+ * is: the agent does all the work and then cannot record any of it.** t469, 2026-09-15 — the
+ * operator attached `C:\Dev\warmstart-site`, the grant reached the argv on every run, codex edited
+ * the site exactly as asked, and `git commit` there died on `.git/index.lock: Permission denied`.
+ * The agent had nothing left to do but ask a person for something no person could give it from the
+ * UI. See `gitMetadataRoots` for the sandbox behaviour and the probe that settled the fix.
+ *
+ * ⚠️ Applied to every granted path rather than to the ones a particular CLI would trip over.
+ * Whether a sandbox carves `.git` back out of a root it granted is a fact about that sandbox on that
+ * platform, and naming the directory is free on the CLIs that would have allowed it anyway — where
+ * guessing which ones need it is an `if` on an adapter name, which this codebase does not write.
+ *
+ * ⚠️ A path that is not a repository contributes only itself, which covers the attachment store and
+ * every ordinary folder.
+ */
+export function grantedWritableRoots(dirs: string[]): string[] {
+  return uniquePaths(dirs.flatMap((dir) => [dir, ...gitMetadataRoots(dir)]))
 }
 
 /**

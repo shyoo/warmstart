@@ -3485,6 +3485,67 @@ ${state.trim()}`, run.id)
   }
 }
 
+/**
+ * End this run because the operator granted a directory it cannot be given, and start the next one.
+ *
+ * ⛔ **A sandbox's writable set is fixed before the first token.** Codex reads its roots off the
+ * `exec` argv and re-applies the ACLs from that frozen payload before every command; the stream
+ * transport has no channel to widen one mid-flight; and driving a TUI to say `/add-dir` is the one
+ * thing this project refuses to do. So a grant is only ever a fact about the *next* process, which
+ * is why an approval ends the run instead of returning into it.
+ *
+ * ⚠️ **The same two moves a person's reply makes, in the same order, and deliberately nothing
+ * new.** The run ends `blocked` and rests the task exactly as `parkForHuman` does — nothing landed,
+ * nothing committed, the session left warm — and then `continueTask` requeues it, which is what an
+ * operator typing into a stopped task already does. The next dispatch revives that conversation, so
+ * the grant costs a cache read rather than a rebuild.
+ *
+ * ⛔ **The handoff is written before the run ends, not after.** The next run is a *resume*, but a
+ * resumed prompt deliberately does not restate the task, so whatever the agent knew that the thread
+ * does not say is lost unless it is recorded here. See `dirgrants.ts` for what is asked for.
+ */
+export async function resumeWithGrant(
+  sessionId: string,
+  granted: string,
+  state?: string
+): Promise<{ ok: boolean; reply: string }> {
+  const run = runForSession(sessionId)
+  if (!run?.taskId || run.outcome) {
+    return { ok: false, reply: 'This session has no open run, so there is nothing to restart.' }
+  }
+  const task = getTask(run.taskId)
+  if (!task) return { ok: false, reply: 'This session is not working on a task.' }
+  // ⛔ A completion already owns this session's teardown. See `parkForHuman`.
+  if (completing.has(sessionId)) {
+    return { ok: false, reply: 'A completion for this task is still landing; it is too late to restart it.' }
+  }
+
+  const why = `granted ${granted}, which only a new process can be given`
+  if (state?.trim()) {
+    setTaskHandoff(task.id, state.trim())
+    addMessage(task.id, 'agent', `Where things stand:\n${state.trim()}`, run.id)
+  }
+  setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
+  finishRun(run.id, 'blocked', why)
+  void captureQuotaAfter(requireRun(run.id))
+
+  const project = task.projectId ? getProject(task.projectId) : null
+  const session = getSession(sessionId)
+  if (!session || sessionEnded(session.state)) await releaseWorkspaceOf(sessionId, task.id)
+  await releaseFor(run.id, task.id, project?.id ?? null)
+
+  const outcome = continueTask(task.id)
+  log.info(`t${task.seq} is restarting to pick up the grant on ${granted} (${outcome})`)
+  return {
+    ok: true,
+    reply:
+      `The operator granted ${granted}. It cannot reach this process — a sandbox fixes what it may ` +
+      `write before it starts — so this run is closed and t${task.seq} has already been requeued. ` +
+      'The next run resumes this same conversation with the directory writable. STOP HERE; ' +
+      'nothing was landed, committed or discarded.'
+  }
+}
+
 async function landCompletion(
   sessionId: string,
   run: Run,

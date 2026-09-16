@@ -14,7 +14,7 @@ import type {
   SpendSnapshot
 } from '@shared/protocol.js'
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
-import { uniquePaths, workspaceGrants } from './grants.js'
+import { grantedWritableRoots, uniquePaths, workspaceGrants } from './grants.js'
 import {
   asRecord,
   num,
@@ -1116,10 +1116,15 @@ export const claudeCode: AgentAdapter = {
     // ⭐ `req.grantDirs` is the operator's own list — the folders attached to this task or to one of
     // its ancestors (`grantedDirsFor`). It is the same flag because it is the same question: a
     // directory the work genuinely needs and that nothing about the workspace would reveal.
+    //
+    // ⚠️ `grantedWritableRoots` adds an attached repository's own `.git` beside it. On this CLI that
+    // is redundant — `--add-dir` here widens tool access and a subdirectory of a granted directory
+    // was already reachable — and it is written the same way regardless, because which sandbox
+    // carves `.git` back out of a root it granted is a fact about a sandbox and not a reason to
+    // branch on an adapter's name. See `gitMetadataRoots`.
     const granted = uniquePaths([
       ...workspaceGrants(req.cwd),
-      ...(req.grantDirs ?? []),
-      ...attachmentDirs(req.attachments ?? [])
+      ...grantedWritableRoots([...(req.grantDirs ?? []), ...attachmentDirs(req.attachments ?? [])])
     ])
     for (const dir of granted) args.push('--add-dir', dir)
     if (req.mcpConfig) {

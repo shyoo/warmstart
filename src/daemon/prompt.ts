@@ -681,6 +681,13 @@ export function promptFor(
   // able to write somewhere it has no reason to look. ⚠️ Only the directories the attachment
   // sentence above does not already name, and only on a cold prompt, for `coldStartBlock`'s reason:
   // a session already holding this task's context was told this when it opened.
+  //
+  // ⛔ **And how to get one, because an agent refused a write outside its workspace otherwise has
+  // nowhere to go.** Measured on t469, 2026-09-15: codex asked the operator for write access, the
+  // operator answered, and no answer they could type widened a sandbox — the run was abandoned and
+  // the work redone on another worker. The route differs by adapter because the *channel* does: one
+  // tool call where there are tools, and the decision contract where there are none. ⚠️ Both are one
+  // sentence on a cold prompt only, for the same reason the grants above are.
   if (!holdsPrompt) {
     const named = new Set(attachments.filter((a) => a.kind === 'folder').map((a) => a.file))
     const unnamed = grantedDirsFor(task.id).filter((dir) => !named.has(dir))
@@ -690,6 +697,17 @@ export function promptFor(
           'You may read and write there; nothing else outside the workspace is granted.'
       )
     }
+    parts.push(
+      adapter(adapterId).info.capabilities.mcp
+        ? 'If the work needs a directory outside this workspace and a read or write there is ' +
+            'refused, call the MCP tool `request_directory` with its full absolute path rather than ' +
+            'working around it. Granting it ends this run and resumes the conversation with the ' +
+            'directory writable, so put what you have worked out into that call’s `state`.'
+        : 'If the work needs a directory outside this workspace and a read or write there is ' +
+            'refused, do not work around it: end your reply with `NEEDS DECISION:` naming the full ' +
+            'absolute path and why, and stop. The person can attach that folder to this task, and ' +
+            'your next run gets it — no answer they type can widen the sandbox this run is in.'
+    )
   }
 
   // ⛔ Only name tools this adapter actually gets. `mcp: false` means the daemon spawns it with no

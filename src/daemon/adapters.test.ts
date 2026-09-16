@@ -15,7 +15,13 @@ import {
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { adapter, adapters } from './adapters/index.js'
-import { gitWritableRoots, linkedWritableRoots, workspaceGrants } from './adapters/grants.js'
+import {
+  externalGitRoots,
+  gitMetadataRoots,
+  grantedWritableRoots,
+  linkedWritableRoots,
+  workspaceGrants
+} from './adapters/grants.js'
 import { costModel, loadCostModels } from './costmodel.js'
 import { spawnEnv } from './which.js'
 import { APPROVE_TOOL, MCP_SERVER_NAME } from './mcpconfig.js'
@@ -1249,7 +1255,7 @@ describe('a worker that has to be able to commit', () => {
 
   it('is given every directory its commit writes to, none of which is its own', () => {
     expect(made, 'the worktree fixture must actually have been built').toBe(true)
-    const roots = gitWritableRoots(work)
+    const roots = gitMetadataRoots(work)
     // ⛔ The three paths a commit on a worktree branch touches: the index in the slot directory, and
     //    the objects and the branch ref in the common `.git`. Asserted by *containment*, because
     //    which of the returned roots covers which path is an implementation detail and the
@@ -1262,7 +1268,7 @@ describe('a worker that has to be able to commit', () => {
       }
     }
     const covered = (p: string): boolean =>
-      roots.some((r) => norm(p).startsWith(norm(r)))
+      roots.some((r: string) => norm(p).startsWith(norm(r)))
     const gitDir = resolve(work, /gitdir:\s*(.+)/.exec(readFileSync(join(work, '.git'), 'utf8'))![1]!.trim())
     expect(covered(join(gitDir, 'index.lock'))).toBe(true)
     expect(covered(join(trunk, '.git', 'objects'))).toBe(true)
@@ -1272,21 +1278,64 @@ describe('a worker that has to be able to commit', () => {
     expect(roots.map(norm)).not.toContain(norm(work))
   })
 
-  it('asks for nothing extra in an ordinary clone, where the metadata is already inside', () => {
+  /**
+   * ⭐ **This asserted the opposite until t470, and the belief it encoded was measured false.**
+   * *"In a normal checkout `.git` is a directory under `cwd`, the sandbox already covers it"* was
+   * true of the sandbox as it was. Codex's elevated Windows backend grants each writable root a
+   * write ACE and then writes an explicit **deny** ACE on that root's `.git` — its own audit log,
+   * 2026-09-16: `granting write ACE to C:\Dev\warmstart-site` followed by `applied deny ACE to
+   * protect C:\Dev\warmstart-site\.git`. So the one directory a commit must have is the one the
+   * sandbox takes back, and naming it as a root in its own right is what stops that — probed
+   * against codex-cli 0.151.0 the same day: two grant lines, no deny line, and the commit succeeds.
+   */
+  it('names an ordinary clone’s own .git, because a sandbox can carve it back out', () => {
     expect(made, 'the worktree fixture must actually have been built').toBe(true)
-    // ⛔ The guard against widening by habit. In a normal checkout `.git` is a directory under
-    //    `cwd`, the sandbox already covers it, and granting the same path twice would be noise that
-    //    hides the one case that matters.
-    expect(gitWritableRoots(trunk)).toEqual([])
+    expect(gitMetadataRoots(trunk)).toEqual([join(trunk, '.git')])
+    // ⛔ And it is *not* in the `icacls` set. That reset exists for worktrees this fleet created
+    //    under a sandbox; an ordinary clone's `.git` belongs to whoever owns the checkout, and
+    //    rewriting the ACLs on somebody's own repository is not a thing a spawn may do.
+    expect(externalGitRoots(trunk)).toEqual([])
+    // ⚠️ The worktree case is unchanged: its metadata really is outside, so it is both granted and
+    //    reset.
+    expect(externalGitRoots(work)).toEqual(gitMetadataRoots(work))
   })
 
   it('says nothing about a directory that is not a repository at all', () => {
     // ⚠️ `--skip-git-repo-check` means a `vcs: none` project runs here too.
     const bare = mkdtempSync(join(tmpdir(), 'agentyard-worktree-none-'))
     try {
-      expect(gitWritableRoots(bare)).toEqual([])
+      expect(gitMetadataRoots(bare)).toEqual([])
+      expect(externalGitRoots(bare)).toEqual([])
+      // ⚠️ And a granted folder that is not a repository contributes only itself — which is what the
+      //    attachment store is.
+      expect(grantedWritableRoots([bare])).toEqual([bare])
     } finally {
       rmSync(bare, { recursive: true, force: true })
+    }
+  })
+
+  /**
+   * ⛔ **t469, 2026-09-15, and the shape of the failure is why this is pinned on every adapter that
+   * takes the flag.** The operator attached `C:\Dev\warmstart-site` to the task; the grant reached
+   * the argv on both runs (daemon log, 02:14:44 and 02:23:16); codex made every edit it was asked
+   * for; and `git commit` there died on `fatal: Unable to create
+   * 'C:/Dev/warmstart-site/.git/index.lock': Permission denied`. All of the work, none of it
+   * recorded, and a question put to the operator that no click of theirs could answer.
+   */
+  it('grants an attached repository’s .git beside it, so the work can be committed', () => {
+    expect(made, 'the worktree fixture must actually have been built').toBe(true)
+    expect(grantedWritableRoots([trunk])).toEqual([trunk, join(trunk, '.git')])
+    for (const adapterId of ['openai-compatible', 'claude-code', 'antigravity-cli'] as const) {
+      const plan = adapter(adapterId).plan({
+        sessionId: '5e551011-0000-4000-8000-000000000001',
+        isolationRoot: 'C:/tmp/root',
+        cwd: work,
+        transport: 'stream',
+        grantDirs: [trunk]
+      })
+      const granted = plan.args.filter((_, i) => plan.args[i - 1] === '--add-dir')
+      expect(granted, adapterId).toContain(trunk)
+      expect(granted, adapterId).toContain(join(trunk, '.git'))
     }
   })
 
@@ -1298,7 +1347,7 @@ describe('a worker that has to be able to commit', () => {
       cwd: work,
       transport: 'stream'
     })
-    for (const root of gitWritableRoots(work)) {
+    for (const root of gitMetadataRoots(work)) {
       expect(plan.args[plan.args.indexOf(root) - 1]).toBe('--add-dir')
     }
     // ⛔ And the sandbox is still on. Widening the writable set is the fix; removing the boundary

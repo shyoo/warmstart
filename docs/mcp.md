@@ -85,6 +85,7 @@ any of them — it runs the identical bar and hands the same reason back, verbat
 | `task_complete` | ⛔ **the only signal that a task succeeded.** A process exiting cleanly says nothing |
 | `await_human` | ⛔ **the other terminal contract:** the agent has gone as far as it can and the rest is a person's. Ends the run `blocked`, rests the task at `awaiting_human`, claims nothing and lands nothing |
 | `ask_human` | put a question to the operator and **wait** (single choice, multi-checkboxes via `multi_select`, or open text) |
+| `request_directory` | ask for a directory outside the workspace, and get one. ⛔ **The only tool whose *success* ends the run** — a granted directory cannot reach the process that asked for it |
 | `checkpoint` | report a finished phase and wait for the go-ahead. `checkpointed` completion mode |
 | `task_create` | file a follow-up, inheriting a **narrowed** mandate and a share of the budget |
 | `handoff` | leave a note for whoever continues; prepended to the next run's prompt |
@@ -151,6 +152,38 @@ line plus one `- option — detail` bullet per choice, and the daemon files a re
 it. Multiple choices are indicated with `NEEDS DECISION: [multi] <question>` or `(select all that apply)`.
 The operator UI also includes a `+ select multiple` mode toggle on question cards.
 ⛔ However it arrived, a question that does not become a row is a question nobody can reply to.
+
+### `request_directory`, and why granting one ends the run
+
+⛔ **The hole it fills is not that an agent could not ask — it is that no answer could do anything.**
+Measured on t469, 2026-09-15: codex asked *"Grant write access to `C:\Dev\warmstart-site\.git` so
+the completed changes can be committed"*, the card reached the operator, and they typed *"Continue."*
+Nothing changed, because nothing a person types into a thread widens a sandbox. The run was
+abandoned and the work redone on another worker. A question whose only useful answer is out of the
+answerer's reach costs a person's attention and returns nothing.
+
+⛔ **A sandbox fixes what it may write before the first token.** Codex reads its roots off the `exec`
+argv and re-applies the ACLs from that frozen payload before every command; the stream transport has
+no mid-flight channel to widen one; and driving a TUI to type `/add-dir` is the one thing the
+invariants refuse. So an approval can only ever be a fact about the *next* process — which is why
+**Grant** ends this run and requeues the task at once, and why the button says so: the new run costs
+tokens, and a person clicking *yes* to a permission must not be surprised by a charge.
+
+⚠️ **Nothing under it is new machinery, deliberately.** A granted folder is the same `folder`
+attachment the composer's *Attach a folder* writes, so `grantedDirsFor` re-grants it on every later
+run and down every lineage (t462). The card is an ordinary `Question`, so it draws on the desktop and
+the phone unchanged. The restart is `continueTask`, which is exactly what a person replying to a
+stopped task already does — so the next run is a warm resume and the grant costs a cache read.
+
+⛔ **Only a grant is terminal.** A refusal, a path that is not a directory, a path inside the
+workspace and a directory this task already holds all leave the turn open with a sentence the agent
+can act on. Ending a run over a mistyped path would throw work away over a typo. ⛔ And
+*already granted* is refused **without raising a second card** — the resumed run arrives holding a
+conversation in which it asked for this directory, and re-asking is the loop AGENTS.md names.
+
+⚠️ **MCP-capable adapters only, which today is `claude-code` alone.** Every other adapter is told in
+its prompt to name the absolute path after `NEEDS DECISION:` and stop; the operator attaches that
+folder to their reply and the next run has it. Same outcome, one more step, and no tool call.
 
 ⛔ **`task_split` blocks on a structural approval, and that is the point.** An agent told in its prompt
 to ask before splitting can forget; an agent whose tool call does not return until a person has answered

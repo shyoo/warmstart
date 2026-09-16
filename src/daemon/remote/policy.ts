@@ -153,6 +153,7 @@ export const REMOTE_METHODS = {
   'agent.createTask': 'deny',
   'agent.handoff': 'deny',
   'agent.awaitHuman': 'deny',
+  'agent.requestDirectory': 'deny',
   'agent.split': 'deny',
   'agent.depend': 'deny',
   'agent.debateRound': 'deny',

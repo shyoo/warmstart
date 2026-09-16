@@ -12,6 +12,7 @@ import {
   validateAgreement
 } from '../debate.js'
 import { cancelTask } from '../cancel.js'
+import { requestDirectory } from '../dirgrants.js'
 import { completeTask, continueTask, endPlannerForSplit, parkForHuman } from '../scheduler.js'
 import { updateTask } from '../tasks.js'
 import {
@@ -28,7 +29,7 @@ import { admitAgentTask } from './support.js'
 
 type AgentMethod =
   | 'agent.taskRead' | 'agent.complete' | 'agent.awaitHuman' | 'agent.createTask' | 'agent.split' | 'agent.depend'
-  | 'agent.handoff' | 'agent.land' | 'agent.debateRound'
+  | 'agent.handoff' | 'agent.land' | 'agent.debateRound' | 'agent.requestDirectory'
 
 /**
  * How many malformed `debate_round` calls a debate tolerates before it is handed to a person.
@@ -94,6 +95,18 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
      * `parkForHuman`.
      */
     'agent.awaitHuman': (p) => parkForHuman(p.sessionId, p.reason, p.state),
+    /**
+     * ⛔ The one tool call whose *success* ends the run. A refusal, a bad path and an
+     * already-granted directory all leave the turn open, because none of them is a reason to throw
+     * one away. See `dirgrants.ts`.
+     */
+    'agent.requestDirectory': (p) =>
+      requestDirectory({
+        sessionId: p.sessionId,
+        path: p.path,
+        reason: p.reason,
+        ...(p.state ? { state: p.state } : {})
+      }),
     'agent.createTask': (p) => {
       const run = runForSession(p.sessionId)
       const parent = run?.taskId ? getTask(run.taskId) : null

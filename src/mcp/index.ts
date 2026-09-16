@@ -455,6 +455,78 @@ server.registerTool(
 )
 
 /**
+ * Ask the operator for a directory outside the workspace, and actually get it.
+ *
+ * ⛔ **`ask_human` could already ask this; what it could not do was answer it.** Measured on t469,
+ * 2026-09-15: codex asked *"Grant write access to `C:\Dev\warmstart-site\.git` so the completed
+ * changes can be committed"*, the operator typed *"Continue."*, and nothing about the sandbox
+ * changed, because nothing a person can type into a thread widens one. The question reached them
+ * and the answer had nowhere to go — the same failure `request_human` had, one layer down.
+ *
+ * ⛔ **And it is the one tool whose success ends the run.** A sandbox fixes what it may write before
+ * the first token, so an approval can only ever reach the *next* process. The description says that
+ * plainly, because an agent told it has been granted something and left running would spend the
+ * rest of its turn retrying a write that is still refused.
+ *
+ * ⚠️ `state` is not optional in spirit. The next run is a resume, and a resumed prompt does not
+ * restate the task — so whatever this turn worked out that the thread does not already say is lost
+ * unless it is written down here.
+ */
+server.registerTool(
+  'request_directory',
+  {
+    title: 'Ask the operator to grant a directory outside your workspace',
+    description:
+      'Call this when the work genuinely needs a directory outside your workspace and a read or ' +
+      'write there was refused — not when a command failed for some other reason. Name the full ' +
+      'absolute path and say why you need it. The operator gets a Grant / Don\u2019t grant card. ' +
+      'If they refuse, or the path is wrong, or it was already granted, you are told so and carry ' +
+      'on in this same turn. If they GRANT it, this run ENDS: a sandbox cannot be widened once its ' +
+      'process has started, so the grant takes effect in a new run that resumes this same ' +
+      'conversation. Put everything you have worked out into `state` — that run will not be told ' +
+      'the task again. Ask once: asking for a directory you already have is refused.',
+    inputSchema: {
+      path: z
+        .string()
+        .describe('The full absolute path of the directory, e.g. C:\\Dev\\site or /Users/me/site'),
+      reason: z
+        .string()
+        .describe(
+          'Why the work needs it, in one line. The operator sees exactly this and is deciding ' +
+            'whether to hand an agent write access to it.'
+        ),
+      state: z
+        .string()
+        .optional()
+        .describe(
+          'Where things stand — what is already done, what is left, and what you were about to do ' +
+            'with this directory. Recorded as the handoff, and read by the run that picks the grant up.'
+        )
+    }
+  },
+  async (args) => {
+    const sessionId = appEnv('SESSION_ID') ?? ''
+    try {
+      const result = await rpc('agent.requestDirectory', {
+        sessionId,
+        path: args.path,
+        reason: args.reason,
+        ...(args.state ? { state: args.state } : {})
+      })
+      // ⚠️ Never `isError`. A refusal is a real answer to a real question and the agent is meant to
+      // read it and carry on; flagging it as a tool failure invites a retry of the call rather than
+      // of the work.
+      return { content: [{ type: 'text' as const, text: result.reply }] }
+    } catch (err) {
+      return {
+        content: [{ type: 'text' as const, text: `Could not reach the operator: ${String(err)}` }],
+        isError: true
+      }
+    }
+  }
+)
+
+/**
  * Land a conversation's committed work, mid-conversation, because a person asked for it.
  *
  * ⛔ **Still not a commit tool.** The agent commits with `git`, in its own workspace, exactly as it
