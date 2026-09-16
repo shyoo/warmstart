@@ -14,14 +14,13 @@ checks** against `release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3 434 (6 s
 signed, hardened-runtime bundle. Last CI green on all seven jobs: `593e5c6`, run 35058132724 — the
 merge commit itself. CI is **enabled**, and so is the **Release** workflow, now proven end to end.
 
-**`v0.1.0-rc.2` is published (run 35063333496, 2026-09-15) and verified on both machines.** The
-operator installed the shipped `.dmg` and `.exe` and drove real agents from each — the launch gate
-(items 5 and 8) is closed. `rc.1` had been tagged before the t446–t473 merge at schema v71 and
-refused the operator's v73 database; `rc.2` is cut from this tree behind the release-base gate.
-The repository is still **private**. ⏭ Delete draft `untagged-34911447448` → flip the repository
-public (`gh repo edit --visibility public`; set description and topics while there) → `/release
-patch` for the bare `0.1.0`, the first release the updater can see, attested now that the
-repository can. Phase 3/4 (write-up, demo, landing page, channels) is off-repo and after that.
+**Version is `0.1.0`, prepared by `/release patch` (t474.6, 2026-09-15): committed, untagged. The
+repository is public** (flipped 2026-09-15 after `rc.2` was installed and verified on both machines
+— the launch gate, items 5 and 8, is closed). ⏭ Land → CI green → `git tag v0.1.0 && git push
+origin v0.1.0`. It publishes as a full release, so `/releases/latest` serves it and every `rc.2`
+install is offered it; and it is the first tag build on a public repository, so the attestation
+step runs for the first time — watch it. Then Phase 3/4 (write-up, demo GIF, landing page,
+channels), all off-repo.
 
 ## Closed in this cleanup
 
@@ -140,8 +139,8 @@ judgement. Do not replace the missing evidence with a unit test.
 5. ✅ **Closed 2026-09-15** — the signed, notarised `rc.2` bundle opened a PTY and drove a real
    agent on the owner's Mac. Still unmeasured individually: Application Support isolation and
    Antigravity's Keychain under the hardened runtime; both were exercised only as part of that run.
-6. **Flip the repository public, then `/release patch` → `0.1.0`.** Both rc tag builds are green;
-   the only pipeline step never exercised is attestation, which needs the public repository.
+6. **Tag `v0.1.0`** once this commit is on `main` with CI green — see the top. Attestation is the
+   one pipeline step never yet exercised.
 7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.

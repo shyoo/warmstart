@@ -1,6 +1,6 @@
 {
   "name": "warmstart",
-  "version": "0.1.0-rc.2",
+  "version": "0.1.0",
   "description": "A desktop control room that keeps multiple AI coding agents moving across tasks, accounts, quota windows, and human decisions.",
   "license": "Apache-2.0",
   "repository": {
