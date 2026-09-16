@@ -7,10 +7,11 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-14, **macOS 13 arm64**, measured on this branch's tip with electron-builder
-26.16.1): typecheck, lint pass; L1 **3,475 passed, 5 skipped** (202 files); L2 **203 checks** (5
-skipped); L3 **434 passed, 6 skipped** at the pinned 1024×720 window; L4 **17 checks** against a
-signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
+Baseline (2026-09-15, **Windows 11**, measured on this branch's tip at `0.1.0-rc.1`): typecheck,
+lint pass; L1 **3,475 passed, 5 skipped** (202 files); L2 **203 checks** (5 skipped); L3 **436
+passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks**; `dist:win` produced
+`warmstart-0.1.0-rc.1-win-{x64,arm64}.exe`, so NSIS accepts the `-rc` suffix. macOS 13 arm64 on
+2026-09-14: L3 434/6, L4 17 against a signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
 **Release** workflow, proven on both platforms (item 6 below).
 
