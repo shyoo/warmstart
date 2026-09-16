@@ -96,8 +96,10 @@ channels), all off-repo.
   derives `--prerelease` from a `-` in the version — ⛔ which matters because `src/main/updates.ts`
   polls `/releases/latest`, an endpoint GitHub never answers with a pre-release or draft, so every
   release this workflow had published was invisible to installed apps. `isNewerVersion` now lets an
-  installed rc see its bare final. O9 closed by wording: `CONTRIBUTING.md`/`CLA.md` promised a CLA
-  bot that does not exist; signing is now a comment on the first PR. ✅ The tag build has published.
+  installed rc see its bare final. O9 closed by wording: signing is a comment on the first PR, not a
+  promised bot (t481, 2026-09-16). The comment names an immutable CLA revision;
+  `.github/pull_request_template.md`, `CLA-SIGNERS.md` and the maintainer checklist make the first
+  external signature reproducible rather than a memory-only process. ✅ The tag build has published.
 
 - **A granted directory can now be committed in, and an agent can ask for one that works (t470,
   2026-09-15).** Codex's elevated Windows sandbox writes a **deny** ACE on each `--add-dir` root's
@@ -108,16 +110,13 @@ channels), all off-repo.
   requeues it for a warm resume with the agent's `state` as handoff. ⚠️ `claude-code` only; the rest
   name the path after `NEEDS DECISION:`. See `docs/mcp.md`, `adapters.md`.
 
-- **Quota-preemption hand-off with a destination (t458, 2026-09-15).** A hand-off chosen during
-  the warning names where the work goes (`quotaPreemptWarning.reassignWorkerId`, written by
-  `task.overrideQuota`, read by `preempt()` at expiry). ⚠️ **Not run against a real preemption**.
-
-- **Plan & Execute (t456 / t458, 2026-09-15).** The same `plan` kind with the fan-out capped at one
-  and no integration turn; the shape is *derived*, never stored — `planModeOf` (`shared/tasks.ts`)
-  reads `min(mandate.maxChildren, childDefaults.maxChildren) <= 1` — and the executor lands onto the
-  **project's** target. Design and the two operator decisions:
+- **Quota-preemption hand-off with a destination, and Plan & Execute (t456/t458, 2026-09-15).** A
+  preemption warning's chosen hand-off now names where the work goes
+  (`quotaPreemptWarning.reassignWorkerId`, read by `preempt()` at expiry); Plan & Execute is the same
+  `plan` kind with fan-out capped at one, derived rather than stored (`planModeOf`,
+  `shared/tasks.ts`), whose executor lands onto the project's target. Design:
   [`transient_docs/plan_and_execute_2026-09-15.md`](transient_docs/plan_and_execute_2026-09-15.md).
-  ⚠️ **Not run against a real agent**, and the cost claim is unmeasured on this fleet (item 2).
+  ⚠️ **Neither run against a real preemption or agent**; the cost claim is unmeasured.
 
 ## Remaining work — ordered by payoff
 

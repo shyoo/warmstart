@@ -11,8 +11,9 @@ work already in flight, and that wastes your time more than mine.
 ## The CLA, and why it exists
 
 Warmstart asks first-time contributors to sign a [Contributor License Agreement](CLA.md). It is one
-comment on your first pull request (the wording is at the end of `CLA.md`), and it covers everything
-you contribute afterwards.
+comment on your first pull request, after the maintainer gives you a permanent link to the exact CLA
+version being signed. The wording is at the end of `CLA.md`, and the agreement covers everything you
+contribute afterwards. Signatures are recorded in [`CLA-SIGNERS.md`](CLA-SIGNERS.md).
 
 **Two paragraphs on why**, because an unexplained CLA is a reasonable thing to be annoyed by.
 
@@ -32,6 +33,16 @@ terms, permanently.
 If you would rather not sign, that is a legitimate position and you are still welcome here: file
 issues, reproduce bugs, argue in threads, write about the project. Those are contributions too and none
 of them need a CLA.
+
+### Maintainer checklist for a first pull request
+
+1. Link the contributor to `CLA.md` at the full commit SHA currently on `main`, not to the moving
+   `main` URL, and ask them to post the declaration from `CLA.md` as a new comment.
+2. Check that every person whose work is included has posted the declaration with the exact link.
+3. Before merging, add each signature to `CLA-SIGNERS.md`. Obtain the stable numeric account ID with
+   `gh api users/<login> --jq .id`; do not treat a display name as identity.
+4. After merging, lock the pull-request conversation so a contributor without repository write
+   access cannot later delete the signing comment.
 
 ## The name
 

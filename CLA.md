@@ -79,11 +79,18 @@ make these representations inaccurate in any respect.
 
 ## How to sign
 
-**You do not need to do anything before opening a pull request.** On your first one, post this
-comment from your GitHub account:
+**You do not need to do anything before opening a pull request.** On your first one, the maintainer
+will give you a permanent link to the version of this document you are being asked to sign. Post the
+following as a new comment from your GitHub account, using that exact link:
 
-> I have read the CLA in CLA.md and I hereby sign it.
+> I have read and agree to the Warmstart Individual Contributor License Agreement at
+> `<permanent CLA link>`, and I hereby sign it.
 
-That comment is the signature: it records your GitHub username, the timestamp, and (through the
-pull request's base commit) the version of this document. It covers every future contribution, so
-you sign once. The maintainer keeps a list of signers in the repository.
+The link names the exact document even if this file changes later. The comment records your GitHub
+account, the timestamp and your intent to sign that document. It covers every future contribution,
+so you sign once. If a pull request contains work by more than one person, each contributor must
+sign from their own account.
+
+The maintainer records accepted signatures in [`CLA-SIGNERS.md`](CLA-SIGNERS.md) before merging.
+If you are contributing on behalf of an employer rather than as an individual, contact the
+maintainer instead; the comment above does not replace the separate agreement described in §4.
