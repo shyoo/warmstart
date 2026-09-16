@@ -351,7 +351,10 @@ never taking a task; the switch for *"do not use this one"* is `enabled`. ⚠️
 imposed: the ceiling is the account's own rate limits, and a number invented here would be a guess
 presented as a rule. ⚠️ Bounds unattended **work** only — a `consult` is exempt and bounded
 separately, and a session a task would *reuse* does not fill a slot because reusing one starts no
-process.
+process. ⭐ A task it holds back says so in the setting's own words (`shared/capacity.ts`): what is
+full, that **Max parallel instances** is what to raise, that raising it dispatches on the next tick,
+and what a second parallel run costs — quota, the reliability of the quota reading, and warm-session
+reuse. See [`routing.md`](routing.md) §2.2.
 
 **Model and effort** — *what answers a turn, and how hard it thinks.* Resolved **task → worker → the
 CLI's own default**, and deliberately not through the project or the fleet: a model id belongs to one

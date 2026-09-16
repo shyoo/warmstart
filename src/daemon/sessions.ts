@@ -1,3 +1,4 @@
+import { capacitySpawnError } from '@shared/capacity.js'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -929,9 +930,7 @@ export function spawnSession(opts: SpawnOptions): Session {
 
     const running = liveWork.length + uncountedOpenRuns
     if (running >= worker.maxConcurrent) {
-      throw new Error(
-        `worker '${worker.label}' is at its concurrency limit (${running}/${worker.maxConcurrent})`
-      )
+      throw new Error(capacitySpawnError(worker.label, running, worker.maxConcurrent))
     }
   }
 

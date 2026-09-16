@@ -39,8 +39,17 @@ export function atCapacity(
   reuse: Session | null,
   retainedAwaitingHuman = 0
 ): boolean {
+  return slotsInUse(sessions, reuse, retainedAwaitingHuman) >= maxConcurrent
+}
+
+/** The same arithmetic `atCapacity` gates on, as a number, so a refusal can say how full it is. */
+export function slotsInUse(
+  sessions: Session[],
+  reuse: Session | null,
+  retainedAwaitingHuman = 0
+): number {
   const busy = sessions.filter((s) => s.purpose === 'work' && s.id !== reuse?.id).length
-  return busy + retainedAwaitingHuman >= maxConcurrent
+  return busy + retainedAwaitingHuman
 }
 
 /**

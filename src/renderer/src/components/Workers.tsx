@@ -90,11 +90,21 @@ function modelChoices(models: Array<{ id: string }>): SettingOption[] {
  *
  * ⛔ One string, used by the heading's tooltip and the input's alike. Two copies of this is how the
  * header ends up describing a different setting from the box underneath it.
+ *
+ * ⭐ **It names the cost of raising it, because this is the one screen where somebody is about to.**
+ * A task held at `<account> at capacity` points here (`capacityHoldReason`, `shared/capacity.ts`),
+ * and the number goes up in one keystroke — so the three things a second parallel run actually costs
+ * belong beside the box, not in a doc. ⚠️ The short form of the same three clauses is
+ * `PARALLEL_TRADEOFF`; if one changes, both do.
  */
 const MAX_HELP =
-  'Maximum concurrent tasks this account may run simultaneously. Additional tasks queue until a slot frees. ' +
-  'Note: parallel sessions against the same prefix duplicate cache writes and share the quota window. ' +
-  'Decreasing this value does not interrupt running tasks; it only pauses dispatch of subsequent tasks.'
+  'How many tasks this account may run at the same time. Anything beyond it waits, held as ' +
+  '"<account> at capacity", and raising this number dispatches a waiting task on the next tick — ' +
+  'there is nothing else to press. ' +
+  'What running more at once costs: the quota window drains faster; the quota reading is less ' +
+  'reliable while several runs share one window; and fewer tasks land on a warm session, so more of ' +
+  'them start cold, which costs tokens and tends to give a weaker answer. ' +
+  'Lowering it never interrupts a running task; it only holds the next dispatch.'
 
 /**
  * The (i) beside `Routable models` — the sentence behind why an empty box is not "nothing routes

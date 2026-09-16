@@ -218,7 +218,7 @@ describe('the capacity gate above one slot', () => {
         workerId: worker.id,
         purpose: 'work'
       })
-    ).toThrow(/is at its concurrency limit \(1\/1\)/)
+    ).toThrow(/is at its concurrency limit \(1 of 1 parallel instance in use\)/)
 
     // Once the run finishes, spawnSession no longer throws concurrency limit
     tasks.finishRun(run.id, 'completed')

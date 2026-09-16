@@ -1628,6 +1628,18 @@ body {
 
 .flow-bind--stale { opacity: 0.75; }
 
+/* A tree a waiting ticket still owns. Not running (so not the running green) and not free — the
+   same human tone the awaiting lane uses, because it is the same fact seen from the other side. */
+.flow-bind--locked {
+  background: color-mix(in srgb, var(--state-human) 6%, var(--color-surface));
+  border-color: color-mix(in srgb, var(--state-human) 35%, var(--color-border));
+}
+
+.flow-bind--locked .flow-tag--locked {
+  background: color-mix(in srgb, var(--state-human) 15%, transparent);
+  color: var(--state-human);
+}
+
 .flow-bind--unbound {
   border: 1px dashed color-mix(in srgb, var(--state-running) 35%, var(--color-border));
   margin-top: var(--sp-1);

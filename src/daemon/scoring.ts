@@ -67,7 +67,8 @@ import {
  * (temporal dead zone), not merely a stale value. Measured 2026-09-08: `vitest`'s per-file dynamic
  * imports never hit this ordering and stayed green; the real packaged daemon crashed on boot.
  */
-import { atCapacity, evictableResidents, retainedReservations } from './residency.js'
+import { atCapacity, evictableResidents, retainedReservations, slotsInUse } from './residency.js'
+import { capacityHoldReason } from '@shared/capacity.js'
 
 /**
  * What `fitness` and `price` say for their basis while no worker has a routable-model allowlist.
@@ -331,7 +332,13 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     const sessions = sessionsForWorker(worker.id)
     const retained = retainedReservations(worker.id, sessions)
     if (atCapacity(sessions, worker.maxConcurrent, reuse, retained)) {
-      refuse(worker, 'capacity', `${worker.label} at capacity`)
+      // ⚠️ The count as well as the verdict: "at capacity" alone left an operator with no way to
+      // tell a fleet that is genuinely busy from a one-slot default nobody had ever changed.
+      refuse(
+        worker,
+        'capacity',
+        capacityHoldReason(worker.label, slotsInUse(sessions, reuse, retained), worker.maxConcurrent)
+      )
       continue
     }
 

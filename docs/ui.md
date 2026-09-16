@@ -60,7 +60,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 
 | Component | Screen |
 |---|---|
-| `Flow` | project lifecycle map: 6-column kanban flow with ticket ↔ workspace ↔ worker bindings and read-only grading runs. ⭐ The **trunk** is the first binding row of every git project, labelled with its landing target (`main`); a trunk held by a resting task is drawn *held*, never *free*, and an inbound ticket is only ever drawn heading for the kind of tree it will get (`computeWorkspaceRows`) |
+| `Flow` | project lifecycle map: 6-column kanban flow with ticket ↔ workspace ↔ worker bindings and read-only grading runs. ⭐ The **trunk** is the first binding row of every git project, labelled with its landing target (`main`); a trunk held by a resting task is drawn *held* and a pool member held by a ticket waiting on a person is drawn *locked*, never *free*, and an inbound ticket is only ever drawn heading for the kind of tree it will get (`computeWorkspaceRows`) |
 | `FleetStrip` `Workers` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions; one two-column settings card per worker |
 | `Tasks` `TaskThread` `thread/*` `Dependencies` | the board, one task's thread, and prerequisite edges |
 | `thread/DiffPanel` | **Changes in this task**: a file list with counts, drawn wherever the change resolves. ⚠️ Collapsed by default everywhere, including at the `awaiting_human` gate (2026-09-14) — it used to spring open on its own there, which read as a surprise rather than a nudge; the person presses it themselves. ⭐ Since t425 it draws **no patch**: a file row, or *Open in Diff pane*, opens the pane at that file. The two patch renderers (`PatchBody`, `SplitBody`) live in this file because its rule governs them: ⛔ every line is a **text node** — in `<pre>` for the single column, in a `<td>` for the split (`lib/sidebyside.ts`) — and the only thing derived from its content is a CSS class from the first character (`lib/diffline.ts`): no markdown, no highlighter, no linkified paths |
@@ -884,10 +884,17 @@ whose entire design is to be invisible.
   count under the price read as a gloss *on* the price. One labelled row each, unit in the label.
 - ⛔ **A run's `completed` beside a task's `awaiting_human` is not a contradiction** — the UI has to
   say so, because that pair is what somebody reads as broken.
-- ⛔ **A Flow ticket appears in one lifecycle lane only.** A workspace claim enriches Running only
-  while its task is `running` or `cancelling`, where the binding says **locked**; an
-  `awaiting_human` ticket stays in Awaiting and names the workspace it still locks. A release still
-  unwinding must not pin a completed or awaiting ticket under Running as a second copy.
+- ⛔ **A Flow ticket appears in one lifecycle lane only, and the pool row says what the tree is.**
+  A workspace claim enriches Running only while its task is `running` or `cancelling`, where the
+  binding says **locked**; an `awaiting_human` ticket stays in Awaiting and names the workspace it
+  still locks. A release still unwinding must not pin a completed or awaiting ticket under Running as
+  a second copy. ⭐ **But the *workspace row* for that retained tree is drawn `locked` too**
+  (`isLockedWorkspace`, `Flow.tsx`): the ticket read `locks ws2` while ws2's own row read **free** —
+  one fact with two answers, and the wrong one on the column an operator reads to find a tree that
+  can take work. It is not cosmetic: a free row is a row `computeWorkspaceRows` pairs an inbound
+  dispatch with, drawing a ticket heading into a tree it cannot have. The row shows the ticket, the
+  tree and the account in the human tone, and the count under Running is unchanged — it counts
+  *active* tasks, and this one is not one.
 - ⛔ **Stop grading stops only grading.** A pending quality review has its own read-only session and
   metered run, so its Stop grading button records that review/run as `cancelled` and leaves the
   completed task, its workspace, and prior scores unchanged.

@@ -3624,6 +3624,19 @@ try {
     'a max of 0 is a worker that stays enabled and silently never takes a task'
   )
 
+  // ⭐ The box is also where somebody about to raise it finds out what raising it costs. A hold
+  // that reads `<account> at capacity` points here; the sentence beside the control has to say what
+  // the number does and what a second parallel run spends, or the fix reads as free.
+  const maxHelp = await evaluate(`${maxInput}?.getAttribute('title') ?? ''`)
+  check(
+    'the parallel-instances box explains the hold it causes and what raising it costs',
+    maxHelp.includes('at capacity') &&
+      maxHelp.includes('next tick') &&
+      maxHelp.includes('quota') &&
+      maxHelp.includes('warm session'),
+    maxHelp
+  )
+
   // ⚠️ React owns the value, so a plain assignment is discarded on the next render. The native
   // setter plus a bubbling `input` event is what a real keystroke looks like from React's side.
   await evaluate(

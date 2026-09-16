@@ -105,6 +105,27 @@ export function workspaceLockLine(ws: FlowWorkspace): string {
   return `locks ${ws.label}${ws.workerLabel ? ` / ${ws.workerLabel}` : ''}`
 }
 
+/** The statuses where a ticket is resting on a person and keeps the tree it was working in. */
+const WAITING_STATUSES = new Set<TaskStatus>(['awaiting_human', 'paused_user'])
+
+/**
+ * Is this tree claimed by a ticket that is waiting on a person?
+ *
+ * ⛔ **Then it is locked, and the running column has to say so.** The awaiting lane already marked
+ * the *ticket* `locks ws2`, but the pool row for ws2 read **free** — the two halves of one fact
+ * disagreed, and the half an operator uses to answer *what can take work right now* was the wrong
+ * one. Worse than cosmetic: a free row is a row `computeWorkspaceRows` will pair an inbound
+ * dispatch with, drawing a ticket heading into a tree it cannot have.
+ *
+ * ⚠️ The task's own status wins over the claim's copy of it; `ws.taskStatus` is the fallback for the
+ * ticket that is not in this project's `task.list` page.
+ */
+export function isLockedWorkspace(ws: FlowWorkspace, byId: Map<string, Task>): boolean {
+  if (!ws.taskId || !ws.holding) return false
+  const status = byId.get(ws.taskId)?.status ?? ws.taskStatus
+  return status !== null && status !== undefined && WAITING_STATUSES.has(status)
+}
+
 export interface BoundWorkspaceRow {
   ws: FlowWorkspace
   activeTask: Task | null
@@ -153,10 +174,16 @@ export function computeWorkspaceRows(
       }
     }
 
-    // ⭐ **A held trunk is drawn held**, unlike a held pool member. A resting trunk task keeps the
-    // lease (its files are in the checkout) and every worktree landing waits on it, so "free" would
-    // be the one wrong word; the ticket itself stays in its own lane.
+    // ⭐ **A held trunk is drawn held.** A resting trunk task keeps the lease (its files are in the
+    // checkout) and every worktree landing waits on it, so "free" would be the one wrong word; the
+    // ticket itself stays in its own lane.
     if (ws.kind === 'trunk' && ws.taskSeq && ws.holding) {
+      return { ws, activeTask: null, inboundTask: null, inboundWorker: null }
+    }
+
+    // ⭐ And so is a pool member locked by a ticket waiting on a person — same reasoning, and the
+    // row must not be offered to an inbound dispatch. See `isLockedWorkspace`.
+    if (isLockedWorkspace(ws, byId)) {
       return { ws, activeTask: null, inboundTask: null, inboundWorker: null }
     }
 
@@ -385,24 +412,47 @@ export function Flow({ projectId, fleet, onOpenTask }: {
       )
     }
 
-    // Case 1b: a trunk lease held by a task that is resting, not running: main held by t402
-    if (ws.kind === 'trunk' && ws.taskSeq && ws.holding) {
+    // Case 1b: a lease held by a task that is resting, not running — the trunk held by t402, or a
+    // pool member locked by a ticket waiting on a person.
+    //
+    // ⭐ **`locked` here says the same thing the awaiting lane's ticket says**, and it is the half
+    // that answers *which trees can take work now*: the awaiting ticket read `locks ws2` while ws2's
+    // own row said `free`.
+    const lockedWait = isLockedWorkspace(ws, byId)
+    if (lockedWait || (ws.kind === 'trunk' && ws.taskSeq && ws.holding)) {
       const held = ws.taskId ? byId.get(ws.taskId) : null
+      const note = lockedWait
+        ? `${ws.label} is locked by t${ws.taskSeq}${heldFor ? ` for ${heldFor}` : ''} — it is waiting on a person and keeps this tree, so nothing else can be dispatched into it`
+        : `${ws.label} is held by t${ws.taskSeq}${heldFor ? ` for ${heldFor}` : ''} — worktree landings into it wait until it is released`
       return (
         <div
-          className="flow-bind flow-bind--active"
+          className={`flow-bind flow-bind--active${lockedWait ? ' flow-bind--locked' : ''}`}
           key={ws.path}
-          title={`${ws.label} is held by t${ws.taskSeq}${heldFor ? ` for ${heldFor}` : ''} — worktree landings into it wait until it is released`}
+          title={`${note}${ws.branch ? `
+${ws.branch}` : ''}`}
         >
           <span className="flow-bind-ticket">
-            {held ? ticket(held, `holding ${ws.label}`) : <span className="flow-ticket flow-ticket--other">t{ws.taskSeq}</span>}
+            {held ? ticket(held, note) : <span className="flow-ticket flow-ticket--other">t{ws.taskSeq}</span>}
           </span>
           <span className="flow-bind-arrow flow-bind-arrow--active" aria-hidden="true">→</span>
           <span className="flow-bind-dest">
-            <span className="flow-ws-badge mono flow-ws-badge--trunk">{ws.label}</span>
+            <span className={`flow-ws-badge mono${ws.kind === 'trunk' ? ' flow-ws-badge--trunk' : ''}`}>{ws.label}</span>
+            {lockedWait && ws.workerLabel ? (
+              <>
+                <span className="flow-bind-slash">/</span>
+                <span className="flow-worker-pill">
+                  <AgentIcon adapterId={ws.adapterId} size={14} />
+                  <span className="flow-worker-name">{ws.workerLabel}</span>
+                </span>
+              </>
+            ) : null}
           </span>
           <span className="flow-bind-meta">
-            <span className="flow-tag flow-tag--held">held</span>
+            {lockedWait ? (
+              <span className="flow-tag flow-tag--locked">locked</span>
+            ) : (
+              <span className="flow-tag flow-tag--held">held</span>
+            )}
           </span>
         </div>
       )

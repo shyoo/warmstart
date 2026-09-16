@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-16, **Windows 11**, measured on t478's tip over `0.1.0`): typecheck, lint and
-build pass; L1 **3,575 passed, 5 skipped** (210 files); L2 **203 checks** (5 skipped); L3 **456
+Baseline (2026-09-16, **Windows 11**, measured on t480's tip over `0.1.0`): typecheck, lint and
+build pass; L1 **3,601 passed, 5 skipped** (211 files); L2 **203 checks** (5 skipped); L3 **474
 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
 `release/win-unpacked`, 2026-09-15. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
 signed, hardened-runtime bundle. Last CI green on all seven jobs: `593e5c6`, run 35058132724 — the
@@ -23,6 +23,23 @@ step runs for the first time — watch it. Then Phase 3/4 (write-up, demo GIF, l
 channels), all off-repo.
 
 ## Closed in this cleanup
+
+- **A tree a waiting ticket still owns reads `locked` on both sides of the board, and "at capacity"
+  now says what to do about it (t480, 2026-09-16).** Flow's awaiting lane marked the ticket `locks
+  ws2` while ws2's own row read **free** — one fact, two answers, and the wrong one on the column an
+  operator reads to find a tree that can take work. Not cosmetic: a free row is one
+  `computeWorkspaceRows` pairs an inbound dispatch with. `isLockedWorkspace`
+  (`Flow.tsx`) draws the pool member held by an `awaiting_human`/`paused_user` ticket as `locked`
+  — ticket, tree and account, in the human tone — and withholds it from inbound pairing; the lane
+  count is unchanged, because it counts *active* tasks. ⭐ The capacity refusal is one shared string
+  (`shared/capacity.ts`), read by the scheduler's hold reason and `spawnSession`'s throw alike:
+  `<label> at capacity` (the prefix the suites match), then what is full, that **Max parallel
+  instances** is the setting and raising it dispatches on the next tick, and the cost — quota drains
+  faster, the reading is less reliable, warm sessions are reused less. `MAX_HELP` beside the control
+  carries the long form, pinned by an L3 check. `docs/routing.md` §2.2, `docs/ui.md` §3,
+  `docs/glossary.md`. ⚠️ The locked *row* is L1-only: `ui.test.mjs` never opens the Flow board and
+  a claim cannot be staged over RPC. Baseline on this tip, Windows 11: typecheck, lint, build pass;
+  L1 **3,601 passed, 5 skipped** (211 files); L2 **203**; L3 **474 passed, 4 skipped**.
 
 - **Open conversations sit under their project in the sidebar, and a task can be renamed (t479,
   2026-09-16).** Switching between two conversations meant Tasks board → row → open, every time. A
@@ -59,10 +76,6 @@ channels), all off-repo.
   ⭐ Driven visibly at 1440×900 on the showcase fleet and pinned by six L3 checks. `docs/ui.md` §3.
   Baseline on `01b3cf4`, Windows 11: L1 3,581 / L3 462 passed; typecheck, lint, build pass.
 
-- **README.md rephrased in direct developer tone, with warmstart.dev's pitch phrases (t476,
-  2026-09-16)** — e.g. "Right agent and the right model, without thinking twice" for "Smart routing".
-  Verified facts, security boundaries and documentation links kept as they were.
-
 - **The window now says why orchestratord died, within a second (t474.2, 2026-09-15).** `rc.1`
   installed beside the trunk-built app found a v73 database it understood as v71, logged one line and
   exited five times while the window said *Starting orchestratord…*. `ensure()` now listens for the
@@ -81,19 +94,6 @@ channels), all off-repo.
   release this workflow had published was invisible to installed apps. `isNewerVersion` now lets an
   installed rc see its bare final. O9 closed by wording: `CONTRIBUTING.md`/`CLA.md` promised a CLA
   bot that does not exist; signing is now a comment on the first PR. ✅ The tag build has published.
-
-- **Codex's reasoning effort is now selectable, matching Claude and Muse (t473, 2026-09-15).**
-  `codex exec --help` lists no `--reasoning-effort` flag; `-c model_reasoning_effort=<level>` is the
-  route in. Measured live (codex-cli 0.151.0): a fresh `exec` and an `exec resume` both echoed the
-  level back in the rollout's `turn_context`, and an invalid level failed the turn with the API's
-  own enum error rather than being silently dropped. `plan()` in `openai-compatible.ts` sends it
-  beside `--model`. ⛔ Past Codex runs' `effort` stays `null`, which already reads as "CLI default"
-  everywhere and is excluded from the per-effort breakdown rather than bucketed as unknown.
-
-- **User-facing copy rewritten in direct developer style (t464, 2026-09-15)** across 21 components.
-- **Finishing a conversation no longer races Retire it (t467, 2026-09-15).** `resolveTask` waits
-  (bounded, 15s) for the session process to exit and parks/releases its workspace before the Finish
-  RPC returns. Pinned by `runfailure.test.ts` and `landingcorners.test.ts`.
 
 - **A granted directory can now be committed in, and an agent can ask for one that works (t470,
   2026-09-15).** Codex's elevated Windows sandbox writes a **deny** ACE on each `--add-dir` root's

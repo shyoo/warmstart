@@ -88,9 +88,24 @@ export function atCapacity(
 ```
 
 #### What this means in practice:
-- **Worker A has 1 slot, currently executing a turn for Task 1:** Task 2 arrives. Worker A is busy (`busy = 1 >= 1`). Worker A is rejected with `Worker A at capacity`.
+- **Worker A has 1 slot, currently executing a turn for Task 1:** Task 2 arrives. Worker A is busy (`busy = 1 >= 1`). Worker A is rejected with `Worker A at capacity — 1 of 1 parallel instance in use. Raise Max parallel instances for Worker A in Workers and this starts on the next tick; running more at once spends quota faster, makes the quota reading less reliable, and reuses warm sessions less often.`
 - **Worker A has 1 slot, Task 1 is resting at `awaiting_human` with an idle warm session:** The operator replies to Task 1. Task 1 reuses its own warm session (`reuse = s1`). The session count excludes `s1`, so `busy = 0 < 1`. **Task 1 is NOT blocked by its own resting session** and continues immediately.
 - **Worker A has 1 slot, Task 1 is resting at `awaiting_human`, and a new Task 2 arrives:** Task 2 cannot reuse Task 1's session (unless session sharing is explicitly enabled). For Task 2, `reuse` is null, so `busy = 1 >= 1`. Task 2 cannot start on Worker A until Task 1's session exits or is evicted.
+
+#### The sentence the refusal writes
+
+⛔ **The wording is one shared string** — [`src/shared/capacity.ts`](../src/shared/capacity.ts) —
+read by the scheduler's hold reason (`capacityHoldReason`) and by `spawnSession`'s thrown refusal
+(`capacitySpawnError`) alike, because the same person reads both, minutes apart, about the same
+number. `<label> at capacity` stays the opening: the suites match hold reasons on that prefix.
+
+⭐ It names three things, because *"at capacity"* on its own answered none of them: **what is full**
+(`1 of 1 parallel instance in use`), **what to change** (Max parallel instances on the Workers row —
+raising it dispatches the held task on the next tick, with nothing else to press), and **what that
+costs** (`PARALLEL_TRADEOFF`: quota drains faster, the quota reading is less reliable while several
+runs share one window, and fewer tasks land on a warm session). The long form of the tradeoff lives
+in `MAX_HELP` beside the control itself, which is where somebody about to change the number is
+looking; the two must not drift.
 
 ### 2.3 Quota High-Water Gate (92%)
 - **Pool-aware lookup:** Multi-pool workers (such as Google Antigravity, which meters Gemini separately from Claude/GPT) look up the specific quota pool matching each candidate model (`poolFor(worker, model)`).

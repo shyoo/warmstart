@@ -8,6 +8,7 @@ import {
   completionTime,
   bindingLine,
   workspaceLockLine,
+  isLockedWorkspace,
   laneFor,
   runningWorkspaceRows,
   visibleTasksForLane,
@@ -236,6 +237,50 @@ describe('computeWorkspaceRows', () => {
     expect(rows[0]!.ws.holding).toBe('task')
     expect(rows[0]!.ws.taskSeq).toBe(9)
     expect(rows[0]!.activeTask).toBeNull()
+  })
+
+  it('draws a pool member locked by a waiting ticket as locked, not free', () => {
+    // ⛔ The awaiting lane already says the ticket `locks ws2`. Before this, ws2's own row in the
+    // running column said `free` — the same fact, two answers, and the wrong one on the board an
+    // operator reads to find a tree that can take work.
+    const waiting = mockTask({ id: 't-9', seq: 9, status: 'awaiting_human' })
+    const ws2 = mockWorkspace({ path: 'C:/ws/ws2', label: 'ws2', taskId: 't-9', taskSeq: 9, taskStatus: 'awaiting_human', holding: 'task' })
+    const byId = new Map([['t-9', waiting]])
+
+    expect(isLockedWorkspace(ws2, byId)).toBe(true)
+    const rows = computeWorkspaceRows([ws2], byId, [], [])
+    expect(rows[0]!.activeTask).toBeNull()
+    expect(rows[0]!.ws.holding).toBe('task')
+    expect(rows[0]!.ws.taskSeq).toBe(9)
+    // ⛔ And it stays on the board: `runningWorkspaceRows` keeps every row with no active task.
+    expect(runningWorkspaceRows(rows)).toHaveLength(1)
+  })
+
+  it('reads the claim’s own status when the waiting ticket is not in the page', () => {
+    const ws2 = mockWorkspace({ label: 'ws2', taskId: 't-9', taskSeq: 9, taskStatus: 'paused_user', holding: 'task' })
+    expect(isLockedWorkspace(ws2, new Map())).toBe(true)
+  })
+
+  it('does not call a workspace locked when its ticket is running, free or finished', () => {
+    const byId = new Map([
+      ['t-run', mockTask({ id: 't-run', status: 'running' })],
+      ['t-done', mockTask({ id: 't-done', status: 'completed' })]
+    ])
+    expect(isLockedWorkspace(mockWorkspace({ taskId: 't-run', holding: 'session', taskStatus: 'running' }), byId)).toBe(false)
+    expect(isLockedWorkspace(mockWorkspace({ taskId: 't-done', holding: 'session', taskStatus: 'completed' }), byId)).toBe(false)
+    expect(isLockedWorkspace(mockWorkspace(), byId)).toBe(false)
+    // A status with no claim behind it is not a lock — the tree was already released.
+    expect(isLockedWorkspace(mockWorkspace({ taskId: 't-9', taskStatus: 'awaiting_human', holding: null }), byId)).toBe(false)
+  })
+
+  it('never offers a locked workspace to an inbound dispatch', () => {
+    const waiting = mockTask({ id: 't-9', seq: 9, status: 'awaiting_human' })
+    const inbound = mockTask({ id: 't-10', seq: 10, status: 'assigned', assignee: 'w-1' })
+    const byId = new Map([['t-9', waiting]])
+    const ws1 = mockWorkspace({ label: 'ws1', taskId: 't-9', taskSeq: 9, taskStatus: 'awaiting_human', holding: 'task', workerId: 'w-1' })
+
+    const rows = computeWorkspaceRows([ws1], byId, [inbound], [])
+    expect(rows[0]!.inboundTask).toBeNull()
   })
 
   it('prevents a single task from occupying multiple workspaces (Bug 1)', () => {
