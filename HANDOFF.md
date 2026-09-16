@@ -1,16 +1,16 @@
 # Warmstart — Session Handoff
 
-## Current state — 2026-09-15
+## Current state — 2026-09-16
 
 Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling, pooled worktrees,
 model-aware routing, quality review, remote access, packaging, and atomic worker/model reassignment.
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-15, **Windows 11**, measured on t474.3's tip over the merge of t446–t473, at
-`0.1.0-rc.1`, unchanged by the `rc.2` bump): typecheck, lint and build pass; L1 **3,570 passed, 5 skipped** (210 files); L2
-**203 checks** (5 skipped); L3 **452 passed, 4 skipped** at the pinned 1024×720 window; L4 **19
-checks** against `release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
+Baseline (2026-09-16, **Windows 11**, measured on t478's tip over `0.1.0`): typecheck, lint and
+build pass; L1 **3,575 passed, 5 skipped** (210 files); L2 **203 checks** (5 skipped); L3 **456
+passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
+`release/win-unpacked`, 2026-09-15. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
 signed, hardened-runtime bundle. Last CI green on all seven jobs: `593e5c6`, run 35058132724 — the
 merge commit itself. CI is **enabled**, and so is the **Release** workflow, now proven end to end.
 
@@ -23,6 +23,19 @@ step runs for the first time — watch it. Then Phase 3/4 (write-up, demo GIF, l
 channels), all off-repo.
 
 ## Closed in this cleanup
+
+- **A run's prompt chip now hangs under the request, and every benchmark prior cites its leaderboard
+  (t478, 2026-09-16).** The `📋 49` chip sat under the run's *last agent answer*, which read as
+  though the agent had been handed its own reply — a person who typed `/push` found their prompt two
+  bubbles below. `promptAnchors` (`lib/threadbubble.ts`) replaces `promptMessageId`: a run claims the
+  last unclaimed request before `startedAt` (a human message, or the opening message of a task an
+  agent filed) and falls back to its own last answer when a retry followed no new note. ⭐ Routing
+  Model › Models grew a **Prior source** column and Table 13 — the leaderboards, their files and
+  retrieval dates, carried on the report from `benchmarkTable()` because only the daemon can read
+  `benchmarks/*.json`; a family-prefix prior reads *inferred, family match* rather than borrowing the
+  neighbour's citation. ⭐ Both read back off the built app: `test/ui.test.mjs` seeds a run carrying a
+  prompt through the store and asserts which bubble the chip lands under — reverting the anchor turns
+  those two checks red, which is how they were confirmed to test anything.
 
 - **README.md rephrased with clear tone and warmstart.dev pitch phrases (t476, 2026-09-16).** Rephrased
   core value proposition, provider capabilities, worktree workflow, and feature sections to use direct
@@ -46,25 +59,20 @@ channels), all off-repo.
 - **A release now carries notes written at bump time, and an rc cannot become `latest` (t474,
   2026-09-15).** `/release` (`.claude/skills/release/`) bumps the three version files, writes
   `releases/v<version>.md` and commits; it never tags, because the tag is the publish trigger.
-  `release.yml` reads that file as the first part of the release body, rejects a tag without one
-  before `npm ci`, and derives `--prerelease` from a `-` in the version — ⛔ which matters because
-  `src/main/updates.ts` polls `/releases/latest`, an endpoint GitHub never answers with a pre-release
-  or draft, so every release this workflow had ever published (always `--prerelease`) was invisible
-  to installed apps. `isNewerVersion` now lets an installed rc see its bare final. O9 closed by
-  wording: `CONTRIBUTING.md`/`CLA.md` promised a CLA bot that does not exist; signing is now a
-  comment on the first PR. ✅ The tag build has since run and published (item 6).
+  `release.yml` reads that file as the release body, rejects a tag without one before `npm ci`, and
+  derives `--prerelease` from a `-` in the version — ⛔ which matters because `src/main/updates.ts`
+  polls `/releases/latest`, an endpoint GitHub never answers with a pre-release or draft, so every
+  release this workflow had published was invisible to installed apps. `isNewerVersion` now lets an
+  installed rc see its bare final. O9 closed by wording: `CONTRIBUTING.md`/`CLA.md` promised a CLA
+  bot that does not exist; signing is now a comment on the first PR. ✅ The tag build has published.
 
 - **Codex's reasoning effort is now selectable, matching Claude and Muse (t473, 2026-09-15).**
-  `selectableEffort` had been `false` since 2026-08-27 pending a real run — AGENTS.md forbids
-  promoting a documented-but-unmeasured flag, and `codex exec --help` lists no `--reasoning-effort`
-  flag at all; `-c model_reasoning_effort=<level>` is the actual route in. Measured live against a
-  signed-in ChatGPT account (codex-cli 0.151.0): a fresh `exec` and an `exec resume` both echoed the
-  level back in the rollout's `turn_context` (`"effort":"high"`/`"medium"`), and an invalid level
-  failed the turn with the API's own enum error rather than being silently dropped. `plan()` in
-  `openai-compatible.ts` now sends the flag beside `--model`; `constraints.test.ts` and
-  `docs/adapters.md` updated to match. ⛔ Past Codex runs' `effort` stays `null`, not backfilled:
-  `null` already reads as "CLI default" everywhere, and `statistics.ts` already excludes a
-  null-effort session from the per-effort breakdown rather than bucketing it as unknown.
+  `codex exec --help` lists no `--reasoning-effort` flag; `-c model_reasoning_effort=<level>` is the
+  route in. Measured live (codex-cli 0.151.0): a fresh `exec` and an `exec resume` both echoed the
+  level back in the rollout's `turn_context`, and an invalid level failed the turn with the API's
+  own enum error rather than being silently dropped. `plan()` in `openai-compatible.ts` sends it
+  beside `--model`. ⛔ Past Codex runs' `effort` stays `null`, which already reads as "CLI default"
+  everywhere and is excluded from the per-effort breakdown rather than bucketed as unknown.
 
 - **User-facing copy rewritten in direct developer style (t464, 2026-09-15).** Sentences, tooltips,
   placeholders and section intros across 21 components in `src/renderer/src/components`; 112 lines shorter.
@@ -74,11 +82,9 @@ channels), all off-repo.
   `landingcorners.test.ts`.
 
 - **A granted directory can now be committed in, and an agent can ask for one that works (t470,
-  2026-09-15).** ⛔ The t469 grant was *not* dropped: `--add-dir C:\Dev\warmstart-site` was on the
-  argv of both runs (daemon log, 02:14:44 and 02:23:16). Codex's elevated Windows sandbox grants each
-  `--add-dir` root a write ACE and then writes an explicit **deny** ACE on that root's `.git` — its
-  own audit log, `granting write ACE to …warmstart-site` then `applied deny ACE to protect
-  …warmstart-site\.git` — so every edit landed and `git commit` died at `.git/index.lock: Permission
+  2026-09-15).** ⛔ The t469 grant was *not* dropped. Codex's elevated Windows sandbox grants each
+  `--add-dir` root a write ACE and then writes an explicit **deny** ACE on that root's `.git` (its
+  own audit log says so), so every edit landed and `git commit` died at `.git/index.lock: Permission
   denied`. ⭐ Probed against codex-cli 0.151.0: passing `<dir>/.git` as a root of its own draws a
   grant and **no** deny, and the commit succeeds. `gitMetadataRoots` (was `gitWritableRoots`) returns
   it now, for the workspace and every granted folder; `externalGitRoots` keeps the `icacls` reset to
@@ -90,21 +96,17 @@ channels), all off-repo.
   adapter with MCP); the rest name the path after `NEEDS DECISION:`. See `docs/mcp.md`, `adapters.md`.
 
 - **The quota-preemption card's wrap-up buttons, and hand-off with a destination (t458,
-  2026-09-15).** Multi-button options wrap in `.decide-buttons`, one grid item, so a second button
-  stops auto-placing into the description's column. ⭐ A hand-off chosen during the warning can name
-  where the work goes: `quotaPreemptWarning.reassignWorkerId`, set by `task.overrideQuota` (refused
-  beside `preemptionAction: 'compact'`) and read by `preempt()` at expiry, which reassigns, clears
-  `not_before`, and falls back to pausing if the chosen worker is gone. Pinned in
-  `quotaoverride.test.ts`, `preemption.test.ts`, `test/ui.test.mjs`. ⚠️ **Not run against a real
-  preemption**; seeded through the store like the suite's other quota states.
+  2026-09-15).** Multi-button options wrap in `.decide-buttons`, one grid item. A hand-off chosen
+  during the warning names where the work goes (`quotaPreemptWarning.reassignWorkerId`, written by
+  `task.overrideQuota`, read by `preempt()` at expiry). Pinned in `quotaoverride.test.ts`,
+  `preemption.test.ts`, `test/ui.test.mjs`. ⚠️ **Not run against a real preemption**.
 
 - **Plan & Execute, and the composer pill's teaching order (t456 / t458, 2026-09-15).** Plan & Execute
   is the same `plan` kind with the fan-out capped at one and no integration turn; the shape is
   *derived*, never stored — `planModeOf` (`shared/tasks.ts`) reads
   `min(mandate.maxChildren, childDefaults.maxChildren) <= 1` and everything follows, including the
-  executor landing onto the **project's** target rather than the planner's branch. The pill now reads
-  Single Task, Conversation, Plan & Execute, Plan & Split, Debate, from the single `KIND_OPTIONS`
-  order. Design, measurements and the two operator decisions:
+  executor landing onto the **project's** target rather than the planner's branch. The pill reads
+  from the single `KIND_OPTIONS` order. Design and the two operator decisions:
   [`transient_docs/plan_and_execute_2026-09-15.md`](transient_docs/plan_and_execute_2026-09-15.md).
   ⚠️ **Not run against a real agent**, and the cost claim is unmeasured on this fleet (item 2).
 

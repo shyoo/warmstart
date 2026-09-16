@@ -2348,6 +2348,28 @@ try {
     /n\/a/i.test(modelsPanel),
     'nothing on this install has ever priced a run'
   )
+  // ⛔ A prior is a belief, and AGENTS.md says every belief carries its basis. The page must name
+  // the leaderboard each number was read off, not merely print the number.
+  check(
+    'every prior cites where it came from, with the file and the retrieval date',
+    /Prior source/i.test(modelsPanel) &&
+      /vals-terminal-bench-2\.1/.test(modelsPanel) &&
+      /coding-agents\.2026-09/.test(modelsPanel) &&
+      /2026-09-04/.test(modelsPanel),
+    'the priors table is the one place an operator can check the numbers routing ranks models by'
+  )
+  const priorLinks = JSON.parse(
+    await evaluate(`(() => {
+      const links = [...document.querySelectorAll('.content a[href^="https://"]')]
+        .filter(a => a.target === '_blank');
+      return JSON.stringify({ n: links.length, hrefs: links.slice(0, 3).map(a => a.href) });
+    })()`)
+  )
+  check(
+    'each source opens in the real browser rather than navigating the shell',
+    priorLinks.n > 0 && priorLinks.hrefs.every((h) => /^https:\/\//.test(h)),
+    JSON.stringify(priorLinks)
+  )
 
   section('routing model > the paper as a whole')
   // ⛔ Every table is centred in the column — read off geometry, because a `margin: 0 auto` that a
@@ -4686,6 +4708,80 @@ try {
     '⛔ a person’s own asterisks come back as asterisks, not as bold',
     fenced.asterisks === true && fenced.markdownInMine === 0,
     JSON.stringify(fenced)
+  )
+
+  section('the prompt chip hangs under the request, not under the answer')
+  // ⛔ **The sender's side.** A prompt is what somebody sent, so the `📋 1,475` chip belongs under
+  // the message that asked — the person's own `/push`, or the opening message of a task an agent
+  // filed — not under the agent's last answer two bubbles below, which is where it sat until t478
+  // and read as though the agent had been handed its own reply. `promptAnchors` decides; this reads
+  // back which bubble the built app actually drew it under.
+  const chipTaskId = await evaluate(`
+    window.agentyard.rpc('task.page', { limit: 100 })
+      .then(p => p.tasks.find(t => t.title === 'ui dependent task')?.id)
+  `)
+  {
+    // Seeded through the store: a run carries a prompt only once an agent has been dispatched, and
+    // this suite's worker has no credentials, so there is no honest way to author one over an RPC.
+    const store = new DatabaseSync(join(dataDir, 'warmstart.db'))
+    const workerId = store.prepare('select id from workers limit 1').get().id
+    const startedAt = Date.now()
+    store
+      .prepare(
+        `insert into runs (id, task_id, worker_id, started_at, ended_at, outcome, prompt)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run('ui-chip-run', chipTaskId, workerId, startedAt, startedAt + 1000, 'success', 'the prompt this run was sent')
+    store
+      .prepare(
+        `insert into task_messages (task_id, role, text, run_id, ts) values (?,?,?,?,?)`
+      )
+      .run(chipTaskId, 'agent', 'Done — landed it.', 'ui-chip-run', startedAt + 1000)
+    store.close()
+  }
+  // Leaving the task and coming back is what re-reads the thread and its runs.
+  await evaluate(`document.querySelector('.detail-head .back-to-list')?.click()`)
+  await waitFor(
+    async () =>
+      await evaluate(
+        `[...document.querySelectorAll('.tbl tbody tr')].some(r => r.innerText.includes('ui dependent task'))`
+      ),
+    'the task list to come back'
+  )
+  await evaluate(
+    `[...document.querySelectorAll('.tbl tbody tr')].find(r => r.innerText.includes('ui dependent task'))?.click()`
+  )
+  let chipAt = null
+  await waitFor(async () => {
+    const got = await evaluate(`
+      JSON.stringify((() => {
+        const chips = [...document.querySelectorAll('.thread--task .prompt-chip')];
+        if (chips.length === 0) return null;
+        return {
+          n: chips.length,
+          on: chips.map(c => {
+            const msg = c.closest('.msg');
+            return {
+              role: [...msg.classList].find(k => k.startsWith('msg--') && k !== 'msg--right' && k !== 'msg--left'),
+              side: msg.classList.contains('msg--right') ? 'right' : 'left',
+              said: msg.querySelector('.msg-text')?.innerText.slice(0, 40) ?? ''
+            };
+          })
+        };
+      })())
+    `)
+    chipAt = got === 'null' || got == null ? null : JSON.parse(got)
+    return chipAt !== null
+  }, 'the prompt chip on the seeded run')
+  check(
+    'the chip sits under the human message that asked, on its own side of the thread',
+    chipAt.n === 1 && chipAt.on[0].role === 'msg--human' && chipAt.on[0].side === 'right',
+    JSON.stringify(chipAt)
+  )
+  check(
+    '⛔ and not under the agent’s answer, which is where it used to be',
+    chipAt.on.every((c) => c.role !== 'msg--agent'),
+    JSON.stringify(chipAt)
   )
 
   section('what the thread ledger says a task cost')

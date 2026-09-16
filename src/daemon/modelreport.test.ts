@@ -165,6 +165,20 @@ describe('modelReport', () => {
     expect(row?.explorations).toBe(1)
   })
 
+  it('carries the leaderboard behind every prior it publishes', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'SourcedWorker' })
+    const report = api.modelReport()
+    const row = report.rows.find((r) => r.workerId === w.id && r.model === 'claude-opus-5')
+    expect(row?.prior).not.toBeNull()
+    expect(row?.priorSource).toBeTruthy()
+    // ⛔ The name on the row has to resolve in the report's own source list, or the page shows a
+    // citation nobody can follow. Only the daemon can read `benchmarks/*.json`, so it ships them.
+    const cited = report.benchmarkSources.find((s) => s.name === row?.priorSource)
+    expect(cited).toBeDefined()
+    expect(cited?.url).toMatch(/^https:\/\//)
+    expect(cited?.retrieved).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
   it('publishes the fitness and price weights and formulas actually in force', () => {
     const report = api.modelReport()
     expect(report.fitnessFormula).toContain('quality')

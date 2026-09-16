@@ -1,15 +1,58 @@
-import type { MessageRole, TaskMessage } from '@shared/tasks'
+import type { MessageRole, Run, TaskMessage } from '@shared/tasks'
 
 /** Which edge a chat entry occupies. Kept pure so the thread's reading order stays testable. */
 export function bubbleSide(role: MessageRole): 'left' | 'right' {
   return role === 'human' ? 'right' : 'left'
 }
 
-/** The prompt belongs with the answer it produced, falling back to its system dispatch entry. */
-export function promptMessageId(messages: TaskMessage[], runId: string): number | null {
-  const forRun = messages.filter((m) => m.runId === runId)
-  return forRun.filter((m) => m.role === 'agent').at(-1)?.id ??
-    forRun.find((m) => m.role === 'system')?.id ?? null
+/**
+ * Which message each run's prompt chip hangs under: **the request that caused the run**, not the
+ * answer it produced.
+ *
+ * ⛔ The chip used to sit under the run's last agent message, which read as though the agent had
+ * been handed its own reply — a person who typed `/push` saw `📋 49` under the *answer* two bubbles
+ * down. A prompt is what the sender sent, so it belongs on the sender's side: the last thing a
+ * person said before the run started (or, on a task an agent filed, its opening message), whichever
+ * no earlier run has already claimed.
+ *
+ * ⚠️ A run with nothing to hang under — a retry with no new note between it and the previous run,
+ * a note typed into a live session after its run began — falls back to the old anchor, so the
+ * prompt is never simply dropped.
+ *
+ * Returns message id → run id; a run absent from the values has no anchor at all and the caller
+ * draws its chip wherever it draws unanchored runs (the live tail).
+ */
+export function promptAnchors(messages: TaskMessage[], runs: Run[]): Map<number, string> {
+  const anchors = new Map<number, string>()
+  const taken = new Set<number>()
+  for (const run of [...runs].sort((a, b) => a.startedAt - b.startedAt)) {
+    const id = anchorFor(messages, run, taken)
+    if (id === null) continue
+    anchors.set(id, run.id)
+    taken.add(id)
+  }
+  return anchors
+}
+
+function anchorFor(messages: TaskMessage[], run: Run, taken: Set<number>): number | null {
+  // ⚠️ `runId === null` is what makes a message a *request*: everything a run writes carries its
+  // run's id, so what is left is the opening prompt and whatever a person typed since.
+  const request = messages
+    .filter(
+      (m, i) =>
+        m.runId === null &&
+        (m.role === 'human' || i === 0) &&
+        m.ts <= run.startedAt &&
+        !taken.has(m.id)
+    )
+    .at(-1)
+  if (request) return request.id
+  const forRun = messages.filter((m) => m.runId === run.id)
+  return (
+    forRun.filter((m) => m.role === 'agent').at(-1)?.id ??
+    forRun.find((m) => m.role === 'system')?.id ??
+    null
+  )
 }
 
 export type ThreadItem =

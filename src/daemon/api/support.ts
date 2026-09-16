@@ -12,7 +12,7 @@ import { paceFactors, paceFor, paceValue } from '../pace.js'
 import { qualityReport } from '../quality.js'
 import { weights, WEIGHT_FORMULAS } from '../objective.js'
 import { lastQuota } from '../quota.js'
-import { benchmarkPrior } from '../benchmarks.js'
+import { benchmarkPrior, benchmarkTable } from '../benchmarks.js'
 import { fitnessFor } from '../fitness.js'
 import { sessionsForWorker } from '../sessions.js'
 import { costModel } from '../costmodel.js'
@@ -472,6 +472,18 @@ export function modelReport(): ModelReport {
     fitnessFormula: WEIGHT_FORMULAS.fitness,
     priceWeight: w.price,
     priceFormula: WEIGHT_FORMULAS.price,
-    rows
+    rows,
+    // ⛔ Shipped with the report, not looked up in the renderer: `benchmarks/*.json` is readable
+    // only here, and a prior shown without the leaderboard it came from is exactly the confident
+    // unsourced number AGENTS.md forbids.
+    benchmarkSources: benchmarkTable().flatMap((file) =>
+      (file.sources ?? []).map((src) => ({
+        fileId: file.id,
+        effectiveFrom: file.effective_from,
+        name: src.name,
+        url: src.url,
+        retrieved: src.retrieved
+      }))
+    )
   }
 }

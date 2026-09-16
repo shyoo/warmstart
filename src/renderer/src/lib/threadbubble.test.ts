@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { bubbleSide, buildThreadItems, promptMessageId } from './threadbubble'
-import type { TaskMessage } from '@shared/tasks'
+import { bubbleSide, buildThreadItems, promptAnchors } from './threadbubble'
+import type { Run, TaskMessage } from '@shared/tasks'
 
 describe('thread bubbles', () => {
   it('puts only human messages on the right', () => {
@@ -9,12 +9,65 @@ describe('thread bubbles', () => {
     expect(bubbleSide('controller')).toBe('left')
     expect(bubbleSide('system')).toBe('left')
   })
-  it('attaches a prompt to the last agent answer for its run', () => {
-    const messages = [
-      { id: 1, runId: 'r', role: 'system' }, { id: 2, runId: 'r', role: 'agent' }, { id: 3, runId: 'r', role: 'agent' }
-    ] as TaskMessage[]
-    expect(promptMessageId(messages, 'r')).toBe(3)
-    expect(promptMessageId(messages.slice(0, 1), 'r')).toBe(1)
+  describe('promptAnchors', () => {
+    const run = (id: string, startedAt: number): Run => ({ id, startedAt }) as Run
+
+    it('hangs a run’s prompt under the request that caused it, not the answer', () => {
+      const messages = [
+        { id: 1, runId: null, role: 'human', ts: 100 },
+        { id: 2, runId: 'r', role: 'system', ts: 110 },
+        { id: 3, runId: 'r', role: 'agent', ts: 120 }
+      ] as TaskMessage[]
+      expect(promptAnchors(messages, [run('r', 105)])).toEqual(new Map([[1, 'r']]))
+    })
+
+    it('gives each run its own request, in order', () => {
+      const messages = [
+        { id: 1, runId: null, role: 'human', ts: 100 },
+        { id: 2, runId: 'r1', role: 'agent', ts: 120 },
+        { id: 3, runId: null, role: 'human', ts: 200 },
+        { id: 4, runId: 'r2', role: 'agent', ts: 220 }
+      ] as TaskMessage[]
+      expect(promptAnchors(messages, [run('r2', 205), run('r1', 105)])).toEqual(
+        new Map([
+          [1, 'r1'],
+          [3, 'r2']
+        ])
+      )
+    })
+
+    it('falls back to the run’s own answer when no unclaimed request precedes it', () => {
+      const messages = [
+        { id: 1, runId: null, role: 'human', ts: 100 },
+        { id: 2, runId: 'r1', role: 'agent', ts: 120 },
+        { id: 3, runId: 'r2', role: 'system', ts: 300 },
+        { id: 4, runId: 'r2', role: 'agent', ts: 320 }
+      ] as TaskMessage[]
+      // r2 is a retry with nothing said in between, so it keeps the old anchor.
+      expect(promptAnchors(messages, [run('r1', 105), run('r2', 290)])).toEqual(
+        new Map([
+          [1, 'r1'],
+          [4, 'r2']
+        ])
+      )
+    })
+
+    it('anchors a task an agent filed on its opening message', () => {
+      const messages = [
+        { id: 1, runId: null, role: 'agent', ts: 100 },
+        { id: 2, runId: 'r', role: 'agent', ts: 120 }
+      ] as TaskMessage[]
+      expect(promptAnchors(messages, [run('r', 105)])).toEqual(new Map([[1, 'r']]))
+    })
+
+    it('leaves a run unanchored when it has said nothing yet and claimed no request', () => {
+      const messages = [
+        { id: 1, runId: null, role: 'human', ts: 100 },
+        { id: 2, runId: 'r1', role: 'agent', ts: 120 }
+      ] as TaskMessage[]
+      // The live run has no new note behind it and no message of its own: the tail draws its chip.
+      expect(promptAnchors(messages, [run('r1', 105), run('r2', 200)])).toEqual(new Map([[1, 'r1']]))
+    })
   })
 
   describe('buildThreadItems', () => {

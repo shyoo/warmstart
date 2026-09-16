@@ -35,7 +35,7 @@ import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from 
 import { showsLiveOutput } from '../lib/live'
 import { supersededAskIds } from '../lib/compactionstatus'
 import { codeSpans } from '../lib/codespans'
-import { bubbleSide, buildThreadItems, promptMessageId } from '../lib/threadbubble'
+import { bubbleSide, buildThreadItems, promptAnchors } from '../lib/threadbubble'
 import { duration, tokens, when } from '../lib/format'
 import { Money, taskPriceTitle } from './Price'
 import { effortLabel, modelLabel } from '../lib/modelname'
@@ -1283,6 +1283,9 @@ function Thread({
     () => buildThreadItems(messages, activity, showLive),
     [messages, activity, showLive]
   )
+  // ⛔ Computed once for the thread, not per bubble: the anchor for one run depends on which
+  // messages the runs before it already claimed, so it cannot be decided a message at a time.
+  const anchors = useMemo(() => promptAnchors(messages, runs), [messages, runs])
 
   return (
     <div className="thread thread--task">
@@ -1293,6 +1296,9 @@ function Thread({
         if (item.kind === 'message') {
           const m = item.message
           const runForMsg = m.runId ? runs.find((r) => r.id === m.runId) : null
+          // The run whose prompt hangs under *this* bubble — the request that caused it, which is
+          // almost never a message the run itself wrote. See `promptAnchors`.
+          const anchoredRun = runs.find((r) => r.id === anchors.get(m.id))
           const isTargetMsgForRunActivity =
             runForMsg?.activity &&
             runForMsg.activity.length > 0 &&
@@ -1338,13 +1344,13 @@ function Thread({
                   </div>
                 </div>
                 {/* The meta line under the bubble: when it was said (bare time today, dated otherwise,
-                    the full stamp on hover), the prompt that produced it as a `📋 1,475` chip (on the
-                    run's last answer — see `promptMessageId`), and ⓘ for the detail a short system
-                    line keeps behind it. */}
+                    the full stamp on hover), the prompt this message *produced* as a `📋 1,475` chip —
+                    on the request that caused the run, so it sits with the sender (see
+                    `promptAnchors`) — and ⓘ for the detail a short system line keeps behind it. */}
                 <div className="msg-meta">
                   <span className="msg-when" title={new Date(m.ts).toLocaleString()}>{when(m.ts)}</span>
-                  {runForMsg?.prompt && promptMessageId(messages, runForMsg.id) === m.id && (
-                    <PromptChip prompt={runForMsg.prompt} />
+                  {anchoredRun?.prompt && (
+                    <PromptChip prompt={anchoredRun.prompt} title="The prompt this message produced" />
                   )}
                   {m.detail && <details className="msg-detail"><summary title="Show details">ⓘ</summary><div><MessageText text={m.detail} markdown /></div></details>}
                 </div>
@@ -1374,7 +1380,7 @@ function Thread({
                 </span>
               </div>
               {item.isLiveTail ? (
-                liveRun?.prompt && promptMessageId(messages, liveRun.id) === null && (
+                liveRun?.prompt && ![...anchors.values()].includes(liveRun.id) && (
                   <div className="msg-meta">
                     <PromptChip prompt={liveRun.prompt} />
                   </div>

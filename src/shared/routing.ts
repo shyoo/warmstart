@@ -239,6 +239,27 @@ export interface ModelReportRow {
   explorations: number
 }
 
+/**
+ * One leaderboard a benchmark prior was taken from, so the table can say where its numbers came
+ * from rather than asking the reader to trust them.
+ *
+ * ⛔ **Carried, not re-derived in the renderer.** The names on a row's `priorSource` are keys into
+ * the benchmark file's own `sources` list; only the daemon can read that file, so the URL and the
+ * retrieval date travel with the report. A name that resolves to nothing here is shown as a bare
+ * name, never as a dead link.
+ */
+export interface BenchmarkSourceRef {
+  /** The benchmark file this source belongs to, e.g. `coding-agents.2026-09`. */
+  fileId: string
+  /** The date that file's numbers are stated as of. */
+  effectiveFrom: string
+  /** The key a model entry's `source` holds. */
+  name: string
+  url: string
+  /** When the number was read off the leaderboard. */
+  retrieved: string
+}
+
 export interface ModelReport {
   generatedAt: number
   objective: Objective
@@ -256,6 +277,8 @@ export interface ModelReport {
   priceWeight: number
   priceFormula: string
   rows: ModelReportRow[]
+  /** Where the `prior` column's numbers were read from. Empty only if no benchmark file loaded. */
+  benchmarkSources: BenchmarkSourceRef[]
 }
 
 /**

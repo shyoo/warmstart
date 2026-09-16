@@ -307,6 +307,13 @@ three quantities this fleet shrinks, so it should take more evidence to move it.
 keeps the value within about 11% of the prior (`8/(1+8)`); it takes on the order of twenty before the
 measured number dominates.
 
+**The operator surface cites its sources.** Analytics › Routing Model › Models prints a *Prior
+source* column beside every prior and, under it (Table 13), the leaderboards themselves — name,
+benchmark file, effective and retrieval dates — linked out to the real browser. `modelReport`
+(`api/support.ts`) carries them on the report from `benchmarkTable()`, because only the daemon can
+read `benchmarks/*.json`. A prior from a family prefix reads *inferred, family match* rather than
+borrowing the neighbour's citation.
+
 Three degenerate cases, each explicit rather than defaulted:
 
 | Prior | Clean reviews | `value` | Why |

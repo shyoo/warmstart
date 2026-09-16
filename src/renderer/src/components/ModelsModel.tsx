@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { ModelReport } from '@shared/routing'
+import type { BenchmarkSourceRef, ModelReport } from '@shared/routing'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { money } from '../lib/format'
 import { errorMessage } from '@shared/errors.js'
@@ -19,6 +19,38 @@ const REQUIRED_BY_BAND: Record<'low' | 'medium' | 'high', number> = { low: 0.35,
 
 function fmtScore(n: number | null): string {
   return n === null ? 'unmeasured' : n.toFixed(2)
+}
+
+/**
+ * Where one row's prior came from: the leaderboard's name, linked to it where the benchmark file
+ * gives a URL.
+ *
+ * ⚠️ A family match carries no source of its own — the prior is a mapping from a neighbouring model,
+ * not a published figure for this one — so it says so rather than borrowing the family's link.
+ */
+function PriorSource({
+  name,
+  prior,
+  basis,
+  sources
+}: {
+  name: string | null
+  prior: number | null
+  basis: string
+  sources: BenchmarkSourceRef[]
+}): React.JSX.Element {
+  if (!name) {
+    // A prior with no source is a family match — a mapping from a neighbouring model id, which is
+    // not a published figure for this one and must not borrow the neighbour's link.
+    return <span title={basis}>{prior === null ? 'none' : 'inferred, family match'}</span>
+  }
+  const src = sources.find((s) => s.name === name)
+  if (!src) return <span>{name}</span>
+  return (
+    <a href={src.url} target="_blank" rel="noreferrer" title={`${src.url} — retrieved ${src.retrieved}`}>
+      {src.name}
+    </a>
+  )
 }
 
 export function ModelsModel(): React.JSX.Element {
@@ -233,6 +265,7 @@ export function ModelsModel(): React.JSX.Element {
               <th>Model</th>
               <th>Routable?</th>
               <th className="tbl-num">Prior</th>
+              <th>Prior source</th>
               <th className="tbl-num">Clean composite</th>
               <th className="tbl-num">Fitness</th>
               <th className="tbl-num">Est. cost/task</th>
@@ -244,7 +277,7 @@ export function ModelsModel(): React.JSX.Element {
           <tbody>
             {report.rows.length === 0 && (
               <tr>
-                <td colSpan={10} className="dim">
+                <td colSpan={11} className="dim">
                   No worker on this fleet can price a model yet.
                 </td>
               </tr>
@@ -261,6 +294,14 @@ export function ModelsModel(): React.JSX.Element {
                 <td>{r.model}</td>
                 <td>{r.routable ? 'yes' : 'not on allowlist'}</td>
                 <td className="tbl-num num">{r.prior === null ? 'unknown' : r.prior.toFixed(2)}</td>
+                <td className="dim">
+                  <PriorSource
+                    name={r.priorSource}
+                    prior={r.prior}
+                    basis={r.priorBasis}
+                    sources={report.benchmarkSources}
+                  />
+                </td>
                 <td className="tbl-num num">
                   {r.cleanComposite === null ? 'n/a' : `${r.cleanComposite.toFixed(1)} (n=${r.cleanSamples})`}
                 </td>
@@ -288,6 +329,54 @@ export function ModelsModel(): React.JSX.Element {
           Hover over any row to view the benchmark prior and blended fitness derivation. A dimmed
           row indicates a model supported by the provider that is not currently enabled on the worker allowlist.
         </p>
+      </section>
+
+      <section className="doc-section">
+        <h3>5.7 Where the priors came from</h3>
+        <p className="panel-sub">
+          Every number in the <strong>Prior</strong> column above was read off one of these, on the
+          date shown, and checked in as data — never typed from memory. A model whose source reads{' '}
+          <em>inferred</em> was matched to a family prefix rather than scored in its own right, and a
+          model no file names at all reads <code>unknown</code>, which is not a score of zero. Drop an
+          updated file into the data directory&rsquo;s <code>benchmarks/</code> folder to supersede the
+          one compiled into the app.
+        </p>
+        <table className="tbl tbl--paper">
+          <caption>
+            <strong>Table 13.</strong> The leaderboards behind the benchmark priors.
+          </caption>
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Benchmark file</th>
+              <th>Retrieved</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.benchmarkSources.length === 0 && (
+              <tr>
+                <td colSpan={3} className="dim">
+                  No benchmark file is loaded, so no model on this fleet has a prior.
+                </td>
+              </tr>
+            )}
+            {report.benchmarkSources.map((src) => (
+              <tr key={`${src.fileId}:${src.name}`}>
+                <td className="tbl-strong">
+                  {/* ⛔ `target="_blank"` so `setWindowOpenHandler` in the main process hands the URL
+                      to the real browser; an in-window navigation would replace the app. */}
+                  <a href={src.url} target="_blank" rel="noreferrer" title={src.url}>
+                    {src.name}
+                  </a>
+                </td>
+                <td className="dim">
+                  {src.fileId} <span className="dim">(as of {src.effectiveFrom})</span>
+                </td>
+                <td className="dim">{src.retrieved}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </section>
     </div>
   )
