@@ -15,7 +15,7 @@
 
 Give Warmstart the subscription CLIs you already pay for — Claude Code, Codex and Antigravity — and a list of things to do. It runs each task in its own git worktree, routes it to the account and model that can afford it and best suits it, keeps expensive context warm, and brings every question, approval and finished change back to one place.
 
-> **Status: pre-alpha.** Windows is where it is used every day. macOS builds and passes the test suites but has not yet driven a real agent; Linux is not supported. Unattended Claude Code and Antigravity agents run with **your full OS-user authority** — read [Security in brief](#security-in-brief) before pointing Warmstart at a machine that has anything else on it.
+> **Status: pre-alpha.** Windows is where it is used every day; the macOS build is signed and notarised and has driven real agents. Linux is not supported. Unattended Claude Code and Antigravity agents run with **your full OS-user authority** — read [Security in brief](#security-in-brief) before pointing Warmstart at a machine that has anything else on it.
 
 ![The Warmstart dashboard](docs/images/dashboard.png)
 
@@ -98,6 +98,17 @@ Pair a phone by QR code to see quota, answer what is waiting and file tasks; pai
 | **Codex** | `npm install -g @openai/codex` | any ChatGPT plan, or an API key |
 | **Antigravity** | `irm https://antigravity.google/cli/install.ps1 \| iex` | Google AI Pro or Ultra |
 
+### Download
+
+Installers are on the [Releases page](https://github.com/shyoo/warmstart/releases), with a `SHA256SUMS.txt` beside them.
+
+- **macOS** — `warmstart-<version>-mac-arm64.dmg` (Apple Silicon) or `-mac-x64.dmg` (Intel). Signed with a Developer ID and notarised, so Gatekeeper opens it without ceremony.
+- **Windows** — `warmstart-<version>-win-x64.exe` (or `-win-arm64.exe`). Per-user install, no administrator prompt. The build is **unsigned**, so SmartScreen shows *Windows protected your PC* on first run: click *More info* → *Run anyway*, and check the SHA-256 against `SHA256SUMS.txt` if you would rather not take it on trust.
+
+Warmstart never installs an update by itself. It tells you when a newer release exists and downloads the verified installer to a folder; running it is your action.
+
+### Build from source
+
 ```bash
 git clone https://github.com/shyoo/warmstart.git
 cd warmstart
@@ -106,7 +117,7 @@ node scripts/ensure-electron.mjs
 npm run dev
 ```
 
-`npm run dist` builds an installer for the current platform. Builds are unsigned: Windows SmartScreen warns and macOS Gatekeeper requires manual clearance. Then follow [Getting started](docs/getting-started.md): add an account, add a project, file a task. Muse and the local-LLM bridge are also available; see [the adapter reference](docs/adapters.md).
+`npm run dist` builds an installer for the current platform. Then follow [Getting started](docs/getting-started.md): add an account, add a project, file a task. Muse and the local-LLM bridge are also available; see [the adapter reference](docs/adapters.md).
 
 ## Providers are not interchangeable
 
@@ -132,7 +143,7 @@ Warmstart never reads, copies, stores or proxies a credential. It runs each vend
 - API-based models alongside subscription CLIs.
 - A first-class OpenCode adapter and other harnesses.
 - Pull-request review by agents and code review.
-- A signed macOS release.
+- A signed Windows release.
 - Linux.
 
 ## Documentation

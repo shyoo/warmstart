@@ -222,8 +222,8 @@ npm run dist:win    # → release/warmstart-<version>-win-{x64,arm64}.exe
   version string it carries (`version.json` → `version`, mirrored in `package.json`).
 - ⛔ **Bumping the version is the owner's call, not yours.** Ask; never edit `version` to make a
   filename look right.
-- ⚠️ Unsigned by design — SmartScreen warns on the installer, and macOS is un-notarised. That is the
-  honest state of a pre-alpha, not a build failure and not something to work around.
+- ⚠️ The Windows build is unsigned by design and SmartScreen warns; macOS is signed and notarised
+  by the release workflow only, so a local `.dmg` is not. Neither is a build failure.
 - On a docs-only change, `pack` + `test:pack` is enough. Say you skipped `dist:win` and why.
 
 ## 5. Commit

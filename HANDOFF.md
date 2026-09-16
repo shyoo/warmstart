@@ -14,13 +14,14 @@ checks** against `release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3 434 (6 s
 signed, hardened-runtime bundle. Last CI green on all seven jobs: `593e5c6`, run 35058132724 — the
 merge commit itself. CI is **enabled**, and so is the **Release** workflow, now proven end to end.
 
-**Version is `0.1.0-rc.2`, prepared by `/release rc` (t474.4, 2026-09-15): committed, untagged.**
-`v0.1.0-rc.1` was tagged at `eefbbbd`, before the t446–t473 merge, and understood schema v71; the
-operator's trunk-built app had already taken the live database to v73, so `rc.1` refused it on
-first install. `rc.2` is cut from this tree (v73) with the release-base gate green.
-⏭ `/push` → CI green → `git tag v0.1.0-rc.2 && git push origin v0.1.0-rc.2` → install *that*
-artifact on both machines → items 5 and 8 → delete draft `untagged-34911447448` → flip the
-repository public → `/release patch` for the bare `0.1.0`, the first release an installed app can see.
+**`v0.1.0-rc.2` is published (run 35063333496, 2026-09-15) and verified on both machines.** The
+operator installed the shipped `.dmg` and `.exe` and drove real agents from each — the launch gate
+(items 5 and 8) is closed. `rc.1` had been tagged before the t446–t473 merge at schema v71 and
+refused the operator's v73 database; `rc.2` is cut from this tree behind the release-base gate.
+The repository is still **private**. ⏭ Delete draft `untagged-34911447448` → flip the repository
+public (`gh repo edit --visibility public`; set description and topics while there) → `/release
+patch` for the bare `0.1.0`, the first release the updater can see, attested now that the
+repository can. Phase 3/4 (write-up, demo, landing page, channels) is off-repo and after that.
 
 ## Closed in this cleanup
 
@@ -136,21 +137,16 @@ judgement. Do not replace the missing evidence with a unit test.
    must edit there, and watch a sandboxed codex **commit** in it — the `.git` grant is proven by a
    throwaway-repo probe and has not yet carried a real task's work. Then, on `claude-code`, have an
    agent call `request_directory` for a folder nobody attached and confirm the restart resumes warm.
-5. **Run the *signed* app on macOS with a real CLI; this is the launch gate.** The owner confirmed
-   an unsigned build compiles, runs and pairs in remote mode, and `./scripts/build-mac.sh` now
-   reports a build signed with the hardened runtime, and `npm run test:pack` passes on the Mac (all
-   2026-09-14). Remaining: launch *that* bundle, open a PTY, and drive one real task. Still unverified either way: detached daemon startup without system Node
-   under the hardened runtime, Application Support isolation, Antigravity's Keychain, Gatekeeper.
-6. **Tag `v0.1.0-rc.2`** once this commit is on `main` with CI green — see the top. `rc.1`'s tag
-   build (35055712204) proved the pipeline end to end; `rc.2` is the first build worth installing.
+5. ✅ **Closed 2026-09-15** — the signed, notarised `rc.2` bundle opened a PTY and drove a real
+   agent on the owner's Mac. Still unmeasured individually: Application Support isolation and
+   Antigravity's Keychain under the hardened runtime; both were exercised only as part of that run.
+6. **Flip the repository public, then `/release patch` → `0.1.0`.** Both rc tag builds are green;
+   the only pipeline step never exercised is attestation, which needs the public repository.
 7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.
-8. **Record one clean single-account first run.** Install the packaged app on a clean profile, add
-   one account, add one project, file a task, review its diff, land it, and write down what
-   happened. ⛔ A demonstration, not a feature, and the purest form of the pre-public question —
-   items 1–3 mean the basic loop has never been shown end to end against a real agent. Now
-   unblocked: there is finally something to look at at the gate.
+8. ✅ **Closed 2026-09-15** — `rc.2` installed and verified working on Windows and macOS. ⚠️ Not yet
+   written down as a narrative; the demo GIF (Phase 3) is the place that record will live.
 9. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the
    generic declarative adapter cannot meter, gets no MCP tools and cannot reap orphans); CI watch
    after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an
