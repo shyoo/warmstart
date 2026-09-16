@@ -177,20 +177,33 @@ describe('picking a reviewer', () => {
     expect(choice.model).toBe(reviewer.REVIEW_MODELS['openai-compatible'])
   })
 
-  it('allows a local-llm worker to be picked or selected as reviewer with its grading model', () => {
+  it('allows a local-llm worker to be picked or selected as reviewer, leaving the model to its server', () => {
     const LOCAL = 'aaaaaaaa-0000-4000-8000-000000000005'
     worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
     worker(LOCAL, 'LocalLlm', 'local-llm')
     workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
 
+    // ⛔ Null, not a name (t486). A local worker's model is whatever its endpoint serves; the bridge
+    // names it on `init` and `noteReviewerModel` writes it onto the grade afterwards. The name that
+    // used to sit here was written to every local grade regardless of which gguf answered.
     const choice = reviewer.pickReviewer(task(), LOCAL)
     expect(choice.worker?.id).toBe(LOCAL)
-    expect(choice.model).toBe('qwen3-coder-30b-a3b')
-    expect(reviewer.REVIEW_MODELS['local-llm']).toBe('qwen3-coder-30b-a3b')
+    expect(choice.model).toBeNull()
+    expect(reviewer.REVIEW_MODELS['local-llm']).toBeNull()
 
     const autoChoice = reviewer.pickReviewer(task())
     expect(autoChoice.worker?.id).toBe(LOCAL)
-    expect(autoChoice.model).toBe('qwen3-coder-30b-a3b')
+    expect(autoChoice.model).toBeNull()
+  })
+
+  it('a local-llm worker with a chosen served model reviews on that model', () => {
+    const LOCAL = 'aaaaaaaa-0000-4000-8000-000000000005'
+    worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
+    worker(LOCAL, 'LocalLlm', 'local-llm')
+    workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')
+    db.db().prepare('update workers set grading_model = ? where id = ?').run('local-llm:Qwen3.8-27B-UD-Q4_K_XL.gguf', LOCAL)
+
+    expect(reviewer.pickReviewer(task(), LOCAL).model).toBe('local-llm:Qwen3.8-27B-UD-Q4_K_XL.gguf')
   })
 
   it('lists routable peers even when transient state prevents an immediate review', () => {

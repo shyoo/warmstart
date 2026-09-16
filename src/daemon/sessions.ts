@@ -425,7 +425,7 @@ function toSession(r: SessionRow): Session {
     vendorSessionId: r.vendor_session_id,
     currentBranch: r.current_branch,
     contextTokens: r.context_tokens,
-    contextWindow: contextWindowFor(r.adapter_id, r.model),
+    contextWindow: contextWindowFor(r.adapter_id, r.model, r.worker_id),
     lastRequestStartedAt: r.last_request_started_at,
     cacheExpiresAt: r.cache_expires_at,
     tokensSinceCompact: r.tokens_since_compact,
@@ -444,17 +444,21 @@ function toSession(r: SessionRow): Session {
  * different: `52k/200k` shown for a session whose real window is 1M is a wrong number wearing a
  * measurement's clothes, and the reader has no way to tell. Unknown stays unknown.
  */
-function contextWindowFor(adapterId: string, model: string | null): number | null {
+function contextWindowFor(adapterId: string, model: string | null, workerId?: string | null): number | null {
   try {
+    // ⭐ A window the endpoint itself reported (a local server's `/props`) beats the cost model's
+    // figure for the same model: one is read off the running server, the other is a file's default.
+    const reported = workerId ? getWorker(workerId)?.identity?.contextWindow : null
+    if (reported) return reported
     const cm = costModel(adapter(adapterId).info.policy.costModelId)
     if (model) {
       const spec = cm.modelSpec(model)
       if (spec?.context_window) return spec.context_window
     }
-    if (adapterId === 'local-llm') {
-      const firstId = cm.modelIds()[0]
-      return (firstId ? cm.modelSpec(firstId)?.context_window : null) ?? 32768
-    }
+    // No model named yet, on an adapter whose models are whatever the server serves: the template's
+    // window is the honest default until the bridge's `init` names the model (`noteModelChosen`).
+    const dynamic = cm.dynamicModelPrefix()
+    if (dynamic) return cm.modelSpec(`${dynamic}?`)?.context_window ?? null
     return null
   } catch {
     // An unknown adapter or an unpriced model is a missing denominator, not a broken session.
@@ -503,6 +507,29 @@ export function getSession(id: string): Session | null {
  * ⛔ Written once and never overwritten with null. An adapter that reports an id on every record
  * and a blank on one of them would otherwise erase the only handle that can resume it.
  */
+/**
+ * The model that actually answered, where the worker left the choice to its server.
+ *
+ * ⛔ Only a session whose `model` is null adopts it. A model the daemon *asked for* stays the
+ * record of what was asked, and a CLI's `init` naming something else is a discrepancy to read in
+ * the thread (`initLine`, `stream.ts`), not a fact to overwrite the request with. A local worker
+ * with no default sends no model at all; the bridge asks `/v1/models` and reports what it found,
+ * and this is the only way that run, its cost row and its quality grade come to name it.
+ */
+export function noteModelChosen(sessionId: string, model: string | null): void {
+  if (!model) return
+  const changed = db()
+    .prepare('update sessions set model = ? where id = ? and model is null')
+    .run(model, sessionId).changes
+  if (!changed) return
+  const session = getSession(sessionId)
+  if (session) {
+    const entry = live.get(sessionId)
+    if (entry) entry.session = session
+    events.onChange(session)
+  }
+}
+
 export function noteVendorSession(sessionId: string, vendorId: string | null): void {
   if (!vendorId) return
   const changed = db()

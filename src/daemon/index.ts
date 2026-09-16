@@ -13,6 +13,7 @@ import { QuotaPoller } from './quota.js'
 import {
   getSession,
   lastRequestEvidenceAt,
+  noteModelChosen,
   noteVendorSession,
   reconcileOrphans,
   setSessionEvents,
@@ -193,7 +194,11 @@ async function main(): Promise<void> {
       // and takes `--conversation <id>` to resume one - so discarding it is what made every reply on
       // an Antigravity task a cold start. Measured on this install 2026-08-28: nine (task, adapter)
       // pairs, distinct sessions equal to runs in all nine.
-      if (event.kind === 'init') noteVendorSession(session.id, event.sessionId)
+      if (event.kind === 'init') {
+        noteVendorSession(session.id, event.sessionId)
+        // A worker that left the model to its server learns here what answered (local-llm).
+        noteModelChosen(session.id, event.model)
+      }
       // The one quota signal that is both live and free: it rides a turn already being paid for.
       if (event.kind === 'rate_limit') {
         recordRateLimit(session.workerId, session.id, event.info)

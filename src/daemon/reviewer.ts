@@ -18,6 +18,7 @@ import {
   completeReview,
   createPendingReview,
   humanFollowUps,
+  noteReviewerModel,
   parseReviewReply,
   pendingReviews,
   refuseReview,
@@ -29,6 +30,7 @@ import {
 import {
   closeAndWait,
   closeSession,
+  getSession,
   onSessionEnd,
   onSessionStream,
   sendPrompt,
@@ -97,12 +99,15 @@ const REVIEW_WATCH_MS = 5_000
 /** The same settling delay a consult uses: a freshly spawned CLI swallows what arrives too early. */
 const PROMPT_DELAY_MS = 2500
 
-/** Kept exported for callers comparing the built-in defaults; persisted worker choice wins. */
-export const REVIEW_MODELS: Record<string, string> = {
-  'claude-code': defaultGradingModel('claude-code')!,
-  'antigravity-cli': defaultGradingModel('antigravity-cli')!,
-  'openai-compatible': defaultGradingModel('openai-compatible')!,
-  'local-llm': defaultGradingModel('local-llm')!
+/**
+ * Kept exported for callers comparing the built-in defaults; persisted worker choice wins.
+ * ⚠️ `local-llm` is null: its model is the server's, learned on `init` and recorded then.
+ */
+export const REVIEW_MODELS: Record<string, string | null> = {
+  'claude-code': defaultGradingModel('claude-code'),
+  'antigravity-cli': defaultGradingModel('antigravity-cli'),
+  'openai-compatible': defaultGradingModel('openai-compatible'),
+  'local-llm': defaultGradingModel('local-llm')
 }
 
 /** Live review sessions, keyed by their durable review row so a person can stop one precisely. */
@@ -590,6 +595,10 @@ async function runReview(
     const { text, reason: why } = await ask(session.id, prompt, controller.signal)
     activeReviews.delete(review.id)
     await closeAndWait(session.id)
+    // ⭐ A reviewer that left the model to its server (local-llm, no grading model set) names it
+    // on `init`; the session recorded it, and the grade must carry the same name or the tally by
+    // model files the review under nobody.
+    if (!model) noteReviewerModel(review.id, getSession(session.id)?.model ?? null)
     sessionId = null
 
     // `review.cancel` settles the row and run first, then wakes this wait. Never let its normal

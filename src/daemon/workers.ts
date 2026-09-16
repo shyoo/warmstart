@@ -15,6 +15,7 @@ import { creditsMismatchKind, creditsMismatchNote, creditsPurseEmpty } from '@sh
 import { db, row, rows } from './db.js'
 import { ensureDir, paths, slugify } from './paths.js'
 import { adapter, hasAdapter } from './adapters/index.js'
+import { costModel } from './costmodel.js'
 import { lastQuota } from './quota.js'
 import { log } from './log.js'
 import { emit } from './events.js'
@@ -336,24 +337,51 @@ export function inheritedModelFor(worker: Worker): Array<string | null> {
   return [resolveModelChoice(null, worker, false, lastQuota(worker.id)).model]
 }
 
-/** Smallest configured review rung for a built-in adapter; external adapters use their CLI default. */
+/**
+ * Smallest configured review rung for a built-in adapter; external adapters use their CLI default.
+ *
+ * ⛔ No entry for `local-llm`, on purpose. Its model is whatever the operator loaded, and a name
+ * written here was a claim about a server nobody had asked: every local grade filed until
+ * 2026-09-16 said `qwen3-coder-30b-a3b`, including the ones a 27B Qwen3.8 answered. Null means the
+ * server's model, which the bridge names on `init` and the session then records.
+ */
 export function defaultGradingModel(adapterId: string): string | null {
   return {
     'claude-code': 'claude-haiku-4-5',
     'antigravity-cli': 'gemini-3.8-flash-low',
-    'openai-compatible': 'gpt-5.6-luna',
-    'local-llm': 'qwen3-coder-30b-a3b'
+    'openai-compatible': 'gpt-5.6-luna'
   }[adapterId] ?? null
 }
 
-/** Smallest configured model suitable for the one-line, title-only consult. */
+/** Smallest configured model suitable for the one-line, title-only consult. Same rule for local-llm. */
 export function defaultSummarisingModel(adapterId: string): string | null {
   return {
     'claude-code': 'claude-haiku-4-5',
     'antigravity-cli': 'gemini-3.8-flash-low',
-    'openai-compatible': 'gpt-5.6-luna',
-    'local-llm': 'qwen3-coder-30b-a3b'
+    'openai-compatible': 'gpt-5.6-luna'
   }[adapterId] ?? null
+}
+
+/**
+ * Every model id this fleet can name for an adapter: the cost model's own list, plus - for an
+ * adapter whose models are decided by a server - what each commissioned worker's endpoint reported
+ * at its last identity probe. ⚠️ The second half is a belief with a `checkedAt`, not a catalogue;
+ * a server swapped since the probe shows up on the next refresh.
+ *
+ * `workerId` narrows the served half to one worker, which is what its own model picker wants: the
+ * models on *this* endpoint, not the union of every local server on the fleet.
+ */
+export function knownModelIds(adapterId: string, workerId?: string | null): string[] {
+  const cm = costModel(adapter(adapterId).info.policy.costModelId)
+  const ids = new Set(cm.modelIds())
+  if (cm.dynamicModelPrefix()) {
+    for (const w of listWorkers(true)) {
+      if (w.adapterId !== adapterId || w.retiredAt) continue
+      if (workerId && w.id !== workerId) continue
+      for (const id of w.identity?.servedModels ?? []) ids.add(id)
+    }
+  }
+  return [...ids]
 }
 
 /**
@@ -749,6 +777,10 @@ export async function refreshIdentity(id: string, lift = false): Promise<Worker>
     // Recorded, never gated on. See WorkerIdentity.subscriptionType.
     subscriptionType: probe.subscriptionType ?? null,
     subscriptionExpired: probe.subscriptionExpired ?? null,
+    // What a local endpoint serves, and how wide its window is - the only source either can come
+    // from, so null everywhere a CLI answered instead.
+    servedModels: probe.servedModels ?? null,
+    contextWindow: probe.contextWindow ?? null,
     raw: probe.raw,
     checkedAt: Date.now()
   }

@@ -10,6 +10,7 @@ import { Pill } from './Pill'
 import { TerminalPane } from './Terminal'
 import { useTarget } from '../lib/target'
 import { errorMessage } from '@shared/errors.js'
+import { isLocalModelId, localModelLabel } from '@shared/localmodel'
 
 /**
  * The (i) beside a column heading whose number needs a sentence.
@@ -81,8 +82,11 @@ function SignInLocationWarning(): React.JSX.Element {
  * install did before this control existed. It leads the list because it is the value a fresh worker
  * holds, and a picker whose first entry is not its own default reads as one that has been changed.
  */
-function modelChoices(models: Array<{ id: string }>): SettingOption[] {
-  return [{ value: '', label: 'CLI default' }, ...models.map((m) => ({ value: m.id, label: m.id }))]
+function modelChoices(models: Array<{ id: string }>, adapterId?: string): SettingOption[] {
+  // A local endpoint has no CLI: leaving the box empty means the model the server is serving, which
+  // the bridge reads at dispatch and the run records. The ids are the server's own file names.
+  const unset = adapterId === 'local-llm' ? "Server's model" : 'CLI default'
+  return [{ value: '', label: unset }, ...models.map((m) => ({ value: m.id, label: isLocalModelId(m.id) ? localModelLabel(m.id) : m.id }))]
 }
 
 /**
@@ -275,8 +279,14 @@ export function Workers({
     void rpc('adapter.detect').then(setDetections)
   }, [])
 
-  const modelsFor = (adapterId: string): ModelOptions | null =>
-    modelOptions.find((o) => o.adapterId === adapterId) ?? null
+  /**
+   * The models one account can be set to. A worker whose models are its server's (local-llm) has an
+   * entry of its own naming what *that* endpoint reported; everything else reads the adapter's list.
+   */
+  const modelsFor = (adapterId: string, workerId?: string): ModelOptions | null =>
+    (workerId ? modelOptions.find((o) => o.adapterId === adapterId && o.workerId === workerId) : null) ??
+    modelOptions.find((o) => o.adapterId === adapterId && !o.workerId) ??
+    null
 
   /**
    * The effort levels this account could actually be given.
@@ -286,7 +296,7 @@ export function Workers({
    * offer a choice that fails at dispatch.
    */
   const effortsFor = (worker: Worker): string[] => {
-    const options = modelsFor(worker.adapterId)
+    const options = modelsFor(worker.adapterId, worker.id)
     if (!options?.selectableEffort || !worker.defaultModel) return []
     return options.models.find((m) => m.id === worker.defaultModel)?.effortLevels ?? []
   }
@@ -814,7 +824,7 @@ export function Workers({
                           }
                         >
                           {modelsFor(worker.adapterId)!.pools!.map((p) => {
-                            const poolModels = (modelsFor(worker.adapterId)?.models ?? []).filter((m) =>
+                            const poolModels = (modelsFor(worker.adapterId, worker.id)?.models ?? []).filter((m) =>
                               p.models.includes(m.id)
                             )
                             const currentVal = worker.defaultModels?.[p.id] ?? ''
@@ -847,7 +857,7 @@ export function Workers({
                           <SettingButtonSelect
                             className="worker-model-select"
                             value={worker.defaultModel ?? ''}
-                            options={modelChoices(modelsFor(worker.adapterId)?.models ?? [])}
+                            options={modelChoices(modelsFor(worker.adapterId, worker.id)?.models ?? [], worker.adapterId)}
                             ariaLabel={`Default model for ${worker.label}`}
                             disabled={busy === `model:${worker.id}`}
                             title={
@@ -904,7 +914,7 @@ export function Workers({
                     <td>
                       <RoutableModelsPill
                         worker={worker}
-                        models={modelsFor(worker.adapterId)?.models ?? []}
+                        models={modelsFor(worker.adapterId, worker.id)?.models ?? []}
                         disabled={false}
                         busy={busy === `routable:${worker.id}`}
                         onChange={(next) =>
@@ -922,7 +932,7 @@ export function Workers({
                         <SettingButtonSelect
                           className="worker-grading-select"
                           value={worker.gradingModel ?? ''}
-                          options={modelChoices(modelsFor(worker.adapterId)?.models ?? [])}
+                          options={modelChoices(modelsFor(worker.adapterId, worker.id)?.models ?? [], worker.adapterId)}
                           ariaLabel={`Grading model for ${worker.label}`}
                           disabled={busy === `grading-model:${worker.id}`}
                           title="The model this account uses for peer reviews. New workers start on the adapter's smallest configured model."
@@ -960,7 +970,7 @@ export function Workers({
                       <SettingButtonSelect
                         className="worker-grading-select"
                         value={worker.summarisingModel ?? ''}
-                        options={modelChoices(modelsFor(worker.adapterId)?.models ?? [])}
+                        options={modelChoices(modelsFor(worker.adapterId, worker.id)?.models ?? [], worker.adapterId)}
                         ariaLabel={`Summary model for ${worker.label}`}
                         disabled={busy === `summary-model:${worker.id}`}
                         title="The small model this account uses for optional, asynchronous task-title summaries. Clear it to leave this worker out."

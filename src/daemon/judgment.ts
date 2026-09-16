@@ -13,9 +13,7 @@ import {
   updateTask
 } from './tasks.js'
 import { getProject } from './projects.js'
-import { listWorkers, routableModelsFor } from './workers.js'
-import { costModel } from './costmodel.js'
-import { adapter } from './adapters/index.js'
+import { knownModelIds, listWorkers, routableModelsFor } from './workers.js'
 import { estimateTask, pessimisticOn, type Estimate } from './estimator.js'
 import { resolveObjective } from './objective.js'
 import { settings } from './settings.js'
@@ -513,7 +511,7 @@ export function triageQuestion(task: Task): string {
 function knownModels(task: Task): string[] {
   const adapterId = task.constraints.adapterId ?? 'claude-code'
   try {
-    return costModel(adapter(adapterId).info.policy.costModelId).modelIds()
+    return knownModelIds(adapterId)
   } catch (err) {
     log.warn('could not read the model list for a triage question:', err)
     return []

@@ -1172,6 +1172,39 @@ costOfKeepalive(session)   costOfCompact(session)   costOfColdStart(tokens)   ca
 `effective_from` is load-bearing: historical runs stay priced by the model in force at the time, so a
 price change does not silently rewrite the estimator's training data.
 
+### 8a. A model the file cannot list: `dynamic_models` (t486, 2026-09-16)
+
+`models` is the list a file can price **by name**, and it is the only list a model id is accepted
+from (`checkWorkerDefaults`, `model.options`, triage escalation). `local.llm` has no such list:
+the model is whatever the operator loaded, and llama.cpp names it after the gguf it was pointed at
+(`C:\models\qwen3-coder\Qwen3-Coder-30B-A3B-Instruct-UD-Q3_K_XL.gguf`) unless started with
+`--alias`. So that file declares the *shape* once instead:
+
+```json
+"dynamic_models": { "id_prefix": "local-llm:", "context_window": 32768, "input_per_mtok": null, … }
+```
+
+`modelSpec(id)` answers the template for any id under the prefix, and nothing for the bare prefix
+or for a name outside it. The ids themselves come from the server: `probeIdentity` reads
+`/v1/models` at every identity refresh and stores them on the worker as
+`identity.servedModels` (`local-llm:<served id verbatim>`, `@shared/localmodel.ts`), and
+`knownModelIds` (`workers.ts`) is the file's list plus those. ⛔ **Verbatim after the prefix**: the
+id goes back to the server on every request and a multi-model server keys on it exactly; only the
+label is shortened (`localModelLabel`: file name, no `.gguf`). The prefix is the namespace that
+keeps a locally served `gpt-oss-120b` from being priced, benchmarked or labelled as OpenAI's — a
+benchmark prior matches the family on the file name and says *matched by its file name*.
+
+⛔ **The pin this replaced.** Until 2026-09-16 the file listed one id, `qwen3-coder-30b-a3b`,
+which made it the only default a person could set and the one migrations 44 and 61 wrote to every
+local worker — while llama.cpp ignores the `model` field on a single-model server, so a
+Qwen3.8-27B endpoint answered every request and every run, cost row and quality grade recorded
+the 30B coder. A local worker's model is now **null by default**, meaning the server's: the bridge
+asks `/v1/models`, names what it found on `init`, and `noteModelChosen` (`sessions.ts`) records it
+on the session that asked for none; a review filed without a model gets the same name afterwards
+(`noteReviewerModel`). The context window is read off llama.cpp's `/props` (`n_ctx`, the slot's
+window) and stored as `identity.contextWindow`; a server that does not answer gets the template's
+32768, and the two are kept apart because one is a measurement and the other a default.
+
 ## 9. Auto mode's classifier — an unmeasured cost
 
 Claude Code's `auto` mode runs a second model (Claude Sonnet 5 by default) over each non-read action

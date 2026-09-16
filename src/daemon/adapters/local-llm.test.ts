@@ -258,6 +258,23 @@ describe('local-llm probeIdentity against mock HTTP server', () => {
     expect(probe.cliVersion).toBe('1.0.0')
     expect(probe.account).toBe('local')
     expect(probe.organization).toBe('models: qwen3-coder-30b, deepseek-coder')
+    // The picker: what the server said, under the namespace, verbatim. No `/props` → no window.
+    expect(probe.servedModels).toEqual(['local-llm:qwen3-coder-30b', 'local-llm:deepseek-coder'])
+    expect(probe.contextWindow).toBeNull()
+  })
+
+  it('keeps a path-shaped id verbatim and reads the window llama.cpp reports on /props', async () => {
+    const served = 'C:\\models\\qwen3-coder\\Qwen3-Coder-30B-A3B-Instruct-UD-Q3_K_XL.gguf'
+    serverHandler = (url, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      if (url.includes('/v1/models')) res.end(JSON.stringify({ data: [{ id: served }] }))
+      else if (url.includes('/props')) res.end(JSON.stringify({ default_generation_settings: { n_ctx: 32768 } }))
+      else res.end('{}')
+    }
+
+    const probe = await ad.probeIdentity(`http://127.0.0.1:${port}`)
+    expect(probe.servedModels).toEqual([`local-llm:${served}`])
+    expect(probe.contextWindow).toBe(32768)
   })
 
   it('returns loggedIn: false when /v1/models returns HTTP error', async () => {
@@ -417,7 +434,8 @@ describe('local-llm-bridge process integration with mock OpenAI SSE endpoint', (
     await new Promise<void>((resolve) => child.on('exit', () => resolve()))
 
     // Assert emitted sequence
-    expect(lines.find((l) => l.type === 'init')).toMatchObject({ type: 'init', model: 'test-model' })
+    // Named as Warmstart names it, whatever the env spelled: the session records this string.
+    expect(lines.find((l) => l.type === 'init')).toMatchObject({ type: 'init', model: 'local-llm:test-model' })
     expect(lines.filter((l) => l.type === 'assistant_text').map((l) => l.text).join('')).toBe('Hello world!')
 
     const usageRecord = lines.find((l) => l.type === 'usage') as { type: string; usage: { input_tokens: number; output_tokens: number }; final: boolean } | undefined

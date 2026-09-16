@@ -902,6 +902,18 @@ export interface PendingReviewInput {
 }
 
 /** Insert the review as `pending` before the agent is asked, so the thread shows it immediately. */
+/**
+ * Fill in the reviewer's model after the fact, where the review was filed without one.
+ *
+ * ⛔ Only a null is filled. A local reviewer with no grading model set leaves the choice to its
+ * server, which names the model on `init` - after the row exists. The tally by model
+ * (`qualityReport`) buckets on this column, so a grade left unnamed is a grade counted under nobody.
+ */
+export function noteReviewerModel(reviewId: string, model: string | null): void {
+  if (!model) return
+  db().prepare('update quality_reviews set reviewer_model = ? where id = ? and reviewer_model is null').run(model, reviewId)
+}
+
 export function createPendingReview(input: PendingReviewInput): QualityReview {
   const id = randomUUID()
   db()

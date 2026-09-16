@@ -54,8 +54,11 @@ the operator's own project root — the one directory in this app where an unwan
 recoverable by throwing a branch away — so an adapter that cannot declare a mode which reads and does
 not write is never offered one, rather than being run in a mode that might. Measured 2026-09-03 from
 each adapter's own declaration; `external.ts` defaults it to `null`, which is the safe direction.
-`local-llm` declares `read-only` (with `qwen3-coder-30b-a3b` as its review model) as local inference
-has no filesystem or shell write tools and runs non-interactively via its bridge.
+`local-llm` declares `read-only` as local inference has no filesystem or shell write tools and runs
+non-interactively via its bridge. Its review model is the server's unless a person sets one: a local
+model is named `local-llm:<the id the server reports>` and is learned from `/v1/models` at every
+identity probe, never from a file — [`cost-model.md`](cost-model.md) §8a says why the pinned name
+this replaced was wrong on every grade a second server answered.
 
 ⚠️ **A local endpoint's pace is a property of somebody's GPU, and no timeout may assume otherwise.**
 Measured 2026-09-04 on a 27B model at ~3.5 tok/s: an 8.3k-token review prompt is minutes of reading

@@ -352,7 +352,15 @@ describe('a cost model may say it does not know', () => {
     // agentyard cannot price is one it cannot gate, estimate for, or reason about the context of.
     for (const a of ALL) {
       const model = costModel(a.info.policy.costModelId)
-      expect(model.modelIds().length, a.info.id).toBeGreaterThan(0)
+      // A cost model either lists its models or declares the shape of the ones a server will name
+      // (`dynamic_models`, local-llm) - never neither, which would leave nothing routable.
+      const dynamic = model.dynamicModelPrefix()
+      expect(model.modelIds().length > 0 || dynamic !== null, a.info.id).toBe(true)
+      if (dynamic) {
+        expect(model.modelSpec(`${dynamic}anything.gguf`)?.id, a.info.id).toBe(`${dynamic}anything.gguf`)
+        expect(model.modelSpec(dynamic), 'the bare prefix names nothing').toBeNull()
+        expect(model.modelSpec('anything.gguf'), 'a name outside the namespace is refused').toBeNull()
+      }
     }
   })
 })
@@ -1197,11 +1205,12 @@ describe('local-llm adapter', () => {
       isolationRoot: 'http://127.0.0.1:9090',
       cwd: 'C:/test',
       transport: 'stream',
-      model: 'qwen3-coder-30b-a3b'
+      model: 'local-llm:qwen3-coder-30b-a3b'
     })
 
     expect(plan.env.LOCAL_LLM_ENDPOINT).toBe('http://127.0.0.1:9090')
-    expect(plan.env.LOCAL_LLM_MODEL).toBe('qwen3-coder-30b-a3b')
+    // As stored: the bridge strips the namespace before the server sees it.
+    expect(plan.env.LOCAL_LLM_MODEL).toBe('local-llm:qwen3-coder-30b-a3b')
     expect(plan.env.LOCAL_LLM_SESSION_ID).toBe('sess-123')
   })
 })

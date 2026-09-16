@@ -563,6 +563,18 @@ export interface WorkerIdentity {
   subscriptionType?: string | null
   /** Has the CLI's config or probe identified that the subscription is expired / inactive? */
   subscriptionExpired?: boolean | null
+  /**
+   * The models the endpoint said it serves, as Warmstart names them (`local-llm:<served id>`), or
+   * null where the adapter has no such list (every cloud CLI). ⭐ This is the model picker for a
+   * local worker: the cost model has no catalogue to offer, because the model is whatever the
+   * operator loaded, and only the server knows what that is.
+   */
+  servedModels?: string[] | null
+  /**
+   * The context window the endpoint reported (llama.cpp's `/props` → `n_ctx`), or null where the
+   * server does not say. ⚠️ A measurement where present; the cost model's figure is the fallback.
+   */
+  contextWindow?: number | null
   /** Whatever the probe could read back, verbatim, for the Doctor panel. */
   raw?: string
   /**
@@ -1462,6 +1474,12 @@ export interface ModelPoolInfo {
 /** The choices one adapter can offer, read from the cost model file its policy names. */
 export interface ModelOptions {
   adapterId: string
+  /**
+   * Set on an entry that lists what one worker's own server serves (local-llm), beside the
+   * adapter-wide entry. A picker for that worker prefers its entry; a task constraint, which may
+   * land on any worker, reads the adapter-wide one.
+   */
+  workerId?: string
   costModelId: string
   /** ⚠️ False means this adapter takes no effort flag; the form offers no effort control for it. */
   selectableEffort: boolean

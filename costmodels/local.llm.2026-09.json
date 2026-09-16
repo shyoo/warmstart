@@ -7,9 +7,11 @@
     "tool can meter. So every token price is null, every cache field is inert, and the scheduler",
     "treats this worker as always-eligible from a quota perspective.",
     "",
-    "The models array is a default for Qwen3-Coder-30B-A3B via llama.cpp. At commissioning the",
-    "adapter queries /v1/models and the user picks from whatever the server reports; models not",
-    "listed here get the fallback context window (32768)."
+    "There is no models array, because there is no catalogue: the model is whatever the operator",
+    "loaded, and llama.cpp names it after the gguf it was pointed at (or its --alias). The adapter",
+    "reads /v1/models at every identity probe and mints ids as local-llm:<served id verbatim>;",
+    "dynamic_models is the shape every one of them gets. The context window is the fallback for a",
+    "server that does not say (llama.cpp does, on /props, and the adapter reads it there)."
   ],
   "id": "local.llm.2026-09",
   "provider": "local",
@@ -35,17 +37,15 @@
     "breakeven_context_tokens": 0,
     "min_tokens_since_compact": 0
   },
-  "models": [
-    {
-      "id": "qwen3-coder-30b-a3b",
-      "context_window": 32768,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "unknown",
-      "context_awareness": false,
-      "effort_levels": []
-    }
-  ],
+  "dynamic_models": {
+    "id_prefix": "local-llm:",
+    "context_window": 32768,
+    "input_per_mtok": null,
+    "output_per_mtok": null,
+    "tokenizer": "unknown",
+    "context_awareness": false,
+    "effort_levels": []
+  },
   "$plans_comment": [
     "No subscription, so no money to divide. `priced: false` is the whole answer and every run on",
     "this cost model renders `n/a` rather than $0.00 - electricity is a real cost this tool cannot",

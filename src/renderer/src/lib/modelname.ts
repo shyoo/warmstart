@@ -1,3 +1,5 @@
+import { isLocalModelId, localModelLabel } from '@shared/localmodel'
+
 /**
  * Model ids, written the way a person says them.
  *
@@ -60,6 +62,10 @@ export function effortLabel(effort: string | null | undefined): string | null {
 export function modelLabel(model: string | null | undefined, effort?: string | null): string | null {
   if (!model) return null
   if (model.trim() === '<synthetic>') return null
+  // A locally served model is named after its file, and the directory and `.gguf` are not the name.
+  // ⚠️ Kept as the server spells it otherwise: `Qwen3-Coder-30B-A3B-Instruct-UD-Q3_K_XL` is
+  // exact where a title-cased rewrite of it would be a guess at the quant's spelling.
+  if (isLocalModelId(model)) return localModelLabel(model)
   // ⚠️ `org/model` is how an openai-compatible endpoint names one. The org is where the model is
   // being reached, not part of what it is called. ⛔ Split on `/` only — a dot is *inside* a version
   // (`gpt-5.6-terra`), so treating it as a separator would render that model as `6 Terra`.

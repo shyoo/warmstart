@@ -44,8 +44,21 @@ function errText(err: unknown): string {
 // ---------------------------------------------------------------------------- configuration
 
 const ENDPOINT = process.env.LOCAL_LLM_ENDPOINT ?? 'http://127.0.0.1:8080'
-const MODEL = process.env.LOCAL_LLM_MODEL ?? ''
-const CONTEXT_SIZE = Number.parseInt(process.env.LOCAL_LLM_CONTEXT_SIZE ?? '32768', 10)
+/**
+ * Copied from `@shared/localmodel.ts` (see the import rule above): a local model is named
+ * `local-llm:<the id the server reports>` everywhere inside Warmstart, and the server sees only
+ * what follows the prefix.
+ */
+const LOCAL_MODEL_PREFIX = 'local-llm:'
+const stripPrefix = (id: string): string => (id.startsWith(LOCAL_MODEL_PREFIX) ? id.slice(LOCAL_MODEL_PREFIX.length) : id)
+/**
+ * The model the daemon asked for, as the server knows it — or empty, meaning **whatever the server
+ * serves**: `main()` then asks `/v1/models` and takes the first, so the `init` record names what
+ * actually answered rather than a placeholder. A single-model llama.cpp ignores the field either
+ * way; a multi-model server keys on it, which is why the stored id is never shortened.
+ */
+let MODEL = stripPrefix((process.env.LOCAL_LLM_MODEL ?? '').trim())
+let CONTEXT_SIZE = Number.parseInt(process.env.LOCAL_LLM_CONTEXT_SIZE ?? '', 10)
 const SESSION_ID = process.env.LOCAL_LLM_SESSION_ID ?? null
 const PERMISSION_MODE = process.env.LOCAL_LLM_PERMISSION_MODE ?? 'default'
 const IS_READ_ONLY = PERMISSION_MODE === 'read-only'
@@ -546,9 +559,62 @@ async function runConversation(prompt: string, messages: ChatMessage[]): Promise
   }
 }
 
+/** One GET against the endpoint, parsed; null on any failure. Both callers treat null as "does not say". */
+function getJson(path: string): Promise<Record<string, unknown> | null> {
+  return new Promise((resolve) => {
+    try {
+      const url = new URL(path, ENDPOINT)
+      const transport = url.protocol === 'https:' ? https : http
+      const req = transport.get(url, { timeout: 5_000 }, (res) => {
+        let body = ''
+        res.on('data', (d: Buffer) => { body += d.toString() })
+        res.on('end', () => {
+          if (res.statusCode !== 200) return resolve(null)
+          try {
+            const parsed: unknown = JSON.parse(body)
+            resolve(parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : null)
+          } catch {
+            resolve(null)
+          }
+        })
+      })
+      req.on('error', () => resolve(null))
+      req.on('timeout', () => {
+        req.destroy()
+        resolve(null)
+      })
+    } catch {
+      resolve(null)
+    }
+  })
+}
+
+/**
+ * Ask the server what it serves, where the daemon left the choice to it, and how wide its window is.
+ *
+ * ⚠️ Best effort and silent: a server that answers neither (the suite's mock 404s both) leaves the
+ * model unnamed and the window at 32768, which is what the bridge assumed before it asked at all.
+ */
+async function learnFromServer(): Promise<void> {
+  if (!MODEL) {
+    const models = await getJson('/v1/models')
+    const first = Array.isArray(models?.data) ? (models.data as Array<{ id?: unknown }>)[0]?.id : undefined
+    if (typeof first === 'string' && first.trim()) MODEL = first.trim()
+  }
+  if (!Number.isFinite(CONTEXT_SIZE) || CONTEXT_SIZE <= 0) {
+    // llama.cpp only; `n_ctx` is the slot's window. Anything else 404s and keeps the default.
+    const props = await getJson('/props')
+    const settings = props?.default_generation_settings as { n_ctx?: unknown } | undefined
+    const n = settings?.n_ctx
+    CONTEXT_SIZE = typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.floor(n) : 32768
+  }
+}
+
 async function main(): Promise<void> {
-  // Emit init record immediately so the session is identified
-  emit({ type: 'init', model: MODEL || 'local', session_id: SESSION_ID })
+  await learnFromServer()
+  // ⭐ Named as Warmstart names it, so the session records what answered - the daemon adopts this
+  // where the worker left the model to the server (`noteModelChosen`, `sessions.ts`).
+  emit({ type: 'init', model: MODEL ? `${LOCAL_MODEL_PREFIX}${MODEL}` : null, session_id: SESSION_ID })
 
   const messages: ChatMessage[] = [
     {

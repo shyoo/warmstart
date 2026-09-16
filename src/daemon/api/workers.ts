@@ -2,7 +2,7 @@
 import type { AdapterInfo, DoctorReport, ModelOptions, Settings } from '@shared/protocol.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from '../adapters/index.js'
-import { createWorker, listWorkers, creditsDiscrepancy, noteCreditsDiscrepancyReported, setWorkerCreditsIntent, refreshIdentity, reorderWorkers, requireWorker, retireWorker, updateWorker } from '../workers.js'
+import { createWorker, knownModelIds, listWorkers, creditsDiscrepancy, noteCreditsDiscrepancyReported, setWorkerCreditsIntent, refreshIdentity, reorderWorkers, requireWorker, retireWorker, updateWorker } from '../workers.js'
 import { accountUnavailability } from '../eligibility.js'
 import { lastQuota, lastQuotaReading, probeWorker, refreshNow } from '../quota.js'
 import { emit } from '../events.js'
@@ -134,23 +134,30 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
         try {
           const cm = costModel(a.info.policy.costModelId)
           const pools = cm.pools()
-          return [
-            {
-              adapterId: a.info.id,
-              costModelId: cm.id,
-              selectableEffort: a.info.capabilities.selectableEffort,
-              models: cm.modelIds().map((id) => {
-                const spec = cm.modelSpec(id)
-                return {
-                  id,
-                  contextWindow: spec?.context_window ?? null,
-                  effortLevels: spec?.effort_levels ?? [],
-                  ...(spec?.pool ? { pool: spec.pool } : {})
-                }
-              }),
-              ...(pools.length > 0 ? { pools } : {})
-            }
-          ]
+          const options = (ids: string[], workerId?: string): ModelOptions => ({
+            adapterId: a.info.id,
+            ...(workerId ? { workerId } : {}),
+            costModelId: cm.id,
+            selectableEffort: a.info.capabilities.selectableEffort,
+            models: ids.map((id) => {
+              const spec = cm.modelSpec(id)
+              return {
+                id,
+                contextWindow: spec?.context_window ?? null,
+                effortLevels: spec?.effort_levels ?? [],
+                ...(spec?.pool ? { pool: spec.pool } : {})
+              }
+            }),
+            ...(pools.length > 0 ? { pools } : {})
+          })
+          // The adapter-wide list (a task's model constraint reaches any worker), then - where the
+          // models are a server's - one entry per worker naming what *its* endpoint reported.
+          const perWorker = cm.dynamicModelPrefix()
+            ? listWorkers()
+                .filter((w) => w.adapterId === a.info.id && !w.retiredAt)
+                .map((w) => options(knownModelIds(a.info.id, w.id), w.id))
+            : []
+          return [options(knownModelIds(a.info.id)), ...perWorker]
         } catch (err) {
           // ⚠️ One adapter naming a cost model that will not load must not blank the picker for the
           // other three. The form falls back to "whatever the worker defaults to", which is exactly

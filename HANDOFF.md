@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-16, **Windows 11**, measured on t485's tip, `0.1.0+7.gcced61f`): typecheck, lint
-and build pass; L1 **3,618 passed, 5 skipped** (212 files); L2 **203 checks** (5 skipped); L3
+Baseline (2026-09-16, **Windows 11**, measured on t486's tip over `0.1.0+8.gb642d0e`): typecheck, lint
+and build pass; L1 **3,629 passed, 5 skipped** (213 files); L2 **203 checks** (5 skipped); L3
 **474 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
 `release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
 signed, hardened-runtime bundle. Last CI green on all seven jobs: `593e5c6`, run 35058132724 — the
@@ -22,6 +22,23 @@ first cut through the new flow is the test of `release.yml`'s new verify step; i
 `npm ci` if it fails. Then Phase 3/4 (write-up, demo GIF, landing page, channels), all off-repo.
 
 ## Closed in this cleanup
+
+- **A local worker's model is what its server serves, named `local-llm:<served id>` (t486,
+  2026-09-16).** `costmodels/local.llm` listed one id, `qwen3-coder-30b-a3b`; every model write is
+  validated against the cost model, so it was the only default a person could set and the one
+  migrations 44/61 wrote — while llama.cpp ignores `model` on a single-model server, so the
+  Qwen3.8-27B endpoint answered and every run and grade said the 30B coder had. The file now
+  declares `dynamic_models` (a template under `id_prefix`); `probeIdentity` reads `/v1/models` and
+  llama.cpp's `/props` into `identity.servedModels` / `contextWindow`; `knownModelIds` feeds
+  `model.options` (an entry per local worker), fitness and triage; the bridge asks `/v1/models`
+  when no model is set and names it on `init`, which `noteModelChosen` records on the session and
+  `noteReviewerModel` on the grade. Migration 74 clears the pinned literal to null. Benchmark
+  priors match the family on the file name; labels are the file name without `.gguf`.
+  `docs/cost-model.md` §8a. ⚠️ **Not yet driven against a real server** — both llama.cpp scripts
+  were started for this task and neither ever answered on 8080/8090 during the run (no `llama`
+  process, nothing listening; measured three times over ~40 min). Next: start one, press Probe on
+  the local worker, confirm the picker lists the gguf and a run's session names it.
+  Design: [`transient_docs/local_model_identity_2026-09-16.md`](transient_docs/local_model_identity_2026-09-16.md).
 
 - **A release is one turn, and the tag is the version (t485, 2026-09-16).** `v0.1.0` cost four
   turns, two "Prepare vX" commits and two CI runs whose only input was a version string (measured:
@@ -53,36 +70,6 @@ first cut through the new flow is the test of `release.yml`'s new verify step; i
   `medium` on all three turns, but `thread.started` carries neither. `initLine` (`stream.ts`) now fills
   from the spawn request, marked *(as requested)*, and `stripFrames` keeps the daemon's dim lines out
   of an MCP-less reply read back from the pane (which also quoted that header as the answer's first line).
-
-- **A tree a waiting ticket still owns reads `locked` on both sides of the board, and "at capacity"
-  now says what to do about it (t480, 2026-09-16).** Flow's awaiting lane marked the ticket `locks
-  ws2` while ws2's own row read **free** — one fact, two answers, and the wrong one on the column an
-  operator reads to find a tree that can take work. Not cosmetic: a free row is one
-  `computeWorkspaceRows` pairs an inbound dispatch with. `isLockedWorkspace`
-  (`Flow.tsx`) draws the pool member held by an `awaiting_human`/`paused_user` ticket as `locked`
-  — ticket, tree and account, in the human tone — and withholds it from inbound pairing; the lane
-  count is unchanged, because it counts *active* tasks. ⭐ The capacity refusal is one shared string
-  (`shared/capacity.ts`), read by the scheduler's hold reason and `spawnSession`'s throw alike:
-  `<label> at capacity` (the prefix the suites match), then what is full, that **Max parallel
-  instances** is the setting and raising it dispatches on the next tick, and the cost — quota drains
-  faster, the reading is less reliable, warm sessions are reused less. `MAX_HELP` beside the control
-  carries the long form, pinned by an L3 check. `docs/routing.md` §2.2, `docs/ui.md` §3,
-  `docs/glossary.md`. ⚠️ The locked *row* is L1-only: `ui.test.mjs` never opens the Flow board and
-  a claim cannot be staged over RPC. Baseline on this tip, Windows 11: typecheck, lint, build pass;
-  L1 **3,601 passed, 5 skipped** (211 files); L2 **203**; L3 **474 passed, 4 skipped**.
-
-- **Open conversations sit under their project in the sidebar, and a task can be renamed (t479,
-  2026-09-16).** Switching between two conversations meant Tasks board → row → open, every time. A
-  project row now lists every *unfinished* conversation under it (💬, newest first; one press opens
-  the thread) with a ▾/▸ fold remembered per project — ⛔ unfinished, not running: a conversation
-  rests at `awaiting_human` between turns, so only finished/cancelled/draft/deleted leaves the list
-  (operator's decision, with the fold and no cap). The thread heading is now the rename control
-  (`thread/TitleEditor`) over the existing `task.update { title }`, which clears the controller's
-  summary and leaves held statuses alone — pinned at L1 in `titlesummary.test.ts`, and by 11 L3
-  checks that file a conversation, open it from the sidebar, rename it and watch it leave on Finish.
-  ⭐ Driven visibly at 1440×900 on the showcase fleet. `docs/ui.md` §3. Baseline on this tip,
-  Windows 11: L1 **3,592 passed, 5 skipped** (212 files); L3 **473 passed, 4 skipped**; typecheck, lint, build pass. L2/L4 not
-  re-run — no daemon or packaging change.
 
 - **The window now says why orchestratord died, within a second (t474.2, 2026-09-15).** `rc.1`
   installed beside the trunk-built app found a v73 database it understood as v71, logged one line and

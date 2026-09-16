@@ -106,28 +106,25 @@ export function checkWorkerDefaults(
 ): void {
   const info = adapter(adapterId).info
   const cm = costModel(info.policy.costModelId)
+  // An adapter whose models are its server's takes any id under its prefix; a bare name is the
+  // old mistake (a cloud model's id, or a file name without the namespace) and says so.
+  const prefix = cm.dynamicModelPrefix()
+  const refused = (m: string): Error =>
+    new Error(
+      prefix && !m.startsWith(prefix)
+        ? `'${m}' is not how ${info.label} names a model: it is '${prefix}<id the server reports>' — probe the worker to see them`
+        : `'${m}' is not a model ${info.label} can be priced for`
+    )
 
-  if (patch.defaultModel) {
-    if (!cm.modelSpec(patch.defaultModel)) {
-      throw new Error(`'${patch.defaultModel}' is not a model ${info.label} can be priced for`)
-    }
-  }
-
-  if (patch.gradingModel && !cm.modelSpec(patch.gradingModel)) {
-    throw new Error(`'${patch.gradingModel}' is not a model ${info.label} can be priced for`)
-  }
-
-  if (patch.summarisingModel && !cm.modelSpec(patch.summarisingModel)) {
-    throw new Error(`'${patch.summarisingModel}' is not a model ${info.label} can be priced for`)
-  }
+  if (patch.defaultModel && !cm.modelSpec(patch.defaultModel)) throw refused(patch.defaultModel)
+  if (patch.gradingModel && !cm.modelSpec(patch.gradingModel)) throw refused(patch.gradingModel)
+  if (patch.summarisingModel && !cm.modelSpec(patch.summarisingModel)) throw refused(patch.summarisingModel)
 
   if (patch.defaultModels) {
     for (const [pool, m] of Object.entries(patch.defaultModels)) {
       if (m) {
         const spec = cm.modelSpec(m)
-        if (!spec) {
-          throw new Error(`'${m}' is not a model ${info.label} can be priced for`)
-        }
+        if (!spec) throw refused(m)
         const matchesPool =
           spec.pool === pool ||
           (pool === 'claude' && (spec.pool === 'claude' || spec.pool === 'gpt'))
@@ -144,9 +141,7 @@ export function checkWorkerDefaults(
       // priced, gated and estimated for. An allowlist entry the cost model does not declare is
       // refused on write, never stored — the ladder in `routableModelsFor` and part 2's scorer both
       // trust that everything in this column is legal.
-      if (!cm.modelSpec(m)) {
-        throw new Error(`'${m}' is not a model ${info.label} can be priced for`)
-      }
+      if (!cm.modelSpec(m)) throw refused(m)
     }
   }
 

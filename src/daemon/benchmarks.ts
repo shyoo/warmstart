@@ -1,3 +1,4 @@
+import { isLocalModelId, localModelLabel } from '@shared/localmodel.js'
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { paths } from './paths.js'
@@ -119,6 +120,13 @@ export function resetBenchmarks(): void {
 export function benchmarkPrior(modelId: string | null | undefined): BenchmarkPrior {
   if (!modelId) {
     return { agentic: null, basis: 'no model id was given, so no prior applies', source: null }
+  }
+  // ⭐ A locally served model is named after its file (`local-llm:C:\models\Qwen3-Coder-30B-A3B-…
+  // .gguf`), which no leaderboard lists. The family match runs on the file's own name, lower-cased,
+  // so the published Qwen3-Coder figure still stands in — as *inferred*, which the basis says.
+  if (isLocalModelId(modelId)) {
+    const family = benchmarkPrior(localModelLabel(modelId).toLowerCase())
+    return { ...family, basis: `${family.basis} (local model '${modelId}', matched by its file name)` }
   }
 
   for (const file of files()) {

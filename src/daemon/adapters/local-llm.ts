@@ -8,6 +8,7 @@ import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './typ
 import { asRecord, num, type StreamEvent } from '../stream.js'
 import { spawnEnv } from '../which.js'
 import { errorMessage } from '@shared/errors.js'
+import { localModelId } from '@shared/localmodel.js'
 
 /**
  * Local LLM adapter — any OpenAI-compatible server, designed for llama.cpp + Qwen3-Coder.
@@ -108,53 +109,75 @@ const info: AdapterInfo = {
   }
 }
 
-// ---------------------------------------------------------------------------- reachability cache
 // ---------------------------------------------------------------------------- HTTP probe
 
-async function probeEndpoint(
-  endpoint: string
-): Promise<{ ok: boolean; models: string[]; error?: string }> {
+/** One GET, five seconds, the body as text. `status` is 0 when no response came at all. */
+function getText(endpoint: string, path: string): Promise<{ status: number; body: string; error?: string }> {
   return new Promise((resolve) => {
     let resolved = false
-    const done = (result: { ok: boolean; models: string[]; error?: string }) => {
+    const done = (result: { status: number; body: string; error?: string }) => {
       if (resolved) return
       resolved = true
       resolve(result)
     }
-
     try {
-      const url = new URL('/v1/models', endpoint)
+      const url = new URL(path, endpoint)
       const transport = url.protocol === 'https:' ? https : http
       const req = transport.get(url, { timeout: 5_000 }, (res) => {
         let body = ''
         res.on('data', (d: Buffer) => { body += d.toString() })
-        res.on('end', () => {
-          if (res.statusCode !== 200) {
-            done({ ok: false, models: [], error: `HTTP ${res.statusCode}` })
-            return
-          }
-          try {
-            const parsed = JSON.parse(body) as { data?: Array<{ id?: string }> }
-            const models = (parsed.data ?? [])
-              .map((m) => m.id)
-              .filter((id): id is string => typeof id === 'string')
-            done({ ok: true, models })
-          } catch {
-            done({ ok: true, models: [] })
-          }
-        })
+        res.on('end', () => done({ status: res.statusCode ?? 0, body }))
       })
-      req.on('error', (err) => {
-        done({ ok: false, models: [], error: err.message })
-      })
+      req.on('error', (err) => done({ status: 0, body: '', error: err.message }))
       req.on('timeout', () => {
         req.destroy()
-        done({ ok: false, models: [], error: 'timeout (5s)' })
+        done({ status: 0, body: '', error: 'timeout (5s)' })
       })
     } catch (err) {
-      done({ ok: false, models: [], error: errorMessage(err) })
+      done({ status: 0, body: '', error: errorMessage(err) })
     }
   })
+}
+
+/**
+ * What the server serves. `/v1/models` is the OpenAI-shaped list every compatible server answers;
+ * the ids are **the server's own** — llama.cpp reports the gguf path it was started with unless
+ * given `--alias` — and are kept verbatim behind the `local-llm:` prefix (`@shared/localmodel`).
+ */
+export async function probeEndpoint(
+  endpoint: string
+): Promise<{ ok: boolean; models: string[]; error?: string }> {
+  const res = await getText(endpoint, '/v1/models')
+  if (res.status !== 200) return { ok: false, models: [], error: res.error ?? `HTTP ${res.status}` }
+  try {
+    const parsed = JSON.parse(res.body) as { data?: Array<{ id?: string }> }
+    const models = (parsed.data ?? [])
+      .map((m) => m.id)
+      .filter((id): id is string => typeof id === 'string' && id.trim() !== '')
+    return { ok: true, models }
+  } catch {
+    return { ok: true, models: [] }
+  }
+}
+
+/**
+ * The context window the server was started with, or null where it does not say.
+ *
+ * ⚠️ llama.cpp only: `/props` carries `default_generation_settings.n_ctx`, which is the slot's
+ * window (`-c` divided by `--parallel`). Other OpenAI-compatible servers 404 here and get null,
+ * which the cost model's `dynamic_models.context_window` then stands in for. A number here is a
+ * measurement; the fallback is a guess, and the two are kept apart on purpose.
+ */
+export async function probeContextWindow(endpoint: string): Promise<number | null> {
+  const res = await getText(endpoint, '/props')
+  if (res.status !== 200) return null
+  try {
+    const parsed = JSON.parse(res.body) as { default_generation_settings?: { n_ctx?: unknown } }
+    const n = parsed.default_generation_settings?.n_ctx
+    return typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.floor(n) : null
+  } catch {
+    return null
+  }
 }
 
 // ---------------------------------------------------------------------------- bridge path
@@ -178,7 +201,7 @@ function bridgePath(): string {
  * The bridge writes NDJSON records to stdout with a `type` key:
  *
  * ```
- * {"type":"init","model":"qwen3-coder-30b-a3b","session_id":null}
+ * {"type":"init","model":"local-llm:Qwen3-Coder-30B-A3B-Instruct-UD-Q3_K_XL.gguf","session_id":null}
  * {"type":"assistant_text","text":"Hello"}
  * {"type":"tool_call","name":"task_complete","arguments":"{\"summary\":\"Done\"}"}
  * {"type":"tool_result","tool":"task_complete","summary":"Done"}
@@ -308,6 +331,10 @@ export const localLlm: AgentAdapter = {
    *
    * ⚠️ `isolationRoot` here is actually the endpoint URL, which is an overloading of the field.
    * This probe pings the endpoint to verify reachability and updates the cache.
+   *
+   * ⭐ It is also where the worker learns **which models it has**: `servedModels` is the picker a
+   * local worker offers, because no cost model can list what an operator loaded. Re-read at every
+   * identity refresh, so swapping the gguf behind an endpoint shows up on the next probe.
    */
   async probeIdentity(isolationRoot: string): Promise<IdentityProbe> {
     const endpoint = isolationRoot
@@ -325,15 +352,19 @@ export const localLlm: AgentAdapter = {
       }
     }
 
+    const contextWindow = await probeContextWindow(endpoint)
     return {
       loggedIn: true,
       cliVersion: '1.0.0',
       account: 'local',
       organization: probe.models.length > 0 ? `models: ${probe.models.join(', ')}` : 'connected',
+      servedModels: probe.models.map(localModelId),
+      contextWindow,
       raw: JSON.stringify({
         loggedIn: true,
         endpoint,
         models: probe.models,
+        contextWindow,
         source: 'http-probe'
       })
     }

@@ -1,6 +1,6 @@
 import { adapters } from './adapters/index.js'
 import { benchmarkPrior } from './benchmarks.js'
-import { costModel } from './costmodel.js'
+import { knownModelIds } from './workers.js'
 import { qualityReport } from './quality.js'
 import type { QualityKey } from '@shared/quality.js'
 
@@ -147,7 +147,7 @@ export function fitnessTable(): Fitness[] {
   for (const a of adapters()) {
     let ids: string[]
     try {
-      ids = costModel(a.info.policy.costModelId).modelIds()
+      ids = knownModelIds(a.info.id)
     } catch {
       continue
     }

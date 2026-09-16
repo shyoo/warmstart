@@ -166,6 +166,8 @@ describe('fitnessTable', () => {
     const table = fitness.fitnessTable()
     expect(table.length).toBeGreaterThan(20)
     expect(table.some((f) => f.adapterId === 'claude-code' && f.model === 'claude-opus-5')).toBe(true)
-    expect(table.some((f) => f.adapterId === 'local-llm')).toBe(true)
+    // A local model is whatever a worker's server serves (t486): with no local worker commissioned
+    // there is nothing to list, and a row for a name nobody is serving would be a guess.
+    expect(table.some((f) => f.adapterId === 'local-llm')).toBe(false)
   })
 })

@@ -1970,6 +1970,22 @@ const MIGRATIONS: Migration[] = [
       create index if not exists tasks_review_queue on tasks(status, updated_at desc)
         where deleted_at is null;
     `)
+  },
+  // 74 - a local worker's model is whatever its server serves, not a name a migration wrote (t486).
+  //
+  // ⛔ Migrations 44 and 61 pinned `qwen3-coder-30b-a3b` on every local-llm worker as its grading
+  // and summarising model, and the cost model listed that one id, so it was also the only default a
+  // person could pick. llama.cpp ignores the `model` field on a single-model server, so a Qwen3.8-27B
+  // endpoint answered every request and every run, cost row and quality grade recorded the 30B
+  // coder. Null now means "the server's model": the bridge asks `/v1/models`, names what it found on
+  // `init`, and `noteModelChosen` records it. Only the pinned literal is cleared - a model a person
+  // chose under the new `local-llm:` namespace is theirs and stays.
+  (conn) => {
+    for (const column of ['default_model', 'grading_model', 'summarising_model']) {
+      conn.exec(
+        `update workers set ${column} = null where adapter_id = 'local-llm' and ${column} = 'qwen3-coder-30b-a3b'`
+      )
+    }
   }
 ]
 

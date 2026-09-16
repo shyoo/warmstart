@@ -79,6 +79,24 @@ export interface CostModelFile {
      */
     pool?: string
   }>
+  /**
+   * A model this file cannot list but will accept: one whose id is decided by a server at run time.
+   *
+   * ⭐ `local.llm` is the case. There is no catalogue to copy in — the model is whatever the operator
+   * loaded, and llama.cpp names it after the gguf it was pointed at — so the file declares the
+   * *shape* of any such model once and the adapter mints ids under `id_prefix` from what
+   * `/v1/models` reports. ⛔ The prefix is the namespace that keeps a locally served `gpt-oss-120b`
+   * from being priced, benchmarked or labelled as anybody else's model of that name.
+   */
+  dynamic_models?: {
+    id_prefix: string
+    context_window: number | null
+    input_per_mtok: number | null
+    output_per_mtok: number | null
+    tokenizer: string
+    context_awareness: boolean
+    effort_levels: string[]
+  }
   quota?: unknown
   /**
    * What a subscription costs, and which of its windows the money is divided over.
@@ -90,6 +108,8 @@ export interface CostModelFile {
    */
   plans?: PlansBlock
 }
+
+export type ModelSpec = NonNullable<CostModelFile['models']>[number]
 
 /** The subscription catalogue for one provider. See docs/cost-model.md §13. */
 export interface PlansBlock {
@@ -343,16 +363,32 @@ export class CostModel {
     return this.data.cache.ttl_measured_from
   }
 
-  modelSpec(id: string) {
-    return this.data.models?.find((m) => m.id === id) ?? null
+  modelSpec(id: string): ModelSpec | null {
+    const listed = this.data.models?.find((m) => m.id === id)
+    if (listed) return listed
+    // A dynamic id: the file's one template, under the id the server gave. ⚠️ The prefix alone is
+    // not a model — `local-llm:` with nothing after it names nothing.
+    const dynamic = this.data.dynamic_models
+    if (dynamic && id.startsWith(dynamic.id_prefix) && id.length > dynamic.id_prefix.length) {
+      const { id_prefix: _prefix, ...template } = dynamic
+      return { id, ...template }
+    }
+    return null
   }
 
   /**
-   * Every model this file can price. ⛔ The only list agentyard will accept a model name from - a
-   * model it cannot price is one it cannot gate, estimate for, or reason about the context of.
+   * Every model this file can price by name. ⛔ The only list agentyard will accept a model name
+   * from - a model it cannot price is one it cannot gate, estimate for, or reason about the context
+   * of - **plus** whatever a `dynamic_models` template admits, which is not a list: the served ids
+   * live on the workers (`knownModelIds`, `workers.ts`), and this stays the file's own.
    */
   modelIds(): string[] {
     return this.data.models?.map((m) => m.id) ?? []
+  }
+
+  /** The prefix a dynamic id must carry, or null where every model is listed by name. */
+  dynamicModelPrefix(): string | null {
+    return this.data.dynamic_models?.id_prefix ?? null
   }
 
   /**
