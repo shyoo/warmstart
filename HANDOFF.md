@@ -8,7 +8,7 @@ The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-16, **Windows 11**, measured on the packaging fix over `0.1.0+9.gd5e8f3f`):
-typecheck, lint and build pass; L1 **3,634 passed, 5 skipped** (214 files); L2 **203 checks**
+typecheck, lint and build pass; L1 **3,635 passed, 5 skipped** (214 files); L2 **203 checks**
 (5 skipped); L4 **19 checks** against `release/win-unpacked`, the packaged daemon answering
 `v0.1.0+9.gd5e8f3f.dirty`. L3 not re-run on this tip (no renderer change); it was **474 passed, 4
 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
@@ -16,14 +16,32 @@ signed, hardened-runtime bundle. CI is **enabled**, and so is the **Release** wo
 
 **`v0.1.0` is released and `latest`** (tag build 35066743396, 2026-09-16, attested — the first
 tag build on the public repository). **The version is now the tag** (t485, below): nothing in the
-tree carries one, so there is no "prepared, untagged" state any more. ⏭ The next release is one
-turn: `/release rc` on a green `origin/main`, install and verify it, `/release promote`. ⚠️ The
-first cut through the new flow is the test of `release.yml`'s new verify step; it fails before
-`npm ci` if it fails. Then Phase 3/4 (write-up, demo GIF, landing page, channels), all off-repo.
+tree carries one, so there is no "prepared, untagged" state any more, and a release is one turn:
+`/release rc` on a green `origin/main`, install and verify it, `/release promote`. ⭐ That flow has now
+carried a real cut, `release.yml`'s verify step included. Then Phase 3/4 (write-up, demo GIF, landing
+page, channels), all off-repo.
 
-⏭ **`0.1.1-rc.1` is the cut in flight**: notes at `.build-cache/notes-v0.1.1-rc.1.md`; the tag waits on CI.
+**`v0.1.1-rc.1` is tagged, built and published** (tag build 35161851026, 2026-09-16; five installers
++ `SHA256SUMS.txt`, attested). ⚠️ It published as a **full release** and became `/releases/latest`
+for ~8 minutes before being corrected with `gh release edit --prerelease` — see the version.mjs entry
+below. ⏭ Next: install it, verify it, then `/release promote`.
 
 ## Closed in this cleanup
+
+- **`scripts/version.mjs` printed nothing when *run* on Linux or macOS, and that decided a
+  release's visibility (2026-09-16).** It tested whether it had been invoked directly by comparing
+  `import.meta.url` against a hand-built `file:///${process.argv[1]}` — right on Windows (`C:\a` →
+  `file:///C:/a`), never true on POSIX (`/a` → `file:////a`). ⭐ So `release.yml`'s
+  `version=$(node scripts/version.mjs)` was the empty string, its `case "$version" in *-*)` found no
+  `-`, and **`v0.1.1-rc.1` published as a full release and became `/releases/latest`** — the one thing
+  t474 says an rc must never be, because installed apps poll that endpoint. Corrected on GitHub with
+  `gh release edit v0.1.1-rc.1 --prerelease`; `/releases/latest` reads `v0.1.0` again. `pathToFileURL`
+  now, and the workflow **refuses** a version that is not version-shaped rather than defaulting.
+  ⚠️ Every consumer that *imports* `resolveVersion()` was unaffected, which is why no build looked
+  wrong and every existing test stayed green; `src/shared/version.test.ts` now runs the script as a
+  program, and ⛔ that check is green on Windows either way — it only goes red where the bug bit.
+  ⚠️ `scripts/build-mac.sh` reads the same command into `.build-cache/version.txt`, so its step
+  fingerprints were built on an empty version on macOS; unmeasured, and worth a look on the next Mac.
 
 - **electron-builder is invoked from one script, and never from a config file that computes
   anything (2026-09-16).** t485's `electron-builder.js` — an ESM config that `extends:` the settings
@@ -72,7 +90,7 @@ first cut through the new flow is the test of `release.yml`'s new verify step; i
   and a CI-green lookup. `/release promote` tags the rc's *commit* with the bare version and the
   workflow rebuilds — chosen over flipping the pre-release flag, which would ship `-rc.N` as the
   version forever. Notes are the tag body; `releases/` takes no new files.
-  ⚠️ Unmeasured: the first tag through `release.yml`'s new verify step. Design:
+  ⭐ `v0.1.1-rc.1` is the first tag through it and the verify step passed. Design:
   [`transient_docs/release_flow_2026-09-16.md`](transient_docs/release_flow_2026-09-16.md).
 
 - **A codex conversation keeps its tree between turns, Land finds the branch wherever it is, and the
@@ -89,22 +107,7 @@ first cut through the new flow is the test of `release.yml`'s new verify step; i
   from the spawn request, marked *(as requested)*, and `stripFrames` keeps the daemon's dim lines out
   of an MCP-less reply read back from the pane (which also quoted that header as the answer's first line).
 
-- **The window now says why orchestratord died, within a second (t474.2, 2026-09-15).** `rc.1`
-  installed beside the trunk-built app found a v73 database it understood as v71, logged one line and
-  exited five times while the window said *Starting orchestratord…*. `ensure()` now listens for the
-  child's `exit`, and `main/daemonexit.ts` reads the `failed to start` line into the status message
-  (⭐ +508ms against a `user_version = 999` database). `docs/architecture.md` § startup. ⛔ The
-  release-side gate, `check-release-base.mjs`, refuses a trunk ahead of `origin/main`, a branch
-  behind it, or a dirty trunk (`releasebase.test.ts`); `release-tag.mjs cut` runs it first.
 - **`warmstart-site` polish (t468/t469/t471).** ⚠️ Committed there, **not pushed** — a push deploys.
-- **An rc cannot become `latest` (t474, 2026-09-15).** `release.yml` derives `--prerelease` from a
-  `-` in the version — ⛔ which matters because `src/main/updates.ts` polls `/releases/latest`, an
-  endpoint GitHub never answers with a pre-release or draft, so every release the workflow had
-  published before was invisible to installed apps. `isNewerVersion` lets an installed rc see its
-  bare final. O9 closed by wording: signing is a comment on the first PR, not a promised bot (t481,
-  2026-09-16); `.github/pull_request_template.md`, `CLA-SIGNERS.md` and the maintainer checklist
-  make the first external signature reproducible rather than a memory-only process.
-
 - **A granted directory can now be committed in, and an agent can ask for one that works (t470,
   2026-09-15).** Codex's elevated Windows sandbox writes a **deny** ACE on each `--add-dir` root's
   `.git`, so edits landed and `git commit` died at `.git/index.lock`. ⭐ Probed on codex-cli 0.151.0:
@@ -113,14 +116,6 @@ first cut through the new flow is the test of `release.yml`'s new verify step; i
   **`request_directory`** (`daemon/dirgrants.ts`): **Grant** attaches the folder, ends the run and
   requeues it for a warm resume with the agent's `state` as handoff. ⚠️ `claude-code` only; the rest
   name the path after `NEEDS DECISION:`. See `docs/mcp.md`, `adapters.md`.
-
-- **Quota-preemption hand-off with a destination, and Plan & Execute (t456/t458, 2026-09-15).** A
-  preemption warning's chosen hand-off now names where the work goes
-  (`quotaPreemptWarning.reassignWorkerId`, read by `preempt()` at expiry); Plan & Execute is the same
-  `plan` kind with fan-out capped at one, derived rather than stored (`planModeOf`,
-  `shared/tasks.ts`), whose executor lands onto the project's target. Design:
-  [`transient_docs/plan_and_execute_2026-09-15.md`](transient_docs/plan_and_execute_2026-09-15.md).
-  ⚠️ **Neither run against a real preemption or agent**; the cost claim is unmeasured.
 
 ## Remaining work — ordered by payoff
 
@@ -148,7 +143,7 @@ judgement. Do not replace the missing evidence with a unit test.
    agent call `request_directory` for a folder nobody attached and confirm the restart resumes warm.
 5. ✅ **Closed 2026-09-15** — the signed, notarised `rc.2` bundle drove a real agent on the owner's
    Mac. Unmeasured alone: Application Support isolation, and Antigravity's Keychain under hardening.
-6. **Finish the `0.1.1-rc.1` cut** and watch `release.yml`'s verify step, then `promote`.
+6. **Install `v0.1.1-rc.1` on Windows and macOS, verify it, then `/release promote`** so a final 0.1.1 becomes `latest`.
 7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.

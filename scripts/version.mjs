@@ -20,6 +20,7 @@
 //   node scripts/version.mjs        # prints the version this checkout would build as
 
 import { execFileSync } from 'node:child_process'
+import { pathToFileURL } from 'node:url'
 
 export const PLACEHOLDER_VERSION = '0.0.0'
 
@@ -78,6 +79,13 @@ export function resolveVersion({ cwd = process.cwd(), env = process.env } = {}) 
   }
 }
 
-const invokedDirectly =
-  process.argv[1] && import.meta.url === new URL(`file:///${process.argv[1].replace(/\\/g, '/')}`).href
-if (invokedDirectly) console.log(resolveVersion())
+// ⛔ `pathToFileURL`, not a hand-built `file:///${argv[1]}`. That construction is Windows-shaped —
+// `C:\a\b` becomes `file:///C:/a/b`, which is right, while a POSIX `/a/b` becomes `file:////a/b`,
+// which matches nothing — so on Linux and macOS this file printed *nothing at all* when run
+// directly. ⭐ Measured 2026-09-16: `release.yml`'s `version=$(node scripts/version.mjs)` was
+// therefore empty, its `case "$version" in *-*)` test found no `-`, and `v0.1.1-rc.1` published as a
+// full release and became `/releases/latest` — the one thing t474 says an rc must never be. Every
+// consumer that *imports* `resolveVersion()` was unaffected, which is why no build looked wrong.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  console.log(resolveVersion())
+}

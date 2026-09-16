@@ -202,6 +202,14 @@ jobs:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
           version=$(node scripts/version.mjs)
+          # ⛔ An empty or non-semver version must stop the release, never fall through. `v0.1.1-rc.1`
+          # published as a *full* release and became `/releases/latest` because this was empty
+          # (2026-09-16: `scripts/version.mjs` built its own `file:///` URL and so printed nothing on
+          # Linux) and the pre-release test below found no `-` in it. A default is a wrong answer here.
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::scripts/version.mjs printed '$version', which is not a version"; exit 1 ;;
+          esac
           echo "version=$version" >> "$GITHUB_OUTPUT"
           # A `-` in the version (0.1.0-rc.1) is a pre-release. ⛔ That decides more than a badge:
           # packaged Warmstart polls `/releases/latest`, which GitHub never answers with a
