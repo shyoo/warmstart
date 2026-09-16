@@ -11,16 +11,18 @@ Baseline (2026-09-15, **Windows 11**, measured on this merge of t446–t473 with
 at `0.1.0-rc.1`): typecheck, lint and build pass; L1 **3,558 passed, 5 skipped** (208 files); L2
 **203 checks** (5 skipped); L3 **452 passed, 4 skipped** at the pinned 1024×720 window; L4 **19
 checks** against `release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
-signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
-`3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
-**Release** workflow, proven on both platforms (item 6 below).
+signed, hardened-runtime bundle. Last CI green on all seven jobs: `593e5c6`, run 35058132724 — the
+merge commit itself. CI is **enabled**, and so is the **Release** workflow, now proven end to end.
 
-**Version is `0.1.0-rc.1`, committed and untagged (t474, 2026-09-15).** The repository is still
-private. The go-public order, from `internal_docs/` (not citable) reduced to what the tree can
-check: `/push` this → CI green → `git tag v0.1.0-rc.1 && git push origin v0.1.0-rc.1` → install
-*that* artifact on both machines and do items 5 and 8 → delete draft `untagged-34911447448` → flip
-the repository public → re-tag or cut `rc.2` so the artifacts carry attestations → `/release patch`
-for the bare `0.1.0`, which is the first release an installed app can see.
+⛔ **`v0.1.0-rc.1` is tagged at `eefbbbd`, one commit *before* that merge, so the six published
+artifacts contain none of t446–t473** — not the `.git` directory grant, not Plan & Execute, not the
+trunk `GIT_DIR` repair. Release run 35055712204 succeeded and the pre-release is public with both
+`.dmg`s, both `.exe`s and `SHA256SUMS.txt`, which closes item 6; what it does *not* do is ship this
+tree. ⏭ **Cut `rc.2` from the merge before installing anything on a second machine**, or items 5
+and 8 get demonstrated against a build 25 commits behind the repository. The rest of the
+go-public order stands: install *that* artifact → items 5 and 8 → delete draft
+`untagged-34911447448` → flip the repository public → `/release patch` for the bare `0.1.0`, the
+first release an installed app can see.
 
 ## Closed in this cleanup
 
@@ -33,8 +35,7 @@ for the bare `0.1.0`, which is the first release an installed app can see.
   or draft, so every release this workflow had ever published (always `--prerelease`) was invisible
   to installed apps. `isNewerVersion` now lets an installed rc see its bare final. O9 closed by
   wording: `CONTRIBUTING.md`/`CLA.md` promised a CLA bot that does not exist; signing is now a
-  comment on the first PR. ⚠️ The tag build has not been run yet; the `publish` job's checkout and
-  notes read are proven only by YAML parsing and a read of the script.
+  comment on the first PR. ✅ The tag build has since run and published (item 6).
 
 - **Codex's reasoning effort is now selectable, matching Claude and Muse (t473, 2026-09-15).**
   `selectableEffort` had been `false` since 2026-08-27 pending a real run — AGENTS.md forbids
@@ -140,11 +141,10 @@ a unit test.
    reports a build signed with the hardened runtime, and `npm run test:pack` passes on the Mac (all
    2026-09-14). Remaining: launch *that* bundle, open a PTY, and drive one real task. Still unverified either way: detached daemon startup without system Node
    under the hardened runtime, Application Support isolation, Antigravity's Keychain, Gatekeeper.
-6. **Tag `v0.1.0-rc.1` and watch the first tag build.** ✅ The macOS half is proven: run
-   34911447448 (2026-09-15, electron-builder 26.16.1) notarised, stapled, `spctl` accepted, draft
-   `untagged-34911447448` holds both `.dmg`s. A tag builds Windows too, reads
-   `releases/v0.1.0-rc.1.md` (which carries the uninstall line for the `appId` change) and
-   publishes a pre-release. ⏭ Unproven until it runs: the `publish` job's checkout and notes step.
+6. **✅ Done — cut `rc.2` from the merge.** The tag build ran (35055712204, 2026-09-15) and published
+   a public pre-release from `releases/v0.1.0-rc.1.md`: both `.dmg`s, `win-x64`, `win-arm64`, `win`
+   and `SHA256SUMS.txt`. The `publish` job's checkout and notes step are proven. ⛔ It was tagged at
+   `eefbbbd`, so the artifacts predate the merge — see the note at the top.
 7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.
