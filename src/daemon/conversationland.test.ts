@@ -193,6 +193,31 @@ describe('a conversation that lands twice', () => {
   })
 })
 
+describe('a conversation whose tree was parked between turns', () => {
+  it('⛔ lands from a borrowed workspace and gives it back, rather than answering "not holding a workspace"', async () => {
+    // t481, 2026-09-16: a codex conversation's process exited at the end of its turn, the pool
+    // member was parked onto `origin/main`, and Land answered "no workspace has the branch checked
+    // out" about a branch carrying one clean commit.
+    const { project, taskId, workspace, root } = await seedConversation('parked between turns')
+    commitInWorkspace(workspace, 'parked.txt')
+    await worktrees.parkWorkspace(project, workspace)
+    expect(git(workspace, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD')
+
+    const landed = await conversationland.landConversationWork(taskId)
+    expect(landed.reason ?? '').toBe('')
+    expect(landed.ok).toBe(true)
+    expect(git(root, 'log', '--format=%s', 'main')).toContain('the agent wrote parked.txt')
+
+    // The borrowed slot goes back parked and unclaimed, and the next branch exists for the next turn.
+    expect(git(workspace, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD')
+    expect(worktrees.workspaceHeldBy(project, `land:${taskId}`)).toBeNull()
+    const after = tasks.requireTask(taskId)
+    expect(after.branch).toBe(landed.nextBranch)
+    expect(await worktrees.branchExists(project, after.branch as string)).toBe(true)
+    expect(isOpenConversation(after)).toBe(true)
+  })
+})
+
 describe('a refusal moves nothing', () => {
   it('refuses a dirty tree, leaves the branch, the target and the task exactly as they were', async () => {
     const { taskId, workspace, root } = await seedConversation('half finished')

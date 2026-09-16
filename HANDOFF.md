@@ -24,6 +24,20 @@ channels), all off-repo.
 
 ## Closed in this cleanup
 
+- **A codex conversation keeps its tree between turns, Land finds the branch wherever it is, and the
+  session line names the model it asked for (t483, 2026-09-16).** t481 (CodexFirst, `gpt-5.6-sol`):
+  Land answered *"not holding a workspace"* 31s after the turn ended, about a branch with one clean
+  verified commit. ⭐ Measured on the daemon log and ws1's reflog: codex exits once per turn, *after*
+  `endConversationTurn` closed the run, so `onSessionExit` found no open run, read the task as nobody's
+  and parked ws1 onto `origin/main`. It now asks `taskOfSession`, so an `awaiting_human` conversation
+  keeps the claim (`idleturn.test.ts`, red without the fix); and `landConversationWork` borrows a pool
+  member when no tree has the branch (`conversationland.test.ts`). ⚠️ The Commit instruction telling
+  codex *not* to merge was correct — an MCP-less adapter has no `land_work`, so the person presses Land.
+  ⭐ *"— model unknown · mode unknown"* was display only: codex's rollout recorded `gpt-5.6-sol` at
+  `medium` on all three turns, but `thread.started` carries neither. `initLine` (`stream.ts`) now fills
+  from the spawn request, marked *(as requested)*, and `stripFrames` keeps the daemon's dim lines out
+  of an MCP-less reply read back from the pane (which also quoted that header as the answer's first line).
+
 - **A tree a waiting ticket still owns reads `locked` on both sides of the board, and "at capacity"
   now says what to do about it (t480, 2026-09-16).** Flow's awaiting lane marked the ticket `locks
   ws2` while ws2's own row read **free** — one fact, two answers, and the wrong one on the column an
@@ -66,16 +80,6 @@ channels), all off-repo.
   neighbour's citation. ⭐ Both read back off the built app: `test/ui.test.mjs` seeds a run carrying a
   prompt and asserts which bubble the chip lands under — reverting the anchor turns the checks red.
 
-- **A long thread no longer hides the task's status (t477, 2026-09-16).** Once the status box has
-  scrolled off the top, `thread/LedgerPeek` pins a small box at the top of the ledger column with
-  the task, its status and hold line, and — once the timeline has gone too — the latest run (`#N`,
-  account / model, fresh, status, usage), read from the same rows; pressing it scrolls the row back.
-  `lib/scrolledpast.ts` measures geometry on scroll and after every render — ⛔ an
-  `IntersectionObserver` missed a box jumped past in one frame, and the hidden L3 window gets no
-  scroll events at all (measured: a hand-dispatched `scroll` drew what the real `scrollTo` had not).
-  ⭐ Driven visibly at 1440×900 on the showcase fleet and pinned by six L3 checks. `docs/ui.md` §3.
-  Baseline on `01b3cf4`, Windows 11: L1 3,581 / L3 462 passed; typecheck, lint, build pass.
-
 - **The window now says why orchestratord died, within a second (t474.2, 2026-09-15).** `rc.1`
   installed beside the trunk-built app found a v73 database it understood as v71, logged one line and
   exited five times while the window said *Starting orchestratord…*. `ensure()` now listens for the
@@ -114,10 +118,6 @@ channels), all off-repo.
   **project's** target. Design and the two operator decisions:
   [`transient_docs/plan_and_execute_2026-09-15.md`](transient_docs/plan_and_execute_2026-09-15.md).
   ⚠️ **Not run against a real agent**, and the cost claim is unmeasured on this fleet (item 2).
-
-- **t408–t455, landed and documented in docs/ (2026-09-13–15).** Covered by the docs/ pages they
-  owed; see git history (probe PTY answers, live quota probe, remote settings, Statistics axes,
-  landing messages, welcome tour, gate panel, idle-turn deferral, phone `ask_human` card).
 
 ## Remaining work — ordered by payoff
 

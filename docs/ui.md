@@ -533,7 +533,10 @@ press leaves the thread open on the next numbered branch ([`landing.md`](landing
   `commit-only` would be a button that does nothing. ⚠️ It refuses while a turn is running — the
   agent is editing that tree — where `land_work` does not, because there the agent is blocked on the
   tool's own reply. This state used to have no button at all: Commit had nothing to ask for and
-  *Retry landing* is drawn only after a landing has already failed.
+  *Retry landing* is drawn only after a landing has already failed. ⛔ **No tree on the branch is not
+  nothing to land** (t481, 2026-09-16): where no pool member has the branch checked out,
+  `landConversationWork` borrows a free one (holder `land:<task>`), checks the branch out, lands and
+  cuts the next branch there, then parks and releases it — the way *Retry landing* always has.
 - ⭐ **Both are buttons with a second answer behind a ▼ — `SplitButton`, not a picker** (t283).
   They shipped as `SettingButtonSelect`s: the dark rounded control with a ✍ on it that every
   *setting* in this app wears, in a column beside a green Finish and a red Stop. The one row on the

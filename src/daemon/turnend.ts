@@ -5,9 +5,9 @@ import { adapter } from './adapters/index.js'
 import { voidApprovalsForSession } from './approvals.js'
 import { fileParkedQuestion, parkQuestionsForSession } from './questions.js'
 import { compactionsForTask } from './compaction.js'
-import { creditRunListUsd, getTask, isIntegrationParent, runForSession, runsFor } from './tasks.js'
+import { creditRunListUsd, getTask, isIntegrationParent, runForSession, runsFor, taskOfSession } from './tasks.js'
 import { backscroll, clearHousekeepingPrompt, closeSession, sessionDiagnostics } from './sessions.js'
-import { stripAnsi } from './stream.js'
+import { stripAnsi, stripFrames } from './stream.js'
 import { log } from './log.js'
 import {
   completeTask,
@@ -232,7 +232,12 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
   // ⚠️ The early return this replaced (`if (!run) return`) is exactly the path a session that
   // finished its task and was then closed takes — the common case, and the one that would have
   // leaked every worktree the fleet ever used.
-  const task = run?.taskId ? getTask(run.taskId) : null
+  //
+  // ⛔ **`taskOfSession`, not the open run alone.** A conversation's turn closes its run in
+  // `endConversationTurn` *before* a one-shot CLI's process exits, so on codex there is never an open
+  // run here — the task read as nobody's, the tree was parked and released, and t481's Land pressed
+  // 31 seconds later found no workspace on its branch (daemon log and ws1's reflog, 2026-09-16).
+  const task = run?.taskId ? getTask(run.taskId) : taskOfSession(session.id)
   await releaseWorkspaceOf(session.id, task?.status === 'awaiting_human' ? task.id : null)
 }
 
@@ -281,7 +286,9 @@ export async function onStreamResult(
   // terminal contracts. Codex streams its prose as `assistant_text` and emits a bare `turn.completed`
   // with `text: null`, so inspect the session's backscroll when `result.text` carries no terminal contract.
   const sessionText = stripAnsi(backscroll(session.id)).trim() || null
-  const effectiveText = result.text?.trim() ? result.text : sessionText
+  // ⛔ The reply is what the agent said, so the daemon's own dim lines come out first — the session
+  // header and tool rows are pane furniture, and t481's thread quoted the header as the answer.
+  const effectiveText = result.text?.trim() ? result.text : stripAnsi(stripFrames(backscroll(session.id))).trim() || null
   const terminal = mcpLess ? (lastTerminalContract(result.text) ?? lastTerminalContract(sessionText)) : null
   const completion = terminal?.completion ?? null
   const asked = terminal?.asked ?? null

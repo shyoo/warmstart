@@ -139,6 +139,53 @@ export type StreamEvent =
   | { kind: 'other'; type: string }
 
 /**
+ * What the daemon put on the command line for a session: the model, effort and permission mode it
+ * asked the CLI for. `null` where it asked for nothing and the CLI chose for itself.
+ */
+export interface SpawnAsked {
+  model: string | null
+  effort: string | null
+  permissionMode: string | null
+}
+
+/**
+ * A session's opening line: which model, which effort, which permission mode.
+ *
+ * ⛔ **What the CLI reported first, what was asked for second, and it says which.** Codex's
+ * `thread.started` carries neither a model nor a sandbox, so every codex turn opened with *"— model
+ * unknown · mode unknown"* (t481, 2026-09-16) — read, reasonably, as the model picker having failed,
+ * while codex's own rollout recorded `gpt-5.6-sol` at `medium` on every turn. A value the vendor did
+ * not confirm is marked *as requested*, never shown as though it had been.
+ */
+export function initLine(event: Extract<StreamEvent, { kind: 'init' }>, asked?: SpawnAsked): string {
+  let requested = false
+  const pick = (reported: string | null, wanted: string | null | undefined, fallback: string): string => {
+    if (reported) return reported
+    if (!wanted) return fallback
+    requested = true
+    return wanted
+  }
+  const parts = [pick(event.model, asked?.model, asked ? 'CLI default model' : 'model unknown')]
+  // ⚠️ No stream dialect reports effort, so it is only ever the request.
+  if (asked?.effort) parts.push(pick(null, `${asked.effort} effort`, ''))
+  parts.push(pick(event.permissionMode, asked?.permissionMode, asked ? 'CLI default mode' : 'mode unknown'))
+  return parts.join(' · ') + (requested ? ' (as requested)' : '')
+}
+
+/**
+ * Rendered scrollback with the daemon's own annotation lines taken out.
+ *
+ * ⛔ **For reading an agent's reply back out of the pane**, which is how an MCP-less adapter's turn
+ * ends. Every line `renderForHuman` writes that the agent did not say — the session header, tool
+ * calls, `— done` — is framed in dim, and t481's thread quoted the header as the first line of the
+ * agent's answer.
+ */
+export function stripFrames(text: string): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b\[2m[^\x1b]*\x1b\[0m(\r?\n)?/g, '')
+}
+
+/**
  * One stream event, as a line a person can read.
  *
  * ⛔ A `stream` session has no TUI. Its stdout is `stream-json`, and the session pane used to
@@ -151,7 +198,7 @@ export type StreamEvent =
  * because the scheduler needed them, rendered on the way past. Returns '' for anything with nothing
  * to say, and the caller writes nothing at all in that case.
  */
-export function renderForHuman(event: StreamEvent): string {
+export function renderForHuman(event: StreamEvent, asked?: SpawnAsked): string {
   const dim = (s: string) => `[2m${s}[0m`
   const eol = '\r\n'
 
@@ -159,7 +206,9 @@ export function renderForHuman(event: StreamEvent): string {
     case 'assistant_text':
       // ⚠️ Already on the screen a character at a time. Printing the framed copy as well is how a
       // streamed turn ends up saying everything twice.
-      return event.streamed ? '' : event.text.replace(/\n/g, eol)
+      // ⚠️ And it ends its own line. Codex sends one `agent_message` per paragraph with no trailing
+      // newline, so t481's thread read *"…without changing code yet.The handoff already…"*.
+      return event.streamed ? '' : event.text.replace(/\n/g, eol) + (event.text.endsWith('\n') ? '' : eol)
     case 'assistant_delta':
       return event.text.replace(/\n/g, eol)
     case 'tool_use':
@@ -169,7 +218,7 @@ export function renderForHuman(event: StreamEvent): string {
     case 'thinking':
       return event.start ? dim('· thinking…') + eol : ''
     case 'init':
-      return dim(`— ${event.model ?? 'model unknown'} · ${event.permissionMode ?? 'mode unknown'}`) + eol
+      return dim(`— ${initLine(event, asked)}`) + eol
     case 'usage': {
       if (!event.final) return ''
       const u = event.usage
@@ -218,7 +267,10 @@ export function renderForHuman(event: StreamEvent): string {
  * ⚠️ `usage` is deliberately absent. A context size is a fact about the session and is already on the
  * session detail with its basis; repeating it once per turn in a reading pane is noise.
  */
-export function describeStream(event: StreamEvent): Omit<SessionStreamLine, 'seq' | 'ts'> | null {
+export function describeStream(
+  event: StreamEvent,
+  asked?: SpawnAsked
+): Omit<SessionStreamLine, 'seq' | 'ts'> | null {
   switch (event.kind) {
     case 'assistant_text':
       return event.streamed || !event.text.trim() ? null : { kind: 'text', text: event.text }
@@ -234,7 +286,7 @@ export function describeStream(event: StreamEvent): Omit<SessionStreamLine, 'seq
     case 'init':
       return {
         kind: 'note',
-        text: `${event.model ?? 'model unknown'} · ${event.permissionMode ?? 'mode unknown'}`,
+        text: initLine(event, asked),
         tone: 'dim'
       }
     case 'rate_limit': {

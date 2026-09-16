@@ -452,6 +452,22 @@ describe('what stands the check down', () => {
     expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
   })
 
+  it('⛔ a conversation whose process exits after its turn keeps its workspace for the reply (t481)', async () => {
+    // Codex exits once per turn, after `endConversationTurn` has already closed the run. The exit
+    // used to find no open run, read the task as nobody's, and park and release the tree.
+    const { task, session } = seedRunningTask({ kind: 'conversation' })
+    const resources = await import('./resources.js')
+    const poolId = resources.workspacePoolId(`p-${session.id}`)
+    resources.upsertResource({ id: poolId, kind: 'counted', label: 'pool', members: [dir] })
+    resources.claim(poolId, session.id, 1)
+    await endTurn(session, 'Here is what I found.')
+    expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+
+    await turnend.onSessionExit(session, 0)
+
+    expect(resources.openClaims(poolId).map((c) => c.holder)).toEqual([task.id])
+  })
+
   it('a turn that ended in an error, which the failure path owns', async () => {
     const { run, session } = seedRunningTask({ metered: 500 })
     await turnend.onStreamResult(session, {

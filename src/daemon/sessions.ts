@@ -24,7 +24,7 @@ import { getWorker, refreshIdentity, requireWorker, watchReadiness } from './wor
 import { log } from './log.js'
 import { ensureDir, paths } from './paths.js'
 import { removeMcpConfig, writeMcpConfig } from './mcpconfig.js'
-import { StreamParser, describeStream, renderForHuman, stripAnsi, type StreamEvent } from './stream.js'
+import { StreamParser, describeStream, renderForHuman, stripAnsi, type SpawnAsked, type StreamEvent } from './stream.js'
 import { settings } from './settings.js'
 import { formatCmdInvocation, unwrapForPty } from './which.js'
 import { terminalAnswerer } from './termquery.js'
@@ -123,6 +123,8 @@ interface Live {
    * is printed before any request, so it is evidence of a process, not of a cache.
    */
   lastActivityAt: number | null
+  /** What this session's command line asked for, so its opening line can say so. See `initLine`. */
+  asked: SpawnAsked
 }
 
 const live = new Map<string, Live>()
@@ -1006,6 +1008,7 @@ export function spawnSession(opts: SpawnOptions): Session {
         ? writeMcpConfig(id, 'controller')
         : null
   const partialMessages = wantsPartialMessages(ad.info, purpose, transport)
+  const permissionMode = permissionModeFor(ad.info, purpose, transport, opts.permissionMode)
   const plan = ad.plan({
     sessionId: id,
     isolationRoot: worker.isolationRoot,
@@ -1014,7 +1017,7 @@ export function spawnSession(opts: SpawnOptions): Session {
     model: opts.model,
     effort: opts.effort,
     partialMessages,
-    permissionMode: permissionModeFor(ad.info, purpose, transport, opts.permissionMode),
+    permissionMode,
     mcpConfig,
     argv: opts.argv,
     attachments: opts.attachments,
@@ -1066,11 +1069,11 @@ export function spawnSession(opts: SpawnOptions): Session {
       if (isRequestEvidence(event.kind)) entry.lastActivityAt = Date.now()
       events.onStream(entry.session, event)
       for (const listener of listeners ?? []) listener(event)
-      text += renderForHuman(event)
+      text += renderForHuman(event, entry.asked)
       // ⛔ The second tier, beside the first rather than instead of it. The rendered bytes above
       // still feed `scrollback`, which `turnend.ts` reads to find a completion an MCP-less adapter
       // could not report; this is the same events shaped for a view that can lay one out.
-      const described = describeStream(event)
+      const described = describeStream(event, entry.asked)
       if (described) events.onStreamLine(id, noteStreamLine(id, described))
     }
     return text
@@ -1205,7 +1208,8 @@ export function spawnSession(opts: SpawnOptions): Session {
         : null,
     promptedOnce: false,
     promptedAt: null,
-    lastActivityAt: null
+    lastActivityAt: null,
+    asked: { model: opts.model ?? null, effort: opts.effort ?? null, permissionMode: permissionMode ?? null }
   })
 
   log.info(

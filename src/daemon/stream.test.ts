@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { StreamParser, describeStream, renderForHuman, type StreamEvent } from './stream.js'
+import { StreamParser, describeStream, initLine, renderForHuman, stripAnsi, stripFrames, type StreamEvent } from './stream.js'
 import { adapter } from './adapters/index.js'
 
 /**
@@ -512,6 +512,29 @@ describe('renderForHuman', () => {
         usage: { input: 2, output: 10, thinking: 0, cacheRead: 5, cacheWrite: 0 }
       })
     ).toBe('')
+  })
+
+  it('⛔ names the model, effort and mode that were asked for when the CLI does not say (t481)', () => {
+    // Codex's `thread.started` carries neither, and the line read "model unknown · mode unknown".
+    const init = { kind: 'init', sessionId: 't', model: null, permissionMode: null } as const
+    const asked = { model: 'gpt-5.6-sol', effort: 'medium', permissionMode: 'workspace-write' }
+    const out = renderForHuman(init, asked)
+    expect(out).toContain('gpt-5.6-sol · medium effort · workspace-write (as requested)')
+    expect(out).not.toContain('unknown')
+    // What the vendor reported wins, and is not marked as a request.
+    expect(initLine({ ...init, model: 'claude-opus-5', permissionMode: 'auto' }, { ...asked, effort: null })).toBe(
+      'claude-opus-5 · auto'
+    )
+    expect(describeStream(init, asked)).toMatchObject({ text: 'gpt-5.6-sol · medium effort · workspace-write (as requested)' })
+  })
+
+  it('⛔ keeps its own annotation lines out of an agent reply read back from the pane (t481)', () => {
+    const pane =
+      renderForHuman({ kind: 'init', sessionId: null, model: 'm', permissionMode: 'p' }) +
+      renderForHuman({ kind: 'assistant_text', text: 'First paragraph.' }) +
+      renderForHuman({ kind: 'tool_use', summary: 'ran npm test' } as StreamEvent) +
+      renderForHuman({ kind: 'assistant_text', text: 'Second paragraph.' })
+    expect(stripAnsi(stripFrames(pane))).toBe('First paragraph.\r\nSecond paragraph.\r\n')
   })
 
   it('never puts protocol on the screen', () => {

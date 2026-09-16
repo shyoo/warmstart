@@ -7,8 +7,13 @@ import { addMessage, getTask, runsFor, setTaskBranch } from './tasks.js'
 import { noteCurrentBranch } from './sessions.js'
 import { sessionOf } from './scheduler.js'
 import {
+  branchExists,
   branchNameFor,
+  claimWorkspace,
   gitIn as git,
+  parkWorkspace,
+  prepareWorkspace,
+  releaseWorkspace,
   workspaceHeldBy,
   workspaceOnBranch,
   workspaceState
@@ -142,16 +147,47 @@ export async function landConversationWork(
   const held =
     (session ? workspaceHeldBy(project, session.id) : null) ?? workspaceHeldBy(project, task.id)
   const target = landingTargetFor(task, project)
-  const state = held
+  const found = held
     ? await workspaceState(held.path, target)
     : await workspaceOnBranch(project, branch, target)
-  if (!state) {
+  if (found) return landIn(task, project, found, branch, rung, target, session)
+
+  // ⛔ **The fourth place, and the one t481 needed: nowhere.** A conversation on an adapter whose
+  // turn ends its process has its tree parked when the process exits — measured on ws1's reflog,
+  // 2026-09-16: `moving from warmstart/t481-… to origin/main` at 10:30:05, and Land pressed at
+  // 10:30:33 answered *"not holding a workspace"* about a branch sitting there with one clean,
+  // verified commit on it. The branch is the carrier, not the tree, so borrow a pool member for the
+  // landing exactly as Retry landing does, and give it back parked whatever happens.
+  if (!(await branchExists(project, branch))) {
+    return { ok: false, reason: `\`${branch}\` does not exist, so there is nothing to land` }
+  }
+  const borrowed = await claimWorkspace(project, `land:${task.id}`)
+  if (!borrowed) {
     return {
       ok: false,
-      reason: `this conversation is not holding a workspace, and no workspace has \`${branch}\` checked out`
+      reason: `no workspace has \`${branch}\` checked out and every workspace is busy; try again in a moment`
     }
   }
+  try {
+    const prepared = await prepareWorkspace(project, borrowed, branch, task)
+    if (!prepared.ok) return { ok: false, reason: prepared.error ?? 'could not prepare a workspace to land from' }
+    return await landIn(task, project, await workspaceState(borrowed.path, target), branch, rung, target, null)
+  } finally {
+    await parkWorkspace(project, borrowed.path)
+    releaseWorkspace(borrowed.claimId)
+  }
+}
 
+/** The landing itself, in a tree already on `branch`. */
+async function landIn(
+  task: NonNullable<ReturnType<typeof getTask>>,
+  project: NonNullable<ReturnType<typeof reloadProjectIfPresent>>,
+  state: Awaited<ReturnType<typeof workspaceState>>,
+  branch: string,
+  rung: FinishPolicy,
+  target: string,
+  session: { id: string } | null
+): Promise<ConversationLanding> {
   const decision = decideFinish({
     task,
     project,
