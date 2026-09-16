@@ -385,6 +385,14 @@ it still refuses), a panel-wide **Check merged PRs** that runs the sweep without
 **Make a task** — which files a normal task to go and deal with it — and **Dismiss**, which only
 hides the row.
 
+⭐ **Finishing a conversation releases its worktree before Finish reports success.** A conversation
+keeps a live session and workspace while it waits for another turn. When the operator finishes it,
+Warmstart asks that session to stop, waits up to 15 seconds for the process to exit, then parks and
+releases the workspace. This ordering matters to **Retire it**: before t467, Finish returned after
+only asking the process to stop, so Loose ends could show the empty branch while the session still
+claimed its checkout and the immediate retirement refused. Measured on t466 (2026-09-15): the task
+and run were completed while session `753261d2` remained live with ws2's open claim.
+
 ⛔ **Delete it is the one button on this panel that discards work, and it does so on purpose.**
 Everything else here either does nothing destructive or re-derives its own proof that nothing is
 being lost before it acts. **Delete it** is the opposite case: the operator is looking at a branch
@@ -395,6 +403,11 @@ idle, unclaimed, clean pool member, which is exactly what `parkWorkspace` would 
 (`idlePoolHolder`, the same licence the merged-PR sweep steps off on, [below](#landed-means-pushed)).
 It does not require `ahead === 0` the way **Retire it** does, because the whole point is to remove
 commits the trunk does not have.
+
+A refusal names the action that failed and the remedy. An operator checkout says to switch that
+checkout to another branch; a claimed pool member says to stop or finish its work; a dirty pool
+member says to commit or move its files. The UI says **Could not retire/delete/clean up**, never the
+ambiguous *kept it*.
 
 ⛔ Everything else here leaves work intact. **Retire it** deletes a *name*, and the daemon re-derives
 the proof that the branch carries nothing before it does — the panel may be minutes old, and a branch

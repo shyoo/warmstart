@@ -339,7 +339,8 @@ describe('task branches the repository still has a name for', () => {
 
     const verdict = await worktrees.retireStrandedBranch(project, branch, 'main')
     expect(verdict.deleted).toBe(false)
-    expect(verdict.reason).toContain('checked out in')
+    expect(verdict.reason).toContain('active in')
+    expect(verdict.reason).toContain('Switch that checkout to another branch')
     expect(git(root, 'branch', '--list', branch)).toContain(branch)
   })
 
@@ -402,7 +403,8 @@ describe('task branches the repository still has a name for', () => {
 
     const verdict = await worktrees.deleteUnlandedBranch(project, branch, 'main')
     expect(verdict.deleted).toBe(false)
-    expect(verdict.reason).toContain('checked out in')
+    expect(verdict.reason).toContain('active in')
+    expect(verdict.reason).toContain('Switch that checkout to another branch')
     expect(git(root, 'branch', '--list', branch)).toContain(branch)
   })
 

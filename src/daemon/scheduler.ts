@@ -3226,7 +3226,7 @@ export function deliverToLiveSession(taskId: string, messageId: number, text: st
  * ⛔ Dependents are admitted, exactly as they are on an agent completion. Forgetting that would leave
  * every blocked child of a hand-resolved task waiting on a parent that will never move again.
  */
-export function resolveTask(taskId: string, note?: string): Task {
+export async function resolveTask(taskId: string, note?: string): Promise<Task> {
   const task = requireTask(taskId)
   if (task.status === 'completed') return task
 
@@ -3260,8 +3260,21 @@ export function resolveTask(taskId: string, note?: string): Task {
 
   // The session was being kept warm for a reply that is now not coming. Holding it any longer costs
   // this worker its only work slot for a conversation that is over.
+  //
+  // ⛔ Wait for the process, then park and release its workspace before reporting that Finish is
+  // done. `closeSession` only asks the process to stop. Returning immediately let Loose ends expose
+  // the now-empty task branch while the live session still claimed its worktree; an immediate
+  // **Retire it** then refused the branch as checked out. Measured on t466 (2026-09-15): the task was
+  // completed, its run was closed, but session 753261d2 stayed `live` with ws2's open claim.
   if (session) {
-    closeSession(session.id)
+    if (await closeAndWait(session.id)) {
+      await releaseWorkspaceOf(session.id)
+    } else {
+      log.warn(
+        `session ${session.id.slice(0, 8)} did not exit after t${task.seq} was finished by the operator; ` +
+          'its workspace remains claimed and will not be reused'
+      )
+    }
   }
 
   // ⚠️ Dependents are admitted by the `setStatus` above, for every path that completes a task. The

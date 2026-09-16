@@ -1418,6 +1418,29 @@ export async function idlePoolHolder(
   return { poolMember, claimed, dirty }
 }
 
+function heldBranchReason(
+  branch: string,
+  heldBy: string,
+  holder: { poolMember: boolean; claimed: boolean; dirty: boolean }
+): string {
+  if (!holder.poolMember) {
+    return (
+      `cannot remove \`${branch}\` because it is active in ${heldBy}. ` +
+      'Switch that checkout to another branch, then try again'
+    )
+  }
+  if (holder.claimed) {
+    return (
+      `cannot remove \`${branch}\` because a task or session is still using ${heldBy}. ` +
+      'Stop or finish that work, then try again'
+    )
+  }
+  return (
+    `cannot remove \`${branch}\` because ${heldBy} has uncommitted files. ` +
+    'Commit or move those files, then try again'
+  )
+}
+
 /**
  * Delete a task branch that carries nothing.
  *
@@ -1439,11 +1462,11 @@ export async function retireStrandedBranch(
   const state = (await taskBranches(project, target)).find((b) => b.branch === branch)
   if (!state) return { deleted: false, reason: `there is no branch called \`${branch}\`` }
   if (state.heldBy) {
-    const { poolMember, claimed, dirty } = await idlePoolHolder(project, state.heldBy)
-    if (poolMember && !claimed && !dirty) {
+    const holder = await idlePoolHolder(project, state.heldBy)
+    if (holder.poolMember && !holder.claimed && !holder.dirty) {
       await git(state.heldBy, ['switch', '--detach', state.head])
     } else {
-      return { deleted: false, reason: `\`${branch}\` is checked out in ${state.heldBy}` }
+      return { deleted: false, reason: heldBranchReason(branch, state.heldBy, holder) }
     }
   }
   if (state.ahead !== 0) {
@@ -1484,11 +1507,11 @@ export async function deleteUnlandedBranch(
   const state = (await taskBranches(project, target)).find((b) => b.branch === branch)
   if (!state) return { deleted: false, reason: `there is no branch called \`${branch}\`` }
   if (state.heldBy) {
-    const { poolMember, claimed, dirty } = await idlePoolHolder(project, state.heldBy)
-    if (poolMember && !claimed && !dirty) {
+    const holder = await idlePoolHolder(project, state.heldBy)
+    if (holder.poolMember && !holder.claimed && !holder.dirty) {
       await git(state.heldBy, ['switch', '--detach', state.head])
     } else {
-      return { deleted: false, reason: `\`${branch}\` is checked out in ${state.heldBy}` }
+      return { deleted: false, reason: heldBranchReason(branch, state.heldBy, holder) }
     }
   }
   try {

@@ -36,6 +36,7 @@ let approvals: typeof import('./approvals.js')
 let transcript: typeof import('./transcript.js')
 let compaction: typeof import('./compaction.js')
 let activity: typeof import('./activity.js')
+let resources: typeof import('./resources.js')
 
 const ORG_DISABLED =
   'Your organization has disabled Claude subscription access for Claude Code. ' +
@@ -169,6 +170,7 @@ beforeAll(async () => {
   transcript = await import('./transcript.js')
   compaction = await import('./compaction.js')
   activity = await import('./activity.js')
+  resources = await import('./resources.js')
   db.openDb(join(dir, 'runfail.db'))
 })
 
@@ -982,10 +984,10 @@ describe('continuing a task that has stopped', () => {
  * succeeded or to delete the record of it.
  */
 describe('answering a task that is waiting on a person', () => {
-  it('records the answer as a judgement, not as a verification', () => {
+  it('records the answer as a judgement, not as a verification', async () => {
     const { task } = seedRunningTask()
     tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
-    scheduler.resolveTask(task.id)
+    await scheduler.resolveTask(task.id)
     expect(tasks.getTask(task.id)?.status).toBe('completed')
     // ⚠️ `task_complete` stays the only signal that an *agent* finished. This is the separate and
     // equally legitimate signal that a person is satisfied, and it says so in the thread.
@@ -994,14 +996,14 @@ describe('answering a task that is waiting on a person', () => {
     expect(said).toContain('Nothing here verified the work')
   })
 
-  it('keeps a note when one is given, because "why" outlives the click', () => {
+  it('keeps a note when one is given, because "why" outlives the click', async () => {
     const { task } = seedRunningTask()
     tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
-    scheduler.resolveTask(task.id, 'committed by hand, landing was right to refuse')
+    await scheduler.resolveTask(task.id, 'committed by hand, landing was right to refuse')
     expect(tasks.messagesFor(task.id).map(messageBody).join('\n')).toContain('landing was right')
   })
 
-  it('unblocks whatever was waiting on it', () => {
+  it('unblocks whatever was waiting on it', async () => {
     // ⛔ Exactly as an agent completion does. Without this, every blocked child of a hand-resolved
     // task waits on a parent that will never move again.
     const { task } = seedRunningTask()
@@ -1013,11 +1015,11 @@ describe('answering a task that is waiting on a person', () => {
     expect(tasks.getTask(child.id)?.status).toBe('blocked')
 
     tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
-    scheduler.resolveTask(task.id)
+    await scheduler.resolveTask(task.id)
     expect(tasks.getTask(child.id)?.status).toBe('ready')
   })
 
-  it('leaves the account that did the work in the record', () => {
+  it('leaves the account that did the work in the record', async () => {
     // ⛔ The complaint, exactly as it arrived: "after I clicked Mark done it shows worker as *you*,
     // but the main worker was ClaudeSecond — I was only temporarily assigned to make a close call."
     // `resolveTask` used to write `assignee: 'human'` on the way to `completed`, so answering a
@@ -1025,7 +1027,7 @@ describe('answering a task that is waiting on a person', () => {
     // mistake is visible without a click; this blanked it at the one moment somebody was looking.
     const { task, worker } = seedRunningTask()
     tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
-    scheduler.resolveTask(task.id)
+    await scheduler.resolveTask(task.id)
     const done = tasks.getTask(task.id)
     expect(done?.status).toBe('completed')
     expect(done?.ranOn).toBe(worker.id)
@@ -1069,12 +1071,12 @@ describe('answering a task that is waiting on a person', () => {
     expect(tasks.getTask(task.id)?.ranModel).toBe('claude-opus-5')
   })
 
-  it('is idempotent, so a double click is not a second decision', () => {
+  it('is idempotent, so a double click is not a second decision', async () => {
     const { task } = seedRunningTask()
     tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
-    scheduler.resolveTask(task.id)
+    await scheduler.resolveTask(task.id)
     const before = tasks.messagesFor(task.id).length
-    scheduler.resolveTask(task.id)
+    await scheduler.resolveTask(task.id)
     expect(tasks.messagesFor(task.id).length).toBe(before)
   })
 })
@@ -1604,14 +1606,14 @@ describe('a turn failed because the remote provider is overloaded (529)', () => 
 })
 
 describe('resolveTask when a person marks a task as complete', () => {
-  it('finishes any open run so the clock stops', () => {
+  it('finishes any open run so the clock stops', async () => {
     // t249 bug: when a person resolved a task with an open run, the run was left open,
     // so activeSince remained set and the runtime clock kept ticking.
     const { task, run } = seedRunningTask({ metered: 500 })
     expect(tasks.requireRun(run.id).endedAt).toBeNull()
     expect(tasks.requireTask(task.id).status).toBe('running')
 
-    scheduler.resolveTask(task.id, 'all complete')
+    await scheduler.resolveTask(task.id, 'all complete')
 
     // The run must be finished when the task is resolved by hand.
     const finished = tasks.requireRun(run.id)
@@ -1625,19 +1627,33 @@ describe('resolveTask when a person marks a task as complete', () => {
     expect(completed.activeSince).toBeNull()
   })
 
-  it('closes the session when resolving a task with an open run', () => {
+  it('closes the session before resolving Finish to the operator', async () => {
     const { task, session } = seedRunningTask({ metered: 500 })
+    const resourceId = `workspace:finish-${task.id}`
+    resources.upsertResource({
+      id: resourceId,
+      projectId: null,
+      kind: 'counted',
+      label: 'finish test workspace',
+      capacity: 1,
+      members: [dir],
+      meta: {}
+    })
+    expect(resources.claim(resourceId, session.id, 1, dir)).not.toBeNull()
     const sessionBefore = sessions.getSession(session.id)
     expect(sessionBefore?.state).toBe('live')
 
-    scheduler.resolveTask(task.id, 'done')
+    const resolved = scheduler.resolveTask(task.id, 'done')
 
-    // Session must be closed.
+    await expect(resolved).resolves.toMatchObject({ id: task.id, status: 'completed' })
+
+    // Finish does not return while a session can still claim the task's workspace.
     const sessionAfter = sessions.getSession(session.id)
     expect(sessionAfter?.state).toBe('closed')
+    expect(resources.openClaims(resourceId)).toEqual([])
   })
 
-  it('handles resolving a task with no open run', () => {
+  it('handles resolving a task with no open run', async () => {
     // A task that completed normally (not by hand) has no open run.
     seq += 1
     const adapterId = 'openai-compatible'
@@ -1646,17 +1662,17 @@ describe('resolveTask when a person marks a task as complete', () => {
     tasks.setStatus(task.id, 'running', { assignee: worker.id })
 
     // Don't start a run. This is a valid state for a task.
-    scheduler.resolveTask(task.id, 'quick resolution')
+    await scheduler.resolveTask(task.id, 'quick resolution')
 
     const resolved = tasks.requireTask(task.id)
     expect(resolved.status).toBe('completed')
   })
 
-  it('records a message on the task explaining the resolution', () => {
+  it('records a message on the task explaining the resolution', async () => {
     const { task } = seedRunningTask()
     const note = 'Everything looks good'
 
-    scheduler.resolveTask(task.id, note)
+    await scheduler.resolveTask(task.id, note)
 
     const messages = tasks.messagesFor(task.id)
     const resolution = messages.find((m) => m.role === 'system')
@@ -1664,42 +1680,42 @@ describe('resolveTask when a person marks a task as complete', () => {
     expect(resolution?.text).toContain('Marked done by you')
   })
 
-  it('does not re-finish a task that is already completed', () => {
+  it('does not re-finish a task that is already completed', async () => {
     const { task } = seedRunningTask()
-    scheduler.resolveTask(task.id, 'first resolution')
+    await scheduler.resolveTask(task.id, 'first resolution')
     const firstMessages = tasks.messagesFor(task.id)
 
-    scheduler.resolveTask(task.id, 'second attempt')
+    await scheduler.resolveTask(task.id, 'second attempt')
     const secondMessages = tasks.messagesFor(task.id)
 
     // Should return without adding a message.
     expect(secondMessages.length).toBe(firstMessages.length)
   })
 
-  it('sets the assignee to the account that ran the work', () => {
+  it('sets the assignee to the account that ran the work', async () => {
     const { task, worker } = seedRunningTask()
     expect(tasks.requireTask(task.id).ranOn).toBe(worker.id)
 
-    scheduler.resolveTask(task.id)
+    await scheduler.resolveTask(task.id)
 
     const resolved = tasks.requireTask(task.id)
     expect(resolved.assignee).toBe(worker.id)
   })
 
-  it('sets assignee to null if nothing ever ran', () => {
+  it('sets assignee to null if nothing ever ran', async () => {
     seq += 1
     const adapterId = 'openai-compatible'
     const worker = workers.createWorker({ adapterId, label: `w${seq}`, enabled: false })
     const task = tasks.createTask({ title: `t${seq}`, createdBy: { kind: 'human' } })
     tasks.setStatus(task.id, 'running', { assignee: worker.id })
 
-    scheduler.resolveTask(task.id)
+    await scheduler.resolveTask(task.id)
 
     const resolved = tasks.requireTask(task.id)
     expect(resolved.assignee).toBeNull()
   })
 
-  it('completes a task the operator had stopped, and releases what waited on it', () => {
+  it('completes a task the operator had stopped, and releases what waited on it', async () => {
     // t262: Stop parks a task in `paused_user`, and the only ways out on the page were Resume or
     // Delete. Changing your mind about a task you stopped is an ordinary thing to do, and until it
     // reaches `completed` nothing blocked behind it moves.
@@ -1714,13 +1730,13 @@ describe('resolveTask when a person marks a task as complete', () => {
     })
     tasks.setStatus(child.id, 'blocked')
 
-    scheduler.resolveTask(parent.id, 'good enough as it stands')
+    await scheduler.resolveTask(parent.id, 'good enough as it stands')
 
     expect(tasks.requireTask(parent.id).status).toBe('completed')
     expect(tasks.requireTask(child.id).status).not.toBe('blocked')
   })
 
-  it('admits dependents waiting on this task', () => {
+  it('admits dependents waiting on this task', async () => {
     const { task: parent } = seedRunningTask()
     const child = tasks.createTask({
       title: 'child task',
@@ -1732,7 +1748,7 @@ describe('resolveTask when a person marks a task as complete', () => {
     const before = tasks.requireTask(child.id)
     expect(before.status).toBe('blocked')
 
-    scheduler.resolveTask(parent.id)
+    await scheduler.resolveTask(parent.id)
 
     const after = tasks.requireTask(child.id)
     expect(after.status).not.toBe('blocked')

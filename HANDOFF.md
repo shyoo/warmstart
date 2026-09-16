@@ -8,15 +8,24 @@ The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-15, **Windows 11**, after t462): typecheck, lint and build pass; L1 **3,548 passed,
-5 skipped** (205 files + 2 platform skips); L2 **203 checks** (5 skipped); L3 **452 passed, 4 skipped**
-at the pinned 1024×720 window; L4 **19 checks** against `release/win-unpacked` (after t451, not re-run
-since). The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17 against a signed,
+5 skipped** (205 files + 2 platform skips); L2 **203 checks** (5 skipped); L3 **452 passed, 4 skipped** at 1024×720; L4 **19 checks** against `release/win-unpacked` (after t451, not re-run since).
+The same day on **macOS 13 arm64**: L1 3,475 / L3 434 (6 skipped) / L4 17 against a signed,
 hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
 **Release** workflow: it has been dispatched twice with `platforms=macos` (item 6 below), so a `v*`
 tag now builds both platforms.
 
 ## Closed in this cleanup
+
+- **Finishing a conversation no longer races Retire it (t467, 2026-09-15).** Read-only evidence from
+  the live database showed t466 `completed` with its run closed while session `753261d2` remained
+  `live` and still claimed `C:\Dev\warmstart_workspaces\ws2`; Loose ends therefore offered its empty
+  branch, then retirement refused the checkout. `resolveTask` now waits for the session process to
+  exit and parks/releases its workspace before the Finish RPC returns. A process that misses the
+  bounded 15-second wait keeps its claim and is never reused. Retirement still switches only a
+  clean, unclaimed pool member. Refusals say **Could not retire/delete/clean up** and tell the
+  operator whether to switch a checkout, finish work, or handle uncommitted files. Pinned by
+  `runfailure.test.ts` and real-git `landingcorners.test.ts`.
 
 - **A folder an operator attaches is now granted to every task downstream of it, and on every run
   (t462, 2026-09-15).** ⭐ **The measurement this exists for:** on t460 → t461 the operator attached
@@ -53,14 +62,6 @@ tag now builds both platforms.
   peer grades per finished task, from a *different-vendor* reviewer, with dimension scores whose
   weighted mean is the stored composite. ⚠️ Anything jittered by `n % WORKERS.length` is constant per
   worker, so the grades were identical within each model and the quality whiskers drew a point.
-
-- **warmstart.dev carries the same story, committed locally in `C:\Dev\warmstart-site` and not
-  pushed (t462, 2026-09-15).** New *Five ways to file a task* and *Roadmap* sections, a seven-block
-  feature grid, the trade-off scatters in place of the retired Routing Model shot, and `.shot img`
-  loses its border and drop shadow because each PNG now carries its own frame. Measured at 1,280 px
-  and at a real 390 px phone viewport: nothing extends past the viewport. ⚠️ `--window-size=390` is
-  **not** a phone — headless Chrome on Windows will not go below ~500 px and crops instead, which
-  reads exactly like an overflow that is not there. That repo's own `HANDOFF.md` has the rest.
 
 - **Quality Review's gradable totals now exclude tasks the same page says cannot be graded (t459,
   2026-09-15).** `reviewQueue` previously calculated the non-gradable count from live eligibility but

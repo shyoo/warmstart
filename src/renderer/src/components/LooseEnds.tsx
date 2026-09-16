@@ -178,7 +178,9 @@ export function LooseEnds(): React.JSX.Element | null {
                             projectId: end.projectId,
                             branch: end.branch as string
                           })
-                          return r.deleted ? `deleted ${end.branch}` : `kept it — ${r.reason}`
+                          return r.deleted
+                            ? `deleted ${end.branch}`
+                            : `Could not delete ${end.branch}: ${r.reason ?? 'the branch was not removed'}`
                         })
                       }
                     >
@@ -202,7 +204,9 @@ export function LooseEnds(): React.JSX.Element | null {
                             projectId: end.projectId,
                             branch: end.branch as string
                           })
-                          return r.deleted ? `cleaned up ${end.branch}` : `kept it — ${r.reason}`
+                          return r.deleted
+                            ? `cleaned up ${end.branch}`
+                            : `Could not clean up ${end.branch}: ${r.reason ?? 'the branch was not removed'}`
                         })
                       }
                     >
@@ -221,7 +225,9 @@ export function LooseEnds(): React.JSX.Element | null {
                             projectId: end.projectId,
                             branch: end.branch as string
                           })
-                          return r.deleted ? `retired ${end.branch}` : `kept it — ${r.reason}`
+                          return r.deleted
+                            ? `retired ${end.branch}`
+                            : `Could not retire ${end.branch}: ${r.reason ?? 'the branch was not removed'}`
                         })
                       }
                     >
