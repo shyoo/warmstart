@@ -4583,6 +4583,149 @@ try {
     globalHeads || '(no conversations on this install, so no header to read)'
   )
 
+  section('open conversations in the sidebar, and renaming from the convoHeading')
+  // ⛔ Switching between two conversations meant Tasks board → find the row → open it, every time
+  // (t479). A project now lists the conversations it is in the middle of under itself in the
+  // sidebar, and one press lands on the thread. ⚠️ Filed through the RPC rather than the composer,
+  // because the point is the sidebar and the thread, not the form; the one worker has no
+  // credentials, so this conversation is held unfinished, which is exactly the state that lists it.
+  const sideConvo = JSON.parse(
+    await evaluate(`
+      (async () => {
+        const r = window.agentyard.rpc;
+        const projects = await r('project.list');
+        const project = projects.find(p => p.name === 'ui project');
+        const t = await r('task.create', {
+          title: 'can you look at why the tests hang',
+          kind: 'conversation',
+          projectId: project.id,
+          prompt: 'can you look at why the tests hang'
+        });
+        const done = await r('task.create', {
+          title: 'a conversation that is over',
+          kind: 'conversation',
+          projectId: project.id
+        });
+        // ⚠️ Resolved, not cancelled: Cancel winds a task down into a *resting* state (paused_user
+        // here), and a paused conversation is still one you are in the middle of, so it stays listed.
+        // Mark done is what finishes it.
+        await r('task.resolve', { id: done.id });
+        return JSON.stringify({ id: t.id, seq: t.seq, status: t.status, doneSeq: done.seq });
+      })()
+    `)
+  )
+  await wait(1500)
+  const sidebarRows = async () =>
+    JSON.parse(
+      await evaluate(`
+        JSON.stringify([...document.querySelectorAll('.nav-item--conversation')].map(b => ({
+          text: b.innerText.replace(/\\s+/g, ' ').trim(),
+          title: b.getAttribute('title') ?? '',
+          active: b.classList.contains('nav-item--active')
+        })))
+      `)
+    )
+  let sideRows = await sidebarRows()
+  check(
+    '⛔ an unfinished conversation is listed under its project in the sidebar',
+    sideRows.some((r) => r.text.includes('why the tests hang')),
+    JSON.stringify(sideRows)
+  )
+  check(
+    'and a finished one is not',
+    !sideRows.some((r) => r.title.includes(`t${sideConvo.doneSeq} `)),
+    JSON.stringify(sideRows)
+  )
+  check(
+    'each row carries the conversation mark',
+    sideRows.every((r) => r.text.startsWith('💬')),
+    JSON.stringify(sideRows)
+  )
+  // ⚠️ Half the claim: the row has to be there for the click to prove anything.
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item--conversation')].find(b => b.innerText.includes('why the tests hang'))?.click()`
+  )
+  await wait(1200)
+  const convoHeading = await evaluate(`document.querySelector('.detail-head h3')?.innerText ?? ''`)
+  check(
+    'pressing it opens that conversation’s thread directly',
+    convoHeading.includes(`t${sideConvo.seq}`) && convoHeading.includes('why the tests hang'),
+    convoHeading || '(no thread convoHeading on the page)'
+  )
+  sideRows = await sidebarRows()
+  check(
+    'and the row reads as the open one',
+    sideRows.some((r) => r.text.includes('why the tests hang') && r.active),
+    JSON.stringify(sideRows)
+  )
+
+  // ⛔ A title had no editor outside a draft. The convoHeading is the control now, and the write goes
+  // through the daemon: the name below is read back from `task.list`, not from the input.
+  await evaluate(`document.querySelector('.title-rename')?.click()`)
+  await waitFor(
+    async () => await evaluate(`!!document.querySelector('.title-editor-input')`),
+    'the title editor to open'
+  )
+  await evaluate(
+    `(() => { const el = document.querySelector('.title-editor-input');` +
+      ` const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;` +
+      ` set.call(el, 'The hanging tests'); el.dispatchEvent(new Event('input', { bubbles: true })); })()`
+  )
+  await evaluate(`document.querySelector('.title-editor')?.requestSubmit()`)
+  let renamedJson = null
+  await waitFor(
+    async () =>
+      (renamedJson = await evaluate(
+        `window.agentyard.rpc('task.list', {}).then(ts => ts.find(t => t.id === ${JSON.stringify(sideConvo.id)}))
+          .then(t => JSON.stringify({ title: t.title, status: t.status, summary: t.titleSummary }))`
+      )) && JSON.parse(renamedJson).title === 'The hanging tests',
+    'the rename to reach the daemon'
+  )
+  const renamedTask = JSON.parse(renamedJson)
+  check('renaming from the heading writes the title through to the daemon', renamedTask.title === 'The hanging tests', renamedJson)
+  // ⚠️ The status this suite can reach is the held `ready` (no credentialed worker); the
+  // `awaiting_human` case, which is the one a person actually renames, is pinned at L1 in
+  // `titlesummary.test.ts`. What this proves is that the write changed the name and nothing else.
+  check(
+    '⛔ and changes nothing but the name',
+    renamedTask.status === sideConvo.status && renamedTask.summary === null,
+    `${renamedJson} (was ${sideConvo.status})`
+  )
+  await wait(800)
+  const afterHeading = await evaluate(`document.querySelector('.detail-head h3')?.innerText ?? ''`)
+  sideRows = await sidebarRows()
+  check(
+    'the heading and the sidebar row both read the new name',
+    afterHeading.includes('The hanging tests') && sideRows.some((r) => r.text.includes('The hanging tests')),
+    `heading: ${afterHeading} · rows: ${JSON.stringify(sideRows)}`
+  )
+
+  // The fold: the toggle on the project row hides the list and remembers it.
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.querySelector('.nav-fold')?.click()`
+  )
+  await wait(400)
+  const foldedRows = await sidebarRows()
+  const foldCount = await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.querySelector('.nav-fold')?.innerText.trim() ?? ''`
+  )
+  check('the project row folds its conversations away and shows how many are folded', foldedRows.length === 0 && /1/.test(foldCount), `sideRows: ${foldedRows.length}, fold: ${foldCount}`)
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.querySelector('.nav-fold')?.click()`
+  )
+  await wait(400)
+  check('and unfolds them again', (await sidebarRows()).length === 1)
+
+  // Finishing the conversation takes it off the list — the list is what you are in the middle of.
+  const resolved = await evaluate(
+    `window.agentyard.rpc('task.resolve', { id: ${JSON.stringify(sideConvo.id)} }).then(t => t.status, e => 'error: ' + e.message)`
+  )
+  await waitFor(
+    async () => (await sidebarRows()).length === 0,
+    `the finished conversation to leave the sidebar (resolve said: ${resolved})`
+  )
+  check('a conversation leaves the sidebar once it is finished', (await sidebarRows()).length === 0, resolved)
+
   section('global settings')
   await evaluate(
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Global')).click()`

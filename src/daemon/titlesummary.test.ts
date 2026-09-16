@@ -140,3 +140,36 @@ describe('asking the controller to name a long task', () => {
     expect(after?.title).toBe(longTitle())
   })
 })
+
+/**
+ * Renaming from the thread's heading (t479). The RPC existed for drafts; what the heading relies on
+ * is that it is safe on every other status, and that the label the board shows follows the rename.
+ */
+describe('renaming a task from its heading', () => {
+  it('shows the typed title everywhere by dropping the controller label the old title earned', () => {
+    const task = tasks.createTask({ title: longTitle() })
+    tasks.updateTask(task.id, { titleSummary: 'Summarise task titles' })
+    const renamed = tasks.updateTask(task.id, { title: 'Fix the PTY reaper' })
+    expect(renamed.title).toBe('Fix the PTY reaper')
+    expect(renamed.titleSummary).toBeNull()
+  })
+
+  it('⛔ does not re-dispatch a conversation that is waiting on a reply', () => {
+    // A conversation rests at `awaiting_human` between every turn, which is exactly when a person
+    // renames it. `updateTask` ends in `admit()`; a rename that moved this to `ready` would spend a
+    // run nobody asked for.
+    const task = tasks.createTask({ title: 'can you look at why the tests hang', kind: 'conversation' })
+    tasks.setStatus(task.id, 'awaiting_human')
+    const renamed = tasks.updateTask(task.id, { title: 'The hanging tests' })
+    expect(renamed.status).toBe('awaiting_human')
+    expect(tasks.updateTask(task.id, { title: '   ' }).title).toBe('The hanging tests')
+  })
+
+  it('leaves a paused or finished task at rest too', () => {
+    for (const status of ['paused_user', 'completed', 'cancelled'] as const) {
+      const task = tasks.createTask({ title: `rename me (${status})` })
+      tasks.setStatus(task.id, status)
+      expect(tasks.updateTask(task.id, { title: 'renamed' }).status).toBe(status)
+    }
+  })
+})

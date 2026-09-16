@@ -74,6 +74,7 @@ import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
 import { DebateBoard } from './thread/DebateBoard'
 import { CompactionRow, ReviewRow, RunRow } from './thread/RunRow'
 import { LedgerPeek } from './thread/LedgerPeek'
+import { TitleEditor } from './thread/TitleEditor'
 import { Markdown } from './thread/Markdown'
 import {
   compactionChoice,
@@ -388,9 +389,15 @@ function TaskDetail({
         {/* ⚠️ The label, not the prompt. The prompt is a paragraph and this is a page heading —
             and it is not lost by being summarised here: the first entry in the thread below is
             the full text, verbatim, which is what the agent was actually given. */}
-        <h3 title={task.title}>
-          t{task.seq} · {taskLabel(task)}
-        </h3>
+        {/* ⛔ The heading is also the rename control (t479) — except on a draft, whose title box
+            lives in `DraftControls` below, where the prompt it belongs with is edited too. */}
+        {task.status === 'draft' ? (
+          <h3 title={task.title}>
+            t{task.seq} · {taskLabel(task)}
+          </h3>
+        ) : (
+          <TitleEditor task={task} onRenamed={refresh} />
+        )}
       </header>
 
       <div className="detail-grid">

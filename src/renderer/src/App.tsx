@@ -45,7 +45,12 @@ import { RemoteMachines } from './components/RemoteMachines'
 import { RoutingModel, type RoutingTab } from './components/RoutingModel'
 import { Statistics, type StatisticsTab } from './components/Statistics'
 import { QualityReview } from './components/QualityReview'
-import { ProjectDot, projectWorkState } from './lib/taskview'
+import { isWorking, ProjectDot, projectWorkState, taskLabelShort, Working } from './lib/taskview'
+import {
+  openConversations,
+  readCollapsedConversations,
+  writeCollapsedConversations
+} from './lib/sidebarconversations'
 import { useUiSettings } from './lib/uisettings'
 import { useTarget } from './lib/target'
 import { MachinePicker } from './components/MachinePicker'
@@ -176,6 +181,22 @@ export function App({
   const [orphanTasks, setOrphanTasks] = useState(0)
   const [pendingDeliveries, setPendingDeliveries] = useState<PullRequestDelivery[]>([])
   const [activePrBadgeProjectId, setActivePrBadgeProjectId] = useState<string | null>(null)
+  /**
+   * Projects whose conversation list is folded away (t479). ⚠️ Read once; written on every toggle.
+   * The set holds the *collapsed* ones so a project seen for the first time is open.
+   */
+  const [collapsedConversations, setCollapsedConversations] = useState<Set<string>>(() =>
+    readCollapsedConversations()
+  )
+  const toggleConversations = useCallback((projectId: string) => {
+    setCollapsedConversations((cur) => {
+      const next = new Set(cur)
+      if (next.has(projectId)) next.delete(projectId)
+      else next.add(projectId)
+      writeCollapsedConversations(next)
+      return next
+    })
+  }, [])
   /**
    * The add-project wizard, which is chrome rather than a route.
    *
@@ -454,10 +475,19 @@ export function App({
               const projectPendingPrs = pendingDeliveries.filter((d) => d.projectId === project.id)
               const hasPendingPr = projectPendingPrs.length > 0
               const state = projectWorkState(projectTasks, hasPendingPr)
+              // ⛔ The conversations this project is in the middle of, listed under it so switching
+              // between two of them is one click here rather than a trip through the Tasks board
+              // (t479). Which ones qualify is `openConversations`' rule, not this file's.
+              const conversations = openConversations(projectTasks, project.id)
+              const folded = collapsedConversations.has(project.id)
+              const openThreadId =
+                route.kind === 'project' && route.id === project.id && route.tab === 'thread'
+                  ? route.taskId ?? null
+                  : null
               return (
                 <div key={project.id} className="nav-item-project-wrapper">
                   <NavItem
-                    active={route.kind === 'project' && route.id === project.id}
+                    active={route.kind === 'project' && route.id === project.id && openThreadId === null}
                     onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'tasks' })}
                   >
                     <ProjectDot
@@ -471,8 +501,53 @@ export function App({
                           : undefined
                       }
                     />
-                    <span>{project.name}</span>
+                    <span className="nav-project-name">{project.name}</span>
+                    {/* ⚠️ Only where there is something to fold. A toggle on a project with no open
+                        conversation would be a control that does nothing. A `span` with a role, not
+                        a nested button: the row itself is already a button. */}
+                    {conversations.length > 0 && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        className="nav-fold"
+                        aria-label={`${folded ? 'Show' : 'Hide'} ${conversations.length} open ${conversations.length === 1 ? 'conversation' : 'conversations'}`}
+                        aria-expanded={!folded}
+                        title={folded ? 'Show open conversations' : 'Hide open conversations'}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          toggleConversations(project.id)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            toggleConversations(project.id)
+                          }
+                        }}
+                      >
+                        {folded ? '▸' : '▾'}
+                        {folded && <span className="nav-count num">{conversations.length}</span>}
+                      </span>
+                    )}
                   </NavItem>
+                  {!folded &&
+                    conversations.map((conversation) => (
+                      <button
+                        key={conversation.id}
+                        type="button"
+                        className={`nav-item nav-item--conversation${openThreadId === conversation.id ? ' nav-item--active' : ''}`}
+                        title={`t${conversation.seq} · ${conversation.title}`}
+                        onClick={() =>
+                          setRoute({ kind: 'project', id: project.id, tab: 'thread', taskId: conversation.id })
+                        }
+                      >
+                        <span className="nav-conversation-icon" aria-hidden>
+                          💬
+                        </span>
+                        <span className="nav-conversation-title">{taskLabelShort(conversation, 48)}</span>
+                        {isWorking(conversation) && <Working />}
+                      </button>
+                    ))}
                   {activePrBadgeProjectId === project.id && hasPendingPr && (
                     <div
                       className="project-pr-badge"

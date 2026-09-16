@@ -24,6 +24,19 @@ channels), all off-repo.
 
 ## Closed in this cleanup
 
+- **Open conversations sit under their project in the sidebar, and a task can be renamed (t479,
+  2026-09-16).** Switching between two conversations meant Tasks board → row → open, every time. A
+  project row now lists every *unfinished* conversation under it (💬, newest first; one press opens
+  the thread) with a ▾/▸ fold remembered per project — ⛔ unfinished, not running: a conversation
+  rests at `awaiting_human` between turns, so only finished/cancelled/draft/deleted leaves the list
+  (operator's decision, with the fold and no cap). The thread heading is now the rename control
+  (`thread/TitleEditor`) over the existing `task.update { title }`, which clears the controller's
+  summary and leaves held statuses alone — pinned at L1 in `titlesummary.test.ts`, and by 11 L3
+  checks that file a conversation, open it from the sidebar, rename it and watch it leave on Finish.
+  ⭐ Driven visibly at 1440×900 on the showcase fleet. `docs/ui.md` §3. Baseline on this tip,
+  Windows 11: L1 **3,592 passed, 5 skipped** (212 files); L3 **473 passed, 4 skipped**; typecheck, lint, build pass. L2/L4 not
+  re-run — no daemon or packaging change.
+
 - **A run's prompt chip now hangs under the request, and every benchmark prior cites its leaderboard
   (t478, 2026-09-16).** The `📋 49` chip sat under the run's *last agent answer*, which read as
   though the agent had been handed its own reply — a person who typed `/push` found their prompt two
@@ -34,8 +47,7 @@ channels), all off-repo.
   retrieval dates, carried on the report from `benchmarkTable()` because only the daemon can read
   `benchmarks/*.json`; a family-prefix prior reads *inferred, family match* rather than borrowing the
   neighbour's citation. ⭐ Both read back off the built app: `test/ui.test.mjs` seeds a run carrying a
-  prompt through the store and asserts which bubble the chip lands under — reverting the anchor turns
-  those two checks red, which is how they were confirmed to test anything.
+  prompt and asserts which bubble the chip lands under — reverting the anchor turns the checks red.
 
 - **A long thread no longer hides the task's status (t477, 2026-09-16).** Once the status box has
   scrolled off the top, `thread/LedgerPeek` pins a small box at the top of the ledger column with
@@ -45,25 +57,20 @@ channels), all off-repo.
   `IntersectionObserver` missed a box jumped past in one frame, and the hidden L3 window gets no
   scroll events at all (measured: a hand-dispatched `scroll` drew what the real `scrollTo` had not).
   ⭐ Driven visibly at 1440×900 on the showcase fleet and pinned by six L3 checks. `docs/ui.md` §3.
-  Baseline on this tip over `01b3cf4`, Windows 11: L1 **3,581 passed, 5 skipped** (211 files); L3
-  **462 passed, 4 skipped**; typecheck, lint, build pass. L2/L4 not re-run — no daemon/packaging change.
+  Baseline on `01b3cf4`, Windows 11: L1 3,581 / L3 462 passed; typecheck, lint, build pass.
 
 - **README.md rephrased in direct developer tone, with warmstart.dev's pitch phrases (t476,
   2026-09-16)** — e.g. "Right agent and the right model, without thinking twice" for "Smart routing".
   Verified facts, security boundaries and documentation links kept as they were.
 
-- **The window now says why orchestratord died, within a second (t474.2, 2026-09-15).** The
-  operator installed `rc.1` beside the trunk-built app they run daily; the trunk had migrated the
-  live database to v73 and the release understood v71, so the daemon logged one actionable line and
-  exited five times over two minutes while the window said *Starting orchestratord…* throughout.
-  `ensure()` now listens for the child's `exit` and stops polling at once, and `main/daemonexit.ts`
-  reads the `failed to start` line back from the day's log into the status message. ⭐ Driven from
-  `out/` against a `user_version = 999` database: the panel read the full refusal **+508ms** after
-  the page was reachable. `docs/architecture.md` § startup. ⛔ The release-side lesson is now a
-  gate: `npm run release:check` (`scripts/check-release-base.mjs`, step 0 of `/release`) refuses
-  a trunk ahead of `origin/main`, a branch behind it, or a dirty trunk; real-git
-  `releasebase.test.ts` reproduces the 25-commit trap. ⛔ Found on the way: unanchored `release/`
-  in `.gitignore` had swallowed `.claude/skills/release/`, so the skill was never in `57e6747`.
+- **The window now says why orchestratord died, within a second (t474.2, 2026-09-15).** `rc.1`
+  installed beside the trunk-built app found a v73 database it understood as v71, logged one line and
+  exited five times while the window said *Starting orchestratord…*. `ensure()` now listens for the
+  child's `exit`, and `main/daemonexit.ts` reads the `failed to start` line into the status message
+  (⭐ +508ms against a `user_version = 999` database). `docs/architecture.md` § startup. ⛔ The
+  release-side gate: `npm run release:check` (step 0 of `/release`) refuses a trunk ahead of
+  `origin/main`, a branch behind it, or a dirty trunk (`releasebase.test.ts`). ⛔ Unanchored
+  `release/` in `.gitignore` had swallowed `.claude/skills/release/`.
 - **`warmstart-site` polish (t468/t469/t471).** ⚠️ Committed there, **not pushed** — a push deploys.
 - **A release now carries notes written at bump time, and an rc cannot become `latest` (t474,
   2026-09-15).** `/release` (`.claude/skills/release/`) bumps the three version files, writes
@@ -83,35 +90,28 @@ channels), all off-repo.
   beside `--model`. ⛔ Past Codex runs' `effort` stays `null`, which already reads as "CLI default"
   everywhere and is excluded from the per-effort breakdown rather than bucketed as unknown.
 
-- **User-facing copy rewritten in direct developer style (t464, 2026-09-15).** Sentences, tooltips,
-  placeholders and section intros across 21 components in `src/renderer/src/components`; 112 lines shorter.
-- **Finishing a conversation no longer races Retire it (t467, 2026-09-15).** `resolveTask` now waits
-  (bounded, 15s) for the session process to exit and parks/releases its workspace before the Finish RPC
-  returns, preventing race conditions with empty branch retirement. Pinned by `runfailure.test.ts` and
-  `landingcorners.test.ts`.
+- **User-facing copy rewritten in direct developer style (t464, 2026-09-15)** across 21 components.
+- **Finishing a conversation no longer races Retire it (t467, 2026-09-15).** `resolveTask` waits
+  (bounded, 15s) for the session process to exit and parks/releases its workspace before the Finish
+  RPC returns. Pinned by `runfailure.test.ts` and `landingcorners.test.ts`.
 
 - **A granted directory can now be committed in, and an agent can ask for one that works (t470,
-  2026-09-15).** ⛔ The t469 grant was *not* dropped. Codex's elevated Windows sandbox grants each
-  `--add-dir` root a write ACE and then writes an explicit **deny** ACE on that root's `.git` (its
-  own audit log says so), so every edit landed and `git commit` died at `.git/index.lock: Permission
-  denied`. ⭐ Probed against codex-cli 0.151.0: passing `<dir>/.git` as a root of its own draws a
-  grant and **no** deny, and the commit succeeds. `gitMetadataRoots` (was `gitWritableRoots`) returns
-  it now, for the workspace and every granted folder (⚠️ it had hit any plain-clone workspace too — a
-  `trunk`-mode task could not commit at all). ⭐ New MCP tool **`request_directory`**
-  (`daemon/dirgrants.ts`): the operator's **Grant** attaches the folder to the task, ends the run and
-  requeues it, so the grant arrives on a warm resume with the agent's `state` as the handoff. ⚠️
-  `claude-code` only; the rest name the path after `NEEDS DECISION:`. See `docs/mcp.md`, `adapters.md`.
+  2026-09-15).** Codex's elevated Windows sandbox writes a **deny** ACE on each `--add-dir` root's
+  `.git`, so edits landed and `git commit` died at `.git/index.lock`. ⭐ Probed on codex-cli 0.151.0:
+  passing `<dir>/.git` as its own root draws no deny; `gitMetadataRoots` returns it for the workspace
+  and every grant (it had hit plain-clone `trunk` workspaces too). ⭐ New MCP tool
+  **`request_directory`** (`daemon/dirgrants.ts`): **Grant** attaches the folder, ends the run and
+  requeues it for a warm resume with the agent's `state` as handoff. ⚠️ `claude-code` only; the rest
+  name the path after `NEEDS DECISION:`. See `docs/mcp.md`, `adapters.md`.
 
 - **Quota-preemption hand-off with a destination (t458, 2026-09-15).** A hand-off chosen during
   the warning names where the work goes (`quotaPreemptWarning.reassignWorkerId`, written by
   `task.overrideQuota`, read by `preempt()` at expiry). ⚠️ **Not run against a real preemption**.
 
-- **Plan & Execute, and the composer pill's teaching order (t456 / t458, 2026-09-15).** Plan & Execute
-  is the same `plan` kind with the fan-out capped at one and no integration turn; the shape is
-  *derived*, never stored — `planModeOf` (`shared/tasks.ts`) reads
-  `min(mandate.maxChildren, childDefaults.maxChildren) <= 1` and everything follows, including the
-  executor landing onto the **project's** target rather than the planner's branch. The pill reads
-  from the single `KIND_OPTIONS` order. Design and the two operator decisions:
+- **Plan & Execute (t456 / t458, 2026-09-15).** The same `plan` kind with the fan-out capped at one
+  and no integration turn; the shape is *derived*, never stored — `planModeOf` (`shared/tasks.ts`)
+  reads `min(mandate.maxChildren, childDefaults.maxChildren) <= 1` — and the executor lands onto the
+  **project's** target. Design and the two operator decisions:
   [`transient_docs/plan_and_execute_2026-09-15.md`](transient_docs/plan_and_execute_2026-09-15.md).
   ⚠️ **Not run against a real agent**, and the cost claim is unmeasured on this fleet (item 2).
 

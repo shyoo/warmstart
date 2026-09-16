@@ -1394,6 +1394,61 @@ body {
   color: var(--color-text-faint);
 }
 
+/* ---- open conversations under a project (t479) ------------------------- */
+/* The project's name takes the row; the fold toggle sits at its right edge and is a span with a
+   role, because the row itself is already a button. */
+.nav-project-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-left: auto;
+  padding: 0 var(--sp-1);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-faint);
+  font-size: var(--text-meta);
+  line-height: 1;
+}
+
+.nav-fold:hover,
+.nav-fold:focus-visible {
+  color: var(--color-text);
+  background: var(--color-border);
+  outline: none;
+}
+
+.nav-fold .nav-count {
+  margin-left: 0;
+}
+
+/* One row per conversation, indented under its project and a step smaller, so the list reads as
+   the project's contents rather than as more projects. */
+.nav-item--conversation {
+  padding-left: calc(var(--sp-2) + 14px);
+  font-size: var(--text-dense);
+}
+
+.nav-conversation-icon {
+  flex: none;
+  font-size: var(--text-meta);
+  line-height: 1;
+}
+
+.nav-conversation-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---- panels ------------------------------------------------------------ */
 
 .panel {
@@ -4176,6 +4231,88 @@ select:focus-visible,
 .back-to-list {
   flex: none;
   white-space: nowrap;
+}
+
+/* The heading as a rename control (t479, `thread/TitleEditor.tsx`). The title is a button that looks
+   like the heading it replaced; the pencil appears on hover so the page does not read as a form. */
+.title-editable {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.title-editable-text {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: text;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.title-rename {
+  flex: none;
+  padding: 0 var(--sp-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-text-faint);
+  font: inherit;
+  font-size: var(--text-body);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+
+.title-editable:hover .title-rename,
+.title-rename:focus-visible {
+  opacity: 1;
+}
+
+.title-rename:hover {
+  color: var(--color-text);
+  background: var(--color-surface-2);
+}
+
+.title-editor {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.title-editor-seq {
+  flex: none;
+  font-size: var(--text-section);
+  font-weight: 600;
+}
+
+.title-editor-input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px var(--sp-2);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--text-section);
+  font-weight: 600;
+}
+
+.title-editor .btn {
+  padding: 2px var(--sp-2);
+  font-size: var(--text-dense);
+}
+
+.title-editor-error {
+  font-size: var(--text-meta);
 }
 
 .detail-meta {
