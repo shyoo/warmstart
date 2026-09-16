@@ -1,13 +1,14 @@
-# Release notes
+# Release notes — the three cut before the tag carried them
 
-One file per version, `v<version>.md`, written when the version is bumped (`/release`) and read by
-`.github/workflows/release.yml` as the first part of the GitHub Release body. A `v*` tag whose file is
-missing fails the workflow before anything is built.
+`v0.1.0-rc.1`, `v0.1.0-rc.2` and `v0.1.0` (2026-09-15/16) were released by a flow that bumped
+`version.json` and committed a notes file here per version. That flow is gone: since 2026-09-16 the
+**tag is the version and the annotated tag's message is the notes** (`scripts/release-tag.mjs`,
+`docs/development.md` § *Cutting a release*), so this directory takes no new files. Read a later
+release's notes with `git tag -l --format='%(contents:body)' v<version>` or on the Releases page.
 
-Not `docs/` — these are neither reference nor status; they are what a person installing that version
-needs to know, frozen at the moment it shipped. Never edit one after its tag exists.
+The three files stay as they shipped. Never edit one after its tag exists.
 
-## Shape
+## Shape — still the shape of a tag's notes
 
 No `#` heading — the release title is `Warmstart v<version>`. Then, in this order, each section only
 if it has content:

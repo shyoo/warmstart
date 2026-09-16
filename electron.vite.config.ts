@@ -1,13 +1,17 @@
 import { resolve } from 'node:path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+import { resolveVersion } from './scripts/version.mjs'
 
 const shared = resolve('src/shared')
+// The version is a git fact, not a file's (`scripts/version.mjs`); every bundle reads this constant.
+const define = { __APP_VERSION__: JSON.stringify(resolveVersion()) }
 
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
     resolve: { alias: { '@shared': shared } },
+    define,
     build: {
       rollupOptions: {
         // Two Node entry points. orchestratord is a separate long-lived process, launched with
@@ -41,6 +45,7 @@ export default defineConfig({
     root: 'src/renderer',
     build: { rollupOptions: { input: resolve('src/renderer/index.html') } },
     resolve: { alias: { '@shared': shared, '@renderer': resolve('src/renderer/src') } },
+    define,
     plugins: [react()]
   }
 })

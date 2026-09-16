@@ -55,7 +55,7 @@ there.
 
 ```bash
 npm run dev          # electron-vite dev
-npm run version:check # version.json agrees with package and lock metadata
+npm run version:check # the version resolves from git; package.json keeps its 0.0.0 placeholder
 npm run typecheck    # tsc --noEmit over tsconfig.node.json and tsconfig.web.json
 npm run lint         # eslint, type-aware rules on
 npm run build        # typecheck + production bundle into out/
@@ -169,10 +169,19 @@ working, not a leak. Guard the directory actually being rewritten, nothing wider
 
 ⚠️ **Windows builds are unsigned** and SmartScreen warns. That is a deliberate decision, not an
 oversight: signing Windows is a certificate and a purchase, not a config line. **macOS is the other
-way round now** — see below. **`version.json` is the version source.** Its value is compiled into the window, daemon and MCP
-server; `package.json` and `package-lock.json` carry the same value because Electron Builder requires
-package metadata, and `npm run version:check` refuses a mismatch. Change all three deliberately before
-tagging `v<version>`; the release workflow rejects a tag that does not name `version.json`.
+way round now** — see below. **The tag is the version.** No file carries it:
+[`scripts/version.mjs`](../scripts/version.mjs) reads `WARMSTART_VERSION` on a release build (the
+workflow sets it from the tag) and `git describe --tags --match 'v*' --long --dirty` otherwise, so a
+trunk build is `0.1.0+7.gcced61f` — the last tag, the distance, the sha, `.dirty` when uncommitted —
+and a bare `0.1.0` only on the tagged commit. Every bundle receives it as `__APP_VERSION__`
+(`electron.vite.config.ts`, `vite.mobile.config.ts`, `vitest.config.ts`), and
+[`electron-builder.js`](../electron-builder.js) stamps it into the package as `extraMetadata.version`
+— which is why that file exists: electron-builder finds `electron-builder.yml` before `.js`, so the
+settings live in `electron-builder.base.yml` and the JS entry extends it. `package.json` and the lock
+keep `0.0.0` on purpose, `version.json` names only the release repository, and `npm run
+version:check` refuses a build the moment a version is written into either again. ⭐ Build
+metadata orders nothing (`isNewerVersion`, [`src/main/updates.ts`](../src/main/updates.ts)), so a
+trunk build between releases is not nagged about the release it already contains.
 
 ### macOS signing and the hardened runtime
 
@@ -237,30 +246,45 @@ signing-order change, or `asarUnpack`.
 
 ### Cutting a release
 
-`/release [major|minor|patch|rc|<version>]` first runs `npm run release:check`
-([`scripts/check-release-base.mjs`](../scripts/check-release-base.mjs)), which refuses when the
-trunk's `main` is ahead of `origin/main`, when the branch is behind it, or when the trunk has
-uncommitted tracked changes — ⛔ `v0.1.0-rc.1` (2026-09-15) was cut while the trunk held 25
-unpushed commits and two migrations, so the operator's own database (v73) refused the release
-(v71) on first install. Pinned by [`src/daemon/releasebase.test.ts`](../src/daemon/releasebase.test.ts)
-with real git. Then it bumps `version.json`, `package.json` and the lock together, writes
-`releases/v<version>.md` (shape in [`../releases/README.md`](../releases/README.md)) and commits.
-It never tags. The tag is the publish trigger, made by hand once the commit is on
-`main` and CI is green:
+One turn, no commit. `/release rc` and `/release promote` (`.claude/skills/release/`) drive
+[`scripts/release-tag.mjs`](../scripts/release-tag.mjs):
 
 ```bash
-git tag v<version> && git push origin v<version>
+node scripts/release-tag.mjs plan rc [--bump patch|minor|major]   # 0.1.0 → 0.2.0-rc.1; continues an open series
+node scripts/release-tag.mjs plan promote                         # highest open rc → its bare version, on the rc's commit
+node scripts/release-tag.mjs cut <version> --notes <file> [--wait] [--dry-run]
 ```
 
-`.github/workflows/release.yml` then builds Windows and macOS installers, attests them when the
-repository is public, checksums them, and creates the GitHub Release with `releases/v<version>.md`
-as the first part of its body. ⛔ A tag whose notes file is missing, or whose version differs from
-`version.json`, fails before `npm ci` — both checks run first so a mistake costs seconds, not a
-macOS build. A `-` in the version (`0.1.0-rc.1`) publishes as a **pre-release**, and that decides
-visibility, not just a badge: GitHub's `/releases/latest` never answers with a pre-release, so an
-`-rc` is invisible to installed apps and the bare version is the first thing they see. The manual
-`workflow_dispatch` (with its `platforms` cost-control input) still exists for exercising the
-pipeline; it always produces a pre-release, `--draft` by default.
+`cut` makes one **annotated tag** whose message is the release notes (`Warmstart v<version>`, a
+blank line, then the body the skill wrote) and pushes it. It refuses — and never tags — when the
+base is unsafe ([`scripts/check-release-base.mjs`](../scripts/check-release-base.mjs): the trunk's
+`main` ahead of `origin/main`, the branch behind it, or the trunk dirty — ⛔ `v0.1.0-rc.1`,
+2026-09-15, was cut while the trunk held 25 unpushed commits and two migrations, so the operator's
+own database (v73) refused the release (v71) on first install; pinned by
+[`src/daemon/releasebase.test.ts`](../src/daemon/releasebase.test.ts) with real git), when the
+commit is not on `origin/main`, when the tag exists, when the version is not above every existing
+tag, or when CI on that commit is not green (`--wait` watches an in-progress run). Which version
+comes next is decided from the tags that exist, never from a file —
+[`src/daemon/releaseplan.test.ts`](../src/daemon/releaseplan.test.ts).
+
+`.github/workflows/release.yml` fires on the tag, re-checks the same facts before `npm ci` (a
+version-shaped, annotated tag with a non-empty body, on `main`, CI green — so a mistake costs
+seconds, not a macOS build), builds Windows and macOS installers with `WARMSTART_VERSION` set from
+the tag, attests them, checksums them, and creates the GitHub Release with the tag body as the
+first part of its notes. A `-` in the version (`0.2.0-rc.1`) publishes as a **pre-release**, and
+that decides visibility, not just a badge: GitHub's `/releases/latest` never answers with a
+pre-release, so an `-rc` is invisible to installed apps and the bare version is the first thing
+they see. `promote` therefore rebuilds: the rc's commit gets a second tag, `v0.2.0`, and the
+installers are built again from the same source under the final version — the bytes differ, the
+commit and the attestation subject do not. The manual `workflow_dispatch` (with its `platforms`
+cost-control input) still exists for exercising the pipeline; its version is `git describe`'s and
+it always produces a pre-release, `--draft` by default.
+
+Measured before this flow (2026-09-16, runs 35062655991 → 35066743396): an rc and its promotion
+took four agent turns, two "Prepare vX" commits, two CI runs (6–9 min each) and two Release runs
+(7.5–8 min each). Now each is one turn and one Release run; the version-only commits and their CI
+runs are gone. Notes are edited afterwards on GitHub (`gh release edit --notes-file`), never in git;
+`releases/` holds the notes of the three releases cut the old way and takes no new files.
 
 ### Release downloads
 

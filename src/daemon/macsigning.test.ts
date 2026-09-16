@@ -26,9 +26,9 @@ function read(relative: string): string {
 
 /** The mac block only. Reading the whole file would match `hardenedRuntime` from a comment elsewhere. */
 function macBlock(): string {
-  const yml = read('electron-builder.yml')
+  const yml = read('electron-builder.base.yml')
   const start = yml.indexOf('\nmac:\n')
-  expect(start, 'electron-builder.yml has a top-level `mac:` block').toBeGreaterThan(-1)
+  expect(start, 'electron-builder.base.yml has a top-level `mac:` block').toBeGreaterThan(-1)
   const rest = yml.slice(start + 1)
   const end = rest.search(/\n[a-z]/)
   return end === -1 ? rest : rest.slice(0, end)

@@ -317,8 +317,14 @@ function Invoke-Step {
 # something it never looked at.
 $LOCK = 'package-lock.json'   # stands in for node_modules; hashing 11MB of @lydell does not pay
 $TSCONFIGS = @('tsconfig.json', 'tsconfig.node.json', 'tsconfig.web.json')
-$BUNDLE_IN = @('src', 'costmodels', 'electron.vite.config.ts', 'version.json', 'package.json', $LOCK) + $TSCONFIGS
-$PACK_IN = @('out', 'electron-builder.yml', 'version.json', 'package.json', 'resources', $LOCK)
+# ⭐ The version is a git fact (scripts/version.mjs), not a file's content, so it is written to a
+# file first and that file is an input: a new tag alone then re-bundles and re-packs, as it must.
+New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+$VERSION_IN = '.build-cache/version.txt'
+$version = (node scripts/version.mjs).Trim()
+Set-Content -LiteralPath (Join-Path $repo $VERSION_IN) -Value $version -NoNewline
+$BUNDLE_IN = @('src', 'costmodels', 'electron.vite.config.ts', 'scripts/version.mjs', $VERSION_IN, 'version.json', 'package.json', $LOCK) + $TSCONFIGS
+$PACK_IN = @('out', 'electron-builder.js', 'electron-builder.base.yml', 'scripts/version.mjs', $VERSION_IN, 'version.json', 'package.json', 'resources', $LOCK)
 
 # What `electron-vite build` is expected to leave behind. Hash-suffixed chunk names are deliberately
 # not listed - these five are the entry points, and their absence is what a half-written out\ looks
@@ -574,7 +580,7 @@ Invoke-Step -Name 'pack' -Title 'Packaged app' -Inputs $PACK_IN -Outputs @($PACK
 if (-not $SkipTests) {
   # ⛔ The only suite that can catch a native left inside the asar, an app that cannot start its own
   # daemon, or a PTY that will not open. Everything above passes in all three of those cases.
-  Invoke-Step -Name 'test-pack' -Title 'Drive the packaged app' -Inputs @('out', 'test', 'electron-builder.yml', $LOCK) -Body {
+  Invoke-Step -Name 'test-pack' -Title 'Drive the packaged app' -Inputs @('out', 'test', 'electron-builder.base.yml', $LOCK) -Body {
     Run "npm run test:pack"
   }
 }
@@ -588,7 +594,6 @@ if ($Installer) {
 }
 
 # ---------------------------------------------------------------- what came out
-$version = (Get-Content (Join-Path $repo 'package.json') -Raw | ConvertFrom-Json).version
 $elapsed = ((Get-Date) - $started).TotalSeconds
 
 Write-Host ""

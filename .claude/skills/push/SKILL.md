@@ -213,9 +213,11 @@ npm run dist:win    # → release/warmstart-<version>-win-{x64,arm64}.exe
 
 - `release/` is **gitignored**. The artifact is a build product; it is never committed and step 6
   does not carry it. Report its **path, size and mtime** as evidence it was built, and say which
-  version string it carries (`version.json` → `version`, mirrored in `package.json`).
-- ⛔ **Bumping the version is the owner's call, not yours.** That is `/release`, on request; never
-  edit `version` to make a filename look right.
+  version string it carries (`node scripts/version.mjs` — the last tag plus the distance,
+  e.g. `0.1.0+7.gcced61f`; a bare version only on a tagged commit).
+- ⛔ **There is no version to bump.** The tag is the version (`scripts/version.mjs`), and
+  `package.json` keeps its `0.0.0` placeholder on purpose — `npm run version:check` refuses a
+  build otherwise. Releasing is `/release rc` / `/release promote`, on request.
 - ⚠️ The Windows build is unsigned by design and SmartScreen warns; macOS is signed and notarised
   by the release workflow only, so a local `.dmg` is not. Neither is a build failure.
 - On a docs-only change, `pack` + `test:pack` is enough. Say you skipped `dist:win` and why.

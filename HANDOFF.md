@@ -7,22 +7,38 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-16, **Windows 11**, measured on t480's tip over `0.1.0`): typecheck, lint and
-build pass; L1 **3,601 passed, 5 skipped** (211 files); L2 **203 checks** (5 skipped); L3 **474
-passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
-`release/win-unpacked`, 2026-09-15. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
+Baseline (2026-09-16, **Windows 11**, measured on t485's tip, `0.1.0+7.gcced61f`): typecheck, lint
+and build pass; L1 **3,618 passed, 5 skipped** (212 files); L2 **203 checks** (5 skipped); L3
+**474 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
+`release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
 signed, hardened-runtime bundle. Last CI green on all seven jobs: `593e5c6`, run 35058132724 — the
 merge commit itself. CI is **enabled**, and so is the **Release** workflow, now proven end to end.
 
-**Version is `0.1.0`, prepared by `/release patch` (t474.6, 2026-09-15): committed, untagged. The
-repository is public** (flipped 2026-09-15 after `rc.2` was installed and verified on both machines
-— the launch gate, items 5 and 8, is closed). ⏭ Land → CI green → `git tag v0.1.0 && git push
-origin v0.1.0`. It publishes as a full release, so `/releases/latest` serves it and every `rc.2`
-install is offered it; and it is the first tag build on a public repository, so the attestation
-step runs for the first time — watch it. Then Phase 3/4 (write-up, demo GIF, landing page,
-channels), all off-repo.
+**`v0.1.0` is released and `latest`** (tag build 35066743396, 2026-09-16, attested — the first
+tag build on the public repository). **The version is now the tag** (t485, below): nothing in the
+tree carries one, so there is no "prepared, untagged" state any more. ⏭ The next release is one
+turn: `/release rc` on a green `origin/main`, install and verify it, `/release promote`. ⚠️ The
+first cut through the new flow is the test of `release.yml`'s new verify step; it fails before
+`npm ci` if it fails. Then Phase 3/4 (write-up, demo GIF, landing page, channels), all off-repo.
 
 ## Closed in this cleanup
+
+- **A release is one turn, and the tag is the version (t485, 2026-09-16).** `v0.1.0` cost four
+  turns, two "Prepare vX" commits and two CI runs whose only input was a version string (measured:
+  runs 35062655991 → 35066743396). The version was a source fact, so every rc and every promotion
+  had to go through the pipeline before a tag could point at it. Now `scripts/version.mjs` derives
+  it from git (`WARMSTART_VERSION` on a release build, `git describe` otherwise → `0.1.0+7.gcced61f`),
+  every bundle reads `__APP_VERSION__`, and `electron-builder.js` stamps `extraMetadata.version`
+  (the yml is `electron-builder.base.yml` because electron-builder finds `.yml` before `.js`).
+  `package.json` keeps `0.0.0`; `check-version.mjs` refuses a build if a version is written back.
+  `/release rc` → `scripts/release-tag.mjs plan` (next version from the tags that exist) → notes →
+  `cut`: one annotated tag on `origin/main`'s tip, pushed after the base gate, the on-main check,
+  and a CI-green lookup. `/release promote` tags the rc's *commit* with the bare version and the
+  workflow rebuilds — chosen over flipping the pre-release flag, which would ship `-rc.N` as the
+  version forever. Notes are the tag body; `releases/` takes no new files. ⭐ `npm run pack` on this
+  branch stamped `0.1.0+7.gcced61f.dirty` into the asar and the packaged daemon answered with it.
+  ⚠️ Unmeasured: the first tag through `release.yml`'s new verify step. Design:
+  [`transient_docs/release_flow_2026-09-16.md`](transient_docs/release_flow_2026-09-16.md).
 
 - **A codex conversation keeps its tree between turns, Land finds the branch wherever it is, and the
   session line names the model it asked for (t483, 2026-09-16).** t481 (CodexFirst, `gpt-5.6-sol`):
@@ -68,38 +84,21 @@ channels), all off-repo.
   Windows 11: L1 **3,592 passed, 5 skipped** (212 files); L3 **473 passed, 4 skipped**; typecheck, lint, build pass. L2/L4 not
   re-run — no daemon or packaging change.
 
-- **A run's prompt chip now hangs under the request, and every benchmark prior cites its leaderboard
-  (t478, 2026-09-16).** The `📋 49` chip sat under the run's *last agent answer*, which read as
-  though the agent had been handed its own reply — a person who typed `/push` found their prompt two
-  bubbles below. `promptAnchors` (`lib/threadbubble.ts`) replaces `promptMessageId`: a run claims the
-  last unclaimed request before `startedAt` (a human message, or the opening message of a task an
-  agent filed) and falls back to its own last answer when a retry followed no new note. ⭐ Routing
-  Model › Models grew a **Prior source** column and Table 13 — the leaderboards, their files and
-  retrieval dates, carried on the report from `benchmarkTable()` because only the daemon can read
-  `benchmarks/*.json`; a family-prefix prior reads *inferred, family match* rather than borrowing the
-  neighbour's citation. ⭐ Both read back off the built app: `test/ui.test.mjs` seeds a run carrying a
-  prompt and asserts which bubble the chip lands under — reverting the anchor turns the checks red.
-
 - **The window now says why orchestratord died, within a second (t474.2, 2026-09-15).** `rc.1`
   installed beside the trunk-built app found a v73 database it understood as v71, logged one line and
   exited five times while the window said *Starting orchestratord…*. `ensure()` now listens for the
   child's `exit`, and `main/daemonexit.ts` reads the `failed to start` line into the status message
   (⭐ +508ms against a `user_version = 999` database). `docs/architecture.md` § startup. ⛔ The
-  release-side gate: `npm run release:check` (step 0 of `/release`) refuses a trunk ahead of
-  `origin/main`, a branch behind it, or a dirty trunk (`releasebase.test.ts`). ⛔ Unanchored
-  `release/` in `.gitignore` had swallowed `.claude/skills/release/`.
+  release-side gate, `check-release-base.mjs`, refuses a trunk ahead of `origin/main`, a branch
+  behind it, or a dirty trunk (`releasebase.test.ts`); `release-tag.mjs cut` runs it first.
 - **`warmstart-site` polish (t468/t469/t471).** ⚠️ Committed there, **not pushed** — a push deploys.
-- **A release now carries notes written at bump time, and an rc cannot become `latest` (t474,
-  2026-09-15).** `/release` (`.claude/skills/release/`) bumps the three version files, writes
-  `releases/v<version>.md` and commits; it never tags, because the tag is the publish trigger.
-  `release.yml` reads that file as the release body, rejects a tag without one before `npm ci`, and
-  derives `--prerelease` from a `-` in the version — ⛔ which matters because `src/main/updates.ts`
-  polls `/releases/latest`, an endpoint GitHub never answers with a pre-release or draft, so every
-  release this workflow had published was invisible to installed apps. `isNewerVersion` now lets an
-  installed rc see its bare final. O9 closed by wording: signing is a comment on the first PR, not a
-  promised bot (t481, 2026-09-16). The comment names an immutable CLA revision;
-  `.github/pull_request_template.md`, `CLA-SIGNERS.md` and the maintainer checklist make the first
-  external signature reproducible rather than a memory-only process. ✅ The tag build has published.
+- **An rc cannot become `latest` (t474, 2026-09-15).** `release.yml` derives `--prerelease` from a
+  `-` in the version — ⛔ which matters because `src/main/updates.ts` polls `/releases/latest`, an
+  endpoint GitHub never answers with a pre-release or draft, so every release the workflow had
+  published before was invisible to installed apps. `isNewerVersion` lets an installed rc see its
+  bare final. O9 closed by wording: signing is a comment on the first PR, not a promised bot (t481,
+  2026-09-16); `.github/pull_request_template.md`, `CLA-SIGNERS.md` and the maintainer checklist
+  make the first external signature reproducible rather than a memory-only process.
 
 - **A granted directory can now be committed in, and an agent can ask for one that works (t470,
   2026-09-15).** Codex's elevated Windows sandbox writes a **deny** ACE on each `--add-dir` root's
@@ -145,8 +144,8 @@ judgement. Do not replace the missing evidence with a unit test.
 5. ✅ **Closed 2026-09-15** — the signed, notarised `rc.2` bundle opened a PTY and drove a real
    agent on the owner's Mac. Still unmeasured individually: Application Support isolation and
    Antigravity's Keychain under the hardened runtime; both were exercised only as part of that run.
-6. **Tag `v0.1.0`** once this commit is on `main` with CI green — see the top. Attestation is the
-   one pipeline step never yet exercised.
+6. **Cut the first release through the tag-is-the-version flow** (`/release rc`, then `promote`)
+   and watch `release.yml`'s verify step — the one part of t485 no local check can reach.
 7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.

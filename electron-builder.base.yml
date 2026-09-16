@@ -1,4 +1,6 @@
-# Packaging.
+# Packaging - the settings. ⚠️ electron-builder does not read this file directly: it finds
+# `electron-builder.js` first, which extends this one and stamps `extraMetadata.version` from git
+# (`scripts/version.mjs`). Everything a person maintains stays here; the JS file holds nothing else.
 #
 # ⛔ Two things in this file are load-bearing rather than boilerplate, and both come from decisions
 # taken much earlier:
@@ -16,7 +18,7 @@
 appId: io.github.shyoo.warmstart
 productName: Warmstart
 copyright: Copyright © 2026 Sunghwan Yoo
-# The version comes from package.json, which scripts/check-version.mjs makes match version.json.
+# The version is stamped by electron-builder.js; package.json carries a placeholder on purpose.
 # This exact spelling is also the only asset shape the in-app downloader accepts.
 artifactName: ${name}-${version}-${os}-${arch}.${ext}
 

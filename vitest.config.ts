@@ -1,5 +1,6 @@
 import { resolve } from 'node:path'
 import { defineConfig } from 'vitest/config'
+import { resolveVersion } from './scripts/version.mjs'
 
 /**
  * Tests run against the source, so they need the same `@shared` alias the three bundles get from
@@ -7,6 +8,7 @@ import { defineConfig } from 'vitest/config'
  * which passes for a while and then fails the moment a test touches a real exported value.
  */
 export default defineConfig({
+  define: { __APP_VERSION__: JSON.stringify(resolveVersion()) },
   resolve: {
     alias: { '@shared': resolve('src/shared'), '@renderer': resolve('src/renderer/src') }
   },

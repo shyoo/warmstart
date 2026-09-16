@@ -10,9 +10,16 @@
 # the `platforms` input below and build one platform at a time while iterating on this file.
 #
 # ⛔ **No tests run here.** `ci.yml` already ran the suites on the commit being tagged, and repeating
-# them would double the bill for no new information. The tag is expected to point at a green commit.
+# them would double the bill for no new information. The first step *checks* that rather than
+# expecting it: the tagged commit must be on `main` with a green CI run.
 #
-# ⛔ **`publish: null` in electron-builder.yml is intentional and stays.** Packaged Warmstart polls
+# ⭐ **The tag is the version and its message is the notes.** Nothing about a release lives in a
+# tracked file (`scripts/version.mjs`, `scripts/release-tag.mjs`): `/release rc` pushes one annotated
+# tag on a commit CI already passed, and `/release promote` pushes the final tag on the same commit.
+# The build below is told its version through `WARMSTART_VERSION`, which `electron-builder.js` and
+# the bundles' `__APP_VERSION__` both read.
+#
+# ⛔ **`publish: null` in electron-builder.base.yml is intentional and stays.** Packaged Warmstart polls
 # this Release and can download its matching SHA-256-verified installer, but it never runs or
 # installs that file. This workflow uploads artifacts; a human installs them.
 
@@ -49,6 +56,9 @@ concurrency:
 env:
   electron_config_cache: ${{ github.workspace }}/.electron-cache
   ELECTRON_CACHE: ${{ github.workspace }}/.electron-cache
+  # A tag build carries the tag's version; a manual run is left to `git describe` (hence the full
+  # checkouts below), which yields `<last tag>+<n>.g<sha>` and always publishes as a pre-release.
+  WARMSTART_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
 jobs:
   build:
@@ -67,25 +77,33 @@ jobs:
           || '["windows-latest","macos-latest"]') }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
-      # Both checks run before `npm ci`, so a mistagged or note-less release fails in seconds rather
-      # than after two installer builds. The notes file is what `/release` writes (`releases/README.md`).
-      - name: Verify the tag names this source version, and that its notes exist
+      # Everything a tag must be, checked before `npm ci` so a mistake costs seconds rather than two
+      # installer builds: a semver name, an *annotated* tag (its message is the release notes), a
+      # commit that is on `main`, and a CI run on that commit that succeeded. `scripts/release-tag.mjs`
+      # refuses all four before pushing; this is the same gate on the side that publishes.
+      - name: Verify the tag is a version, is annotated, is on main, and its commit passed CI
         if: github.event_name == 'push'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
         run: |
-          version=$(node -p "require('./version.json').version")
-          test "${{ github.ref_name }}" = "v$version" || {
-            echo "tag ${{ github.ref_name }} does not match version.json v$version" >&2
-            exit 1
-          }
-          test -s "releases/v$version.md" || {
-            echo "releases/v$version.md is missing or empty: run /release before tagging" >&2
-            exit 1
-          }
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "$TAG is not a version tag" >&2; exit 1; }
+          # actions/checkout leaves the tag ref pointing at the commit; fetch the tag object itself.
+          git fetch --force --quiet origin "refs/tags/$TAG:refs/tags/$TAG"
+          test "$(git cat-file -t "$TAG")" = tag || { echo "$TAG is a lightweight tag: no notes. Cut it with /release." >&2; exit 1; }
+          test -n "$(git tag -l --format='%(contents:body)' "$TAG" | tr -d '[:space:]')" || { echo "$TAG carries no notes" >&2; exit 1; }
+          git fetch --quiet origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "$TAG points at $GITHUB_SHA, which is not on main" >&2; exit 1; }
+          conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=1" --jq '.workflow_runs[0].conclusion // "none"')
+          test "$conclusion" = success || { echo "CI on $GITHUB_SHA concluded '$conclusion', not success" >&2; exit 1; }
+          echo "$TAG: annotated, on main, CI green. Building as $(node scripts/version.mjs)."
       - run: npm ci
       - uses: actions/cache@v4
         with:
@@ -97,11 +115,11 @@ jobs:
       # ⚠️ macOS signing is opt-in on the presence of secrets, so this workflow still produces an
       # (unsigned) build before the certificate is wired up. electron-builder reads these env names
       # directly. ⛔ But an unsigned build proves nothing about the hardened runtime, because the
-      # hardened runtime is a *signing* flag — `electron-builder.yml` now asks for it, and a runner
+      # hardened runtime is a *signing* flag — `electron-builder.base.yml` now asks for it, and a runner
       # with no certificate silently produces a bundle that never had it applied. The real test is
       # the Mac (`docs/development.md` §3), not this job.
       #
-      # ⛔ Notarisation is enabled here and nowhere else. `electron-builder.yml` pins `notarize:
+      # ⛔ Notarisation is enabled here and nowhere else. `electron-builder.base.yml` pins `notarize:
       # false` so a local build is fast and deterministic; `dist:mac:release` overrides it, and is
       # chosen only when the credentials to do it are actually present — otherwise app-builder-lib
       # throws `InvalidConfigurationError` on a partially configured secret set rather than skipping.
@@ -168,8 +186,10 @@ jobs:
     needs: build
     runs-on: ubuntu-latest   # ⭐ cheapest runner; this job only moves files around
     steps:
-      # Only for `version.json` and `releases/v<version>.md`; nothing is built here.
+      # Only for the version and the tag's notes; nothing is built here.
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           path: staging
@@ -178,19 +198,27 @@ jobs:
       - name: Read the version and its notes
         id: version
         shell: bash
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: |
-          version=$(node -p "require('./version.json').version")
+          version=$(node scripts/version.mjs)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           # A `-` in the version (0.1.0-rc.1) is a pre-release. ⛔ That decides more than a badge:
           # packaged Warmstart polls `/releases/latest`, which GitHub never answers with a
           # pre-release or a draft, so an `-rc` build is invisible to installed apps by
           # construction and a final version is the first thing they can see.
           case "$version" in *-*) echo 'prerelease=true' >> "$GITHUB_OUTPUT" ;; *) echo 'prerelease=false' >> "$GITHUB_OUTPUT" ;; esac
-          if [ -s "releases/v$version.md" ]; then
-            echo "notes=releases/v$version.md" >> "$GITHUB_OUTPUT"
+          # The changelog is the annotated tag's body, written by `/release` at tag time.
+          : > changelog.md
+          if [ -n "$TAG" ]; then
+            git fetch --force --quiet origin "refs/tags/$TAG:refs/tags/$TAG"
+            git tag -l --format='%(contents:body)' "$TAG" > changelog.md
+          fi
+          if [ -s changelog.md ]; then
+            echo "notes=changelog.md" >> "$GITHUB_OUTPUT"
           else
             echo "notes=" >> "$GITHUB_OUTPUT"
-            echo "::warning::releases/v$version.md not found; the release carries no changelog."
+            echo "::warning::no tag notes; the release carries no changelog."
           fi
 
       - name: List what will be published

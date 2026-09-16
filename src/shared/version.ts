@@ -1,9 +1,16 @@
 import versionInfo from '../../version.json'
 
 /**
- * The one version a Warmstart release claims everywhere: the UI, orchestratord, MCP handshake,
- * release filenames, and GitHub-release update lookup. `scripts/check-version.mjs` makes the
- * package-manager metadata agree before a build or release can proceed.
+ * The one version a Warmstart build claims everywhere: the UI, orchestratord, the MCP handshake,
+ * release filenames, and the GitHub-release update lookup.
+ *
+ * It is not read from a file. `scripts/version.mjs` derives it from git — the tag on a release
+ * build, `<last tag>+<n>.g<sha>` between releases — and every bundle receives it as the
+ * `__APP_VERSION__` constant (`electron.vite.config.ts`, `vite.mobile.config.ts`, `vitest.config.ts`);
+ * `electron-builder.js` stamps the same value into the package. `scripts/check-version.mjs` refuses
+ * a build the moment a version is written into `version.json` or `package.json` again.
  */
-export const APP_VERSION = versionInfo.version
+declare const __APP_VERSION__: string
+
+export const APP_VERSION = __APP_VERSION__
 export const RELEASE_REPOSITORY = versionInfo.releaseRepository

@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { resolveVersion } from './scripts/version.mjs'
 
 const shared = resolve('src/shared')
 
@@ -19,5 +20,6 @@ export default defineConfig({
   },
   resolve: { alias: { '@shared': shared, '@renderer': resolve('src/renderer/src') } },
   plugins: [react()],
+  define: { __APP_VERSION__: JSON.stringify(resolveVersion()) },
   publicDir: resolve('src/mobile/public')
 })

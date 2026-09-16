@@ -24,7 +24,7 @@ correction below the wrong sentence. `AGENTS.md` is the short entry point that p
 | add or change an MCP tool | [`mcp.md`](mcp.md) |
 | write or change a test | [`testing.md`](testing.md) — the four tiers, and the ways a suite here has reported a confident false pass |
 | build, package, or hit a platform-specific failure | [`development.md`](development.md) |
-| cut a release or change its notes | [`development.md`](development.md) § *Cutting a release* — `/release` bumps and writes `../releases/v<version>.md`; the tag publishes |
+| cut a release or change its notes | [`development.md`](development.md) § *Cutting a release* — `/release rc` tags, `/release promote` retags; the tag is the version and its message is the notes |
 | change the renderer | [`ui.md`](ui.md) |
 | configure phone or remote-desktop access, or notifications | [`remote.md`](remote.md) |
 | understand the authority given to unattended agents | [`security.md`](security.md) — adapter containment, credentials, landing gates and remote access |
