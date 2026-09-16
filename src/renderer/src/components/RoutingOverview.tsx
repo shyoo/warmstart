@@ -337,6 +337,56 @@ export function RoutingOverview(): React.JSX.Element {
       </section>
 
       <section className="doc-section">
+        <h3>1.3a Where the coefficients themselves come from</h3>
+        <p className="panel-sub">
+          Every formula in Table 1 has the shape <M tex="a_t + b_t q + c_t c + d_t v" /> — an
+          intercept and one coefficient per axis, four numbers per term. None of them are fit to
+          data. There is no historical record of &ldquo;this was the correct dispatch&rdquo; to
+          regress against, and no two fleets look enough alike for one fitted set to travel between
+          them. Every number is a design judgement, authored once in <code>weights()</code>{' '}
+          (<code>src/daemon/objective.ts</code>) and published unchanged as the string in Table 1 —
+          the same string <code>cost.test.ts</code> evaluates and every stored decision carries, so
+          it cannot drift from the code that computed it.
+        </p>
+        <p className="panel-sub">
+          Concretely: the intercept <M tex="a_t" /> is the term&rsquo;s floor — what it is worth
+          read in isolation, before any preference is applied. Because{' '}
+          <M tex="q + c + v = 1" /> always, no real objective sits at the origin, so the floor is
+          never experienced on its own; it is the anchor the axis coefficients move away from.
+          Each axis coefficient answers one question asked while writing the term:{' '}
+          <em>how much should moving this axis from 0 to 1 change how much the term matters?</em>{' '}
+          <code>cacheWarmth</code>&rsquo;s <M tex="2.2c" /> says a fully cost-weighted objective
+          should value a warm cache a little over three times as much as the floor
+          (<M tex="1.0 \to 3.2" />); its <M tex="-0.6v" /> says a fully velocity-weighted one
+          should discount it by more than half. <strong>Those specific ratios — roughly
+          3.2×, not 2× or 5× — are a judgement call, not a measurement</strong>, and the same is
+          true of every other coefficient in the table.
+        </p>
+        <p className="panel-sub">
+          <strong>What is actually checked, and what is not.</strong> The daemon&rsquo;s test suite
+          (<code>cost.test.ts</code>) asserts <em>direction and ordering</em>, never magnitude:
+          cost-weighted work must value a warm session more than velocity-weighted does, quality-weighted
+          work must punish context rot hardest, and no weight may go negative anywhere on the simplex.
+          Those properties hold for any coefficient with the right sign and enough magnitude — the
+          suite would still pass with <code>cacheWarmth</code>&rsquo;s <M tex="2.2" /> read as{' '}
+          <M tex="1.8" /> or <M tex="3.0" />. The one number in this model that <em>is</em> measured
+          rather than authored is the roughly two-hour keepalive/compaction break-even
+          (<em>docs/cost-model.md</em> §3), and the objective&rsquo;s effect on it is deliberately
+          kept within one to four hours across every preset (<code>cost.test.ts</code>) so that the
+          vector can move that number without losing touch with the one calibration this fleet has.
+        </p>
+        <p className="panel-sub">
+          So a reader asking &ldquo;why 2.2 and not 2.0&rdquo; should not expect a derivation to
+          find — there is not one to show. What can be shown, and is what every stored decision in
+          §1.6 is for, is that the formula that ran matches the formula published here, that raising
+          an axis always moves a term in its stated direction, and that the resulting score makes the
+          trade-off in §1.2 explicit and checkable rather than implicit and remembered. Changing a
+          coefficient is an edit to <code>weights()</code>, republished in this same table and
+          re-verified by the same tests — never a silent retune.
+        </p>
+      </section>
+
+      <section className="doc-section">
         <h3>1.4 A worked example</h3>
         <p className="panel-sub">
           Two accounts, one task, the balanced objective. <strong>A</strong> already holds this

@@ -167,6 +167,45 @@ expressed as a ratio against the geometric mean of the fleet's task durations, s
 Total score:
 $$\text{Score} = \sum (\text{sign} \times \text{weight} \times \text{value})$$
 
+### 3.1a Where the coefficients themselves come from
+
+Every formula above has the shape `a + b×cost + c×velocity + d×quality` — an intercept and one
+coefficient per axis. **None of them are fit to data.** There is no historical record of "this was
+the correct dispatch" to regress against, and no two fleets look enough alike for one fitted set to
+travel between them. Every number is a design judgement, authored once in `weights()`
+(`src/daemon/objective.ts`) and published unchanged as the string in `WEIGHT_FORMULAS`
+(`src/shared/routing.ts`) — the same string `cost.test.ts` evaluates and every stored
+`routing_decisions` row carries, so it cannot drift from the code that computed it.
+
+- **The intercept** is the term's floor — what it is worth read in isolation, before any objective
+  is applied. Because `cost + velocity + quality = 1` always, no real objective sits at the origin,
+  so the floor is never experienced on its own; it is the anchor the axis coefficients move away
+  from.
+- **Each axis coefficient** answers one question asked while writing the term: *how much should
+  moving this axis from 0 to 1 change how much the term matters?* `cacheWarmth`'s `2.2×cost` says a
+  fully cost-weighted objective should value a warm cache a little over three times as much as the
+  floor (`1.0 → 3.2`); its `-0.6×velocity` says a fully velocity-weighted one should discount it by
+  more than half. **Those specific ratios — roughly 3.2×, not 2× or 5× — are a judgement call, not a
+  measurement**, and the same is true of every other coefficient in the table.
+
+⛔ **What is actually checked, and what is not.** `cost.test.ts` asserts *direction and ordering*,
+never magnitude: cost-weighted work must value a warm session more than velocity-weighted does
+(`weights(economy).cacheWarmth > weights(velocity).cacheWarmth`), quality-weighted work must punish
+context rot hardest, and no weight may go negative anywhere on the simplex. Those properties hold
+for any coefficient with the right sign and enough magnitude — the suite would still pass with
+`cacheWarmth`'s `2.2` read as `1.8` or `3.0`. The one number in this model that *is* measured rather
+than authored is the roughly two-hour keepalive/compaction break-even (§ below and `docs/cost-model.md`
+§3), and the objective's effect on it is deliberately kept within one to four hours across every
+preset (`cost.test.ts`: `the compact threshold stays near the measured ~2h break-even`) so the vector
+can move that number without losing touch with the one calibration this fleet has.
+
+⚠️ So "why 2.2 and not 2.0" has no derivation to find — there is not one to show. What can be shown,
+and is what every stored decision's `weightFormulas` field is for, is that the formula that ran
+matches the formula published here, that raising an axis always moves a term in its stated
+direction, and that the resulting score is checkable rather than remembered. Changing a coefficient
+is an edit to `weights()`, republished in this same table and re-verified by the same ordering
+tests — never a silent retune.
+
 ### 3.2 Deep Dive: Warm Cache Preference & Session Affinity
 Prompt cache creation costs up to **2.0×** base input tokens, while a cache read costs only **0.1×** and refreshes the TTL for free.
 
