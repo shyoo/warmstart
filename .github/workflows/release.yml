@@ -71,13 +71,19 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Verify the tag names this source version
+      # Both checks run before `npm ci`, so a mistagged or note-less release fails in seconds rather
+      # than after two installer builds. The notes file is what `/release` writes (`releases/README.md`).
+      - name: Verify the tag names this source version, and that its notes exist
         if: github.event_name == 'push'
         shell: bash
         run: |
           version=$(node -p "require('./version.json').version")
           test "${{ github.ref_name }}" = "v$version" || {
             echo "tag ${{ github.ref_name }} does not match version.json v$version" >&2
+            exit 1
+          }
+          test -s "releases/v$version.md" || {
+            echo "releases/v$version.md is missing or empty: run /release before tagging" >&2
             exit 1
           }
       - run: npm ci
@@ -162,10 +168,30 @@ jobs:
     needs: build
     runs-on: ubuntu-latest   # ⭐ cheapest runner; this job only moves files around
     steps:
+      # Only for `version.json` and `releases/v<version>.md`; nothing is built here.
+      - uses: actions/checkout@v5
       - uses: actions/download-artifact@v4
         with:
           path: staging
           merge-multiple: true
+
+      - name: Read the version and its notes
+        id: version
+        shell: bash
+        run: |
+          version=$(node -p "require('./version.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # A `-` in the version (0.1.0-rc.1) is a pre-release. ⛔ That decides more than a badge:
+          # packaged Warmstart polls `/releases/latest`, which GitHub never answers with a
+          # pre-release or a draft, so an `-rc` build is invisible to installed apps by
+          # construction and a final version is the first thing they can see.
+          case "$version" in *-*) echo 'prerelease=true' >> "$GITHUB_OUTPUT" ;; *) echo 'prerelease=false' >> "$GITHUB_OUTPUT" ;; esac
+          if [ -s "releases/v$version.md" ]; then
+            echo "notes=releases/v$version.md" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes=" >> "$GITHUB_OUTPUT"
+            echo "::warning::releases/v$version.md not found; the release carries no changelog."
+          fi
 
       - name: List what will be published
         run: ls -la staging
@@ -203,11 +229,19 @@ jobs:
       # ⛔ **The notes claim an attestation only when one was actually made.** A release that says its
       # binaries carry signed provenance when the step was skipped is the download-page version of a
       # landing that landed nothing: the same invariant, that every belief carries its basis.
+      # The changelog comes first and is written by a person (or `/release`) at bump time; everything
+      # after it is derived from what is in staging.
       - name: Write the release notes
         env:
           ATTESTED: ${{ steps.attestable.outputs.ok }}
+          CHANGELOG: ${{ steps.version.outputs.notes }}
         run: |
-          cat > notes.md <<NOTES
+          : > notes.md
+          if [ -n "$CHANGELOG" ]; then
+            cat "$CHANGELOG" >> notes.md
+            echo >> notes.md
+          fi
+          cat >> notes.md <<NOTES
           ## Verify your download
 
           Every artifact is checksummed in \`SHA256SUMS.txt\`.
@@ -270,15 +304,18 @@ jobs:
           cat notes.md
 
       # ⚠️ A manual run produces a **draft** by default, so this pipeline can be exercised end to end
-      # without ever publishing to the world by accident.
+      # without ever publishing to the world by accident. A tag publishes; whether as a pre-release
+      # is the version's call (the `version` step above), never this file's. An untagged run is
+      # always a pre-release, so it can never become `/releases/latest`.
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || format('untagged-{0}', github.run_id) }}
           DRAFT: ${{ (github.event_name == 'workflow_dispatch' && inputs.draft) && '--draft' || '' }}
+          PRERELEASE: ${{ (github.ref_type != 'tag' || steps.version.outputs.prerelease == 'true') && '--prerelease' || '' }}
         run: |
           gh release create "$TAG" staging/* \
             --repo "${{ github.repository }}" \
-            --title "$TAG" \
+            --title "Warmstart $TAG" \
             --notes-file notes.md \
-            --prerelease $DRAFT
+            $PRERELEASE $DRAFT

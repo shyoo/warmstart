@@ -185,7 +185,8 @@ fail on its own.
    `com.apple.security.cs.allow-dyld-environment-variables` — the plists say why it is deliberately
    absent.
 4. **`npm run test:pack`** against the signed bundle, then drive a real task end to end.
-5. **Only then** dispatch the release workflow with `platforms=macos`. The five repository secrets
+5. **Only then** dispatch the release workflow with `platforms=macos`. ✅ Done: run 34911447448
+   (2026-09-15) notarised, stapled, and `spctl` accepted the bundle as *Notarized Developer ID*. The five repository secrets
    it reads (`MAC_CSC_LINK`, `MAC_CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`,
    `APPLE_TEAM_ID`) are set (2026-09-14): `MAC_CSC_LINK` is the bare base64 of the exported `.p12`
    (`base64 -i cert.p12 | gh secret set MAC_CSC_LINK`; `decodeCscLinkBase64` accepts anything over
@@ -207,14 +208,37 @@ equalled the secret. The local build never sees this: it signs from the login ke
 which binary failed validation and how, because it decides whether the fix is an entitlement, a
 signing-order change, or `asarUnpack`.
 
+### Cutting a release
+
+`/release [major|minor|patch|rc|<version>]` bumps `version.json`, `package.json` and the lock
+together, writes `releases/v<version>.md` (shape in [`../releases/README.md`](../releases/README.md))
+and commits. It never tags. The tag is the publish trigger, made by hand once the commit is on
+`main` and CI is green:
+
+```bash
+git tag v<version> && git push origin v<version>
+```
+
+`.github/workflows/release.yml` then builds Windows and macOS installers, attests them when the
+repository is public, checksums them, and creates the GitHub Release with `releases/v<version>.md`
+as the first part of its body. ⛔ A tag whose notes file is missing, or whose version differs from
+`version.json`, fails before `npm ci` — both checks run first so a mistake costs seconds, not a
+macOS build. A `-` in the version (`0.1.0-rc.1`) publishes as a **pre-release**, and that decides
+visibility, not just a badge: GitHub's `/releases/latest` never answers with a pre-release, so an
+`-rc` is invisible to installed apps and the bare version is the first thing they see. The manual
+`workflow_dispatch` (with its `platforms` cost-control input) still exists for exercising the
+pipeline; it always produces a pre-release, `--draft` by default.
+
 ### Release downloads
 
 On a packaged build, Warmstart polls the latest stable GitHub Release for the repository recorded in
 `version.json`. A newer release is downloaded only when it contains the exact builder filename for
 this OS and architecture (`warmstart-<version>-<os>-<arch>.<ext>`) and `SHA256SUMS.txt` names a
-matching SHA-256. The file lands in `<dataDir>/updates/`; the footer exposes it once verified.
-⛔ Warmstart never executes or installs the download. Opening its folder is the operator's action,
-because an app that manages credentials and starts agents must not replace itself unattended.
+matching SHA-256. An installed pre-release treats the bare version of its own triple as newer; two
+pre-releases are never ordered. The file lands in `<dataDir>/updates/`; the footer exposes it once
+verified. ⛔ Warmstart never executes or installs the download. Opening its folder is the
+operator's action, because an app that manages credentials and starts agents must not replace
+itself unattended.
 
 `release/` is gitignored. An artifact is a build product and is never committed.
 

@@ -1,6 +1,6 @@
 # Warmstart — Session Handoff
 
-## Current state — 2026-09-14
+## Current state — 2026-09-15
 
 Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling, pooled worktrees,
 model-aware routing, quality review, remote access, packaging, and atomic worker/model reassignment.
@@ -12,10 +12,28 @@ Baseline (2026-09-14, **macOS 13 arm64**, measured on this branch's tip with ele
 skipped); L3 **434 passed, 6 skipped** at the pinned 1024×720 window; L4 **17 checks** against a
 signed, hardened-runtime bundle. Last CI green on all seven jobs: `c909c4c`, run 34883661692, with t445.2's fix for
 `3489bc0`'s red `ui · windows-latest` (run 34872370257). CI is **enabled**, and so is the
-**Release** workflow: it has been dispatched twice with `platforms=macos` (item 6 below), so a `v*`
-tag now builds both platforms.
+**Release** workflow, proven on both platforms (item 6 below).
+
+**Version is `0.1.0-rc.1`, committed and untagged (t474, 2026-09-15).** The repository is still
+private. The go-public order, from `internal_docs/` (not citable) reduced to what the tree can
+check: `/push` this → CI green → `git tag v0.1.0-rc.1 && git push origin v0.1.0-rc.1` → install
+*that* artifact on both machines and do items 5 and 8 → delete draft `untagged-34911447448` → flip
+the repository public → re-tag or cut `rc.2` so the artifacts carry attestations → `/release patch`
+for the bare `0.1.0`, which is the first release an installed app can see.
 
 ## Closed in this cleanup
+
+- **A release now carries notes written at bump time, and an rc cannot become `latest` (t474,
+  2026-09-15).** `/release` (`.claude/skills/release/`) bumps the three version files, writes
+  `releases/v<version>.md` and commits; it never tags, because the tag is the publish trigger.
+  `release.yml` reads that file as the first part of the release body, rejects a tag without one
+  before `npm ci`, and derives `--prerelease` from a `-` in the version — ⛔ which matters because
+  `src/main/updates.ts` polls `/releases/latest`, an endpoint GitHub never answers with a pre-release
+  or draft, so every release this workflow had ever published (always `--prerelease`) was invisible
+  to installed apps. `isNewerVersion` now lets an installed rc see its bare final. O9 closed by
+  wording: `CONTRIBUTING.md`/`CLA.md` promised a CLA bot that does not exist; signing is now a
+  comment on the first PR. ⚠️ The tag build has not been run yet; the `publish` job's checkout and
+  notes read are proven only by YAML parsing and a read of the script.
 
 - **The local macOS deploy launcher works through its scripts-directory symlink (t14, 2026-09-14).**
   `BASH_SOURCE` names the symlink, so repository discovery accepts both entry points; stopping never
@@ -80,7 +98,6 @@ tag now builds both platforms.
   the capturing daemon starts and live state after; and `Browser.close` leaves orchestratord
   running — six orphans were found on this machine — so every launch now ends with `daemon.shutdown`
   and a wait on the lock file's pid.
-- **The status bar spans the full window as `.shell`'s own grid row (t434, 2026-09-14)** — it used to sit inside `.main`'s flex column, so its border stopped at the resizable sidebar's edge. **Global › Status no longer repeats Notice's warnings (t433):** only Notice lists them.
 - **Three settings faults the operator hit driving a remote machine (t431, 2026-09-14).**
   ⭐ The workers table's reorder arrows could not be clicked and vanished on hover — the order cell and
   worker cell shared one grid area, so hover painted over the arrows; the order cell is now
@@ -91,24 +108,12 @@ tag now builds both platforms.
   ⭐ A host left running to take work could sleep mid-run; `preventSleep` (`UiSettings`, default on)
   holds a `powerSaveBlocker`, per-install since the setting deciding whether a run survives the night
   is the host's. ⚠️ None of the three driven in the packaged app.
-- **CI on `main` is green again (2026-09-13).** Six task-table checks failed on both runners after
-  the ~30-commit merge `3ff9ffd`; three measured causes, all written up in
-  [`docs/testing.md`](docs/testing.md) §3. Dep and Took now collapse together at a 660px panel.
 - **A probe PTY answers the TUI's cursor-position query (t3, 2026-09-13).** Muse Code 1.2.1 writes
   `ESC[6n` at startup and exits 0 at +6.4s unanswered, before `readyMs`, so every `/usage` probe read
   *"the probe session did not start"* on a signed-in worker. `termquery.ts` answers it on `probe`
   PTYs only, proven through the real `spawnSession` in
   [`probepty.test.ts`](src/daemon/probepty.test.ts). ⚠️ Not yet driven in the packaged app: rebuild,
   press **Refresh** on Muse, and expect *Currently unavailable* until the account completes one turn.
-- **Antigravity CLI commissioning and live quota probe on macOS (2026-09-13).**
-  `readAntigravityIdentity`/`probeIdentity` read the OAuth token and auth email instead of a false
-  `loggedIn: false` that locked the worker into `Antigravity: unknown`; the live packaged probe reads
-  all 4 quota windows in 6s.
-- **t408–t425, all landed and all documented in [`docs/`](docs/README.md) (2026-09-13).** The Diff
-  pane; Claude Code's `StreamEvent.tool_use` narration and the split Session TUI; macOS worktree
-  symlink resolution and GUI-launch PATH search; task-oriented Global settings; *Later observed*
-  reconciliation; one desktop driving another's fleet; the 92% preemption guard; `sweepAcls` for a
-  dead run's DACL; **relative** pool `.git` pointers; unattended permission mode in `docs/security.md`.
 
 ## Remaining work — ordered by payoff
 
@@ -134,12 +139,11 @@ a unit test.
    reports a build signed with the hardened runtime, and `npm run test:pack` passes on the Mac (all
    2026-09-14). Remaining: launch *that* bundle, open a PTY, and drive one real task. Still unverified either way: detached daemon startup without system Node
    under the hardened runtime, Application Support isolation, Antigravity's Keychain, Gatekeeper.
-6. **Execute the release pipeline for macOS.** The five Apple secrets are set (2026-09-14) and
-   `platforms=macos` has run twice: 34909163579 (a wrong `.p12` password) and 34910069869, which
-   imported the certificate and then died in electron-builder 26.15.3's own keychain unlock — the
-   bump to 26.16.1 is the fix ([`docs/development.md`](docs/development.md) §3). ⏭ Re-dispatch;
-   notarisation is the first step nothing has reached yet. Windows stays unsigned. Release notes
-   must tell upgraders to uninstall the old app, because the `appId` changed.
+6. **Tag `v0.1.0-rc.1` and watch the first tag build.** ✅ The macOS half is proven: run
+   34911447448 (2026-09-15, electron-builder 26.16.1) notarised, stapled, `spctl` accepted, draft
+   `untagged-34911447448` holds both `.dmg`s. A tag builds Windows too, reads
+   `releases/v0.1.0-rc.1.md` (which carries the uninstall line for the `appId` change) and
+   publishes a pre-release. ⏭ Unproven until it runs: the `publish` job's checkout and notes step.
 7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.

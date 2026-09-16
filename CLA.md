@@ -79,8 +79,11 @@ make these representations inaccurate in any respect.
 
 ## How to sign
 
-**You do not need to do anything before opening a pull request.** When you open your first one, a bot
-comments with a link; signing takes one click and is recorded against your GitHub account. It covers
-every future contribution, so you sign once.
+**You do not need to do anything before opening a pull request.** On your first one, post this
+comment from your GitHub account:
 
-Your signature records your GitHub username, the timestamp, and the version of this document.
+> I have read the CLA in CLA.md and I hereby sign it.
+
+That comment is the signature: it records your GitHub username, the timestamp, and (through the
+pull request's base commit) the version of this document. It covers every future contribution, so
+you sign once. The maintainer keeps a list of signers in the repository.
