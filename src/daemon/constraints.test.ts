@@ -212,12 +212,13 @@ describe('the effort capability itself', () => {
     //    `gemini-3.1-pro-high` "conflicts with --effort=low", `claude-sonnet-4-6` "not supported for
     //    model", `gpt-oss-120b-medium` conflicts. Only a bare family — `gemini-3.1-pro` — accepts
     //    it, and `agy models` does not list the bare families. Two spellings, one choice.
-    // ⚠️ `openai-compatible` **false, still unrun**. `model_reasoning_effort` is a documented config
-    //    key and this adapter's verification says `measured`, so documentation alone is not enough.
+    // ⭐ `openai-compatible` **true, promoted 2026-09-15**. `-c model_reasoning_effort=high` against
+    //    a signed-in ChatGPT account came back with `"effort":"high"` on the rollout's turn_context,
+    //    on a fresh exec and on resume — set *and* observable, the same bar `claude-code` cleared.
     const expected: Record<string, boolean> = {
       'claude-code': true,
       'antigravity-cli': false,
-      'openai-compatible': false
+      'openai-compatible': true
     }
     for (const [id, can] of Object.entries(expected)) {
       expect(adapters.adapter(id).info.capabilities.selectableEffort, id).toBe(can)

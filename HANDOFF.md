@@ -18,17 +18,25 @@ tag now builds both platforms.
 
 ## Closed in this cleanup
 
-- **`warmstart-site`'s task diagrams mark landing green, Debate now draws its rounds, and `#proof`
-  adds a bad cache-expiry case (t471, 2026-09-15).** The done/check state in every `TaskDiagram.astro`
-  kind now reads `--color-ok` (green) instead of the accent blue, so it reads apart from in-flight
-  agent nodes; Plan & Split's middle label is now "executors" to match the composer's own wording.
-  Debate's diagram draws three seats exchanging positions over rounds (an X marks the exchange
-  between rows) before converging through an organizer to done, instead of a single merge. The reuse
-  example in `#proof` now pairs its measured good case (green) with a bad one (red: resumed after the
-  cache expires, paying `cacheWrite1h` instead of `cacheRead`), built only from facts already in
-  `site.ts`, and links Anthropic's prompt-caching documentation as a source. `--color-ok`/`--color-danger`
-  (and their `-dim` variants) were added to `global.css`, mirroring the app's `--state-ok`/`--state-danger`.
-  ⚠️ **Committed in that repo, not pushed** — a push to its `main` deploys Cloudflare Pages.
+- **Codex's reasoning effort is now selectable, matching Claude and Muse (t473, 2026-09-15).**
+  `selectableEffort` had been `false` since 2026-08-27 pending a real run — AGENTS.md forbids
+  promoting a documented-but-unmeasured flag, and `codex exec --help` lists no `--reasoning-effort`
+  flag at all; `-c model_reasoning_effort=<level>` is the actual route in. Measured live against a
+  signed-in ChatGPT account (codex-cli 0.151.0): a fresh `exec` and an `exec resume` both echoed the
+  level back in the rollout's `turn_context` (`"effort":"high"`/`"medium"`), and an invalid level
+  failed the turn with the API's own enum error rather than being silently dropped. `plan()` in
+  `openai-compatible.ts` now sends the flag beside `--model`; `constraints.test.ts` and
+  `docs/adapters.md` updated to match. ⛔ Past Codex runs' `effort` column stays `null`, deliberately
+  not backfilled: `null` already reads as "CLI default" everywhere (RunRow, TaskThread, Facts,
+  NewTask), and `statistics.ts` already excludes a null-effort session from the per-effort breakdown
+  rather than bucketing it as unknown — there was never a "?" to fix.
+
+- **`warmstart-site` polish: task diagrams read `--color-ok` for done, Debate draws three seats
+  exchanging positions over rounds, the five task kinds get dispatch diagrams matching the composer's
+  own schematic language, and a backdrop-less `tasks.png` was replaced with the sha256-verified
+  composite (t468/t469/t471, 2026-09-15).** `generate-readme-assets.mjs` now refuses to write a shot
+  under `MIN_SHOT_BYTES` (400,000); see `docs/development.md`. ⚠️ **Committed in that repo, not
+  pushed** — a push to its `main` deploys Cloudflare Pages.
 
 - **Rephrase all user-facing UI copy and analytics descriptions into direct, concise developer style (t464, 2026-09-15).**
   Cleaned up all user-facing sentences, tooltips, placeholders, section intros, and flavor text across 21 components
@@ -38,21 +46,6 @@ tag now builds both platforms.
   "rung", "dearest model") and pseudo-academic paper jargon while strictly preserving test-invariant assertions and RPC contracts.
   Net reduction of 112 lines of verbose text. Verified: typecheck, lint, `npm test` (3,548 passed), `npm run build`, and `ui.test.mjs`
   (all 452 checks passed).
-
-- **`warmstart-site` drops "routing" for automatic assignment, draws the five task topologies, and
-  proves context reuse with one measured example (t469, 2026-09-15).** The `#how` heading is now the
-  pitch ("The right agent and the right model, without thinking twice"); step 1 is *Pick your task
-  type*; the kinds table became cards, each with a dispatch diagram in the composer's own schematic
-  language (`TaskDiagram.astro`, mirroring `PlanShape` in `NewTask.tsx`); `#proof` carries the
-  2026-08-28 cold/resume figures (41,542 → 65, 99.8% fewer; 0.1× read against a 2.0× rebuild, 95%
-  lower), compaction, and the cache-expiry worst case. ⚠️ **Committed in that repo, not pushed** —
-  a push to its `main` deploys Cloudflare Pages.
-
-- **`warmstart-site`'s `tasks.png` had no backdrop; the generator now refuses to write a shot that
-  looks like it is missing one (t468, 2026-09-15).** t465's failed regeneration was worked around by
-  hand-copying in a raw, backdrop-less substitute (258,589 bytes), which shipped unnoticed. Replaced
-  with the real, sha256-verified composited file. `generate-readme-assets.mjs` now has
-  `MIN_SHOT_BYTES` (400,000): `shot()`/`shotElement()` throw below that floor. See `docs/development.md`.
 
 - **Finishing a conversation no longer races Retire it (t467, 2026-09-15).** Read-only evidence from
   the live database showed t466 `completed` with its run closed while session `753261d2` remained

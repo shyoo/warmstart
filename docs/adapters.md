@@ -433,8 +433,13 @@ behaviour falls out of it:
     `agy models` reports the pre-combined one, which is what this cost model prices. ⛔ Declaring
     true would offer a second control for a choice already made, and anyone touching both would get
     a hard dispatch failure rather than a politely ignored flag.
-  - **`openai-compatible`: false, still unrun.** `model_reasoning_effort` is a documented `-c`
-    override and that adapter's verification says `measured`, so documentation alone is not enough.
+  - **`openai-compatible`: true, promoted 2026-09-15.** `codex exec --help` lists no
+    `--reasoning-effort` flag; `-c model_reasoning_effort=<level>` is the only route in. Run against a
+    signed-in ChatGPT account (codex-cli 0.151.0), on a fresh `exec` and on `exec resume`: both turns'
+    rollout `turn_context` came back with `"effort":"high"`/`"medium"` — set *and* observable. An
+    unsupported level (`=bogus`) fails the turn with the API's own `[ReasoningEffortParam] ...
+    Supported values are: 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', and 'max'` rather than
+    being silently dropped.
   - **`muse-code`: true.** `muse exec --reasoning-effort` receives the selected level on both the
     interactive and stream spawn paths. Its picker offers `none`, `minimal`, `low`, `medium`, `high`,
     `xhigh` and `ultra`; the current list was supplied for this change on 2026-09-14. ⚠️ This worker

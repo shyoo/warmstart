@@ -128,11 +128,17 @@ const info: AdapterInfo = {
     // `awaiting_human` however well the work went. The `false` branch tells it to commit and
     // summarise instead, and `onStreamResult` completes the task off the terminal record.
     mcp: false,
-    // ⚠️ `model_reasoning_effort` is a documented config key and `-c key=value` is a real flag, but
-    // the pair has not been run here, and this adapter's verification says `measured`. Declaring it
-    // true on documentation alone is exactly the trade AGENTS.md forbids — it would present a
-    // documented capability with the same confidence as a measured one. Left false until run.
-    selectableEffort: false,
+    /**
+     * ⭐ Promoted 2026-09-15, on a real spawn rather than `--help`. `-c model_reasoning_effort=high`
+     * against a signed-in ChatGPT account (codex-cli 0.151.0) ran clean and the rollout's
+     * `turn_context` record came back with `"effort":"high"` — set *and* observable, the same bar
+     * `claude-code` was promoted on. An invalid level (`=bogus`) fails loudly before any tokens are
+     * spent: `turn.failed` with `[ReasoningEffortParam] ... Supported values are: 'none', 'minimal',
+     * 'low', 'medium', 'high', 'xhigh', and 'max'.` — a real door, not a silently ignored flag.
+     * `exec --help` never lists a `--reasoning-effort` flag on this CLI; the config override is the
+     * only route in, exactly as the comment this replaced said.
+     */
+    selectableEffort: true,
     // ⛔ `'none'` until 2026-08-29, on the grounds that no non-interactive *status command* exists
     // (openai/codex#10233, still open). That was a fact about commands mistaken for a fact about
     // readings: the server's `rate_limits` are written into every rollout, so the reading is a file
@@ -192,13 +198,16 @@ const info: AdapterInfo = {
   login: { kind: 'cli', argv: ['login'] },
   verification: {
     level: 'measured',
-    asOf: '2026-09-03',
+    asOf: '2026-09-15',
     note:
       'codex-cli 0.151.0 on Windows. Flag surface, CODEX_HOME and doctor JSON shape; the running CLI ' +
       'refreshed models_cache.json on 2026-09-03, listing gpt-5.6-sol as a visible model. Quota, the --json event ' +
       'shapes and the stdin contract re-measured against 0.151.0 on 2026-08-29: exec reads its ' +
       'prompt from stdin to EOF and blocks until the pipe closes, and turn.completed is both the ' +
-      'usage record and the terminal one.'
+      'usage record and the terminal one. `-c model_reasoning_effort=<level>` re-measured 2026-09-15 ' +
+      'against a signed-in ChatGPT account, on a fresh exec and on exec resume: both echoed the level ' +
+      'back in the rollout turn_context, and an unsupported level failed the turn with the API’s ' +
+      'own enum error rather than being silently dropped.'
   }
 }
 
@@ -1272,6 +1281,13 @@ export const openaiCompatible: AgentAdapter = {
       if (attachment.kind === 'image') args.push('-i', attachment.file)
     }
     if (req.model) args.push('--model', req.model)
+    // ⚠️ Only ever set when this adapter declares `selectableEffort` — the scheduler drops it
+    // otherwise (adapters/types.ts). `-c key=value`, not a dedicated flag: `exec --help` has none,
+    // and `-c model_reasoning_effort=<level>` is the only measured route in (see `selectableEffort`
+    // above). The value travels as a bare word rather than `key="value"` because that is what was
+    // measured working — TOML parse fails on the bare word and the CLI falls back to the literal
+    // string, same as every other `-c` override in this adapter's own `--help` text promises.
+    if (req.effort) args.push('-c', `model_reasoning_effort=${req.effort}`)
     // ⛔ Last, and in this order: `exec resume [OPTIONS] [SESSION_ID] [PROMPT]`. The `-` is the
     // PROMPT and it means *read the prompt from stdin* — the same one-shot channel a fresh `exec`
     // uses, so `sendPrompt` needs no branch for this. Without it, resume prints `No prompt provided
