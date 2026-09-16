@@ -17,6 +17,12 @@ tag now builds both platforms.
 
 ## Closed in this cleanup
 
+- **`warmstart-site`'s `tasks.png` had no backdrop; the generator now refuses to write a shot that
+  looks like it is missing one (t468, 2026-09-15).** t465's failed regeneration was worked around by
+  hand-copying in a raw, backdrop-less substitute (258,589 bytes), which shipped unnoticed. Replaced
+  with the real, sha256-verified composited file. `generate-readme-assets.mjs` now has
+  `MIN_SHOT_BYTES` (400,000): `shot()`/`shotElement()` throw below that floor. See `docs/development.md`.
+
 - **Finishing a conversation no longer races Retire it (t467, 2026-09-15).** Read-only evidence from
   the live database showed t466 `completed` with its run closed while session `753261d2` remained
   `live` and still claimed `C:\Dev\warmstart_workspaces\ws2`; Loose ends therefore offered its empty
@@ -52,16 +58,11 @@ tag now builds both platforms.
   until the repository is public and a `v*` tag exists.
 
   ⛔ **t461 wrote the generator's new code but never ran it, and `docs/images/tradeoffs.png` was
-  committed as a byte-identical copy of `statistics.png`.** All ten images are now regenerated from
-  one real run and total **7.5 MB** (600–870 kB each; the backdrop's gradients are what PNG
-  compresses worst, and `MAX_SHOT_WIDTH` caps the raw DPR-1.5 capture at 1,800 px). Three things had
-  to be fixed before a run produced anything: the **welcome tour** opens on the always-clean scratch
-  profile and landed in all ten captures; the `thread` scene still clicked a task title t461 had
-  renamed; and the `tradeoffs` section did not exist at all, because the quality axis folds
-  `quality_reviews` rows and the seed only wrote `tasks.quality_review_score` — it now seeds two real
-  peer grades per finished task, from a *different-vendor* reviewer, with dimension scores whose
-  weighted mean is the stored composite. ⚠️ Anything jittered by `n % WORKERS.length` is constant per
-  worker, so the grades were identical within each model and the quality whiskers drew a point.
+  committed as a byte-identical copy of `statistics.png`.** All ten images were regenerated from one
+  real run (7.5 MB total); the welcome tour, a renamed task title, and a `tradeoffs` section that
+  needed real `quality_reviews` rows all had to be fixed first. Mechanics, the `MIN_SHOT_BYTES`
+  backdrop guard, and t465/t468's follow-on incident are in
+  [`docs/development.md`](docs/development.md).
 
 - **Quality Review's gradable totals now exclude tasks the same page says cannot be graded (t459,
   2026-09-15).** `reviewQueue` previously calculated the non-gradable count from live eligibility but
@@ -101,15 +102,14 @@ tag now builds both platforms.
   single action button that jumped away mid-tour (t455).
 
 - **t408–t449, landed and documented in docs/ (2026-09-13–14).** Statistics' scatters read higher-is-better
-  on every axis (`axisPosition`); a reassigned failed landing now carries the `landing.failed`/`finish.held`
-  message that said why (t448, `worktreeArrivalNotice`, `dispatchDetail`); a clean profile gets a welcome tour
-  and reports Git/`gh`/Tailscale from the daemon's PATH (t449, [`docs/external-task-debugging.md`](docs/external-task-debugging.md));
-  a leaked `GIT_DIR` re-initialising the trunk is repaired before every base lookup (`repairTrunkConfig`) and
-  `spawnEnv()` no longer hands Windows children an empty PATH (`pathKey`); a compaction ask names the
-  session's latest run and a dead ask a landed sibling supersedes reads *superseded* (t446, migration 72);
-  plus t445–t447 (`TradeoffPlots`, macOS `xcrun` shim, `test:ui` window pin, signed hardened-runtime build)
-  and t408–t436 (probe PTY answers, live quota probe, remote settings, Muse `.codex` symlink, CI table
-  checks, Diff pane, split Session TUI). Detail is in the docs/ pages each one owed.
+  on every axis; a reassigned failed landing carries the `landing.failed`/`finish.held` message that said why
+  (t448); a clean profile gets a welcome tour and reports Git/`gh`/Tailscale from the daemon's PATH (t449,
+  [`docs/external-task-debugging.md`](docs/external-task-debugging.md)); a leaked `GIT_DIR` re-initialising
+  the trunk is repaired before every base lookup and `spawnEnv()` no longer hands Windows children an empty
+  PATH; a compaction ask names the session's latest run and a dead ask a landed sibling supersedes reads
+  *superseded* (t446, migration 72); plus t445–t447 and t408–t436 (probe PTY answers, live quota probe,
+  remote settings, Muse `.codex` symlink, CI table checks, Diff pane, split Session TUI). Detail is in the
+  docs/ pages each one owed.
 
 ## Remaining work — ordered by payoff
 

@@ -49,6 +49,16 @@ const only = new Set(process.argv.slice(2))
  */
 const MAX_SHOT_WIDTH = 1800
 
+/**
+ * The smallest a composited PNG has ever come in at (statistics.png, an element clip, 2026-09-15).
+ * ⛔ **t465's failure mode, guarded.** When a regeneration run failed, an agent hand-copied a
+ * substitute file into `docs/images/tasks.png` instead of fixing the run — a raw, backdrop-less
+ * capture that landed at 258,589 bytes, well under every real composited shot. The backdrop's
+ * gradients and glows are what PNG compresses worst, so file size is a cheap, reliable tell that
+ * `composite()` never ran. Below this floor is not "a smaller scene"; it is a missing backdrop.
+ */
+const MIN_SHOT_BYTES = 400_000
+
 if (!existsSync(join(ROOT, 'out', 'renderer', 'index.html'))) {
   console.error('out/renderer is missing: run `npm run build` first')
   process.exit(1)
@@ -566,7 +576,11 @@ async function launch() {
     const reply = await send('Page.captureScreenshot', { format: 'png' }, 20_000)
     if (!reply.result?.data) throw new Error(`no image data for ${name}: ${JSON.stringify(reply.error ?? reply)}`)
     const framed = await composite(reply.result.data)
-    writeFileSync(join(ASSETS, `${name}.png`), Buffer.from(framed, 'base64'))
+    const buffer = Buffer.from(framed, 'base64')
+    if (buffer.length < MIN_SHOT_BYTES) {
+      throw new Error(`${name}.png came out at ${buffer.length} bytes, under the ${MIN_SHOT_BYTES}-byte backdrop floor (see MIN_SHOT_BYTES) — refusing to write a shot that looks like it is missing its backdrop`)
+    }
+    writeFileSync(join(ASSETS, `${name}.png`), buffer)
     console.log(`wrote docs/images/${name}.png`)
   }
 
@@ -578,7 +592,12 @@ async function launch() {
     const reply = await send('Page.captureScreenshot', { format: 'png', clip: { ...box, scale: 1 } }, 20_000)
     if (!reply.result?.data) throw new Error(`no image data for ${name}`)
     const framed = await composite(reply.result.data)
-    writeFileSync(join(ASSETS, `${name}.png`), Buffer.from(framed, 'base64'))
+    const buffer = Buffer.from(framed, 'base64')
+    if (buffer.length < MIN_SHOT_BYTES) {
+      throw new Error(`${name}.png came out at ${buffer.length} bytes, under the ${MIN_SHOT_BYTES}-byte backdrop floor (see MIN_SHOT_BYTES) — refusing to write a shot that looks like it is missing its backdrop`)
+    }
+    writeFileSync(join(ASSETS, `${name}.png`), buffer)
+    console.log(`wrote docs/images/${name}.png`)
   }
 
   return {

@@ -106,6 +106,16 @@ section that did not exist. ⚠️ Anything jittered by `n % WORKERS.length` is 
 because a history task's worker *is* `i % WORKERS.length` — the seeded grades were identical within
 each model and the quality whiskers drew a point.
 
+⛔ **Every composited shot is at least `MIN_SHOT_BYTES` (400,000 bytes), and the script refuses to
+write one under that floor.** t465 (2026-09-15) hand-copied a substitute into `docs/images/tasks.png`
+after a regeneration run failed, and the substitute was a raw, backdrop-less capture at 258,589 bytes
+— it shipped unnoticed until t468 caught it by eye in `warmstart-site`. Never work around a failed
+run by copying in a different file; fix the run and regenerate. When `docs/images/*.png` changes,
+`warmstart-site/src/assets/shots/` needs the same files copied over by hand (the two are copies, not
+a shared asset — see that repo's `HANDOFF.md`); verify each copy with `sha256sum` against the source
+before committing there, since a copy that silently picked up a stale or substitute file is exactly
+this bug.
+
 ⚠️ **Type-aware lint rules are on.** They cost a TypeScript program per run and are the only rules
 that can see the mistakes this codebase actually makes — a floating promise in a process-spawning
 daemon, a `String(x)` on a value a vendor may send as an object, an `any` out of `JSON.parse`. ⛔ A
