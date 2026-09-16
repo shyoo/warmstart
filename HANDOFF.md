@@ -27,6 +27,15 @@ tag now builds both platforms.
   Net reduction of 112 lines of verbose text. Verified: typecheck, lint, `npm test` (3,548 passed), `npm run build`, and `ui.test.mjs`
   (all 452 checks passed).
 
+- **`warmstart-site` drops "routing" for automatic assignment, draws the five task topologies, and
+  proves context reuse with one measured example (t469, 2026-09-15).** The `#how` heading is now the
+  pitch ("The right agent and the right model, without thinking twice"); step 1 is *Pick your task
+  type*; the kinds table became cards, each with a dispatch diagram in the composer's own schematic
+  language (`TaskDiagram.astro`, mirroring `PlanShape` in `NewTask.tsx`); `#proof` carries the
+  2026-08-28 cold/resume figures (41,542 → 65, 99.8% fewer; 0.1× read against a 2.0× rebuild, 95%
+  lower), compaction, and the cache-expiry worst case. ⚠️ **Committed in that repo, not pushed** —
+  a push to its `main` deploys Cloudflare Pages.
+
 - **`warmstart-site`'s `tasks.png` had no backdrop; the generator now refuses to write a shot that
   looks like it is missing one (t468, 2026-09-15).** t465's failed regeneration was worked around by
   hand-copying in a raw, backdrop-less substitute (258,589 bytes), which shipped unnoticed. Replaced
