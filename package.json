@@ -32,12 +32,12 @@
     "test:ui": "node test/ui.test.mjs",
     "test:e2e": "node test/e2e.test.mjs",
     "test:all": "npm run test && npm run test:daemon && npm run test:ui",
-    "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder",
-    "dist:win": "npm run build && electron-builder --win",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:mac:release": "npm run build && electron-builder --mac -c.mac.notarize=true",
-    "dist:linux": "npm run build && electron-builder --linux",
+    "pack": "npm run build && node scripts/pack.mjs --dir",
+    "dist": "npm run build && node scripts/pack.mjs",
+    "dist:win": "npm run build && node scripts/pack.mjs --win",
+    "dist:mac": "npm run build && node scripts/pack.mjs --mac",
+    "dist:mac:release": "npm run build && node scripts/pack.mjs --mac -c.mac.notarize=true",
+    "dist:linux": "npm run build && node scripts/pack.mjs --linux",
     "test:pack": "node test/pack.test.mjs"
   },
   "dependencies": {

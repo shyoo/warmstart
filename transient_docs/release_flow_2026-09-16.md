@@ -57,6 +57,9 @@ git describe --tags --match 'v*' --long --dirty        WARMSTART_VERSION (releas
 - electron-builder finds `electron-builder.yml` before `.js` (`app-builder-lib/out/util/config/load.js`,
   read 2026-09-16: `.yml, .yaml, .json, .json5, .toml, .js, .cjs, .ts`), so the settings file is
   renamed `electron-builder.base.yml` and `electron-builder.js` extends it with one stamped field.
+  ⛔ **REVERSED the same day.** That JS config made `electron-builder --dir` exit 0 on Windows CI
+  without packaging anything (run 35158401830, twice). The yml is `electron-builder.yml` again and the
+  version is passed by `scripts/pack.mjs` as `-c.extraMetadata.version`; see that file and `HANDOFF.md`.
 - `scripts/build-win.ps1` / `build-mac.sh` fingerprint inputs by content, and a tag is not content.
   Both now write the resolved version to `.build-cache/version.txt` and hash that, so a new tag
   alone re-bundles and re-packs.

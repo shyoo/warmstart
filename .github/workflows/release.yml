@@ -16,10 +16,10 @@
 # ⭐ **The tag is the version and its message is the notes.** Nothing about a release lives in a
 # tracked file (`scripts/version.mjs`, `scripts/release-tag.mjs`): `/release rc` pushes one annotated
 # tag on a commit CI already passed, and `/release promote` pushes the final tag on the same commit.
-# The build below is told its version through `WARMSTART_VERSION`, which `electron-builder.js` and
+# The build below is told its version through `WARMSTART_VERSION`, which `scripts/pack.mjs` and
 # the bundles' `__APP_VERSION__` both read.
 #
-# ⛔ **`publish: null` in electron-builder.base.yml is intentional and stays.** Packaged Warmstart polls
+# ⛔ **`publish: null` in electron-builder.yml is intentional and stays.** Packaged Warmstart polls
 # this Release and can download its matching SHA-256-verified installer, but it never runs or
 # installs that file. This workflow uploads artifacts; a human installs them.
 
@@ -115,11 +115,11 @@ jobs:
       # ⚠️ macOS signing is opt-in on the presence of secrets, so this workflow still produces an
       # (unsigned) build before the certificate is wired up. electron-builder reads these env names
       # directly. ⛔ But an unsigned build proves nothing about the hardened runtime, because the
-      # hardened runtime is a *signing* flag — `electron-builder.base.yml` now asks for it, and a runner
+      # hardened runtime is a *signing* flag — `electron-builder.yml` now asks for it, and a runner
       # with no certificate silently produces a bundle that never had it applied. The real test is
       # the Mac (`docs/development.md` §3), not this job.
       #
-      # ⛔ Notarisation is enabled here and nowhere else. `electron-builder.base.yml` pins `notarize:
+      # ⛔ Notarisation is enabled here and nowhere else. `electron-builder.yml` pins `notarize:
       # false` so a local build is fast and deterministic; `dist:mac:release` overrides it, and is
       # chosen only when the credentials to do it are actually present — otherwise app-builder-lib
       # throws `InvalidConfigurationError` on a partially configured secret set rather than skipping.

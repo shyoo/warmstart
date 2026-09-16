@@ -175,9 +175,14 @@ workflow sets it from the tag) and `git describe --tags --match 'v*' --long --di
 trunk build is `0.1.0+7.gcced61f` — the last tag, the distance, the sha, `.dirty` when uncommitted —
 and a bare `0.1.0` only on the tagged commit. Every bundle receives it as `__APP_VERSION__`
 (`electron.vite.config.ts`, `vite.mobile.config.ts`, `vitest.config.ts`), and
-[`electron-builder.js`](../electron-builder.js) stamps it into the package as `extraMetadata.version`
-— which is why that file exists: electron-builder finds `electron-builder.yml` before `.js`, so the
-settings live in `electron-builder.base.yml` and the JS entry extends it. `package.json` and the lock
+[`scripts/pack.mjs`](../scripts/pack.mjs) passes it to electron-builder as
+`-c.extraMetadata.version` — the one place the packager is invoked, and the reason
+`electron-builder.yml` is again the only config file. ⛔ **Do not compute it in an
+`electron-builder.js` instead.** t485 did, and on Windows CI *only* that made `electron-builder
+--dir` exit 0 having printed nothing and written no `release/` (runs 35158401830, twice, 2026-09-16;
+identical runner image, Node 22.23.2 and electron-builder 26.16.1 to the green `v0.1.0` build, and
+not reproducible on a Windows developer machine through any of `npx`, `npm run pack`, or `CI=true npm
+run pack`). `test:pack` was the only check that saw it. `package.json` and the lock
 keep `0.0.0` on purpose, `version.json` names only the release repository, and `npm run
 version:check` refuses a build the moment a version is written into either again. ⭐ Build
 metadata orders nothing (`isNewerVersion`, [`src/main/updates.ts`](../src/main/updates.ts)), so a

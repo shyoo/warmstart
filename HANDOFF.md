@@ -7,12 +7,12 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-16, **Windows 11**, measured on t486's tip over `0.1.0+8.gb642d0e`): typecheck, lint
-and build pass; L1 **3,629 passed, 5 skipped** (213 files); L2 **203 checks** (5 skipped); L3
-**474 passed, 4 skipped** at the pinned 1024×720 window; L4 **19 checks** against
-`release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
-signed, hardened-runtime bundle. Last CI green on all seven jobs: `593e5c6`, run 35058132724 — the
-merge commit itself. CI is **enabled**, and so is the **Release** workflow, now proven end to end.
+Baseline (2026-09-16, **Windows 11**, measured on the packaging fix over `0.1.0+9.gd5e8f3f`):
+typecheck, lint and build pass; L1 **3,634 passed, 5 skipped** (214 files); L2 **203 checks**
+(5 skipped); L4 **19 checks** against `release/win-unpacked`, the packaged daemon answering
+`v0.1.0+9.gd5e8f3f.dirty`. L3 not re-run on this tip (no renderer change); it was **474 passed, 4
+skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
+signed, hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
 
 **`v0.1.0` is released and `latest`** (tag build 35066743396, 2026-09-16, attested — the first
 tag build on the public repository). **The version is now the tag** (t485, below): nothing in the
@@ -21,7 +21,26 @@ turn: `/release rc` on a green `origin/main`, install and verify it, `/release p
 first cut through the new flow is the test of `release.yml`'s new verify step; it fails before
 `npm ci` if it fails. Then Phase 3/4 (write-up, demo GIF, landing page, channels), all off-repo.
 
+⏭ **`0.1.1-rc.1` is the cut in flight**: notes at `.build-cache/notes-v0.1.1-rc.1.md`; the tag waits on CI.
+
 ## Closed in this cleanup
+
+- **electron-builder is invoked from one script, and never from a config file that computes
+  anything (2026-09-16).** t485's `electron-builder.js` — an ESM config that `extends:` the settings
+  yml to stamp the version — worked on Linux, on macOS and on this Windows machine, and on **Windows
+  CI** made `electron-builder --dir` exit **0** having printed nothing at all and written no
+  `release/`, so `test:pack` found no package (⭐ measured: run 35158401830, twice, on the same runner
+  image, Node 22.23.2 and electron-builder 26.16.1 that built `v0.1.0` green; not reproducible here
+  through `npx electron-builder`, `npm run pack`, or `CI=true npm run pack`). ⛔ **The root cause is
+  still unknown**; what is measured is that removing the JS config restores the green build. The
+  settings are back in `electron-builder.yml`, the only config, discovered as it was for every release
+  up to `v0.1.0`; `scripts/pack.mjs` passes `-c.extraMetadata.version`, which ⭐ reaches the packaged
+  `package.json` and leaves the project's own alone (probed with `9.9.9-probe`, read back out of
+  `app.asar`), and spawns `node <cli.js>` from electron-builder's `bin` rather than the
+  `node_modules/.bin` batch shim. `src/daemon/packaging.test.ts` pins the shape: one config, no
+  version in it, every `pack`/`dist:*` script through the wrapper. ⚠️ A packaging step that reports
+  success without packaging is the worst shape a failure can take, and **L4 was the only tier that
+  could see it** — nothing below L4 builds a package.
 
 - **A local worker's model is what its server serves, named `local-llm:<served id>` (t486,
   2026-09-16).** `costmodels/local.llm` listed one id, `qwen3-coder-30b-a3b`; every model write is
@@ -45,15 +64,14 @@ first cut through the new flow is the test of `release.yml`'s new verify step; i
   runs 35062655991 → 35066743396). The version was a source fact, so every rc and every promotion
   had to go through the pipeline before a tag could point at it. Now `scripts/version.mjs` derives
   it from git (`WARMSTART_VERSION` on a release build, `git describe` otherwise → `0.1.0+7.gcced61f`),
-  every bundle reads `__APP_VERSION__`, and `electron-builder.js` stamps `extraMetadata.version`
-  (the yml is `electron-builder.base.yml` because electron-builder finds `.yml` before `.js`).
+  every bundle reads `__APP_VERSION__`, and `scripts/pack.mjs` passes `extraMetadata.version`
+  (⛔ it was an `electron-builder.js` for a day; see the entry above for why it is not).
   `package.json` keeps `0.0.0`; `check-version.mjs` refuses a build if a version is written back.
   `/release rc` → `scripts/release-tag.mjs plan` (next version from the tags that exist) → notes →
   `cut`: one annotated tag on `origin/main`'s tip, pushed after the base gate, the on-main check,
   and a CI-green lookup. `/release promote` tags the rc's *commit* with the bare version and the
   workflow rebuilds — chosen over flipping the pre-release flag, which would ship `-rc.N` as the
-  version forever. Notes are the tag body; `releases/` takes no new files. ⭐ `npm run pack` on this
-  branch stamped `0.1.0+7.gcced61f.dirty` into the asar and the packaged daemon answered with it.
+  version forever. Notes are the tag body; `releases/` takes no new files.
   ⚠️ Unmeasured: the first tag through `release.yml`'s new verify step. Design:
   [`transient_docs/release_flow_2026-09-16.md`](transient_docs/release_flow_2026-09-16.md).
 
@@ -128,16 +146,13 @@ judgement. Do not replace the missing evidence with a unit test.
    must edit there, and watch a sandboxed codex **commit** in it — the `.git` grant is proven by a
    throwaway-repo probe and has not yet carried a real task's work. Then, on `claude-code`, have an
    agent call `request_directory` for a folder nobody attached and confirm the restart resumes warm.
-5. ✅ **Closed 2026-09-15** — the signed, notarised `rc.2` bundle opened a PTY and drove a real
-   agent on the owner's Mac. Still unmeasured individually: Application Support isolation and
-   Antigravity's Keychain under the hardened runtime; both were exercised only as part of that run.
-6. **Cut the first release through the tag-is-the-version flow** (`/release rc`, then `promote`)
-   and watch `release.yml`'s verify step — the one part of t485 no local check can reach.
+5. ✅ **Closed 2026-09-15** — the signed, notarised `rc.2` bundle drove a real agent on the owner's
+   Mac. Unmeasured alone: Application Support isolation, and Antigravity's Keychain under hardening.
+6. **Finish the `0.1.1-rc.1` cut** and watch `release.yml`'s verify step, then `promote`.
 7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.
-8. ✅ **Closed 2026-09-15** — `rc.2` installed and verified working on Windows and macOS. ⚠️ Not yet
-   written down as a narrative; the demo GIF (Phase 3) is the place that record will live.
+8. ✅ **Closed 2026-09-15** — `rc.2` installed and verified on Windows and macOS.
 9. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the
    generic declarative adapter cannot meter, gets no MCP tools and cannot reap orphans); CI watch
    after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an

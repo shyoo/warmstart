@@ -70,7 +70,7 @@ const PRODUCT = 'Warmstart'
 /**
  * The executable's own name, which is **not** `productName` on every platform.
  *
- * ⚠️ Linux sanitises it, and `electron-builder.base.yml` pins the result with `executableName`. This was
+ * ⚠️ Linux sanitises it, and `electron-builder.yml` pins the result with `executableName`. This was
  * invisible while the product was called `agentyard`: a lowercase single word survives the sanitiser
  * untouched, so one constant appeared to work everywhere right up until the rename gave it a space.
  */
@@ -163,8 +163,8 @@ try {
     (newest, file) => Math.max(newest, statSync(file).mtimeMs),
     Math.max(
       statSync(join(REPO, 'package.json')).mtimeMs,
-      statSync(join(REPO, 'electron-builder.base.yml')).mtimeMs,
-      statSync(join(REPO, 'electron-builder.js')).mtimeMs
+      statSync(join(REPO, 'electron-builder.yml')).mtimeMs,
+      statSync(join(REPO, 'scripts', 'pack.mjs')).mtimeMs
     )
   )
   // ⚠️ "Cannot tell" is its own answer and is not "stale". If the archive is somewhere neither

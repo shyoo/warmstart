@@ -448,7 +448,7 @@ VERSION_IN=".build-cache/version.txt"
 VERSION=$(node scripts/version.mjs)
 printf '%s' "$VERSION" > "$REPO/$VERSION_IN"
 BUNDLE_IN="src costmodels electron.vite.config.ts scripts/version.mjs $VERSION_IN version.json package.json $LOCK $TSCONFIGS"
-PACK_IN="out electron-builder.js electron-builder.base.yml scripts/version.mjs $VERSION_IN version.json package.json resources $LOCK"
+PACK_IN="out electron-builder.yml scripts/pack.mjs scripts/version.mjs $VERSION_IN version.json package.json resources $LOCK"
 BUNDLE_OUT="out/main/index.js;out/main/orchestratord.js;out/main/agentyard-mcp.js;out/preload/index.cjs;out/renderer/index.html"
 if [[ "$(uname -m)" == "arm64" ]]; then
   PACKED_APP="release/mac-arm64/Warmstart.app"
@@ -507,7 +507,7 @@ invoke_step 'pack' 'Packaged app' "$PACK_IN" "$PACKED_APP" run_pack
 
 # 6. Drive the packaged app (if not skipping tests)
 if [[ "$SKIP_TESTS" -eq 0 ]]; then
-  invoke_step 'test-pack' 'Drive the packaged app' "out test electron-builder.base.yml $LOCK" "" run_cmd npm run test:pack
+  invoke_step 'test-pack' 'Drive the packaged app' "out test electron-builder.yml $LOCK" "" run_cmd npm run test:pack
 fi
 
 # 7. Installer (if requested)
@@ -553,7 +553,7 @@ for dmg in release/Warmstart-*.dmg; do
 done
 
 # ---------------------------------------------------------------- Signing state
-# ⛔ Do not print a signing state; read one. `hardenedRuntime: true` in electron-builder.base.yml is a
+# ⛔ Do not print a signing state; read one. `hardenedRuntime: true` in electron-builder.yml is a
 # request, and it is honoured only when a "Developer ID Application" certificate was found —
 # otherwise an unsigned bundle is built happily, the flag is never applied, and nothing in the
 # output path says so. `flags=...(runtime)` below is the only proof the hardened runtime shipped,
@@ -581,7 +581,7 @@ if [[ -n "$TARGET_APP" ]]; then
       echo -e "${COLOR_YELLOW}    Notarisation requires it, so this bundle cannot be notarised as built.${COLOR_RESET}"
     fi
     echo -e "${COLOR_GRAY}    ${CODEDIR:-no CodeDirectory line in codesign output}${COLOR_RESET}"
-    echo -e "${COLOR_GRAY}    Never notarised locally: electron-builder.base.yml pins notarize:false, and the${COLOR_RESET}"
+    echo -e "${COLOR_GRAY}    Never notarised locally: electron-builder.yml pins notarize:false, and the${COLOR_RESET}"
     echo -e "${COLOR_GRAY}    release workflow is the only thing that turns it on.${COLOR_RESET}"
   fi
 fi

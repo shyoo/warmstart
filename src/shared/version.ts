@@ -7,7 +7,7 @@ import versionInfo from '../../version.json'
  * It is not read from a file. `scripts/version.mjs` derives it from git — the tag on a release
  * build, `<last tag>+<n>.g<sha>` between releases — and every bundle receives it as the
  * `__APP_VERSION__` constant (`electron.vite.config.ts`, `vite.mobile.config.ts`, `vitest.config.ts`);
- * `electron-builder.js` stamps the same value into the package. `scripts/check-version.mjs` refuses
+ * `scripts/pack.mjs` passes the same value to electron-builder. `scripts/check-version.mjs` refuses
  * a build the moment a version is written into `version.json` or `package.json` again.
  */
 declare const __APP_VERSION__: string

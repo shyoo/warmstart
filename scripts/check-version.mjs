@@ -1,7 +1,7 @@
 // The version is not in any file, and this refuses the build the moment somebody puts it back.
 //
 // `scripts/version.mjs` derives it from git (or from `WARMSTART_VERSION` on a release build) and
-// `electron-builder.js` stamps it into the package at build time. So `package.json` and the lock
+// `scripts/pack.mjs` passes it to electron-builder at build time. So `package.json` and the lock
 // carry a fixed placeholder, and `version.json` names only the repository the app polls for
 // updates. A real version written into either is a second source of truth that would drift from
 // the tag the moment the next one is pushed.
