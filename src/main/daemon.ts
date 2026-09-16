@@ -13,6 +13,7 @@ import type {
 } from '@shared/protocol.js'
 import { readEndpoint } from '../daemon/lock.js'
 import { withAugmentedPath } from '../daemon/which.js'
+import { readStartupFailure } from './daemonexit.js'
 import { errorMessage } from '@shared/errors.js'
 
 /**
@@ -111,6 +112,7 @@ export class DaemonClient extends EventEmitter {
     // ELECTRON_RUN_AS_NODE turns this same binary into a plain Node process, so a packaged app needs
     // no system Node and native modules match the ABI already shipped. detached + unref is what lets
     // the fleet outlive the window that started it.
+    const spawnedAt = Date.now()
     const child = spawn(process.execPath, [daemonScript], {
       // ⚠️ Under the key the block already has — `Path` on Windows — so the child gets one PATH and
       // not two spellings of it; see `pathKey`.
@@ -120,9 +122,16 @@ export class DaemonClient extends EventEmitter {
       windowsHide: true
     })
     child.unref()
+    // `unref` only stops the child holding this process open; `exit` still arrives while both are
+    // alive. A daemon that refuses to start says so and exits in well under a second, and waiting
+    // the full timeout to notice would be twenty seconds of *Starting…* over a finished answer.
+    let exitCode: number | null | undefined
+    child.on('exit', (code) => {
+      exitCode = code
+    })
 
     const deadline = Date.now() + STARTUP_TIMEOUT_MS
-    while (Date.now() < deadline) {
+    while (Date.now() < deadline && exitCode === undefined) {
       await delay(250)
       const published = readEndpoint()
       if (published && published.pid !== existing?.pid && (await this.alive(published))) {
@@ -133,10 +142,20 @@ export class DaemonClient extends EventEmitter {
 
     // ⚠️ Still `error`, because it still is not connected and the UI must say so - but no longer
     // final. The retry is what turns "quit and relaunch" back into "wait a moment".
-    this.setStatus({
-      state: 'error',
-      message: `orchestratord did not answer within ${STARTUP_TIMEOUT_MS / 1000}s - retrying`
-    })
+    //
+    // ⛔ And it says *why* when the daemon did. stderr is ignored so the daemon can outlive the
+    // window, but `daemon/index.ts` logs one `failed to start` line before exiting, and the reason
+    // in it (a schema newer than this build, a data directory that cannot be written) is the whole
+    // diagnosis. An exit with nothing logged is still reported as an exit: silence from a process
+    // that died is a different fact from a process that is slow.
+    const reason = readStartupFailure(spawnedAt)
+    const what =
+      exitCode !== undefined
+        ? `orchestratord exited${exitCode === null ? '' : ` with code ${exitCode}`}${reason ? `: ${reason}` : ' without saying why'}`
+        : reason
+          ? `orchestratord did not answer within ${STARTUP_TIMEOUT_MS / 1000}s: ${reason}`
+          : `orchestratord did not answer within ${STARTUP_TIMEOUT_MS / 1000}s`
+    this.setStatus({ state: 'error', message: `${what} - retrying` })
     this.scheduleEnsureRetry()
     return this.status
   }

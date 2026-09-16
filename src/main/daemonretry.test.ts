@@ -21,11 +21,28 @@ vi.mock('../daemon/lock.js', () => ({
 }))
 
 const spawned: string[][] = []
+/** What the next spawned daemon does: nothing (the slow case), or exit with this code at once. */
+let nextExit: number | null | undefined
+/** What the daemon log says about it, stubbed so this test never reads the real data directory. */
+let loggedReason: string | null = null
 vi.mock('node:child_process', () => ({
   spawn: (cmd: string, args: string[]) => {
     spawned.push([cmd, ...args])
-    return { unref: (): void => {} }
+    const listeners: Array<(code: number | null) => void> = []
+    if (nextExit !== undefined) {
+      const code = nextExit
+      setTimeout(() => listeners.forEach((fn) => fn(code)), 100)
+    }
+    return {
+      unref: (): void => {},
+      on: (event: string, fn: (code: number | null) => void): void => {
+        if (event === 'exit') listeners.push(fn)
+      }
+    }
   }
+}))
+vi.mock('./daemonexit.js', () => ({
+  readStartupFailure: (): string | null => loggedReason
 }))
 
 const { DaemonClient } = await import('./daemon.js')
@@ -36,6 +53,8 @@ describe('orchestratord did not answer in time', () => {
 
   beforeEach(() => {
     spawned.length = 0
+    nextExit = undefined
+    loggedReason = null
     vi.useFakeTimers()
   })
   afterEach(() => {
@@ -65,6 +84,53 @@ describe('orchestratord did not answer in time', () => {
     await vi.advanceTimersByTimeAsync(21_000 + 5_500)
     expect(spawned).toHaveLength(3)
 
+    client.dispose()
+  })
+
+  /**
+   * The case this was written for. Measured 2026-09-15 on the first packaged 0.1.0-rc.1 install:
+   * the daemon logged `database schema v73 is newer than this build understands (v71)` and exited
+   * in under a second, five times over two minutes, and the window said *Starting orchestratord…*
+   * throughout. The reason was in the log the whole time; nothing read it.
+   */
+  it('says why the daemon exited, and says it as soon as it has', async () => {
+    nextExit = 1
+    loggedReason = 'database schema v73 is newer than this build understands (v71). Upgrade Warmstart.'
+    const client = new DaemonClient()
+    const settled = client.ensure(script)
+    // ⚠️ Well short of the 20s poll: a finished answer must not wait out the timeout.
+    await vi.advanceTimersByTimeAsync(1_000)
+    const status = await settled
+
+    expect(status.state).toBe('error')
+    const message = status.state === 'error' ? status.message : ''
+    expect(message).toContain('exited with code 1')
+    expect(message).toContain('schema v73 is newer')
+    expect(message).toContain('retrying')
+    expect(message).not.toContain('did not answer')
+    client.dispose()
+  })
+
+  it('reports an exit that logged nothing as an exit, not as slowness', async () => {
+    nextExit = null
+    const client = new DaemonClient()
+    const settled = client.ensure(script)
+    await vi.advanceTimersByTimeAsync(1_000)
+    const status = await settled
+    const message = status.state === 'error' ? status.message : ''
+    expect(message).toContain('exited without saying why')
+    expect(message).not.toContain('did not answer')
+    client.dispose()
+  })
+
+  it('adds the logged reason to a timeout when the daemon is still running', async () => {
+    loggedReason = 'the data directory is not writable'
+    const client = new DaemonClient()
+    const settled = client.ensure(script)
+    await vi.advanceTimersByTimeAsync(21_000)
+    const status = await settled
+    const message = status.state === 'error' ? status.message : ''
+    expect(message).toContain('did not answer within 20s: the data directory is not writable')
     client.dispose()
   })
 

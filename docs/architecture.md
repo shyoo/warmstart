@@ -52,7 +52,15 @@ being scanned, that is not always enough. ⛔ **A timeout must not be terminal**
 on a 2s → 5s → 15s → 30s backoff (last value repeating) rather than settling into `error` forever.
 It used to settle — `scheduleReconnect` hangs off the WebSocket `close` event, and on that path no
 socket was ever opened, so one slow start left the window showing an empty fleet until the operator
-quit and relaunched. Pinned by `src/main/daemonretry.test.ts`.
+quit and relaunched. ⛔ **And a daemon that exits is reported as an exit, with its own reason.**
+The child is spawned with `stdio: 'ignore'` so it can outlive the window, so main never sees its
+stderr — but it still gets the `exit` event, and `daemon/index.ts` writes one `ERROR orchestratord
+failed to start: …` line to the day's log before dying. `main/daemonexit.ts` reads that line back
+(today's file and yesterday's, since the spawn time) and it becomes the status message, at once
+rather than after the 20s poll. Measured 2026-09-15 on the first packaged `0.1.0-rc.1` install: the
+daemon refused a v73 database (the build understood v71) five times in two minutes, one actionable
+line each, while the window said *Starting orchestratord…* throughout. Pinned by
+`src/main/daemonretry.test.ts` and `src/main/daemonexit.test.ts`.
 
 ### Talking to the daemon
 

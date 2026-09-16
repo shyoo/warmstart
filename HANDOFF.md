@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-15, **Windows 11**, measured on this merge of t446–t473 with t474's release prep,
-at `0.1.0-rc.1`): typecheck, lint and build pass; L1 **3,558 passed, 5 skipped** (208 files); L2
+Baseline (2026-09-15, **Windows 11**, measured on t474.2's tip over the merge of t446–t473, at
+`0.1.0-rc.1`): typecheck, lint and build pass; L1 **3,565 passed, 5 skipped** (209 files); L2
 **203 checks** (5 skipped); L3 **452 passed, 4 skipped** at the pinned 1024×720 window; L4 **19
 checks** against `release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
 signed, hardened-runtime bundle. Last CI green on all seven jobs: `593e5c6`, run 35058132724 — the
@@ -25,6 +25,17 @@ go-public order stands: install *that* artifact → items 5 and 8 → delete dra
 first release an installed app can see.
 
 ## Closed in this cleanup
+
+- **The window now says why orchestratord died, within a second (t474.2, 2026-09-15).** The
+  operator installed `rc.1` beside the trunk-built app they run daily; the trunk had migrated the
+  live database to v73 and the release understood v71, so the daemon logged one actionable line and
+  exited five times over two minutes while the window said *Starting orchestratord…* throughout.
+  `ensure()` now listens for the child's `exit` and stops polling at once, and `main/daemonexit.ts`
+  reads the `failed to start` line back from the day's log into the status message. ⭐ Driven from
+  `out/` against a `user_version = 999` database: the panel read the full refusal **+508ms** after
+  the page was reachable. `docs/architecture.md` § startup. ⛔ The lesson for releasing: a tag cut
+  from `origin/main` while the trunk carries unpushed migrations ships a build the operator's own
+  data refuses — `/release` should refuse when the trunk is ahead of origin, not yet done.
 
 - **A release now carries notes written at bump time, and an rc cannot become `latest` (t474,
   2026-09-15).** `/release` (`.claude/skills/release/`) bumps the three version files, writes
@@ -49,11 +60,7 @@ first release an installed app can see.
   `null` already reads as "CLI default" everywhere, and `statistics.ts` already excludes a
   null-effort session from the per-effort breakdown rather than bucketing it as unknown.
 
-- **`warmstart-site` polish (t468/t469/t471, 2026-09-15).** Task diagrams read `--color-ok` for done,
-  Debate draws three seats exchanging positions over rounds, the five task kinds get dispatch diagrams
-  in the composer's schematic language, and a backdrop-less `tasks.png` became the sha256-verified
-  composite. `generate-readme-assets.mjs` now refuses a shot under `MIN_SHOT_BYTES` (400,000); see
-  `docs/development.md`. ⚠️ **Committed in that repo, not pushed** — a push there deploys Cloudflare Pages.
+- **`warmstart-site` polish (t468/t469/t471).** ⚠️ Committed there, **not pushed** — a push deploys.
 
 - **User-facing copy rewritten in direct developer style (t464, 2026-09-15).** Sentences, tooltips,
   placeholders and section intros across 21 components in `src/renderer/src/components`; 112 lines
@@ -61,13 +68,11 @@ first release an installed app can see.
 
 - **Finishing a conversation no longer races Retire it (t467, 2026-09-15).** Read-only evidence from
   the live database showed t466 `completed` with its run closed while session `753261d2` remained
-  `live` and still claimed `C:\Dev\warmstart_workspaces\ws2`; Loose ends therefore offered its empty
-  branch, then retirement refused the checkout. `resolveTask` now waits for the session process to
-  exit and parks/releases its workspace before the Finish RPC returns. A process that misses the
-  bounded 15-second wait keeps its claim and is never reused. Retirement still switches only a
-  clean, unclaimed pool member. Refusals say **Could not retire/delete/clean up** and tell the
-  operator whether to switch a checkout, finish work, or handle uncommitted files. Pinned by
-  `runfailure.test.ts` and real-git `landingcorners.test.ts`.
+  `live` and still claimed its workspace, so Loose ends offered an empty branch and retirement then
+  refused the checkout. `resolveTask` now waits (bounded, 15s) for the session process to exit and
+  parks/releases its workspace before the Finish RPC returns; a process that misses the wait keeps
+  its claim and is never reused. Refusals say **Could not retire/delete/clean up** and what to do.
+  Pinned by `runfailure.test.ts` and real-git `landingcorners.test.ts`.
 
 - **A granted directory can now be committed in, and an agent can ask for one that works (t470,
   2026-09-15).** ⛔ The t469 grant was *not* dropped: `--add-dir C:\Dev\warmstart-site` was on the
@@ -86,15 +91,13 @@ first release an installed app can see.
   adapter with MCP); the rest name the path after `NEEDS DECISION:`. See `docs/mcp.md`, `adapters.md`.
 
 - **The quota-preemption card's wrap-up buttons, and hand-off with a destination (t458,
-  2026-09-15).** Every option with more than one button now wraps them in `.decide-buttons`, one
-  grid item in `.decide-option`'s two-column grid, so a second button stops auto-placing into the
-  description's column. ⭐ A hand-off chosen during the warning can now name where the work goes:
-  `quotaPreemptWarning.reassignWorkerId`, set by `task.overrideQuota` (refused beside
-  `preemptionAction: 'compact'` — a compacted context belongs to the session that built it) and read
-  by `preempt()` at expiry, which reassigns the constraints, clears `not_before`, and falls back to
-  pausing if the chosen worker is gone. Pinned in `quotaoverride.test.ts`, `preemption.test.ts` and
-  `test/ui.test.mjs`. ⚠️ **Not run against a real preemption**; the scenario is seeded through the
-  store, as the other quota states in that suite are.
+  2026-09-15).** Multi-button options wrap in `.decide-buttons`, one grid item, so a second button
+  stops auto-placing into the description's column. ⭐ A hand-off chosen during the warning can name
+  where the work goes: `quotaPreemptWarning.reassignWorkerId`, set by `task.overrideQuota` (refused
+  beside `preemptionAction: 'compact'`) and read by `preempt()` at expiry, which reassigns, clears
+  `not_before`, and falls back to pausing if the chosen worker is gone. Pinned in
+  `quotaoverride.test.ts`, `preemption.test.ts`, `test/ui.test.mjs`. ⚠️ **Not run against a real
+  preemption**; seeded through the store like the suite's other quota states.
 
 - **Plan & Execute, and the composer pill's teaching order (t456 / t458, 2026-09-15).** Plan & Execute
   is the same `plan` kind with the fan-out capped at one and no integration turn; the shape is
@@ -113,9 +116,8 @@ first release an installed app can see.
 
 ## Remaining work — ordered by payoff
 
-These are deliberately not marked complete: each needs either a real signed-in account, a macOS
-machine, release credentials, or a human product judgement. Do not replace the missing evidence with
-a unit test.
+Each needs a real signed-in account, a macOS machine, release credentials, or a human product
+judgement. Do not replace the missing evidence with a unit test.
 
 1. **Run a real trunk task beside worktree tasks.** File a trunk task that pulls `main` and resolves a
    conflict while a worktree task finishes under `commit-and-merge`; confirm the worktree task sits at
@@ -141,10 +143,8 @@ a unit test.
    reports a build signed with the hardened runtime, and `npm run test:pack` passes on the Mac (all
    2026-09-14). Remaining: launch *that* bundle, open a PTY, and drive one real task. Still unverified either way: detached daemon startup without system Node
    under the hardened runtime, Application Support isolation, Antigravity's Keychain, Gatekeeper.
-6. **✅ Done — cut `rc.2` from the merge.** The tag build ran (35055712204, 2026-09-15) and published
-   a public pre-release from `releases/v0.1.0-rc.1.md`: both `.dmg`s, `win-x64`, `win-arm64`, `win`
-   and `SHA256SUMS.txt`. The `publish` job's checkout and notes step are proven. ⛔ It was tagged at
-   `eefbbbd`, so the artifacts predate the merge — see the note at the top.
+6. **Cut `rc.2` from this tree** (`/release rc` → `/push` → tag). `rc.1`'s tag build (35055712204)
+   proved the pipeline end to end, but was tagged at `eefbbbd`, before the merge — see the top.
 7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.
