@@ -825,6 +825,24 @@ export function chronologicalTimeline(
 }
 
 /**
+ * The run the peek names when the timeline has scrolled away: the last one in the timeline, with
+ * the `#N` the timeline itself gave it.
+ *
+ * ⛔ The last *timeline* entry of kind `run`, not `runs[0]`. `runs[0]` is the newest by start, and the
+ * timeline is ordered on the end (`byEndThenStart`), so the two can disagree while an attempt is
+ * open; the peek stands in for the row that scrolled away and has to name the same row. The index
+ * is the position in the whole timeline, compactions and reviews counted, because that is the
+ * number printed on the row.
+ */
+export function latestRunEntry(timeline: TimelineItem[]): { index: number; run: Run } | null {
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const item = timeline[i]
+    if (item?.kind === 'run') return { index: i + 1, run: item.run }
+  }
+  return null
+}
+
+/**
  * The four landing-failure predicates, each one cause of `resolveRetryCauses`.
  *
  * ⛔ Thin wrappers over the shared classifier, not regexes of their own: the daemon's *Resolve &

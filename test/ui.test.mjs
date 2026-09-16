@@ -1052,6 +1052,64 @@ try {
     check('and an empty message box does not disable it', sb.enabled, stopBtn)
   }
 
+  // ---- the ledger peek (t477) ----------------------------------------------------------
+  // ⛔ A long conversation pushes the status box off the top of the page, and the only way to
+  // learn whether the task was still running was to scroll back up and lose your place. Once the
+  // ledger has scrolled off, a small box pinned to the top of its column repeats the task, its
+  // status and — once the timeline has gone too — the latest run. ⚠️ The fixture thread is short,
+  // so the conversation column is given the height a hundred-message thread has; what is being
+  // measured is the scroll response, not the fixture's length.
+  const peekAt = async (scrollTop) => {
+    await evaluate(`document.querySelector('.content')?.scrollTo(0, ${scrollTop})`)
+    // ⚠️ A hidden window is not reliably handed its scroll events at all (measured 2026-09-16: a
+    // synthetic `scroll` dispatched by hand drew the peek where the real `scrollTo` had not), so
+    // what this waits for is the page's once-a-second render, which re-measures on its own.
+    await wait(1500)
+    return JSON.parse(
+      await evaluate(`
+        JSON.stringify((() => {
+          const content = document.querySelector('.content');
+          const ledger = document.querySelector('.detail-side > .detail-side-box');
+          const peek = document.querySelector('.ledger-peek');
+          const top = content.getBoundingClientRect().top;
+          return {
+            scrollTop: Math.round(content.scrollTop),
+            ledgerGone: ledger.getBoundingClientRect().bottom <= top,
+            peek: peek ? peek.innerText.replace(/\\s+/g, ' ').trim() : null,
+            // Pinned: drawn inside the pane's top edge, not wherever the column has scrolled to.
+            pinnedTop: peek ? Math.round(peek.getBoundingClientRect().top - top) : null,
+            ledgerStatus: (ledger.querySelector('.status')?.innerText ?? '').trim(),
+            peekStatus: (peek?.querySelector('.status')?.innerText ?? '').trim(),
+            runRows: document.querySelectorAll('.side-run').length,
+            peekRun: !!peek?.querySelector('.ledger-peek-section--run')
+          };
+        })())
+      `)
+    )
+  }
+  await evaluate(`document.querySelector('.detail-main').style.minHeight = '4000px'`)
+  const atTop = await peekAt(0)
+  check('no ledger peek while the ledger itself is on screen', atTop.peek === null && !atTop.ledgerGone, JSON.stringify(atTop))
+  const atBottom = await peekAt(99_999)
+  check('⛔ the ledger peek appears once the ledger has scrolled off the top', atBottom.ledgerGone && atBottom.peek !== null, JSON.stringify(atBottom))
+  check('and it repeats the status the ledger shows, word for word', atBottom.peekStatus !== '' && atBottom.peekStatus === atBottom.ledgerStatus, JSON.stringify(atBottom))
+  check('and it is pinned inside the top of the pane', atBottom.pinnedTop !== null && atBottom.pinnedTop >= 0 && atBottom.pinnedTop < 40, JSON.stringify(atBottom))
+  // ⚠️ Half the claim: the task had to have run for a run half to exist. The fixture task above
+  // is one the daemon worked on, so `runRows` is non-empty and the second half is asserted.
+  check(
+    atBottom.runRows > 0
+      ? 'and past the timeline it names the latest run as well'
+      : 'and a task that never ran gets no run half',
+    atBottom.peekRun === atBottom.runRows > 0,
+    JSON.stringify(atBottom)
+  )
+  await evaluate(`document.querySelector('.ledger-peek-section')?.click()`)
+  await wait(1500)
+  const afterJump = await peekAt(await evaluate(`document.querySelector('.content').scrollTop`))
+  check('and pressing it scrolls the ledger back into view, and the peek goes', !afterJump.ledgerGone && afterJump.peek === null, JSON.stringify(afterJump))
+  await evaluate(`document.querySelector('.detail-main').style.minHeight = ''`)
+  await evaluate(`document.querySelector('.content')?.scrollTo(0, 0)`)
+
   // ⛔ Back before anything else is checked. Everything below files a task, and the form lives on
   // the list — so a Back button that did not actually return would fail here as a missing button
   // rather than as the navigation bug it is. Assert the return itself.

@@ -34,6 +34,7 @@ import { TaskQuestions } from './Questions'
 import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from './Dependencies'
 import { showsLiveOutput } from '../lib/live'
 import { supersededAskIds } from '../lib/compactionstatus'
+import { useScrolledPast } from '../lib/scrolledpast'
 import { codeSpans } from '../lib/codespans'
 import { bubbleSide, buildThreadItems, promptAnchors } from '../lib/threadbubble'
 import { duration, tokens, when } from '../lib/format'
@@ -45,6 +46,7 @@ import {
   CANCELLABLE,
   chronologicalTimeline,
   kindLabel,
+  latestRunEntry,
   pieceSettings,
   plannedAssignment,
   statusToneFor,
@@ -71,6 +73,7 @@ import { sameSource, useDiffPane } from '../lib/diffpane'
 import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
 import { DebateBoard } from './thread/DebateBoard'
 import { CompactionRow, ReviewRow, RunRow } from './thread/RunRow'
+import { LedgerPeek } from './thread/LedgerPeek'
 import { Markdown } from './thread/Markdown'
 import {
   compactionChoice,
@@ -279,6 +282,14 @@ function TaskDetail({
     commits = []
   } = detail
   const timeline = chronologicalTimeline(runs, compactions, reviews)
+  // The two boxes the peek stands in for, once each has scrolled off the top. State rather than
+  // refs: the timeline box is rendered only once there is a run, and `useScrolledPast` has to
+  // re-observe when the node arrives. See `LedgerPeek`.
+  const [ledgerBox, setLedgerBox] = useState<HTMLElement | null>(null)
+  const [timelineBox, setTimelineBox] = useState<HTMLElement | null>(null)
+  const pastLedger = useScrolledPast(ledgerBox)
+  const pastTimeline = useScrolledPast(timelineBox)
+  const latestRun = pastTimeline ? latestRunEntry(timeline) : null
   // ⛔ An ask that died while a newer one on the same session landed reads "failed" by default,
   // which is what t446's preemption ask did for a day while the retry that compacted the session
   // sat orphaned. The dead one is superseded, and says so (see `compactionstatus.ts`).
@@ -550,7 +561,7 @@ function TaskDetail({
         </div>
 
         <aside className="detail-side">
-          <div className="detail-side-box">
+          <div className="detail-side-box" ref={setLedgerBox}>
             <Fact label="status" className="fact--status">
               <span className={`status ${statusToneFor(task)}`}>
                 {statusLabel(task)}
@@ -1115,13 +1126,31 @@ function TaskDetail({
             </Fact>
           </div>
 
+          {/* ⛔ A zero-height sticky mount, right after the ledger box, so the peek pins to the top of
+              the column and takes no room in it. The peek itself decides nothing about scrolling —
+              `useScrolledPast` on the two boxes above does — and is drawn only once the ledger has
+              gone off the top. */}
+          <div className="ledger-peek-mount" aria-live="off">
+            {pastLedger && (
+              <LedgerPeek
+                task={task}
+                now={now}
+                latest={latestRun}
+                sessions={sessions}
+                fleet={fleet}
+                onJumpToLedger={() => ledgerBox?.scrollIntoView({ block: 'start' })}
+                onJumpToRun={() => timelineBox?.scrollIntoView({ block: 'start' })}
+              />
+            )}
+          </div>
+
           {commits.length > 0 && <CommitsBox taskId={task.id} commits={commits} />}
 
           <QualityReviewBox task={task} reviews={reviews} refresh={refresh} />
           <ManualReviewBox task={task} reviews={manualReviews} refresh={refresh} />
 
           {timeline.length > 0 && (
-            <div className="detail-side-box">
+            <div className="detail-side-box" ref={setTimelineBox}>
               {/* ⚠️ The label carries the distinction: attempts and context compactions in chronological order. */}
               <div
                 className="side-label"

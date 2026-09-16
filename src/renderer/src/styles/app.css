@@ -4221,6 +4221,99 @@ select:focus-visible,
   padding: var(--sp-3);
 }
 
+/* ⛔ Stretched to the row, although its boxes are shorter than the thread beside them. The peek
+   below is `position: sticky`, and a sticky element stops at the bottom of its containing block —
+   an aside as tall as its own content would let the peek follow the reader for the ledger's height
+   and then scroll away with it, exactly where a long thread begins. */
+.detail-side {
+  align-self: stretch;
+}
+
+/* The ledger's headline, pinned once the ledger has scrolled off (`thread/LedgerPeek.tsx`). The
+   mount is a zero-height sticky child right after the ledger box — it takes none of the column's
+   room (the negative margin gives back the flex gap) and starts sticking exactly when that box's
+   bottom edge passes the top of the page. The peek is absolutely placed inside it, so it overlays
+   whatever the column has scrolled to rather than pushing it. */
+.ledger-peek-mount {
+  position: sticky;
+  top: var(--sp-2);
+  height: 0;
+  margin-top: calc(-1 * var(--sp-3));
+  z-index: 5;
+}
+
+.ledger-peek {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-panel), 0 6px 18px rgb(0 0 0 / 0.18);
+  font-size: var(--text-meta);
+  overflow: hidden;
+}
+
+/* Each half is a button — pressing it scrolls the row it stands in for back into view — styled as
+   a plain block so the box reads as facts, not as controls. */
+.ledger-peek-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease);
+}
+
+.ledger-peek-section:hover {
+  background: var(--color-surface-2);
+}
+
+.ledger-peek-section--run {
+  border-top: 1px solid var(--color-border);
+}
+
+.ledger-peek-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-2);
+  margin-bottom: 2px;
+}
+
+.ledger-peek-row {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: var(--sp-2);
+  align-items: baseline;
+}
+
+.ledger-peek-key {
+  color: var(--color-text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+
+.ledger-peek-val {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.ledger-peek .side-run-quota {
+  margin-top: 0;
+}
+
 /* The ledger is a reading order, not a chronology of when its controls were added. */
 .detail-side > .detail-side-box:first-child { display: flex; flex-direction: column; }
 .detail-side > .detail-side-box:first-child > :not(.fact) { order: 50; }

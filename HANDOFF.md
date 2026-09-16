@@ -37,11 +37,20 @@ channels), all off-repo.
   prompt through the store and asserts which bubble the chip lands under — reverting the anchor turns
   those two checks red, which is how they were confirmed to test anything.
 
-- **README.md rephrased with clear tone and warmstart.dev pitch phrases (t476, 2026-09-16).** Rephrased
-  core value proposition, provider capabilities, worktree workflow, and feature sections to use direct
-  developer tone and pitch phrases aligned with warmstart.dev ("Right agent and the right model, without
-  thinking twice" replacing "Smart routing"). Maintained all verified facts, security boundaries, and
-  documentation links.
+- **A long thread no longer hides the task's status (t477, 2026-09-16).** Once the status box has
+  scrolled off the top, `thread/LedgerPeek` pins a small box at the top of the ledger column with
+  the task, its status and hold line, and — once the timeline has gone too — the latest run (`#N`,
+  account / model, fresh, status, usage), read from the same rows; pressing it scrolls the row back.
+  `lib/scrolledpast.ts` measures geometry on scroll and after every render — ⛔ an
+  `IntersectionObserver` missed a box jumped past in one frame, and the hidden L3 window gets no
+  scroll events at all (measured: a hand-dispatched `scroll` drew what the real `scrollTo` had not).
+  ⭐ Driven visibly at 1440×900 on the showcase fleet and pinned by six L3 checks. `docs/ui.md` §3.
+  Baseline on this tip over `01b3cf4`, Windows 11: L1 **3,581 passed, 5 skipped** (211 files); L3
+  **462 passed, 4 skipped**; typecheck, lint, build pass. L2/L4 not re-run — no daemon/packaging change.
+
+- **README.md rephrased in direct developer tone, with warmstart.dev's pitch phrases (t476,
+  2026-09-16)** — e.g. "Right agent and the right model, without thinking twice" for "Smart routing".
+  Verified facts, security boundaries and documentation links kept as they were.
 
 - **The window now says why orchestratord died, within a second (t474.2, 2026-09-15).** The
   operator installed `rc.1` beside the trunk-built app they run daily; the trunk had migrated the
@@ -87,19 +96,15 @@ channels), all off-repo.
   own audit log says so), so every edit landed and `git commit` died at `.git/index.lock: Permission
   denied`. ⭐ Probed against codex-cli 0.151.0: passing `<dir>/.git` as a root of its own draws a
   grant and **no** deny, and the commit succeeds. `gitMetadataRoots` (was `gitWritableRoots`) returns
-  it now, for the workspace and every granted folder; `externalGitRoots` keeps the `icacls` reset to
-  worktrees this fleet made. ⚠️ It silently hit any plain-clone workspace too — a `trunk`-mode task
-  could not commit at all. ⭐ New MCP tool **`request_directory`**
+  it now, for the workspace and every granted folder (⚠️ it had hit any plain-clone workspace too — a
+  `trunk`-mode task could not commit at all). ⭐ New MCP tool **`request_directory`**
   (`daemon/dirgrants.ts`): the operator's **Grant** attaches the folder to the task, ends the run and
-  requeues it, so the grant arrives on a warm resume — the card says the restart costs tokens, and
-  the agent's `state` becomes the handoff. Refusals never end a turn. ⚠️ `claude-code` only (the one
-  adapter with MCP); the rest name the path after `NEEDS DECISION:`. See `docs/mcp.md`, `adapters.md`.
+  requeues it, so the grant arrives on a warm resume with the agent's `state` as the handoff. ⚠️
+  `claude-code` only; the rest name the path after `NEEDS DECISION:`. See `docs/mcp.md`, `adapters.md`.
 
-- **The quota-preemption card's wrap-up buttons, and hand-off with a destination (t458,
-  2026-09-15).** Multi-button options wrap in `.decide-buttons`, one grid item. A hand-off chosen
-  during the warning names where the work goes (`quotaPreemptWarning.reassignWorkerId`, written by
-  `task.overrideQuota`, read by `preempt()` at expiry). Pinned in `quotaoverride.test.ts`,
-  `preemption.test.ts`, `test/ui.test.mjs`. ⚠️ **Not run against a real preemption**.
+- **Quota-preemption hand-off with a destination (t458, 2026-09-15).** A hand-off chosen during
+  the warning names where the work goes (`quotaPreemptWarning.reassignWorkerId`, written by
+  `task.overrideQuota`, read by `preempt()` at expiry). ⚠️ **Not run against a real preemption**.
 
 - **Plan & Execute, and the composer pill's teaching order (t456 / t458, 2026-09-15).** Plan & Execute
   is the same `plan` kind with the fan-out capped at one and no integration turn; the shape is
@@ -110,10 +115,9 @@ channels), all off-repo.
   [`transient_docs/plan_and_execute_2026-09-15.md`](transient_docs/plan_and_execute_2026-09-15.md).
   ⚠️ **Not run against a real agent**, and the cost claim is unmeasured on this fleet (item 2).
 
-- **t408–t455, landed and documented in docs/ (2026-09-13–15).** Earlier cleanup items now fully
-  covered by the docs/ pages they owed; see git history for t408–t449 (probe PTY answers, live quota
-  probe, remote settings, Statistics axes, landing messages, welcome tour) and t451–t455 (gate panel,
-  idle-turn deferral, Quality Review's N+1 fetch, phone `ask_human` decision card, tour navigation).
+- **t408–t455, landed and documented in docs/ (2026-09-13–15).** Covered by the docs/ pages they
+  owed; see git history (probe PTY answers, live quota probe, remote settings, Statistics axes,
+  landing messages, welcome tour, gate panel, idle-turn deferral, phone `ask_human` card).
 
 ## Remaining work — ordered by payoff
 

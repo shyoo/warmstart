@@ -27,6 +27,7 @@ import {
   isUncommittedTask,
   isWorking,
   kindLabel,
+  latestRunEntry,
   modelFacts,
   modelLine,
   pieceSettings,
@@ -922,6 +923,31 @@ describe('timeline ordering for runs and compactions', () => {
     const review = { id: 'q1', runId: 'rq', createdAt: 2000, completedAt: 3000 } as unknown as QualityReview
     const timeline = chronologicalTimeline([run], [], [review])
     expect(timeline.map((i) => i.kind)).toEqual(['review', 'run'])
+  })
+
+  describe('latestRunEntry — the run the ledger peek names', () => {
+    it('names the last run in the timeline with the #N the timeline printed on it', () => {
+      const run1 = { id: 'r1', startedAt: 1000, endedAt: 1500, kind: 'work' } as unknown as Run
+      const run2 = { id: 'r2', startedAt: 3000, endedAt: 3500, kind: 'work' } as unknown as Run
+      const c1 = { id: 'c1', ts: 2000, askedAt: 2000, landedAt: 2500 } as unknown as Compaction
+      const review = { id: 'q1', runId: 'rq', createdAt: 4000, completedAt: 4500 } as unknown as QualityReview
+      const timeline = chronologicalTimeline([run2, run1], [c1], [review])
+      // run1 #1, compaction #2, run2 #3, review #4 — the peek says "#3 Run", as the row does.
+      expect(latestRunEntry(timeline)).toEqual({ index: 3, run: run2 })
+    })
+
+    it('⛔ follows the timeline order, not runs[0], while an attempt is open', () => {
+      // Started later, ended earlier: `runs[0]` by start is r2, the timeline's last run is r1.
+      const r1 = { id: 'r1', startedAt: 1000, endedAt: null, kind: 'work' } as unknown as Run
+      const r2 = { id: 'r2', startedAt: 2000, endedAt: 2500, kind: 'work' } as unknown as Run
+      expect(latestRunEntry(chronologicalTimeline([r2, r1]))?.run.id).toBe('r1')
+    })
+
+    it('has nothing to name for a task that has never run', () => {
+      expect(latestRunEntry([])).toBeNull()
+      const review = { id: 'q1', runId: 'rq', createdAt: 1, completedAt: 2 } as unknown as QualityReview
+      expect(latestRunEntry(chronologicalTimeline([], [], [review]))).toBeNull()
+    })
   })
 
   it('handles empty runs and compactions', () => {
