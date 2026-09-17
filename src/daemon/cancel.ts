@@ -112,7 +112,7 @@ export async function cancelTask(taskId: string, options: CancelOptions = {}): P
     await cancelTask(child.id, { ...options, restingState, requestedBy: 'system' })
   }
 
-  await windDown(task, options.hard === true)
+  await windDown(task, options.hard === true, restingState)
 
   const settled = setStatus(taskId, restingState)
   await retireCancelledBranch(settled)
@@ -165,20 +165,32 @@ async function retireCancelledBranch(task: Task): Promise<void> {
  * stalls a project forever, and the symptom - nothing dispatches, nothing errors - is the worst kind
  * of bug to find later.
  */
-async function windDown(task: Task, hard: boolean): Promise<void> {
+async function windDown(task: Task, hard: boolean, restingState: RestingState): Promise<void> {
   const run = runsFor(task.id).find((r) => !r.endedAt)
+  // ⛔ **A resting conversation has no open run to find here.** `endConversationTurn` finishes the
+  // run the moment the agent's turn ends and keeps the session live and warm for the reply — that is
+  // the whole point of `awaiting_human` — so `run` alone missed every conversation cancelled while it
+  // was waiting on a person, and its session was never told to close or asked whether it should stay
+  // warm: nobody's, forever, still holding the worker's slot. Falls back to the most recent run of
+  // any kind so a resting session is still found; `run` itself stays the answer to "is there a turn
+  // to interrupt", which a resting conversation does not have.
+  const restingRun = run ?? runsFor(task.id)[0]
 
   try {
-    if (run?.sessionId) {
-      const session = getSession(run.sessionId)
+    if (restingRun?.sessionId) {
+      const session = getSession(restingRun.sessionId)
       if (session && !sessionEnded(session.state)) {
         if (hard) {
           closeSession(session.id)
-        } else {
+        } else if (run) {
           interruptSession(session.id)
           const wrapped = await askForWrapUp(session.id)
           if (!wrapped) log.warn(`session ${session.id.slice(0, 8)} did not wrap up in time`)
-          decideSessionFate(task, session.id)
+          decideSessionFate(task, restingState, session.id)
+        } else {
+          // Nothing is running — the turn already ended and the session is only resting. There is
+          // no turn to interrupt or wrap up; decide its fate the same way a live one's is decided.
+          decideSessionFate(task, restingState, session.id)
         }
       }
     }
@@ -237,11 +249,17 @@ async function askForWrapUp(sessionId: string): Promise<boolean> {
  * ⛔ Not reflexive. A `paused_user` task whose context is still warm and which may resume in ten
  * minutes is worth keeping; one going to `cancelled` is worth closing now. Killing a warm session
  * that is about to be resumed costs `2.0·C` to rebuild - see docs/cost-model.md §3.
+ *
+ * ⛔ **`resting` is passed in, not read off `task.cancel`.** `task` is the snapshot `cancelTask` read
+ * at the top of the call, before it wrote `cancel_json` — so `task.cancel?.restingState` was always
+ * stale (usually `undefined`, from whatever the *previous* cancel left, if any) and this fell through
+ * to the `'cancelled'` branch regardless of what the operator actually asked for. Every ordinary
+ * human Stop — `paused_user` by default — was closing a session it was supposed to be deciding
+ * whether to keep warm.
  */
-function decideSessionFate(task: Task, sessionId: string): void {
+function decideSessionFate(task: Task, resting: RestingState, sessionId: string): void {
   const session = getSession(sessionId)
   if (!session) return
-  const resting = task.cancel?.restingState ?? 'cancelled'
 
   if (resting === 'cancelled') {
     closeSession(sessionId)

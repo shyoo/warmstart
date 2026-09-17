@@ -87,14 +87,10 @@ channels), all off-repo.
   declares `dynamic_models` (a template under `id_prefix`); `probeIdentity` reads `/v1/models` and
   llama.cpp's `/props` into `identity.servedModels` / `contextWindow`; `knownModelIds` feeds
   `model.options` (an entry per local worker), fitness and triage; the bridge asks `/v1/models`
-  when no model is set and names it on `init`, which `noteModelChosen` records on the session and
-  `noteReviewerModel` on the grade. Migration 74 clears the pinned literal to null. Benchmark
-  priors match the family on the file name; labels are the file name without `.gguf`.
-  `docs/cost-model.md` §8a. ⚠️ **Not yet driven against a real server** — both llama.cpp scripts
-  were started for this task and neither ever answered on 8080/8090 during the run (no `llama`
-  process, nothing listening; measured three times over ~40 min). Next: start one, press Probe on
-  the local worker, confirm the picker lists the gguf and a run's session names it.
-  Design: [`transient_docs/local_model_identity_2026-09-16.md`](transient_docs/local_model_identity_2026-09-16.md).
+  when no model is set and names it on `init`. Migration 74 clears the pinned literal to null.
+  `docs/cost-model.md` §8a. ⚠️ **Not yet driven against a real server** — start one, press Probe on
+  the local worker, confirm the picker lists the gguf and a run's session names it. Design:
+  [`transient_docs/local_model_identity_2026-09-16.md`](transient_docs/local_model_identity_2026-09-16.md).
 
 - **A release is one turn, and the tag is the version (t485, 2026-09-16).** `v0.1.0` cost four
   turns, two "Prepare vX" commits and two CI runs whose only input was a version string (measured:
@@ -113,18 +109,22 @@ channels), all off-repo.
   [`transient_docs/release_flow_2026-09-16.md`](transient_docs/release_flow_2026-09-16.md).
 
 - **A codex conversation keeps its tree between turns, Land finds the branch wherever it is, and the
-  session line names the model it asked for (t483, 2026-09-16).** t481 (CodexFirst, `gpt-5.6-sol`):
-  Land answered *"not holding a workspace"* 31s after the turn ended, about a branch with one clean
-  verified commit. ⭐ Measured on the daemon log and ws1's reflog: codex exits once per turn, *after*
-  `endConversationTurn` closed the run, so `onSessionExit` found no open run, read the task as nobody's
-  and parked ws1 onto `origin/main`. It now asks `taskOfSession`, so an `awaiting_human` conversation
-  keeps the claim (`idleturn.test.ts`, red without the fix); and `landConversationWork` borrows a pool
-  member when no tree has the branch (`conversationland.test.ts`). ⚠️ The Commit instruction telling
-  codex *not* to merge was correct — an MCP-less adapter has no `land_work`, so the person presses Land.
-  ⭐ *"— model unknown · mode unknown"* was display only: codex's rollout recorded `gpt-5.6-sol` at
-  `medium` on all three turns, but `thread.started` carries neither. `initLine` (`stream.ts`) now fills
-  from the spawn request, marked *(as requested)*, and `stripFrames` keeps the daemon's dim lines out
-  of an MCP-less reply read back from the pane (which also quoted that header as the answer's first line).
+  session line names the model it asked for (t483, 2026-09-16).** Codex exits once per turn, after
+  `endConversationTurn` closes the run, so `onSessionExit` used to find no open run and park the
+  workspace onto `origin/main` mid-conversation; it now asks `taskOfSession`, so an `awaiting_human`
+  task keeps its claim, and `landConversationWork` borrows a pool member when no tree has the branch.
+  *"— model unknown · mode unknown"* was display only: `initLine` now fills from the spawn request.
+
+- **A held conversation's worker slot never came back (t498 ← t497, 2026-09-17).** ClaudeThird held a
+  conversation resting at `awaiting_human`; a second task pinned to it queued at capacity, exactly as
+  designed — but closing the conversation never freed the worker. `resolveTask` (Finish) and
+  `cancelTask`'s `windDown` (Stop) both found "the session to close" through `sessionOf`, which answers
+  "is a run open right now" — `endConversationTurn` finishes that run the instant the turn ends and
+  keeps the session live for the reply, so neither ever found it. `restingSessionOf` (scheduler.ts)
+  finds the most recent run's session whether or not it is open; both call sites use it now. ⛔ Fixing
+  this exposed a second bug in the same function: `decideSessionFate` read a stale pre-write
+  `task.cancel?.restingState`, so an ordinary human Stop always closed a warm session instead of
+  deciding whether to keep it — now passed in explicitly. `conversationcapacity.test.ts`.
 
 ## Remaining work — ordered by payoff
 

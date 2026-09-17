@@ -3241,7 +3241,14 @@ export async function resolveTask(taskId: string, note?: string): Promise<Task> 
   // resolved by hand, it must be closed with the specific note about hand resolution or the clock
   // will keep ticking. This was t249's bug. setStatus will try to finish runs when the task
   // settles, so we need to do this first with the correct note.
-  const session = sessionOf(task.id)
+  //
+  // ⛔ **`restingSessionOf`, not `sessionOf`.** A conversation parked at `awaiting_human` has no
+  // open run — `endConversationTurn` finishes it the moment the agent's turn ends — so `sessionOf`
+  // found nothing here and Finish walked past a session that was very much still alive, leaving it
+  // occupying the worker's slot forever and any other task queued behind that worker stuck at
+  // "at capacity" with no way out. Measured against t498's report: closing a held conversation did
+  // not unblock a task waiting on that worker.
+  const session = restingSessionOf(task.id)
   if (session) {
     const run = runForSession(session.id)
     if (run && run.endedAt === null) {
@@ -4842,6 +4849,22 @@ export function resumeIdleConversation(session: Session, opts?: { ignoreQuiet?: 
 
 export function sessionOf(taskId: string): Session | null {
   const run = runsFor(taskId).find((r) => !r.endedAt)
+  return run?.sessionId ? getSession(run.sessionId) : null
+}
+
+/**
+ * The session this task is resting on, whether or not its run is still open.
+ *
+ * ⛔ **Not `sessionOf`.** A conversation parked at `awaiting_human` has no open run —
+ * `endConversationTurn` finishes it the moment the agent's turn ends, deliberately, so the reply is
+ * metered as its own turn — but its session stays live and warm for exactly the reply this task is
+ * resting on. `sessionOf` answers "is somebody talking right now" and is right to say no; a caller
+ * that means "which process is this task still holding open" needs this instead. Falls back to the
+ * most recent run of any kind, open or closed, which is also right for a task that never ran at all
+ * (no runs, no session).
+ */
+export function restingSessionOf(taskId: string): Session | null {
+  const run = runsFor(taskId)[0]
   return run?.sessionId ? getSession(run.sessionId) : null
 }
 
