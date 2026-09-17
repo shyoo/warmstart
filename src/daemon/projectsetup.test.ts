@@ -295,6 +295,44 @@ describe('creating a project', () => {
     expect(readFileSync(join(root, 'AGENTS.md'), 'utf8')).toContain('never directly on `trunk`')
   })
 
+  it('commits the scaffolding it just wrote so the trunk starts clean', async () => {
+    // ⛔ t505/t506, 2026-09-17: `.warmstart/project.json` is documented as a committed file, but
+    // nothing ever committed it — it sat untracked until a landing found a dirty trunk and refused
+    // to merge, with nothing to say the block was scaffolding Warmstart itself had left behind.
+    const root = repoDir()
+    const docs = setup.proposeProjectDocs({ root, name: 'Clean' })
+    const result = await setup.createProject({ root, name: 'Clean', docs })
+
+    expect(result.warnings).toEqual([])
+    expect(
+      execFileSync('git', ['status', '--porcelain', '--', '.warmstart', ...result.docsWritten], {
+        cwd: root,
+        encoding: 'utf8'
+      })
+    ).toBe('')
+
+    const committed = execFileSync('git', ['show', '--stat', '--format=', 'HEAD'], {
+      cwd: root,
+      encoding: 'utf8'
+    })
+    expect(committed).toContain('.warmstart/project.json')
+    for (const name of result.docsWritten) expect(committed).toContain(name)
+  })
+
+  it('leaves an existing config alone rather than committing over it', async () => {
+    const root = repoDir()
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
+    writeFileSync(join(root, '.warmstart', 'project.json'), '{"schema_version":1}')
+    // ⚠️ Untracked on purpose: a config the operator wrote themselves and has not yet committed is
+    // theirs to commit, not this wizard's to sweep up alongside the files it wrote.
+    const result = await setup.createProject({ root, name: 'Untouched' })
+
+    expect(result.warnings).toEqual([])
+    expect(
+      execFileSync('git', ['status', '--porcelain', '--', '.warmstart'], { cwd: root, encoding: 'utf8' })
+    ).toContain('.warmstart')
+  })
+
   it('never overwrites a doc that is already there', async () => {
     const root = repoDir({ 'README.md': 'mine, and not to be replaced' })
     const result = await setup.createProject({

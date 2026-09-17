@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+14.gf3f136c.dirty`): typecheck, lint and
-build pass; L1 **3,690 passed, 5 skipped** (218 files). L2 **203 checks** (5 skipped) and L4 **19 checks**
+Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+16.g6379fdb.dirty`): typecheck, lint and
+build pass; L1 **3,695 passed, 5 skipped** (218 files). L2 **203 checks** (5 skipped) and L4 **19 checks**
 against `release/win-unpacked` were at `0.1.1+1.g1fff656`. L3 not re-run on this
 tip (a renderer change, but `test/ui.test.mjs` never opens a project tab — see t500 below); it was
 **474 passed, 4 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64,
@@ -25,6 +25,12 @@ promote`, `release.yml`'s verify step included — in two turns and no "Prepare 
 channels), all off-repo.
 
 ## Closed in this cleanup
+
+- **A freshly onboarded project could start with a dirty trunk that blocks its first landing (t506 ←
+  t505, 2026-09-17).** `.warmstart/project.json` is documented as committed, but `writeStarterConfig`
+  only wrote it — it sat untracked until a queued landing found the trunk dirty and refused to merge.
+  `createProject` now commits the scaffolding it just wrote right after writing it; an existing,
+  uncommitted config the operator wrote by hand is left alone. `projectsetup.test.ts`.
 
 - **Pending pull requests get a dedicated Tasks banner and dot-clearing reconciliation (t503, 2026-09-17).**
   A project with open PRs displays a dedicated `.tasks-pr-banner` in Tasks with task links, PR URLs,
@@ -71,16 +77,11 @@ channels), all off-repo.
   alone, and spawns `node <cli.js>` from electron-builder's `bin`. `packaging.test.ts`.
 
 - **A local worker's model is what its server serves, named `local-llm:<served id>` (t486,
-  2026-09-16).** `costmodels/local.llm` listed one id, `qwen3-coder-30b-a3b`; every model write is
-  validated against the cost model, so it was the only default a person could set and the one
-  migrations 44/61 wrote — while llama.cpp ignores `model` on a single-model server, so the
-  Qwen3.8-27B endpoint answered and every run and grade said the 30B coder had. The file now
-  declares `dynamic_models` (a template under `id_prefix`); `probeIdentity` reads `/v1/models` and
-  llama.cpp's `/props` into `identity.servedModels` / `contextWindow`; `knownModelIds` feeds
-  `model.options` (an entry per local worker), fitness and triage; the bridge asks `/v1/models`
-  when no model is set and names it on `init`. Migration 74 clears the pinned literal to null.
-  `docs/cost-model.md` §8a. ⚠️ **Not yet driven against a real server** — start one, press Probe on
-  the local worker, confirm the picker lists the gguf and a run's session names it. Design:
+  2026-09-16).** `costmodels/local.llm` pinned one id, so llama.cpp (which ignores `model` on a
+  single-model server) always answered as the pinned model regardless of what actually loaded. The
+  file now declares `dynamic_models`; `probeIdentity` reads `/v1/models`/`/props` and `knownModelIds`
+  feeds the picker, fitness and triage. Migration 74 clears the pinned literal. `docs/cost-model.md`
+  §8a. ⚠️ **Not yet driven against a real server.** Design:
   [`transient_docs/local_model_identity_2026-09-16.md`](transient_docs/local_model_identity_2026-09-16.md).
 
 - **A release is one turn, and the tag is the version (t485, 2026-09-16).** The version was a source fact

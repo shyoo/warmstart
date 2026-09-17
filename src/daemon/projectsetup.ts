@@ -13,6 +13,7 @@ import type {
 } from '@shared/tasks.js'
 import { PROJECT_DOC_NAMES } from '@shared/tasks.js'
 import { canonicalPath, samePath, withinPath } from './fspath.js'
+import { git } from './git.js'
 import { log } from './log.js'
 import {
   addProject,
@@ -20,6 +21,7 @@ import {
   detectVcs,
   listProjects,
   policyFor,
+  PROJECT_CONFIG_RELATIVE,
   readProjectConfig,
   relativeWorkspaceRoot,
   reloadProject,
@@ -268,11 +270,15 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
   const project = addProject({ root, name: request.name })
 
   let configPath: string | null = null
+  let configFreshlyWritten = false
   try {
     // ⚠️ The starter first, so a brand-new project.json carries the whole skeleton — objective,
     // prepare, permission — rather than only the handful of keys the form happened to set. It
     // returns early when the repo already committed one, so an existing config is never clobbered.
+    const configFile = join(root, PROJECT_CONFIG_RELATIVE)
+    const configExistedBefore = existsSync(configFile)
     configPath = writeStarterConfig(project.id)
+    configFreshlyWritten = !configExistedBefore && configPath === configFile
     if (request.checks !== undefined) setProjectChecks(project.id, request.checks)
     const policy = { ...request.policy }
     if (request.workspaceRoot !== undefined) policy.workspaceRoot = request.workspaceRoot
@@ -286,7 +292,46 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
 
   const docsWritten = writeProjectDocs(project, request.docs ?? [], warnings)
 
+  // ⛔ **A file this wizard just wrote is never left uncommitted.** `.warmstart/project.json` is
+  // documented as a *committed* file (data-model.md, glossary.md) so every clone and every landing
+  // check sees the same policy — but nothing wrote it to git, so it sat untracked until a landing
+  // discovered a dirty trunk and refused to merge, with no indication the block was Warmstart's own
+  // doing. Only the files this call actually wrote are staged; anything the operator already had is
+  // never touched.
+  if (project.vcs === 'git') {
+    const scaffolding = [...(configFreshlyWritten ? [PROJECT_CONFIG_RELATIVE] : []), ...docsWritten]
+    await commitScaffolding(project, scaffolding, warnings)
+  }
+
   return { project: reloadProject(project.id), configPath, docsWritten, warnings }
+}
+
+/**
+ * Commit the scaffolding files this call just wrote, so the trunk it hands back is clean.
+ *
+ * ⛔ **Only what is actually dirty.** `git status --porcelain` is checked before staging, because a
+ * path this function is about to commit could in principle already match what `HEAD` has (an
+ * operator re-running create against a project whose scaffolding was committed by hand); staging and
+ * committing nothing is quietly correct, not an error.
+ */
+async function commitScaffolding(project: Project, paths: string[], warnings: string[]): Promise<void> {
+  if (paths.length === 0) return
+  try {
+    const dirty = await git(project.root, ['status', '--porcelain', '--', ...paths])
+    if (!dirty.trim()) return
+    await git(project.root, ['add', '--', ...paths])
+    await git(project.root, [
+      'commit',
+      '--no-verify',
+      '-m',
+      'Add Warmstart project scaffolding\n\n' +
+        `Warmstart wrote ${paths.join(', ')} for this project and committed them immediately, ` +
+        'so the trunk starts clean rather than blocking the first landing on a file nobody knew to commit.'
+    ])
+    log.info(`${project.name}: committed ${paths.join(', ')}`)
+  } catch (err) {
+    warnings.push(`could not commit the project scaffolding (${paths.join(', ')}): ${errorMessage(err)}`)
+  }
 }
 
 /**
