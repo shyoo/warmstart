@@ -28,7 +28,7 @@ channels), all off-repo.
 - **The trade-off scatters name their marks (t490, 2026-09-16).** Every mark had only its agent's
   icon. `placeScatterLabels` (`Statistics.tsx`) sets a name beside each, clear of labels and icons;
   `compactModelLabel` (`lib/modelname.ts`) shortens by shape, not family (*3.1 Pro High*, *Spark 1.3 C*).
-  ⚠️ Seen only as a static render of invented points, not in the packaged app with real data.
+  Duration ticks clear the axis title (`marginLeft` 62). Seen at 2× on real data, not packaged.
 
 - **`scripts/version.mjs` printed nothing when *run* on Linux or macOS, and that decided a
   release's visibility (2026-09-16).** It tested whether it had been invoked directly by comparing

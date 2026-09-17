@@ -789,7 +789,8 @@ export function ScatterPlot({
   const [hovered, setHovered] = useState<string | null>(null)
   const width = 300
   const height = 220
-  const marginLeft = 46
+  // ⚠️ Wide enough for a duration tick (`27m 31s`, ~38px of 9px mono) to clear the rotated axis title.
+  const marginLeft = 62
   const marginRight = 14
   const marginTop = 12
   const marginBottom = 30
@@ -880,11 +881,11 @@ export function ScatterPlot({
           {AXIS_TITLE[xAxis]} ({AXIS_HINT[xAxis]})
         </text>
         <text
-          x={10}
+          x={8}
           y={midY}
           textAnchor="middle"
           className="scatter-plot-axis-label"
-          transform={`rotate(-90, 10, ${midY})`}
+          transform={`rotate(-90, 8, ${midY})`}
         >
           {AXIS_TITLE[yAxis]} ({AXIS_HINT[yAxis]})
         </text>
