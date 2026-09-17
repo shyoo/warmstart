@@ -25,6 +25,11 @@ channels), all off-repo.
 
 ## Closed in this cleanup
 
+- **The trade-off scatters name their marks (t490, 2026-09-16).** Every mark had only its agent's
+  icon. `placeScatterLabels` (`Statistics.tsx`) sets a name beside each, clear of labels and icons;
+  `compactModelLabel` (`lib/modelname.ts`) shortens by shape, not family (*3.1 Pro High*, *Spark 1.3 C*).
+  ⚠️ Seen only as a static render of invented points, not in the packaged app with real data.
+
 - **`scripts/version.mjs` printed nothing when *run* on Linux or macOS, and that decided a
   release's visibility (2026-09-16).** It tested whether it had been invoked directly by comparing
   `import.meta.url` against a hand-built `file:///${process.argv[1]}` — right on Windows (`C:\a` →
@@ -108,7 +113,6 @@ channels), all off-repo.
   from the spawn request, marked *(as requested)*, and `stripFrames` keeps the daemon's dim lines out
   of an MCP-less reply read back from the pane (which also quoted that header as the answer's first line).
 
-- **`warmstart-site` polish (t468/t469/t471).** ⚠️ Committed there, **not pushed** — a push deploys.
 - **A granted directory can now be committed in, and an agent can ask for one that works (t470,
   2026-09-15).** Codex's elevated Windows sandbox writes a **deny** ACE on each `--add-dir` root's
   `.git`, so edits landed and `git commit` died at `.git/index.lock`. ⭐ Probed on codex-cli 0.151.0:

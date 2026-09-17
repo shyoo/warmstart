@@ -10,7 +10,7 @@ import type {
 } from '@shared/statistics'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { duration, money, when } from '../lib/format'
-import { effortLabel, modelLabel } from '../lib/modelname'
+import { compactModelLabel, effortLabel, modelLabel } from '../lib/modelname'
 import {
   readStatisticsExcludeApiMixed,
   readStatisticsWindow,
@@ -563,6 +563,8 @@ function StatGraph({
 type ModelPoint = {
   key: string
   label: string
+  /** The model alone, drawn beside the mark — the icon already names the agent. */
+  shortLabel: string
   adapterId: string
   cost: number
   velocity: number
@@ -633,6 +635,7 @@ export function measuredModelPoints(report: StatisticsReport, excludeApiMixed = 
     .map(([key, p]) => ({
       key,
       label: `${agents.get(p.adapterId) ?? p.adapterId} · ${modelLabel(p.model) ?? p.model}`,
+      shortLabel: compactModelLabel(p.model) ?? p.model,
       adapterId: p.adapterId,
       cost: p.cost!,
       velocity: p.velocity!,
@@ -679,6 +682,93 @@ function axisPosition(axis: Axis, value: number, max: number): number {
 function axisMax(points: ModelPoint[], axis: Axis): number {
   if (axis === 'quality') return 10
   return Math.max(...points.map((p) => p[axis]), axis === 'cost' ? 0.01 : 1)
+}
+
+/** A mark's name label, where it was placed, and whether it had to move off its mark to fit. */
+export type PlacedLabel = {
+  key: string
+  text: string
+  x: number
+  y: number
+  anchor: 'start' | 'end'
+  /** The mark's centre, so a displaced label can draw a leader back to it. */
+  cx: number
+  cy: number
+  displaced: boolean
+}
+
+/** Rough width of `text` at the label's 8px type: close enough to keep labels apart, not to typeset. */
+const LABEL_CHAR_WIDTH = 4.4
+const LABEL_LINE_HEIGHT = 9
+
+/**
+ * Places a name beside every mark without two names overprinting.
+ *
+ * ⚠️ The measured models cluster — most grade between 7.5 and 9 — so a label drawn at its mark would
+ * be unreadable exactly where the plot is most interesting. Each label goes right of its mark (left
+ * when it would run off the plot), at the mark's height if that is free, else at the nearest free
+ * line above or below. Greedy and in mark order, so the same data always lays out the same way.
+ */
+export function placeScatterLabels(
+  marks: Array<{ key: string; text: string; cx: number; cy: number }>,
+  bounds: { left: number; right: number; top: number; bottom: number },
+  markRadius: number
+): PlacedLabel[] {
+  const placed: Array<PlacedLabel & { x0: number; x1: number }> = []
+  const gap = markRadius + 4
+  const ordered = [...marks].sort((a, b) => a.cy - b.cy || a.cx - b.cx || a.key.localeCompare(b.key))
+  for (const mark of ordered) {
+    const width = mark.text.length * LABEL_CHAR_WIDTH
+    const fitsRight = mark.cx + gap + width <= bounds.right
+    const fitsLeft = mark.cx - gap - width >= bounds.left
+    const sides = (fitsRight || !fitsLeft ? [true, false] : [false, true]).filter((right) =>
+      right ? fitsRight || !fitsLeft : fitsLeft
+    )
+    const extent = (right: boolean): [number, number] =>
+      right ? [mark.cx + gap, mark.cx + gap + width] : [mark.cx - gap - width, mark.cx - gap]
+    // ⚠️ Another model's icon is as much in the way as its label: a name drawn under a mark is gone.
+    const free = (right: boolean, y: number): boolean => {
+      const [x0, x1] = extent(right)
+      const half = LABEL_LINE_HEIGHT / 2
+      return (
+        y >= bounds.top + half &&
+        y <= bounds.bottom - half &&
+        placed.every((p) => p.x1 < x0 || p.x0 > x1 || Math.abs(p.y - y) >= LABEL_LINE_HEIGHT) &&
+        marks.every(
+          (m) =>
+            m.key === mark.key ||
+            m.cx + markRadius < x0 ||
+            m.cx - markRadius > x1 ||
+            Math.abs(m.cy - y) >= markRadius + half
+        )
+      )
+    }
+    // At the mark's height on either side first; only then the nearest free line above or below.
+    const candidates = [
+      ...sides.map((right) => ({ right, y: mark.cy })),
+      ...Array.from({ length: 12 }, (_, i) => i + 1).flatMap((step) =>
+        sides.flatMap((right) => [
+          { right, y: mark.cy + step * LABEL_LINE_HEIGHT },
+          { right, y: mark.cy - step * LABEL_LINE_HEIGHT }
+        ])
+      )
+    ]
+    const chosen = candidates.find((c) => free(c.right, c.y)) ?? { right: sides[0]!, y: mark.cy }
+    const [x0, x1] = extent(chosen.right)
+    placed.push({
+      key: mark.key,
+      text: mark.text,
+      x: chosen.right ? x0 : x1,
+      y: chosen.y,
+      anchor: chosen.right ? 'start' : 'end',
+      cx: mark.cx,
+      cy: mark.cy,
+      displaced: Math.abs(chosen.y - mark.cy) > markRadius,
+      x0,
+      x1
+    })
+  }
+  return placed.map(({ x0: _x0, x1: _x1, ...label }) => label)
 }
 
 /**
@@ -798,6 +888,36 @@ export function ScatterPlot({
         >
           {AXIS_TITLE[yAxis]} ({AXIS_HINT[yAxis]})
         </text>
+        {placeScatterLabels(
+          points.map((point) => ({
+            key: point.key,
+            text: point.shortLabel,
+            cx: scaleX(axisPosition(xAxis, point[xAxis], maxX)),
+            cy: scaleY(axisPosition(yAxis, point[yAxis], maxY))
+          })),
+          { left: marginLeft, right: width - marginRight, top: marginTop, bottom: height - marginBottom },
+          iconSize / 2
+        ).map((label) => (
+          <g key={`label-${label.key}`} aria-hidden>
+            {label.displaced && (
+              <line
+                x1={label.cx}
+                y1={label.cy}
+                x2={label.anchor === 'start' ? label.x - 1 : label.x + 1}
+                y2={label.y}
+                className="scatter-plot-label-leader"
+              />
+            )}
+            <text
+              x={label.x}
+              y={label.y + 3}
+              textAnchor={label.anchor}
+              className={`scatter-plot-mark-label${hovered === label.key ? ' active' : ''}`}
+            >
+              {label.text}
+            </text>
+          </g>
+        ))}
         {points.map((point) => {
           const cx = scaleX(axisPosition(xAxis, point[xAxis], maxX))
           const cy = scaleY(axisPosition(yAxis, point[yAxis], maxY))

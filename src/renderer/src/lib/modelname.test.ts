@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { effortLabel, modelLabel } from './modelname.js'
+import { compactModelLabel, effortLabel, modelLabel } from './modelname.js'
 
 /**
  * ⛔ **Every id here is one this fleet can actually dispatch**, read off the four files in
@@ -82,5 +82,25 @@ describe('effortLabel', () => {
   it('shows a level nobody here has heard of rather than hiding it', () => {
     expect(effortLabel('ultra')).toBe('Ultra')
     expect(effortLabel(null)).toBeNull()
+  })
+})
+
+describe('compactModelLabel', () => {
+  it('drops what the agent icon beside a chart mark already says', () => {
+    expect(compactModelLabel('gemini-3.1-pro-high')).toBe('3.1 Pro High')
+    expect(compactModelLabel('gemini-3.7-flash-medium')).toBe('3.7 Flash Med')
+    expect(compactModelLabel('gpt-5.6-sol')).toBe('5.6 Sol')
+    expect(compactModelLabel('muse-spark-1.3-contributor')).toBe('Spark 1.3 C')
+  })
+
+  it('keeps the word in front of a version that ends the name, or nothing would be left', () => {
+    expect(compactModelLabel('claude-opus-5')).toBe('Opus 5')
+    expect(compactModelLabel('claude-haiku-4-5-20251001')).toBe('Haiku 4.5')
+  })
+
+  it('leaves a name with no version, and a local model, as modelLabel writes them', () => {
+    expect(compactModelLabel('gpt-oss')).toBe(modelLabel('gpt-oss'))
+    expect(compactModelLabel('local-llm:Qwen3-Coder-30B.gguf')).toBe(modelLabel('local-llm:Qwen3-Coder-30B.gguf'))
+    expect(compactModelLabel(null)).toBeNull()
   })
 })

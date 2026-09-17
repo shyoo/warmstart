@@ -113,3 +113,30 @@ function word(token: string): string {
 function titleCase(token: string): string {
   return token.charAt(0).toUpperCase() + token.slice(1)
 }
+
+/** A trailing word longer than this is cut to its initial in a compact label. */
+const COMPACT_WORD_MAX = 6
+
+/**
+ * `modelLabel`, cut down for a mark on a chart, where the agent's icon beside it already says whose
+ * model it is. `gemini-3.1-pro-high` → *3.1 Pro High*; `muse-spark-1.3-contributor` → *Spark 1.3 C*;
+ * `claude-opus-5` stays *Opus 5*.
+ *
+ * ⛔ Shape, not family, like everything above: a lone word in front of a version that has a variant
+ * after it is the family (*Gemini* 3.1 Pro, *GPT* 5.6 Sol) and goes; a version with nothing after it
+ * *is* the name's tail (Opus 5), so the word in front of it stays. Of two words before the version,
+ * the first goes. A long word after the version keeps only its initial. ⚠️ Lossy by design, so a
+ * caller must keep the full label within reach, as the scatter's hover line does.
+ */
+export function compactModelLabel(model: string | null | undefined, effort?: string | null): string | null {
+  const full = modelLabel(model, effort)
+  if (!full || (model && isLocalModelId(model))) return full
+  const words = full.split(' ')
+  const version = words.findIndex((w) => /^\d+(\.\d+)*$/.test(w))
+  if (version <= 0) return full
+  const before = words.slice(0, version)
+  const after = words.slice(version + 1)
+  const lead = before.length === 1 && after.length > 0 ? [] : before.slice(-1)
+  const tail = after.map((w) => (w.length > COMPACT_WORD_MAX ? w.charAt(0) : w))
+  return [...lead, words[version]!, ...tail].join(' ')
+}

@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { PriceStatRow, StatisticsReport } from '@shared/statistics.js'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { graphLabel, labelColumn, measuredModelPoints, priceRowsForGraph, TradeoffPlots } from './Statistics.js'
+import {
+  graphLabel,
+  labelColumn,
+  measuredModelPoints,
+  placeScatterLabels,
+  priceRowsForGraph,
+  TradeoffPlots
+} from './Statistics.js'
 
 function row(key: string, basis: PriceStatRow['basis']): PriceStatRow {
   return {
@@ -245,7 +252,67 @@ describe('the trade-off scatters draw one mark per model on every pair of axes',
     }
   })
 
+  it('names the model beside every mark, since the icon only names the agent', () => {
+    expect([...markup.matchAll(/class="scatter-plot-mark-label"/g)]).toHaveLength(6)
+    expect(markup).toMatch(/>Opus 5<\/text>/)
+    expect(markup).toMatch(/>Sonnet 5<\/text>/)
+  })
+
   it('leaves no trace of the retired 3D plot classes', () => {
     expect(markup).not.toMatch(/three-axis/)
+  })
+})
+
+describe('placeScatterLabels', () => {
+  const bounds = { left: 46, right: 286, top: 12, bottom: 190 }
+
+  it('keeps a lone label on its mark, to the right', () => {
+    const label = placeScatterLabels([{ key: 'a', text: 'Opus 5', cx: 100, cy: 100 }], bounds, 7)[0]!
+    expect(label.anchor).toBe('start')
+    expect(label.x).toBeGreaterThan(100)
+    expect(label.y).toBe(100)
+    expect(label.displaced).toBe(false)
+  })
+
+  it('puts a label left of a mark near the right edge rather than off the plot', () => {
+    const label = placeScatterLabels([{ key: 'a', text: 'Gemini 3.1 Pro High', cx: 270, cy: 100 }], bounds, 7)[0]!
+    expect(label.anchor).toBe('end')
+    expect(label.x).toBeLessThan(270)
+  })
+
+  /** ⛔ The reported case: three models graded within a hair of each other drew one unreadable blot. */
+  it('never overprints two labels, or a label and another mark, when marks overlap', () => {
+    const labels = placeScatterLabels(
+      [
+        { key: 'a', text: 'Opus 5', cx: 200, cy: 30 },
+        { key: 'b', text: 'GPT 5.6 Sol', cx: 202, cy: 31 },
+        { key: 'c', text: 'Muse Spark 1.3', cx: 201, cy: 33 }
+      ],
+      bounds,
+      7
+    )
+    // The same 4.4px-per-character estimate the placement uses; this checks the geometry, not the type.
+    const box = (l: (typeof labels)[number]) => {
+      const width = l.text.length * 4.4
+      return l.anchor === 'start' ? { x0: l.x, x1: l.x + width, y: l.y } : { x0: l.x - width, x1: l.x, y: l.y }
+    }
+    for (const a of labels) {
+      for (const b of labels) {
+        if (a === b) continue
+        const [p, q] = [box(a), box(b)]
+        const apart = p.x1 < q.x0 || p.x0 > q.x1 || Math.abs(p.y - q.y) >= 9
+        expect(apart).toBe(true)
+      }
+      for (const other of labels) {
+        if (other === a) continue
+        const p = box(a)
+        const clear = other.cx + 7 < p.x0 || other.cx - 7 > p.x1 || Math.abs(other.cy - p.y) >= 7 + 4.5
+        expect(clear).toBe(true)
+      }
+    }
+    for (const l of labels) {
+      expect(l.y).toBeGreaterThanOrEqual(bounds.top)
+      expect(l.y).toBeLessThanOrEqual(bounds.bottom)
+    }
   })
 })
