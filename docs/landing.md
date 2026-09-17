@@ -359,6 +359,32 @@ revert of the agent's own work at the tip. The stash label says how many were hi
 stashed, both branches were left at the base commit. The resumed runs saw empty branches and started
 over — one spent 13.3M tokens re-deriving work that was in `git stash list` the whole time.
 
+## When the run committed in another repository
+
+Both ladders measure the task's own checkout — its worktree, or the trunk — so an agent that committed
+somewhere else used to finish as *nothing to land*. ⛔ Measured on t491 (2026-09-16): filed on
+`sunghwanyoo-site` about a commit in `warmstart-site`, the agent committed its rephrase **there**; the
+trunk finish saw no commits on `sunghwanyoo-site`'s `main`, wrote *"no commits reached `main`"*, and
+completed a task whose work sat unpushed in another repository. An agent running with the operator's
+own authority (Antigravity, an unattended Claude) can do this; a sandbox only narrows it.
+
+`strayCommits` (`straycommits.ts`) now runs **before either ladder**:
+
+- **Where to look comes from the run, what happened comes from git.** Every absolute path in the run's
+  recorded tool lines is a candidate; its repository counts only if that repository's `HEAD` reflog has
+  a `commit` entry timestamped inside the run. A repository the agent merely read produces nothing.
+- **Excluded:** the project checkout and every worktree sharing its git directory (another task's pool
+  member is not this run's stray), the task's workspace, and every directory granted to it.
+- **An unpushed stray holds the task** at `awaiting_human`, naming each commit and repository. ⛔ It is
+  never pushed for you: another repository's checks and remote are no project's policy here. A stray the
+  agent already pushed is named on the thread and the ordinary finish continues.
+
+⚠️ **Best effort in both directions.** It misses a repository reached only by a relative `cd`, or named
+before the bounded activity tail (`RUN_KEEP`) rolled over; and it counts a commit somebody else made in
+the same repository during the run. The second costs a click; the first is the silent completion this
+exists to stop, so a task that finished with nothing to land while the work plainly happened still
+deserves a look at the repositories it touched.
+
 ## Loose ends
 
 Five kinds of work that exists and is going nowhere, listed on **Overview**:

@@ -179,6 +179,7 @@ import {
 } from './activity.js'
 import { log } from './log.js'
 import { git } from './git.js'
+import { strayCommits, strayHoldReason, strayNote } from './straycommits.js'
 import { clockTime, oneLine, shortDuration } from './threadline.js'
 import { RESTART_REAP_NOTE } from './activetime.js'
 import { db } from './db.js'
@@ -3594,7 +3595,39 @@ async function landCompletion(
       `branch=${task.branch ?? 'none'} project=${project?.name ?? 'none'}/${project?.vcs ?? '-'}`
   )
 
-  if (project && held && held.workspace.kind === 'trunk' && project.vcs === 'git') {
+  // ⛔ **Work in a repository the finish below never looks at.** Both ladders measure the task's own
+  // checkout, so an agent that committed somewhere else finishes as "nothing to land" — t491 did,
+  // and its commit sat unpushed in another project. Measured before either ladder runs, and a hold
+  // rather than an act: another repository's checks and remote are nobody's policy here.
+  const strays =
+    project && held && project.vcs === 'git'
+      ? await strayCommits({
+          lines: runActivityFor(run.id).map((e) => e.text),
+          since: run.startedAt,
+          projectRoot: project.root,
+          exclude: [held.workspace.path, ...grantedDirsFor(task.id)]
+        }).catch((err: unknown) => {
+          log.warn(`t${task.seq}: could not look for commits outside the project:`, err)
+          return []
+        })
+      : []
+  const strayHold = strayHoldReason(strays)
+  if (strays.length > 0) {
+    log.info(`t${task.seq} committed outside its project:\n${strayNote(strays)}`)
+    if (!strayHold) {
+      addMessage(task.id, 'system', 'Also committed outside this project, and already pushed there', null, [], {
+        detail: strayNote(strays)
+      })
+    }
+  }
+
+  if (strayHold) {
+    addMessage(task.id, 'system', `Not finished: ${oneLine(strayHold)}`, null, [], {
+      event: 'finish.held',
+      detail: `${strayHold}\n\n${strayNote(strays)}`
+    })
+    setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: strayHold })
+  } else if (project && held && held.workspace.kind === 'trunk' && project.vcs === 'git') {
     // ⭐ **A trunk task's finish.** Its own ladder (`decideTrunkFinish`): there is no branch to read,
     // so everything below that measures one is skipped, and the acts are the same four — ask once,
     // hand to a person, verify-and-maybe-push, or done.

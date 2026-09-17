@@ -25,10 +25,12 @@ channels), all off-repo.
 
 ## Closed in this cleanup
 
-- **The trade-off scatters name their marks (t490, 2026-09-16).** Every mark had only its agent's
-  icon. `placeScatterLabels` (`Statistics.tsx`) sets a name beside each, clear of labels and icons;
-  `compactModelLabel` (`lib/modelname.ts`) shortens by shape, not family (*3.1 Pro High*, *Spark 1.3 C*).
-  Axis titles say *right/top is better*; ticks clear them. Seen at 2× on real data, not packaged.
+- **A run that commits in another repository is held, not finished (t492, 2026-09-16).** t491 committed in
+  `warmstart-site` while filed on `sunghwanyoo-site`; the trunk finish saw nothing and completed it unpushed.
+  `strayCommits` checks repositories the run's tool lines name against their reflog. `docs/landing.md`.
+
+- **The trade-off scatters name their marks (t490, 2026-09-16).** `placeScatterLabels` and `compactModelLabel`
+  (*3.1 Pro High*, *Spark 1.3 C*) in `Statistics.tsx`; axes say *right/top is better*. Not seen packaged.
 
 - **`scripts/version.mjs` printed nothing when *run* on Linux or macOS, and that decided a
   release's visibility (2026-09-16).** It tested whether it had been invoked directly by comparing
@@ -146,30 +148,27 @@ judgement. Do not replace the missing evidence with a unit test.
    must edit there, and watch a sandboxed codex **commit** in it — the `.git` grant is proven by a
    throwaway-repo probe and has not yet carried a real task's work. Then, on `claude-code`, have an
    agent call `request_directory` for a folder nobody attached and confirm the restart resumes warm.
-5. ✅ **Closed 2026-09-15** — the signed, notarised `rc.2` bundle drove a real agent on the owner's
-   Mac. Unmeasured alone: Application Support isolation, and Antigravity's Keychain under hardening.
-6. **Verify `v0.1.1` as installed from the Releases page**, on Windows and on a Mac — the promoted build is a rebuild of the rc, not the same artefacts.
-7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
+5. **Verify `v0.1.1` as installed from the Releases page**, on Windows and on a Mac — the promoted build is a rebuild of the rc, not the same artefacts.
+6. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.
-8. ✅ **Closed 2026-09-15** — `rc.2` installed and verified on Windows and macOS.
-9. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the
+7. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the
    generic declarative adapter cannot meter, gets no MCP tools and cannot reap orphans); CI watch
    after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an
    update-available check that keeps `publish: null`; a full data-directory export (isolation roots,
    attachments); and a clone-per-worker or container backend, the only thing that closes both the
    host-authority gap and the shared common-`.git` grant. ⚠️ Deliberately **not** on this list:
    GitHub/Linear/Slack intake, agent-to-agent messaging, kanban, voice, cross-machine sync.
-10. **Give Antigravity a real per-worker isolation root.** It shares `~/.gemini` today; changing `HOME`
+8. **Give Antigravity a real per-worker isolation root.** It shares `~/.gemini` today; changing `HOME`
    must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
-11. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data;
+9. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data;
    compare small and large quality-review models on the same five tasks; verify the Claude credits
    gauge against one real invoice; and decide whether preempted runs should contribute to estimates.
-12. **Increase thread UI coverage where behaviour changes.** Most thread interactions remain
+10. **Increase thread UI coverage where behaviour changes.** Most thread interactions remain
    hand-tested. Extract pure decisions into `src/renderer/src/lib/` first.
-13. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines
+11. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines
    against a ~1,500 target; no extracted module may read a scheduler binding at module evaluation time.
-14. **Drive t423's live views in the packaged app, with a real run behind them.** Watch a dispatched
+12. **Drive t423's live views in the packaged app, with a real run behind them.** Watch a dispatched
    Claude task narrate its tool calls into the thread peephole and the Session TUI; open **Open a real
    terminal** on it and confirm the fork holds the context while the run carries on; turn
    `liveNarration` to `streaming` and see whether the typing is worth ten times the stream lines.
