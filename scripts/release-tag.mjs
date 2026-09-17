@@ -18,6 +18,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { judge, measure } from './check-release-base.mjs'
 
 const TAG = /^v(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.]+))?$/
@@ -238,6 +239,8 @@ function main(argv) {
   console.log(`It publishes to https://github.com/${REPOSITORY}/releases/tag/${tag.name}${tag.prerelease ? ' as a pre-release' : ' as latest'}.`)
 }
 
-const invokedDirectly =
-  process.argv[1] && import.meta.url === new URL(`file:///${process.argv[1].replace(/\\/g, '/')}`).href
-if (invokedDirectly) main(process.argv.slice(2))
+// ⛔ `pathToFileURL`, never a hand-built `file:///${argv[1]}`: that form is true only on Windows, so
+// on Linux and macOS this file would run as a **silent no-op that exits 0** — a `cut` that tagged
+// nothing and said so by saying nothing. `scripts/version.mjs` had the same line and it published an
+// rc as `/releases/latest` (2026-09-16); `src/shared/scripts.test.ts` now fails on the shape.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main(process.argv.slice(2))

@@ -15,6 +15,7 @@
 
 import { execFileSync } from 'node:child_process'
 import { dirname } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const run = (cwd, ...argv) =>
   execFileSync('git', argv, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -82,9 +83,11 @@ export function judge({ trunkAhead, headBehind, trunkDirty, trunkBranch }, targe
   return problems
 }
 
-const invokedDirectly =
-  process.argv[1] && import.meta.url === new URL(`file:///${process.argv[1].replace(/\\/g, '/')}`).href
-if (invokedDirectly) {
+// ⛔ `pathToFileURL`, never a hand-built `file:///${argv[1]}`: that form is true only on Windows, so
+// on Linux and macOS this gate would exit 0 without checking anything — a refusal that never refuses.
+// `scripts/version.mjs` carried the same line and it published an rc as `/releases/latest`
+// (2026-09-16); `src/shared/scripts.test.ts` fails on the shape now.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2)
   const option = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback)
   const target = option('--target', 'main')

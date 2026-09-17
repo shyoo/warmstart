@@ -7,24 +7,21 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the
 authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-16, **Windows 11**, measured on the packaging fix over `0.1.0+9.gd5e8f3f`):
-typecheck, lint and build pass; L1 **3,635 passed, 5 skipped** (214 files); L2 **203 checks**
-(5 skipped); L4 **19 checks** against `release/win-unpacked`, the packaged daemon answering
-`v0.1.0+9.gd5e8f3f.dirty`. L3 not re-run on this tip (no renderer change); it was **474 passed, 4
-skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
-signed, hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
+Baseline (2026-09-16, **Windows 11**, measured over `0.1.1+1.g1fff656`): typecheck, lint and build
+pass; L1 **3,637 passed, 5 skipped** (215 files); L2 **203 checks** (5 skipped); L4 **19 checks**
+against `release/win-unpacked`, the packaged daemon answering its own version. L3 not re-run on this
+tip (no renderer change); it was **474 passed, 4 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64,
+2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so
+is the **Release** workflow.
 
-**`v0.1.0` is released and `latest`** (tag build 35066743396, 2026-09-16, attested — the first
-tag build on the public repository). **The version is now the tag** (t485, below): nothing in the
-tree carries one, so there is no "prepared, untagged" state any more, and a release is one turn:
-`/release rc` on a green `origin/main`, install and verify it, `/release promote`. ⭐ That flow has now
-carried a real cut, `release.yml`'s verify step included. Then Phase 3/4 (write-up, demo GIF, landing
-page, channels), all off-repo.
-
-**`v0.1.1-rc.1` is tagged, built and published** (tag build 35161851026, 2026-09-16; five installers
-+ `SHA256SUMS.txt`, attested). ⚠️ It published as a **full release** and became `/releases/latest`
-for ~8 minutes before being corrected with `gh release edit --prerelease` — see the version.mjs entry
-below. ⏭ Next: install it, verify it, then `/release promote`.
+**`v0.1.1` is released and `latest`** (tag build 35165991396, 2026-09-17, attested; five installers
++ `SHA256SUMS.txt`). It was verified as `v0.1.1-rc.1` (tag build 35161851026) and promoted onto that
+rc's own commit `1d2c714`, so `v0.1.1` and `v0.1.1-rc.1` name the same bytes. ⭐ **The whole
+tag-is-the-version flow has now carried a release end to end** — `/release rc`, verify, `/release
+promote`, `release.yml`'s verify step included — in two turns and no "Prepare vX" commit.
+⚠️ `main` is *ahead* of the released tag: the two fixes below landed after the rc was cut, so the
+0.1.1 installers do not contain them. ⏭ Next is Phase 3/4 (write-up, demo GIF, landing page,
+channels), all off-repo.
 
 ## Closed in this cleanup
 
@@ -35,13 +32,17 @@ below. ⏭ Next: install it, verify it, then `/release promote`.
   `version=$(node scripts/version.mjs)` was the empty string, its `case "$version" in *-*)` found no
   `-`, and **`v0.1.1-rc.1` published as a full release and became `/releases/latest`** — the one thing
   t474 says an rc must never be, because installed apps poll that endpoint. Corrected on GitHub with
-  `gh release edit v0.1.1-rc.1 --prerelease`; `/releases/latest` reads `v0.1.0` again. `pathToFileURL`
-  now, and the workflow **refuses** a version that is not version-shaped rather than defaulting.
-  ⚠️ Every consumer that *imports* `resolveVersion()` was unaffected, which is why no build looked
-  wrong and every existing test stayed green; `src/shared/version.test.ts` now runs the script as a
-  program, and ⛔ that check is green on Windows either way — it only goes red where the bug bit.
-  ⚠️ `scripts/build-mac.sh` reads the same command into `.build-cache/version.txt`, so its step
-  fingerprints were built on an empty version on macOS; unmeasured, and worth a look on the next Mac.
+  `gh release edit v0.1.1-rc.1 --prerelease` before promotion. `pathToFileURL` now, and the workflow
+  **refuses** a version that is not version-shaped instead of defaulting to `prerelease=false`.
+  ⛔ **`release-tag.mjs` and `check-release-base.mjs` carried the same line** — on a Mac or Linux box
+  a `cut` would have tagged nothing and the base gate refused nothing, both exiting 0 in silence.
+  ⚠️ Every consumer that *imports* `resolveVersion()` was unaffected, which is why every build carried
+  the right version and every existing test stayed green. Two now cover it: `version.test.ts` runs the
+  script as a program (⛔ green on Windows either way — it only goes red where the bug bit, which is
+  CI's ubuntu `check` job), and `scripts.test.ts` fails on the *shape* in any `scripts/*.mjs`, proven
+  red against the old line. ⚠️ `scripts/build-mac.sh` reads the same command into
+  `.build-cache/version.txt`, so its step fingerprints were computed from an empty version on macOS;
+  unmeasured, and worth a look on the next Mac.
 
 - **electron-builder is invoked from one script, and never from a config file that computes
   anything (2026-09-16).** t485's `electron-builder.js` — an ESM config that `extends:` the settings
@@ -143,7 +144,7 @@ judgement. Do not replace the missing evidence with a unit test.
    agent call `request_directory` for a folder nobody attached and confirm the restart resumes warm.
 5. ✅ **Closed 2026-09-15** — the signed, notarised `rc.2` bundle drove a real agent on the owner's
    Mac. Unmeasured alone: Application Support isolation, and Antigravity's Keychain under hardening.
-6. **Install `v0.1.1-rc.1` on Windows and macOS, verify it, then `/release promote`** so a final 0.1.1 becomes `latest`.
+6. **Verify `v0.1.1` as installed from the Releases page**, on Windows and on a Mac — the promoted build is a rebuild of the rc, not the same artefacts.
 7. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
    other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
    both computers, a revoke on the host cutting the client off, and the ±1 version warning.

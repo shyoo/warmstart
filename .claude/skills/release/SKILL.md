@@ -72,6 +72,11 @@ node scripts/release-tag.mjs cut <version> --notes .build-cache/notes-v<version>
 node scripts/release-tag.mjs cut <version> --notes .build-cache/notes-v<version>.md
 ```
 
+⛔ **For a `promote`, pass `--commit <the rc's commit>`** — the sha `plan promote` printed. `cut` takes
+a *version*, not the word `promote`, and defaults the commit to `origin/main`'s tip, so without it a
+promotion silently tags whatever has landed since the rc instead of the bytes that were verified.
+⚠️ Read the dry run's first line and check the sha is the rc's; it says which commit it would tag.
+
 The dry run prints the full tag message and every gate's verdict; the real run tags and pushes
 only when all of them pass:
 
