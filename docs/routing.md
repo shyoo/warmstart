@@ -649,7 +649,7 @@ If:
 - No controller worker is designated or available,
 - The controller is out of quota or rate-limited (`CONTROLLER_HIGH_WATER = 80%`),
 - The controller reaches the hourly limit (`HOURLY_CAP = 20` consults/hr),
-- The consult times out (`CONSULT_TTL_MS.route = 90` seconds), or
+- The consult times out (`CONSULT_TTL_MS.route = 90` seconds, measured from when it was queued — a consult already running is cut off at the same deadline), or
 - The controller returns invalid JSON or an unlisted worker ID,
 
 Then `fallbackFor` automatically selects the **top-scoring candidate (`best`)** from the arithmetic. The fleet never halts due to controller absence.

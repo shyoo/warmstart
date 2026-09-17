@@ -77,6 +77,26 @@ export const HOURLY_CAP = 20
 /** One turn of judgment. Past this the consult is abandoned and the fallback fires. */
 const ANSWER_TIMEOUT_MS = 4 * 60 * 1000
 
+/** Less than this left in a consult's window is not worth spawning a CLI for; the fallback is used. */
+export const MIN_ANSWER_MS = 20 * 1000
+
+/** When the deterministic answer is due. */
+export function consultDeadline(consult: Pick<Consult, 'kind' | 'createdAt'>): number {
+  return consult.createdAt + CONSULT_TTL_MS[consult.kind]
+}
+
+/**
+ * How long one started consult may wait for its answer.
+ *
+ * ⛔ Bounded by the consult's own window, not only by `ANSWER_TIMEOUT_MS`. The window used to be
+ * checked only *before* a consult started, so a route consult (90s) that started 49s in waited the
+ * full four minutes for an answer that never came — t501 sat undispatched for 4m49s behind "the top
+ * score is used if none arrives" (2026-09-17).
+ */
+export function answerTimeoutFor(consult: Pick<Consult, 'kind' | 'createdAt'>, now = Date.now()): number {
+  return Math.max(0, Math.min(ANSWER_TIMEOUT_MS, consultDeadline(consult) - now))
+}
+
 /** The CLI needs a moment before it reads stdin; a prompt sent too early is dropped. */
 const PROMPT_DELAY_MS = 2500
 
@@ -412,9 +432,13 @@ export async function drainConsults(): Promise<{ answered: number; note: string 
     let answered = 0
     const notes: string[] = []
 
-    for (const consult of pendingConsults()) {
-      // 1. Expired. The deterministic answer was always available; now it is used.
-      if (Date.now() - consult.createdAt > CONSULT_TTL_MS[consult.kind]) {
+    // ⚠️ Soonest deadline first, not oldest first. A title (30 min) queued a second before a route
+    // (90s) used to take the one slot while a task sat undispatched waiting on the route.
+    const queue = pendingConsults().sort((a, b) => consultDeadline(a) - consultDeadline(b))
+    for (const consult of queue) {
+      // 1. Expired, or too close to it to be worth a turn. The deterministic answer was always
+      // available; now it is used.
+      if (answerTimeoutFor(consult) < MIN_ANSWER_MS) {
         applyFallback(consult, 'no controller answered within the window')
         notes.push(`${consult.kind} fell back on time`)
         continue
@@ -471,11 +495,15 @@ async function run(consult: Consult, worker: Worker, model: string | null = null
       .run(worker.id, session.id, Date.now(), consult.id)
     emit({ type: 'consult.changed', consult: requireConsult(consult.id) })
 
-    const text = await ask(session.id, consult.question)
+    const timeoutMs = answerTimeoutFor(consult)
+    const text = await ask(session.id, consult.question, timeoutMs)
     closeSession(session.id)
 
+    // ⚠️ Only a consult that had the whole answer timeout says anything about the account. One cut
+    // short by its own window (a route has 90s) meters nothing mid-turn, and calling that dead would
+    // hold a healthy account out of dispatch for being asked a question with a short fuse.
     if (text === null) {
-      noteDeadConsult(worker, session.id, 'it did not answer in time')
+      if (timeoutMs >= ANSWER_TIMEOUT_MS) noteDeadConsult(worker, session.id, 'it did not answer in time')
       applyFallback(requireConsult(consult.id), 'the controller did not answer in time')
       return
     }
@@ -505,7 +533,7 @@ async function run(consult: Consult, worker: Worker, model: string | null = null
 }
 
 /** Send the question and wait for the turn to end. Resolves to null on timeout or a dead session. */
-function ask(sessionId: string, question: string): Promise<string | null> {
+function ask(sessionId: string, question: string, timeoutMs: number): Promise<string | null> {
   return new Promise((resolve) => {
     let text = ''
     let done = false
@@ -524,7 +552,7 @@ function ask(sessionId: string, question: string): Promise<string | null> {
       if (event.kind === 'result') finish(event.text ?? text ?? null)
     })
     const offEnd = onSessionEnd(sessionId, () => finish(text || null))
-    const timer = setTimeout(() => finish(null), ANSWER_TIMEOUT_MS)
+    const timer = setTimeout(() => finish(null), timeoutMs)
 
     setTimeout(() => {
       try {

@@ -184,8 +184,12 @@ right is that t366 stops sitting `running` for 32 minutes.
 
 `controller.ts` drains a queue of `consults`. Five judgment events (`judgment.ts`): routing,
 decomposition, failure triage, agent-filed work, and title summary. Each has a **closed answer set**
-and a **deterministic fallback that fires on a timer** (`ANSWER_TIMEOUT_MS` = 4 min) whether or not a
-controller ever replies. With no controller account configured, the fleet behaves exactly as it would
+and a **deterministic fallback that fires on a timer** whether or not a controller ever replies: the
+consult's own window (`CONSULT_TTL_MS`, 90s for a route), and one started consult waits at most what
+is left of it, capped at `ANSWER_TIMEOUT_MS` = 4 min (`answerTimeoutFor`); the queue drains soonest
+deadline first. A consult runs in the adapter's `readOnlyPermissionMode`, never its default (t501:
+Antigravity's default skips permissions, and a route consult spent four minutes running python
+against `warmstart.db` while the task it was routing waited). With no controller account configured, the fleet behaves exactly as it would
 without one.
 
 ### The quota poller

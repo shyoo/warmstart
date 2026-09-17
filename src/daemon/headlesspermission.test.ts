@@ -89,10 +89,21 @@ describe('the mode an unattended session actually starts in', () => {
     expect(sessions.permissionModeFor(claude(), 'chat', 'stream', 'default')).toBe('default')
   })
 
-  it('touches no purpose but work — a consult and a review keep the default', () => {
-    for (const purpose of ['chat', 'consult', 'review', 'probe', 'login'] as const) {
+  it('leaves chat, review, probe and login on the default', () => {
+    for (const purpose of ['chat', 'review', 'probe', 'login'] as const) {
       expect(sessions.permissionModeFor(claude(), purpose, 'stream', undefined)).toBeUndefined()
     }
+  })
+
+  it('puts a consult in the read-only mode, never the adapter default (t501)', () => {
+    // ⛔ Antigravity's default is `dangerously-skip-permissions`; a route consult on it ran python
+    // against the live database for four minutes instead of answering.
+    for (const adapter of adapters.adapters()) {
+      const mode = sessions.permissionModeFor(adapter.info, 'consult', 'stream', undefined)
+      expect(mode, adapter.info.id).toBe(adapter.info.capabilities.readOnlyPermissionMode ?? undefined)
+    }
+    const agy = adapters.adapters().find((a) => a.info.id === 'antigravity-cli')!
+    expect(sessions.permissionModeFor(agy.info, 'consult', 'stream', undefined)).toBe('plan')
   })
 
   it('only ever names a mode its own CLI accepts', () => {

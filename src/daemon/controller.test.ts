@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { extractJson } from './controller.js'
+import { MIN_ANSWER_MS, answerTimeoutFor, consultDeadline, extractJson } from './controller.js'
 import {
   MAX_DECOMPOSE_CHILDREN,
   validateDecomposition,
@@ -172,5 +172,29 @@ describe('validateRoute', () => {
 
   it('refuses an empty answer', () => {
     expect(validateRoute({}, ids).ok).toBe(false)
+  })
+})
+
+describe('a consult waits no longer than its own window (t501)', () => {
+  const created = 1_000_000
+
+  it('cuts a route consult that started late down to what is left of its 90s', () => {
+    // ⛔ The bug: started 49s in, it waited the full four minutes while the task sat undispatched.
+    expect(answerTimeoutFor({ kind: 'route', createdAt: created }, created + 49_000)).toBe(41_000)
+  })
+
+  it('caps a long window at one turn of judgment', () => {
+    expect(answerTimeoutFor({ kind: 'title', createdAt: created }, created)).toBe(4 * 60 * 1000)
+  })
+
+  it('is zero past the deadline, never negative', () => {
+    expect(answerTimeoutFor({ kind: 'route', createdAt: created }, created + 10 * 60 * 1000)).toBe(0)
+  })
+
+  it('puts a route ahead of an older title', () => {
+    const title = { kind: 'title' as const, createdAt: created }
+    const route = { kind: 'route' as const, createdAt: created + 10_000 }
+    expect(consultDeadline(route)).toBeLessThan(consultDeadline(title))
+    expect(MIN_ANSWER_MS).toBeLessThan(answerTimeoutFor(route, route.createdAt))
   })
 })

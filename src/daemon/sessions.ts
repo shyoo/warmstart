@@ -931,6 +931,12 @@ export function permissionModeFor(
   requested: string | undefined
 ): string | undefined {
   if (requested) return requested
+  // ⛔ A consult is unattended judgment and gets no tools, so it runs in the mode that reads and does
+  // not act — never the adapter's default. `antigravity-cli`'s default is
+  // `dangerously-skip-permissions`, and a route consult on it (t501, 2026-09-17) spent its whole
+  // four minutes opening `warmstart.db` with python and reading daemon source instead of answering,
+  // while the task it was routing sat undispatched. `null` means the adapter declares no such mode.
+  if (purpose === 'consult') return info.capabilities.readOnlyPermissionMode ?? undefined
   if (purpose !== 'work' || transport !== 'stream') return undefined
   return info.policy.headlessPermissionMode ?? undefined
 }

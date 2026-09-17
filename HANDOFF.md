@@ -26,6 +26,17 @@ channels), all off-repo.
 
 ## Closed in this cleanup
 
+- **A route consult held a task for 4m49s instead of 90s, and ran tools on Antigravity (t502 ← t501,
+  2026-09-17).** t501 sat at *"waiting on a routing decision"*. Two causes, from the daemon log and the
+  consult's agy conversation store: `CONSULT_TTL_MS` was checked only before a consult *started*, so a
+  route started 49s in waited the full `ANSWER_TIMEOUT_MS`; and a consult took the adapter's default
+  permission mode, which on `antigravity-cli` is `dangerously-skip-permissions` — it listed the data
+  dir, ran python against `warmstart.db` and read `controller.ts` for four minutes, never answering.
+  Now `answerTimeoutFor` bounds a running consult by its window, the queue drains soonest deadline
+  first, `permissionModeFor` gives a consult `readOnlyPermissionMode` (agy `plan`: a command attempt is
+  auto-denied and the turn ends in ~1.1s, measured), and a consult cut short by its window no longer
+  marks the account dead. Also seen, not fixed: the dispatch log's `score 1.91: ` has an empty reason.
+
 - **A codex run can reach the network; it still cannot push (t494 ← t493, 2026-09-16).** t493 saw every
   `gh` call, `git fetch origin main` and `git push` die at the socket and asked how a branch could be
   pushed. ⭐ Not `gh`: codex's `workspace-write` ships with `network_access: false` and `exec` has no
@@ -37,12 +48,6 @@ channels), all off-repo.
   succeed; landing pushes, outside, as the instruction already says. ⚠️ Deliberately not done: handing in
   the operator's token (`gh auth token` → `GH_TOKEN`) lets a *sandboxed* agent write to every repository it reaches; if authenticated `gh` inside codex is wanted, that is the decision. `docs/adapters.md`, `docs/security.md`. ⚠️ The first landing hit two 15s
   timeouts: `%TEMP%` holds **28,760** leftover fixtures and an adapters test walked it as `cwd` (1.6s idle; now an empty mkdtemp, 1ms); git-heavy `conversationland` timed out on load alone. Clear the litter.
-
-- **A run that commits in another repository is held, not finished (t492, 2026-09-16).** t491 committed in
-  `warmstart-site` while filed on `sunghwanyoo-site`; the trunk finish saw nothing and completed it unpushed.
-  `strayCommits` checks repositories the run's tool lines name against their reflog. `docs/landing.md`.
-
-- **The trade-off scatters name their marks (t490, 2026-09-16).** `placeScatterLabels`, `compactModelLabel` in `Statistics.tsx`; axes say *right/top is better*. Demo video: `scripts/record-demo.mjs` → `out/demo/`, staged on the invented fleet (`docs/development.md`).
 
 - **`scripts/version.mjs` printed nothing when *run* on Linux or macOS, and that decided a
   release's visibility (2026-09-16).** It tested direct invocation by comparing `import.meta.url`
@@ -86,13 +91,6 @@ channels), all off-repo.
   version forever. Notes are the tag body; `releases/` takes no new files.
   ⭐ `v0.1.1-rc.1` is the first tag through it and the verify step passed. Design:
   [`transient_docs/release_flow_2026-09-16.md`](transient_docs/release_flow_2026-09-16.md).
-
-- **A codex conversation keeps its tree between turns, Land finds the branch wherever it is, and the
-  session line names the model it asked for (t483, 2026-09-16).** Codex exits once per turn, after
-  `endConversationTurn` closes the run, so `onSessionExit` used to find no open run and park the
-  workspace onto `origin/main` mid-conversation; it now asks `taskOfSession`, so an `awaiting_human`
-  task keeps its claim, and `landConversationWork` borrows a pool member when no tree has the branch.
-  *"— model unknown · mode unknown"* was display only: `initLine` now fills from the spawn request.
 
 - **A held conversation's worker slot never came back (t498 ← t497, 2026-09-17).** ClaudeThird held a
   conversation resting at `awaiting_human`; a second task pinned to it queued at capacity, exactly as
