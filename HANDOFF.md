@@ -7,10 +7,11 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+10.g966251f.dirty`): typecheck, lint and
-build pass; L1 **3,669 passed, 5 skipped** (217 files). L2 **203 checks** (5 skipped) and L4 **19 checks**
+Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+12.g6b1bda6.dirty`): typecheck, lint and
+build pass; L1 **3,685 passed, 5 skipped** (220 files). L2 **203 checks** (5 skipped) and L4 **19 checks**
 against `release/win-unpacked` were at `0.1.1+1.g1fff656`. L3 not re-run on this
-tip (no renderer change); it was **474 passed, 4 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64,
+tip (a renderer change, but `test/ui.test.mjs` never opens a project tab — see t500 below); it was
+**474 passed, 4 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64,
 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so
 is the **Release** workflow.
 
@@ -44,23 +45,15 @@ channels), all off-repo.
 - **The trade-off scatters name their marks (t490, 2026-09-16).** `placeScatterLabels`, `compactModelLabel` in `Statistics.tsx`; axes say *right/top is better*. Demo video: `scripts/record-demo.mjs` → `out/demo/`, staged on the invented fleet (`docs/development.md`).
 
 - **`scripts/version.mjs` printed nothing when *run* on Linux or macOS, and that decided a
-  release's visibility (2026-09-16).** It tested whether it had been invoked directly by comparing
-  `import.meta.url` against a hand-built `file:///${process.argv[1]}` — right on Windows (`C:\a` →
-  `file:///C:/a`), never true on POSIX (`/a` → `file:////a`). ⭐ So `release.yml`'s
-  `version=$(node scripts/version.mjs)` was the empty string, its `case "$version" in *-*)` found no
-  `-`, and **`v0.1.1-rc.1` published as a full release and became `/releases/latest`** — the one thing
-  t474 says an rc must never be, because installed apps poll that endpoint. Corrected on GitHub with
-  `gh release edit v0.1.1-rc.1 --prerelease` before promotion. `pathToFileURL` now, and the workflow
-  **refuses** a version that is not version-shaped instead of defaulting to `prerelease=false`.
-  ⛔ **`release-tag.mjs` and `check-release-base.mjs` carried the same line** — on a Mac or Linux box
-  a `cut` would have tagged nothing and the base gate refused nothing, both exiting 0 in silence.
-  ⚠️ Every consumer that *imports* `resolveVersion()` was unaffected, which is why every build carried
-  the right version and every existing test stayed green. Two now cover it: `version.test.ts` runs the
-  script as a program (⛔ green on Windows either way — it only goes red where the bug bit, which is
-  CI's ubuntu `check` job), and `scripts.test.ts` fails on the *shape* in any `scripts/*.mjs`, proven
-  red against the old line. ⚠️ `scripts/build-mac.sh` reads the same command into
-  `.build-cache/version.txt`, so its step fingerprints were computed from an empty version on macOS;
-  unmeasured, and worth a look on the next Mac.
+  release's visibility (2026-09-16).** It tested direct invocation by comparing `import.meta.url`
+  against a hand-built `file:///${process.argv[1]}` — right on Windows, never true on POSIX. ⭐ So
+  `release.yml`'s `version=$(node scripts/version.mjs)` was empty, and **`v0.1.1-rc.1` published as a
+  full release and became `/releases/latest`** — corrected on GitHub with `gh release edit
+  v0.1.1-rc.1 --prerelease` before promotion. `pathToFileURL` now; `release-tag.mjs` and
+  `check-release-base.mjs` carried the same line and are fixed too; the workflow refuses a version
+  that is not version-shaped. `version.test.ts` runs the script as a program and `scripts.test.ts`
+  fails on the *shape* in any `scripts/*.mjs`. ⚠️ `scripts/build-mac.sh` reads the same command into
+  `.build-cache/version.txt`; unmeasured on macOS, worth a look on the next Mac.
 
 - **electron-builder is invoked from one script, and never from a config file that computes
   anything (2026-09-16).** t485's `electron-builder.js` — an ESM config that `extends:` the settings yml to stamp the version — worked on Linux, macOS and this Windows machine, and on **Windows CI** made `electron-builder --dir` exit **0** having printed nothing and written no `release/`, so `test:pack` found no package (⭐ measured: run 35158401830, twice, same runner image, Node 22.23.2 and electron-builder 26.16.1 that built `v0.1.0` green; not reproducible through `npx electron-builder`, `npm run pack`, or `CI=true npm run pack`). ⛔ **The root cause is still unknown**; removing the JS config restores the green build. The settings are back in `electron-builder.yml`, the only config, as for every release up to `v0.1.0`; `scripts/pack.mjs` passes `-c.extraMetadata.version`, which ⭐ reaches the packaged `package.json` and leaves the project's own alone (probed with `9.9.9-probe`, read back out of `app.asar`), and spawns `node <cli.js>` from electron-builder's `bin` rather than the `node_modules/.bin` batch shim. `src/daemon/packaging.test.ts` pins the shape: one config, no version in it, every `pack`/`dist:*` script through the wrapper. ⚠️ A packaging step that reports success without packaging is the worst shape a failure can take, and **L4 was the only tier that could see it** — nothing below L4 builds a package.
@@ -121,6 +114,17 @@ channels), all off-repo.
   `modelRoutingActive()`. `windowRisk` lost its reset-horizon factor (it could exceed 1.0); `quotaRisk`
   now skips a billing window `prepaid` finds forfeiting, including a fresh non-session
   `allowed_warning` on it. `docs/routing.md` §3.3, §3.3a.
+
+- **Three thread-page UI fixes (t500, 2026-09-17).** The thread no longer needs a manual scroll to
+  follow a running agent: a reader already at the bottom is kept pinned there as messages and the
+  live activity tail grow, the same pinned-tail pattern `SessionStream` already used for its own pane
+  (`isNearThreadBottom`, `lib/threadscroll.ts`). `.detail-head` — the back button and the `t<seq> ·
+  title` heading — is now `position: sticky` at the top of `.content`, so a long thread no longer
+  scrolls the way out off the page; the title truncates to one line rather than wrapping the pinned
+  header taller. The composer's ordinary pill row (`.composer-bar`) no longer wraps to a second line
+  at an unpredictable point — it scrolls horizontally instead, the same answer already used for the
+  Plan & Split and Debate tables; `.composer-send` buttons no longer wrap their own label either.
+  `docs/ui.md`.
 
 ## Remaining work — ordered by payoff
 

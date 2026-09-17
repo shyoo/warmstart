@@ -2592,9 +2592,13 @@ body {
 }
 
 /* The task composer is modal wherever it opens. It is deliberately narrower than a task table:
-   writing a prompt benefits from a readable measure, while the Plan & Split pills can scroll inside. */
+   writing a prompt benefits from a readable measure, while every row of pills — the ordinary bar
+   and the Plan & Split / Debate tables alike — scrolls inside rather than needing the width of its
+   widest possible row (`.composer-bar`). 860px, not 760px: wide enough that the ordinary row seldom
+   needs that scroll at all on an average fleet, without pretending a bigger number would make the
+   scroll unnecessary — a long enough worker label always can. */
 .task-composer-modal {
-  width: min(760px, calc(100vw - 2 * var(--sp-5)));
+  width: min(860px, calc(100vw - 2 * var(--sp-5)));
   max-height: min(720px, calc(100vh - 2 * var(--sp-5)));
   overflow-y: auto;
   background: var(--color-bg);
@@ -4226,16 +4230,33 @@ select:focus-visible,
   padding-top: var(--sp-1);
 }
 
-/* The way out, then the title. Baseline-aligned so the button does not sit above the words. */
+/* The way out, then the title. Baseline-aligned so the button does not sit above the words.
+   ⭐ **Sticky, like the ledger's own peek** (`thread/LedgerPeek.tsx`) — a long thread pushes this row
+   off the top within a screen or two, and it carries the one thing every other screen in this app
+   needs back within reach: the way out. Unlike the ledger, the box worth pinning *is* the real
+   header — the back button and the rename control both keep working stuck as they do unstuck —
+   so this pins itself rather than growing a read-only stand-in the way the ledger's peek does. The
+   background covers the thread scrolling underneath; the padding is new room the sticky treatment
+   costs, taken back from the margin so the header is not visibly taller unstuck. */
 .detail-head {
   display: flex;
   align-items: baseline;
   gap: var(--sp-3);
-  margin-bottom: var(--sp-3);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: var(--sp-2) 0;
+  margin: calc(-1 * var(--sp-2)) 0 var(--sp-1);
+  background: var(--color-bg);
 }
 
 .detail h3 {
   margin: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--text-section);
   font-weight: 600;
 }
@@ -4254,6 +4275,11 @@ select:focus-visible,
   min-width: 0;
 }
 
+/* ⛔ One line, ellipsised, not `overflow-wrap: anywhere`. The heading sits in a row with the back
+   button and — once the thread has scrolled — pins there (`.detail-head`), so a title long enough
+   to wrap used to grow the sticky header taller with every extra line; the full text is still one
+   hover away in the `title` this button's `<h3>` carries, and unabridged as the thread's own first
+   message besides. */
 .title-editable-text {
   margin: 0;
   padding: 0;
@@ -4263,8 +4289,11 @@ select:focus-visible,
   font: inherit;
   text-align: left;
   cursor: text;
+  flex: 1;
   min-width: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .title-rename {
@@ -6560,12 +6589,23 @@ select:focus-visible,
   margin-top: 0;
 }
 
+/* ⛔ **The row's buttons never break their own label onto a second line.** `.btn` sets no
+   `white-space`, so a flex row tighter than its buttons' combined natural width used to shrink one
+   below its text's width and wrap *inside* it — "Save as Draft" read as two lines and the row grew
+   taller than the pill beside it. `nowrap` here holds every label to one line; a row that still
+   cannot fit them all overflows rather than folding a button in half, which the widened modal below
+   and the composer's own free-form width keep rare in practice. */
 .composer-send {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: nowrap;
   gap: var(--sp-2);
   padding: var(--sp-1) var(--sp-1) 0;
+}
+
+.composer-send button {
+  white-space: nowrap;
 }
 
 /* The attachment picker belongs to the prompt it enriches, while the other send controls stay at
@@ -6574,21 +6614,32 @@ select:focus-visible,
   margin-right: auto;
 }
 
+/* ⛔ **Scrolls, and never wraps to a second line.** This used to be `flex-wrap: wrap`, on the
+   reasoning that a row too full to fit was better folded than cut off — but folding is exactly what
+   read as "the buttons are wrapping": eight-odd pills breaking mid-row at whatever width the window
+   happened to be, with the wrap point moving every time a worker with a longer label was pinned or
+   a project name changed which pill was muted. `.pill` already caps every label at 22ch with an
+   ellipsis (`.pill`, below), so a single pinned account cannot make this row taller on its own — the
+   remaining failure mode is *too many* pills for one line, which the Plan & Split and Debate rows
+   already answer by scrolling their table (`.composer-bar--plan`, `.composer-bar--debate`) rather
+   than wrapping it. This is the same answer for the ordinary row: `overflow-x: auto` keeps it one
+   line tall regardless of window width or any single label's length, and the row's own horizontal
+   scrollbar is the same gesture already asked of the two table variants beside it. */
 .composer-bar {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: var(--sp-2);
-  padding: var(--sp-2) var(--sp-1) 0;
+  padding: var(--sp-2) var(--sp-1) var(--sp-1);
+  overflow-x: auto;
 }
 
 /* ⚠️ A gap, not a separator. The three groups — what this task is, how it lands, who runs it — are
    worth spacing apart and not worth drawing a line between; a rule here read as a disabled control
-   at small sizes. It collapses to nothing once the row wraps, which is when the grouping is gone
-   anyway. */
+   at small sizes. */
 .composer-gap {
-  flex: 0 1 var(--sp-4);
-  min-width: 0;
+  flex: none;
+  width: var(--sp-4);
 }
 
 /* ⛔ Only drawn in Plan & Split, where there are two rows of pills that would otherwise be
