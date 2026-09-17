@@ -220,7 +220,29 @@ function envFor(isolationRoot: string): Record<string, string> {
   // worker was commissioned with and bills somewhere else.
   delete env.OPENAI_API_KEY
   delete env.CODEX_API_KEY
+  // ⛔ Git's default TLS backend on Windows cannot work under codex's sandbox even once the network
+  // is open (see `plan`). Measured 2026-09-16, codex-cli 0.151.0, Git for Windows configured for
+  // schannel: `git ls-remote https://github.com/…` inside the sandbox dies with *"schannel:
+  // AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS"* — the restricted token cannot open the
+  // user's certificate store — while `-c http.sslBackend=openssl` answers with the ref. Both
+  // backends ship in every Git for Windows, so naming OpenSSL is safe wherever the schannel one
+  // would have been chosen. ⚠️ `GIT_CONFIG_*`, not `GIT_SSL_BACKEND`: the latter is not a variable
+  // git reads (measured — a bogus value is ignored), and codex *appends* its own `safe.directory`
+  // entries after whatever count it inherits, so this one survives the spawn.
+  if (process.platform === 'win32') addGitConfig(env, 'http.sslBackend', 'openssl')
   return env
+}
+
+/**
+ * One more `GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>` pair on `env`, after any the operator's
+ * shell already carries — the count is read first so nothing of theirs is overwritten.
+ */
+export function addGitConfig(env: Record<string, string>, key: string, value: string): void {
+  const count = Number.parseInt(env.GIT_CONFIG_COUNT ?? '0', 10)
+  const n = Number.isFinite(count) && count >= 0 ? count : 0
+  env[`GIT_CONFIG_KEY_${n}`] = key
+  env[`GIT_CONFIG_VALUE_${n}`] = value
+  env.GIT_CONFIG_COUNT = String(n + 1)
 }
 
 /**
@@ -1200,7 +1222,24 @@ export const openaiCompatible: AgentAdapter = {
       // `codex exec` is the headless entry point; the interactive TUI has no subcommand.
       // ⛔ `--json`, not `--output-format`: measured, `exec` has no `--output-format` flag.
       args.push('exec', '--json')
-      args.push('--sandbox', req.permissionMode ?? info.policy.defaultPermissionMode)
+      const sandbox = req.permissionMode ?? info.policy.defaultPermissionMode
+      args.push('--sandbox', sandbox)
+      // ⛔ `workspace-write` ships with **outbound network off**, and `exec` has no approval prompt
+      // to ask for it with — so every `git fetch`, `git push` and `gh` call dies at the socket:
+      // *"An attempt was made to access a socket in a way forbidden by its access permissions"*.
+      // Measured on t493, 2026-09-16 (rollout `turn_context.sandbox_policy.network_access: false`):
+      // `gh secret list`, `gh issue view`, `gh release list`, `git fetch origin main` and `git push`
+      // all refused, and the agent stopped to ask how a branch could be pushed. ⚠️ The finishing
+      // instruction *tells* every worktree agent to fetch the target before it declares — so this
+      // was failing on every codex run, silently, until one task needed the network for its work.
+      // `sandbox_workspace_write.network_access` is the documented key; ⭐ measured 2026-09-16 on
+      // codex-cli 0.151.0, `-c` on `exec` flips the recorded policy to `network_access: true` and
+      // `git ls-remote` reaches GitHub. ⚠️ What it does **not** do is put a credential inside the
+      // sandbox: the restricted token cannot open Windows Credential Manager, so GCM and `gh`'s
+      // keyring both fail there (`gh auth status` → *"The token in default is invalid"*), and a
+      // push stays the landing's job — which the finishing instruction already says. See
+      // `docs/adapters.md`. Scoped to `workspace-write` because it is the only mode the key names.
+      if (sandbox === 'workspace-write') args.push('-c', 'sandbox_workspace_write.network_access=true')
       args.push('--cd', req.cwd)
       // ⛔ Without this the agent can edit and can never commit. `workspace-write` makes `cwd`
       // writable, and a pooled worktree keeps its index, objects and refs in the trunk's `.git`

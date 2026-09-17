@@ -4,12 +4,12 @@
 
 Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling, pooled worktrees,
 model-aware routing, quality review, remote access, packaging, and atomic worker/model reassignment.
-The maintained reference in [`docs/`](docs/README.md) is the
-authority on each subsystem; dated design and incident history belongs in `transient_docs/`, not here.
+The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
+design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-16, **Windows 11**, measured over `0.1.1+1.g1fff656`): typecheck, lint and build
-pass; L1 **3,637 passed, 5 skipped** (215 files); L2 **203 checks** (5 skipped); L4 **19 checks**
-against `release/win-unpacked`, the packaged daemon answering its own version. L3 not re-run on this
+Baseline (2026-09-16, **Windows 11**, measured over `0.1.1+6.gbc645d3`): typecheck, lint and build
+pass; L1 **3,656 passed, 5 skipped** (216 files). L2 **203 checks** (5 skipped) and L4 **19 checks**
+against `release/win-unpacked` were at `0.1.1+1.g1fff656`. L3 not re-run on this
 tip (no renderer change); it was **474 passed, 4 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64,
 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so
 is the **Release** workflow.
@@ -25,12 +25,23 @@ channels), all off-repo.
 
 ## Closed in this cleanup
 
+- **A codex run can reach the network; it still cannot push (t494 ← t493, 2026-09-16).** t493 saw every
+  `gh` call, `git fetch origin main` and `git push` die at the socket and asked how a branch could be
+  pushed. ⭐ Not `gh`: codex's `workspace-write` ships with `network_access: false` and `exec` has no
+  prompt to ask — so the *fetch first* clause every worktree agent gets had failed on every codex run.
+  `plan()` passes `-c sandbox_workspace_write.network_access=true`; `envFor` appends
+  `http.sslBackend=openssl` on Windows (schannel cannot open the cert store under the restricted token).
+  Measured with `codex sandbox` (zero tokens) and three ~35k-input `exec` turns. ⛔ **No credential
+  reaches the sandbox** — GCM and `gh`'s keyring both fail there, so `gh` is anonymous and a push cannot
+  succeed; landing pushes, outside, as the instruction already says. ⚠️ Deliberately not done: handing in
+  the operator's token (`gh auth token` → `GH_TOKEN`) lets a *sandboxed* agent write to every repository it reaches; if authenticated `gh` inside codex is wanted, that is the decision. `docs/adapters.md`, `docs/security.md`. ⚠️ The first landing hit two 15s
+  timeouts: `%TEMP%` holds **28,760** leftover fixtures and an adapters test walked it as `cwd` (1.6s idle; now an empty mkdtemp, 1ms); git-heavy `conversationland` timed out on load alone. Clear the litter.
+
 - **A run that commits in another repository is held, not finished (t492, 2026-09-16).** t491 committed in
   `warmstart-site` while filed on `sunghwanyoo-site`; the trunk finish saw nothing and completed it unpushed.
   `strayCommits` checks repositories the run's tool lines name against their reflog. `docs/landing.md`.
 
-- **The trade-off scatters name their marks (t490, 2026-09-16).** `placeScatterLabels` and `compactModelLabel`
-  (*3.1 Pro High*, *Spark 1.3 C*) in `Statistics.tsx`; axes say *right/top is better*. Not seen packaged.
+- **The trade-off scatters name their marks (t490, 2026-09-16).** `placeScatterLabels`, `compactModelLabel` in `Statistics.tsx`; axes say *right/top is better*. Not seen packaged.
 
 - **`scripts/version.mjs` printed nothing when *run* on Linux or macOS, and that decided a
   release's visibility (2026-09-16).** It tested whether it had been invoked directly by comparing
@@ -115,15 +126,6 @@ channels), all off-repo.
   from the spawn request, marked *(as requested)*, and `stripFrames` keeps the daemon's dim lines out
   of an MCP-less reply read back from the pane (which also quoted that header as the answer's first line).
 
-- **A granted directory can now be committed in, and an agent can ask for one that works (t470,
-  2026-09-15).** Codex's elevated Windows sandbox writes a **deny** ACE on each `--add-dir` root's
-  `.git`, so edits landed and `git commit` died at `.git/index.lock`. ⭐ Probed on codex-cli 0.151.0:
-  passing `<dir>/.git` as its own root draws no deny; `gitMetadataRoots` returns it for the workspace
-  and every grant (it had hit plain-clone `trunk` workspaces too). ⭐ New MCP tool
-  **`request_directory`** (`daemon/dirgrants.ts`): **Grant** attaches the folder, ends the run and
-  requeues it for a warm resume with the agent's `state` as handoff. ⚠️ `claude-code` only; the rest
-  name the path after `NEEDS DECISION:`. See `docs/mcp.md`, `adapters.md`.
-
 ## Remaining work — ordered by payoff
 
 Each needs a real signed-in account, a macOS machine, release credentials, or a human product
@@ -185,8 +187,7 @@ judgement. Do not replace the missing evidence with a unit test.
 | Vertex/Antigravity cache price | Find a published vendor price; do not infer it experimentally. | Keeps `cache.kind: "unpriced"` honest. |
 | Expected-idle estimator | Gather real queue data first. | No honest design exists without it. |
 
-Record results, CLI versions and dates in [`docs/cost-model.md`](docs/cost-model.md), then remove the
-row. R5 is dropped: cross-account transplant needs a second subscription.
+Record results, CLI versions and dates in [`docs/cost-model.md`](docs/cost-model.md), then remove the row.
 
 ## Durable constraints
 

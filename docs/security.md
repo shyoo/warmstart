@@ -9,7 +9,7 @@ repository an agent reads as untrusted input until you have decided otherwise.
 |---|---|---|
 | Claude Code | `bypassPermissions` | Your OS user's full authority |
 | Antigravity | `--dangerously-skip-permissions` | Your OS user's full authority |
-| Codex | `--sandbox workspace-write` | Workspace sandbox, widened to the repository's shared `.git` |
+| Codex | `--sandbox workspace-write` | Workspace sandbox, widened to the repository's shared `.git`; outbound network open, no credential inside |
 
 Claude Code and Antigravity use their bypass modes because a headless process cannot reliably stop
 and ask for terminal approval. This is a deliberate availability-versus-containment choice, not a
@@ -36,6 +36,13 @@ authority**.
 Codex's worktree sandbox must reach the common `.git` directory to commit. That directory contains
 the repository's other refs and objects, so this is broader than one task branch. Clone-per-worker
 or container isolation is the architectural fix and is not implemented today.
+
+The Codex sandbox is opened to the network (`sandbox_workspace_write.network_access`), because the
+finishing instruction asks every agent to fetch the landing target and a sandbox without network
+refused that on every run (t493, 2026-09-16). What stays outside it is every credential: the
+sandbox's restricted token cannot read Windows Credential Manager, so `gh` runs unauthenticated
+there and a `git push` cannot succeed. Pushing is the landing's job, done outside the sandbox with
+your credentials, and Warmstart does not hand an agent your GitHub token to change that.
 
 Warmstart currently has no private vulnerability-reporting process. Open a public issue and do not
 include secrets or private repository content.

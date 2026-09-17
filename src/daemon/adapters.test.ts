@@ -15,6 +15,7 @@ import {
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { adapter, adapters } from './adapters/index.js'
+import { addGitConfig } from './adapters/openai-compatible.js'
 import {
   externalGitRoots,
   gitMetadataRoots,
@@ -751,6 +752,85 @@ describe('a stream transport has two halves, and only one of them was wired', ()
     expect(plan.args).not.toContain('resume')
     expect(plan.args).not.toContain('exec')
   })
+
+  /**
+   * ⛔ **t493, 2026-09-16: codex could not fetch, push or run `gh`, and it was the sandbox, not the
+   * tools.** `workspace-write` ships with outbound network off and `exec` has no prompt to ask for it,
+   * so every call died at the socket (*"forbidden by its access permissions"*) and the agent stopped
+   * to ask how a branch could be pushed. The finishing instruction tells every worktree agent to
+   * *fetch first*, so this was failing on every codex run. Measured on codex-cli 0.151.0: the `-c`
+   * below flips the rollout's `sandbox_policy.network_access` to `true` and `git ls-remote` answers.
+   */
+  it('a headless codex run is allowed the network, on exec and ahead of resume', () => {
+    const spawn = (resumeFrom?: string) =>
+      adapter('openai-compatible').plan({
+        sessionId: 'ignored',
+        isolationRoot: 'C:/tmp/root',
+        cwd: 'C:/tmp/work',
+        transport: 'stream',
+        resumeFrom
+      })
+    const key = 'sandbox_workspace_write.network_access=true'
+    const cold = spawn()
+    expect(cold.args[cold.args.indexOf(key) - 1]).toBe('-c')
+    // ⛔ `-c` is declared on `exec`; after the `resume` subcommand it would be an argument error.
+    const warm = spawn('0199e5b1-6d2e-7a51-9c3f-1b2c3d4e5f60')
+    expect(warm.args.indexOf(key)).toBeGreaterThan(-1)
+    expect(warm.args.indexOf(key)).toBeLessThan(warm.args.indexOf('resume'))
+    // ⚠️ The key names one sandbox mode. A read-only run stays exactly as read-only as it was.
+    const ro = adapter('openai-compatible').plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: 'C:/tmp/work',
+      transport: 'stream',
+      permissionMode: 'read-only'
+    })
+    expect(ro.args).not.toContain(key)
+  })
+
+  /**
+   * ⛔ The second half of t493. With the network open, git on Windows still failed inside the
+   * sandbox — *"schannel: AcquireCredentialsHandle failed: SEC_E_NO_CREDENTIALS"*, the restricted
+   * token cannot open the user's certificate store — and `-c http.sslBackend=openssl` answered.
+   * It travels as `GIT_CONFIG_*` because `GIT_SSL_BACKEND` is not a variable git reads, and codex
+   * appends its own `safe.directory` entries after whatever count it inherits (measured).
+   */
+  it('git inside the codex sandbox is told to use the OpenSSL backend, on Windows', () => {
+    const plan = adapter('openai-compatible').plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: 'C:/tmp/work',
+      transport: 'stream'
+    })
+    const env = plan.env ?? {}
+    const pairs = Array.from({ length: Number(env.GIT_CONFIG_COUNT ?? 0) }, (_, i) => [
+      env[`GIT_CONFIG_KEY_${i}`],
+      env[`GIT_CONFIG_VALUE_${i}`]
+    ])
+    if (process.platform === 'win32') expect(pairs).toContainEqual(['http.sslBackend', 'openssl'])
+    else expect(pairs).not.toContainEqual(['http.sslBackend', 'openssl'])
+  })
+
+  it('a git config entry is appended after the ones the shell already carries', () => {
+    // ⚠️ An operator whose shell sets `GIT_CONFIG_COUNT` for its own reasons must not lose entry 0.
+    const env: Record<string, string> = {
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'user.name',
+      GIT_CONFIG_VALUE_0: 'operator'
+    }
+    addGitConfig(env, 'http.sslBackend', 'openssl')
+    expect(env).toEqual({
+      GIT_CONFIG_COUNT: '2',
+      GIT_CONFIG_KEY_0: 'user.name',
+      GIT_CONFIG_VALUE_0: 'operator',
+      GIT_CONFIG_KEY_1: 'http.sslBackend',
+      GIT_CONFIG_VALUE_1: 'openssl'
+    })
+    // And a count that is not a number is treated as none, not as a crash or a negative index.
+    const odd: Record<string, string> = { GIT_CONFIG_COUNT: 'many' }
+    addGitConfig(odd, 'a.b', 'c')
+    expect(odd).toEqual({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'a.b', GIT_CONFIG_VALUE_0: 'c' })
+  })
 })
 
 describe('the MCP server is called the same thing at both ends', () => {
@@ -761,16 +841,25 @@ describe('the MCP server is called the same thing at both ends', () => {
   it('claude-code is told to call exactly that tool', () => {
     const claude = ALL.find((a) => a.info.id === 'claude-code')
     expect(claude).toBeDefined()
-    const plan = claude?.plan({
-      sessionId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-      isolationRoot: join(tmpdir(), 'mac-adapters-test'),
-      cwd: tmpdir(),
-      transport: 'stream',
-      mcpConfig: join(tmpdir(), 'mcp.json')
-    })
-    const i = plan?.args.indexOf('--permission-prompt-tool') ?? -1
-    expect(i, 'claude-code no longer passes --permission-prompt-tool').toBeGreaterThan(-1)
-    expect(plan?.args[i + 1]).toBe(APPROVE_TOOL)
+    // ⛔ An empty directory, never `tmpdir()` itself. `plan()` walks its `cwd`'s entries looking for
+    // links that leave the workspace (`linkedWritableRoots`), and the temp directory on a machine
+    // that runs this suite holds every fixture a crashed test left behind — 28,760 entries on
+    // 2026-09-16, 1.6s idle and past the 15s budget under a full-suite run (t494's landing).
+    const cwd = mkdtempSync(join(tmpdir(), 'agentyard-adapters-cwd-'))
+    try {
+      const plan = claude?.plan({
+        sessionId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        isolationRoot: join(tmpdir(), 'mac-adapters-test'),
+        cwd,
+        transport: 'stream',
+        mcpConfig: join(tmpdir(), 'mcp.json')
+      })
+      const i = plan?.args.indexOf('--permission-prompt-tool') ?? -1
+      expect(i, 'claude-code no longer passes --permission-prompt-tool').toBeGreaterThan(-1)
+      expect(plan?.args[i + 1]).toBe(APPROVE_TOOL)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
   })
 
   it('the standalone MCP bundle declares that same name', () => {
