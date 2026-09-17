@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { qualityWho } from './Tasks.js'
+import { prBannerHeading, prLabelFrom, qualityWho } from './Tasks.js'
 
 /**
  * The Quality cell's tooltip names who produced the number. ⚠️ Before t359 a task rated only by
@@ -32,3 +32,23 @@ describe('qualityWho', () => {
     )
   })
 })
+
+describe('prBannerHeading', () => {
+  it('formats single and multiple pending pull request headings', () => {
+    expect(prBannerHeading(1)).toBe('Pending pull request')
+    expect(prBannerHeading(2)).toBe('2 pending pull requests')
+    expect(prBannerHeading(5)).toBe('5 pending pull requests')
+  })
+})
+
+describe('prLabelFrom', () => {
+  it('extracts PR number from GitHub pull request URLs', () => {
+    expect(prLabelFrom('https://github.com/shyoo/awardtracker/pull/375')).toBe('PR #375')
+    expect(prLabelFrom('https://github.com/owner/repo/pull/1')).toBe('PR #1')
+  })
+
+  it('falls back to PR when URL does not contain pull number', () => {
+    expect(prLabelFrom('https://github.com/owner/repo')).toBe('PR')
+  })
+})
+

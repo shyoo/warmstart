@@ -66,6 +66,7 @@ export function LooseEnds(): React.JSX.Element | null {
     } finally {
       setBusy(null)
       await refresh()
+      window.dispatchEvent(new CustomEvent('warmstart:refresh-projects'))
     }
   }
 

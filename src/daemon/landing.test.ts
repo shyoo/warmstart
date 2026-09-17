@@ -29,6 +29,7 @@ let landing: typeof import('./landing.js')
 let commits: typeof import('./taskcommits.js')
 let resources: typeof import('./resources.js')
 let deliveries: typeof import('./deliveries.js')
+let events: typeof import('./events.js')
 /** `landing.landQueue` and its shipped values, bound after the dynamic import. */
 let landingQueue: { waitMs: number; pollMs: number }
 let queueDefaults: { waitMs: number; pollMs: number }
@@ -85,6 +86,7 @@ beforeAll(async () => {
   commits = await import('./taskcommits.js')
   resources = await import('./resources.js')
   deliveries = await import('./deliveries.js')
+  events = await import('./events.js')
   landingQueue = landing.landQueue
   queueDefaults = { ...landingQueue }
   db.openDb(join(dir, 'landing.db'))
@@ -1583,15 +1585,23 @@ describe('pull-request landing strategy', () => {
       return (realRun as (...args: unknown[]) => unknown)(cmd, ...rest)
     }) as never)
 
-    await deliveries.reconcilePullRequestDeliveries()
+    const heard: import('@shared/protocol.js').DaemonEvent[] = []
+    events.setEventSink((e) => heard.push(e))
+    try {
+      await deliveries.reconcilePullRequestDeliveries()
 
-    expect(git(root, 'branch', '--list', branch)).toBe('')
-    const [delivery] = deliveries.deliveriesForTask(task.id)
-    expect(delivery).toMatchObject({ state: 'merged', mergeSha, headSha })
-    expect(typeof delivery?.reconciledAt).toBe('number')
-    expect(commits.taskCommits(task.id)).toMatchObject([
-      { sha: mergeSha, target: 'main', source: 'pull-request' }
-    ])
+      expect(git(root, 'branch', '--list', branch)).toBe('')
+      const [delivery] = deliveries.deliveriesForTask(task.id)
+      expect(delivery).toMatchObject({ state: 'merged', mergeSha, headSha })
+      expect(typeof delivery?.reconciledAt).toBe('number')
+      expect(commits.taskCommits(task.id)).toMatchObject([
+        { sha: mergeSha, target: 'main', source: 'pull-request' }
+      ])
+      expect(heard.some((e) => e.type === 'project.changed' && e.project.id === task.projectId)).toBe(true)
+      expect(heard.some((e) => e.type === 'task.changed' && e.task.id === task.id)).toBe(true)
+    } finally {
+      events.setEventSink(() => {})
+    }
   })
 })
 

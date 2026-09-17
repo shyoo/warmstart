@@ -282,6 +282,12 @@ export function App({
     }
   })
 
+  useEffect(() => {
+    const handleRefresh = () => void refreshProjects()
+    window.addEventListener('warmstart:refresh-projects', handleRefresh)
+    return () => window.removeEventListener('warmstart:refresh-projects', handleRefresh)
+  }, [refreshProjects])
+
   /**
    * Clicking a notification opens the task it was about.
    *
@@ -795,6 +801,7 @@ export function App({
               projects={projects}
               resources={resources}
               refreshProjects={refreshProjects}
+              pendingDeliveries={pendingDeliveries}
               fleet={fleet}
               keyboard={keyboard}
               setKeyboard={setKeyboard}
@@ -1018,6 +1025,7 @@ function ProjectRoute({
   projects,
   resources,
   refreshProjects,
+  pendingDeliveries,
   fleet,
   keyboard,
   setKeyboard,
@@ -1029,6 +1037,7 @@ function ProjectRoute({
   projects: Project[]
   resources: ResourceAvailability[]
   refreshProjects: () => Promise<void>
+  pendingDeliveries?: PullRequestDelivery[]
   fleet: ReturnType<typeof useFleet>['fleet']
   keyboard: boolean
   setKeyboard: (v: boolean) => void
@@ -1062,6 +1071,7 @@ function ProjectRoute({
       projects={projects}
       resources={resources}
       refreshProjects={refreshProjects}
+      pendingDeliveries={pendingDeliveries}
       fleet={fleet}
       keyboard={keyboard}
       setKeyboard={setKeyboard}

@@ -10,6 +10,7 @@ import { errorMessage } from '@shared/errors.js'
 import { log } from './log.js'
 import { recordTaskCommits } from './taskcommits.js'
 import { idlePoolHolder, taskBranches } from './worktrees.js'
+import { emit } from './events.js'
 
 export type { DeliveryState, PullRequestDelivery }
 
@@ -98,7 +99,12 @@ export function recordPullRequestDelivery(input: {
   )
   const stored = row<DeliveryRow>(db().prepare('select * from task_deliveries where url = ?').get(input.url))
   if (!stored) throw new Error(`could not persist pull request delivery ${input.url}`)
-  return toDelivery(stored)
+  const delivery = toDelivery(stored)
+  const project = getProject(input.projectId)
+  if (project) emit({ type: 'project.changed', project })
+  const task = getTask(input.taskId)
+  if (task) emit({ type: 'task.changed', task })
+  return delivery
 }
 
 export function deliveriesForTask(taskId: string): PullRequestDelivery[] {
@@ -435,6 +441,8 @@ export async function reconcilePullRequestDeliveries(): Promise<DeliverySweep> {
   if (reconciling) return { ran: false, checked: 0, cleanedUp: 0, kept: 0, failed: 0 }
   reconciling = true
   const sweep: DeliverySweep = { ran: true, checked: 0, cleanedUp: 0, kept: 0, failed: 0 }
+  const affectedProjectIds = new Set<string>()
+  const affectedTaskIds = new Set<string>()
   try {
     await salvageAnnouncedDeliveries()
     const pending = rows<DeliveryRow>(
@@ -450,6 +458,25 @@ export async function reconcilePullRequestDeliveries(): Promise<DeliverySweep> {
       if (after.observationError) sweep.failed += 1
       else if (after.state === 'merged' && after.reconciledAt) sweep.cleanedUp += 1
       else if (after.state === 'merged') sweep.kept += 1
+
+      if (
+        after.state !== delivery.state ||
+        after.reconciledAt !== delivery.reconciledAt ||
+        after.retireBlocked !== delivery.retireBlocked ||
+        after.headSha !== delivery.headSha ||
+        after.mergeSha !== delivery.mergeSha
+      ) {
+        affectedProjectIds.add(delivery.projectId)
+        affectedTaskIds.add(delivery.taskId)
+      }
+    }
+    for (const pid of affectedProjectIds) {
+      const project = getProject(pid)
+      if (project) emit({ type: 'project.changed', project })
+    }
+    for (const tid of affectedTaskIds) {
+      const task = getTask(tid)
+      if (task) emit({ type: 'task.changed', task })
     }
     return sweep
   } finally {
@@ -508,6 +535,12 @@ export async function cleanUpMergedBranch(
     }
   }
   const stillThere = (await taskBranches(project, after.target)).some((b) => b.branch === branch)
+  const deleted = !stillThere
+  if (deleted || after.reconciledAt) {
+    emit({ type: 'project.changed', project })
+    const task = getTask(delivery.taskId)
+    if (task) emit({ type: 'task.changed', task })
+  }
   if (!stillThere) return { deleted: true }
   return { deleted: false, reason: after.retireBlocked ?? after.observationError ?? `\`${branch}\` was kept` }
 }

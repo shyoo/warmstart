@@ -672,6 +672,9 @@ records an observation error and age instead of treating an unavailable GitHub a
 PR keeps neither a task nor a session running. Closed without merge keeps the branch and says so on
 the thread. Merged first fetches `origin/<target>`, proves GitHub's merge commit is there, records it
 for quality review, and says so on the thread; it never pulls or moves the operator's local trunk.
+Whenever a delivery is recorded, reconciled, or its branch cleaned up, the daemon emits `project.changed`
+and `task.changed` so attached UIs immediately refresh pending PR state, update sidebar project dots, and
+clear the Tasks PR banner.
 
 ⛔ **An exact merged PR is authority to retire squash/rebase history.** An ordinary branch is still
 deleted only by ancestry. The PR exception applies only when the persisted URL reports merged, its

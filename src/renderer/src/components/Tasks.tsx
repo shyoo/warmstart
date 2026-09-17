@@ -1,11 +1,12 @@
 import { Fragment, useCallback, useDeferredValue, useEffect, useRef, useState } from 'react'
-import type { Project, Task, TaskSort, TaskView } from '@shared/tasks'
+import type { Project, PullRequestDelivery, Task, TaskSort, TaskView } from '@shared/tasks'
 import { TASK_VIEW_ORDER, TASK_VIEWS } from '@shared/tasks'
 import type { ModelOptions } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { showsLiveOutput } from '../lib/live'
 import { tokens, whenParts } from '../lib/format'
 import { Money, taskPriceTitle } from './Price'
+import { mergedSweepNote } from '../lib/looseends'
 import {
   PAGE_SIZE_OPTIONS,
   TASK_COLUMNS,
@@ -51,6 +52,17 @@ export function qualityWho(task: Pick<Task, 'qualityReviewCount' | 'qualityManua
   }
   if (task.qualityManualCount > 0) return 'Your rating'
   return `Scored by ${task.qualityReviewer ?? 'another agent'}`
+}
+
+/** Formats PR badge label from its URL, e.g. "PR #123". */
+export function prLabelFrom(url: string): string {
+  const match = url.match(/\/pull\/(\d+)/)
+  return match ? `PR #${match[1]}` : 'PR'
+}
+
+/** Formats the heading for the pending PR banner. */
+export function prBannerHeading(count: number): string {
+  return count === 1 ? 'Pending pull request' : `${count} pending pull requests`
 }
 
 /**
@@ -151,7 +163,9 @@ export function Tasks({
   projectId,
   fleet,
   selected,
-  onOpenTask
+  onOpenTask,
+  pendingDeliveries: propsPendingDeliveries,
+  onRefreshProjects
 }: {
   projects: Project[]
   /** When set, this list is one project's and the composer draws no project pill — the page says it. */
@@ -168,11 +182,40 @@ export function Tasks({
    * project had. The list no longer knows or cares what happens next.
    */
   onOpenTask: (taskId: string) => void
+  /** Pending pull request deliveries across projects or for this project. */
+  pendingDeliveries?: PullRequestDelivery[]
+  /** Refresh project list and pending deliveries in the parent. */
+  onRefreshProjects?: () => Promise<void>
 }): React.JSX.Element {
   const [tasks, setTasks] = useState<Task[]>([])
   const [total, setTotal] = useState(0)
   const [counts, setCounts] = useState<Record<TaskView, number> | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [deliveries, setDeliveries] = useState<PullRequestDelivery[]>(propsPendingDeliveries ?? [])
+  const [checkingMerged, setCheckingMerged] = useState(false)
+  const [mergeNote, setMergeNote] = useState<string | null>(null)
+  const [extraTasks, setExtraTasks] = useState<Record<string, Task>>({})
+
+  useEffect(() => {
+    if (propsPendingDeliveries !== undefined) {
+      setDeliveries(propsPendingDeliveries)
+    }
+  }, [propsPendingDeliveries])
+
+  const refreshDeliveries = useCallback(async () => {
+    try {
+      const all = await rpc('delivery.pending')
+      setDeliveries(all)
+    } catch {
+      // ignore
+    }
+  }, [])
+
+  useEffect(() => {
+    if (propsPendingDeliveries === undefined) {
+      void refreshDeliveries()
+    }
+  }, [propsPendingDeliveries, refreshDeliveries])
   /**
    * Which buckets are showing.
    *
@@ -324,7 +367,62 @@ export function Tasks({
 
   useDaemonEvents((event) => {
     if (event.type === 'task.changed' || event.type === 'run.changed') void refresh()
+    if (event.type === 'project.changed' || event.type === 'task.changed') void refreshDeliveries()
   })
+
+  const projectDeliveries = deliveries.filter((d) => !projectId || d.projectId === projectId)
+  const deliveryByTaskId = new Map<string, PullRequestDelivery>()
+  for (const d of projectDeliveries) {
+    deliveryByTaskId.set(d.taskId, d)
+  }
+
+  useEffect(() => {
+    const missing = projectDeliveries.filter(
+      (d) => !extraTasks[d.taskId] && !tasks.some((t) => t.id === d.taskId)
+    )
+    if (missing.length === 0) return
+    let active = true
+    void Promise.all(
+      missing.map((d) =>
+        rpc('task.get', { id: d.taskId })
+          .then((res) => (res ? ([d.taskId, res.task] as const) : null))
+          .catch(() => null)
+      )
+    ).then((results) => {
+      if (!active) return
+      setExtraTasks((prev) => {
+        const next = { ...prev }
+        for (const res of results) {
+          if (res) next[res[0]] = res[1]
+        }
+        return next
+      })
+    }).catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [projectDeliveries, tasks, extraTasks])
+
+  const getDeliveryTask = (taskId: string): Task | undefined => {
+    return tasks.find((t) => t.id === taskId) ?? extraTasks[taskId]
+  }
+
+  const handleCheckMerged = async () => {
+    setCheckingMerged(true)
+    setMergeNote(null)
+    try {
+      const sweep = await rpc('looseend.checkMerged')
+      setMergeNote(mergedSweepNote(sweep))
+      await onRefreshProjects?.()
+      window.dispatchEvent(new CustomEvent('warmstart:refresh-projects'))
+      await refresh()
+      await refreshDeliveries()
+    } catch (err) {
+      setMergeNote(errorMessage(err))
+    } finally {
+      setCheckingMerged(false)
+    }
+  }
 
   const act = async (fn: () => Promise<unknown>) => {
     setError(null)
@@ -406,6 +504,73 @@ export function Tasks({
                 Yes, delete
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {projectDeliveries.length > 0 && (
+        <div className="tasks-pr-banner" role="region" aria-label="Pending pull requests">
+          <div className="tasks-pr-banner-header">
+            <div className="tasks-pr-banner-title">
+              <span className="tasks-pr-banner-icon" aria-hidden>
+                ⑂
+              </span>
+              <span className="tasks-pr-banner-heading">
+                {prBannerHeading(projectDeliveries.length)}
+              </span>
+              <span className="tasks-pr-banner-sub">
+                Awaiting review or merge on GitHub
+              </span>
+            </div>
+            <div className="tasks-pr-banner-actions">
+              <button
+                type="button"
+                className="btn btn--sm"
+                disabled={checkingMerged}
+                onClick={() => void handleCheckMerged()}
+                title="Check if pending PRs have merged on GitHub"
+              >
+                {checkingMerged ? 'Checking…' : 'Check merged PRs'}
+              </button>
+            </div>
+          </div>
+          {mergeNote && <div className="tasks-pr-banner-note">{mergeNote}</div>}
+          <div className="tasks-pr-banner-list">
+            {projectDeliveries.map((delivery) => {
+              const deliveryTask = getDeliveryTask(delivery.taskId)
+              const prLabel = prLabelFrom(delivery.url)
+              return (
+                <div key={delivery.id} className="tasks-pr-banner-item">
+                  <div className="tasks-pr-banner-task">
+                    <button
+                      type="button"
+                      className="tasks-pr-task-link"
+                      onClick={() => onOpenTask(delivery.taskId)}
+                      title={deliveryTask ? `Open t${deliveryTask.seq} thread` : 'Open task thread'}
+                    >
+                      <span className="mono">t{deliveryTask?.seq ?? '…'}</span>
+                      <span className="tasks-pr-task-title">
+                        {deliveryTask ? taskLabelShort(deliveryTask, 70) : `Task ${delivery.taskId.slice(0, 8)}`}
+                      </span>
+                    </button>
+                  </div>
+                  <div className="tasks-pr-banner-pr">
+                    <a
+                      href={delivery.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="tasks-pr-link"
+                      title={delivery.url}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {prLabel} ↗
+                    </a>
+                    <span className="tasks-pr-branch mono dim" title={`${delivery.branch} into ${delivery.target}`}>
+                      {delivery.branch} → {delivery.target}
+                    </span>
+                  </div>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}
@@ -647,6 +812,8 @@ export function Tasks({
                 task.status === 'awaiting_human' ||
                 task.status === 'draft'
 
+              const taskPr = deliveryByTaskId.get(task.id)
+
               return (
                 <Fragment key={task.id}>
                   <tr
@@ -682,6 +849,18 @@ export function Tasks({
                               and the `…` to mean what it says. */}
                           {taskLabelShort(task, TITLE_CHARS)}
                         </span>
+                        {taskPr && (
+                          <a
+                            href={taskPr.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="task-pr-pill"
+                            title={`Pending pull request: ${taskPr.url}`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {prLabelFrom(taskPr.url)} ↗
+                          </a>
+                        )}
                       </div>
                       {task.branch && <div className="tbl-path mono">{task.branch}</div>}
                     </td>}

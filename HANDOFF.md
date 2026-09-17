@@ -26,6 +26,14 @@ channels), all off-repo.
 
 ## Closed in this cleanup
 
+- **Pending pull requests get a dedicated Tasks banner and dot-clearing reconciliation (t503, 2026-09-17).**
+  A project with open PRs displays a dedicated `.tasks-pr-banner` in Tasks with task links, PR URLs,
+  branch info and an instant **Check merged PRs** action; tasks with pending deliveries show a `PR #N`
+  pill in the table. The daemon now emits `project.changed` and `task.changed` on PR recording, sweep
+  reconciliation and branch cleanup, and the renderer listens for `warmstart:refresh-projects`, so merged
+  PR checks update the sidebar dot from purple (`pending_pr`) back to empty circle (`idle`) immediately.
+  `docs/ui.md`, `docs/landing.md`.
+
 - **A route consult held a task for 4m49s instead of 90s, and ran tools on Antigravity (t502 ← t501,
   2026-09-17).** t501 sat at *"waiting on a routing decision"*. Two causes, from the daemon log and the
   consult's agy conversation store: `CONSULT_TTL_MS` was checked only before a consult *started*, so a
@@ -38,15 +46,12 @@ channels), all off-repo.
   marks the account dead. Also seen, not fixed: the dispatch log's `score 1.91: ` has an empty reason.
 
 - **A codex run can reach the network; it still cannot push (t494 ← t493, 2026-09-16).** t493 saw every
-  `gh` call, `git fetch origin main` and `git push` die at the socket and asked how a branch could be
-  pushed. ⭐ Not `gh`: codex's `workspace-write` ships with `network_access: false` and `exec` has no
-  prompt to ask — so the *fetch first* clause every worktree agent gets had failed on every codex run.
-  `plan()` passes `-c sandbox_workspace_write.network_access=true`; `envFor` appends
-  `http.sslBackend=openssl` on Windows (schannel cannot open the cert store under the restricted token).
-  Measured with `codex sandbox` (zero tokens) and three ~35k-input `exec` turns. ⛔ **No credential
-  reaches the sandbox** — GCM and `gh`'s keyring both fail there, so `gh` is anonymous and a push cannot
-  succeed; landing pushes, outside, as the instruction already says. ⚠️ Deliberately not done: handing in
-  the operator's token (`gh auth token` → `GH_TOKEN`) lets a *sandboxed* agent write to every repository it reaches; if authenticated `gh` inside codex is wanted, that is the decision. `docs/adapters.md`, `docs/security.md`. ⚠️ The first landing hit two 15s timeouts: `%TEMP%` holds **28,760** leftover fixtures and an adapters test walked it as `cwd` (1.6s idle; now an empty mkdtemp, 1ms); git-heavy `conversationland` timed out on load alone. Clear the litter.
+  `gh` call, `git fetch origin main` and `git push` die at the socket. codex's `workspace-write` ships
+  with `network_access: false` and `exec` has no prompt to ask — so the *fetch first* clause every
+  worktree agent gets failed on every codex run. `plan()` passes `-c sandbox_workspace_write.network_access=true`;
+  `envFor` appends `http.sslBackend=openssl` on Windows. Measured with `codex sandbox` and three ~35k-input `exec` turns.
+  ⛔ **No credential reaches the sandbox** — GCM and `gh`'s keyring both fail there; landing pushes outside.
+  `docs/adapters.md`, `docs/security.md`. Litter cleared: mkdtemp replaces `%TEMP%` cwd walk (1.6s idle → 1ms).
 
 - **`scripts/version.mjs` printed nothing when *run* on Linux or macOS, and that decided a
   release's visibility (2026-09-16).** It tested direct invocation by comparing `import.meta.url`
@@ -60,7 +65,10 @@ channels), all off-repo.
   `.build-cache/version.txt`; unmeasured on macOS, worth a look on the next Mac.
 
 - **electron-builder is invoked from one script, and never from a config file that computes
-  anything (2026-09-16).** t485's `electron-builder.js` — an ESM config that `extends:` the settings yml to stamp the version — worked on Linux, macOS and this Windows machine, and on **Windows CI** made `electron-builder --dir` exit **0** having printed nothing and written no `release/`, so `test:pack` found no package (⭐ measured: run 35158401830, twice, same runner image, Node 22.23.2 and electron-builder 26.16.1 that built `v0.1.0` green; not reproducible through `npx electron-builder`, `npm run pack`, or `CI=true npm run pack`). ⛔ **The root cause is still unknown**; removing the JS config restores the green build. The settings are back in `electron-builder.yml`, the only config, as for every release up to `v0.1.0`; `scripts/pack.mjs` passes `-c.extraMetadata.version`, which ⭐ reaches the packaged `package.json` and leaves the project's own alone (probed with `9.9.9-probe`, read back out of `app.asar`), and spawns `node <cli.js>` from electron-builder's `bin` rather than the `node_modules/.bin` batch shim. `src/daemon/packaging.test.ts` pins the shape: one config, no version in it, every `pack`/`dist:*` script through the wrapper. ⚠️ A packaging step that reports success without packaging is the worst shape a failure can take, and **L4 was the only tier that could see it** — nothing below L4 builds a package.
+  anything (2026-09-16).** t485's `electron-builder.js` — an ESM config extending the yml — exited 0
+  with no output on Windows CI (measured: run 35158401830; L4 pack caught it). Settings are back in
+  `electron-builder.yml`, `scripts/pack.mjs` passes `-c.extraMetadata.version` to leave `package.json`
+  alone, and spawns `node <cli.js>` from electron-builder's `bin`. `packaging.test.ts`.
 
 - **A local worker's model is what its server serves, named `local-llm:<served id>` (t486,
   2026-09-16).** `costmodels/local.llm` listed one id, `qwen3-coder-30b-a3b`; every model write is
@@ -75,21 +83,11 @@ channels), all off-repo.
   the local worker, confirm the picker lists the gguf and a run's session names it. Design:
   [`transient_docs/local_model_identity_2026-09-16.md`](transient_docs/local_model_identity_2026-09-16.md).
 
-- **A release is one turn, and the tag is the version (t485, 2026-09-16).** `v0.1.0` cost four
-  turns, two "Prepare vX" commits and two CI runs whose only input was a version string (measured:
-  runs 35062655991 → 35066743396). The version was a source fact, so every rc and every promotion
-  had to go through the pipeline before a tag could point at it. Now `scripts/version.mjs` derives
-  it from git (`WARMSTART_VERSION` on a release build, `git describe` otherwise → `0.1.0+7.gcced61f`),
-  every bundle reads `__APP_VERSION__`, and `scripts/pack.mjs` passes `extraMetadata.version`
-  (⛔ it was an `electron-builder.js` for a day; see the entry above for why it is not).
-  `package.json` keeps `0.0.0`; `check-version.mjs` refuses a build if a version is written back.
-  `/release rc` → `scripts/release-tag.mjs plan` (next version from the tags that exist) → notes →
-  `cut`: one annotated tag on `origin/main`'s tip, pushed after the base gate, the on-main check,
-  and a CI-green lookup. `/release promote` tags the rc's *commit* with the bare version and the
-  workflow rebuilds — chosen over flipping the pre-release flag, which would ship `-rc.N` as the
-  version forever. Notes are the tag body; `releases/` takes no new files.
-  ⭐ `v0.1.1-rc.1` is the first tag through it and the verify step passed. Design:
-  [`transient_docs/release_flow_2026-09-16.md`](transient_docs/release_flow_2026-09-16.md).
+- **A release is one turn, and the tag is the version (t485, 2026-09-16).** The version was a source fact
+  costing four turns and two commits per release. `scripts/version.mjs` derives it from git
+  (`WARMSTART_VERSION` or `git describe`); `scripts/pack.mjs` passes `extraMetadata.version`; `package.json`
+  keeps `0.0.0`. `/release rc` plans, notes and cuts one annotated tag; `/release promote` tags the rc commit.
+  Verified with `v0.1.1-rc.1` / `v0.1.1`. Design: [`transient_docs/release_flow_2026-09-16.md`](transient_docs/release_flow_2026-09-16.md).
 
 - **A held conversation's worker slot never came back (t498 ← t497, 2026-09-17).** ClaudeThird held a
   conversation resting at `awaiting_human`; a second task pinned to it queued at capacity, exactly as

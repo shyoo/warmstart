@@ -1,5 +1,5 @@
 import { sessionEnded } from '@shared/protocol'
-import type { Project as ProjectRecord, ResourceAvailability } from '@shared/tasks'
+import type { Project as ProjectRecord, PullRequestDelivery, ResourceAvailability } from '@shared/tasks'
 import type { FleetEntry } from '../lib/daemon'
 import { rpc } from '../lib/daemon'
 import { useAction } from '../lib/useAction'
@@ -51,6 +51,7 @@ export function Project({
   projects,
   resources,
   refreshProjects,
+  pendingDeliveries,
   fleet,
   keyboard,
   setKeyboard,
@@ -66,6 +67,7 @@ export function Project({
   projects: ProjectRecord[]
   resources: ResourceAvailability[]
   refreshProjects: () => Promise<void>
+  pendingDeliveries?: PullRequestDelivery[]
   fleet: FleetEntry[]
   keyboard: boolean
   setKeyboard: (v: boolean) => void
@@ -105,6 +107,8 @@ export function Project({
           fleet={fleet}
           selected={taskId}
           onOpenTask={openTask}
+          pendingDeliveries={pendingDeliveries}
+          onRefreshProjects={refreshProjects}
         />
       ) : tab === 'thread' ? (
         taskId ? (
