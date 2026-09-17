@@ -134,8 +134,8 @@ Weights derive from the objective vector `(cost, velocity, quality)` configured 
 `objective.ts` evaluates them, `scoring.ts` sums with them, every stored decision carries them, and
 Analytics › Routing Model typesets *those strings* (`lib/tex.ts`) rather than a second copy —
 `cost.test.ts` checks the strings against `weights()` and `tex.test.ts` that every one typesets. The
-page calls this **Routing Model v1.0** (`ROUTING_MODEL_VERSION`), a version of the terms and formulas
-below, not of the app; it moves when one of them does.
+page calls this **Routing Model v1.1** (`ROUTING_MODEL_VERSION`), a version of the terms and formulas
+below, not of the app; it moves when one of them does. ⭐ **v1.1** added `prepaid` (§3.3a).
 
 | Term | Direction | Weight Formula (`objective.ts`) | Balanced (`cost 0.30, velocity 0.30, quality 0.40`) | Value Range | Meaning of Value = 1 |
 |---|:---:|---|:---:|:---:|---|
@@ -143,7 +143,8 @@ below, not of the app; it moves when one of them does.
 | **`contextHeld`** | Bonus (+1) | `0.8 + 1.0×cost + 0.4×quality` | `+1.260` | 0 or 1 | A conversation already holds this task's context — **live or reopenable** |
 | **`contextRot`** | Penalty (−1) | `0.6 + 1.6×quality` | `−1.240` | 0 .. 1 | Context window is 100% full (starts at >50%) |
 | **`projectSwitch`** | Penalty (−1) | `0.3 + 0.6×cost` | `−0.480` | 0 or 1 | Reusable session belongs to another project |
-| **`quotaRisk`** | Penalty (−1) | `0.5 + 1.2×cost` | `−0.860` | 0 .. 1 | At 92% of window or vendor rate-limit warning |
+| **`quotaRisk`** | Penalty (−1) | `0.5 + 1.2×cost` | `−0.860` | 0 .. 1 | At 92% of window or vendor rate-limit warning; skips a billing window `prepaid` found genuinely forfeiting |
+| **`prepaid`** | Bonus (+1), **signed value** | `0.6 + 2.0×cost` | `+1.200` | −1 .. +1 | Subscription quota that would otherwise be forfeit at reset. +0.25 subscription on pace, 0 local/free/unknown, −1 money paid now (usage credits or an API rate) |
 | **`cold`** | Penalty (−1) | `0.8 + 2.0×cost − 0.7×velocity` | `−1.190` | 0 or 1 | No conversation to reuse, live or reopenable (pays full cache write) |
 | **`capabilityFit`** | Bonus (+1) | `0.7 + 1.3×quality` | `+1.220` | 0 .. 1 | All required task capabilities are present |
 | **`fitness`** | Bonus (+1) | `0.4 + 1.6×quality` | `+1.040` | 0 .. 1 | Model agentic coding fitness meeting task complexity bar (`low: 0.35, med: 0.55, high: 0.75`). 0 when unmeasured (`null`), and 0 fleet-wide while no worker has an allowlist (§3.6). |
@@ -151,13 +152,18 @@ below, not of the app; it moves when one of them does.
 | **`pace`** | Bonus (+1), **signed value** | `0.3 + 1.7×velocity` | `+0.810` | −1 .. +1 | Measured 4x **faster** than the fleet's median task. −1 is 4x slower; **0 is both "exactly average" and "nothing measured"** |
 | **`unproven`** | Penalty (−1) | Fixed `0.35` | `−0.350` | 0 .. 1.5 | Account has never completed a metered turn |
 
-⚠️ **`pace` is the only term whose value can be negative**, and deliberately. Every other term
-measures a quantity with a floor — there is no such thing as less-than-no prompt cache — while pace
-has a real middle: the fleet's own centre. A penalty-only reading would score the fleet's fastest
-agent identically to its median one, which is precisely the discrimination the term exists to add.
-Its value comes from `pace.ts`: a per-(agent, model) median of **active time** over finished tasks,
-expressed as a ratio against the geometric mean of the fleet's task durations, shrunk in log space by
-`ratio^(n/(n+4))`, then mapped through `−log(factor)/log(4)` and clamped to `[−1, +1]`.
+⚠️ **`pace` and `prepaid` are the only terms whose value can be negative**, and deliberately, for the
+same underlying reason: each has a real middle, not a floor. Every other term measures a quantity
+with a floor — there is no such thing as less-than-no prompt cache — where `pace`'s middle is the
+fleet's own centre and `prepaid`'s is the boundary between money that costs nothing more to spend
+(a subscription, already paid for) and money that does (usage credits, an API rate). A local or free
+model sits exactly on that boundary: no allowance to lose, no bill to avoid. A penalty-only reading of
+either term would score the fleet's fastest agent identically to its median one, or a subscription
+about to expire unspent identically to one being paid for on the spot — precisely the discrimination
+each term exists to add. `pace`'s value comes from `pace.ts`: a per-(agent, model) median of **active
+time** over finished tasks, expressed as a ratio against the geometric mean of the fleet's task
+durations, shrunk in log space by `ratio^(n/(n+4))`, then mapped through `−log(factor)/log(4)` and
+clamped to `[−1, +1]`. `prepaid`'s value is §3.3a.
 
 - ⛔ **Active time, never wall-clock.** A task dispatched at 09:00, blocked on a question at 09:04 and
   answered at 17:00 took four minutes of agent work. `activetime.ts` is the only place that
@@ -296,6 +302,96 @@ $$\text{quotaRisk} = \max(\text{evidence}, \text{windowRisk}(\text{trustedWindow
    - Vendor CLIs emit streaming `rate_limit_event` records distinguishing `five_hour` and `seven_day` windows.
    - If the vendor emitted `status !== 'allowed'` (e.g. `allowed_warning` or `rejected`) on **any** window within fresh memory, `evidence = 1.0`.
    - **5h vs 7d distinction:** A 7-day advisory (`allowed_warning`) sets `quotaRisk = 1.0` in routing scoring (deprioritizing that account so other workers take new work), but does **not** terminate or preempt a healthy 5-hour run in flight.
+
+3. **What `prepaid` (§3.3a) changes about this term, and nothing else:**
+   - The billing window `prepaid` found genuinely forfeiting — about to reset with real, paid-for
+     quota unspent — is **skipped outright** from the `windowRisk` loop, not discounted. A window
+     with nothing left to forfeit, or that resets on pace rather than early, is scored exactly as
+     above.
+   - A fresh `allowed_warning` on that same forfeiting window, on a non-session window, does not
+     saturate `evidence` either — it is the caution a subscription window about to reset with money
+     on it would ordinarily carry, and `prepaid` already prices the reset. A `rejected` status, a
+     warning on the 5-hour (session) window, or an `at_risk` reserve verdict still saturates: none of
+     those are explained by a window resetting soon.
+   - ⛔ **`windowRisk` itself carries no reset-horizon logic any more.** It used to be scaled by how
+     soon a window would reset, so that expiring quota read as *less* risky — the two purposes
+     (quota deficit and an approaching reset) tangled a single number until neither read cleanly, and
+     it let this term exceed its documented 0..1 range (a stored decision once carried `quotaRisk >
+     2.0`). Preferring quota that would otherwise be forfeit is entirely `prepaid`'s job now.
+
+---
+
+### 3.3a Prepaid allowance: use it or lose it
+
+⛔ **The problem, measured.** A subscription's 7-day window is the *billing* window: its cost model
+divides the monthly fee over it (`docs/cost-model.md` §13). Unspent allowance on it is lost at reset
+— the fee was already paid whether the window is used or not. An operator saw ClaudeFirst at **90% of
+its 7d window used, resetting in 10h**, and the router did not prefer it; `quotaRisk` actively
+*penalised* it, because the term has no way to tell a subscription reset apart from any other kind of
+quota pressure. `prepaid` is the term that makes that distinction, and it is **always on** — it reads
+quota and billing class, never a model choice, so it is not behind the `modelRoutingActive()` gate
+§3.6 describes for `fitness` and `price`.
+
+**Billing class**, read from the cost model and the account's own state — never from an adapter or
+cost-model *id*, per `AGENTS.md`'s "never branch on an adapter or mode name":
+
+| Class | Condition | Value |
+|---|---|---|
+| **pay-now** | (a) dispatching past a blocking window on usage credits (§2.3's Timed Human Override via credits), or (b) the cost model declares a `plans` block that is priced but has no `billing_window` (a priced API rate with no subscription) | `−1` |
+| **local/free** | `plans.priced === false` (a whole provider with no subscription, e.g. `local.llm`), or the worker's resolved plan (`resolvePlan`) is itself unpriced or `$0` | `0` |
+| **unknown** | the cost model declares no `plans` block at all | `0`, basis says billing is unknown |
+| **subscription** | everything else | `0.25 + 0.75 × forfeitValue` |
+
+Unknown scores 0 exactly like local/free, but for a different reason, and the basis names which one —
+`AGENTS.md`: *"unknown is a verdict, not a synonym for ok."*
+
+**`forfeitValue`**, for a subscription (`forfeitShare` in `scoring.ts`, exported and unit-tested
+without a database):
+
+1. Find the trusted window(s) matching the cost model's `billing_window` (`billingWindowsFor`). No
+   match, or `resetsAt` null or already past → `forfeitValue = 0`; the **0.25 standing value still
+   applies**, because that much is a classification (this is a subscription), not a quota reading.
+2. `f` = share of the window's **time** still left; `u` = share of it still **unspent**
+   (`(100 − percent) / 100`).
+3. **Under 6 hours elapsed (`1 − f < 1/28` of a 7-day window)**, the window's own pace is
+   unmeasurable — `forfeitValue = 0`, basis *"window just opened; pace unmeasurable"*.
+4. Project the rest of the window at the window's **own average burn rate so far**:
+   `projectedSpend = f × (1 − u) / (1 − f)`.
+5. `forfeit = max(0, u − projectedSpend)`; `forfeitValue = forfeit / u` (0 where `u = 0`).
+
+**Reference numbers**, used in `routing.test.ts` and above:
+
+| Scenario | percent | reset | days | f | u | projected | forfeit | forfeitValue | prepaid |
+|---|---:|---|---:|---:|---:|---:|---:|---:|---:|
+| ClaudeFirst | 90% | 10h | 7 | 0.0595 | 0.10 | 0.0570 | 0.0430 | **0.4304** | **0.573** |
+| Idle mid-week | 10% | (half the window left) | 7 | 0.5 | 0.90 | 0.10 | 0.80 | **0.889** | 0.917 |
+| Behind pace | 97% | 33h | 7 | 0.196 | 0.03 | 0.237 | 0 | **0** | 0.25 |
+
+ClaudeFirst's balanced (`cost 0.30`) contribution is `+1.200 × 0.573 ≈ +0.687`; the same window's
+`quotaRisk` contribution goes from `−0.491` (90% scored on the old slope) to **`0`** — `quotaRisk`
+skips a window `prepaid` finds genuinely forfeiting (`forfeit > 0`) rather than discounting it, per
+§3.3.
+
+⚠️ **Why the term is always on.** `fitness` and `price` compare *models*, and comparing an
+un-opted-in fleet on a hand-curated benchmark or an estimator with no run history would silently
+re-rank it (§3.6). `prepaid` reads *quota that already exists* — a fact about the account and the
+window, not a choice between models — so there is no equivalent risk to gate against, and holding it
+at 0 fleet-wide would only hide a real preference from every operator who has not opted a worker into
+model-aware routing.
+
+**A worked scenario.** ClaudeFirst (90% of a 7d window, resets in 10h; 30% of its 5h) against a fresh
+subscription account (0% of both windows) and a local-LLM worker, balanced objective, both candidates
+otherwise cold:
+
+| Term | ClaudeFirst | Fresh subscription | Local LLM |
+|---|---:|---:|---:|
+| `quotaRisk` | `0` (7d skipped, forfeiting; 5h below floor) | `0` | `0` (no quota) |
+| `prepaid` | `+0.687` (`0.573 × 1.200`) | `+0.300` (`0.25 × 1.200`, standing only) | `0` |
+
+Everything else — `cold`, `capabilityFit`, `pace` — is identical across all three cold candidates and
+cancels in the comparison. ClaudeFirst now outscores both, which is the whole fix: quota that is
+already paid for and about to be forfeited is worth *more* than quota nobody has touched yet, because
+the fresh account's allowance is not about to be lost.
 
 ---
 
@@ -511,7 +607,7 @@ candidates that already hold this task's conversation and candidates that do not
 holder wins the tie outright and **no controller turn is spent** (`basis: 'reuse'`).
 
 - **Why it is not double-counting.** `affinity` (+1.26 balanced) and `cold` (−1.19 balanced) already
-  price reuse, but they are two terms among eleven; a tie means the rest cancelled them out. Within
+  price reuse, but they are two terms among twelve; a tie means the rest cancelled them out. Within
   ε the scores say the two candidates are indistinguishable — and between two equals, the one that
   skips a full cache write and already remembers the work is strictly cheaper. Measured 2026-08-28: a
   continued turn read back **41,542** cached tokens and wrote 65, against a cold start that wrote all
@@ -721,27 +817,37 @@ Once each has, that term is what separates two otherwise-identical cold candidat
 
 **Phase 2 (Scoring Quota Risk):**
 The cold baseline every candidate shares here is $\text{cold} + \text{capabilityFit} = -1.190 + 1.220 = +0.030$.
+None of the three has a trusted *billing-window* (7d) percentage reading — only a 5h percent, plus a
+bare advisory on worker 3's 7d — so `prepaid` cannot find a forfeiting window for any of them and every
+one scores the subscription's standing value, `+0.25 × 1.200 = +0.300`. It is identical across all
+three and cancels in the comparison, exactly like `capabilityFit` above; shown once rather than three
+times.
 
 - **Worker 1:**
   - $\text{percent} = 35 \le 50 \implies \text{windowRisk} = 0.0$
   - $\text{quotaRisk} = \max(0, 0.0) = 0.0$
   - Quota contribution: $0.0 \times -0.860 = \mathbf{0.000}$
-  - Total Score: $\mathbf{+0.030}$
+  - Total Score: $0.030 + 0.300 = \mathbf{+0.330}$
 - **Worker 2:**
   - $\text{percent} = 71 \implies \text{windowRisk} = (71 - 50) / 42 = 0.500$
   - $\text{quotaRisk} = \max(0, 0.500) = 0.500$
   - Quota contribution: $0.500 \times -0.860 = \mathbf{-0.430}$
-  - Total Score: $0.030 - 0.430 = \mathbf{-0.400}$
+  - Total Score: $0.030 - 0.430 + 0.300 = \mathbf{-0.100}$
 - **Worker 3:**
   - $\text{percent} = 40 \implies \text{windowRisk} = 0.0$
-  - `rate_limit_event` advisory $\implies \text{evidence} = 1.0$
+  - `rate_limit_event` advisory on the 7d window $\implies \text{evidence} = 1.0$. ⚠️ **Still
+    saturates**, unmodified by `prepaid` — the exception in §3.3 only ever stands down a warning on a
+    window `prepaid` has itself found forfeiting, and there is no trusted percentage on worker 3's 7d
+    window for `prepaid` to have read at all.
   - $\text{quotaRisk} = \max(1.0, 0.0) = 1.000$
   - Quota contribution: $1.000 \times -0.860 = \mathbf{-0.860}$
-  - Total Score: $0.030 - 0.860 = \mathbf{-0.830}$
+  - Total Score: $0.030 - 0.860 + 0.300 = \mathbf{-0.530}$
 
 **Outcome:**
-Rankings: **Worker 1 (+0.030)** > **Worker 2 (-0.400)** > **Worker 3 (-0.830)**.
-Worker 1 beats Worker 2 by 0.430 (> 0.10), so **Worker 1 wins cleanly** without a controller consult.
+Rankings: **Worker 1 (+0.330)** > **Worker 2 (-0.100)** > **Worker 3 (-0.530)**.
+Worker 1 beats Worker 2 by 0.430 (> 0.10), so **Worker 1 wins cleanly** without a controller consult —
+the same margin as before `prepaid` existed, because an equal bonus everywhere changes every total by
+the same amount and never the ranking.
 
 ---
 

@@ -126,7 +126,7 @@ measurement behind it, in [`docs/architecture.md`](docs/architecture.md) §4. Th
 - **A quality review never grades its own author, and no path writes a score that could not name its
   reviewer.** Excluded by *adapter*, not by account — one Claude grading another Claude is Claude
   grading Claude. No eligible peer means no review; there is no self-graded variant. ⛔ The score
-  feeds one preference term among eleven (`fitness`, `objective.ts`) and can never exclude a candidate.
+  feeds one preference term among twelve (`fitness`, `objective.ts`) and can never exclude a candidate.
 - **Cancel is not delete.** Cancel winds down into a resting state and destroys nothing. Delete is
   human-only, soft by default, and never removes runs.
 - **Agents work in a pooled worktree, never the trunk — unless the task's workspace mode is

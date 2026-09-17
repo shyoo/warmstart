@@ -443,6 +443,22 @@ export class CostModel {
     return !!plans && plans.priced !== false && !!plans.billing_window
   }
 
+  /** Does this provider declare a `plans` block at all, priced or not? `false` means billing is unknown. */
+  hasPlans(): boolean {
+    return !!this.data.plans
+  }
+
+  /** The whole-provider priced switch, or `null` where there is no `plans` block to have one. */
+  plansPriced(): boolean | null {
+    const plans = this.data.plans
+    return plans ? plans.priced !== false : null
+  }
+
+  /** Does this provider's money divide over a billing window at all — `false` on a priced API rate with none. */
+  hasBillingWindow(): boolean {
+    return !!this.data.plans?.billing_window
+  }
+
   /** A plan by its catalogue id, or null. `source` is `stored` — the caller already decided. */
   planById(id: string | null | undefined): PlanRef | null {
     const entry = this.data.plans?.catalog.find((p) => p.id === id)

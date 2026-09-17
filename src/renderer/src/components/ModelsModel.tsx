@@ -10,7 +10,7 @@ import { weightFormulaTex } from '../lib/tex'
  * Analytics > Routing Model > Models.
  *
  * ⛔ **The fleet can now answer a question none of the other three axes can: why *that model*, not
- * only why *that account*.** Routing scores `(worker, model)` pairs, and two of its eleven terms —
+ * only why *that account*.** Routing scores `(worker, model)` pairs, and two of its twelve terms —
  * `fitness` and `price` — exist only at that granularity. A page that stayed one row per worker would
  * have nowhere to show either.
  */

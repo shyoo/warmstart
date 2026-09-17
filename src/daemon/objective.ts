@@ -89,6 +89,17 @@ export interface Weights {
    * Penalty scaling from 0 (cheapest in the field) to 1 (8x or more expensive).
    */
   price: number
+  /**
+   * Sunk cost versus marginal cost, as a preference rather than a gate.
+   *
+   * A subscription's fee is already paid, so quota it never spends is money lost at reset — this
+   * term is a bonus for using it. Money spent right now (usage credits, or an API rate with no
+   * subscription window) is a real, marginal charge — this term is a penalty for spending it when a
+   * candidate that costs nothing more exists. A local or free model is neither: no allowance to
+   * forfeit and no bill to avoid, so it sits at the signed middle, 0. ⛔ **Signed, like `pace`** — see
+   * `docs/routing.md` §3.3a.
+   */
+  prepaid: number
 }
 
 /**
@@ -118,7 +129,10 @@ export function weights(objective: Objective): Weights {
     // other when nothing else separates them.
     pace: 0.3 + 1.7 * velocity,
     fitness: 0.4 + 1.6 * quality,
-    price: 0.5 + 2.0 * cost
+    price: 0.5 + 2.0 * cost,
+    // Cost-weighted work cares most about not leaving a paid subscription unspent; the weight scales
+    // with cost the same way `price`'s does, because both are the cost axis's own preference.
+    prepaid: 0.6 + 2.0 * cost
   }
 }
 

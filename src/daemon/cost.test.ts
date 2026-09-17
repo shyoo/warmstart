@@ -77,6 +77,12 @@ describe('weights', () => {
     expect(weights(PRESETS.quality).contextRot).toBeGreaterThan(weights(PRESETS.economy).contextRot)
   })
 
+  it('cost-weighted work values prepaid subscription quota more than velocity-weighted does', () => {
+    // Sunk cost is the cost axis's own preference — `prepaid`'s weight scales with `cost` the same
+    // way `price`'s does, so an economy objective should weight it above a velocity-heavy one.
+    expect(weights(PRESETS.economy).prepaid).toBeGreaterThan(weights(PRESETS.velocity).prepaid)
+  })
+
   it('no weight is ever negative, whatever the vector', () => {
     for (const preset of Object.values(PRESETS)) {
       for (const [key, value] of Object.entries(weights(preset))) {

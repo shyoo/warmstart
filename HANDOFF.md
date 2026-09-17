@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-16, **Windows 11**, measured over `0.1.1+6.gbc645d3`): typecheck, lint and build
-pass; L1 **3,656 passed, 5 skipped** (216 files). L2 **203 checks** (5 skipped) and L4 **19 checks**
+Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+10.g966251f.dirty`): typecheck, lint and
+build pass; L1 **3,669 passed, 5 skipped** (217 files). L2 **203 checks** (5 skipped) and L4 **19 checks**
 against `release/win-unpacked` were at `0.1.1+1.g1fff656`. L3 not re-run on this
 tip (no renderer change); it was **474 passed, 4 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64,
 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so
@@ -41,7 +41,7 @@ channels), all off-repo.
   `warmstart-site` while filed on `sunghwanyoo-site`; the trunk finish saw nothing and completed it unpushed.
   `strayCommits` checks repositories the run's tool lines name against their reflog. `docs/landing.md`.
 
-- **The trade-off scatters name their marks (t490, 2026-09-16).** `placeScatterLabels`, `compactModelLabel` in `Statistics.tsx`; axes say *right/top is better*. Not seen packaged. Demo video: `scripts/record-demo.mjs` → `out/demo/`, staged on the invented fleet (`docs/development.md`).
+- **The trade-off scatters name their marks (t490, 2026-09-16).** `placeScatterLabels`, `compactModelLabel` in `Statistics.tsx`; axes say *right/top is better*. Demo video: `scripts/record-demo.mjs` → `out/demo/`, staged on the invented fleet (`docs/development.md`).
 
 - **`scripts/version.mjs` printed nothing when *run* on Linux or macOS, and that decided a
   release's visibility (2026-09-16).** It tested whether it had been invoked directly by comparing
@@ -63,21 +63,7 @@ channels), all off-repo.
   unmeasured, and worth a look on the next Mac.
 
 - **electron-builder is invoked from one script, and never from a config file that computes
-  anything (2026-09-16).** t485's `electron-builder.js` — an ESM config that `extends:` the settings
-  yml to stamp the version — worked on Linux, on macOS and on this Windows machine, and on **Windows
-  CI** made `electron-builder --dir` exit **0** having printed nothing at all and written no
-  `release/`, so `test:pack` found no package (⭐ measured: run 35158401830, twice, on the same runner
-  image, Node 22.23.2 and electron-builder 26.16.1 that built `v0.1.0` green; not reproducible here
-  through `npx electron-builder`, `npm run pack`, or `CI=true npm run pack`). ⛔ **The root cause is
-  still unknown**; what is measured is that removing the JS config restores the green build. The
-  settings are back in `electron-builder.yml`, the only config, discovered as it was for every release
-  up to `v0.1.0`; `scripts/pack.mjs` passes `-c.extraMetadata.version`, which ⭐ reaches the packaged
-  `package.json` and leaves the project's own alone (probed with `9.9.9-probe`, read back out of
-  `app.asar`), and spawns `node <cli.js>` from electron-builder's `bin` rather than the
-  `node_modules/.bin` batch shim. `src/daemon/packaging.test.ts` pins the shape: one config, no
-  version in it, every `pack`/`dist:*` script through the wrapper. ⚠️ A packaging step that reports
-  success without packaging is the worst shape a failure can take, and **L4 was the only tier that
-  could see it** — nothing below L4 builds a package.
+  anything (2026-09-16).** t485's `electron-builder.js` — an ESM config that `extends:` the settings yml to stamp the version — worked on Linux, macOS and this Windows machine, and on **Windows CI** made `electron-builder --dir` exit **0** having printed nothing and written no `release/`, so `test:pack` found no package (⭐ measured: run 35158401830, twice, same runner image, Node 22.23.2 and electron-builder 26.16.1 that built `v0.1.0` green; not reproducible through `npx electron-builder`, `npm run pack`, or `CI=true npm run pack`). ⛔ **The root cause is still unknown**; removing the JS config restores the green build. The settings are back in `electron-builder.yml`, the only config, as for every release up to `v0.1.0`; `scripts/pack.mjs` passes `-c.extraMetadata.version`, which ⭐ reaches the packaged `package.json` and leaves the project's own alone (probed with `9.9.9-probe`, read back out of `app.asar`), and spawns `node <cli.js>` from electron-builder's `bin` rather than the `node_modules/.bin` batch shim. `src/daemon/packaging.test.ts` pins the shape: one config, no version in it, every `pack`/`dist:*` script through the wrapper. ⚠️ A packaging step that reports success without packaging is the worst shape a failure can take, and **L4 was the only tier that could see it** — nothing below L4 builds a package.
 
 - **A local worker's model is what its server serves, named `local-llm:<served id>` (t486,
   2026-09-16).** `costmodels/local.llm` listed one id, `qwen3-coder-30b-a3b`; every model write is
@@ -125,6 +111,16 @@ channels), all off-repo.
   this exposed a second bug in the same function: `decideSessionFate` read a stale pre-write
   `task.cancel?.restingState`, so an ordinary human Stop always closed a warm session instead of
   deciding whether to keep it — now passed in explicitly. `conversationcapacity.test.ts`.
+
+- **Routing prefers subscription quota that would otherwise be forfeit at reset (t499, 2026-09-17).**
+  `quotaRisk` used to *penalise* an account resetting soon with money already spent on it (90% of a
+  7d window, 10h to reset, scored `−0.491`). New signed term `prepaid` (`scoring.ts`, routing model
+  **v1.1**): `+0.25 + 0.75×forfeitValue` for a forfeiting subscription window (`forfeitShare`'s pace
+  projection), `0` for local/free/unknown billing, `−1` for money spent now (credits past a blocking
+  window, or a priced API rate with no subscription window). Always on, not behind
+  `modelRoutingActive()`. `windowRisk` lost its reset-horizon factor (it could exceed 1.0); `quotaRisk`
+  now skips a billing window `prepaid` finds forfeiting, including a fresh non-session
+  `allowed_warning` on it. `docs/routing.md` §3.3, §3.3a.
 
 ## Remaining work — ordered by payoff
 

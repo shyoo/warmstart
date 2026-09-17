@@ -53,7 +53,7 @@ const TERM_NOTES: Record<WeightName, { range: string; meaning: string }> = {
   projectSwitch: { range: '0 or 1', meaning: 'the reusable conversation belongs to another project' },
   quotaRisk: {
     range: '0 … 1',
-    meaning: 'the model’s quota pool is at the 92 % high-water mark (0 below 50 %), scaled by how near the reset is; 1 outright on a vendor rate-limit warning'
+    meaning: 'the model’s quota pool is at the 92 % high-water mark (0 below 50 %); skips a billing window `prepaid` found genuinely forfeiting; 1 outright on a vendor rate-limit warning'
   },
   cold: { range: '0 or 1', meaning: 'no conversation to reuse — the dispatch pays a full cache write' },
   capabilityFit: { range: '0 … 1', meaning: 'every capability the task declared is present (the share, below 1)' },
@@ -68,8 +68,16 @@ const TERM_NOTES: Record<WeightName, { range: string; meaning: string }> = {
   price: {
     range: '0 … 1',
     meaning: 'estimated cost is 8× the cheapest candidate in the field or more (log scale; 0 for the cheapest)'
+  },
+  prepaid: {
+    range: '−1 … +1',
+    meaning:
+      '+1 subscription quota that would otherwise be forfeit at reset, +0.25 subscription on pace, 0 local/free/unknown, −1 money paid now (usage credits or an API rate)'
   }
 }
+
+/** Terms whose value can be negative — everything else has a floor at 0. */
+const SIGNED_TERMS = new Set<WeightName>(['pace', 'prepaid'])
 
 const TERM_ORDER: WeightName[] = [
   'cacheWarmth',
@@ -78,6 +86,7 @@ const TERM_ORDER: WeightName[] = [
   'contextRot',
   'projectSwitch',
   'quotaRisk',
+  'prepaid',
   'capabilityFit',
   'pace',
   'fitness',
@@ -273,7 +282,7 @@ export function RoutingOverview(): React.JSX.Element {
             {TERM_ORDER.map((name) => (
               <tr key={name}>
                 <td className="tbl-strong mono tbl-nowrap">{name}</td>
-                <td className="tbl-nowrap">{WEIGHT_SIGNS[name] === 1 ? (name === 'pace' ? '± signed' : '+ bonus') : '− penalty'}</td>
+                <td className="tbl-nowrap">{WEIGHT_SIGNS[name] === 1 ? (SIGNED_TERMS.has(name) ? '± signed' : '+ bonus') : '− penalty'}</td>
                 <td className="tbl-nowrap">
                   <M tex={weightFormulaTex(WEIGHT_FORMULAS[name])} />
                 </td>
@@ -451,12 +460,11 @@ export function RoutingOverview(): React.JSX.Element {
           </table>
         </div>
         <p className="panel-sub">
-          A&rsquo;s quota value is <M tex="(70 - 50)/(92 - 50) = 0.476" />, and with 90 of 300
-          minutes left against 30 % of the window remaining the reset-horizon factor is exactly 1.
-          A wins by 2.78, and the reason is legible: reusing a conversation that already holds the
-          task is worth far more than the quota headroom B has spare. Push <M tex="c" /> to 0.7 and
-          A&rsquo;s lead widens; push <M tex="v" /> to 0.7 and it narrows, because a cold start stops
-          being expensive when starting sooner is the point.
+          A&rsquo;s quota value is <M tex="(70 - 50)/(92 - 50) = 0.476" />. A wins by 2.78, and the
+          reason is legible: reusing a conversation that already holds the task is worth far more
+          than the quota headroom B has spare. Push <M tex="c" /> to 0.7 and A&rsquo;s lead widens;
+          push <M tex="v" /> to 0.7 and it narrows, because a cold start stops being expensive when
+          starting sooner is the point.
         </p>
         <p className="dim">
           Illustrative arithmetic on the published constants — not a measurement of this fleet. The

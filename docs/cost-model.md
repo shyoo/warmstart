@@ -1450,6 +1450,14 @@ different facts and only the second one is a number.
 ⛔ **One unknown meter makes the whole overage layer unknown.** A total that silently omits the one
 meter that could not be read is a smaller number wearing a complete number's clothes.
 
+**Routing treats these two layers as different kinds of money.** `subscriptionUsd` is sunk — the fee
+is paid whether the window is spent or not, so leaving it unspent loses money rather than saving it.
+`overageUsd` (and a priced API rate with no subscription at all) is marginal — a real, additional
+charge for the turn about to run. The `prepaid` routing term (`docs/routing.md` §3.3a) reads exactly
+this distinction: a bonus for spending a subscription's own window before it resets unspent, a penalty
+for spending money that would not otherwise be spent, and 0 for a local or free model, which has
+neither.
+
 ### Spend meters, and the series that falls
 
 `spend_samples` is the money analogue of `quota_samples`, and `attribute()` in `price.ts` splits it

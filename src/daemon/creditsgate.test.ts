@@ -197,6 +197,13 @@ describe('the dispatch gate on a window the vendor has already emptied', () => {
     // ⛔ And the hold clock goes with it. A task that is dispatching is not waiting for a reset, and
     // leaving one on the choice would tell the cache clock the queue cannot move.
     expect(choice.holdUntil ?? null).toBeNull()
+
+    // ⭐ **This is money spent now, not a subscription's own unspent allowance.** Dispatching past a
+    // blocking window on usage credits is a real, marginal charge — the same billing window that
+    // `prepaid` would otherwise read as forfeiting (100% used, spent outright) is instead the pay-now
+    // case, and the term reads -1 rather than the standing 0.25 a subscription would carry.
+    const prepaid = choice.breakdown?.terms.find((t) => t.name === 'prepaid')
+    expect(prepaid?.value).toBe(-1)
   })
 
   it('takes a 5h window that is merely over its mark as well, not only a spent one', () => {
@@ -238,8 +245,10 @@ describe('the dispatch gate on a window the vendor has already emptied', () => {
   })
 
   it('does not make the billing account look cheap', () => {
-    // ⚠️ The stand-down lifts the cliff and leaves `windowRisk` alone. An account with room left is
-    // still the better answer — credits are a permission to spend, not a preference for spending.
+    // ⚠️ The stand-down lifts the cliff and leaves `windowRisk` alone — and `prepaid` reads this
+    // candidate as money spent now (-1), never as a subscription's own unspent allowance, so nothing
+    // here discounts it either. An account with room left is still the better answer — credits are a
+    // permission to spend, not a preference for spending.
     const billing = seedWorker('ClaudeSecond')
     const free = seedWorker('ClaudeThird')
     seed7d(billing.id, FULL_7D)

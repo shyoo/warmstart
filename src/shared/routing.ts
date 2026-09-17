@@ -20,10 +20,13 @@ import type { Objective } from './tasks.js'
  * ⚠️ A version of the *model* — the terms, their signs and the weight formulas below — not of the
  * app. It moves when a term is added, removed or re-derived, so a reader comparing two decisions
  * a month apart can tell whether the arithmetic between them changed.
+ *
+ * ⭐ **1.1** added `prepaid`, the term that prefers subscription quota that would otherwise be
+ * forfeit at reset over quota paid for now. See `docs/routing.md` §3.3a.
  */
-export const ROUTING_MODEL_VERSION = '1.0'
+export const ROUTING_MODEL_VERSION = '1.1'
 
-/** The names of the ten objective-derived weights, in the order the scheduler publishes them. */
+/** The names of the eleven objective-derived weights, in the order the scheduler publishes them. */
 export type WeightName =
   | 'cacheWarmth'
   | 'contextHeld'
@@ -35,6 +38,7 @@ export type WeightName =
   | 'pace'
   | 'fitness'
   | 'price'
+  | 'prepaid'
 
 /**
  * Each weight's derivation, as the arithmetic it actually is.
@@ -59,16 +63,19 @@ export const WEIGHT_FORMULAS: Record<WeightName, string> = {
   capabilityFit: '0.7 + 1.3×quality',
   pace: '0.3 + 1.7×velocity',
   fitness: '0.4 + 1.6×quality',
-  price: '0.5 + 2.0×cost'
+  price: '0.5 + 2.0×cost',
+  prepaid: '0.6 + 2.0×cost'
 }
 
 /**
  * The direction each weight pushes. ⛔ `scoreCandidate` in `scoring.ts` reads this same table, so
  * the sign the page prints is the sign the sum used.
  *
- * ⚠️ `pace` is `+1` with a **signed** value, which is why it is not listed as a penalty: the term is
- * positive for an agent measured faster than the fleet's centre and negative for one measured slower,
- * so a single direction here would be a lie about half of its range.
+ * ⚠️ `pace` and `prepaid` are `+1` with a **signed** value, which is why neither is listed as a
+ * penalty: `pace` is positive for an agent measured faster than the fleet's centre and negative for
+ * one measured slower; `prepaid` is positive for quota already paid for (subscription) and negative
+ * for money spent now (usage credits or an API rate), so a single direction here would be a lie
+ * about half of either's range.
  */
 export const WEIGHT_SIGNS: Record<WeightName, 1 | -1> = {
   cacheWarmth: 1,
@@ -80,7 +87,8 @@ export const WEIGHT_SIGNS: Record<WeightName, 1 | -1> = {
   capabilityFit: 1,
   pace: 1,
   fitness: 1,
-  price: -1
+  price: -1,
+  prepaid: 1
 }
 
 /**

@@ -911,16 +911,54 @@ describe('quota as a slope rather than a switch', () => {
     expect((antigravity - claudeSecond) * 0.908).toBeGreaterThan(0.1)
   })
 
-  it('penalises quota deficit and rewards expiring credits based on reset horizon', () => {
-    const now = Date.now()
-    // Antigravity: 93% on 7d window resetting in 10h (expiring credits, high available rate before reset)
-    const antigravity = scoring.windowRisk(93, 92, 50, now + 10 * 3600 * 1000, now, 'weekly:gemini')
-    // ClaudeSecond: 97% on 7d window resetting in 33h (1d 9h, low available rate, severe deficit)
-    const claudeSecond = scoring.windowRisk(97, 92, 50, now + 33 * 3600 * 1000, now, 'weekly')
+  /**
+   * `windowRisk` no longer has a reset-horizon factor — the t83 arithmetic below used to live here,
+   * scaling risk down for a window about to reset. That preference is now `forfeitShare`'s job
+   * entirely, and it is a separate term (`prepaid`) rather than a discount folded into this one,
+   * which is why `windowRisk` can no longer exceed its documented 0..1 range.
+   */
+  describe('forfeitShare: how much of a billing window is projected to go unspent at reset', () => {
+    it('matches the ClaudeFirst reference number: 90%, resets in 10h, 7 days', () => {
+      const now = Date.now()
+      const fs = scoring.forfeitShare(90, now + 10 * 3600 * 1000, 7, now)
+      expect(fs.forfeit).toBeCloseTo(0.043038, 3)
+      expect(fs.value).toBeCloseTo(0.4304, 3)
+    })
 
-    expect(antigravity).toBeLessThan(claudeSecond)
-    expect(claudeSecond).toBeGreaterThan(2.0)
-    expect(antigravity).toBeLessThan(1.0)
+    it('matches the idle mid-week reference number: 10% used, half the window left', () => {
+      const now = Date.now()
+      const fs = scoring.forfeitShare(10, now + 3.5 * 24 * 3600 * 1000, 7, now)
+      expect(fs.forfeit).toBeCloseTo(0.8, 3)
+      expect(fs.value).toBeCloseTo(0.889, 3)
+    })
+
+    it('matches the behind-pace reference number: 97% used, resets in 33h — nothing forfeit', () => {
+      const now = Date.now()
+      const fs = scoring.forfeitShare(97, now + 33 * 3600 * 1000, 7, now)
+      expect(fs.forfeit).toBe(0)
+      expect(fs.value).toBe(0)
+    })
+
+    it('reads pace as unmeasurable under 6h into a 7-day window', () => {
+      const now = Date.now()
+      // 5h elapsed of 7 days (168h): well inside the 6h (1/28) guard.
+      const fs = scoring.forfeitShare(50, now + (168 - 5) * 3600 * 1000, 7, now)
+      expect(fs.value).toBe(0)
+      expect(fs.basis).toContain('pace unmeasurable')
+    })
+
+    it('scores 0 with no trusted reset time — resetsAt null or already past', () => {
+      const now = Date.now()
+      expect(scoring.forfeitShare(90, null, 7, now).value).toBe(0)
+      expect(scoring.forfeitShare(90, now - 1000, 7, now).value).toBe(0)
+    })
+
+    it('scores 0 where nothing is left unspent to forfeit', () => {
+      const now = Date.now()
+      const fs = scoring.forfeitShare(100, now + 10 * 3600 * 1000, 7, now)
+      expect(fs.value).toBe(0)
+      expect(fs.forfeit).toBe(0)
+    })
   })
 
   it('favors a worker with sooner reset and expiring credits over a worker with distant reset (t83 scenario)', () => {
@@ -958,6 +996,116 @@ describe('quota as a slope rather than a switch', () => {
 
     const choice = scoring.chooseTarget(tasks.requireTask(task.id))
     expect(choice.worker?.id).toBe(agy.id)
+
+    // ⭐ The `prepaid` term is what does the preferring now: Antigravity's weekly window is genuinely
+    // forfeiting (93% used, resets in 10h), so `quotaRisk` skips it outright rather than merely
+    // discounting it, and `prepaid` reads the forfeit share instead.
+    const terms = choice.breakdown?.terms ?? []
+    const quotaRisk = terms.find((t) => t.name === 'quotaRisk')
+    const prepaid = terms.find((t) => t.name === 'prepaid')
+    expect(quotaRisk?.value).toBe(0)
+    expect(prepaid?.value).toBeCloseTo(0.25 + 0.75 * 0.15918, 3)
+  })
+
+  it('prefers a subscription account whose 7d window would otherwise be forfeit at reset over one still on pace', () => {
+    db.db().prepare('update workers set enabled = 0').run()
+    const now = Date.now()
+    const forfeiting = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst', enabled: true })
+    const onPace = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFourth', enabled: true })
+
+    // ClaudeFirst: 30% 5h, 90% 7d resetting in 10h — the reference scenario, forfeitValue ≈ 0.4304.
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?), (?,?,?,?,?,?,?)`
+      )
+      .run(
+        forfeiting.id, 'session', 'Claude 5h', 30, now + 3 * 3600 * 1000, 'cli', now,
+        forfeiting.id, 'weekly', 'Claude 7d', 90, now + 10 * 3600 * 1000, 'cli', now
+      )
+
+    // ClaudeFourth: 30% 5h, 40% 7d resetting in 5 days — below the risk floor, nothing to forfeit.
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?), (?,?,?,?,?,?,?)`
+      )
+      .run(
+        onPace.id, 'session', 'Claude 5h', 30, now + 3 * 3600 * 1000, 'cli', now,
+        onPace.id, 'weekly', 'Claude 7d', 40, now + 5 * 24 * 3600 * 1000, 'cli', now
+      )
+
+    const task = tasks.createTask({ title: 'ClaudeFirst reference scenario' })
+    tasks.setQuotaOverride(task.id, now + 48 * 3600 * 1000)
+
+    const choice = scoring.chooseTarget(task)
+    expect(choice.worker?.id).toBe(forfeiting.id)
+
+    const terms = choice.breakdown?.terms ?? []
+    const quotaRisk = terms.find((t) => t.name === 'quotaRisk')
+    const prepaid = terms.find((t) => t.name === 'prepaid')
+    expect(quotaRisk?.value).toBe(0)
+    expect(prepaid?.value).toBeCloseTo(0.5728, 3)
+  })
+
+  it('does not let a fresh allowed_warning re-penalise a forfeiting billing window, but a rejected status still saturates', () => {
+    const now = Date.now()
+    const worker = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeWarned', enabled: true })
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?), (?,?,?,?,?,?,?)`
+      )
+      .run(
+        worker.id, 'session', 'Claude 5h', 30, now + 3 * 3600 * 1000, 'cli', now,
+        worker.id, 'weekly', 'Claude 7d', 90, now + 10 * 3600 * 1000, 'cli', now
+      )
+    db.db()
+      .prepare(
+        `insert into rate_limit_samples (worker_id, session_id, window_id, status, resets_at, sampled_at)
+         values (?,?,?,?,?,?)`
+      )
+      .run(worker.id, null, 'weekly', 'allowed_warning', now + 10 * 3600 * 1000, now)
+
+    const task = tasks.createTask({
+      title: 'allowed_warning on a forfeiting window',
+      constraints: { workerId: worker.id }
+    })
+    tasks.setQuotaOverride(task.id, now + 48 * 3600 * 1000)
+
+    const warned = scoring.chooseTarget(task)
+    const quotaRiskWarned = warned.breakdown?.terms.find((t) => t.name === 'quotaRisk')
+    expect(quotaRiskWarned?.value).toBe(0)
+
+    db.db().prepare('delete from rate_limit_samples where worker_id = ?').run(worker.id)
+    db.db()
+      .prepare(
+        `insert into rate_limit_samples (worker_id, session_id, window_id, status, resets_at, sampled_at)
+         values (?,?,?,?,?,?)`
+      )
+      .run(worker.id, null, 'weekly', 'rejected', now + 10 * 3600 * 1000, now)
+
+    const rejected = scoring.chooseTarget(task)
+    const quotaRiskRejected = rejected.breakdown?.terms.find((t) => t.name === 'quotaRisk')
+    expect(quotaRiskRejected?.value).toBe(1)
+  })
+
+  it('scores prepaid 0 on a local worker (no subscription to forfeit) and >= 0.25 on a subscription one', () => {
+    db.db().prepare('update workers set enabled = 0').run()
+    const local = workers.createWorker({ adapterId: 'local-llm', label: 'qwen-prepaid', enabled: true })
+    const claude = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudePrepaid', enabled: true })
+
+    const localChoice = scoring.chooseTarget(
+      tasks.createTask({ title: 'local prepaid check', constraints: { workerId: local.id } })
+    )
+    const localPrepaid = localChoice.breakdown?.terms.find((t) => t.name === 'prepaid')
+    expect(localPrepaid?.value).toBe(0)
+
+    const claudeChoice = scoring.chooseTarget(
+      tasks.createTask({ title: 'subscription prepaid check', constraints: { workerId: claude.id } })
+    )
+    const claudePrepaid = claudeChoice.breakdown?.terms.find((t) => t.name === 'prepaid')
+    expect(claudePrepaid?.value).toBeGreaterThanOrEqual(0.25)
   })
 
   it('refuses dispatch to a worker whose 7d window is >= 92% (t84 scenario)', () => {
