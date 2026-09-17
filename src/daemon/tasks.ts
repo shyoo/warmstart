@@ -535,6 +535,15 @@ export function getTask(id: string): Task | null {
 }
 
 /**
+ * `getTask`, by the `t<seq>` number the board shows. `seq` is install-wide, so one number names
+ * one task — which is what makes it the reference an agent can repeat back over MCP.
+ */
+export function getTaskBySeq(seq: number): Task | null {
+  const r = row<TaskRow>(db().prepare(`${TASK_SELECT} where t.seq = ?`).get(seq))
+  return r ? (toTasks([r])[0] ?? null) : null
+}
+
+/**
  * `getTask`, for a whole list, in a bounded number of queries rather than one per id.
  *
  * ⛔ **Exists because a caller looped `getTask` over a page of ids.** Each call re-runs

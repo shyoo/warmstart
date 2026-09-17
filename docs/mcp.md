@@ -80,7 +80,7 @@ any of them — it runs the identical bar and hands the same reason back, verbat
 
 | Tool | Does |
 |---|---|
-| `task_read` | read **this task only**: its task record, whole thread, and prior runs. The daemon derives the task from the caller's live session, so it is a route to recover a past reference, not a way to inspect the board |
+| `task_read` | read this task — its task record, whole thread, and prior runs — or, with `task` (a `t<seq>`, a bare seq, or an id), one sibling in the **same project**. Without the argument the daemon derives the task from the caller's live session, so it stays a route to recover a past reference, not a way to inspect the board: a task on another project, or a reference that names nothing, is refused |
 | `approve` | the permission prompt tool. Called by the CLI in place of showing a card |
 | `task_complete` | ⛔ **the only signal that a task succeeded.** A process exiting cleanly says nothing |
 | `await_human` | ⛔ **the other terminal contract:** the agent has gone as far as it can and the rest is a person's. Ends the run `blocked`, rests the task at `awaiting_human`, claims nothing and lands nothing |

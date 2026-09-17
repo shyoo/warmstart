@@ -791,7 +791,8 @@ export function promptFor(
     if (!holdsPrompt) {
       parts.push(
         'Warmstart gives you the MCP tool `task_read` to read this task’s recorded thread and prior ' +
-        'runs. Use it when an earlier task reference or result matters; it is scoped to this task.'
+        'runs. Use it when an earlier task reference or result matters; pass `task` with a t-number ' +
+        'to read another task in the same project.'
       )
     }
     // ⛔ The completion mode changes what "finished" means, so it belongs in the same sentence

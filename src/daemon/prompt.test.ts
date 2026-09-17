@@ -65,7 +65,7 @@ describe('promptFor prompt construction', () => {
     expect(prompt).toContain('call the MCP tool `task_complete` with a one-line summary')
     expect(prompt).toContain('call `ask_human` rather than guessing')
     expect(prompt).toContain('MCP tool `task_read`')
-    expect(prompt).toContain('scoped to this task')
+    expect(prompt).toContain('to read another task in the same project')
     // ⛔ And where the choices go. On t235 an agent lettered them into the question as well, so when
     // the tool call lost its `options` argument the operator got prose and a text box.
     expect(prompt).toContain('as an entry in its `options` argument')
@@ -97,6 +97,50 @@ describe('promptFor prompt construction', () => {
     expect(result?.messages.map((message) => message.text)).toContain('The earlier reference is t354.')
     expect(result?.runs.map((entry) => entry.id)).toContain(run.id)
     expect(await handlers['agent.taskRead']({ sessionId: 'not-a-live-session' })).toBeNull()
+  })
+
+  it('lets a worker name another task in the same project, and nothing outside it', async () => {
+    const projects = await import('./projects.js')
+    const rootA = mkdtempSync(join(tmpdir(), 'agentyard-prompt-proj-a-'))
+    const rootB = mkdtempSync(join(tmpdir(), 'agentyard-prompt-proj-b-'))
+    const projA = projects.addProject({ root: rootA })
+    const projB = projects.addProject({ root: rootB })
+    const own = tasks.createTask({ title: 'Own work', status: 'ready', projectId: projA.id })
+    const sibling = tasks.createTask({ title: 'Sibling work', status: 'ready', projectId: projA.id })
+    tasks.addMessage(sibling.id, 'human', 'The sibling reference.')
+    const elsewhere = tasks.createTask({ title: 'Elsewhere', status: 'ready', projectId: projB.id })
+    const sessionId = '00000000-0000-0000-0000-000000000497'
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, project_id, cwd, state, purpose, started_at)
+         values (?, ?, 'claude-code', 'stream', ?, ?, 'live', 'work', ?)`
+      )
+      .run(sessionId, claude.id, projA.id, rootA, Date.now())
+    tasks.startRun({
+      taskId: own.id,
+      workerId: claude.id,
+      sessionId,
+      projectId: projA.id,
+      quotaUnverified: true,
+      costModelId: null
+    })
+    const handlers = api.buildApi({ version: '1.0.0', port: 1234, startedAt: Date.now() })
+
+    // By t-number, bare seq and id alike.
+    for (const ref of [`t${sibling.seq}`, String(sibling.seq), sibling.id]) {
+      const result = await handlers['agent.taskRead']({ sessionId, task: ref })
+      expect(result?.task.id).toBe(sibling.id)
+      expect(result?.messages.map((message) => message.text)).toContain('The sibling reference.')
+    }
+    // The default is still the task on the live session.
+    expect((await handlers['agent.taskRead']({ sessionId }))?.task.id).toBe(own.id)
+    // Outside the project, and nowhere at all, are both refused rather than read.
+    await expect(handlers['agent.taskRead']({ sessionId, task: `t${elsewhere.seq}` })).rejects.toThrow(
+      /another project/
+    )
+    await expect(handlers['agent.taskRead']({ sessionId, task: 't999999' })).rejects.toThrow(
+      /no task is recorded/
+    )
   })
 
   /**

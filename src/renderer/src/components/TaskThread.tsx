@@ -1,5 +1,5 @@
 import { sessionEnded } from '@shared/protocol'
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   resolveModelChoice,
   SHARING_LABELS,
@@ -35,6 +35,7 @@ import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from 
 import { showsLiveOutput } from '../lib/live'
 import { supersededAskIds } from '../lib/compactionstatus'
 import { useScrolledPast } from '../lib/scrolledpast'
+import { shouldJumpToThreadBottom } from '../lib/threadscroll'
 import { codeSpans } from '../lib/codespans'
 import { bubbleSide, buildThreadItems, promptAnchors } from '../lib/threadbubble'
 import { duration, tokens, when } from '../lib/format'
@@ -288,6 +289,16 @@ function TaskDetail({
   // re-observe when the node arrives. See `LedgerPeek`.
   const [ledgerBox, setLedgerBox] = useState<HTMLElement | null>(null)
   const [timelineBox, setTimelineBox] = useState<HTMLElement | null>(null)
+  // Opening a task lands at the bottom of its thread, where the recent conversation is — a long
+  // thread otherwise opens at the top. Once per navigation, never per render: a thread growing
+  // under a running agent must not yank back a person who scrolled up to read.
+  const threadBottom = useRef<HTMLDivElement | null>(null)
+  const jumpedForTask = useRef<string | null>(null)
+  useEffect(() => {
+    if (!shouldJumpToThreadBottom(jumpedForTask.current, task.id)) return
+    jumpedForTask.current = task.id
+    threadBottom.current?.scrollIntoView({ block: 'end' })
+  }, [task.id])
   const pastLedger = useScrolledPast(ledgerBox)
   const pastTimeline = useScrolledPast(timelineBox)
   const latestRun = pastTimeline ? latestRunEntry(timeline) : null
@@ -565,6 +576,8 @@ function TaskDetail({
             />
           )}
           {task.status !== 'draft' && <Compose task={task} refresh={refresh} onStop={cancel} />}
+          {/* The mark the open-task jump scrolls to: the bottom of the thread, above nothing. */}
+          <div ref={threadBottom} aria-hidden="true" />
         </div>
 
         <aside className="detail-side">

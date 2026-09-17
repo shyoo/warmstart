@@ -178,23 +178,36 @@ server.registerTool(
 // and any way to assign work directly to another worker.
 if (TIER === 'worker') {
 /**
- * The worker can recover the task record it is actually running without reading the database or
- * gaining an id-shaped route into the rest of the board. This is particularly useful after a
- * resumed session when a past task reference matters more than the opening instruction.
+ * The worker can recover the task record it is actually running without reading the database, and
+ * can name one sibling in the same project — but gains no route into the rest of the board. This
+ * is particularly useful after a resumed session when a past task reference matters more than the
+ * opening instruction.
  */
 server.registerTool(
   'task_read',
   {
-    title: 'Read this task and its recorded history',
+    title: 'Read a task and its recorded history',
     description:
       'Read the task you are currently working on, including its whole thread and every prior run. ' +
-      'Use this when an earlier reference or result matters. It can read only this task, not another ' +
-      'task or the fleet.'
+      'Use this when an earlier reference or result matters. Pass `task` (a t-number like `t12`, ' +
+      'or an id) to read another task in the same project instead — a task on another project, ' +
+      'or a reference that names nothing, is refused.',
+    inputSchema: {
+      task: z
+        .string()
+        .optional()
+        .describe(
+          'Another task in the same project to read, as a t-number (t12) or an id. Omit to read this task.'
+        )
+    }
   },
-  async () => {
+  async (args) => {
     const sessionId = appEnv('SESSION_ID') ?? ''
     try {
-      const result = await rpc('agent.taskRead', { sessionId })
+      const result = await rpc('agent.taskRead', {
+        sessionId,
+        ...(args.task ? { task: args.task } : {})
+      })
       if (!result) {
         return {
           content: [{ type: 'text' as const, text: 'No active task is associated with this session.' }],

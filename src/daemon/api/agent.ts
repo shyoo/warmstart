@@ -1,5 +1,5 @@
 /** The worker RPCs an agent reaches through MCP, and the only ones it can. */
-import { addMessage, createTask, getTask, messagesFor, requireTask, runForSession, runsFor, setTaskHandoff } from '../tasks.js'
+import { addMessage, createTask, getTask, getTaskBySeq, messagesFor, requireTask, runForSession, runsFor, setTaskHandoff } from '../tasks.js'
 import { landConversationWork } from '../conversationland.js'
 import { askQuestion } from '../questions.js'
 import { addSplitDependency, applySplit, validateSplit } from '../split.js'
@@ -75,15 +75,31 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
     /**
      * The worker's native route back to the task record.
      *
-     * ⛔ Session → open run → task, rather than a caller-supplied task id. A worker needs the
-     * previous thread to recover an earlier reference, but may not turn that into fleet-wide read
-     * authority merely by changing an argument in an MCP call.
+     * ⛔ Without a reference: session → open run → task. With one, the named task — but only in
+     * the caller's own project (two tasks with no project count as sharing it). A worker needs
+     * the previous thread to recover an earlier reference, and the sibling a handoff names, but
+     * may not turn that into fleet-wide read authority merely by changing an argument in an MCP
+     * call: a reference that names nothing, or names a task elsewhere, is refused.
      */
-    'agent.taskRead': (p) => {
+    'agent.taskRead': async (p) => {
       const run = runForSession(p.sessionId)
-      const task = run?.taskId ? getTask(run.taskId) : null
-      if (!task) return null
-      return { task, messages: messagesFor(task.id), runs: runsFor(task.id) }
+      const own = run?.taskId ? getTask(run.taskId) : null
+      if (!own) return null
+      const ref = (p.task ?? '').trim()
+      if (!ref) {
+        return { task: own, messages: messagesFor(own.id), runs: runsFor(own.id) }
+      }
+      const seqMatch = /^t?(\d+)$/i.exec(ref)
+      const other = seqMatch ? getTaskBySeq(Number(seqMatch[1])) : getTask(ref)
+      if (!other) {
+        throw new Error(`no task is recorded as '${p.task}'`)
+      }
+      if (other.projectId !== own.projectId) {
+        throw new Error(
+          `t${other.seq} is on another project: task_read reaches only tasks in this task's own project`
+        )
+      }
+      return { task: other, messages: messagesFor(other.id), runs: runsFor(other.id) }
     },
     'agent.complete': async (p) => {
       await completeTask(p.sessionId, p.summary)

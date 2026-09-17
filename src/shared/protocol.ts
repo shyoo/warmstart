@@ -2602,13 +2602,15 @@ export interface RpcMap {
 
   // ---- worker tier: called by the MCP server on an agent's behalf -----------------------
   /**
-   * Read the task this session is currently running, including its recorded thread and prior runs.
+   * Read a task's recorded thread and prior runs.
    *
-   * ⛔ The task id comes from the live run, never from the caller. A worker can recover the context
-   * of its own work without gaining a way to inspect another task or the fleet.
+   * Without `task`, the task this session is currently running — the recovery route for recorded
+   * context. With `task` (a `t<seq>`, a bare seq, or an id), another task in the **same project**,
+   * so a worker can read a sibling it was told about without gaining a way to inspect the fleet:
+   * a task outside the caller's project, and a reference that names nothing, are both refused.
    */
   'agent.taskRead': {
-    params: { sessionId: string }
+    params: { sessionId: string; task?: string }
     result: { task: Task; messages: TaskMessage[]; runs: Run[] } | null
   }
   /** ⛔ The only signal that a task succeeded. A process exiting says nothing about the work. */
