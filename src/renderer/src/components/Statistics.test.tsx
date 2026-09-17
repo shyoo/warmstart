@@ -258,6 +258,12 @@ describe('the trade-off scatters draw one mark per model on every pair of axes',
     expect(markup).toMatch(/>Sonnet 5<\/text>/)
   })
 
+  it('says which side of each axis is better by position, not "higher", since cost is plotted inverted', () => {
+    expect([...markup.matchAll(/\(right is better\)/g)]).toHaveLength(3)
+    expect([...markup.matchAll(/\(top is better\)/g)]).toHaveLength(3)
+    expect(markup).not.toMatch(/higher is better/)
+  })
+
   it('leaves no trace of the retired 3D plot classes', () => {
     expect(markup).not.toMatch(/three-axis/)
   })

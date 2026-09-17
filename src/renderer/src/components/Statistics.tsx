@@ -661,11 +661,11 @@ const AXIS_RENDER: Record<Axis, (value: number) => string> = {
   velocity: duration
 }
 
-const AXIS_HINT: Record<Axis, string> = {
-  quality: 'higher is better',
-  cost: 'higher is better',
-  velocity: 'higher is better'
-}
+/** ⚠️ Named by position, not by value: cost and active time are plotted inverted (see
+ *  `INVERTED_AXES`), so a cheaper task sits *higher* on the cost axis while its number is *lower*, and
+ *  "higher is better" read as a claim about the number. Every axis runs better away from the origin. */
+const X_AXIS_HINT = 'right is better'
+const Y_AXIS_HINT = 'top is better'
 
 /** Cost and active time are measured such that a *smaller* number is the better outcome; flipping
  *  their plotted position (but not their displayed value) keeps "further from the origin" reading
@@ -878,7 +878,7 @@ export function ScatterPlot({
           textAnchor="middle"
           className="scatter-plot-axis-label"
         >
-          {AXIS_TITLE[xAxis]} ({AXIS_HINT[xAxis]})
+          {AXIS_TITLE[xAxis]} ({X_AXIS_HINT})
         </text>
         <text
           x={8}
@@ -887,7 +887,7 @@ export function ScatterPlot({
           className="scatter-plot-axis-label"
           transform={`rotate(-90, 8, ${midY})`}
         >
-          {AXIS_TITLE[yAxis]} ({AXIS_HINT[yAxis]})
+          {AXIS_TITLE[yAxis]} ({Y_AXIS_HINT})
         </text>
         {placeScatterLabels(
           points.map((point) => ({

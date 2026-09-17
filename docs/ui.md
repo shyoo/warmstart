@@ -231,8 +231,9 @@ measured has ever qualified unfiltered. ⭐ The checkbox is a per-display prefer
 page change or an app restart rather than resetting to off. ⛔ A model whose weakest axis rests on
 fewer than `MIN_TRUSTED_SAMPLES` (5, the same floor the price table dims its `n` column at) is dropped
 from all three scatters entirely — a mark has no column to dim a thin count in, so it is excluded
-rather than drawn as a confident point over a guess. ⭐ **Every axis reads "higher is better"
-(2026-09-14).** Cost and active time are measured such that a *smaller* number is the better outcome,
+rather than drawn as a confident point over a guess. ⭐ **Every axis is better away from the origin (2026-09-14)**, and its
+title says so by position — *right is better*, *top is better* — since "higher" read as a claim about
+the number on an inverted axis. Cost and active time are measured such that a *smaller* number is the better outcome,
 so `axisPosition` plots them on an inverted position (`max - value`) while the tick labels and tooltip
 still show the real dollar/duration — a mark further from the origin is always the better outcome, on
 every axis, without needing to reverse quality too. ⭐ **The hover legend is a reserved-height strip
