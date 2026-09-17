@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+12.g6b1bda6.dirty`): typecheck, lint and
-build pass; L1 **3,685 passed, 5 skipped** (220 files). L2 **203 checks** (5 skipped) and L4 **19 checks**
+Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+14.gf3f136c.dirty`): typecheck, lint and
+build pass; L1 **3,690 passed, 5 skipped** (218 files). L2 **203 checks** (5 skipped) and L4 **19 checks**
 against `release/win-unpacked` were at `0.1.1+1.g1fff656`. L3 not re-run on this
 tip (a renderer change, but `test/ui.test.mjs` never opens a project tab — see t500 below); it was
 **474 passed, 4 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64,
@@ -46,8 +46,7 @@ channels), all off-repo.
   Measured with `codex sandbox` (zero tokens) and three ~35k-input `exec` turns. ⛔ **No credential
   reaches the sandbox** — GCM and `gh`'s keyring both fail there, so `gh` is anonymous and a push cannot
   succeed; landing pushes, outside, as the instruction already says. ⚠️ Deliberately not done: handing in
-  the operator's token (`gh auth token` → `GH_TOKEN`) lets a *sandboxed* agent write to every repository it reaches; if authenticated `gh` inside codex is wanted, that is the decision. `docs/adapters.md`, `docs/security.md`. ⚠️ The first landing hit two 15s
-  timeouts: `%TEMP%` holds **28,760** leftover fixtures and an adapters test walked it as `cwd` (1.6s idle; now an empty mkdtemp, 1ms); git-heavy `conversationland` timed out on load alone. Clear the litter.
+  the operator's token (`gh auth token` → `GH_TOKEN`) lets a *sandboxed* agent write to every repository it reaches; if authenticated `gh` inside codex is wanted, that is the decision. `docs/adapters.md`, `docs/security.md`. ⚠️ The first landing hit two 15s timeouts: `%TEMP%` holds **28,760** leftover fixtures and an adapters test walked it as `cwd` (1.6s idle; now an empty mkdtemp, 1ms); git-heavy `conversationland` timed out on load alone. Clear the litter.
 
 - **`scripts/version.mjs` printed nothing when *run* on Linux or macOS, and that decided a
   release's visibility (2026-09-16).** It tested direct invocation by comparing `import.meta.url`
@@ -124,6 +123,11 @@ channels), all off-repo.
   Plan & Split and Debate tables; `.composer-send` buttons no longer wrap their own label either.
   `docs/ui.md`.
 
+- **Typing a project name in the Add-a-project wizard lost focus mid-keystroke (t504, 2026-09-17).**
+  Its mount-focus effect was keyed on `onClose`, a prop `App.tsx` hands it as a fresh closure every
+  render — App re-renders often (dashboard polling), re-firing the effect and refocusing the modal
+  mid-type. Split in two: Escape still depends on `onClose`; the one-time focus now runs on mount only.
+
 ## Remaining work — ordered by payoff
 
 Each needs a real signed-in account, a macOS machine, release credentials, or a human product
@@ -157,17 +161,15 @@ judgement. Do not replace the missing evidence with a unit test.
    after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an
    update-available check that keeps `publish: null`; a full data-directory export (isolation roots,
    attachments); and a clone-per-worker or container backend, the only thing that closes both the
-   host-authority gap and the shared common-`.git` grant. ⚠️ Deliberately **not** on this list:
-   GitHub/Linear/Slack intake, agent-to-agent messaging, kanban, voice, cross-machine sync.
+   host-authority gap and the shared common-`.git` grant. ⚠️ Not on this list: GitHub/Linear/Slack
+   intake, agent-to-agent messaging, kanban, voice, cross-machine sync.
 8. **Give Antigravity a real per-worker isolation root.** It shares `~/.gemini` today; changing `HOME`
    must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
 9. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data;
-   compare small and large quality-review models on the same five tasks; verify the Claude credits
-   gauge against one real invoice; and decide whether preempted runs should contribute to estimates.
+   compare small and large quality-review models on the same five tasks; verify the Claude credits gauge against one real invoice; and decide whether preempted runs should contribute to estimates.
 10. **Increase thread UI coverage where behaviour changes.** Most thread interactions remain
-   hand-tested. Extract pure decisions into `src/renderer/src/lib/` first.
-11. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines
-   against a ~1,500 target; no extracted module may read a scheduler binding at module evaluation time.
+   hand-tested; extract pure decisions into `src/renderer/src/lib/` first.
+11. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines against a ~1,500 target; no extracted module may read a scheduler binding at module evaluation time.
 12. **Drive t423's live views in the packaged app, with a real run behind them.** Watch a dispatched
    Claude task narrate its tool calls into the thread peephole and the Session TUI; open **Open a real
    terminal** on it and confirm the fork holds the context while the run carries on; turn

@@ -83,16 +83,23 @@ export function NewProject({
       .catch(() => setSettings(null))
   }, [])
 
-  // Escape closes, and the dialog takes focus when it opens — it is modal, so the keyboard has to
-  // be inside it or the sidebar behind it still answers arrow keys.
+  // Escape closes — the dialog listens on every render of `onClose` since a parent re-render can
+  // hand it a new closure, but must not itself re-fire the effect below.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') onClose()
     }
     document.addEventListener('keydown', onKey)
-    dialogRef.current?.focus()
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
+
+  // The dialog takes focus once, when it opens — it is modal, so the keyboard has to be inside it
+  // or the sidebar behind it still answers arrow keys. ⛔ Deliberately mount-only: the wizard's own
+  // state (and an `onClose` a re-rendering parent hands it fresh) must never steal focus back from
+  // whatever field the operator is typing in.
+  useEffect(() => {
+    dialogRef.current?.focus()
+  }, [])
 
   /**
    * Ask the daemon what is in there.
