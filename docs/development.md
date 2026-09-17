@@ -121,6 +121,23 @@ that can see the mistakes this codebase actually makes — a floating promise in
 daemon, a `String(x)` on a value a vendor may send as an object, an `any` out of `JSON.parse`. ⛔ A
 rule is disabled only with the reason written down; *"it fired a lot"* is not a reason.
 
+### `scripts/record-demo.mjs` — the demo video
+
+`node scripts/record-demo.mjs` after `npm run build` writes `out/demo/warmstart-demo.mp4` (1920 px,
+about a minute) and a 960 px `.gif`, on the same fictional fleet: `scripts/showcase.mjs` holds the
+fleet, the seeding and the DevTools launcher both scripts share. It files one task through the real
+composer, then **stages** its run — assignment, Flow with three tasks in parallel, agent messages, landing, two peer grades — as rows
+written on a timer, with a same-value `task.setPriority` making the renderer read them again. Frames
+come from `Page.startScreencast`; captions and the click pulse are DOM drawn over the page. Needs
+`ffmpeg` on `PATH`. `DEMO_DEBUG=1` writes one PNG per beat; `DEMO_KEEP=1` leaves `out/showcase/`.
+
+⛔ **A filed task is `ready`, so this one could dispatch.** Hiding the CLIs from `PATH` is not
+enough — Antigravity is also found under `%LOCALAPPDATA%\agy\bin` and Muse through `wsl.exe`. Every
+invented account is set to role `none` with grading off, the script refuses to film unless the
+daemon reports exactly that, and refuses to encode if any session appeared that it did not stage.
+⚠️ The staged run is unpriced (a run added after the daemon started never shows a price), so no
+caption claims a cost for it. Say the fleet is illustrative wherever the video is published.
+
 ### `scripts/build-mac.sh` and `scripts/build-win.ps1` — the whole pipeline, cached
 
 ⭐ Runs checks → bundle → packaged app → drive it. **~92s cold, seconds warm.** Steps are

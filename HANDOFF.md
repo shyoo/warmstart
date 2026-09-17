@@ -41,7 +41,7 @@ channels), all off-repo.
   `warmstart-site` while filed on `sunghwanyoo-site`; the trunk finish saw nothing and completed it unpushed.
   `strayCommits` checks repositories the run's tool lines name against their reflog. `docs/landing.md`.
 
-- **The trade-off scatters name their marks (t490, 2026-09-16).** `placeScatterLabels`, `compactModelLabel` in `Statistics.tsx`; axes say *right/top is better*. Not seen packaged.
+- **The trade-off scatters name their marks (t490, 2026-09-16).** `placeScatterLabels`, `compactModelLabel` in `Statistics.tsx`; axes say *right/top is better*. Not seen packaged. Demo video: `scripts/record-demo.mjs` → `out/demo/`, staged on the invented fleet (`docs/development.md`).
 
 - **`scripts/version.mjs` printed nothing when *run* on Linux or macOS, and that decided a
   release's visibility (2026-09-16).** It tested whether it had been invoked directly by comparing
