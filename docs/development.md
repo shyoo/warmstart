@@ -128,7 +128,8 @@ about a minute) and a 960 px `.gif`, on the same fictional fleet: `scripts/showc
 fleet, the seeding and the DevTools launcher both scripts share. It files one task through the real
 composer, then **stages** its run — assignment, Flow with three tasks in parallel, agent messages, landing, two peer grades — as rows
 written on a timer, with a same-value `task.setPriority` making the renderer read them again. Frames
-come from `Page.startScreencast`; captions and the click pulse are DOM drawn over the page. Needs
+come from `Page.startScreencast`. The README shows the copy in `docs/images/demo.{gif,mp4}` and
+warmstart.dev its own in `public/demo/`, each captioned as illustrative — copy a new take to both; captions and the click pulse are DOM drawn over the page. Needs
 `ffmpeg` on `PATH`. `DEMO_DEBUG=1` writes one PNG per beat; `DEMO_KEEP=1` leaves `out/showcase/`.
 
 ⛔ **A filed task is `ready`, so this one could dispatch.** Hiding the CLIs from `PATH` is not

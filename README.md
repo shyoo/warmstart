@@ -17,7 +17,9 @@ Give Warmstart the Claude Code, Codex, and Antigravity accounts you already use.
 
 > **Status: pre-alpha.** Windows is used every day; the macOS build is signed and notarised and has driven real agents. Linux is not supported. Unattended Claude Code and Antigravity agents run with **your full OS-user authority** — read [Security in brief](#security-in-brief) before pointing Warmstart at a machine that has anything else on it.
 
-![The Warmstart dashboard](docs/images/dashboard.png)
+[![A one-minute demo: a task is filed, assigned to the account with quota to spare, runs beside two others in its own worktree, lands, and is peer-graded](docs/images/demo.gif)](docs/images/demo.mp4)
+
+<sub>**Illustrative.** The accounts, projects and this run are invented and staged; the app is real. Recorded by <code>scripts/record-demo.mjs</code> · <a href="docs/images/demo.mp4">MP4, 1920 px</a>.</sub>
 
 ## Why Warmstart
 

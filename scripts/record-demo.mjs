@@ -28,8 +28,10 @@
  * ⚠️ Captions and the click pulse are DOM injected over the page for the recording only. The
  * renderer's CSP allows inline style; nothing here loads anything.
  *
- * Output lands in `out/demo/` (gitignored): publish it from there. `DEMO_DEBUG=1` also writes one
- * PNG per beat, for checking a take without watching it; `DEMO_KEEP=1` leaves the scratch fleet.
+ * Output lands in `out/demo/` (gitignored). The published copies are `docs/images/demo.{gif,mp4}`,
+ * which the README shows, and `warmstart-site/public/demo/`: copy a new take to both and check the
+ * SHA-256. `DEMO_DEBUG=1` also writes one PNG per beat, for checking a take without watching it;
+ * `DEMO_KEEP=1` leaves the scratch fleet.
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
