@@ -1700,6 +1700,7 @@ export interface RpcMap {
 
   // ---- M2: projects, tasks, approvals, resources ----------------------------------------
   'project.list': { params: void; result: Project[] }
+  'project.reorder': { params: { ids: string[] }; result: Project[] }
   'project.add': { params: { root: string; name?: string }; result: Project }
   /**
    * What is in a directory somebody is about to add: is it already a project, does it have a repo,

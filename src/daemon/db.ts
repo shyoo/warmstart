@@ -1986,6 +1986,16 @@ const MIGRATIONS: Migration[] = [
         `update workers set ${column} = null where adapter_id = 'local-llm' and ${column} = 'qwen3-coder-30b-a3b'`
       )
     }
+  },
+  // 75 - the operator's project order is fleet state, not a preference of one window (t512).
+  // Guarded because migration replay is part of this database's test contract.
+  (conn) => {
+    if (!hasColumn(conn, 'projects', 'sort_order')) {
+      conn.exec(`alter table projects add column sort_order integer not null default 0`)
+      const projects = conn.prepare('select id from projects order by created_at, id').all() as Array<{ id: string }>
+      const write = conn.prepare('update projects set sort_order = ? where id = ?')
+      projects.forEach((project, index) => write.run(index, project.id))
+    }
   }
 ]
 

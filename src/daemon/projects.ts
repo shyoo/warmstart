@@ -73,6 +73,7 @@ interface ProjectRow {
   config_path: string | null
   created_at: number
   archived_at: number | null
+  sort_order: number
 }
 
 function toProject(r: ProjectRow): Project {
@@ -90,8 +91,8 @@ function toProject(r: ProjectRow): Project {
 
 export function listProjects(includeArchived = false): Project[] {
   const sql = includeArchived
-    ? 'select * from projects order by created_at'
-    : 'select * from projects where archived_at is null order by created_at'
+    ? 'select * from projects order by sort_order, created_at, id'
+    : 'select * from projects where archived_at is null order by sort_order, created_at, id'
   return rows<ProjectRow>(db().prepare(sql).all()).map(toProject)
 }
 
@@ -154,8 +155,8 @@ export function addProject(input: { root: string; name?: string }): Project {
 
   db()
     .prepare(
-      `insert into projects (id, name, root, vcs, config_json, config_path, created_at)
-       values (?, ?, ?, ?, ?, ?, ?)`
+      `insert into projects (id, name, root, vcs, config_json, config_path, created_at, sort_order)
+       values (?, ?, ?, ?, ?, ?, ?, coalesce((select max(sort_order) + 1 from projects), 0))`
     )
     .run(id, name, root, vcs, JSON.stringify(config), path, now)
 
@@ -163,6 +164,41 @@ export function addProject(input: { root: string; name?: string }): Project {
   const project = requireProject(id)
   emit({ type: 'project.changed', project })
   return project
+}
+
+/** Persist the complete visible project order; omitted archived rows retain their relative tail. */
+export function reorderProjects(ids: string[]): Project[] {
+  const all = listProjects(true)
+  const known = new Map(all.map((project) => [project.id, project]))
+  const seen = new Set<string>()
+  const ordered: Project[] = []
+  for (const id of ids) {
+    const project = known.get(id)
+    if (!project || project.archivedAt !== null) throw new Error(`no active project '${id}'`)
+    if (seen.has(id)) throw new Error(`project '${project.name}' listed twice in an ordering`)
+    seen.add(id)
+    ordered.push(project)
+  }
+  const active = all.filter((project) => project.archivedAt === null)
+  if (ordered.length !== active.length) throw new Error('an ordering must include every active project')
+  for (const project of all) if (!seen.has(project.id)) ordered.push(project)
+
+  const conn = db()
+  const write = conn.prepare('update projects set sort_order = ? where id = ?')
+  conn.exec('begin immediate')
+  try {
+    ordered.forEach((project, index) => write.run(index, project.id))
+    conn.exec('commit')
+  } catch (error) {
+    conn.exec('rollback')
+    throw error
+  }
+  const result = listProjects()
+  // One event is enough: project consumers re-read the ordered list. Emitting one per rewritten row
+  // would turn a single drag into N concurrent fleet refreshes in every open window.
+  const changed = result.find((project, index) => active[index]?.id !== project.id)
+  if (changed) emit({ type: 'project.changed', project: changed })
+  return result
 }
 
 /** Re-read the committed config from disk. Called on demand and before dispatching into a project. */

@@ -56,6 +56,7 @@ import { useTarget } from './lib/target'
 import { MachinePicker } from './components/MachinePicker'
 import { WelcomeTour } from './components/WelcomeTour'
 import { completeWelcome, welcomePending } from './lib/welcome'
+import { reorderedProjectIds } from './lib/projectorder'
 
 /**
  * The shell.
@@ -176,6 +177,8 @@ export function App({
   const [openSession, setOpenSession] = useState<string | null>(null)
   const [keyboard, setKeyboard] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
+  const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null)
+  const [projectDrop, setProjectDrop] = useState<{ id: string; after: boolean } | null>(null)
   const [resources, setResources] = useState<ResourceAvailability[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [orphanTasks, setOrphanTasks] = useState(0)
@@ -491,11 +494,54 @@ export function App({
                   ? route.taskId ?? null
                   : null
               return (
-                <div key={project.id} className="nav-item-project-wrapper">
+                <div
+                  key={project.id}
+                  className={`nav-item-project-wrapper${projectDrop?.id === project.id ? ` nav-item-project-wrapper--drop-${projectDrop.after ? 'after' : 'before'}` : ''}`}
+                  onDragOver={(event) => {
+                    if (!draggedProjectId || draggedProjectId === project.id) return
+                    event.preventDefault()
+                    event.dataTransfer.dropEffect = 'move'
+                    const row = event.currentTarget.querySelector(':scope > .nav-item')
+                    const rect = row?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect()
+                    setProjectDrop({ id: project.id, after: event.clientY >= rect.top + rect.height / 2 })
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault()
+                    const movedId = draggedProjectId ?? event.dataTransfer.getData('text/plain')
+                    const current = projects.map((item) => item.id)
+                    const next = reorderedProjectIds(
+                      current,
+                      movedId,
+                      project.id,
+                      projectDrop?.id === project.id && projectDrop.after
+                    )
+                    setDraggedProjectId(null)
+                    setProjectDrop(null)
+                    if (next.every((id, index) => id === current[index])) return
+                    void rpc('project.reorder', { ids: next }).then(setProjects).catch(() => void refreshProjects())
+                  }}
+                >
                   <NavItem
                     active={route.kind === 'project' && route.id === project.id && openThreadId === null}
                     onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'tasks' })}
                   >
+                    <span
+                      className="nav-project-drag"
+                      draggable
+                      aria-hidden
+                      title="Drag to reorder projects"
+                      onDragStart={(event) => {
+                        setDraggedProjectId(project.id)
+                        event.dataTransfer.effectAllowed = 'move'
+                        event.dataTransfer.setData('text/plain', project.id)
+                      }}
+                      onDragEnd={() => {
+                        setDraggedProjectId(null)
+                        setProjectDrop(null)
+                      }}
+                    >
+                      ⠿
+                    </span>
                     <ProjectDot
                       state={state}
                       onClick={

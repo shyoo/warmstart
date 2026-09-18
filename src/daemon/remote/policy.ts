@@ -38,6 +38,7 @@ export const REMOTE_METHODS = {
   'project.docTemplates': 'deny',
   'project.create': 'deny',
   'project.reload': 'deny',
+  'project.reorder': 'deny',
   'project.archive': 'deny',
   'project.writeConfig': 'deny',
   'project.flow': 'deny',

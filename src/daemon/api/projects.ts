@@ -1,5 +1,5 @@
 /** Projects: registration, configuration, checks and the flow view. */
-import { addProject, archiveProject, listProjects, reloadProject, requireProject, setProjectChecks, setProjectPolicy, writeStarterConfig } from '../projects.js'
+import { addProject, archiveProject, listProjects, reloadProject, reorderProjects, requireProject, setProjectChecks, setProjectPolicy, writeStarterConfig } from '../projects.js'
 import { proposeChecks } from '../projectstack.js'
 import { createProject, inspectProjectDirectory, proposeProjectDocs, workspaceRootReport } from '../projectsetup.js'
 import { flowWorkspaces } from '../flow.js'
@@ -9,7 +9,7 @@ import type { Api, ApiContext } from './support.js'
 
 type ProjectMethod =
   | 'project.list' | 'project.add' | 'project.inspect' | 'project.workspaceRoot' | 'project.docTemplates'
-  | 'project.create' | 'project.reload' | 'project.archive' | 'project.writeConfig' | 'project.flow'
+  | 'project.create' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.writeConfig' | 'project.flow'
   | 'project.proposeChecks' | 'project.setChecks' | 'project.setPolicy'
 
 export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
@@ -21,6 +21,7 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
     'project.docTemplates': (p) => ({ docs: proposeProjectDocs(p) }),
     'project.create': (p) => createProject(p),
     'project.reload': (p) => reloadProject(p.id),
+    'project.reorder': (p) => reorderProjects(p.ids),
     'project.archive': (p) => archiveProject(p.id),
     'project.writeConfig': (p) => ({ path: writeStarterConfig(p.id) }),
     // ⛔ Resolved here, never in the renderer — see the method's note in protocol.ts.

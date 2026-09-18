@@ -1254,6 +1254,41 @@ body {
   position: relative;
 }
 
+.nav-project-drag {
+  flex: none;
+  color: var(--color-text-faint);
+  font-size: 12px;
+  line-height: 1;
+  cursor: grab;
+  opacity: 0.55;
+  transition: opacity 120ms ease;
+}
+
+.nav-item:hover .nav-project-drag,
+.nav-project-drag:focus-visible {
+  opacity: 1;
+}
+
+.nav-project-drag:active {
+  cursor: grabbing;
+}
+
+.nav-item-project-wrapper--drop-before::before,
+.nav-item-project-wrapper--drop-after::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  left: var(--sp-2);
+  right: var(--sp-2);
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-accent);
+  pointer-events: none;
+}
+
+.nav-item-project-wrapper--drop-before::before { top: -1px; }
+.nav-item-project-wrapper--drop-after::after { bottom: -1px; }
+
 .project-pr-badge {
   position: absolute;
   top: 100%;
