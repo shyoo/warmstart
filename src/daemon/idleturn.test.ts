@@ -224,6 +224,21 @@ describe('the turn that ended without reporting', () => {
     expect(said.some((t) => t.startsWith('Over to you:'))).toBe(true)
   })
 
+  it('keeps the agent’s complete final message in the hand-off', async () => {
+    // This is the only durable thread record for an MCP agent that ends its turn without a terminal
+    // signal. An excerpt here made the remainder impossible to recover from the Thread UI (t521).
+    const { task, session } = seedRunningTask()
+    const ending = `First paragraph.\n\n${'The Cloudflare setup is ready. '.repeat(20)}Final instruction.`
+    expect(ending.length).toBeGreaterThan(400)
+    await endTurn(session, ending)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
+    await scheduler.tick()
+
+    const handoff = tasks.messagesFor(task.id).find((message) => message.text.startsWith('Over to you:'))
+    expect(handoff?.text).toContain(ending)
+    expect(handoff?.text).toContain('Final instruction.')
+  })
+
   it('⭐ quotes the CLI’s own needs_action sentence where the turn carried one', async () => {
     // ⛔ The same preference `onSessionExit` makes. A `status_category: "blocked"` record arrives
     // *before* the result and says what the agent stopped for; the result cannot carry it. Reading

@@ -24,6 +24,11 @@ promote`, `release.yml`'s verify step included — in two turns and no "Prepare 
 channels), all off-repo.
 
 ## Closed in this cleanup
+- **An idle agent's hand-off discarded everything after character 400 of its final message (t529 ←
+  t521, 2026-09-18).** `runWatchdogs` wrote the only durable Thread record for an MCP agent that
+  ended a turn without a terminal signal, but formatted it with `idle.said.slice(0, 400)`. The
+  hand-off now carries the complete final message; `idleturn.test.ts` proves a message longer than
+  that boundary reaches the thread intact. `docs/architecture.md`.
 - **An Antigravity run that ran out of quota went to a person as a bare `ERROR` (t528 ← t527,
   2026-09-18).** agy's own `cli.log` showed `RESOURCE_EXHAUSTED (code 429): Individual quota reached
   … Resets in 52h16m45s` after eight retries, but the decoder read the result's `response` (the

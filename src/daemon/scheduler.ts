@@ -2575,7 +2575,9 @@ async function runWatchdogs(): Promise<void> {
             (waiting
               ? `It stopped to ask you something: "${waiting.slice(0, 400)}"`
               : idle.said
-                ? `The last thing it said was: "${idle.said.slice(0, 400)}"`
+                // Unlike a `needs_action` prompt, this is the only durable thread record of the
+                // agent's final turn. Do not turn a useful hand-off into an irrecoverable excerpt.
+                ? `The last thing it said was: "${idle.said}"`
                 : 'It said nothing on the way out.')
         )
         continue
