@@ -7,12 +7,11 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-18, **Windows 11**, measured over `0.1.1+25.gc8f690f.dirty`): typecheck, lint and
-build pass; L1 **3,716 passed, 5 skipped** (221 files). L2 **203 checks** (5 skipped) and L4 **19
-checks** against `release/win-unpacked` were at `0.1.1+1.g1fff656`. L3 not re-run on this tip (a
-renderer change, but `test/ui.test.mjs` never opens a project tab — see t500 below); it was **474
-passed, 4 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
-signed, hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
+Baseline (2026-09-18, **Windows 11**, measured over `0.1.1+32.g183b45c.dirty`): typecheck, lint and
+build pass; L1 **3,723 passed, 5 skipped** (221 files); L2 **203 checks** (5 skipped); L3 **474
+passed, 4 skipped**; L4 **19 checks** against `release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3
+434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so is the
+**Release** workflow.
 
 **`v0.1.1` is released and `latest`** (tag build 35165991396, 2026-09-17, attested; five installers
 + `SHA256SUMS.txt`). It was verified as `v0.1.1-rc.1` (tag build 35161851026) and promoted onto that

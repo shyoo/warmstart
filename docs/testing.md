@@ -246,6 +246,12 @@ branch a constant.
 is worse than no probe** — it turns one assertion into the wrong assertion rather than into none, and
 the failure then points at the code under test instead of at the fixture.
 
+⚠️ **A count is a host assertion too** (2026-09-18). The UI suite asserted *exactly one* prompt chip on
+a task it had just replied to with `task.message`. That reply requeues the task, and whether the
+daemon then dispatches a real run with a prompt of its own before the check reads the thread is a
+fact about the machine — it does on a developer box and not on CI — so the suite flickered between
+one chip and two. What the check was for was the chip's *side*; it now asserts that of every chip.
+
 ### A suite that fails because of the *shape* of the workspace it is in
 
 ⛔ **Pool members are not interchangeable, and the difference is invisible.** On t171, 2026-09-03,

@@ -974,8 +974,11 @@ try {
   const compose = await evaluate(`
     JSON.stringify((() => {
       const row = document.querySelector('.compose-row');
-      const input = row?.querySelector('input, textarea');
-      const button = row?.querySelector('button');
+      // The message box by class, and Send by its primary style: the row also carries a hidden
+      // file <input> and the [+] attachment pill (t527), so the first input and the first button
+      // are no longer the ones this measures.
+      const input = row?.querySelector('.compose-input');
+      const button = row?.querySelector('button.btn--primary');
       if (!row || !input || !button) return { missing: true };
       const i = input.getBoundingClientRect(), b = button.getBoundingClientRect();
       const r = row.getBoundingClientRect();
@@ -4989,7 +4992,10 @@ try {
   }, 'the prompt chip on the seeded run')
   check(
     'the chip sits under the human message that asked, on its own side of the thread',
-    chipAt.n === 1 && chipAt.on[0].role === 'msg--human' && chipAt.on[0].side === 'right',
+    // ⚠️ Every chip, not exactly one: `task.message` above requeued this task, and whether the
+    // daemon then dispatched a real run with a prompt of its own before this section (it does on
+    // a developer machine, not on CI) is a fact about the host, not about where a chip hangs.
+    chipAt.n >= 1 && chipAt.on.every((c) => c.role === 'msg--human' && c.side === 'right'),
     JSON.stringify(chipAt)
   )
   check(
