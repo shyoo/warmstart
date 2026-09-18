@@ -4663,15 +4663,15 @@ select:focus-visible,
 .detail-side > .detail-side-box:first-child { display: flex; flex-direction: column; }
 .detail-side > .detail-side-box:first-child > :not(.fact) { order: 50; }
 .fact { order: 50; }
-.fact--status { order: 1; align-items: center; } .fact--type { order: 2; } .fact--worker { order: 3; }
-.fact--model { order: 4; } .fact--session { order: 5; } .fact--created { order: 6; }
-.fact--started { order: 7; } .fact--parent { order: 8; } .fact--children { order: 8; }
-.fact--depends { order: 9; } .fact--blocks { order: 10; } .fact--workspace { order: 11; }
-.fact--directory { order: 12; } .fact--branch { order: 13; } .fact--mandate { order: 14; }
-.fact--priority { order: 15; } .fact--conversation { order: 16; } .fact--completion { order: 17; }
-.fact--compaction { order: 18; } .fact--objective { order: 19; } .fact--landing { order: 20; }
-.fact--statistics { order: 21; align-items: center; } .fact--took { order: 22; } .fact--elapsed { order: 23; }
-.fact--context { order: 24; } .fact--tokens { order: 25; } .fact--price { order: 26; }
+.fact--status { order: 1; align-items: center; } .fact--waiting { order: 2; } .fact--type { order: 3; } .fact--worker { order: 4; }
+.fact--model { order: 5; } .fact--session { order: 6; } .fact--created { order: 7; }
+.fact--started { order: 8; } .fact--parent { order: 9; } .fact--children { order: 9; }
+.fact--depends { order: 10; } .fact--blocks { order: 11; } .fact--workspace { order: 12; }
+.fact--directory { order: 13; } .fact--branch { order: 14; } .fact--mandate { order: 15; }
+.fact--priority { order: 16; } .fact--conversation { order: 17; } .fact--completion { order: 18; }
+.fact--compaction { order: 19; } .fact--objective { order: 20; } .fact--landing { order: 21; }
+.fact--statistics { order: 22; align-items: center; } .fact--took { order: 23; } .fact--elapsed { order: 24; }
+.fact--context { order: 25; } .fact--tokens { order: 26; } .fact--price { order: 27; }
 .fact--status .fact-value { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-1); }
 .task-stop { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: auto; margin-left: auto; padding: 1px 7px; color: var(--state-danger); background: color-mix(in srgb, var(--state-danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--state-danger) 55%, var(--color-border)); border-radius: var(--radius); font: inherit; font-size: var(--text-dense); font-weight: 500; line-height: var(--leading-tight); cursor: pointer; white-space: nowrap; transition: background var(--motion-fast) var(--ease), border-color var(--motion-fast) var(--ease); }
 .task-stop:hover:not(:disabled) { background: color-mix(in srgb, var(--state-danger) 22%, transparent); border-color: var(--state-danger); color: var(--state-danger); }

@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+16.g6379fdb.dirty`): typecheck, lint and
-build pass; L1 **3,695 passed, 5 skipped** (218 files). L2 **203 checks** (5 skipped) and L4 **19 checks**
+Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+17.gf89be98.dirty`): typecheck, lint and
+build pass; L1 **3,698 passed, 5 skipped** (218 files). L2 **203 checks** (5 skipped) and L4 **19 checks**
 against `release/win-unpacked` were at `0.1.1+1.g1fff656`. L3 not re-run on this
 tip (a renderer change, but `test/ui.test.mjs` never opens a project tab — see t500 below); it was
 **474 passed, 4 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64,
@@ -26,6 +26,16 @@ channels), all off-repo.
 
 ## Closed in this cleanup
 
+- **A Plan & Split task could be routed to an adapter with no `task_split` tool at all, and just
+  landed code instead of splitting anything (t507 ← t505, 2026-09-17).** `promptFor`'s MCP-less
+  branch never checked `planPhaseOf`/`debatePhaseOf`, so a plan or debate task landed there fell
+  straight through to the ordinary "do the work and say `TASK COMPLETE`" contract. `createTask` now
+  writes `needs: ['mcp']` into a `plan` or `debate` task's own constraints — the per-worker capability
+  gate `scoreCandidate` already enforces — in the one place both kinds are created. `prompt.test.ts`.
+  Also fixed: **"Waiting on" sat near the bottom of the status pane despite following "status" in the
+  DOM**, because the `Fact` carrying it had no CSS `order` class and fell to the unstyled default.
+  `.fact--waiting` now orders it directly below `.fact--status`.
+
 - **A freshly onboarded project could start with a dirty trunk that blocks its first landing (t506 ←
   t505, 2026-09-17).** `.warmstart/project.json` is documented as committed, but `writeStarterConfig`
   only wrote it — it sat untracked until a queued landing found the trunk dirty and refused to merge.
@@ -33,11 +43,10 @@ channels), all off-repo.
   uncommitted config the operator wrote by hand is left alone. `projectsetup.test.ts`.
 
 - **Pending pull requests get a dedicated Tasks banner and dot-clearing reconciliation (t503, 2026-09-17).**
-  A project with open PRs displays a dedicated `.tasks-pr-banner` in Tasks with task links, PR URLs,
-  branch info and an instant **Check merged PRs** action; tasks with pending deliveries show a `PR #N`
-  pill in the table. The daemon now emits `project.changed` and `task.changed` on PR recording, sweep
-  reconciliation and branch cleanup, and the renderer listens for `warmstart:refresh-projects`, so merged
-  PR checks update the sidebar dot from purple (`pending_pr`) back to empty circle (`idle`) immediately.
+  A project with open PRs displays a `.tasks-pr-banner` with task links, PR URLs, branch info and an
+  instant **Check merged PRs** action; tasks with pending deliveries show a `PR #N` pill. The daemon
+  now emits `project.changed`/`task.changed` on PR recording, sweep reconciliation and branch cleanup,
+  so a merged PR check updates the sidebar dot from purple (`pending_pr`) to idle immediately.
   `docs/ui.md`, `docs/landing.md`.
 
 - **A route consult held a task for 4m49s instead of 90s, and ran tools on Antigravity (t502 ← t501,
@@ -51,13 +60,11 @@ channels), all off-repo.
   auto-denied and the turn ends in ~1.1s, measured), and a consult cut short by its window no longer
   marks the account dead. Also seen, not fixed: the dispatch log's `score 1.91: ` has an empty reason.
 
-- **A codex run can reach the network; it still cannot push (t494 ← t493, 2026-09-16).** t493 saw every
-  `gh` call, `git fetch origin main` and `git push` die at the socket. codex's `workspace-write` ships
-  with `network_access: false` and `exec` has no prompt to ask — so the *fetch first* clause every
-  worktree agent gets failed on every codex run. `plan()` passes `-c sandbox_workspace_write.network_access=true`;
-  `envFor` appends `http.sslBackend=openssl` on Windows. Measured with `codex sandbox` and three ~35k-input `exec` turns.
-  ⛔ **No credential reaches the sandbox** — GCM and `gh`'s keyring both fail there; landing pushes outside.
-  `docs/adapters.md`, `docs/security.md`. Litter cleared: mkdtemp replaces `%TEMP%` cwd walk (1.6s idle → 1ms).
+- **A codex run can reach the network; it still cannot push (t494 ← t493, 2026-09-16).** codex's
+  `workspace-write` shipped with `network_access: false`, failing the *fetch first* clause every
+  worktree agent gets. `plan()` now passes `-c sandbox_workspace_write.network_access=true`; `envFor`
+  appends `http.sslBackend=openssl` on Windows. ⛔ No credential reaches the sandbox — landing pushes
+  outside. `docs/adapters.md`, `docs/security.md`.
 
 - **`scripts/version.mjs` printed nothing when *run* on Linux or macOS, and that decided a
   release's visibility (2026-09-16).** It tested direct invocation by comparing `import.meta.url`
@@ -70,19 +77,14 @@ channels), all off-repo.
   fails on the *shape* in any `scripts/*.mjs`. ⚠️ `scripts/build-mac.sh` reads the same command into
   `.build-cache/version.txt`; unmeasured on macOS, worth a look on the next Mac.
 
-- **electron-builder is invoked from one script, and never from a config file that computes
-  anything (2026-09-16).** t485's `electron-builder.js` — an ESM config extending the yml — exited 0
-  with no output on Windows CI (measured: run 35158401830; L4 pack caught it). Settings are back in
-  `electron-builder.yml`, `scripts/pack.mjs` passes `-c.extraMetadata.version` to leave `package.json`
-  alone, and spawns `node <cli.js>` from electron-builder's `bin`. `packaging.test.ts`.
+- **electron-builder is invoked from one script, never from a config file that computes anything
+  (2026-09-16).** t485's ESM config exited 0 with no output on Windows CI. Settings are back in
+  `electron-builder.yml`; `scripts/pack.mjs` passes `-c.extraMetadata.version`. `packaging.test.ts`.
 
 - **A local worker's model is what its server serves, named `local-llm:<served id>` (t486,
-  2026-09-16).** `costmodels/local.llm` pinned one id, so llama.cpp (which ignores `model` on a
-  single-model server) always answered as the pinned model regardless of what actually loaded. The
-  file now declares `dynamic_models`; `probeIdentity` reads `/v1/models`/`/props` and `knownModelIds`
-  feeds the picker, fitness and triage. Migration 74 clears the pinned literal. `docs/cost-model.md`
-  §8a. ⚠️ **Not yet driven against a real server.** Design:
-  [`transient_docs/local_model_identity_2026-09-16.md`](transient_docs/local_model_identity_2026-09-16.md).
+  2026-09-16).** `costmodels/local.llm` pinned one id, so a single-model llama.cpp server always
+  answered as that model regardless of what actually loaded. `dynamic_models` + `probeIdentity` fix
+  it; migration 74 clears the pinned literal. ⚠️ Not yet driven against a real server.
 
 - **A release is one turn, and the tag is the version (t485, 2026-09-16).** The version was a source fact
   costing four turns and two commits per release. `scripts/version.mjs` derives it from git
@@ -166,8 +168,7 @@ judgement. Do not replace the missing evidence with a unit test.
    must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
 9. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data;
    compare small and large quality-review models on the same five tasks; verify the Claude credits gauge against one real invoice; and decide whether preempted runs should contribute to estimates.
-10. **Increase thread UI coverage where behaviour changes.** Most thread interactions remain
-   hand-tested; extract pure decisions into `src/renderer/src/lib/` first.
+10. **Increase thread UI coverage where behaviour changes.** Most thread interactions remain hand-tested; extract pure decisions into `src/renderer/src/lib/` first.
 11. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines against a ~1,500 target; no extracted module may read a scheduler binding at module evaluation time.
 12. **Drive t423's live views in the packaged app, with a real run behind them.** Watch a dispatched
    Claude task narrate its tool calls into the thread peephole and the Session TUI; open **Open a real

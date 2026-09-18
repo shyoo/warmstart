@@ -776,6 +776,19 @@ export function createTask(input: CreateTaskInput): Task {
       ? (parent.branch ?? (project && project.vcs === 'git' ? branchNameFor(parent.seq, parent.title, parent.branchUnit) : null))
       : null)
 
+  // ⛔ **`task_split` and `debate_round` are MCP tools, and a plan or debate task has no other route
+  // to file its pieces or arbitrate.** Nothing in eligibility otherwise keeps an MCP-less adapter off
+  // either kind, and `promptFor`'s MCP-less branch has no planning or arbitration instruction to hand
+  // it — it falls straight through to the ordinary "do the work and say TASK COMPLETE" contract
+  // (t507 ← t505, 2026-09-17: an operator picked Plan & Split and the agent just landed code, having
+  // never been told to plan or split anything). `needs` is the capability gate `scoreCandidate`
+  // already enforces per worker; this is the one place — not one per RPC call site — that a plan or
+  // debate task's own requirement gets written into it.
+  const effectiveConstraints =
+    input.kind === 'plan' || input.kind === 'debate'
+      ? { ...input.constraints, needs: Array.from(new Set([...(input.constraints?.needs ?? []), 'mcp'])) }
+      : input.constraints ?? {}
+
   db()
     .prepare(
       `insert into tasks (id, seq, project_id, title, kind, status, priority, created_by_json,
@@ -803,7 +816,7 @@ export function createTask(input: CreateTaskInput): Task {
       input.notBefore ?? null,
       input.deadline ?? null,
       JSON.stringify(input.requires ?? []),
-      JSON.stringify(input.constraints ?? {}),
+      JSON.stringify(effectiveConstraints),
       input.verification ?? 'auto',
       // ⚠️ `inherit` by default, which is not the same as picking the fleet value: a task that has
       // never expressed a preference follows its project as the project changes.

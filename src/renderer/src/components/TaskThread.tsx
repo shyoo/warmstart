@@ -640,7 +640,7 @@ function TaskDetail({
               )}
             </Fact>
             {holdLine(task, now) && (
-              <Fact label={task.status === 'awaiting_human' ? 'wants' : 'waiting on'}>
+              <Fact label={task.status === 'awaiting_human' ? 'wants' : 'waiting on'} className="fact--waiting">
                 {holdLine(task, now)}
               </Fact>
             )}

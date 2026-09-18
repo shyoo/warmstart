@@ -1544,3 +1544,50 @@ describe('the pre-completion rebase check', () => {
     expect(text).toContain('Immediately before you call `task_complete`, check whether this branch')
   })
 })
+
+/**
+ * ⛔ **t507 ← t505, 2026-09-17.** An operator filed a Plan & Split task and the agent just landed
+ * code, having never called `task_split` — nothing kept the task off an MCP-less adapter, and
+ * `promptFor`'s MCP-less branch (the `else` a few hundred lines up from here) has no planning or
+ * arbitration instruction to give one: it falls straight through to the ordinary "do the work and
+ * say `TASK COMPLETE`" contract. `createTask` now writes `needs: ['mcp']` into a plan or debate
+ * task's own constraints, so the capability gate `scoreCandidate` already enforces per worker
+ * refuses an MCP-less candidate before it is ever dispatched, rather than dispatching it into a
+ * prompt with no instruction to carry out the kind of task it was filed as.
+ */
+describe('a plan or debate task requires an MCP adapter', () => {
+  it('refuses an MCP-less adapter pinned to a plan task', async () => {
+    const scoring = await import('./scoring.js')
+    const task = tasks.createTask({
+      title: 'Split this work',
+      kind: 'plan',
+      status: 'ready',
+      constraints: { workerId: agy.id, adapterId: 'antigravity-cli' }
+    })
+    expect(task.constraints.needs).toContain('mcp')
+    const choice = scoring.chooseTarget(task)
+    expect(choice.worker).toBeNull()
+    expect(choice.reason).toContain('lacks mcp')
+  })
+
+  it('refuses an MCP-less adapter pinned to a debate organizer', async () => {
+    const scoring = await import('./scoring.js')
+    const task = tasks.createTask({
+      title: 'Debate this',
+      kind: 'debate',
+      status: 'ready',
+      constraints: { workerId: agy.id, adapterId: 'antigravity-cli' },
+      mandate: { maxChildren: 2 },
+      debate: { seats: [], rounds: 1, exchange: 'full', round: 1, verdict: null }
+    })
+    expect(task.constraints.needs).toContain('mcp')
+    const choice = scoring.chooseTarget(task)
+    expect(choice.worker).toBeNull()
+    expect(choice.reason).toContain('lacks mcp')
+  })
+
+  it('leaves an ordinary work task unaffected', () => {
+    const task = tasks.createTask({ title: 'Just work', status: 'ready' })
+    expect(task.constraints.needs ?? []).not.toContain('mcp')
+  })
+})
