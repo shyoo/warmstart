@@ -24,6 +24,10 @@ promote`, `release.yml`'s verify step included — in two turns and no "Prepare 
 channels), all off-repo.
 
 ## Closed in this cleanup
+- **The thread conversation input box gained the `[+]` file and folder attachment menu (t527 ← t525, 2026-09-18).**
+  t525 gave question cards the task composer's `[+]` attachment menu, but left the thread's bottom compose box without
+  it. `Compose` in `TaskThread.tsx` now renders the same `[+]` Pill button (`COMPOSE_ATTACH_OPTIONS`: file, image, folder),
+  allowing operators to attach files or grant local folders directly to live or resting task turns. `docs/ui.md`.
 - **An idle agent's hand-off discarded everything after character 400 of its final message (t529 ←
   t521, 2026-09-18).** `runWatchdogs` wrote the only durable Thread record for an MCP agent that
   ended a turn without a terminal signal, but formatted it with `idle.said.slice(0, 400)`. The

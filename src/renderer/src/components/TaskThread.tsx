@@ -28,6 +28,8 @@ import type { ManualReview, QualityReview } from '@shared/review'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { ImageChips, usePastedImages } from '../lib/pasteimages'
+import { Pill, PillOptions, type PillOption } from './Pill'
+import { useIsRemote } from '../lib/target'
 import { SettingButtonSelect } from './SettingButtonSelect'
 import { SettingSwitch } from './SettingRow'
 import { TaskQuestions } from './Questions'
@@ -2053,6 +2055,11 @@ function ManualReviewBox({
   )
 }
 
+const COMPOSE_ATTACH_OPTIONS: PillOption[] = [
+  { value: 'file', label: 'Add file or image' },
+  { value: 'folder', label: 'Add folder' }
+]
+
 /**
  * Say something to a task.
  *
@@ -2080,12 +2087,17 @@ function Compose({
   const [outcome, setOutcome] = useState<string | null>(null)
   const { settings } = useUiSettings()
   const paste = usePastedImages()
+  const attachmentPickerRef = useRef<HTMLInputElement>(null)
+  const remoteFleet = useIsRemote()
   const running = task.status === 'running' || task.status === 'assigned'
   const stoppable = STOPPABLE.has(task.status)
 
+  const canSend = (text.trim().length > 0 || paste.ids.length > 0) && !sending && !paste.busy
+
   const send = async () => {
     const body = text.trim()
-    if (!body) return
+    if (!body && paste.ids.length === 0) return
+    if (sending || paste.busy) return
     setSending(true)
     try {
       const result = await rpc('task.message', {
@@ -2114,6 +2126,37 @@ function Compose({
   return (
     <div className="compose">
       <div className="compose-row">
+        <input
+          ref={attachmentPickerRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            const files = [...(e.currentTarget.files ?? [])]
+            e.currentTarget.value = ''
+            void paste.addFiles(files)
+          }}
+        />
+        <Pill
+          className="composer-attachment"
+          ariaLabel="Add attachment"
+          title="Attach file, image, or folder"
+          label="+"
+          menu={(close) => (
+            <PillOptions
+              // ⚠️ A folder is attached by *path*, and the OS picker only knows this computer's
+              // disk; on a remote fleet that path would name nothing. Files upload their bytes.
+              options={remoteFleet ? COMPOSE_ATTACH_OPTIONS.filter((o) => o.value !== 'folder') : COMPOSE_ATTACH_OPTIONS}
+              value=""
+              ariaLabel="Add attachment"
+              onPick={(next) => {
+                close()
+                if (next === 'file') attachmentPickerRef.current?.click()
+                else if (next === 'folder') void paste.addFolders()
+              }}
+            />
+          )}
+        />
         <textarea
           className="compose-input"
           rows={1}
@@ -2128,7 +2171,7 @@ function Compose({
           onDrop={paste.onDrop}
           onDragOver={paste.onDragOver}
           onKeyDown={(e) => {
-            if (isSubmitKey(e, settings.enterBehavior) && text.trim() && !sending) {
+            if (isSubmitKey(e, settings.enterBehavior) && canSend) {
               e.preventDefault()
               void send()
             }
@@ -2152,7 +2195,7 @@ function Compose({
             {stopping ? 'Stopping…' : 'Stop'}
           </button>
         )}
-        <button className="btn btn--primary" disabled={sending || !text.trim()} onClick={() => void send()}>
+        <button className="btn btn--primary" disabled={!canSend} onClick={() => void send()}>
           {sending ? 'Sending…' : running ? 'Send' : 'Send and continue'}
         </button>
       </div>

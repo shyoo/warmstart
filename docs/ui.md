@@ -420,7 +420,9 @@ need — a long enough label always can.
 
 ⛔ **The attachment picker lives inside the prompt it enriches, beside Save as Draft, Send and the
 schedule clock.** Those actions apply to all five kinds, in the order the kind pill offers them:
-Single Task, Conversation, Plan & Execute, Plan & Split and Debate.
+Single Task, Conversation, Plan & Execute, Plan & Split and Debate. The same `[+]` attachment menu
+(file, image, folder) is also offered by the thread composer at the bottom of the task view, so notes
+into a live or resting task can attach files and grant folders directly (t527).
 In Plan & Split the composer draws two labelled rows of pills, and this is decision D5. The first is
 **Planner** — priority, dependencies, reuse, finish, worker, model and effort — which is what the
 *planning turn* runs as. The second is **Executor**, plus a fan-out pill, which is what every subtask

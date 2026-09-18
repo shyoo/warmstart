@@ -5527,6 +5527,17 @@ select:focus-visible,
   flex: 0 0 auto;
 }
 
+.compose-row .composer-attachment {
+  margin-right: 0;
+  flex: 0 0 auto;
+}
+
+.compose-row .composer-attachment .pill {
+  height: 30px;
+  box-sizing: border-box;
+  justify-content: center;
+}
+
 .compose-hint {
   margin: var(--sp-1) 0 0;
   font-size: var(--text-meta);
