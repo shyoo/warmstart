@@ -24,6 +24,11 @@ promote`, `release.yml`'s verify step included — in two turns and no "Prepare 
 channels), all off-repo.
 
 ## Closed in this cleanup
+- **Relocating a moved project meant typing the new path by hand (t517 ← t514, 2026-09-17).** The
+  `RelocateBanner`'s text input had no OS picker, unlike every other path field in the app. It now
+  renders `NewProject`'s `PathField` (newly exported), so relocation gets the same **Choose…** button
+  that opens `dialog.showOpenDialog`, and still falls back to typing on a remote target where there is
+  no local disk to browse. `docs/ui.md`.
 - **An idle Muse account lost every unpinned routing contest, and it was `prepaid`, not the quota
   gate (t516, 2026-09-17).** MuseFirst went a long stretch never auto-routed; the quota gate itself
   was already proven not to block a worker with no reading (t309). Measured against MuseFirst's own

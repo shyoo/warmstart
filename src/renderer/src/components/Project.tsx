@@ -11,6 +11,7 @@ import { Conversations } from './Conversations'
 import { TerminalPane } from './Terminal'
 import { SessionStream } from './SessionStream'
 import { Flow } from './Flow'
+import { PathField } from './NewProject'
 
 export type ProjectTab = 'flow' | 'tasks' | 'thread' | 'conversations' | 'sessionTui' | 'settings'
 
@@ -196,14 +197,14 @@ function RelocateBanner({
         outside Warmstart. If it moved, point Warmstart at the new location below — the project keeps
         its id, tasks, and history.
       </p>
-      <div className="wizard-path">
-        <input
-          className="text-input mono"
-          value={path}
-          spellCheck={false}
-          onChange={(e) => setPath(e.target.value)}
-          placeholder="new directory path"
-        />
+      <PathField
+        label="New directory"
+        value={path}
+        placeholder="new directory path"
+        onChange={setPath}
+        disabled={relocate.busy}
+      />
+      <div className="form-actions">
         <button
           className="btn"
           disabled={relocate.busy || path.trim().length === 0}

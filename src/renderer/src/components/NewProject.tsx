@@ -372,7 +372,7 @@ export function NewProject({
 }
 
 /** A path field with the OS picker beside it. ⚠️ Typing still works — a pasted path is half of these. */
-function PathField({
+export function PathField({
   label,
   value,
   placeholder,
