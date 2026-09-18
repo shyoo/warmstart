@@ -1108,6 +1108,70 @@ describe('quota as a slope rather than a switch', () => {
     expect(claudePrepaid?.value).toBeGreaterThanOrEqual(0.25)
   })
 
+  /**
+   * ⭐ t516: MuseFirst was going a long stretch unrouted, and the operator's hunch was right — Muse
+   * Code blanks its `/usage` panel to "Currently unavailable" until a window's first turn completes
+   * (measured over 11 days of its own `quota_samples`, `docs/routing.md` §3.3a), and every probe in
+   * that state used to leave `trustedWindows` empty. `prepaid` then had no billing window to read and
+   * parked at its 0.25 standing value indefinitely — including through the exact idle-but-quota-rich
+   * stretch it exists to reward. `inferredFreshWindows` now reads the last *trusted* reading's
+   * already-passed `resetsAt` and synthesizes a 0%-used window at the projected next reset, so
+   * `prepaid` scores it like any other fresh window instead of like no window at all.
+   *
+   * ⚠️ **`claude-code` here, not `muse-code`.** `inferredFreshWindows` is gated on `vendorSilent`, a
+   * fact carried on the row — never on an adapter id — and `muse-code`'s eligibility gate refuses a
+   * dispatch outright on a machine where the CLI is not installed (see `probedeadlock.test.ts`'s
+   * `seedProbeCapable` note), which would refuse before scoring runs at all. Proving the mechanism on
+   * an adapter this file already dispatches to successfully is the more honest test of it.
+   */
+  it('infers a fresh 0%-used window from a vendor-silent probe, instead of parking prepaid at its standing value', () => {
+    db.db().prepare('update workers set enabled = 0').run()
+    const now = Date.now()
+    const silent = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeSilent', enabled: true })
+    const ordinary = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeOrdinaryFailure', enabled: true })
+
+    // Both accounts: the last reading anybody trusts is a 7d window that reset 3 days ago with 80%
+    // spent — i.e. we are 3 days into the *next* window, and nothing has been read there since.
+    const lastReset = now - 3 * 24 * 3600 * 1000
+    for (const w of [silent, ordinary]) {
+      db.db()
+        .prepare(
+          `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+           values (?,?,?,?,?,?,?)`
+        )
+        .run(w.id, 'weekly', 'Claude 7d', 80, lastReset, 'cli', lastReset)
+    }
+
+    // The newest probe on both is empty. Only `silent` carries the vendor's own explanation.
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, error, sampled_at, vendor_silent)
+         values (?,'','',0,null,'unknown',?,?,1)`
+      )
+      .run(silent.id, 'the panel reads "Currently unavailable"', now)
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, error, sampled_at)
+         values (?,'','',0,null,'unknown',?,?)`
+      )
+      .run(ordinary.id, 'the usage panel did not appear', now)
+
+    const silentChoice = scoring.chooseTarget(
+      tasks.createTask({ title: 'vendor-silent check', constraints: { workerId: silent.id } })
+    )
+    const ordinaryChoice = scoring.chooseTarget(
+      tasks.createTask({ title: 'ordinary-failure check', constraints: { workerId: ordinary.id } })
+    )
+
+    const silentPrepaid = silentChoice.breakdown?.terms.find((t) => t.name === 'prepaid')
+    const ordinaryPrepaid = ordinaryChoice.breakdown?.terms.find((t) => t.name === 'prepaid')
+
+    // 3 days unspent out of 7 projects a full forfeit at the inferred reset: 0.25 + 0.75×1 = 1.0.
+    expect(silentPrepaid?.value).toBeCloseTo(1.0, 3)
+    // An ordinary failure explains nothing about the window, so it still gets only the standing value.
+    expect(ordinaryPrepaid?.value).toBe(0.25)
+  })
+
   it('refuses dispatch to a worker whose 7d window is >= 92% (t84 scenario)', () => {
     db.db().prepare('update workers set enabled = 0').run()
     const now = Date.now()

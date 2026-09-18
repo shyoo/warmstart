@@ -359,6 +359,22 @@ without a database):
    `projectedSpend = f × (1 − u) / (1 − f)`.
 5. `forfeit = max(0, u − projectedSpend)`; `forfeitValue = forfeit / u` (0 where `u = 0`).
 
+⭐ **A vendor that goes silent on a fresh window is not "no trusted window" any more.** Muse Code
+blanks its whole `/usage` panel until a window's first turn completes (`usageUnavailable`,
+`muse-code.ts`) — measured against MuseFirst's own 11-day `quota_samples` history, every such streak
+begins the moment a window's `resetsAt` passes, and the reading that follows is always low. Before
+this was recognised, `trustedWindows` stayed empty on every such probe, `prepaidTermFor` never found a
+matching billing window, and the account was stuck at the 0.25 standing value indefinitely — including
+during the exact stretch (idle, quota-rich) that `prepaid` exists to reward, which is precisely why an
+idle Muse account lost every unpinned routing contest to one with an ordinary reading. `scoring.ts`'s
+`inferredFreshWindows` now reads `QuotaSnapshot.vendorSilent` (set only where the adapter's own
+`usageUnavailable` matched, never on an ordinary probe failure) and, where the *last trusted* reading's
+`resetsAt` for that window has already passed, synthesizes a 0%-used window at that same id, with a
+projected `resetsAt` advanced by whole billing-window cadences until it lands back in the future. That
+synthesized window feeds `trustedWindows` exactly like a real one, so steps 2–5 above run unchanged —
+a window this fresh, at 0% used, several days into its cadence, still projects a large `forfeitValue`
+precisely because nothing has been read there yet.
+
 **Reference numbers**, used in `routing.test.ts` and above:
 
 | Scenario | percent | reset | days | f | u | projected | forfeit | forfeitValue | prepaid |

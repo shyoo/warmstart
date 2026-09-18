@@ -24,6 +24,18 @@ promote`, `release.yml`'s verify step included — in two turns and no "Prepare 
 channels), all off-repo.
 
 ## Closed in this cleanup
+- **An idle Muse account lost every unpinned routing contest, and it was `prepaid`, not the quota
+  gate (t516, 2026-09-17).** MuseFirst went a long stretch never auto-routed; the quota gate itself
+  was already proven not to block a worker with no reading (t309). Measured against MuseFirst's own
+  11-day `quota_samples` history: Muse Code blanks `/usage` to "Currently unavailable" until a
+  window's first turn completes, every such streak begins right at that window's `resetsAt`, and the
+  first real reading after one is always low — so "vendor silent" means *fresh window, nothing spent*,
+  not *broken probe*. `trustedWindows` used to stay empty on that state, so `prepaidTermFor` never
+  found a billing window and parked at its 0.25 standing value through the exact idle, quota-rich
+  stretch `prepaid` exists to reward. `QuotaSnapshot.vendorSilent` (migration 76, set only where the
+  adapter's own `usageUnavailable` matched) now lets `scoring.ts`'s `inferredFreshWindows` synthesize a
+  0%-used window at the projected next reset from the last trusted reading, feeding `prepaid` (and
+  `quotaRisk`, harmlessly) like a real one. `docs/routing.md` §3.3a, `docs/data-model.md`.
 - **A project whose directory moved outside Warmstart had no error of its own (t514, 2026-09-17).**
   `Project` now carries `rootExists` (`existsSync` on every `toProject`); the Project header banners a
   missing path and `project.relocate` points the same project id at its new directory, keeping tasks

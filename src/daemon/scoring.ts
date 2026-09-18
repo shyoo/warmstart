@@ -7,11 +7,13 @@ import { adapter } from './adapters/index.js'
 import { paceFactors, paceFor, paceValue, type PaceFactors } from './pace.js'
 import {
   lastQuota,
+  lastQuotaReading,
   windowsForPool,
   windowResetsAt,
   poolVerdict,
   freshRateLimit,
-  isSessionRateWindow
+  isSessionRateWindow,
+  type DatedQuota
 } from './quota.js'
 import {
   creditsPurseEmpty,
@@ -483,6 +485,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
         }
       } else {
         quotaUnverified = true
+        trustedWindows = inferredFreshWindows(worker, pool, quota)
       }
 
       const session = reuse
@@ -896,6 +899,68 @@ export function quotaRiskOf(workerId: string): 0 | 1 {
   // dispatch, where being preempted costs it a session.
   const rate = freshRateLimit(workerId)
   return reserve.verdict === 'at_risk' || (rate && rate.status !== 'allowed') ? 1 : 0
+}
+
+/**
+ * What a candidate's window looks like right now, when the newest probe came back with nothing —
+ * *if* the vendor itself said why (`quota.vendorSilent`) and the last reading we do trust shows the
+ * window has already rolled over.
+ *
+ * ⭐ **Why this exists, and why it is not "carry the last percentage forward."** Measured against
+ * MuseFirst's own 11-day probe history (`quota_samples`, 2026-09-06 → 2026-09-17): every
+ * `Currently unavailable` streak begins immediately after the window's own `resetsAt` passes, and the
+ * first real reading to follow one is consistently low (often exactly 0%) — never a continuation of
+ * the percentage the *previous* window held. So the old number is evidence of nothing once its window
+ * has expired, but the fact that it *has* expired is itself the evidence: a window that has rolled
+ * over with the vendor reporting no turns yet has spent nothing in it so far. That is a stronger,
+ * safer belief than "unknown" — it is the account's most quota-rich state, which is exactly the state
+ * `prepaid` (below) exists to reward, and exactly the state Muse's vendor defect was hiding from it.
+ *
+ * ⛔ **Gated on the adapter's own declared capability, never on an adapter id.** `vendorSilent` is
+ * only ever set where `usageUnavailable` matched (see `quota.ts`), so this reads as "this vendor told
+ * us it has nothing" for whichever adapter says so — today Muse, unremarkably extensible to another.
+ *
+ * ⚠️ **The inferred `resetsAt` is a projection, not a reading.** It advances the last known reset by
+ * whole cadences (from the cost model's own billing-window length) until it lands back in the future,
+ * so a long-idle account is not left claiming a reset that already passed a second time.
+ */
+function inferredFreshWindows(worker: Worker, pool: string | null, quota: DatedQuota | null): QuotaWindow[] {
+  if (!quota?.vendorSilent || quota.windows.length > 0) return []
+  const last = lastQuotaReading(worker.id)
+  if (!last || last.windows.length === 0) return []
+
+  let cm: CostModel
+  try {
+    cm = costModel(adapter(worker.adapterId).info.policy.costModelId)
+  } catch {
+    return []
+  }
+  if (!cm.hasBillingWindow()) return []
+
+  const poolWindows = windowsForPool(last.windows, pool)
+  const billing = cm.billingWindowsFor(
+    poolWindows.map((w) => w.id),
+    pool
+  )
+  const now = Date.now()
+  const out: QuotaWindow[] = []
+  for (const win of poolWindows) {
+    // A window that has not reset yet is still exactly what it last read — the "no guessing" case,
+    // not this one.
+    if (win.resetsAt === null || win.resetsAt > now) continue
+    const ref = billing.find((b) => b.id === win.id)
+    const cadenceMs = ref ? ref.days * 24 * 60 * 60 * 1000 : 0
+    if (cadenceMs <= 0) continue
+    const cyclesElapsed = Math.max(1, Math.ceil((now - win.resetsAt) / cadenceMs))
+    out.push({
+      id: win.id,
+      label: win.label,
+      percent: 0,
+      resetsAt: win.resetsAt + cyclesElapsed * cadenceMs,
+      ...(win.group ? { group: win.group } : {})
+    })
+  }
+  return out
 }
 
 /**

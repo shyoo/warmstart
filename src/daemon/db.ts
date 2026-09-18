@@ -1996,6 +1996,21 @@ const MIGRATIONS: Migration[] = [
       const write = conn.prepare('update projects set sort_order = ? where id = ?')
       projects.forEach((project, index) => write.run(index, project.id))
     }
+  },
+  // 76 - a failed probe can say *why* in a way scoring can trust, not just a person reading the log.
+  //
+  // ⛔ **The vendor's own "nothing published yet" is different from an ordinary probe failure, and
+  // that difference used to die in a free-text `error` string.** Muse Code blanks its whole `/usage`
+  // panel until a window's first turn completes, which `usageUnavailable` already recognised well
+  // enough to write a clear sentence — but the fact never survived past the log line. `prepaid`
+  // (scoring.ts) then scored the account as if nothing at all were known about it, when what is
+  // actually known is stronger: the window has rolled over with nothing spent in it yet. `vendor_silent`
+  // carries that distinction into the row so a later reader (scoring, not just a person) can act on it.
+  // Guarded because migration replay is part of this database's test contract.
+  (conn) => {
+    if (!hasColumn(conn, 'quota_samples', 'vendor_silent')) {
+      conn.exec(`alter table quota_samples add column vendor_silent integer`)
+    }
   }
 ]
 

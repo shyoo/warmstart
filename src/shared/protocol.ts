@@ -645,6 +645,17 @@ export interface QuotaSnapshot {
   source: 'cli' | 'config-cache' | 'stream' | 'unknown'
   /** Set when the probe failed. The scheduler degrades conservatively rather than stalling. */
   error?: string
+  /**
+   * Did the vendor itself say "no reading published yet", as opposed to any other reason `windows`
+   * came back empty (a dialog ate the keystrokes, the session never started, a parse failure)?
+   *
+   * ⛔ **A real answer, not a guess.** Set only when the adapter's own `usageUnavailable` matched the
+   * screen — see `muse-code.ts`: the panel is measured to blank until the window's first turn
+   * completes, so "vendor silent" is itself evidence the window is fresh, never evidence that
+   * something is broken. Everything downstream that reasons about a fresh window (`scoring.ts`'s
+   * `prepaid`) may read it; nothing else should confuse it with a generic failure.
+   */
+  vendorSilent?: boolean
 }
 
 /**

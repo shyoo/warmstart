@@ -415,8 +415,19 @@ function parseUsage(screen: string, now: number = Date.now()): QuotaWindow[] | n
  * ```
  * The panel is drawn and the slash command was accepted, but the provider has published no windows.
  * An early observation suggested that one completed turn on the credential ended this state; the
- * 2026-09-08 recurrence disproves that as a sufficient diagnosis. The cause is therefore unknown,
- * and the app must not tell an operator to dispatch paid work as a remedy.
+ * 2026-09-08 recurrence disproved that as a *sufficient* diagnosis on two days of samples.
+ *
+ * ⭐ **Eleven days later the pattern is clear.** Read against the live `quota_samples` history for
+ * MuseFirst (2026-09-06 → 2026-09-17, 427 probe attempts): every `Currently unavailable` streak
+ * begins the moment a window's own `resetsAt` passes, and the first real reading to follow one is
+ * consistently low — because the vendor publishes a window only once it has had a completed turn,
+ * and a freshly reset window has not. So "no reading yet" is not a broken probe; it is the provider's
+ * own way of saying *this window has not started publishing*. `scoring.ts`'s `inferredFreshWindows`
+ * reads exactly that: a window whose last known `resetsAt` is behind us, reported unavailable now, is
+ * inferred at 0% used rather than scored as no evidence at all — the one thing this fleet can say for
+ * certain about a window nobody has spent anything in yet. The app still must not tell an operator to
+ * dispatch paid work as a remedy: nothing here claims the window will *stay* at 0%, only that nothing
+ * has been read there so far.
  */
 function usageUnavailable(screen: string): string | null {
   // ⚠️ Unanchored, for the reason `parseUsage` is: through a PTY this panel arrives on one line.

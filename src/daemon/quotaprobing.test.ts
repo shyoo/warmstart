@@ -564,3 +564,52 @@ describe('what a sweep reports back', () => {
     expect(about).not.toContain(disabled)
   })
 })
+
+describe('vendorSilent: the vendor\'s own "nothing published yet" survives to a reader', () => {
+  /**
+   * ⛔ **The distinction `scoring.ts`'s `inferredFreshWindows` (t516) depends on.** A row the adapter
+   * explained (`usageUnavailable` matched) has to read back differently from an ordinary probe
+   * failure, or scoring cannot tell "this window is fresh" from "we don't know what happened".
+   */
+  it('is true on a row the adapter explained, and absent on an ordinary failure', () => {
+    const explained = seedWorker('vendor-explained')
+    const ordinary = seedWorker('probe-just-failed')
+    const now = Date.now()
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, error, sampled_at, vendor_silent)
+         values (?,'','',0,null,'unknown',?,?,1)`
+      )
+      .run(explained, 'the panel reads "Currently unavailable"', now)
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, error, sampled_at)
+         values (?,'','',0,null,'unknown',?,?)`
+      )
+      .run(ordinary, 'the panel did not appear', now)
+
+    expect(quota.lastQuota(explained)?.vendorSilent).toBe(true)
+    expect(quota.lastQuota(ordinary)?.vendorSilent).toBeUndefined()
+  })
+
+  it('does not leak onto a row that actually carries windows', () => {
+    // ⛔ `store()` writes `vendor_silent` only on the no-windows row; a reader must not find it stuck
+    // on a later, real reading purely because the column exists.
+    const worker = seedWorker('recovered')
+    const now = Date.now()
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, error, sampled_at, vendor_silent)
+         values (?,'','',0,null,'unknown',?,?,1)`
+      )
+      .run(worker, 'the panel reads "Currently unavailable"', now - 60_000)
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,'7d','Muse 7d',5,?,'cli',?)`
+      )
+      .run(worker, now + 3600_000, now)
+
+    expect(quota.lastQuota(worker)?.vendorSilent).toBeUndefined()
+  })
+})

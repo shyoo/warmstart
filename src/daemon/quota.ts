@@ -329,7 +329,11 @@ async function readUsage(workerId: string): Promise<DatedQuota> {
         windows: [],
         sampledAt: Date.now(),
         source: 'unknown',
-        error: why
+        error: why,
+        // ⛔ Only when the adapter's own words explained it — the generic "did not appear" branch
+        // above (`stated` falsy) means we do not actually know why, and inferring a fresh window from
+        // that would tell scoring the account is quota-rich on nothing but a shrug.
+        ...(stated ? { vendorSilent: true } : {})
       }
       storeAndPublish(failed)
       return decorate(failed)
@@ -411,12 +415,12 @@ function store(s: QuotaSnapshot): void {
   bumpPricingEpoch()
   const stmt = db().prepare(
     `insert or replace into quota_samples
-       (worker_id, window_id, label, percent, resets_at, source, error, sampled_at, window_group)
-     values (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (worker_id, window_id, label, percent, resets_at, source, error, sampled_at, window_group, vendor_silent)
+     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
   if (s.windows.length === 0) {
     // Record the failure too. A gap in the series is indistinguishable from a healthy quiet period.
-    stmt.run(s.workerId, '', '', 0, null, s.source, s.error ?? null, s.sampledAt, null)
+    stmt.run(s.workerId, '', '', 0, null, s.source, s.error ?? null, s.sampledAt, null, s.vendorSilent ? 1 : null)
     return
   }
   for (const w of s.windows) {
@@ -431,7 +435,8 @@ function store(s: QuotaSnapshot): void {
       s.source,
       s.error ?? null,
       s.sampledAt,
-      w.group ?? null
+      w.group ?? null,
+      null
     )
   }
 }
@@ -480,6 +485,8 @@ interface SampleRow {
   sampled_at: number
   /** ⚠️ Null on every row written before the column existed, and on every single-pool provider. */
   window_group: string | null
+  /** ⚠️ Null on every row written before the column existed, and on every window row (see `store`). */
+  vendor_silent: number | null
 }
 
 /** The most recent sample for a worker, however old. Callers must look at `stale`. */
@@ -552,7 +559,8 @@ function sampleAt(workerId: string, at: number | null): DatedQuota | null {
     })),
     sampledAt: first.sampled_at,
     source: first.source as QuotaSnapshot['source'],
-    ...(first.error ? { error: first.error } : {})
+    ...(first.error ? { error: first.error } : {}),
+    ...(first.vendor_silent ? { vendorSilent: true } : {})
   })
 }
 
