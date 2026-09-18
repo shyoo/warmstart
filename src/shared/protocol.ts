@@ -2197,7 +2197,7 @@ export interface RpcMap {
   'question.list': { params: Record<string, never>; result: Question[] }
   'question.forTask': { params: { taskId: string }; result: Question[] }
   'question.answer': {
-    params: { id: string; optionIds?: string[]; text?: string }
+    params: { id: string; optionIds?: string[]; text?: string; attachmentIds?: string[] }
     result: Question
   }
   'approval.addRule': {

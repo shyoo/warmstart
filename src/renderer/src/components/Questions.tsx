@@ -2,6 +2,16 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Question } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
+import { ImageChips, usePastedImages } from '../lib/pasteimages'
+import { useIsRemote } from '../lib/target'
+import { Pill, PillOptions, type PillOption } from './Pill'
+
+/** The same answer-time attachments the task composer offers — a question is where a person most
+ * needs to hand over a directory, because that is where an agent's NEEDS DECISION lands. */
+const ANSWER_ATTACH_OPTIONS: PillOption[] = [
+  { value: 'file', label: 'Add file or image' },
+  { value: 'folder', label: 'Add folder' }
+]
 
 /**
  * Answering a question an agent asked.
@@ -47,6 +57,12 @@ export function QuestionCard({
    */
   const [other, setOther] = useState(false)
   const textRef = useRef<HTMLTextAreaElement>(null)
+  // ⛔ The same attachments the composer offers, because the question card is where an agent's
+  // NEEDS DECISION lands — and answering "attach C:\Dev\site" with nowhere to attach it is the
+  // t521 dead end. A folder answered with is granted to the task exactly as a composed one is.
+  const paste = usePastedImages()
+  const attachmentPickerRef = useRef<HTMLInputElement>(null)
+  const remoteFleet = useIsRemote()
 
   useEffect(() => {
     setIsMulti(question.kind === 'multi')
@@ -87,7 +103,8 @@ export function QuestionCard({
       await rpc('question.answer', {
         id: question.id,
         optionIds,
-        ...(text.trim() ? { text: text.trim() } : {})
+        ...(text.trim() ? { text: text.trim() } : {}),
+        ...(paste.ids.length > 0 ? { attachmentIds: paste.ids } : {})
       })
       onAnswered?.()
     } finally {
@@ -95,10 +112,11 @@ export function QuestionCard({
     }
   }
 
-  // ⛔ Nothing chosen and nothing typed is not an answer. The agent is waiting on content, and an
-  // empty submission would reach it as "the operator gave no answer" — which is what parking already
-  // says, more honestly, without anyone having pressed a button.
-  const empty = (other || chosen.length === 0) && !text.trim()
+  // ⛔ Nothing chosen, nothing typed and nothing attached is not an answer. The agent is waiting on
+  // content, and an empty submission would reach it as "the operator gave no answer" — which is
+  // what parking already says, more honestly, without anyone having pressed a button. An attached
+  // folder on its own *is* content: granting a directory the agent asked for needs no prose.
+  const empty = (other || chosen.length === 0) && !text.trim() && paste.ids.length === 0
 
   if (compact) {
     return (
@@ -195,17 +213,49 @@ export function QuestionCard({
         }
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => {
-          if (isSubmitKey(e, settings.enterBehavior) && !busy && !empty) {
+          if (isSubmitKey(e, settings.enterBehavior) && !busy && !empty && !paste.busy) {
             e.preventDefault()
             void answer()
           }
         }}
       />
 
+      <ImageChips paste={paste} />
       <div className="question-actions">
+        <input
+          ref={attachmentPickerRef}
+          type="file"
+          multiple
+          hidden
+          onChange={(e) => {
+            const files = [...(e.currentTarget.files ?? [])]
+            e.currentTarget.value = ''
+            void paste.addFiles(files)
+          }}
+        />
+        <Pill
+          className="composer-attachment"
+          ariaLabel="Add attachment"
+          title="Attach file, image, or folder — a folder answered with is granted to this task"
+          label="+"
+          menu={(close) => (
+            <PillOptions
+              // ⚠️ A folder is attached by *path*, and the OS picker only knows this computer's
+              // disk; on a remote fleet that path would name nothing. Files upload their bytes.
+              options={remoteFleet ? ANSWER_ATTACH_OPTIONS.filter((o) => o.value !== 'folder') : ANSWER_ATTACH_OPTIONS}
+              value=""
+              ariaLabel="Add attachment"
+              onPick={(next) => {
+                close()
+                if (next === 'file') attachmentPickerRef.current?.click()
+                else if (next === 'folder') void paste.addFolders()
+              }}
+            />
+          )}
+        />
         <button
           className="btn btn--primary"
-          disabled={busy || empty}
+          disabled={busy || empty || paste.busy}
           onClick={() => void answer()}
         >
           {busy ? 'Answering…' : 'Answer'}

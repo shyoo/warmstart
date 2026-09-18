@@ -620,7 +620,11 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
     'question.list': () => openQuestions(),
     'question.forTask': (p) => questionsForTask(p.taskId),
     'question.answer': (p) => {
-      const answered = answerQuestion(p.id, { optionIds: p.optionIds ?? [], text: p.text ?? null })
+      const answered = answerQuestion(p.id, {
+        optionIds: p.optionIds ?? [],
+        text: p.text ?? null,
+        ...(p.attachmentIds ? { attachmentIds: p.attachmentIds } : {})
+      })
       // ⛔ **A parked question's answer needs a run to arrive in.** A live question resolves into the
       // tool call the agent is holding and the work carries straight on; a parked one only lands on
       // the thread, and nothing was scheduled to read it — so the operator answered, watched nothing

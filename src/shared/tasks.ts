@@ -1677,6 +1677,12 @@ export interface QuestionAnswer {
   optionIds: string[]
   /** Free text, which every kind may carry — an option plus a caveat is a common and useful answer. */
   text: string | null
+  /**
+   * Attachments filed with the answer — the operator's route to handing the agent a directory.
+   * Bound to the answer's thread message, so a folder here is granted exactly as one attached in
+   * the composer is. Absent on answers recorded before attachments could be answered with.
+   */
+  attachmentIds?: string[]
 }
 
 export interface Question {

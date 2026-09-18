@@ -15,6 +15,7 @@ import { getSession } from './sessions.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
 import { addMessage, getTask, markDelivered, messagesFor, onRunStart, onTaskSettled, runForSession, setStatus } from './tasks.js'
+import { getAttachment } from './attachments.js'
 
 /**
  * Questions.
@@ -347,7 +348,11 @@ export function answerQuestion(id: string, answer: QuestionAnswer, by: 'human' =
   // yet, so it is left outstanding and `buildPrompt` carries it - which is the whole mechanism by
   // which answering a parked question restarts the work.
   if (answered.taskId) {
-    addMessage(answered.taskId, 'human', reply, answered.runId)
+    // ⛔ The attachments ride the answer's own message, which is what binds them to the task. A
+    // folder answered with is therefore granted exactly as one attached in the composer is — the
+    // next run's argv carries it via `grantedDirsFor`, which is the whole route by which an
+    // operator hands an MCP-less agent a directory it asked for with NEEDS DECISION.
+    addMessage(answered.taskId, 'human', reply, answered.runId, answer.attachmentIds ?? [])
     if (consumedLive) {
       const written = messagesFor(answered.taskId)
       const last = written[written.length - 1]
@@ -404,6 +409,20 @@ export function renderAnswer(question: Question): string {
   const parts: string[] = []
   if (chosen.length > 0) parts.push(`The operator chose: ${chosen.join(', ')}.`)
   if (answer.text?.trim()) parts.push(answer.text.trim())
+  // ⛔ Named in the sentence, not left as rows the agent must know to look up. A folder answered
+  // with is granted to the task, and the next run's prompt will say so again via the grant list —
+  // but the live agent taking this as its tool result has no next prompt, so this is the one place
+  // it can read what changed. (It still cannot use it mid-run: a sandbox is fixed at spawn, and a
+  // parked answer restarts the work to pick it up.)
+  const folders = (answer.attachmentIds ?? [])
+    .map((id) => getAttachment(id))
+    .filter((a): a is NonNullable<typeof a> => !!a && a.kind === 'folder')
+  if (folders.length > 0) {
+    parts.push(
+      `The operator also attached ${folders.length === 1 ? 'this folder' : 'these folders'}, ` +
+        `which ${folders.length === 1 ? 'is' : 'are'} granted to this task: ${folders.map((f) => f.file).join('; ')}.`
+    )
+  }
   return parts.length > 0 ? parts.join(' ') : 'The operator gave no answer.'
 }
 

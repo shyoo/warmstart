@@ -183,7 +183,9 @@ conversation in which it asked for this directory, and re-asking is the loop AGE
 
 ⚠️ **MCP-capable adapters only, which today is `claude-code` alone.** Every other adapter is told in
 its prompt to name the absolute path after `NEEDS DECISION:` and stop; the operator attaches that
-folder to their reply and the next run has it. Same outcome, one more step, and no tool call.
+folder to the question's answer with the card's [+] menu (a folder alone counts as an answer) and
+the next run has it — the attachment rides the answer's own thread message, so `grantedDirsFor`
+grants it exactly as a composed one (t521). Same outcome, one more step, and no tool call.
 
 ⛔ **`task_split` blocks on a structural approval, and that is the point.** An agent told in its prompt
 to ask before splitting can forget; an agent whose tool call does not return until a person has answered

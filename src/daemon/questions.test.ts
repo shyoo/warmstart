@@ -238,6 +238,35 @@ describe('an unanswered question is not a refusal', () => {
     expect(thread.some((m) => m.role === 'human' && m.text.includes('Magic-link email'))).toBe(true)
     expect(questions.openQuestions()).toHaveLength(0)
   })
+
+  it('binds a folder answered with to the answer message, granting it to the next run', async () => {
+    // ⛔ The t521 shape: an MCP-less agent asked for a directory with NEEDS DECISION, and the only
+    // place the operator could answer had nowhere to attach it. The answer's folders must land on
+    // the thread message (which binds them to the task) and read as granted, or the resumed run's
+    // argv still refuses the write and the question cost a person for nothing.
+    const { task, session } = seedAsker()
+    const attachments = await import('./attachments.js')
+    const site = mkdtempSync(join(tmpdir(), 'agentyard-grant-'))
+    void questions.askQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'text',
+      question: 'Where should this second repository live?'
+    })
+    questions.parkQuestionsForSession(session.id)
+    const folder = attachments.createFolderAttachment(site)
+
+    questions.answerQuestion(questions.openQuestions()[0]!.id, {
+      optionIds: [],
+      text: 'Use this one.',
+      attachmentIds: [folder.id]
+    })
+
+    const answer = tasks.messagesFor(task.id).filter((m) => m.role === 'human').pop()
+    expect(answer?.attachments.map((a) => a.file)).toContain(site)
+    expect(answer?.text).toContain(site)
+    expect(attachments.grantedDirsFor(task.id)).toContain(site)
+  })
 })
 
 describe('the thread is the permanent record', () => {
