@@ -982,9 +982,11 @@ try {
       if (!row || !input || !button) return { missing: true };
       const i = input.getBoundingClientRect(), b = button.getBoundingClientRect();
       const r = row.getBoundingClientRect();
-      // Every direct child, so the assertion does not depend on how many controls sit beside the
-      // box: the row carries an optional Stop as well as Send.
+      // Every control, so the assertion does not depend on how many sit beside the box: the row
+      // carries an optional Stop as well as Send. .compose-actions is the group that keeps those
+      // two together across a wrap, not a control — it is opened up and its buttons counted.
       const others = [...row.children]
+        .flatMap((el) => (el.classList.contains('compose-actions') ? [...el.children] : [el]))
         .filter((el) => el !== input)
         .map((el) => Math.round(el.getBoundingClientRect().width));
       // Overlap needs both axes: when the row wraps the controls under the box (its textarea has a
@@ -1034,9 +1036,12 @@ try {
       return {
         status,
         hasStop: !!stop,
-        // The order of the row, left to right: what you type in, then Stop, then Send.
+        // The order of the row, left to right: what you type in, then Stop, then Send. When the
+        // row has wrapped the two actions under the box (narrow pane, wide fonts — Linux CI), Stop
+        // is *below* the box instead of to its right, and still directly left of Send.
         ordered: !!(stop && send && input)
-          && input.getBoundingClientRect().right <= stop.getBoundingClientRect().left + 1
+          && (input.getBoundingClientRect().right <= stop.getBoundingClientRect().left + 1
+            || stop.getBoundingClientRect().top >= input.getBoundingClientRect().bottom - 1)
           && stop.getBoundingClientRect().right <= send.getBoundingClientRect().left + 1,
         // ⚠️ Never disabled by the composer being empty. Stopping a run has nothing to do with
         // whether there is a draft reply sitting in the box.

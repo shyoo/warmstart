@@ -5534,6 +5534,14 @@ select:focus-visible,
   flex: 0 0 auto;
 }
 
+/* Stop and Send as one flex item, so the wrap above moves them under the box together. */
+.compose-actions {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-end;
+  flex: 0 0 auto;
+}
+
 .compose-row .composer-attachment {
   margin-right: 0;
   flex: 0 0 auto;

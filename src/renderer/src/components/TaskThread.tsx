@@ -338,6 +338,14 @@ function TaskDetail({
     const scroller = threadBottom.current?.closest('.content')
     if (scroller instanceof HTMLElement) scroller.scrollTop = scroller.scrollHeight
   })
+  // ⛔ A jump up releases the pin itself. The `scroll` event that would otherwise release it
+  // arrives a frame later, and a render landing inside that frame — or a hidden window, which is
+  // not reliably handed scroll events at all (`test/ui.test.mjs`, 2026-09-16) — put the reader
+  // straight back at the bottom they had just asked to leave (Windows CI, run 35405538191).
+  const jumpTo = (box: HTMLElement | null): void => {
+    stickToBottom.current = false
+    box?.scrollIntoView({ block: 'start' })
+  }
   const pastLedger = useScrolledPast(ledgerBox)
   const pastTimeline = useScrolledPast(timelineBox)
   const latestRun = pastTimeline ? latestRunEntry(timeline) : null
@@ -1197,8 +1205,8 @@ function TaskDetail({
                 latest={latestRun}
                 sessions={sessions}
                 fleet={fleet}
-                onJumpToLedger={() => ledgerBox?.scrollIntoView({ block: 'start' })}
-                onJumpToRun={() => timelineBox?.scrollIntoView({ block: 'start' })}
+                onJumpToLedger={() => jumpTo(ledgerBox)}
+                onJumpToRun={() => jumpTo(timelineBox)}
               />
             )}
           </div>
@@ -2184,20 +2192,25 @@ function Compose({
             navigations away from the words that made you want to stop.
             ⚠️ Not disabled while sending, and not the primary. Stopping a run that is mid-reply is
             a legitimate thing to want, and this is the destructive-looking half of a pair where the
-            other half is the ordinary action. */}
-        {stoppable && (
-          <button
-            className="btn btn--danger"
-            disabled={stopping}
-            title="Stop the work and park this task. Destroys nothing — the branch and the workspace are kept, and Resume picks it back up."
-            onClick={() => void stop()}
-          >
-            {stopping ? 'Stopping…' : 'Stop'}
+            other half is the ordinary action.
+            ⚠️ One group, so that when the row is too narrow for the box and its controls side by
+            side (`.compose-row` wraps), Stop and Send drop under the box *together* rather than
+            Send alone leaving Stop stranded beside the box. */}
+        <span className="compose-actions">
+          {stoppable && (
+            <button
+              className="btn btn--danger"
+              disabled={stopping}
+              title="Stop the work and park this task. Destroys nothing — the branch and the workspace are kept, and Resume picks it back up."
+              onClick={() => void stop()}
+            >
+              {stopping ? 'Stopping…' : 'Stop'}
+            </button>
+          )}
+          <button className="btn btn--primary" disabled={!canSend} onClick={() => void send()}>
+            {sending ? 'Sending…' : running ? 'Send' : 'Send and continue'}
           </button>
-        )}
-        <button className="btn btn--primary" disabled={!canSend} onClick={() => void send()}>
-          {sending ? 'Sending…' : running ? 'Send' : 'Send and continue'}
-        </button>
+        </span>
       </div>
       <ImageChips paste={paste} />
       {/*
