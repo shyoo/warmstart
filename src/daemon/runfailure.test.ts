@@ -1395,6 +1395,9 @@ describe('a Codex turn refused because the account is out of quota', () => {
     expect(after.status).toBe('paused_quota')
     expect(after.notBefore).toBeGreaterThan(Date.now())
     expect(after.assignee).toBeNull()
+    expect(after.holdReason).toContain('Vendor refused this turn')
+    expect(after.holdReason).toContain("You've hit your usage limit")
+    expect(after.holdUntil).toBe(after.notBefore)
   })
 
   it('comes back by itself once that time has passed', async () => {

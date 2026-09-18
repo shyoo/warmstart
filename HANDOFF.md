@@ -24,6 +24,7 @@ promote`, `release.yml`'s verify step included — in two turns and no "Prepare 
 channels), all off-repo.
 
 ## Closed in this cleanup
+- **A vendor quota refusal could look like Warmstart's overridable percentage gate (t531 ← t530, 2026-09-18).** An Antigravity run correctly parked on its explicit `Individual quota reached` response, but did not retain that reason on the task row. The thread card then fell back to “Account is past quota watermark” and offered an override that cannot make a vendor serve a refused turn. Vendor-refusal parks now retain their reason and reset time, and the card explains the retry instead. `scheduler.ts`, `Decide.tsx`, `docs/ui.md`.
 - **The thread conversation input box gained the `[+]` file and folder attachment menu (t527 ← t525, 2026-09-18).**
   t525 gave question cards the task composer's `[+]` attachment menu, but left the thread's bottom compose box without
   it. `Compose` in `TaskThread.tsx` now renders the same `[+]` Pill button (`COMPOSE_ATTACH_OPTIONS`: file, image, folder),

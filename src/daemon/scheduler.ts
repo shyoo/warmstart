@@ -4131,7 +4131,13 @@ export async function endUnfinishedRun(
       db()
         .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
         .run(parkAt, Date.now(), task.id)
-      setStatus(task.id, 'paused_quota', { assignee: null })
+      setStatus(task.id, 'paused_quota', {
+        assignee: null,
+        // This is the vendor's refusal, not the scheduler's percentage watermark. Keep it on
+        // the held row so a later renderer does not invent an overridable reason for the park.
+        holdReason: `Vendor refused this turn: ${why}`,
+        holdUntil: parkAt
+      })
       // ⭐ The same nudge preemption sends. The poller schedules its next look from
       // `quotaParkedTasks`, and a reading taken now is what lets this come back early if the vendor
       // was quoting a limit that has since rolled over.

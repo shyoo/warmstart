@@ -86,6 +86,9 @@ export function QuotaDecide({
 
   const isPaused = task.status === 'paused_quota'
   const isReadyHeld = task.status === 'ready' && /% of its .* window/i.test(task.holdReason ?? '')
+  // This prefix is written only by the daemon's failed-turn quota path. Unlike a percentage
+  // watermark, an explicit vendor refusal cannot be overridden locally.
+  const vendorRefused = task.holdReason?.startsWith('Vendor refused this turn: ') ?? false
   const warning = task.status === 'running' ? task.quotaPreemptWarning : null
   const live = task.quotaOverrideUntil !== null && task.quotaOverrideUntil > now
 
@@ -258,7 +261,7 @@ export function QuotaDecide({
               </div>
             </div>
           )}
-          <div className="decide-option">
+          {!vendorRefused && <div className="decide-option">
             <button
               type="button"
               className="btn btn--warn"
@@ -287,7 +290,7 @@ export function QuotaDecide({
                   : 'Dispatches this task immediately even though the account is past its quota watermark.'}{' '}
               ⚠️ A turn the vendor actually refuses will still stop it.
             </span>
-          </div>
+          </div>}
 
           {isPaused && (
             <div className="decide-option">
@@ -301,8 +304,11 @@ export function QuotaDecide({
                 Resume
               </button>
               <span className="decide-what">
-                <strong>Resume without override.</strong> Puts the task back in the queue right now
-                without waiting for the reset timer (dispatches if quota is available).
+                {vendorRefused ? (
+                  <><strong>The vendor refused this turn.</strong> Resume retries it now, but it remains parked until the account's quota resets unless the vendor accepts it sooner.</>
+                ) : (
+                  <><strong>Resume without override.</strong> Puts the task back in the queue right now without waiting for the reset timer (dispatches if quota is available).</>
+                )}
               </span>
             </div>
           )}
@@ -1064,9 +1070,10 @@ export function QuotaOverride({
   // ⚠️ One ticking clock, not `Date.now()` in the render: the countdown below has to move, and a
   // component that reads the wall clock while rendering only updates when something else makes it.
   const now = useNow(1000)
+  const vendorRefused = task.holdReason?.startsWith('Vendor refused this turn: ') ?? false
   const held =
     (task.status === 'ready' && /% of its .* window/.test(task.holdReason ?? '')) ||
-    task.status === 'paused_quota'
+    (task.status === 'paused_quota' && !vendorRefused)
   const warning = task.status === 'running' ? task.quotaPreemptWarning : null
   const live = task.quotaOverrideUntil !== null && task.quotaOverrideUntil > now
   if (!held && !live && !warning) return null
