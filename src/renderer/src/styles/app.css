@@ -5483,13 +5483,20 @@ select:focus-visible,
 
 .compose-row {
   display: flex;
+  flex-wrap: wrap;
+  /* Only a wrapped second line has room to justify: on one line the box grows into it all. */
+  justify-content: flex-end;
   gap: var(--sp-2);
   align-items: flex-end;
 }
 
+/* ⚠️ The box gets the room. The controls beside it — [+], an optional Stop and Send — are fixed
+   widths that add up to ~240px with wide fonts, in a row the thread pane keeps near 400px wide. Below
+   this basis the box is not worth typing into, so the controls drop under it (measured on Linux CI,
+   run 35404098242: the box had 133px beside a 152px Send) instead of squeezing it further. */
 .compose-row input,
 .compose-row textarea {
-  flex: 1 1 auto;
+  flex: 1 1 150px;
   min-width: 0;
 }
 

@@ -422,7 +422,13 @@ need — a long enough label always can.
 schedule clock.** Those actions apply to all five kinds, in the order the kind pill offers them:
 Single Task, Conversation, Plan & Execute, Plan & Split and Debate. The same `[+]` attachment menu
 (file, image, folder) is also offered by the thread composer at the bottom of the task view, so notes
-into a live or resting task can attach files and grant folders directly (t527).
+into a live or resting task can attach files and grant folders directly (t527). ⚠️ That row
+(`.compose-row`) is the one composer that *does* wrap, deliberately: the thread pane keeps it near
+400px, its controls are fixed widths that reach ~240px with Linux fonts, and the box has a 150px flex
+basis — when the two no longer fit side by side, Send drops under the box rather than the box shrinking
+beneath the button (Linux CI, 2026-09-18: 133px box beside a 152px Send). At Windows widths nothing
+wraps; the UI suite reads both states, since a horizontal overlap check alone would call a stacked
+Send an overlap.
 In Plan & Split the composer draws two labelled rows of pills, and this is decision D5. The first is
 **Planner** — priority, dependencies, reuse, finish, worker, model and effort — which is what the
 *planning turn* runs as. The second is **Executor**, plus a fan-out pill, which is what every subtask

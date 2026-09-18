@@ -987,8 +987,14 @@ try {
       const others = [...row.children]
         .filter((el) => el !== input)
         .map((el) => Math.round(el.getBoundingClientRect().width));
+      // Overlap needs both axes: when the row wraps the controls under the box (its textarea has a
+      // 150px flex basis, so this happens with wide fonts in a narrow pane), Send sits *below* the
+      // box, and a horizontal difference alone would call that an overlap. Stacked reads as the
+      // vertical gap, negated, so the number still says "how far apart".
+      const sameLine = Math.max(i.top, b.top) < Math.min(i.bottom, b.bottom);
       return {
-        overlap: Math.round(i.right - b.left),
+        overlap: Math.round(sameLine ? i.right - b.left : -(b.top - i.bottom)),
+        stacked: !sameLine,
         inputWidth: Math.round(i.width),
         rowWidth: Math.round(r.width),
         firstButtonWidth: Math.round(b.width),
@@ -4231,6 +4237,12 @@ try {
   // it said it would write are on disk.
   wizardRoot = mkdtempSync(join(tmpdir(), 'agentyard-ui-wizard-'))
   execFileSync('git', ['init', '--initial-branch=main'], { cwd: wizardRoot, stdio: 'ignore' })
+  // ⚠️ Create commits the scaffolding it writes (t506), and a commit with no identity fails into a
+  // warning the wizard deliberately stays open on — which on a CI runner with no global git config
+  // read as "timed out waiting for the wizard to … close" (run 35404098242). The identity is the
+  // fixture's, not the host's.
+  execFileSync('git', ['config', 'user.email', 'test@example.invalid'], { cwd: wizardRoot, stdio: 'ignore' })
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: wizardRoot, stdio: 'ignore' })
   writeFileSync(
     join(wizardRoot, 'package.json'),
     JSON.stringify({ name: 'wizard-fixture', scripts: { lint: 'x', test: 'x' } })
