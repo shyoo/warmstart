@@ -633,11 +633,22 @@ server.registerTool(
     title: 'File a follow-up task',
     description:
       'File work that should not be part of this task. It inherits a narrowed version of this ' +
-      "task's authority and a share of its budget.",
+      "task's authority and a share of its budget. Pass `aggregate` when you will review and land " +
+      'the piece yourself: it branches off your branch and merges back into it, and nothing ' +
+      'reaches the trunk until you land it. Telling the piece "do not land to main" in its prompt ' +
+      'cannot do this — landing is the daemon\u2019s job, not the agent\u2019s, so the finish policy ' +
+      'would merge it onto the trunk anyway.',
     inputSchema: {
       title: z.string(),
       prompt: z.string().optional(),
-      assignee_hint: z.enum(['human', 'any']).optional()
+      assignee_hint: z.enum(['human', 'any']).optional(),
+      aggregate: z
+        .boolean()
+        .optional()
+        .describe(
+          'File this as a piece you will aggregate: it lands into your own branch, not the ' +
+            'project\u2019s target. Omit it for standalone work that should land normally.'
+        )
     }
   },
   async (args) => {
@@ -647,13 +658,16 @@ server.registerTool(
         sessionId,
         title: args.title,
         ...(args.prompt ? { prompt: args.prompt } : {}),
-        ...(args.assignee_hint ? { assigneeHint: args.assignee_hint } : {})
+        ...(args.assignee_hint ? { assigneeHint: args.assignee_hint } : {}),
+        ...(args.aggregate ? { aggregate: true } : {})
       })
       return {
         content: [
           {
             type: 'text' as const,
-            text: result.ok ? `Filed as t${result.seq}.` : `Not filed: ${result.reason}`
+            text: result.ok
+              ? `Filed as t${result.seq}.` + (result.landingTarget ? ` Landing into ${result.landingTarget}.` : '')
+              : `Not filed: ${result.reason}`
           }
         ]
       }

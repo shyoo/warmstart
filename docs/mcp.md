@@ -87,7 +87,7 @@ any of them — it runs the identical bar and hands the same reason back, verbat
 | `ask_human` | put a question to the operator and **wait** (single choice, multi-checkboxes via `multi_select`, or open text) |
 | `request_directory` | ask for a directory outside the workspace, and get one. ⛔ **The only tool whose *success* ends the run** — a granted directory cannot reach the process that asked for it |
 | `checkpoint` | report a finished phase and wait for the go-ahead. `checkpointed` completion mode |
-| `task_create` | file a follow-up, inheriting a **narrowed** mandate and a share of the budget |
+| `task_create` | file a follow-up, inheriting a **narrowed** mandate and a share of the budget. With `aggregate` the piece lands into your own branch for you to review and land — the way a split piece lands into its plan branch — instead of onto the trunk (t519: prose saying "do not land to main" cannot do this, because landing is the daemon's job) |
 | `handoff` | leave a note for whoever continues; prepended to the next run's prompt |
 | `task_split` | file a whole plan at once — 2 to N pieces for a Plan & Split, with dependency edges encoding every required execution or landing order (edge-free pieces may run in parallel); **exactly one** for a Plan & Execute. ⛔ How many is decided by the task's own child cap (`planModeOf`), not by the agent, and the refusal names the shape. ⛔ Raises **one** approval and blocks on it; atomic |
 | `task_depend` | add one edge between two pieces of **this task's own** split. ⛔ never an arbitrary task in the fleet |

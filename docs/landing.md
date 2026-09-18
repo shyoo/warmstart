@@ -495,7 +495,11 @@ against the project's, and never from a task kind.
 ⭐ **Split work merges into the planner's branch, not the trunk.** When a task is a child of a plan task,
 its target ref is the planner's branch (`plannerBranchFor()`). Merging updates the planner branch directly
 via `git branch -f <planner-branch> <commit>` without touching the trunk, keeping `main` clean until the planner
-or user merges the plan.
+or user merges the plan. A follow-up filed with `task_create`'s `aggregate` gets the same topology for any
+parent: it lands into the filing task's own branch for the filer to review and land. Without it the child
+is ordinary work landing onto the trunk — which is how t519 (2026-09-17) reached `main` despite five
+prompts each saying "do NOT land to main": prose in the child's prompt is read by an actor that never
+lands, so only the daemon-side target holds a branch off the trunk.
 
 ⚠️ **This means `main` stops moving on the days you are mid-edit in it**, and finished tasks queue as
 branches saying *"committed and verified, waiting for a clean trunk"*. That is the cost of the safe

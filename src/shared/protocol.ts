@@ -2633,10 +2633,16 @@ export interface RpcMap {
   }
   /** ⛔ The only signal that a task succeeded. A process exiting says nothing about the work. */
   'agent.complete': { params: { sessionId: string; summary: string }; result: { ok: true } }
-  /** Agent-authored work. Bounded by the calling task's inherited mandate and budget. */
+  /**
+   * Agent-authored work. Bounded by the calling task's inherited mandate and budget.
+   *
+   * ⛔ `aggregate` is a landing fact, and landing is the daemon's job: prose in the child's prompt
+   * cannot hold a branch off the trunk (t519, 2026-09-17). With it the child lands into the
+   * caller's own branch, the way a split piece lands into its plan branch.
+   */
   'agent.createTask': {
-    params: { sessionId: string; title: string; prompt?: string; assigneeHint?: string }
-    result: { ok: boolean; seq?: number; reason?: string }
+    params: { sessionId: string; title: string; prompt?: string; assigneeHint?: string; aggregate?: boolean }
+    result: { ok: boolean; seq?: number; reason?: string; landingTarget?: string }
   }
   'agent.handoff': { params: { sessionId: string; note: string }; result: { ok: true } }
   /**

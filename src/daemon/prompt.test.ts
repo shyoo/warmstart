@@ -143,6 +143,68 @@ describe('promptFor prompt construction', () => {
     )
   })
 
+  it('files an aggregated follow-up into the filing task’s own branch', async () => {
+    // ⛔ The t519 shape: five pieces were each told "commit on your branch, do NOT land to main",
+    // the agent obeyed, and the finish policy merged the first finisher into main anyway — because
+    // prose in the child's prompt is read by an actor that never lands. `aggregate` is the
+    // daemon-side target that prose could not supply.
+    const parent = tasks.createTask({ title: 'Aggregator conversation', status: 'ready' })
+    db.db().prepare('update tasks set branch = ? where id = ?').run('warmstart/t526-aggregator', parent.id)
+    const sessionId = '00000000-0000-0000-0000-000000000526'
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, project_id, cwd, state, purpose, started_at)
+         values (?, ?, 'claude-code', 'stream', null, ?, 'live', 'work', ?)`
+      )
+      .run(sessionId, claude.id, dir, Date.now())
+    tasks.startRun({
+      taskId: parent.id,
+      workerId: claude.id,
+      sessionId,
+      projectId: null,
+      quotaUnverified: true,
+      costModelId: null
+    })
+    const handlers = api.buildApi({ version: '1.0.0', port: 1234, startedAt: Date.now() })
+
+    const aggregated = await handlers['agent.createTask']({ sessionId, title: 'Aggregated piece', aggregate: true })
+    expect(aggregated.ok).toBe(true)
+    const childId = db.db().prepare('select id from tasks where seq = ?').get(aggregated.seq!) as { id: string }
+    expect(tasks.getTask(childId.id)?.landingTarget).toBe('warmstart/t526-aggregator')
+    expect(aggregated.landingTarget).toBe('warmstart/t526-aggregator')
+
+    // Without it the child is ordinary work landing wherever the project says.
+    const plain = await handlers['agent.createTask']({ sessionId, title: 'Standalone follow-up' })
+    expect(plain.ok).toBe(true)
+    const plainId = db.db().prepare('select id from tasks where seq = ?').get(plain.seq!) as { id: string }
+    expect(tasks.getTask(plainId.id)?.landingTarget).toBeNull()
+    expect(plain.landingTarget).toBeUndefined()
+  })
+
+  it('refuses to aggregate when the filing task has no branch to aggregate into', async () => {
+    const parent = tasks.createTask({ title: 'Branchless parent', status: 'ready' })
+    const sessionId = '00000000-0000-0000-0000-000000000527'
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, project_id, cwd, state, purpose, started_at)
+         values (?, ?, 'claude-code', 'stream', null, ?, 'live', 'work', ?)`
+      )
+      .run(sessionId, claude.id, dir, Date.now())
+    tasks.startRun({
+      taskId: parent.id,
+      workerId: claude.id,
+      sessionId,
+      projectId: null,
+      quotaUnverified: true,
+      costModelId: null
+    })
+    const handlers = api.buildApi({ version: '1.0.0', port: 1234, startedAt: Date.now() })
+
+    const refused = await handlers['agent.createTask']({ sessionId, title: 'No branch piece', aggregate: true })
+    expect(refused.ok).toBe(false)
+    expect(refused.reason).toMatch(/no branch to aggregate into/)
+  })
+
   /**
    * ⛔ **A reassign is a cold start**, and the ordinary thread filter keeps only `human`/`controller`
    * messages plus the first `agent` one — so the `system` entry `landTask` writes when a landing

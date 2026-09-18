@@ -12,6 +12,8 @@ import {
   validateAgreement
 } from '../debate.js'
 import { cancelTask } from '../cancel.js'
+import { getProject } from '../projects.js'
+import { branchNameFor } from '../worktrees.js'
 import { requestDirectory } from '../dirgrants.js'
 import { completeTask, continueTask, endPlannerForSplit, parkForHuman } from '../scheduler.js'
 import { updateTask } from '../tasks.js'
@@ -129,6 +131,29 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
       if (!parent || !run) {
         return { ok: false, reason: 'this session is not working on a task' }
       }
+      // ⛔ Aggregation is a landing fact, and landing is the daemon's job — prose in the child's
+      // prompt cannot do it. Measured on t519, 2026-09-17: five pieces were each told "commit on
+      // your branch, do NOT land to main", the agent obeyed to the letter, and the finish policy
+      // merged the first finisher straight into main anyway, because nothing had told the *daemon*
+      // otherwise. With `aggregate` the child lands into this task's own branch, the way a split
+      // piece lands into its plan branch, and nothing reaches the trunk until this task lands it.
+      let landingTarget: string | undefined
+      if (p.aggregate) {
+        const project = parent.projectId ? getProject(parent.projectId) : null
+        const branch =
+          parent.branch ??
+          (project && project.vcs === 'git'
+            ? branchNameFor(parent.seq, parent.title, parent.branchUnit)
+            : null)
+        if (!branch) {
+          return {
+            ok: false,
+            reason:
+              'this task has no branch to aggregate into, so file the follow-up normally instead'
+          }
+        }
+        landingTarget = branch
+      }
       const filedAt = Date.now()
       try {
         // ⛔ Bounded by construction: createTask narrows the mandate, shares the budget, enforces the
@@ -150,12 +175,16 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
             sessionId: p.sessionId,
             runId: run.id
           },
-          ...(p.assigneeHint ? { assigneeHint: p.assigneeHint } : {})
+          ...(p.assigneeHint ? { assigneeHint: p.assigneeHint } : {}),
+          ...(landingTarget ? { landingTarget } : {})
         })
         // A merge into a near-duplicate returns the *existing* task, which has already been through
         // this. Re-gating it would re-open a decision somebody may have already made.
         if (task.createdAt >= filedAt) admitAgentTask(task.id)
-        return { ok: true, seq: task.seq }
+        // ⛔ Read back, not echoed: a merge into a near-duplicate returns the existing task, whose
+        // target is whatever it already was rather than what was just asked for.
+        const filed = getTask(task.id)
+        return { ok: true, seq: task.seq, ...(filed?.landingTarget ? { landingTarget: filed.landingTarget } : {}) }
       } catch (err) {
         return { ok: false, reason: errorMessage(err) }
       }
