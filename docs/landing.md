@@ -665,6 +665,20 @@ and the **last** one (`pullRequestUrlIn`): that error quotes the whole `gh pr cr
 title and body included, ahead of gh's own URL, and on t389 (2026-09-12) the first-URL rule recorded
 the issue the title named, `…/issues/133`, as the delivery. Migration 69 removed such rows.
 
+⛔ **Updating an already-open PR retries the push force, and that is deliberate** (t509, 2026-09-17).
+The closing contract every run gets forbids rewriting commits already on the *landing target*
+(`prompt.ts`), but says nothing about the task's own branch — so a later run legitimately squashes
+commits its earlier run already pushed as an open, unmerged PR, and a plain `git push` then rejects
+as non-fast-forward. `pullRequest.land` retries once with `--force-with-lease` when the first push is
+rejected, never on any other failure; nobody but this task pushes to its own branch, so the retry is
+safe and a lease still refuses if the remote moved for an unrelated reason. Before this, that
+rejection surfaced as an ordinary landing failure ("…may already be pushed"), which was misleading —
+the push had *not* landed — and repeated identically on every **Retry landing** press, because
+`canRelandTask` (`taskview.tsx`) hid the button after the first such failure: a blanket
+`/Retry landing failed/` exclusion, meant to stop a truly empty branch from being retried forever,
+also caught every retriable cause. Only the specific unfixable ones (no commits, a conflict, failing
+checks, uncommitted files, the trunk tripwire) hide the button now.
+
 ⭐ **Opening finishes the coding run; delivery continues without an agent** (t375, 2026-09-12).
 Before success is reported, Warmstart persists the exact PR URL, target, branch and head SHA. A
 zero-token five-minute reconciler asks `gh pr view <url>` for that identity, survives restarts, and

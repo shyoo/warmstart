@@ -874,6 +874,15 @@ export function isTrunkMovedTask(task: Pick<Task, 'holdReason'>): boolean {
  * ⚠️ Bare `/trunk/i` was a trap (measured on t157, 2026-09-03): it matched "the trunk moved during this
  * run and this branch is empty", offering a button that was guaranteed to fail with "Retry landing
  * failed: carries no commits".
+ *
+ * ⛔ **A retry that already failed once must still be retriable** (t509, 2026-09-17). A blanket
+ * `/Retry landing failed/` exclusion used to hide this button for good the moment one retry did not
+ * land — including a `pull-request` push rejected because a later run's squash rewrote history
+ * already on the open PR, which is fixable and exactly what pressing the button again is for. Once
+ * hidden, nothing on the card ever offered it again: a failed retry looked identical to a task with
+ * nothing left to try. Only the specific unfixable causes above (no commits, a conflict, failing
+ * checks, uncommitted files, the trunk tripwire) may hide it; a reason that is merely *prefixed* with
+ * "Retry landing failed" is not on its own one of them.
  */
 export function canRelandTask(task: Pick<Task, 'branch' | 'holdReason'>): boolean {
   if (!task.branch) return false
@@ -883,7 +892,6 @@ export function canRelandTask(task: Pick<Task, 'branch' | 'holdReason'>): boolea
   if (isUncommittedTask(task)) return false
   if (isTrunkMovedTask(task)) return false
   if (/no commits|nothing to land|branch is empty/i.test(reason)) return false
-  if (/Retry landing failed/i.test(reason)) return false
   return /landing failed|not merged|wait(ed|ing) for a turn|would not fast-forward|trunk was busy|clean trunk|the trunk is busy|the trunk has uncommitted/i.test(
     reason
   )

@@ -1401,7 +1401,22 @@ export const pullRequest: LandingStrategy = {
       // ⛔ Push first and separately. If the PR call fails, the work is already safe on the remote
       // and the operator can open one by hand - which is a much better failure than a branch that
       // exists only on this machine.
-      await git(ctx.workspacePath, ['push', '--set-upstream', 'origin', ctx.branch])
+      //
+      // ⚠️ **Retried with `--force-with-lease` on a rejected non-fast-forward.** The closing
+      // contract every run gets only forbids rewriting commits already on the *landing target*
+      // (`prompt.ts`) - squashing commits already pushed as this task's own open pull request is
+      // explicitly allowed, because that branch is nobody's but this task's. A plain push cannot
+      // land history rewritten that way, so the first attempt's rejection is expected, not a
+      // failure to report: retrying force is what "update the existing PR" means on a branch this
+      // tool owns. `--force-with-lease` (no expected value) still refuses if the remote moved for a
+      // reason other than this task's own earlier push - the same compare-and-swap safety a plain
+      // force-push does not have.
+      try {
+        await git(ctx.workspacePath, ['push', '--set-upstream', 'origin', ctx.branch])
+      } catch (err) {
+        if (!/rejected|non-fast-forward|fetch first/i.test(errorMessage(err))) throw err
+        await git(ctx.workspacePath, ['push', '--force-with-lease', '--set-upstream', 'origin', ctx.branch])
+      }
 
       const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
       // ⚠️ A merge base rather than the target's tip: this strategy does not rebase, so the target

@@ -1055,6 +1055,36 @@ describe('landing recovery actions and canRelandTask', () => {
     expect(canRelandTask({ branch: 'b', holdReason: 'committed and verified, waiting for a clean trunk' })).toBe(true)
     expect(canRelandTask({ branch: 'b', holdReason: 'committed and verified on `b`, but the trunk would not fast-forward: rejected' })).toBe(true)
   })
+
+  it('still offers canReland after one retry already failed, unless the cause is unfixable (t509)', () => {
+    // ⛔ Regression: a blanket `/Retry landing failed/` exclusion used to hide "Retry landing" for
+    // good the instant one retry did not land — including a `pull-request` push rejected because a
+    // later run's squash rewrote history already on the open PR. That push is fixable (the daemon
+    // now retries it with `--force-with-lease`), but the button that would trigger the retry was
+    // gone after the first failure, so pressing "Land" again did nothing visible.
+    expect(
+      canRelandTask({
+        branch: 'warmstart/t509-fix',
+        holdReason:
+          'Retry landing failed: git push failed (rejected, non-fast-forward) (the branch ' +
+          '`warmstart/t509-fix` may already be pushed - check the remote before redoing work)'
+      })
+    ).toBe(true)
+    expect(
+      canRelandTask({
+        branch: 'warmstart/t509-fix',
+        holdReason: 'Retry landing failed: every workspace is busy; try again in a moment'
+      })
+    ).toBe(true)
+    // The one genuinely unfixable retry failure - no commits - still hides the button.
+    expect(
+      canRelandTask({
+        branch: 'warmstart/t157-debug',
+        holdReason:
+          'Retry landing failed: warmstart/t157-debug carries no commits that origin/main does not already have.'
+      })
+    ).toBe(false)
+  })
 })
 
 /**

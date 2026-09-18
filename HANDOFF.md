@@ -7,13 +7,12 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+17.gf89be98.dirty`): typecheck, lint and
-build pass; L1 **3,698 passed, 5 skipped** (218 files). L2 **203 checks** (5 skipped) and L4 **19 checks**
-against `release/win-unpacked` were at `0.1.1+1.g1fff656`. L3 not re-run on this
-tip (a renderer change, but `test/ui.test.mjs` never opens a project tab — see t500 below); it was
-**474 passed, 4 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64,
-2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so
-is the **Release** workflow.
+Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+18.g65ad7ba.dirty`): typecheck, lint and
+build pass; L1 **3,700 passed, 5 skipped** (218 files). L2 **203 checks** (5 skipped) and L4 **19
+checks** against `release/win-unpacked` were at `0.1.1+1.g1fff656`. L3 not re-run on this tip (a
+renderer change, but `test/ui.test.mjs` never opens a project tab — see t500 below); it was **474
+passed, 4 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
+signed, hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
 
 **`v0.1.1` is released and `latest`** (tag build 35165991396, 2026-09-17, attested; five installers
 + `SHA256SUMS.txt`). It was verified as `v0.1.1-rc.1` (tag build 35161851026) and promoted onto that
@@ -25,6 +24,17 @@ promote`, `release.yml`'s verify step included — in two turns and no "Prepare 
 channels), all off-repo.
 
 ## Closed in this cleanup
+
+- **A `pull-request` task with an already-open PR could get stuck failing forever, and the retry
+  button that should have fixed it disappeared after the first attempt (t509, 2026-09-17).** The
+  closing contract only forbids rewriting commits already on the *landing target*, so a later run
+  legitimately squashes commits an earlier run already pushed as this task's own open PR — and the
+  plain `git push` in `pullRequest.land` then rejected as non-fast-forward, reported misleadingly as
+  "…may already be pushed" when nothing had landed. It now retries once with `--force-with-lease` on
+  that specific rejection (a compare-and-swap, still refused if the remote moved for another reason).
+  Second half of the cascade: `canRelandTask` (`taskview.tsx`) hid **Retry landing** for good after the
+  first `Retry landing failed: …`, a blanket exclusion meant for an empty branch that also caught every
+  retriable cause — only the genuinely unfixable ones do now. `landing.md`.
 
 - **A Plan & Split task could be routed to an adapter with no `task_split` tool at all, and just
   landed code instead of splitting anything (t507 ← t505, 2026-09-17).** `promptFor`'s MCP-less
@@ -56,9 +66,9 @@ channels), all off-repo.
   permission mode, which on `antigravity-cli` is `dangerously-skip-permissions` — it listed the data
   dir, ran python against `warmstart.db` and read `controller.ts` for four minutes, never answering.
   Now `answerTimeoutFor` bounds a running consult by its window, the queue drains soonest deadline
-  first, `permissionModeFor` gives a consult `readOnlyPermissionMode` (agy `plan`: a command attempt is
-  auto-denied and the turn ends in ~1.1s, measured), and a consult cut short by its window no longer
-  marks the account dead. Also seen, not fixed: the dispatch log's `score 1.91: ` has an empty reason.
+  first, `permissionModeFor` gives a consult `readOnlyPermissionMode` (a command attempt is
+  auto-denied in ~1.1s, measured), and a consult cut short by its window no longer marks the account
+  dead. Also seen, not fixed: the dispatch log's `score 1.91: ` has an empty reason.
 
 - **A codex run can reach the network; it still cannot push (t494 ← t493, 2026-09-16).** codex's
   `workspace-write` shipped with `network_access: false`, failing the *fetch first* clause every
@@ -76,15 +86,6 @@ channels), all off-repo.
   that is not version-shaped. `version.test.ts` runs the script as a program and `scripts.test.ts`
   fails on the *shape* in any `scripts/*.mjs`. ⚠️ `scripts/build-mac.sh` reads the same command into
   `.build-cache/version.txt`; unmeasured on macOS, worth a look on the next Mac.
-
-- **electron-builder is invoked from one script, never from a config file that computes anything
-  (2026-09-16).** t485's ESM config exited 0 with no output on Windows CI. Settings are back in
-  `electron-builder.yml`; `scripts/pack.mjs` passes `-c.extraMetadata.version`. `packaging.test.ts`.
-
-- **A local worker's model is what its server serves, named `local-llm:<served id>` (t486,
-  2026-09-16).** `costmodels/local.llm` pinned one id, so a single-model llama.cpp server always
-  answered as that model regardless of what actually loaded. `dynamic_models` + `probeIdentity` fix
-  it; migration 74 clears the pinned literal. ⚠️ Not yet driven against a real server.
 
 - **A release is one turn, and the tag is the version (t485, 2026-09-16).** The version was a source fact
   costing four turns and two commits per release. `scripts/version.mjs` derives it from git
@@ -191,8 +192,7 @@ Record results, CLI versions and dates in [`docs/cost-model.md`](docs/cost-model
 
 ## Durable constraints
 
-- A worker is an account; a session is a live process. Quota belongs to the worker, context to the
-  session. [`docs/glossary.md`](docs/glossary.md) is authoritative.
+- A worker is an account; a session is a live process. Quota belongs to the worker, context to the session. [`docs/glossary.md`](docs/glossary.md) is authoritative.
 - The scheduler spends zero tokens; model judgment is asynchronous and has a deterministic fallback.
 - Agents use pooled worktrees, never the trunk — unless the task's workspace mode is `trunk`, which
   holds the single trunk lease. Nothing kills a process by image name or bare PID.

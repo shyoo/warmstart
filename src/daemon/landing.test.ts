@@ -1548,6 +1548,55 @@ describe('pull-request landing strategy', () => {
     expect(result.reason).toContain('may already be pushed')
   })
 
+  it('force-with-lease retries a rejected push when a later run rewrote history already on the open PR', async () => {
+    // ⛔ Regression for the cascade in t509: the closing contract every run gets only forbids
+    // rewriting commits already on the *landing target*, not commits already pushed as this task's
+    // own open pull request - so a later run legitimately squashes what it finds there. A plain
+    // `git push` cannot land that, and used to be reported as an ordinary failure ("may already be
+    // pushed") that repeated on every retry with nothing to act on.
+    const branch = 'warmstart/t509-rewrite'
+    const { project, task, ws } = seedRepoWithRemote(branch)
+    const spawn = await import('./spawn.js')
+    const realRun = spawn.run
+    const ghSucceeds = vi.spyOn(spawn, 'run').mockImplementation((async (cmd: unknown, ...rest: unknown[]) => {
+      if (isGhCall(cmd, rest[0])) return { stdout: 'https://github.com/shyoo/awardtracker/pull/509\n', stderr: '' }
+      return (realRun as (...args: unknown[]) => unknown)(cmd, ...rest)
+    }) as never)
+
+    const first = await landing.pullRequest.land({ project, task, workspacePath: ws, branch, policy: 'pull-request' })
+    expect(first.ok).toBe(true)
+    ghSucceeds.mockRestore()
+
+    // A later run adds a second commit, then squashes the pair - legitimate under the closing
+    // contract because neither commit is on the landing target yet, only on this task's own branch.
+    writeFileSync(join(ws, 'file2.txt'), 'more pr work\n')
+    git(ws, 'add', '-A')
+    git(ws, 'commit', '-m', 'more work on pr')
+    git(ws, 'reset', '--soft', 'HEAD~2')
+    git(ws, 'commit', '-m', 'squashed pr work')
+    const rewrittenHead = git(ws, 'rev-parse', 'HEAD')
+
+    vi.spyOn(spawn, 'run').mockImplementation((async (cmd: unknown, ...rest: unknown[]) => {
+      if (isGhCall(cmd, rest[0])) {
+        throw new Error(
+          `Command failed: gh.EXE pr create ... a pull request for branch "${branch}" into branch ` +
+            '"main" already exists:\nhttps://github.com/shyoo/awardtracker/pull/509\n'
+        )
+      }
+      return (realRun as (...args: unknown[]) => unknown)(cmd, ...rest)
+    }) as never)
+
+    const second = await landing.pullRequest.land({ project, task, workspacePath: ws, branch, policy: 'pull-request' })
+
+    expect(second.ok).toBe(true)
+    expect(second.commit).toBe(rewrittenHead)
+    expect(second.prUrl).toBe('https://github.com/shyoo/awardtracker/pull/509')
+    // Proves the remote branch actually carries the rewritten history, not just that the call
+    // returned `ok` - a plain push silently doing nothing would still hit the "already exists" path.
+    expect(git(ws, 'rev-parse', `origin/${branch}`)).toBe(rewrittenHead)
+    expect(deliveries.deliveriesForTask(task.id).at(-1)).toMatchObject({ headSha: rewrittenHead, state: 'open' })
+  })
+
   it('reconciles a squash merge and retires only the unchanged, unheld branch', async () => {
     const branch = 'warmstart/t375-squash-merged'
     const { task, root, ws } = seedRepoWithRemote(branch)
