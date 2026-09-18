@@ -524,24 +524,17 @@ export function App({
                   <NavItem
                     active={route.kind === 'project' && route.id === project.id && openThreadId === null}
                     onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'tasks' })}
+                    draggable
+                    onDragStart={(event) => {
+                      setDraggedProjectId(project.id)
+                      event.dataTransfer.effectAllowed = 'move'
+                      event.dataTransfer.setData('text/plain', project.id)
+                    }}
+                    onDragEnd={() => {
+                      setDraggedProjectId(null)
+                      setProjectDrop(null)
+                    }}
                   >
-                    <span
-                      className="nav-project-drag"
-                      draggable
-                      aria-hidden
-                      title="Drag to reorder projects"
-                      onDragStart={(event) => {
-                        setDraggedProjectId(project.id)
-                        event.dataTransfer.effectAllowed = 'move'
-                        event.dataTransfer.setData('text/plain', project.id)
-                      }}
-                      onDragEnd={() => {
-                        setDraggedProjectId(null)
-                        setProjectDrop(null)
-                      }}
-                    >
-                      ⠿
-                    </span>
                     <ProjectDot
                       state={state}
                       onClick={
@@ -998,14 +991,26 @@ function IconButton({
 function NavItem({
   active,
   onClick,
-  children
+  children,
+  draggable,
+  onDragStart,
+  onDragEnd
 }: {
   active: boolean
   onClick: () => void
   children: React.ReactNode
+  draggable?: boolean
+  onDragStart?: (event: React.DragEvent<HTMLButtonElement>) => void
+  onDragEnd?: () => void
 }): React.JSX.Element {
   return (
-    <button className={`nav-item${active ? ' nav-item--active' : ''}`} onClick={onClick}>
+    <button
+      className={`nav-item${active ? ' nav-item--active' : ''}`}
+      onClick={onClick}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+    >
       {children}
     </button>
   )

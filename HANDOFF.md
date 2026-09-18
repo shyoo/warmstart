@@ -29,7 +29,10 @@ channels), all off-repo.
   missing path and `project.relocate` points the same project id at its new directory, keeping tasks
   and history. Doctor's Projects section flags it fleet-wide too, like `isolationRootExists` for a
   worker. `projectrelocate.test.ts`, `docs/ui.md`.
-
+- **Project reordering no longer needs its own drag handle (t515 ← t512, 2026-09-17).** The `⠿`
+  marker before each project name ate sidebar width for no reason. `draggable` moved from a dedicated
+  `.nav-project-drag` span onto `NavItem`'s `<button>` itself — the whole row is now the drag source
+  and still fires its ordinary `onClick`. Dropped the handle's `cursor: grab`/`grabbing` rules, so dragging shows no hand cursor.
 - **Thread auto-follow no longer traps a taller right pane (t513, 2026-09-17).** Pinning begins only at the whole page's bottom and follows that bottom, never the shorter chat anchor. `docs/ui.md`.
 - **A `pull-request` task with an already-open PR could get stuck failing forever, and the retry
   button that should have fixed it disappeared after the first attempt (t509, 2026-09-17).** The
@@ -41,7 +44,6 @@ channels), all off-repo.
   Second half of the cascade: `canRelandTask` (`taskview.tsx`) hid **Retry landing** for good after the
   first `Retry landing failed: …`, a blanket exclusion meant for an empty branch that also caught every
   retriable cause — only the genuinely unfixable ones do now. `landing.md`.
-
 - **A Plan & Split task could be routed to an adapter with no `task_split` tool at all, and just
   landed code instead of splitting anything (t507 ← t505, 2026-09-17).** `promptFor`'s MCP-less
   branch never checked `planPhaseOf`/`debatePhaseOf`, so a plan or debate task landed there fell
@@ -51,13 +53,11 @@ channels), all off-repo.
   Also fixed: **"Waiting on" sat near the bottom of the status pane despite following "status" in the
   DOM**, because the `Fact` carrying it had no CSS `order` class and fell to the unstyled default.
   `.fact--waiting` now orders it directly below `.fact--status`.
-
 - **A freshly onboarded project could start with a dirty trunk that blocks its first landing (t506 ←
   t505, 2026-09-17).** `.warmstart/project.json` is documented as committed, but `writeStarterConfig`
   only wrote it — it sat untracked until a queued landing found the trunk dirty and refused to merge.
   `createProject` now commits the scaffolding it just wrote right after writing it; an existing,
   uncommitted config the operator wrote by hand is left alone. `projectsetup.test.ts`.
-
 - **Pending pull requests get a dedicated Tasks banner and dot-clearing reconciliation (t503, 2026-09-17).**
   A project with open PRs displays a `.tasks-pr-banner` with task links, PR URLs, branch info and an
   instant **Check merged PRs** action; tasks with pending deliveries show a `PR #N` pill. The daemon
@@ -74,7 +74,7 @@ channels), all off-repo.
   Now `answerTimeoutFor` bounds a running consult by its window, the queue drains soonest deadline
   first, `permissionModeFor` gives a consult `readOnlyPermissionMode` (a command attempt is
   auto-denied in ~1.1s, measured), and a consult cut short by its window no longer marks the account
-  dead. Also seen, not fixed: the dispatch log's `score 1.91: ` has an empty reason.
+  dead.
 
 - **A codex run can reach the network; it still cannot push (t494 ← t493, 2026-09-16).** codex's
   `workspace-write` shipped with `network_access: false`, failing the *fetch first* clause every
@@ -89,8 +89,7 @@ channels), all off-repo.
   full release and became `/releases/latest`** — corrected on GitHub with `gh release edit
   v0.1.1-rc.1 --prerelease` before promotion. `pathToFileURL` now; `release-tag.mjs` and
   `check-release-base.mjs` carried the same line and are fixed too; the workflow refuses a version
-  that is not version-shaped. `version.test.ts` runs the script as a program and `scripts.test.ts`
-  fails on the *shape* in any `scripts/*.mjs`. ⚠️ `scripts/build-mac.sh` reads the same command into
+  that is not version-shaped. ⚠️ `scripts/build-mac.sh` reads the same command into
   `.build-cache/version.txt`; unmeasured on macOS, worth a look on the next Mac.
 
 - **A release is one turn, and the tag is the version (t485, 2026-09-16).** The version was a source fact

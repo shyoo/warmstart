@@ -1254,25 +1254,6 @@ body {
   position: relative;
 }
 
-.nav-project-drag {
-  flex: none;
-  color: var(--color-text-faint);
-  font-size: 12px;
-  line-height: 1;
-  cursor: grab;
-  opacity: 0.55;
-  transition: opacity 120ms ease;
-}
-
-.nav-item:hover .nav-project-drag,
-.nav-project-drag:focus-visible {
-  opacity: 1;
-}
-
-.nav-project-drag:active {
-  cursor: grabbing;
-}
-
 .nav-item-project-wrapper--drop-before::before,
 .nav-item-project-wrapper--drop-after::after {
   content: "";
