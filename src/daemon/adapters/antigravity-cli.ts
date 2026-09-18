@@ -511,7 +511,14 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
           : 'UNKNOWN'
 
     let text: string | null = null
-    if (typeof result?.response === 'string' && result.response.trim()) {
+    if (status !== 'SUCCESS' && typeof result?.error === 'string' && result.error.trim()) {
+      // ⛔ **On a failed turn the error outranks the response** (t527, 2026-09-18). A long turn
+      // that dies mid-way still carries everything the agent narrated in `response`, and read first
+      // that buried `RESOURCE_EXHAUSTED (code 429): Individual quota reached` under a page of
+      // "Now let me look at…" — so the task went to a person as an unexplained `ERROR` instead of
+      // parking on the quota clock, because nothing downstream ever saw the refusal.
+      text = result.error
+    } else if (typeof result?.response === 'string' && result.response.trim()) {
       text = result.response
     } else if (typeof result?.text === 'string' && result.text.trim()) {
       text = result.text
@@ -976,6 +983,22 @@ export const antigravityCli: AgentAdapter = {
       event: 'user',
       message: { role: 'user', content: [{ type: 'text', text }] }
     }),
+
+  /**
+   * Does this failure mean the account is out of quota for now, rather than broken?
+   *
+   * ⚠️ Measured, not imagined: verbatim from agy's own `cli.log` on t527, 2026-09-18, after eight
+   * retries over nine minutes — `RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please
+   * upgrade your subscription to increase your limits. Resets in 52h16m45s.` The Claude/GPT 7d
+   * window read 100% on the probe that followed.
+   *
+   * ⛔ Anchored on the gRPC status and this vendor's quota sentence, never on `ERROR` or `429`
+   * alone: a tool that fetched a rate-limited URL is an agent having a bad turn.
+   */
+  outOfQuota: (reason: string): boolean => {
+    const said = reason.toLowerCase()
+    return said.includes('resource_exhausted') || said.includes('individual quota reached')
+  },
 
   // ⚠️ Not just PATH: the installer leaves `agy` somewhere it does not add until `agy install`
   // runs, so a perfectly usable install would otherwise be invisible to the scheduler.

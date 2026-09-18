@@ -423,3 +423,24 @@ describe('antigravity-cli detect', () => {
   })
 })
 
+
+/**
+ * ⛔ **t527, 2026-09-18.** A Claude model on Antigravity ran its window dry mid-turn and agy ended the
+ * turn with this, verbatim from its `cli.log`. Unrecognised, the task went to a person instead of
+ * parking on the quota clock.
+ */
+describe('Antigravity outOfQuota recognition (t527)', () => {
+  const EXACT_T527 =
+    'RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to ' +
+    'increase your limits. Resets in 52h16m45s.'
+
+  it('recognises the refusal agy ended the turn with', () => {
+    expect(antigravityCli.outOfQuota?.(EXACT_T527)).toBe(true)
+    expect(antigravityCli.outOfQuota?.(`The agent reported a failure (ERROR): ${EXACT_T527}`)).toBe(true)
+  })
+
+  it('does not read an ordinary failure, or a bare 429, as quota', () => {
+    expect(antigravityCli.outOfQuota?.('rebase stopped with a conflict in HANDOFF.md')).toBe(false)
+    expect(antigravityCli.outOfQuota?.('curl returned HTTP 429 from example.com')).toBe(false)
+  })
+})

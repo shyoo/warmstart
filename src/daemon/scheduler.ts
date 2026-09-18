@@ -4283,7 +4283,11 @@ function quotaFailurePark(session: Session, run: Run, why: string): number | nul
   const ad = adapter(session.adapterId)
   const said = why + (session.id ? ` ${stripAnsi(backscroll(session.id))}` : '')
   if (!ad.outOfQuota?.(why) && !ad.outOfQuota?.(said)) return null
-  return windowResetsAt(run.workerId)?.at ?? parseQuotaResetTime(said) ?? Date.now() + BLIND_PARK_MS
+  // ⚠️ The refused model's own pool, as the watchdog asks: on Antigravity a Claude/GPT refusal must
+  // not be parked against the Gemini window's reset (t527, 2026-09-18).
+  const worker = getWorker(run.workerId)
+  const pool = worker ? poolFor(worker, session.model ?? run.model) : null
+  return windowResetsAt(run.workerId, pool)?.at ?? parseQuotaResetTime(said) ?? Date.now() + BLIND_PARK_MS
 }
 
 

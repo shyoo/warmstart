@@ -250,6 +250,18 @@ describe('antigravity-cli', () => {
     })
   })
 
+  it('prefers the error over the narrated response when a turn fails (t527)', () => {
+    const failed =
+      '{"event":"result","result":{"status":"ERROR","response":"Now let me look at the composer:",' +
+      '"error":"RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 52h16m45s."}}'
+    expect(parse('antigravity-cli', [failed]).find((e) => e.kind === 'result')).toMatchObject({
+      isError: true,
+      text: 'RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 52h16m45s.'
+    })
+    const ok = '{"event":"result","result":{"status":"SUCCESS","response":"done","error":"stale"}}'
+    expect(parse('antigravity-cli', [ok]).find((e) => e.kind === 'result')).toMatchObject({ text: 'done' })
+  })
+
   it('reports an unknown cost as null, never as zero', () => {
     // ⛔ Zero would read as "this turn was free" everywhere downstream.
     expect(parse('antigravity-cli', [result]).find((e) => e.kind === 'result')).toMatchObject({

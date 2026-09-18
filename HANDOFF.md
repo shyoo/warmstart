@@ -24,6 +24,12 @@ promote`, `release.yml`'s verify step included — in two turns and no "Prepare 
 channels), all off-repo.
 
 ## Closed in this cleanup
+- **An Antigravity run that ran out of quota went to a person as a bare `ERROR` (t528 ← t527,
+  2026-09-18).** agy's own `cli.log` showed `RESOURCE_EXHAUSTED (code 429): Individual quota reached
+  … Resets in 52h16m45s` after eight retries, but the decoder read the result's `response` (the
+  whole narration) before its `error`, and the adapter had no `outOfQuota`. Now a non-`SUCCESS`
+  result prefers `error`, `antigravityCli.outOfQuota` recognises the refusal, and `quotaFailurePark`
+  asks for the refused model's own pool's reset, as the watchdog does. `docs/adapters.md`.
 - **Concurrent worktree pool expansion failed on `index.lock`, and capacity reduction blocked held tasks (t524 ← t523, 2026-09-17).**
   Dynamically increasing workspace pool size (`ws4`) unblocked queued tasks, but dispatch raced with in-flight
   `git worktree add` (which takes ~41s on large repositories) because `.git` was created early; `prepareWorkspace`
