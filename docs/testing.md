@@ -252,6 +252,13 @@ daemon then dispatches a real run with a prompt of its own before the check read
 fact about the machine — it does on a developer box and not on CI — so the suite flickered between
 one chip and two. What the check was for was the chip's *side*; it now asserts that of every chip.
 
+⚠️ **So is a global git identity** (2026-09-18, CI run 35403359041). `projectsetup.test.ts` passed for
+a day on a fixture repo that had never set `user.email`, because the developer machine's global config
+supplied one; the Linux runner has none, and `createProject`'s scaffolding commit failed with `fatal:
+empty ident name`. A fixture repo that will be committed in sets its own `user.name`/`user.email`, as
+every other suite here already did. To see what CI sees: `HOME=/tmp/nohome GIT_CONFIG_GLOBAL=/dev/null
+GIT_CONFIG_NOSYSTEM=1 npx vitest run <file>`.
+
 ### A suite that fails because of the *shape* of the workspace it is in
 
 ⛔ **Pool members are not interchangeable, and the difference is invisible.** On t171, 2026-09-03,

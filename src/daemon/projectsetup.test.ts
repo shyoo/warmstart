@@ -31,6 +31,10 @@ function repoDir(files: Record<string, string> = {}): string {
   const root = join(dir, `repo${seq}`)
   mkdirSync(root, { recursive: true })
   execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: root, stdio: 'ignore' })
+  // `createProject` commits what it wrote, and a CI runner has no global identity (run
+  // 35403359041: `fatal: empty ident name`). Passing locally was this machine's config, not the test's.
+  execFileSync('git', ['config', 'user.email', 'test@example.invalid'], { cwd: root, stdio: 'ignore' })
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: root, stdio: 'ignore' })
   for (const [name, content] of Object.entries(files)) {
     const path = join(root, name)
     mkdirSync(join(path, '..'), { recursive: true })
