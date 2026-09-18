@@ -949,3 +949,59 @@ describe('the back-pointer a pool member leaves in the trunk', () => {
     worktrees.releaseWorkspace(ws!.claimId)
   })
 })
+
+describe('workspace pool dynamic resizing and stale lock cleanup', () => {
+  it('removes stale index.lock and HEAD.lock from a worktree', async () => {
+    const project = makeProject(1)
+    const ws = await worktrees.claimWorkspace(project, 'run-lock-test')
+    const gitDir = git(ws!.path, 'rev-parse', '--absolute-git-dir')
+    const indexLock = join(gitDir, 'index.lock')
+    const headLock = join(gitDir, 'HEAD.lock')
+    writeFileSync(indexLock, '')
+    writeFileSync(headLock, '')
+    expect(existsSync(indexLock)).toBe(true)
+    expect(existsSync(headLock)).toBe(true)
+
+    worktrees.cleanStaleGitLocks(ws!.path)
+    expect(existsSync(indexLock)).toBe(false)
+    expect(existsSync(headLock)).toBe(false)
+
+    worktrees.releaseWorkspace(ws!.claimId)
+  })
+
+  it('serializes concurrent ensurePool invocations without error', async () => {
+    const project = makeProject(1)
+    const updated = projects.setProjectPolicy(project.id, { poolSize: 3 })
+    const results = await Promise.all([
+      worktrees.ensurePool(updated),
+      worktrees.ensurePool(updated),
+      worktrees.ensurePool(updated)
+    ])
+    expect(results[0]).toHaveLength(3)
+    expect(results[1]).toEqual(results[0])
+    expect(results[2]).toEqual(results[0])
+  })
+
+  it('gracefully parks idle extra workspaces when pool size is reduced, leaving occupied ones alone', async () => {
+    const project = makeProject(2)
+    const ws1 = await worktrees.claimWorkspace(project, 'run-1')
+    const ws2 = await worktrees.claimWorkspace(project, 'run-2')
+    git(ws2!.path, 'switch', '-c', 'warmstart/t999-held-work', 'main')
+
+    // Reduce pool size to 1 while ws2 is claimed
+    const smaller = projects.setProjectPolicy(project.id, { poolSize: 1 })
+    await worktrees.ensurePool(smaller)
+
+    // ws2 is occupied by an open claim, so ensurePool does not touch its branch
+    expect(git(ws2!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('warmstart/t999-held-work')
+
+    // Now release ws2 so it becomes idle
+    worktrees.releaseWorkspace(ws2!.claimId)
+
+    // ensurePool again now sees ws2 as idle and gracefully parks it
+    await worktrees.ensurePool(smaller)
+    expect(git(ws2!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD')
+
+    worktrees.releaseWorkspace(ws1!.claimId)
+  })
+})

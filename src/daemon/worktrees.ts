@@ -1,4 +1,4 @@
-import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, unlinkSync, writeSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { FinishPolicy, Project, ResourceClaim, Task, WorkspaceMode } from '@shared/tasks.js'
 import { resolveFinishPolicy } from '@shared/policy.js'
@@ -112,10 +112,60 @@ export async function baseRef(project: Project, task?: Task | null): Promise<str
 }
 
 /**
+ * Remove stale index.lock or HEAD.lock if left behind by a dead process.
+ * On Windows, if an active process still holds a lock, unlinkSync will throw EBUSY/EPERM,
+ * which is caught safely.
+ */
+export function cleanStaleGitLocks(workspacePath: string): void {
+  try {
+    const pointer = worktreePointer(workspacePath)
+    const adminDir = pointer?.resolved ?? (existsSync(join(workspacePath, '.git')) && statSync(join(workspacePath, '.git')).isDirectory() ? join(workspacePath, '.git') : null)
+    if (!adminDir || !existsSync(adminDir)) return
+    for (const name of ['index.lock', 'HEAD.lock']) {
+      const lock = join(adminDir, name)
+      if (existsSync(lock)) {
+        try {
+          unlinkSync(lock)
+          log.warn(`removed stale git lock ${lock}`)
+        } catch (err) {
+          log.warn(`could not remove lock file ${lock} (a process may be using it):`, err)
+        }
+      }
+    }
+  } catch (err) {
+    log.warn(`lock sweep on ${workspacePath} failed:`, err)
+  }
+}
+
+const inFlightEnsurePool = new Map<string, Promise<string[]>>()
+
+/**
  * Create the pool if it is not there, and register it as a counted Resource whose members are the
  * worktree paths. Idempotent - called before every claim, cheap when nothing has to happen.
+ *
+ * ⛔ Serialized per project: if a worktree is being created in the background, a concurrent dispatch
+ * must wait for creation to complete rather than seeing a half-checked-out tree and failing on index.lock.
  */
 export async function ensurePool(project: Project): Promise<string[]> {
+  while (inFlightEnsurePool.has(project.id)) {
+    try {
+      await inFlightEnsurePool.get(project.id)
+    } catch {
+      // Previous failure shouldn't permanently block subsequent attempts
+    }
+  }
+  const promise = doEnsurePool(project)
+  inFlightEnsurePool.set(project.id, promise)
+  try {
+    return await promise
+  } finally {
+    if (inFlightEnsurePool.get(project.id) === promise) {
+      inFlightEnsurePool.delete(project.id)
+    }
+  }
+}
+
+async function doEnsurePool(project: Project): Promise<string[]> {
   const policy = policyFor(project)
   const poolId = workspacePoolId(project.id)
 
@@ -140,16 +190,44 @@ export async function ensurePool(project: Project): Promise<string[]> {
   for (let i = 1; i <= policy.poolSize; i++) {
     const path = join(policy.workspaceRoot, `ws${i}`)
     members.push(path)
-    if (existsSync(join(path, '.git'))) continue
+    if (existsSync(join(path, '.git'))) {
+      cleanStaleGitLocks(path)
+      continue
+    }
     try {
       // --detach: a pool member holds no branch at rest, so any task branch is free to be claimed.
       await git(project.root, ['worktree', 'add', '--detach', path, base])
       await ensureWorktreePointer(project, path)
+      cleanStaleGitLocks(path)
       log.info(`created worktree ${path} from ${base}`)
     } catch (err) {
       log.error(`could not create worktree ${path}:`, err)
       members.pop()
     }
+  }
+
+  // Gracefully retire any extra workspaces outside the configured poolSize:
+  // If an extra workspace is idle (not held by any active claim), park it off its branch
+  // so it does not hold onto branches, locks or uncommitted work.
+  // If an extra workspace IS occupied, leave it alone until its task completes.
+  const activeClaims = openClaims(poolId)
+  let extraIndex = policy.poolSize + 1
+  while (existsSync(join(policy.workspaceRoot, `ws${extraIndex}`))) {
+    const extraPath = join(policy.workspaceRoot, `ws${extraIndex}`)
+    const isOccupied = activeClaims.some((c) => c.member && samePath(c.member, extraPath))
+    if (!isOccupied && existsSync(join(extraPath, '.git'))) {
+      cleanStaleGitLocks(extraPath)
+      try {
+        const state = await workspaceState(extraPath, base)
+        if (state.branch && state.branch !== base) {
+          log.info(`gracefully parked retired workspace ${extraPath}, which held ${state.branch}`)
+          await parkWorkspace(project, extraPath)
+        }
+      } catch (err) {
+        log.warn(`could not park retired workspace ${extraPath}:`, err)
+      }
+    }
+    extraIndex++
   }
 
   upsertResource({
@@ -457,6 +535,7 @@ export async function switchResidentBranch(
     // the same defect `baseRef`'s own comment describes, one call site over.
     const base = await baseRef(project, task)
     // Git refuses to check one branch out into two worktrees, correctly. A leftover holder is parked.
+    cleanStaleGitLocks(path)
     await parkOtherHolders(project, branch, path)
     if (await gitOk(path, ['rev-parse', '--verify', branch])) {
       await git(path, ['switch', branch])
@@ -765,6 +844,7 @@ export async function prepareWorkspace(
   // enter is not a repository to anything below, and a slot whose `.git` an agent has rewritten is
   // not one either, the ACL sweep included.
   repairTrunkConfig(project)
+  cleanStaleGitLocks(workspace.path)
   await ensureWorktreePointer(project, workspace.path)
   await cleanWorkspaceAcls(workspace.path)
   const policy = policyFor(project)
@@ -884,6 +964,7 @@ export async function parkOtherHolders(
           // ⚠️ The trunk, not the caller's base. The caller may be cutting a subtask from its
           // parent's branch, and parking a stranger's worktree onto that would be nonsense.
           const base = await trunkBaseRef(project)
+          cleanStaleGitLocks(path)
           await ensureWorktreePointer(project, path)
           await rescueDirt(path, base)
           await git(path, ['switch', '--detach', base])

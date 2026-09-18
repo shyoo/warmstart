@@ -595,6 +595,11 @@ produces a question nobody can reply to.
 - ⛔ **The tool never writes a commit, and never destroys work.** Committing is the agent's job. Work
   the tool declines to land is preserved where it is and surfaced under **Loose ends** — preserving it
   silently is only half a fix. Full spec: [`landing.md`](landing.md).
+- ⭐ **Dynamic pool scaling and lock hygiene** (`worktrees.ts`). `ensurePool(project)` is serialized per
+  project so concurrent dispatches do not race against a slow `git worktree add` holding `index.lock`.
+  Stale locks (`index.lock`, `HEAD.lock`) left by crashed git processes are swept before preparing or
+  switching worktrees. Reducing pool size is graceful: idle extra slots are detached/parked cleanly,
+  while occupied slots are allowed to complete their claims before retiring.
 
 ## 5. Layout
 

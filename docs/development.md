@@ -469,6 +469,12 @@ branch, so the finish logs `nothing-to-land` and every gate that runs *before a 
 skipped. Nothing detects this. If a task finishes `nothing-to-land` and the work plainly happened,
 read `git reflog` in the trunk before believing the agent did nothing.
 
+- **Concurrent pool expansion and stale lock handling.** `git worktree add` on large checkouts holds
+  `index.lock` for tens of seconds while creating `.git` early. `ensurePool(project)` is
+  serialized per project so concurrent dispatches wait for checkout completion, and `cleanStaleGitLocks`
+  clears orphaned `.lock` files before preparing or switching a worktree. Reducing pool size is graceful:
+  idle extra slots are parked, while occupied slots run to completion.
+
 ## 5. Working in a worktree
 
 Agent sessions on this repository run in a pooled git worktree, not the trunk.

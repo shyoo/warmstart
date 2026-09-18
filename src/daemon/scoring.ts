@@ -1687,6 +1687,13 @@ export function poolPressure(task: Task): string | null {
   const state = availability(workspacePoolId(project.id))
   if (!state) return null
 
+  // A task returning from `awaiting_human` or continuing with a warm session already occupies
+  // a workspace. Its reservation fills the pool by design, but it is not contention: dispatch
+  // will reuse that exact claim/session without asking the pool for another one, even if the pool
+  // is currently being narrowed.
+  if (workspaceHeldBy(project, task.id)) return null
+  if (warmSessionFor(task)) return null
+
   // `setProjectPolicy` changes the durable desired size immediately, but a larger pool's next
   // member only exists when `ensurePool` runs before its next claim. Do not let the old, full
   // resource prevent that very dispatch: t89 changed three to four, then this gate kept saying
@@ -1700,12 +1707,7 @@ export function poolPressure(task: Task): string | null {
     return `all ${capacity} workspace(s) in ${project.name} are busy` + poolIsNarrow(project, capacity)
   }
 
-  // A task returning from `awaiting_human` already holds its own member. Its reservation fills the
-  // pool by design, but it is not contention: dispatch will transfer that exact claim to the new
-  // session without asking the pool for another one.
-  if (workspaceHeldBy(project, task.id)) return null
   if (state.free > 0) return null
-  if (warmSessionFor(task)) return null
   if (evictableResidents(project.id, 'worktree').length > 0) return null
 
   const capacity = state.resource.capacity

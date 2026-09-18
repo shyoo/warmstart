@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+21.g3cbf882.dirty`): typecheck, lint and
-build pass; L1 **3,710 passed, 5 skipped** (221 files). L2 **203 checks** (5 skipped) and L4 **19
+Baseline (2026-09-18, **Windows 11**, measured over `0.1.1+25.gc8f690f.dirty`): typecheck, lint and
+build pass; L1 **3,716 passed, 5 skipped** (221 files). L2 **203 checks** (5 skipped) and L4 **19
 checks** against `release/win-unpacked` were at `0.1.1+1.g1fff656`. L3 not re-run on this tip (a
 renderer change, but `test/ui.test.mjs` never opens a project tab — see t500 below); it was **474
 passed, 4 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
@@ -24,6 +24,14 @@ promote`, `release.yml`'s verify step included — in two turns and no "Prepare 
 channels), all off-repo.
 
 ## Closed in this cleanup
+- **Concurrent worktree pool expansion failed on `index.lock`, and capacity reduction blocked held tasks (t524 ← t523, 2026-09-17).**
+  Dynamically increasing workspace pool size (`ws4`) unblocked queued tasks, but dispatch raced with in-flight
+  `git worktree add` (which takes ~41s on large repositories) because `.git` was created early; `prepareWorkspace`
+  ran `git switch -c` while `git worktree add` still held `index.lock`. `ensurePool(project)` is now serialized per
+  project, and `cleanStaleGitLocks` cleans orphaned `.lock` files before preparing or switching worktrees. In reverse,
+  reducing pool size is now graceful: idle extra workspaces are parked off held branches, while occupied ones finish
+  undisturbed; and `poolPressure` in `scoring.ts` checks held workspaces and warm sessions before capacity check so held
+  tasks are never blocked by pool narrowing. `worktrees.ts`, `scoring.ts`, `docs/architecture.md`.
 - **Relocating a moved project meant typing the new path by hand (t517 ← t514, 2026-09-17).** The
   `RelocateBanner`'s text input had no OS picker, unlike every other path field in the app. It now
   renders `NewProject`'s `PathField` (newly exported), so relocation gets the same **Choose…** button
@@ -93,27 +101,6 @@ channels), all off-repo.
   auto-denied in ~1.1s, measured), and a consult cut short by its window no longer marks the account
   dead.
 
-- **A codex run can reach the network; it still cannot push (t494 ← t493, 2026-09-16).** codex's
-  `workspace-write` shipped with `network_access: false`, failing the *fetch first* clause every
-  worktree agent gets. `plan()` now passes `-c sandbox_workspace_write.network_access=true`; `envFor`
-  appends `http.sslBackend=openssl` on Windows. ⛔ No credential reaches the sandbox — landing pushes
-  outside. `docs/adapters.md`, `docs/security.md`.
-
-- **`scripts/version.mjs` printed nothing when *run* on Linux or macOS, and that decided a
-  release's visibility (2026-09-16).** It tested direct invocation by comparing `import.meta.url`
-  against a hand-built `file:///${process.argv[1]}` — right on Windows, never true on POSIX. ⭐ So
-  `release.yml`'s `version=$(node scripts/version.mjs)` was empty, and **`v0.1.1-rc.1` published as a
-  full release and became `/releases/latest`** — corrected on GitHub with `gh release edit
-  v0.1.1-rc.1 --prerelease` before promotion. `pathToFileURL` now; `release-tag.mjs` and
-  `check-release-base.mjs` carried the same line and are fixed too; the workflow refuses a version
-  that is not version-shaped. ⚠️ `scripts/build-mac.sh` reads the same command into
-  `.build-cache/version.txt`; unmeasured on macOS, worth a look on the next Mac.
-
-- **A release is one turn, and the tag is the version (t485, 2026-09-16).** The version was a source fact
-  costing four turns and two commits per release. `scripts/version.mjs` derives it from git
-  (`WARMSTART_VERSION` or `git describe`); `scripts/pack.mjs` passes `extraMetadata.version`; `package.json`
-  keeps `0.0.0`. `/release rc` plans, notes and cuts one annotated tag; `/release promote` tags the rc commit.
-  Verified with `v0.1.1-rc.1` / `v0.1.1`. Design: [`transient_docs/release_flow_2026-09-16.md`](transient_docs/release_flow_2026-09-16.md).
 
 - **A held conversation's worker slot never came back (t498 ← t497, 2026-09-17).** ClaudeThird held a
   conversation resting at `awaiting_human`; a second task pinned to it queued at capacity, exactly as
