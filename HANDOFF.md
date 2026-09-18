@@ -13,14 +13,14 @@ passed, 4 skipped**; L4 **19 checks** against `release/win-unpacked`. macOS 13 a
 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so is the
 **Release** workflow.
 
-**`v0.1.1` is released and `latest`** (tag build 35165991396, 2026-09-17, attested; five installers
-+ `SHA256SUMS.txt`). It was verified as `v0.1.1-rc.1` (tag build 35161851026) and promoted onto that
-rc's own commit `1d2c714`, so `v0.1.1` and `v0.1.1-rc.1` name the same bytes. ⭐ **The whole
-tag-is-the-version flow has now carried a release end to end** — `/release rc`, verify, `/release
-promote`, `release.yml`'s verify step included — in two turns and no "Prepare vX" commit.
-⚠️ `main` is *ahead* of the released tag: the two fixes below landed after the rc was cut, so the
-0.1.1 installers do not contain them. ⏭ Next is Phase 3/4 (write-up, demo GIF, landing page,
-channels), all off-repo.
+**`v0.1.1` is `latest`** (tag build 35165991396, 2026-09-17), promoted onto its own rc's commit.
+**`v0.2.0-rc.1` is cut and published as a pre-release** (tag on `c42ae06`, Release run 35407248705,
+2026-09-18: Windows + macOS builds, attested, five installers + `SHA256SUMS.txt`). It carries
+everything under *Closed* below plus migration 76. ⏭ **Next: install `v0.2.0-rc.1`, verify it, then
+`/release promote`.** Its first CI pass took four fix commits (`6ddbba5`..`c42ae06`) — 22 commits
+had accumulated unpushed and three suites had been passing only on this machine's git identity,
+installed CLIs and fonts; `docs/testing.md` records each. Phase 3/4 (write-up, landing page,
+channels) remains off-repo.
 
 ## Closed in this cleanup
 - **A vendor quota refusal could look like Warmstart's overridable percentage gate (t531 ← t530, 2026-09-18).** An Antigravity run correctly parked on its explicit `Individual quota reached` response, but did not retain that reason on the task row. The thread card then fell back to “Account is past quota watermark” and offered an override that cannot make a vendor serve a refused turn. Vendor-refusal parks now retain their reason and reset time, and the card explains the retry instead. `scheduler.ts`, `Decide.tsx`, `docs/ui.md`.
