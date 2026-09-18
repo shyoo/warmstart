@@ -50,7 +50,8 @@ function makeRepo(): Project {
     config: {} as Project['config'],
     configPath: null,
     createdAt: 0,
-    archivedAt: null
+    archivedAt: null,
+    rootExists: true
   }
 }
 

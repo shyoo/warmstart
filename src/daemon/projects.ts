@@ -85,7 +85,8 @@ function toProject(r: ProjectRow): Project {
     config: JSON.parse(r.config_json) as ProjectConfig,
     configPath: r.config_path,
     createdAt: r.created_at,
-    archivedAt: r.archived_at
+    archivedAt: r.archived_at,
+    rootExists: existsSync(r.root)
   }
 }
 
@@ -208,6 +209,44 @@ export function reloadProject(id: string): Project {
   db()
     .prepare('update projects set config_json = ?, config_path = ?, vcs = ? where id = ?')
     .run(JSON.stringify(config), path, config.vcs ?? project.vcs, id)
+  const updated = requireProject(id)
+  emit({ type: 'project.changed', project: updated })
+  return updated
+}
+
+/**
+ * Point an existing project at a directory it was moved or renamed to.
+ *
+ * ⛔ **The identity that survives is the project row, not the path.** A directory rename outside
+ * Warmstart — `c:\Dev\magic_writer` becoming `c:\Dev\inkland` — leaves `root` pointing at nothing;
+ * `toProject`'s `rootExists` is how that gets noticed, and this is how it gets fixed, by re-pointing
+ * the same project id at the directory it now lives in rather than losing its task history to a
+ * freshly `addProject`-ed one. Refuses a directory another project already claims, the same guard
+ * `addProject` applies on create. Committed config and VCS are re-read from the new location, same as
+ * `reloadProject` — a moved repository can carry a different `.warmstart/project.json` if the operator
+ * edited it by hand at the new path before pointing Warmstart there.
+ *
+ * ⚠️ Does not move or rediscover the workspace pool. Existing pooled worktrees under the *old*
+ * `<root>_workspaces` are left where they are — deleting them could destroy in-progress work — and
+ * the next dispatch creates a fresh pool under the new root's default. Unmerged branches in the old
+ * pool surface under Loose ends, same as any other stray worktree.
+ */
+export function relocateProject(id: string, newRoot: string): Project {
+  const project = requireProject(id)
+  const root = canonicalPath(newRoot)
+  if (!existsSync(root)) throw new Error(`directory does not exist: ${root}`)
+
+  const existing = row<ProjectRow>(db().prepare('select * from projects where root = ?').get(root))
+  if (existing && existing.id !== id) {
+    throw new Error(`'${existing.name}' is already registered at ${root}`)
+  }
+
+  if (!samePath(project.root, root)) log.info(`relocated project ${project.name} from ${project.root} to ${root}`)
+
+  const { config, path } = readProjectConfig(root)
+  db()
+    .prepare('update projects set root = ?, config_json = ?, config_path = ?, vcs = ? where id = ?')
+    .run(root, JSON.stringify(config), path, config.vcs ?? project.vcs, id)
   const updated = requireProject(id)
   emit({ type: 'project.changed', project: updated })
   return updated

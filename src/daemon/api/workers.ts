@@ -11,6 +11,7 @@ import { costModel, costModels } from '../costmodel.js'
 import { requestShutdown } from '../lifecycle.js'
 import { paths } from '../paths.js'
 import { atCapacity, retainedReservations } from '../residency.js'
+import { listProjects } from '../projects.js'
 import { DEFAULT_OBJECTIVE, parseObjective } from '../objective.js'
 import { setSetting, settings } from '../settings.js'
 import { refreshCreditStatus } from '../spend.js'
@@ -261,6 +262,19 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
       }
       if (listWorkers().length === 0) warnings.push('No workers commissioned yet.')
 
+      // ⛔ Read fresh, not from a cached list — `Project.rootExists` is exactly this check, and a
+      // directory renamed outside Warmstart (`c:\Dev\magic_writer` → `c:\Dev\inkland`) needs to
+      // surface here the same turn it happens, not after the next `project.list` poll finds it.
+      const projects = listProjects().map((p) => ({ projectId: p.id, name: p.name, root: p.root, rootExists: p.rootExists }))
+      for (const p of projects) {
+        if (!p.rootExists) {
+          warnings.push(
+            `${p.name}: its directory is missing at ${p.root} — moved, renamed, or deleted. ` +
+              'Relocate it from Project settings.'
+          )
+        }
+      }
+
       return {
         generatedAt: Date.now(),
         daemon: {
@@ -273,6 +287,7 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
         adapters: detections,
         tools,
         workers,
+        projects,
         costModels: costModels().map((m) => m.summary()),
         warnings
       }

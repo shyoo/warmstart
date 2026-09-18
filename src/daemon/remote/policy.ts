@@ -33,6 +33,7 @@ export const REMOTE_METHODS = {
   'project.list': 'read',
   'project.activity': 'read',
   'project.add': 'deny',
+  'project.relocate': 'deny',
   'project.inspect': 'deny',
   'project.workspaceRoot': 'deny',
   'project.docTemplates': 'deny',

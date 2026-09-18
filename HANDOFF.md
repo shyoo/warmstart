@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+18.g65ad7ba.dirty`): typecheck, lint and
-build pass; L1 **3,700 passed, 5 skipped** (218 files). L2 **203 checks** (5 skipped) and L4 **19
+Baseline (2026-09-17, **Windows 11**, measured over `0.1.1+21.g3cbf882.dirty`): typecheck, lint and
+build pass; L1 **3,710 passed, 5 skipped** (221 files). L2 **203 checks** (5 skipped) and L4 **19
 checks** against `release/win-unpacked` were at `0.1.1+1.g1fff656`. L3 not re-run on this tip (a
 renderer change, but `test/ui.test.mjs` never opens a project tab — see t500 below); it was **474
 passed, 4 skipped** at `0.1.0+8.gb642d0e`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a
@@ -24,6 +24,12 @@ promote`, `release.yml`'s verify step included — in two turns and no "Prepare 
 channels), all off-repo.
 
 ## Closed in this cleanup
+- **A project whose directory moved outside Warmstart had no error of its own (t514, 2026-09-17).**
+  `Project` now carries `rootExists` (`existsSync` on every `toProject`); the Project header banners a
+  missing path and `project.relocate` points the same project id at its new directory, keeping tasks
+  and history. Doctor's Projects section flags it fleet-wide too, like `isolationRootExists` for a
+  worker. `projectrelocate.test.ts`, `docs/ui.md`.
+
 - **Thread auto-follow no longer traps a taller right pane (t513, 2026-09-17).** Pinning begins only at the whole page's bottom and follows that bottom, never the shorter chat anchor. `docs/ui.md`.
 - **A `pull-request` task with an already-open PR could get stuck failing forever, and the retry
   button that should have fixed it disappeared after the first attempt (t509, 2026-09-17).** The
@@ -135,47 +141,18 @@ channels), all off-repo.
 Each needs a real signed-in account, a macOS machine, release credentials, or a human product
 judgement. Do not replace the missing evidence with a unit test.
 
-1. **Run a real trunk task beside worktree tasks.** File a trunk task that pulls `main` and resolves a
-   conflict while a worktree task finishes under `commit-and-merge`; confirm the worktree task sits at
-   `landing_queued` and lands by itself when the trunk frees, and drive the Flow trunk row, composer
-   pill and Project Settings row in the packaged app. None of the UI is covered by `test/ui.test.mjs`.
-2. **Run one more live Plan & Split, and the first live Plan & Execute.** Exercise a `merge-branch`
-   landing while a sibling is genuinely mid-run, and an organizer resolution turn where some pieces
-   fail. Then file the same job as a Plan & Execute with a cheaper executor: confirm the planner's
-   card completes at the handoff, the executor lands on the project's target, and record both
-   tasks' total run cost side by side — the one measurement t456's design rests on and does not have.
-3. **Run a real debate and record its measurements.** Compare total tokens/cost against a strong
-   single-agent answer; record cache reads, resolved/unresolved citations, and whether the organizer
-   changed the operator's decision. The evidence format is in
-   [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §7.
-4. **Run human-in-the-loop, `commit-and-merge`, cross-task reuse and an inherited directory grant
-   with a real agent.** The code and L1–L3 checks exist; none has been demonstrated in flight. For
-   the grant (t462/t470): attach a second repository to a **planner**, let it file one piece that
-   must edit there, and watch a sandboxed codex **commit** in it — the `.git` grant is proven by a
-   throwaway-repo probe and has not yet carried a real task's work. Then, on `claude-code`, have an
-   agent call `request_directory` for a folder nobody attached and confirm the restart resumes warm.
+1. **Run a real trunk task beside worktree tasks.** File a trunk task that pulls `main` and resolves a conflict while a worktree task finishes under `commit-and-merge`; confirm the worktree task sits at `landing_queued` and lands by itself when the trunk frees, and drive the Flow trunk row, composer pill and Project Settings row in the packaged app. None of the UI is covered by `test/ui.test.mjs`.
+2. **Run one more live Plan & Split, and the first live Plan & Execute.** Exercise a `merge-branch` landing while a sibling is genuinely mid-run, and an organizer resolution turn where some pieces fail. Then file the same job as a Plan & Execute with a cheaper executor: confirm the planner's card completes at the handoff, the executor lands on the project's target, and record both tasks' total run cost side by side — the one measurement t456's design rests on and does not have.
+3. **Run a real debate and record its measurements.** Compare total tokens/cost against a strong single-agent answer; record cache reads, resolved/unresolved citations, and whether the organizer changed the operator's decision. The evidence format is in [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §7.
+4. **Run human-in-the-loop, `commit-and-merge`, cross-task reuse and an inherited directory grant with a real agent.** The code and L1–L3 checks exist; none has been demonstrated in flight. For the grant (t462/t470): attach a second repository to a **planner**, let it file one piece that must edit there, and watch a sandboxed codex **commit** in it — proven only by a throwaway-repo probe so far. Then, on `claude-code`, have an agent call `request_directory` for an unattached folder and confirm the restart resumes warm.
 5. **Verify `v0.1.1` as installed from the Releases page**, on Windows and on a Mac — the promoted build is a rebuild of the rc, not the same artefacts.
-6. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the
-   other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from
-   both computers, a revoke on the host cutting the client off, and the ±1 version warning.
-7. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the
-   generic declarative adapter cannot meter, gets no MCP tools and cannot reap orphans); CI watch
-   after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an
-   update-available check that keeps `publish: null`; a full data-directory export (isolation roots,
-   attachments); and a clone-per-worker or container backend, the only thing that closes both the
-   host-authority gap and the shared common-`.git` grant. ⚠️ Not on this list: GitHub/Linear/Slack
-   intake, agent-to-agent messaging, kanban, voice, cross-machine sync.
-8. **Give Antigravity a real per-worker isolation root.** It shares `~/.gemini` today; changing `HOME`
-   must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
-9. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data;
-   compare small and large quality-review models on the same five tasks; verify the Claude credits gauge against one real invoice; and decide whether preempted runs should contribute to estimates.
+6. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from both computers, a revoke on the host cutting the client off, and the ±1 version warning.
+7. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the generic declarative adapter cannot meter, gets no MCP tools and cannot reap orphans); CI watch after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an update-available check that keeps `publish: null`; a full data-directory export (isolation roots, attachments); and a clone-per-worker or container backend, the only thing that closes both the host-authority gap and the shared common-`.git` grant. ⚠️ Not on this list: GitHub/Linear/Slack intake, agent messaging, kanban, voice, cross-machine sync.
+8. **Give Antigravity a real per-worker isolation root.** It shares `~/.gemini` today; changing `HOME` must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
+9. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data; compare small and large quality-review models on the same five tasks; verify the Claude credits gauge against one real invoice; decide whether preempted runs should contribute to estimates.
 10. **Increase thread UI coverage where behaviour changes.** Most thread interactions remain hand-tested; extract pure decisions into `src/renderer/src/lib/` first.
 11. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines against a ~1,500 target; no extracted module may read a scheduler binding at module evaluation time.
-12. **Drive t423's live views in the packaged app, with a real run behind them.** Watch a dispatched
-   Claude task narrate its tool calls into the thread peephole and the Session TUI; open **Open a real
-   terminal** on it and confirm the fork holds the context while the run carries on; turn
-   `liveNarration` to `streaming` and see whether the typing is worth ten times the stream lines.
-   ⚠️ None of it is covered by `test/ui.test.mjs`, which never opens a project tab.
+12. **Drive t423's live views in the packaged app, with a real run behind them.** Watch a dispatched Claude task narrate its tool calls into the thread peephole and the Session TUI; open **Open a real terminal** on it and confirm the fork holds the context while the run carries on; turn `liveNarration` to `streaming` and see whether the typing is worth ten times the stream lines. ⚠️ None of it is covered by `test/ui.test.mjs`, which never opens a project tab.
 
 ## Open questions and quiet-worker measurements
 

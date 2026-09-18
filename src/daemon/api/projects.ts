@@ -1,5 +1,5 @@
 /** Projects: registration, configuration, checks and the flow view. */
-import { addProject, archiveProject, listProjects, reloadProject, reorderProjects, requireProject, setProjectChecks, setProjectPolicy, writeStarterConfig } from '../projects.js'
+import { addProject, archiveProject, listProjects, relocateProject, reloadProject, reorderProjects, requireProject, setProjectChecks, setProjectPolicy, writeStarterConfig } from '../projects.js'
 import { proposeChecks } from '../projectstack.js'
 import { createProject, inspectProjectDirectory, proposeProjectDocs, workspaceRootReport } from '../projectsetup.js'
 import { flowWorkspaces } from '../flow.js'
@@ -8,7 +8,7 @@ import { log } from '../log.js'
 import type { Api, ApiContext } from './support.js'
 
 type ProjectMethod =
-  | 'project.list' | 'project.add' | 'project.inspect' | 'project.workspaceRoot' | 'project.docTemplates'
+  | 'project.list' | 'project.add' | 'project.relocate' | 'project.inspect' | 'project.workspaceRoot' | 'project.docTemplates'
   | 'project.create' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.writeConfig' | 'project.flow'
   | 'project.proposeChecks' | 'project.setChecks' | 'project.setPolicy'
 
@@ -16,6 +16,7 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
   return {
     'project.list': () => listProjects(),
     'project.add': (p) => addProject(p),
+    'project.relocate': (p) => relocateProject(p.id, p.root),
     'project.inspect': (p) => inspectProjectDirectory(p),
     'project.workspaceRoot': (p) => workspaceRootReport(p.root, p.workspaceRoot),
     'project.docTemplates': (p) => ({ docs: proposeProjectDocs(p) }),

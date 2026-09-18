@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { sessionEnded } from '@shared/protocol'
 import type { Project as ProjectRecord, PullRequestDelivery, ResourceAvailability } from '@shared/tasks'
 import type { FleetEntry } from '../lib/daemon'
@@ -86,6 +87,10 @@ export function Project({
         <span className="tag">{project.vcs}</span>
       </header>
 
+      {!project.rootExists && (
+        <RelocateBanner project={project} refreshProjects={refreshProjects} />
+      )}
+
       <div className="tabs">
         {PROJECT_TABS.map((t) => (
           <button
@@ -153,6 +158,61 @@ export function Project({
           refreshProjects={refreshProjects}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * "Your directory moved" — the one thing a renamed or relocated project needs said out loud.
+ *
+ * ⛔ **Named here, not inferred from a task failure.** Before this, a project whose directory moved
+ * outside Warmstart (a rename, a drive reorganisation) had no error of its own: dispatch just found
+ * nothing at `root` and the operator was left reading a task failure to guess why. `rootExists` is
+ * read fresh on every project list, so this banner is never stale once the directory reappears —
+ * whether that is because the operator typed the new path here or restored the old one by hand.
+ */
+function RelocateBanner({
+  project,
+  refreshProjects
+}: {
+  project: ProjectRecord
+  refreshProjects: () => Promise<void>
+}): React.JSX.Element {
+  const [path, setPath] = useState(project.root)
+
+  const relocate = useAction(
+    async (id: string, root: string) => rpc('project.relocate', { id, root }),
+    {
+      successNote: (p) => `Now pointing at ${p.root}.`,
+      onSuccess: refreshProjects
+    }
+  )
+
+  return (
+    <div className="alert">
+      <p>
+        <strong>This project&rsquo;s directory could not be found</strong> at{' '}
+        <span className="mono">{project.root}</span>. It may have been moved, renamed, or deleted
+        outside Warmstart. If it moved, point Warmstart at the new location below — the project keeps
+        its id, tasks, and history.
+      </p>
+      <div className="wizard-path">
+        <input
+          className="text-input mono"
+          value={path}
+          spellCheck={false}
+          onChange={(e) => setPath(e.target.value)}
+          placeholder="new directory path"
+        />
+        <button
+          className="btn"
+          disabled={relocate.busy || path.trim().length === 0}
+          onClick={() => void relocate.run(project.id, path.trim())}
+        >
+          {relocate.busy ? 'Relocating…' : 'Relocate'}
+        </button>
+      </div>
+      {relocate.note && <div className="notice">{relocate.note}</div>}
     </div>
   )
 }

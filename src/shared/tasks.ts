@@ -170,6 +170,12 @@ export interface Project {
   configPath: string | null
   createdAt: number
   archivedAt: number | null
+  /**
+   * Read fresh off disk on every list/get. False means `root` was moved, renamed, or deleted
+   * outside Warmstart since it was added — dispatch, Doctor, and the Project header all surface
+   * this the same way, so it is never `true` on a stale cached copy.
+   */
+  rootExists: boolean
 }
 
 // ------------------------------------------------------------------- adding a project

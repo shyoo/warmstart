@@ -1510,6 +1510,7 @@ export interface DoctorReport {
     lastQuota: QuotaSnapshot | null
     note?: string
   }>
+  projects: Array<{ projectId: string; name: string; root: string; rootExists: boolean }>
   costModels: CostModelSummary[]
   warnings: string[]
 }
@@ -1702,6 +1703,11 @@ export interface RpcMap {
   'project.list': { params: void; result: Project[] }
   'project.reorder': { params: { ids: string[] }; result: Project[] }
   'project.add': { params: { root: string; name?: string }; result: Project }
+  /**
+   * Point an already-registered project at a directory it was moved or renamed to. Refuses a
+   * directory that does not exist, or that another project already claims. See `relocateProject`.
+   */
+  'project.relocate': { params: { id: string; root: string }; result: Project }
   /**
    * What is in a directory somebody is about to add: is it already a project, does it have a repo,
    * is it empty, which orientation docs are missing, what would verify it, and what is at the

@@ -143,6 +143,30 @@ export function Doctor({ now, view = 'status' }: { now: number; view?: 'notice' 
             )}
           </Section>
 
+          <Section title="Projects">
+            {report.projects.length === 0 ? (
+              <p className="dim">None added yet.</p>
+            ) : (
+              <table className="tbl">
+                <tbody>
+                  {report.projects.map((p) => (
+                    <tr key={p.projectId}>
+                      <td className="tbl-strong">{p.name}</td>
+                      <td>
+                        {p.rootExists ? (
+                          <span className="dim">directory ok</span>
+                        ) : (
+                          <span className="warn">directory missing</span>
+                        )}
+                      </td>
+                      <td className="mono kv-path">{p.root}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </Section>
+
           <Section title="Cost models">
             <table className="tbl">
               <tbody>
