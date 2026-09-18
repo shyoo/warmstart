@@ -1618,6 +1618,21 @@ describe('the pre-completion rebase check', () => {
  * prompt with no instruction to carry out the kind of task it was filed as.
  */
 describe('a plan or debate task requires an MCP adapter', () => {
+  // ⚠️ The installed gate stands before the capability gate in `accountRefusal`, so on a host
+  // without Antigravity (CI run 35403689962) the refusal read "is not installed" and never reached
+  // "lacks mcp". Stubbed for these tests, as every scheduler suite here does for `claude-code`.
+  let origInstalled: (() => boolean) | undefined
+  beforeAll(async () => {
+    const { antigravityCli } = await import('./adapters/antigravity-cli.js')
+    origInstalled = antigravityCli.isInstalled
+    antigravityCli.isInstalled = () => true
+  })
+  afterAll(async () => {
+    if (!origInstalled) return
+    const { antigravityCli } = await import('./adapters/antigravity-cli.js')
+    antigravityCli.isInstalled = origInstalled
+  })
+
   it('refuses an MCP-less adapter pinned to a plan task', async () => {
     const scoring = await import('./scoring.js')
     const task = tasks.createTask({
