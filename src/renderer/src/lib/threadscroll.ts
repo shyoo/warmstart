@@ -14,14 +14,14 @@ export function shouldJumpToThreadBottom(
 }
 
 /**
- * Whether the reader is close enough to the bottom of the thread that arriving content should
- * keep them there — an agent's reply landing while the composer sits under it, exactly like the
- * live tail `SessionStream` pins.
+ * Whether the reader is close enough to the bottom of the whole page that arriving content should
+ * keep them there. The page includes both columns; the thread's composer can end above a taller
+ * adjacent pane and is therefore not evidence that the reader reached the page bottom.
  *
  * ⚠️ Not an exact match. A few pixels of slack survive a `scrollIntoView` and a fractional layout
  * round-trip, and requiring one would drop stickiness on the very frame it was established.
  */
-export function isNearThreadBottom(
+export function isNearPageBottom(
   scrollHeight: number,
   scrollTop: number,
   clientHeight: number,

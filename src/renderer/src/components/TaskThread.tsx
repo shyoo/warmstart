@@ -35,7 +35,7 @@ import { AddDependency, candidatesFor, DependencyList, useTaskCandidates } from 
 import { showsLiveOutput } from '../lib/live'
 import { supersededAskIds } from '../lib/compactionstatus'
 import { useScrolledPast } from '../lib/scrolledpast'
-import { isNearThreadBottom, shouldJumpToThreadBottom } from '../lib/threadscroll'
+import { isNearPageBottom, shouldJumpToThreadBottom } from '../lib/threadscroll'
 import { codeSpans } from '../lib/codespans'
 import { bubbleSide, buildThreadItems, promptAnchors } from '../lib/threadbubble'
 import { duration, tokens, when } from '../lib/format'
@@ -294,25 +294,30 @@ function TaskDetail({
   // under a running agent must not yank back a person who scrolled up to read.
   const threadBottom = useRef<HTMLDivElement | null>(null)
   const jumpedForTask = useRef<string | null>(null)
-  // ⚠️ Whether the reader is (still) at the bottom, kept outside React state so updating it on
-  // every scroll event never schedules a render. Starts true: the jump above lands there.
-  const stickToBottom = useRef(true)
+  // ⚠️ Whether the reader is (still) at the bottom of the whole page, kept outside React state so
+  // updating it on every scroll event never schedules a render. The right pane can be taller than
+  // the thread, so the thread's bottom is not necessarily the page's bottom.
+  const stickToBottom = useRef(false)
   useLayoutEffect(() => {
     if (!shouldJumpToThreadBottom(jumpedForTask.current, task.id)) return
     jumpedForTask.current = task.id
-    stickToBottom.current = true
     threadBottom.current?.scrollIntoView({ block: 'end' })
+    const scroller = threadBottom.current?.closest('.content')
+    stickToBottom.current =
+      scroller instanceof HTMLElement &&
+      isNearPageBottom(scroller.scrollHeight, scroller.scrollTop, scroller.clientHeight)
   }, [task.id])
   // ⭐ **New content keeps a reader who is already at the bottom pinned there.** An agent's reply
   // landing while the composer sits under it used to leave the thread scrolled to wherever it was
   // — nothing here re-jumped except the once-per-task landing above. `SessionStream` already pins
   // its own live tail the same way; this is the thread-page version of it, scoped to the page's
-  // own `.content` scroll container rather than a nested pane.
+  // own `.content` scroll container rather than a nested pane. ⛔ The page bottom, not the thread
+  // anchor: the adjacent ledger/diff pane may extend below the composer.
   useEffect(() => {
     const scroller = threadBottom.current?.closest('.content')
     if (!(scroller instanceof HTMLElement)) return
     const onScroll = (): void => {
-      stickToBottom.current = isNearThreadBottom(
+      stickToBottom.current = isNearPageBottom(
         scroller.scrollHeight,
         scroller.scrollTop,
         scroller.clientHeight
@@ -327,7 +332,9 @@ function TaskDetail({
   // `stickToBottom.current` and calling `scrollIntoView` sets no state, so this cannot loop — the
   // same reasoning `useScrolledPast`'s remeasure carries.
   useLayoutEffect(() => {
-    if (stickToBottom.current) threadBottom.current?.scrollIntoView({ block: 'end' })
+    if (!stickToBottom.current) return
+    const scroller = threadBottom.current?.closest('.content')
+    if (scroller instanceof HTMLElement) scroller.scrollTop = scroller.scrollHeight
   })
   const pastLedger = useScrolledPast(ledgerBox)
   const pastTimeline = useScrolledPast(timelineBox)

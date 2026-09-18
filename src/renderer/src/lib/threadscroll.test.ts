@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isNearThreadBottom, shouldJumpToThreadBottom } from './threadscroll'
+import { isNearPageBottom, shouldJumpToThreadBottom } from './threadscroll'
 
 describe('shouldJumpToThreadBottom', () => {
   it('jumps when no task has been jumped for yet', () => {
@@ -15,21 +15,27 @@ describe('shouldJumpToThreadBottom', () => {
   })
 })
 
-describe('isNearThreadBottom', () => {
+describe('isNearPageBottom', () => {
   it('is true exactly at the bottom', () => {
-    expect(isNearThreadBottom(1000, 700, 300)).toBe(true)
+    expect(isNearPageBottom(1000, 700, 300)).toBe(true)
   })
 
   it('is true within the slack threshold', () => {
-    expect(isNearThreadBottom(1000, 690, 300)).toBe(true)
+    expect(isNearPageBottom(1000, 690, 300)).toBe(true)
   })
 
   it('is false once scrolled meaningfully away from the bottom', () => {
-    expect(isNearThreadBottom(1000, 400, 300)).toBe(false)
+    expect(isNearPageBottom(1000, 400, 300)).toBe(false)
+  })
+
+  it('does not call the shorter thread bottom the page bottom when an adjacent pane continues', () => {
+    // The thread anchor is already visible at y=800, but the taller right pane makes the whole
+    // page 1,400px high. At this position 400px remain reachable below the viewport.
+    expect(isNearPageBottom(1400, 500, 500)).toBe(false)
   })
 
   it('honours a custom threshold', () => {
-    expect(isNearThreadBottom(1000, 650, 300, 100)).toBe(true)
-    expect(isNearThreadBottom(1000, 650, 300, 10)).toBe(false)
+    expect(isNearPageBottom(1000, 650, 300, 100)).toBe(true)
+    expect(isNearPageBottom(1000, 650, 300, 10)).toBe(false)
   })
 })

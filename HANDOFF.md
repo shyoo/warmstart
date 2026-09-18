@@ -24,7 +24,7 @@ promote`, `release.yml`'s verify step included — in two turns and no "Prepare 
 channels), all off-repo.
 
 ## Closed in this cleanup
-- **Projects can be reordered in the sidebar (t512, 2026-09-17).** Dragging the row's grip shows an insertion line and persists one validated fleet-wide order; new projects append. `docs/ui.md`.
+- **Thread auto-follow no longer traps a taller right pane (t513, 2026-09-17).** Pinning begins only at the whole page's bottom and follows that bottom, never the shorter chat anchor. `docs/ui.md`.
 - **A `pull-request` task with an already-open PR could get stuck failing forever, and the retry
   button that should have fixed it disappeared after the first attempt (t509, 2026-09-17).** The
   closing contract only forbids rewriting commits already on the *landing target*, so a later run
