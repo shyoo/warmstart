@@ -101,6 +101,17 @@ happened to be missing from that reading while being demonstrably present in the
 wrote. ⚠️ Read a form control's **`.value`**; `innerText` answers a question about a *rendering* and a
 control's content is not rendered into its own subtree.
 
+### A closed popover renders the chosen label only, so asserting the other answer asserts nothing
+
+⛔ **`SettingButtonSelect` is a popover, not a `<select>`**: closed, its subtree holds the current
+option's label and nothing else. t554's L3 check read the wizard's `innerText` for `Commit` *and*
+`Ignore` to prove the git-fate choice was offered — the second half could never be true of a closed
+control, and the check failed on the first run after the commit landed (2026-09-19). ⚠️ To assert the
+options, click the button and read `[role="option"]` out of `.setting-btn-select-menu`; ⭐ the
+selected option's text carries its `✓`, so match with `startsWith`, not `===`. Then close the menu by
+choosing an option — an open menu swallows the next click, which reads as an unrelated failure two
+checks later.
+
 ### A wrapping box reports its own width, so asking whether the text fits reads the column back
 
 ⛔ **`element.scrollWidth` is the content's width only while the content cannot wrap.** Asked of a box

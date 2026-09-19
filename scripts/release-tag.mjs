@@ -6,7 +6,7 @@
 // and promoting it is a second tag - the final version - on the same commit. Nothing here writes to
 // a tracked file, so there is nothing to push through CI first.
 //
-//   node scripts/release-tag.mjs plan rc [--bump minor|patch|major]   # what the next rc would be
+//   node scripts/release-tag.mjs plan rc [--bump patch|minor|major]   # what the next rc would be
 //   node scripts/release-tag.mjs plan promote                         # the rc a final would name
 //   node scripts/release-tag.mjs plan 0.3.0-rc.1                      # a version chosen by hand
 //   node scripts/release-tag.mjs cut <version> --notes <file> [--commit <sha>] [--wait] [--dry-run]
@@ -73,7 +73,7 @@ const rcNumber = (tag) => {
  *
  * `tags` is every `v*` tag with the commit it points at. `rc` continues the open rc series when one
  * is above the last final (`v0.1.0` final, `v0.2.0-rc.1` open → `0.2.0-rc.2`), or starts one by
- * bumping the last final (minor unless told otherwise). `promote` names the highest open rc's bare
+ * bumping the last final (patch unless told otherwise: 0.2.0 → 0.2.1). `promote` names the highest open rc's bare
  * triple on the rc's own commit - the bytes a person verified are the bytes that ship. A literal
  * version must be above every tag that exists, so `/releases/latest` can never go backwards.
  */
@@ -90,7 +90,7 @@ export function planRelease({ tags, request, bump = null, head }) {
     let triple
     if (bump) triple = bumpTriple(baseTriple, bump)
     else if (openRcs.length > 0) triple = openRcs.at(-1).triple
-    else triple = bumpTriple(baseTriple, 'minor')
+    else triple = bumpTriple(baseTriple, lastFinal ? 'patch' : 'minor') // a first release is 0.1.0, not 0.0.1
     const inSeries = openRcs.filter((tag) => compareTriples(tag.triple, triple) === 0)
     const next = inSeries.length === 0 ? 1 : Math.max(...inSeries.map(rcNumber)) + 1
     const version = `${triple.join('.')}-rc.${next}`

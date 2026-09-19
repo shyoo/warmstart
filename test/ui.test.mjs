@@ -4402,8 +4402,29 @@ try {
   const gitFate = await evaluate(`document.querySelector('.wizard-body').innerText`)
   check(
     'the review step asks what project.json becomes in git',
-    /project\.json in git/i.test(gitFate) && /Commit/.test(gitFate) && /Ignore/.test(gitFate),
+    /project\.json in git/i.test(gitFate) && /Commit/.test(gitFate),
     gitFate.replace(/\n+/g, ' | ').slice(0, 300)
+  )
+  // ⚠️ The control is a popover: closed, it renders the chosen label only, so both answers are
+  // only visible - and only assertable - with the menu open.
+  await evaluate(
+    `document.querySelector('.wizard-body button[aria-label="project.json in git"]')?.click()`
+  )
+  const gitFateOptions = await evaluate(
+    `[...document.querySelectorAll('.setting-btn-select-menu[aria-label="project.json in git"] [role="option"]')].map(o => o.innerText.trim()).join(', ')`
+  )
+  check(
+    'and offers both answers, neither taken silently',
+    /Commit/.test(gitFateOptions) && /Ignore/.test(gitFateOptions),
+    gitFateOptions
+  )
+  // Close it by choosing the committed answer the rest of this case then verifies on disk.
+  await evaluate(
+    `[...document.querySelectorAll('.setting-btn-select-menu[aria-label="project.json in git"] [role="option"]')].find(o => o.innerText.trim().startsWith('Commit'))?.click()`
+  )
+  await waitFor(
+    async () => await evaluate(`!document.querySelector('.setting-btn-select-menu')`),
+    'the git-fate menu to close'
   )
 
   await evaluate(

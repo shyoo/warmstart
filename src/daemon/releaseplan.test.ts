@@ -37,13 +37,13 @@ describe('parseTag and compareVersions', () => {
 })
 
 describe('planRelease', () => {
-  it('starts a new rc series a minor above the last final, on origin/main', () => {
+  it('starts a new rc series a patch above the last final, on origin/main', () => {
     const plan = planRelease({ tags: shipped, request: 'rc', head })
-    expect(plan).toMatchObject({ version: '0.2.0-rc.1', commit: head, since: 'v0.1.0' })
+    expect(plan).toMatchObject({ version: '0.1.1-rc.1', commit: head, since: 'v0.1.0' })
   })
 
-  it('bumps patch or major when told', () => {
-    expect(planRelease({ tags: shipped, request: 'rc', bump: 'patch', head }).version).toBe('0.1.1-rc.1')
+  it('bumps minor or major when told', () => {
+    expect(planRelease({ tags: shipped, request: 'rc', bump: 'minor', head }).version).toBe('0.2.0-rc.1')
     expect(planRelease({ tags: shipped, request: 'rc', bump: 'major', head }).version).toBe('1.0.0-rc.1')
   })
 
@@ -52,6 +52,7 @@ describe('planRelease', () => {
     expect(planRelease({ tags, request: 'rc', head }).version).toBe('0.2.0-rc.2')
     // An explicit bump starts its own series beside the open one.
     expect(planRelease({ tags, request: 'rc', bump: 'patch', head }).version).toBe('0.1.1-rc.1')
+    expect(planRelease({ tags, request: 'rc', bump: 'minor', head }).version).toBe('0.2.0-rc.2')
   })
 
   it('promotes the highest open rc on the rc commit, not on HEAD', () => {

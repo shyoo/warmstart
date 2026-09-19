@@ -273,7 +273,7 @@ One turn, no commit. `/release rc` and `/release promote` (`.claude/skills/relea
 [`scripts/release-tag.mjs`](../scripts/release-tag.mjs):
 
 ```bash
-node scripts/release-tag.mjs plan rc [--bump patch|minor|major]   # 0.1.0 → 0.2.0-rc.1; continues an open series
+node scripts/release-tag.mjs plan rc [--bump patch|minor|major]   # 0.2.0 → 0.2.1-rc.1 (patch by default); continues an open series
 node scripts/release-tag.mjs plan promote                         # highest open rc → its bare version, on the rc's commit
 node scripts/release-tag.mjs cut <version> --notes <file> [--wait] [--dry-run]
 ```

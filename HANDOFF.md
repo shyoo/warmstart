@@ -7,16 +7,16 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-19, **Windows 11**, measured over `0.2.0-rc.2+dirty`): typecheck, lint and build
-pass; L1 **3,739 passed, 5 skipped** (224 files, t554 measured 2026-09-19). Lower tiers (2026-09-18): L2 **203 checks** (5
-skipped); L3 **474 passed, 4 skipped**; L4 **19 checks** against `release/win-unpacked`. macOS 13
+Baseline (2026-09-19, **Windows 11**, measured over `0.2.0-rc.2+3.g6b3362c.dirty`): typecheck, lint
+and build pass; L1 **3,739 passed, 5 skipped** (224 files); L2 **203 checks** (5 skipped); L3 **480
+passed, 4 skipped**; L4 **19 checks** against `release/win-unpacked`. All five measured 2026-09-19. macOS 13
 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so is the
 **Release** workflow.
 
 **`v0.1.1` is `latest`** (tag build 35165991396, 2026-09-17), promoted onto its own rc's commit.
-**`v0.2.0-rc.2` is cut as a pre-release** (2026-09-19, on the commit that carries this line),
-superseding `v0.2.0-rc.1` (`c42ae06`): it adds t536–t549 and migration 77. ⏭ **Next: install
-`v0.2.0-rc.2`, verify it, then `/release promote`.** Its CI first went red on the t545 Workers-table
+**`v0.2.0-rc.2` is cut as a pre-release** (2026-09-19), superseding `v0.2.0-rc.1` (`c42ae06`): it adds
+t536–t549 and migration 77. The 0.2.0 series is still open, so the next `/release rc` continues it
+(`0.2.0-rc.3`) rather than bumping. ⏭ **Next: install the newest rc, verify it, then `/release promote`.** Its CI first went red on the t545 Workers-table
 regression below: six commits had been pushed together, and `test:ui` was not run on them first.
 Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
@@ -25,6 +25,10 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **`/release rc` bumps patch, not minor, when it opens a new series (2026-09-19).** With no rc above
+  the last final it used to jump `0.2.0 → 0.3.0-rc.1`; a minor is now something the operator asks for
+  (`--bump minor|major`), and the first release of all is still `0.1.0`. Same commit fixed t554's L3
+  check, which asserted an option label a closed popover never renders — `docs/testing.md` §3.
 - **The Workers card layout labelled every field after Role one place late (t545 → rc.2, 2026-09-19).**
   t545 added the *Unattended* header without a `<col>` or a positional card label, so `test:ui` failed
   `[14,15]` on CI and blocked the rc. `Workers.tsx` now has fifteen `<col>`s, and `app.css` labels the new cell.
@@ -151,13 +155,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   only wrote it — it sat untracked until a queued landing found the trunk dirty and refused to merge.
   `createProject` now commits the scaffolding it just wrote right after writing it; an existing,
   uncommitted config the operator wrote by hand is left alone. `projectsetup.test.ts`.
-- **Pending pull requests get a dedicated Tasks banner and dot-clearing reconciliation (t503, 2026-09-17).**
-  A project with open PRs displays a `.tasks-pr-banner` with task links, PR URLs, branch info and an
-  instant **Check merged PRs** action; tasks with pending deliveries show a `PR #N` pill. The daemon
-  now emits `project.changed`/`task.changed` on PR recording, sweep reconciliation and branch cleanup,
-  so a merged PR check updates the sidebar dot from purple (`pending_pr`) to idle immediately.
-  `docs/ui.md`, `docs/landing.md`.
-
 ## Remaining work — ordered by payoff
 
 Each needs a real signed-in account, a macOS machine, release credentials, or a human product

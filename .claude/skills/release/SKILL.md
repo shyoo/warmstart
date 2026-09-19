@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut a release in one turn — "/release rc" tags the next release candidate on origin/main and the Release workflow builds and publishes it as a pre-release; "/release promote" tags the verified rc's commit with the final version so it becomes /releases/latest. No commit, no version bump — the tag is the version and its message is the notes. Use when the user runs "/release", "/release rc", "/release rc patch", "/release promote", "/release 0.3.0-rc.1", or asks to "cut an rc", "promote the rc", "ship the release" or "make it latest".
+description: Cut a release in one turn — "/release rc" tags the next release candidate on origin/main and the Release workflow builds and publishes it as a pre-release; "/release promote" tags the verified rc's commit with the final version so it becomes /releases/latest. No commit, no version bump — the tag is the version and its message is the notes. Use when the user runs "/release", "/release rc", "/release rc minor", "/release promote", "/release 0.3.0-rc.1", or asks to "cut an rc", "promote the rc", "ship the release" or "make it latest".
 ---
 
 # /release — plan, notes, tag, push. **No commit.**
@@ -20,11 +20,12 @@ It never tags what CI has not passed. Uncommitted or unpushed work is `/push`'s 
 
 ## 0. Plan
 
-The argument is `rc` (default), `promote`, or a literal version. `rc` takes an optional bump.
+The argument is `rc` (default), `promote`, or a literal version. `rc` takes an optional bump;
+⭐ **the default is patch** — pass `minor` or `major` only when the person asks for one.
 
 ```bash
-node scripts/release-tag.mjs plan rc                 # next rc: continues the open series, else minor
-node scripts/release-tag.mjs plan rc --bump patch    # 0.1.0 → 0.1.1-rc.1 (or major)
+node scripts/release-tag.mjs plan rc                 # next rc: continues the open series, else patch (0.2.0 → 0.2.1-rc.1)
+node scripts/release-tag.mjs plan rc --bump minor    # 0.2.0 → 0.3.0-rc.1 (or major)
 node scripts/release-tag.mjs plan promote            # the highest open rc → its bare version
 node scripts/release-tag.mjs plan 0.3.0-rc.1         # by hand; must be above every existing tag
 ```
