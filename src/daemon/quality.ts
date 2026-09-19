@@ -480,7 +480,7 @@ export async function isTaskGradable(task: Task): Promise<{ ok: boolean; reason:
   return { ok: true, reason: '' }
 }
 
-/** One page of the Quality Review table, with the bucket counts the tabs above it print. */
+/** One visible page of the Quality Review table. Coverage totals are read separately. */
 export async function reviewQueue(
   filter: ReviewFilter = 'none',
   limit = 25,
@@ -489,15 +489,20 @@ export async function reviewQueue(
 ): Promise<ReviewQueuePage> {
   const take = Math.max(1, Math.min(200, Math.floor(limit)))
   const skip = Math.max(0, Math.floor(offset))
-  const allFinished = queueRows('all', 1000, 0)
+  // ⛔ Read and validate the visible page first. The old shape collected up to 1,000 finished
+  // tasks and resolved every one of their git ranges before returning 25 rows. That made opening
+  // this page get slower with history, even though the reader could not see those rows yet.
+  // `reviewCoverage` deliberately keeps the whole-history read, but it is requested after this
+  // response has painted the page.
+  const raw = queueRows(filter, gradableOnly ? 1000 : take, gradableOnly ? 0 : skip)
   // ⛔ One batched fetch, not `getTask` per row: `TASK_SELECT`'s correlated subqueries and its
   // timing lookup are each designed to run once for the whole page, and calling `getTask` in this
-  // loop paid for both of them per task instead — up to 1000 times on every poll. See `getTasksByIds`.
-  const tasksById = getTasksByIds(allFinished.map((r) => r.id))
+  // loop paid for both of them per task instead. See `getTasksByIds`.
+  const tasksById = getTasksByIds(raw.map((r) => r.id))
   const gradableMap = new Map<string, { ok: boolean; reason: string }>()
 
   await Promise.all(
-    allFinished.map(async (r) => {
+    raw.map(async (r) => {
       const task = tasksById.get(r.id) ?? null
       const gradable = task
         ? await isTaskGradable(task)
@@ -506,38 +511,18 @@ export async function reviewQueue(
     })
   )
 
-  // ⛔ These tiles and tab badges are labelled *gradable tasks*. Count from the same eligibility
-  // verdict that drives the rows and batch queue; adding `ungradable` beside the old raw buckets
-  // made every refused task appear on both sides of the summary (t459, 2026-09-15).
-  const gradable = allFinished.filter((r) => gradableMap.get(r.id)?.ok)
-  const none = gradable.filter((r) => r.quality_review_count === 0).length
-  const one = gradable.filter((r) => r.quality_review_count === 1).length
-  const many = gradable.filter((r) => r.quality_review_count >= 2).length
-  const fullCounts: ReviewCounts = {
-    none,
-    one,
-    many,
-    total: none + one + many,
-    ungradable: allFinished.length - gradable.length
-  }
-
-  let filtered = allFinished
-  if (filter === 'none') filtered = filtered.filter((r) => r.quality_review_count === 0)
-  else if (filter === 'one') filtered = filtered.filter((r) => r.quality_review_count === 1)
-  else if (filter === 'many') filtered = filtered.filter((r) => r.quality_review_count >= 2)
-
-  if (gradableOnly) {
-    filtered = filtered.filter((r) => gradableMap.get(r.id)?.ok)
-  }
-
-  const total = filtered.length
-  const found = filtered.slice(skip, skip + take)
+  const found = gradableOnly ? raw.filter((r) => gradableMap.get(r.id)?.ok).slice(skip, skip + take) : raw
+  // A precise total after filtering to eligible work requires the same fleet-wide validation as
+  // the coverage tiles. Keep that deliberate, opt-in filter honest; ordinary page navigation is
+  // a cheap SQL count and never touches historical git ranges.
+  const total = gradableOnly
+    ? raw.filter((r) => gradableMap.get(r.id)?.ok).length
+    : scalar(`select count(*) as n ${FINISHED}${filterClause(filter)}`)
 
   const graders = gradersByTask(found.map((r) => r.id))
   const grading = new Set(pendingReviews().map((r) => r.taskId))
 
   return {
-    counts: fullCounts,
     total,
     adapterLabels: adapterLabels(),
     rows: found.map((r) => {
@@ -559,6 +544,35 @@ export async function reviewQueue(
       }
     })
   }
+}
+
+/**
+ * The exact totals behind the coverage tiles and tab badges.
+ *
+ * ⛔ Kept separate from `reviewQueue`: this validates historical git ranges, so it grows with
+ * history. The renderer asks only after the visible page has arrived; correctness remains the
+ * same, but a reader no longer waits for work outside the page they opened.
+ */
+export async function reviewCoverage(): Promise<ReviewCounts> {
+  const allFinished = queueRows('all', 1000, 0)
+  const tasksById = getTasksByIds(allFinished.map((r) => r.id))
+  const gradable = await Promise.all(
+    allFinished.map(async (r) => {
+      const task = tasksById.get(r.id)
+      return task ? (await isTaskGradable(task)).ok : false
+    })
+  )
+  let none = 0
+  let one = 0
+  let many = 0
+  for (let i = 0; i < allFinished.length; i += 1) {
+    if (!gradable[i]) continue
+    const count = allFinished[i]?.quality_review_count ?? 0
+    if (count === 0) none += 1
+    else if (count === 1) one += 1
+    else many += 1
+  }
+  return { none, one, many, total: none + one + many, ungradable: allFinished.length - (none + one + many) }
 }
 
 /**

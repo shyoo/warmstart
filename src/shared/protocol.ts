@@ -2,6 +2,7 @@ import type { ManualReview, QualityReview } from './review.js'
 import type {
   GradeBatch,
   QualityReport,
+  ReviewCounts,
   ReviewFilter,
   ReviewQueuePage,
   UngradedTask
@@ -2296,13 +2297,16 @@ export interface RpcMap {
   /** The tasks nothing has graded, newest first — what the grade button would work through. */
   'quality.ungraded': { params: { limit?: number }; result: UngradedTask[] }
   /**
-   * One page of Analytics › Quality Review: finished tasks in one grade-count bucket, with the
-   * counts the bucket tabs print and, per row, whether any peer could still grade it.
+   * One page of Analytics › Quality Review: finished tasks in one grade-count bucket, with, per
+   * row, whether any peer could still grade it. Coverage totals are a separate read so opening a
+   * page does not wait to validate every historical diff.
    */
   'quality.queue': {
     params: { filter?: ReviewFilter; limit?: number; offset?: number; gradableOnly?: boolean } | void
     result: ReviewQueuePage
   }
+  /** The exact coverage totals for Analytics › Quality Review, calculated after its visible page. */
+  'quality.coverage': { params: void; result: ReviewCounts }
   /**
    * Commission many reviews at once.
    *

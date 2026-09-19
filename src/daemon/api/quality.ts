@@ -4,7 +4,7 @@ import { createManualReview, deleteManualReview, deleteReview, updateManualRevie
 import { cancelReview, requestReview, reviewEligibility } from '../reviewer.js'
 import { getWorker, listWorkers } from '../workers.js'
 import { routingDecisions } from '../routingdecisions.js'
-import { qualityReport, reviewQueue, ungradedTasks } from '../quality.js'
+import { qualityReport, reviewCoverage, reviewQueue, ungradedTasks } from '../quality.js'
 import { cancelBatch, currentBatch, startBatch } from '../gradebatch.js'
 import { statisticsReport } from '../statistics.js'
 import { listSessions } from '../sessions.js'
@@ -36,7 +36,7 @@ import { checkConstraints, checkedChildAccounts, modelReport, velocityReport } f
 type QualityMethod =
   | 'review.eligibility' | 'review.request' | 'review.cancel' | 'review.delete' | 'review.manual.create' | 'review.manual.update' | 'review.manual.delete' | 'cost.report'
   | 'routing.decisions' | 'routing.velocity' | 'routing.models' | 'quality.report' | 'statistics.report'
-  | 'quality.ungraded' | 'quality.queue' | 'quality.batch.start' | 'quality.batch' | 'quality.batch.cancel'
+  | 'quality.ungraded' | 'quality.queue' | 'quality.coverage' | 'quality.batch.start' | 'quality.batch' | 'quality.batch.cancel'
   | 'scheduler.tick' | 'controller.report' | 'controller.drain' | 'task.plan' | 'task.estimate'
   | 'task.debate' | 'task.debateState' | 'task.estimatePreview'
   | 'chat.history' | 'chat.send' | 'chat.clear'
@@ -124,6 +124,7 @@ export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
     'quality.ungraded': (p) => ungradedTasks(p?.limit ?? 25),
     'quality.queue': (p) =>
       reviewQueue(p?.filter ?? 'none', p?.limit ?? 25, p?.offset ?? 0, p?.gradableOnly ?? false),
+    'quality.coverage': () => reviewCoverage(),
     // ⛔ Starts a queue and answers; it does not wait for the grades. See `quality.batch.start`.
     'quality.batch.start': (p) => startBatch(p.count, p.threshold),
     'quality.batch': () => currentBatch(),

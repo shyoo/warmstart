@@ -104,6 +104,7 @@ export const REMOTE_METHODS = {
   'statistics.report': 'deny',
   'quality.ungraded': 'deny',
   'quality.queue': 'deny',
+  'quality.coverage': 'deny',
   'quality.batch.start': 'deny',
   'quality.batch': 'deny',
   'quality.batch.cancel': 'deny',

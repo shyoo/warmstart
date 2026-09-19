@@ -27,6 +27,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **Quality Review opens its visible page before recalculating fleet-wide coverage (t558, 2026-09-19).** `quality.queue` validates only its usual 25 rows; exact 0/1/2+ totals come through non-stacking `quality.coverage`, while batch and the opt-in filter keep exact full-history checks. `docs/ui.md`.
 - **`/release rc` bumps patch, not minor, when it opens a new series (2026-09-19).** With no rc above
   the last final it used to jump `0.2.0 → 0.3.0-rc.1`; a minor is now something the operator asks for
   (`--bump minor|major`), and the first release of all is still `0.1.0`. Same commit fixed t554's L3

@@ -313,7 +313,11 @@ the *Grade up to five* button that used to sit on Routing Model › Quality is g
 because two buttons spending turns on the same accounts under different caps is a way to empty a
 quota window by pressing the wrong one.
 
-⚠️ **One steady progress mark, beside Refresh, and it tracks the grading rather than the fetch.**
+⚠️ **The visible page arrives before the fleet-wide coverage totals.** The table validates only the
+page a person can see; the 0/1/2+ tiles and tab badges fill after `quality.coverage` has checked the
+entire finished history. That keeps an old backlog from delaying the first 25 rows, while the totals
+remain exact rather than guessed. **One steady progress mark, beside Refresh, tracks grading rather
+than the fetch.**
 While a batch runs the page polls every three seconds; a spinner bound to the fetch therefore blinked
 on and off across both the Refresh button and the "Filter out cannot be graded" label, at a cadence
 that described the poll and nothing an operator cares about. The mark is drawn for as long as

@@ -181,7 +181,6 @@ export interface ReviewQueuePage {
   rows: ReviewQueueRow[]
   /** Rows matching the filter, before paging. */
   total: number
-  counts: ReviewCounts
   /**
    * `openai-compatible` → `Codex CLI`, for every adapter this build has loaded.
    *

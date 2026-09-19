@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { GradeBatch, ReviewFilter, ReviewQueuePage } from '@shared/quality'
+import type { GradeBatch, ReviewCounts, ReviewFilter, ReviewQueuePage } from '@shared/quality'
 import { BATCH_SIZES, BATCH_THRESHOLDS, thresholdLabel } from '@shared/quality'
 import type { Project } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
@@ -51,6 +51,7 @@ export function QualityReview({
   onOpenStatistics: () => void
 }): React.JSX.Element {
   const [page, setPage] = useState<ReviewQueuePage | null>(null)
+  const [counts, setCounts] = useState<ReviewCounts | null>(null)
   const [filter, setFilter] = useState<ReviewFilter>('none')
   const [offset, setOffset] = useState(0)
   const [batch, setBatch] = useState<GradeBatch | null>(null)
@@ -80,6 +81,8 @@ export function QualityReview({
    * anyway, so a refresh that waited its turn would only ever paint something staler.
    */
   const inFlight = useRef(false)
+  /** Coverage walks history, so its background refresh must not pile up behind itself either. */
+  const coverageInFlight = useRef(false)
   const refresh = useCallback(async () => {
     if (inFlight.current) return
     inFlight.current = true
@@ -91,6 +94,17 @@ export function QualityReview({
       setPage(queue)
       setBatch(running)
       setError(null)
+      // Coverage checks every historical diff. Let this page paint its visible rows first, then
+      // fill in the aggregate tiles without making the opening path grow with task history.
+      if (!coverageInFlight.current) {
+        coverageInFlight.current = true
+        void rpc('quality.coverage')
+          .then(setCounts)
+          .catch((err: unknown) => setError(errorMessage(err)))
+          .finally(() => {
+            coverageInFlight.current = false
+          })
+      }
     } catch (err) {
       setError(errorMessage(err))
     } finally {
@@ -145,7 +159,6 @@ export function QualityReview({
     }
   }, [refresh])
 
-  const counts = page?.counts
   const labels = page?.adapterLabels ?? {}
   const running = batch?.state === 'running'
   const pages = page ? Math.max(1, Math.ceil(page.total / PAGE_SIZE)) : 1

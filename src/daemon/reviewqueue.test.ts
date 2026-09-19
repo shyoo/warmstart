@@ -172,9 +172,9 @@ describe('which finished work has been graded', () => {
     expect(page.rows).toHaveLength(1)
     expect(page.total).toBe(2)
     // The one reviewed task has used the fleet's only peer, so it remains a visible row in its
-    // bucket but is not represented as still gradable in the summary.
-    expect(page.counts.one).toBe(0)
-    expect(page.counts.ungradable).toBe(1)
+    // bucket but is not represented as still gradable in the separately loaded summary.
+    expect((await quality.reviewCoverage()).one).toBe(0)
+    expect((await quality.reviewCoverage()).ungradable).toBe(1)
   })
 
   it('names who has already graded a task, so the row says why nobody else may', async () => {
@@ -265,7 +265,7 @@ describe('an agent is asked about a task at most once', () => {
     expect(filtered.total).toBe(0)
     // ⛔ The summary labels these as *gradable* buckets. This exhausted task belongs only in the
     // non-gradable tile, not in both "1 review" and "Non-gradable" (t459).
-    expect(filtered.counts).toEqual({ none: 0, one: 0, many: 0, total: 0, ungradable: 1 })
+    expect(await quality.reviewCoverage()).toEqual({ none: 0, one: 0, many: 0, total: 0, ungradable: 1 })
   })
 
   it('excludes an operator-marked refusal from every gradable bucket', async () => {
@@ -275,7 +275,7 @@ describe('an agent is asked about a task at most once', () => {
     const page = await quality.reviewQueue('none')
     expect(page.rows).toHaveLength(1)
     expect(page.rows[0]?.eligible).toBe(false)
-    expect(page.counts).toEqual({ none: 0, one: 0, many: 0, total: 0, ungradable: 1 })
+    expect(await quality.reviewCoverage()).toEqual({ none: 0, one: 0, many: 0, total: 0, ungradable: 1 })
   })
 })
 
@@ -352,6 +352,14 @@ describe('what a batch would attempt', () => {
  * *"TypeError: fetch failed"*.
  */
 describe('what the coverage page costs to draw', () => {
+  it('returns the visible page before it walks historical diff ranges for the coverage totals', () => {
+    const source = readFileSync(new URL('./quality.ts', import.meta.url), 'utf8')
+    const queue = source.slice(source.indexOf('export async function reviewQueue'), source.indexOf('export async function reviewCoverage'))
+    expect(queue).toContain("const raw = queueRows(filter, gradableOnly ? 1000 : take, gradableOnly ? 0 : skip)")
+    expect(queue).not.toContain("queueRows('all', 1000, 0)")
+    expect(source.slice(source.indexOf('export async function reviewCoverage'))).toContain("queueRows('all', 1000, 0)")
+  })
+
   it('asks whether a task has a diff, never who is free to grade it and how fast they are', () => {
     // ⛔ The peer half of `reviewEligibility` duplicates `reviewerAvailability`, which
     // `isTaskGradable` has already called; what it added on top was the priced menu. Pinned at the
