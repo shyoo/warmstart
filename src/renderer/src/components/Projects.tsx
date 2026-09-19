@@ -98,7 +98,11 @@ export function Projects({
                     {project.config.landing?.target ?? 'main'}
                   </td>
                   <td className="num">
-                    {pool ? `${pool.free}/${pool.resource.capacity} free` : 'not created yet'}
+                    {project.config.workspaces?.poolSize === 0 && project.vcs === 'git'
+                      ? 'trunk only'
+                      : pool
+                        ? `${pool.free}/${pool.resource.capacity} free`
+                        : 'not created yet'}
                   </td>
                   <td className="tbl-actions">
                     <button

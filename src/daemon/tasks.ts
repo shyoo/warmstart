@@ -28,6 +28,7 @@ import {
   type TaskPage,
   type ProjectActivity,
   DERIVED_TASK_SORTS,
+  projectTrunkOnly,
   type TaskSort,
   type TaskStatus,
   type TaskView
@@ -767,6 +768,15 @@ export function createTask(input: CreateTaskInput): Task {
   const now = Date.now()
   const effectiveProjectId = input.projectId ?? parent?.projectId ?? null
   const project = effectiveProjectId ? getProject(effectiveProjectId) : null
+  // ⛔ Refused at the door, not held forever at dispatch: a worktree needs a pool member and a
+  // trunk-only project has none. `inherit` still resolves through the project default, so only an
+  // explicit pin is an instruction that cannot be carried out.
+  if (project && input.workspaceMode === 'worktree' && projectTrunkOnly(project)) {
+    throw new Error(
+      `${project.name} is trunk-only (no worktree pool): file this task into the trunk, or ` +
+        `raise the workspace pool in Project settings`
+    )
+  }
   // ⛔ `integratesChildren`, not `isIntegrationParent`: a Plan & Execute executor is cut from its
   //    planner's branch and lands onto the project's target, because no third turn exists to take a
   //    plan branch any further. See that function.
@@ -1419,6 +1429,17 @@ export function setWorkspaceMode(taskId: string, mode: Task['workspaceMode']): T
     throw new Error(
       `t${current.seq} has already run, so where it works is fixed — file a new task to work elsewhere`
     )
+  }
+  // ⛔ Same refusal as at creation: pinning a worktree on a project with no pool is an instruction
+  // that cannot be carried out, and holding it silently would wedge the task.
+  if (mode === 'worktree' && current.projectId) {
+    const project = getProject(current.projectId)
+    if (project && projectTrunkOnly(project)) {
+      throw new Error(
+        `${project.name} is trunk-only (no worktree pool): run t${current.seq} in the trunk, or ` +
+          `raise the workspace pool in Project settings`
+      )
+    }
   }
   db()
     .prepare('update tasks set workspace_mode = ?, updated_at = ? where id = ?')

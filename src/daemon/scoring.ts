@@ -1,7 +1,7 @@
 import { canWork } from '@shared/protocol.js'
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import type { Objective, Project, Task } from '@shared/tasks.js'
-import { resolveWorkspaceMode, windowHighWater, WINDOW_HIGH_WATER } from '@shared/tasks.js'
+import { projectTrunkOnly, resolveWorkspaceMode, windowHighWater, WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { WEIGHT_SIGNS } from '@shared/routing.js'
 import { adapter } from './adapters/index.js'
 import { paceFactors, paceFor, paceValue, type PaceFactors } from './pace.js'
@@ -1559,6 +1559,17 @@ export function poolPressure(task: Task): string | null {
     if (evictableResidents(project.id, 'trunk').length > 0) return null
     const owner = getTask(holder.holder)
     return `the trunk of ${project.name} is in use${owner ? ` by t${owner.seq}` : ''}`
+  }
+  // ⛔ Trunk-only projects hold worktree tasks with a reason that names the fix, rather than
+  // falling through to "all 0 workspace(s) are busy" — a sentence that is true and useless. The
+  // hold (never a failure) lifts the moment the pool is raised or the task moves to the trunk.
+  if (projectTrunkOnly(project)) {
+    if (workspaceHeldBy(project, task.id)) return null
+    if (warmSessionFor(task)) return null
+    return (
+      `${project.name} is trunk-only (no worktree pool): run t${task.seq} in the trunk, or ` +
+      `raise the workspace pool in Project settings`
+    )
   }
   const state = availability(workspacePoolId(project.id))
   if (!state) return null

@@ -23,6 +23,7 @@ import {
   type ResourceAvailability,
   type SessionSharingChoice,
   WORKSPACE_MODE_LABELS,
+  projectTrunkOnly,
   projectWorkspaceModeChoice,
   type WorkspaceMode
 } from '@shared/tasks'
@@ -100,6 +101,7 @@ export function ProjectSettings({
         fleetFinish={fleetFinish}
         fleetSharing={fleetSharing}
         setPolicy={setPolicy}
+        refreshProjects={refreshProjects}
       />
       <RemoteProjectAccess project={project} />
       <ColdStartPanel project={project} setPolicy={setPolicy} />
@@ -254,20 +256,85 @@ function PolicyPanel({
   project,
   fleetFinish,
   fleetSharing,
-  setPolicy
+  setPolicy,
+  refreshProjects
 }: {
   project: ProjectRecord
   fleetFinish: Settings['finishPolicy']
   fleetSharing: Settings['sessionSharing']
   setPolicy: (patch: ProjectPolicyPatch) => Promise<void>
+  refreshProjects: () => Promise<void>
 }): React.JSX.Element {
   const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
 
   const apply = (patch: ProjectPolicyPatch): void => {
     setBusy(true)
     void setPolicy(patch)
       .catch(() => undefined)
       .finally(() => setBusy(false))
+  }
+
+  const trunkOnly = projectTrunkOnly(project)
+  // ⚠️ What switching back restores. The operator's old pool size is a decision worth keeping
+  // across a trunk-only interval; the default is only for projects that never had one.
+  const [lastPool, setLastPool] = useState(3)
+  useEffect(() => {
+    const size = project.config.workspaces?.poolSize
+    if (size) setLastPool(size)
+  }, [project.config.workspaces?.poolSize])
+
+  /**
+   * Flip the workspace topology. Going trunk-only couples the default workspace to the trunk —
+   * a pool of zero with a worktree default would hold every new task — and then removes the idle
+   * worktree directories, with confirmation. Coming back restores the old pool size and leaves the
+   * default workspace as it is.
+   */
+  const switchTopology = (toTrunkOnly: boolean): void => {
+    if (toTrunkOnly === trunkOnly || busy || project.vcs !== 'git') return
+    if (!toTrunkOnly) {
+      apply({ poolSize: Math.min(32, Math.max(1, Math.trunc(lastPool) || 3)) })
+      return
+    }
+    if (
+      !confirm(
+        'Run this project trunk-only? Every task will take the trunk lease and run serially in ' +
+          'the checkout itself — no parallel worktrees, no task branches. Idle worktree ' +
+          'directories are removed from disk (work in flight is kept, and branches and stashes ' +
+          'are never deleted). New tasks will default to the trunk.'
+      )
+    )
+      return
+    setBusy(true)
+    setNote(null)
+    void (async () => {
+      try {
+        await setPolicy({ poolSize: 0, workspaceMode: 'trunk' })
+      } catch {
+        // `setPolicy` already reports its own failure in the alert above; a failed save means the
+        // topology never changed, so there is nothing to prune.
+        setBusy(false)
+        return
+      }
+      try {
+        const pruned = await rpc('project.pruneWorktrees', { id: project.id })
+        const kept = pruned.kept.map((k) => `${k.path}: ${k.reason}`).join('; ')
+        setNote(
+          pruned.removed.length > 0
+            ? `Removed ${pruned.removed.length} worktree${pruned.removed.length === 1 ? '' : 's'}` +
+                (kept ? ` — kept ${kept}` : ' — the pool is gone.')
+            : kept
+              ? `Nothing removed — kept ${kept}`
+              : 'The pool is gone.'
+        )
+        await refreshProjects()
+      } catch (err) {
+        // The setting itself landed; only the disk cleanup failed, so say exactly that.
+        setNote(`Trunk-only is saved, but removing worktrees failed: ${errorMessage(err)}`)
+      } finally {
+        setBusy(false)
+      }
+    })()
   }
 
   const finishChoice = projectFinishChoice(project)
@@ -415,31 +482,69 @@ function PolicyPanel({
         )}
 
         <SettingRow
-          title="Workspace pool"
+          title="Workspace topology"
           description={
-            project.vcs === 'git'
-              ? `${project.config.workspaces?.poolSize ?? 3} parallel worktree${(project.config.workspaces?.poolSize ?? 3) === 1 ? '' : 's'}. A full pool holds new tasks.`
-              : 'One workspace — this project has no repository.'
+            project.vcs !== 'git' ? (
+              'One workspace — this project has no repository.'
+            ) : trunkOnly ? (
+              <>
+                This project keeps <strong>no worktrees</strong>: every task takes the trunk lease
+                and runs serially in the checkout itself — best for small projects with occasional
+                changes. New tasks follow Default workspace above. Switching back restores a
+                worktree pool for parallel execution.
+              </>
+            ) : (
+              <>
+                Tasks run in parallel in pooled worktrees, one task per tree, while the trunk stays
+                free for trunk work. Trunk-only removes the worktree directories and runs everything
+                serially — best for small projects with occasional changes.
+              </>
+            )
           }
           control={
-            <input
-              className="num-input"
-              type="number"
-              min={1}
-              max={32}
+            <SettingButtonSelect
+              value={trunkOnly ? 'trunk-only' : 'pooled'}
+              options={[
+                { value: 'pooled', label: 'Trunk + worktrees' },
+                { value: 'trunk-only', label: 'Trunk only' }
+              ]}
               disabled={busy || project.vcs !== 'git'}
-              aria-label="Workspace pool size"
-              defaultValue={project.config.workspaces?.poolSize ?? 3}
-              key={project.config.workspaces?.poolSize ?? 3}
-              onBlur={(e) => {
-                const next = Number(e.target.value)
-                if (Number.isFinite(next) && next !== (project.config.workspaces?.poolSize ?? 3)) {
-                  apply({ poolSize: next })
-                }
-              }}
+              ariaLabel="Workspace topology"
+              title="Trunk + worktrees runs tasks in parallel in isolated checkouts; trunk-only keeps no worktrees and runs every task serially in the project checkout."
+              onChange={(val) => switchTopology(val === 'trunk-only')}
             />
           }
         />
+        {!trunkOnly && (
+          <SettingRow
+            title="Workspace pool"
+            description={
+              project.vcs === 'git'
+                ? `${project.config.workspaces?.poolSize ?? 3} parallel worktree${(project.config.workspaces?.poolSize ?? 3) === 1 ? '' : 's'}. A full pool holds new tasks.`
+                : 'One workspace — this project has no repository.'
+            }
+            control={
+              <input
+                className="num-input"
+                type="number"
+                min={1}
+                max={32}
+                disabled={busy || project.vcs !== 'git'}
+                aria-label="Workspace pool size"
+                defaultValue={project.config.workspaces?.poolSize ?? 3}
+                key={project.config.workspaces?.poolSize ?? 3}
+                onBlur={(e) => {
+                  const next = Number(e.target.value)
+                  if (Number.isFinite(next) && next !== (project.config.workspaces?.poolSize ?? 3)) {
+                    setLastPool(next)
+                    apply({ poolSize: next })
+                  }
+                }}
+              />
+            }
+          />
+        )}
+        {note && <p className="note">{note}</p>}
       </div>
     </div>
   )

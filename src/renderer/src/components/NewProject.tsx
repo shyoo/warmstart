@@ -233,7 +233,11 @@ export function NewProject({
           landingTarget: draft.landingTarget.trim(),
           sessionShare: draft.sessionShare,
           completion: draft.completion,
-          poolSize: draft.poolSize
+          poolSize: draft.poolSize,
+          // ⚠️ Coupled, exactly as the settings tab couples them: a pool of zero with a worktree
+          // default would hold every new task, so a trunk-only project starts defaulting to the
+          // trunk. Either half stays changeable afterwards in Project settings.
+          ...(draft.poolSize === 0 ? { workspaceMode: 'trunk' as const } : {})
         },
         checks: checksFromText(draft.checksText),
         docs: draft.docs
@@ -592,6 +596,20 @@ function SetupStep({
     ...FINISH_ORDER.map((p) => ({ value: p, label: FINISH_LABELS[p] }))
   ]
 
+  // ⚠️ What flipping back to a pool restores. The inspection seeds the draft from any existing
+  // config it found, and this tracks the number input after that — so a trunk-only interval keeps
+  // the old pool size instead of resetting it to the default.
+  const lastPoolSize = useRef(3)
+  useEffect(() => {
+    if (draft.poolSize > 0) lastPoolSize.current = draft.poolSize
+  }, [draft.poolSize])
+  const setTopology = useCallback(
+    (toTrunkOnly: boolean): void => {
+      patch({ poolSize: toTrunkOnly ? 0 : lastPoolSize.current })
+    },
+    [patch]
+  )
+
   return (
     <div className="stack">
       <div className="wizard-section">
@@ -696,25 +714,45 @@ function SetupStep({
             }
           />
           <SettingRow
-            title="Workspace pool"
+            title="Workspace topology"
             description={
-              repo
-                ? `Maximum concurrent task workspaces (${draft.poolSize}). Additional tasks wait in queue.`
-                : 'Requires a git repository to support concurrent worktree workspaces.'
+              !repo
+                ? 'Requires a git repository to support concurrent worktree workspaces.'
+                : draft.poolSize === 0
+                  ? 'Trunk only: every task takes the trunk lease and runs serially in the checkout itself — best for small projects with occasional changes. New tasks will default to the trunk.'
+                  : 'Trunk + worktrees (default): tasks run in parallel in isolated checkouts while the trunk stays free. Trunk-only suits small projects with occasional changes — no worktree directories, but one task at a time.'
             }
             control={
-              <input
-                className="num-input"
-                type="number"
-                min={1}
-                max={32}
+              <SettingButtonSelect
+                value={draft.poolSize === 0 ? 'trunk-only' : 'pooled'}
+                options={[
+                  { value: 'pooled', label: 'Trunk + worktrees' },
+                  { value: 'trunk-only', label: 'Trunk only' }
+                ]}
                 disabled={!repo}
-                aria-label="Workspace pool size"
-                value={repo ? draft.poolSize : 1}
-                onChange={(e) => patch({ poolSize: Math.trunc(Number(e.target.value)) })}
+                ariaLabel="Workspace topology"
+                title="Trunk + worktrees runs tasks in parallel in isolated checkouts; trunk-only keeps no worktrees and runs every task serially in the project checkout. Changeable later in Project settings."
+                onChange={(val) => setTopology(val === 'trunk-only')}
               />
             }
           />
+          {repo && draft.poolSize !== 0 && (
+            <SettingRow
+              title="Workspace pool"
+              description={`Maximum concurrent task workspaces (${draft.poolSize}). Additional tasks wait in queue.`}
+              control={
+                <input
+                  className="num-input"
+                  type="number"
+                  min={1}
+                  max={32}
+                  aria-label="Workspace pool size"
+                  value={draft.poolSize}
+                  onChange={(e) => patch({ poolSize: Math.trunc(Number(e.target.value)) })}
+                />
+              }
+            />
+          )}
         </div>
       </div>
 

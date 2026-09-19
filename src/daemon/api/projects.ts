@@ -3,14 +3,14 @@ import { addProject, archiveProject, listProjects, relocateProject, reloadProjec
 import { proposeChecks } from '../projectstack.js'
 import { createProject, inspectProjectDirectory, proposeProjectDocs, workspaceRootReport } from '../projectsetup.js'
 import { flowWorkspaces } from '../flow.js'
-import { ensurePool } from '../worktrees.js'
+import { ensurePool, prunePoolWorktrees } from '../worktrees.js'
 import { log } from '../log.js'
 import type { Api, ApiContext } from './support.js'
 
 type ProjectMethod =
   | 'project.list' | 'project.add' | 'project.relocate' | 'project.inspect' | 'project.workspaceRoot' | 'project.docTemplates'
   | 'project.create' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.writeConfig' | 'project.flow'
-  | 'project.proposeChecks' | 'project.setChecks' | 'project.setPolicy'
+  | 'project.proposeChecks' | 'project.setChecks' | 'project.setPolicy' | 'project.pruneWorktrees'
 
 export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
   return {
@@ -63,6 +63,9 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
         }
       }
       return project
-    }
+    },
+    // ⛔ Local only — see `project.setPolicy`'s note and `remote/policy.ts`. Removing worktrees
+    // from disk is the confirmed destructive half of going trunk-only; a phone never does it.
+    'project.pruneWorktrees': async (p) => prunePoolWorktrees(requireProject(p.id)),
   }
 }

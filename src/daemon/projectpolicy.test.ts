@@ -145,7 +145,10 @@ describe('setting a project’s policy', () => {
     expect(() => projects.setProjectPolicy(project.id, { finish: 'lands-it' as never })).toThrow(
       /finish policy/
     )
-    expect(() => projects.setProjectPolicy(project.id, { poolSize: 0 })).toThrow(/between 1 and 32/)
+    expect(() => projects.setProjectPolicy(project.id, { poolSize: -1 })).toThrow(/between 0 and 32/)
+    expect(() => projects.setProjectPolicy(project.id, { poolSize: 33 })).toThrow(/between 0 and 32/)
+    // ⚠️ Zero is trunk-only — no pool at all — and is accepted; see `trunkonly.test.ts`.
+    expect(projects.setProjectPolicy(project.id, { poolSize: 0 }).config.workspaces?.poolSize).toBe(0)
     expect(() => projects.setProjectPolicy(project.id, { landingTarget: '   ' })).toThrow(/empty/)
     expect(() => projects.setProjectPolicy(project.id, { completion: 'careful' as never })).toThrow(
       /completion mode/

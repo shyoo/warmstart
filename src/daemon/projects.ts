@@ -461,8 +461,10 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
     }
     if (patch.poolSize !== undefined) {
       const size = Math.trunc(patch.poolSize)
-      if (!Number.isFinite(size) || size < 1 || size > 32) {
-        throw new Error(`workspace pool size must be between 1 and 32, not ${String(patch.poolSize)}`)
+      // ⚠️ Zero is a real choice, not a missing value: a pool of zero is trunk-only — no worktrees
+      // at all, every task takes the trunk lease. See `projectTrunkOnly` and `prunePoolWorktrees`.
+      if (!Number.isFinite(size) || size < 0 || size > 32) {
+        throw new Error(`workspace pool size must be between 0 and 32, not ${String(patch.poolSize)}`)
       }
       config.workspaces = { ...config.workspaces, poolSize: size }
     }
@@ -595,7 +597,10 @@ export function policyFor(project: Project): ProjectPolicy {
   const c = project.config
   return {
     // A non-git project is a pool of one over its own directory - no special case anywhere else.
-    poolSize: project.vcs === 'git' ? Math.max(1, c.workspaces?.poolSize ?? DEFAULTS.poolSize) : 1,
+    // ⛔ A git pool may be zero (trunk-only); only the fallback default is at least one, and the
+    // non-git pool is always exactly one. Clamping here would silently resurrect a pool the operator
+    // just removed.
+    poolSize: project.vcs === 'git' ? Math.max(0, c.workspaces?.poolSize ?? DEFAULTS.poolSize) : 1,
     // ⛔ Canonical, and note the two branches did not agree before it. `resolve` returns an absolute
     // config value in *its* case, while the fallback concatenates onto `project.root` in whatever
     // case that was stored — so adding a `workspaces.root` to a project.json silently changed the

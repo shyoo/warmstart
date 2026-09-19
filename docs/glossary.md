@@ -74,6 +74,8 @@ directory itself, as a pool of one. ⭐ A task filed into a project whose pool i
 tree — the hold is re-decided against `schedulingOrder` every tick, so a P0 filed later takes the
 next free workspace. ⚠️ `workspaces.poolSize` (default 3) is the operator's cap and nothing grows it
 automatically; when the fleet can run more sessions than the pool has trees, the hold says so.
+Zero is trunk-only — no pool, every task takes the trunk lease — chosen per project in Project
+settings or the add-project wizard, and changeable either way at any time.
 
 ⚠️ The pool lives at **`<root>_workspaces`** — a *sibling* of the project, never inside it, so nothing
 an agent does can show up as an untracked directory in your repository. A project may override it with

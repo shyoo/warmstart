@@ -85,6 +85,7 @@ export const REMOTE_METHODS = {
   'project.proposeChecks': 'deny',
   'project.setChecks': 'deny',
   'project.setPolicy': 'deny',
+  'project.pruneWorktrees': 'deny',
   'approval.list': 'read',
   'approval.request': 'deny',
   'approval.answer': 'write',

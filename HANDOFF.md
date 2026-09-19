@@ -35,12 +35,10 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   asked to revise — and `openai-compatible` is `mcp: false`, so `task_read` was no route back
   either. `recapTurns` (`prompt.ts`) now interleaves those turns into a **cold** prompt in thread
   order, labelled `[earlier turn — …]` and stated to be context, not instructions to carry out
-  again. Cold means the *session*: a resumed one holds them, a compacted one holds a paid-for
-  summary, and `system` rows stay with the outcome filter that owns them. Bounded (4,000/2,000 per
-  person's/agent's turn, ~12,000 total, oldest dropped and counted, every trim marked *abridged* —
-  nothing silent, t529); ends at `task_read` where there is MCP and at *re-read the files* where
-  there is not. 17 L1 checks; 11 go red with the recap off, 6 more if it reaches a resumed session.
-  `docs/sessions.md`, `docs/architecture.md`.
+  again. Cold means the *session*: a resumed one holds them, a compacted one a paid-for
+  summary. Bounded (~12,000 total, oldest dropped and counted, every trim marked *abridged* —
+  nothing silent, t529); ends at `task_read` where there is MCP, *re-read the files* where not.
+  17 L1 checks (11 go red with the recap off, 6 more on a resumed session). `docs/sessions.md`, `docs/architecture.md`.
 - **A scrolled task thread left a permanent, unfilled strip between the fleet strip and the sticky
   `← Tasks` header (t561, 2026-09-19).** `.detail-head`'s `position: sticky; top: 0` sticks flush
   with `.content`'s *padding* edge, not its border edge, so `.content`'s `padding: var(--sp-5)`
@@ -159,6 +157,8 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 - **The fleet divider said `running` while counting slots (t560, 2026-09-19).** `2 / 1 running`
   beside one live task read as two agents at work; the word is now `in use`, matching the tooltip.
   Probes, consults, reviews and chats were verified excluded on every path. `docs/ui.md`.
+- **Projects can run trunk-only (t563, 2026-09-19).** `workspaces.poolSize: 0` runs every task on the trunk
+  lease; wizard/settings offer Trunk + worktrees (default) vs Trunk only, changeable either way with confirmation; `project.pruneWorktrees` removes idle trees, keeps occupied/dirty ones. `trunkonly.test.ts`.
 ## Remaining work — ordered by payoff
 
 Each needs a real signed-in account, a macOS machine, release credentials, or a human product

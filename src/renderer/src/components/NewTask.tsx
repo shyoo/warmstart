@@ -17,6 +17,7 @@ import {
   SHARING_LABELS,
   SHARING_SHORT,
   WORKSPACE_MODE_LABELS,
+  projectTrunkOnly,
   projectWorkspaceModeChoice,
   resolveModelChoice,
 } from '@shared/tasks'
@@ -940,7 +941,9 @@ export function NewTask({
           // written over the top. See `isOpenConversation`.
           finishPolicy: isConversation ? 'inherit' : prefs.finishPolicy,
           sessionSharing: isConversation ? 'inherit' : prefs.sessionSharing,
-          ...(workspaceMode !== 'inherit' ? { workspaceMode } : {}),
+          // ⚠️ A worktree pin cannot survive picking a trunk-only project: the daemon would
+          // refuse it, so a stale pin from the previous project is dropped to `inherit` instead.
+          ...(workspaceMode !== 'inherit' && !projectTrunkOnly(selectedProject) ? { workspaceMode } : {}),
           ...(isConversation ? { kind: 'conversation' as const } : {}),
           status: targetStatus,
           ...(notBefore ? { notBefore } : {}),
@@ -1396,27 +1399,40 @@ export function NewTask({
             />
 
             <span className="composer-gap" aria-hidden="true" />
-            {selectedProject?.vcs === 'git' && (
-              <SegmentedControl
-                ariaLabel="Workspace"
-                title={
-                  'Where the agent executes. Worktree: an isolated checkout on a dedicated task branch. ' +
-                  'Trunk: the main project checkout, committing directly to the landing target. ' +
-                  'Only one trunk task runs at a time.' +
-                  (workspaceMode === 'inherit'
-                    ? `\n\nDefault from project: ${inheritedWorkspace}.`
-                    : '')
-                }
-                value={workspaceMode === 'inherit' ? inheritedWorkspace : workspaceMode}
-                options={[
-                  { value: 'worktree', label: 'Worktree', title: WORKSPACE_MODE_LABELS.worktree },
-                  { value: 'trunk', label: 'Trunk', title: WORKSPACE_MODE_LABELS.trunk }
-                ]}
-                onChange={(v) =>
-                  setWorkspaceMode(v === inheritedWorkspace ? 'inherit' : (v as WorkspaceModeChoice))
-                }
-              />
-            )}
+            {selectedProject?.vcs === 'git' &&
+              (() => {
+                // ⛔ No worktree pill on a trunk-only project: filing one would be refused at the
+                // door (`createTask`), so offering it is offering an error. The pill collapses to
+                // the trunk rather than disabling half of itself.
+                const trunkOnlyProject = projectTrunkOnly(selectedProject)
+                return (
+                  <SegmentedControl
+                    ariaLabel="Workspace"
+                    title={
+                      'Where the agent executes. Worktree: an isolated checkout on a dedicated task branch. ' +
+                      'Trunk: the main project checkout, committing directly to the landing target. ' +
+                      'Only one trunk task runs at a time.' +
+                      (trunkOnlyProject
+                        ? '\n\nThis project is trunk-only: it keeps no worktree pool.'
+                        : workspaceMode === 'inherit'
+                          ? `\n\nDefault from project: ${inheritedWorkspace}.`
+                          : '')
+                    }
+                    value={trunkOnlyProject ? 'trunk' : workspaceMode === 'inherit' ? inheritedWorkspace : workspaceMode}
+                    options={
+                      trunkOnlyProject
+                        ? [{ value: 'trunk', label: 'Trunk', title: WORKSPACE_MODE_LABELS.trunk }]
+                        : [
+                            { value: 'worktree', label: 'Worktree', title: WORKSPACE_MODE_LABELS.worktree },
+                            { value: 'trunk', label: 'Trunk', title: WORKSPACE_MODE_LABELS.trunk }
+                          ]
+                    }
+                    onChange={(v) =>
+                      setWorkspaceMode(v === inheritedWorkspace ? 'inherit' : (v as WorkspaceModeChoice))
+                    }
+                  />
+                )
+              })()}
 
             {!isConversation && (
               <PillSelect

@@ -1,4 +1,4 @@
-import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, unlinkSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { FinishPolicy, Project, ResourceClaim, Task, WorkspaceMode } from '@shared/tasks.js'
 import { resolveFinishPolicy } from '@shared/policy.js'
@@ -8,6 +8,7 @@ import { settings } from './settings.js'
 import {
   availability,
   claim,
+  getResource,
   openClaims,
   release,
   trunkResourceId,
@@ -15,6 +16,8 @@ import {
   workspacePoolId
 } from './resources.js'
 import { samePath } from './fspath.js'
+import { listSessions } from './sessions.js'
+import { sessionEnded } from '@shared/protocol.js'
 import { log } from './log.js'
 import { git, tryGit } from './git.js'
 import { errorMessage } from '@shared/errors.js'
@@ -181,7 +184,9 @@ async function doEnsurePool(project: Project): Promise<string[]> {
     return [project.root]
   }
 
-  mkdirSync(policy.workspaceRoot, { recursive: true })
+  // ⚠️ No directory for a pool of zero: trunk-only keeps nothing on disk, and creating an
+  // empty workspace root on the first dispatch would leave a directory nothing will ever fill.
+  if (policy.poolSize > 0) mkdirSync(policy.workspaceRoot, { recursive: true })
   // ⚠️ `trunkBaseRef`, not `baseRef`: a pool member at rest belongs to no task, so there is no
   // parent branch to inherit and the trunk is the only sensible place to sit.
   const base = await trunkBaseRef(project)
@@ -235,10 +240,118 @@ async function doEnsurePool(project: Project): Promise<string[]> {
     projectId: project.id,
     kind: 'counted',
     label: `${project.name} workspaces`,
+    // ⛔ Stated, not derived: the derived default is `max(1, members)`, which would report a
+    // trunk-only pool as capacity one — a pool the operator just removed, resurrected in the
+    // Resources panel and in every gate that reads capacity instead of the policy.
+    capacity: members.length,
     members,
     meta: { vcs: 'git', root: policy.workspaceRoot }
   })
   return members
+}
+
+export interface PruneResult {
+  removed: string[]
+  kept: Array<{ path: string; reason: string }>
+}
+
+/**
+ * Remove pooled worktree directories from disk — the second half of switching a project to
+ * trunk-only. `ensurePool` parks extras but never deletes (deleting a worktree can destroy
+ * work), so this is the operator-confirmed step that actually frees the disk.
+ *
+ * ⛔ **Never removes a tree something is standing in.** An open resource claim or a live session
+ * with its cwd inside keeps the directory, whatever the operator confirmed — the confirmation
+ * was about idle pool members, not about work in flight.
+ *
+ * ⛔ **Dirt is rescued before removal, never with it.** `parkWorkspace` commits what it can and
+ * stashes the rest onto refs that live in the shared object store, so the branch and the stash
+ * survive the directory going away and Loose ends still surfaces them. A tree that cannot be
+ * made safe is kept, with the reason, rather than removed with work in it.
+ */
+export async function prunePoolWorktrees(project: Project): Promise<PruneResult> {
+  const removed: string[] = []
+  const kept: Array<{ path: string; reason: string }> = []
+  if (project.vcs !== 'git') throw new Error(`${project.name} has no worktree pool to remove`)
+  const policy = policyFor(project)
+  const poolId = workspacePoolId(project.id)
+  const base = await trunkBaseRef(project)
+  const liveDirs = new Set(
+    listSessions()
+      .filter((s) => !sessionEnded(s.state))
+      .map((s) => s.cwd)
+  )
+  const claimedDirs = new Set(
+    openClaims(poolId)
+      .map((c) => c.member)
+      .filter((m): m is string => !!m)
+  )
+  const under = (dir: string, root: string): boolean =>
+    samePath(dir, root) || dir.toLowerCase().startsWith(root.toLowerCase() + '/')
+
+  let index = 1
+  while (existsSync(join(policy.workspaceRoot, `ws${index}`))) {
+    const path = join(policy.workspaceRoot, `ws${index}`)
+    index++
+    if (!existsSync(join(path, '.git'))) {
+      // Not a worktree — something else the operator put here. Never ours to remove.
+      kept.push({ path, reason: 'not a git worktree' })
+      continue
+    }
+    const holder = openClaims(poolId).find((c) => c.member && samePath(c.member, path))
+    if (holder) {
+      kept.push({ path, reason: `held by ${holder.holder}` })
+      continue
+    }
+    if ([...liveDirs, ...claimedDirs].some((dir) => under(dir, path))) {
+      kept.push({ path, reason: 'a live session is working here' })
+      continue
+    }
+    try {
+      const parked = await parkWorkspace(project, path)
+      if (parked === null) {
+        const state = await workspaceState(path, base)
+        const dirty = state.dirtyFiles.length + state.untrackedFiles.length
+        if (dirty > 0) {
+          kept.push({ path, reason: `holds ${dirty} uncommitted file(s) that could not be made safe` })
+          continue
+        }
+      }
+      await git(project.root, ['worktree', 'remove', '--force', path])
+    } catch (err) {
+      kept.push({ path, reason: `could not remove it: ${errorMessage(err)}` })
+      continue
+    }
+    removed.push(path)
+  }
+
+  try {
+    await git(project.root, ['worktree', 'prune'])
+  } catch (err) {
+    log.warn(`could not prune worktree metadata for ${project.name}:`, err)
+  }
+  // Best-effort: an empty root dir is clutter. `rmSync` without `recursive` refuses a
+  // non-empty one, so something somebody else put there is never touched.
+  try {
+    rmSync(policy.workspaceRoot, { recursive: false })
+  } catch {
+    // Still in use, or never existed. Either way there is nothing to do.
+  }
+  if (removed.length > 0) {
+    const members = (getResource(poolId)?.members ?? []).filter(
+      (m) => !removed.some((r) => samePath(r, m))
+    )
+    upsertResource({
+      id: poolId,
+      projectId: project.id,
+      kind: 'counted',
+      label: `${project.name} workspaces`,
+      capacity: members.length,
+      members,
+      meta: { vcs: 'git', root: policy.workspaceRoot }
+    })
+  }
+  return { removed, kept }
 }
 
 export async function claimWorkspace(

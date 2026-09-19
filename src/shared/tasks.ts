@@ -30,6 +30,10 @@ export interface ProjectConfig {
   /**
    * `mode` is where this project's tasks run by default — see `WorkspaceMode`. ⚠️ Absent means
    * `worktree`, which is what every project did before trunk mode existed.
+   *
+   * `poolSize` is how many pooled worktrees the project keeps. ⚠️ Zero means **trunk-only**: no
+   * pool at all, every task takes the trunk lease — see `projectTrunkOnly`. Absent means the
+   * default pool, which is what every project did before trunk-only mode existed.
    */
   workspaces?: { poolSize?: number; root?: string; mode?: WorkspaceMode }
   prepare?: string[]
@@ -2636,6 +2640,16 @@ export interface ResolvedWorkspaceMode {
 
 export function projectWorkspaceModeChoice(project: Pick<Project, 'config'> | null | undefined): WorkspaceMode {
   return project?.config?.workspaces?.mode === 'trunk' ? 'trunk' : 'worktree'
+}
+
+/**
+ * Whether this project keeps no worktree pool at all: every task takes the trunk lease.
+ *
+ * ⛔ **Git only, and only an explicit zero.** A non-git project's pool of one already *is* its own
+ * directory, so there is nothing to remove; an absent `poolSize` is the default pool, not a choice.
+ */
+export function projectTrunkOnly(project: Pick<Project, 'config' | 'vcs'> | null | undefined): boolean {
+  return !!project && project.vcs === 'git' && project.config?.workspaces?.poolSize === 0
 }
 
 /**

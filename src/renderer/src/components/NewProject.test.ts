@@ -121,12 +121,14 @@ describe('leaving the setup step', () => {
     ])
   })
 
-  it('refuses a pool size the daemon would refuse', () => {
-    expect(stepBlockers('setup', draft({ poolSize: 0 }), inspection())).toEqual([
-      'The workspace pool must be between 1 and 32.'
-    ])
+  it('refuses a pool size the daemon would refuse, and accepts trunk-only zero', () => {
+    // ⚠️ Zero is trunk-only — no pool at all — and the daemon accepts it; see `trunkonly.test.ts`.
+    expect(stepBlockers('setup', draft({ poolSize: 0 }), inspection())).toEqual([])
     expect(stepBlockers('setup', draft({ poolSize: 33 }), inspection())).toEqual([
-      'The workspace pool must be between 1 and 32.'
+      'The workspace pool must be between 0 and 32 (0 is trunk-only).'
+    ])
+    expect(stepBlockers('setup', draft({ poolSize: -1 }), inspection())).toEqual([
+      'The workspace pool must be between 0 and 32 (0 is trunk-only).'
     ])
   })
 

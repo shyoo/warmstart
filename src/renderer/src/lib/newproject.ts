@@ -154,8 +154,9 @@ export function stepBlockers(
     if (!draft.landingTarget.trim()) {
       blockers.push('Name the branch this project’s work lands on.')
     }
-    if (!Number.isInteger(draft.poolSize) || draft.poolSize < 1 || draft.poolSize > 32) {
-      blockers.push('The workspace pool must be between 1 and 32.')
+    // ⚠️ Zero is trunk-only — no pool at all — and is a real choice, not a missing value.
+    if (!Number.isInteger(draft.poolSize) || draft.poolSize < 0 || draft.poolSize > 32) {
+      blockers.push('The workspace pool must be between 0 and 32 (0 is trunk-only).')
     }
     return blockers
   }
@@ -211,8 +212,10 @@ export function creationPlan(
 
   if (willHaveRepo(inspection, draft)) {
     plan.push(
-      `Create up to ${draft.poolSize} pooled worktree${draft.poolSize === 1 ? '' : 's'} under ` +
-        `${inspection?.workspace.path ?? 'the workspace directory'}.`
+      draft.poolSize === 0
+        ? 'Keep no worktree pool — every task will take the trunk lease and run serially in the checkout.'
+        : `Create up to ${draft.poolSize} pooled worktree${draft.poolSize === 1 ? '' : 's'} under ` +
+            `${inspection?.workspace.path ?? 'the workspace directory'}.`
     )
   } else {
     // ⚠️ Said out loud, because it is the consequence of the checkbox two steps back and it is not
