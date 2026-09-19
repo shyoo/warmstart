@@ -1669,3 +1669,251 @@ describe('a plan or debate task requires an MCP adapter', () => {
     expect(task.constraints.needs ?? []).not.toContain('mcp')
   })
 })
+
+/**
+ * ⛔ **t562 ← t557, 2026-09-19.** An operator switched a live conversation's worker twice — once to
+ * Antigravity, then to Codex — and the prompt the incoming codex run received was the *opening*
+ * prompt verbatim and nothing else. The two revision instructions it was being asked to act on and
+ * the draft it was being asked to revise were both recorded in the thread; neither travelled,
+ * because `outstanding` carries the first message plus whatever is undelivered, and everything in
+ * between had been delivered to a session that no longer existed. `openai-compatible` declares
+ * `mcp: false`, so `task_read` was not offered either and there was no route back to any of it.
+ *
+ * ⚠️ Every assertion here is about a **cold** prompt. The subtraction a resumed session gets is the
+ * point of `outstanding` and is covered above; what these prove is that it stops at the session
+ * boundary rather than at the task's first message.
+ */
+describe('a cold successor is given the conversation it is joining', () => {
+  /** The thread t557 actually had when its worker was switched, in miniature. */
+  const switchedMidConversation = (title: string) => {
+    const task = tasks.createTask({
+      title,
+      prompt: 'Draft the launch posts and store them in internal_docs/.',
+      kind: 'conversation',
+      status: 'ready'
+    })
+    // First dispatch: the opening prompt is delivered to the agent, which then answers.
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(task.id, 'agent', 'Drafted seven posts leading with the reviewer-bias finding.')
+    tasks.addMessage(task.id, 'human', 'Too many posts — lead with what the tool does instead.')
+    // Second dispatch, same session: the note is delivered there and answered there.
+    promptText(tasks.requireTask(task.id), 'claude-code', true, { markDelivered: true })
+    tasks.addMessage(task.id, 'agent', 'Revised to five posts, product first.')
+    return tasks.requireTask(task.id)
+  }
+
+  it('carries the middle of the conversation into a reassigned cold prompt', () => {
+    const task = switchedMidConversation('Expand the reach')
+    const text = promptText(task, 'claude-code', false, { markDelivered: false })
+    // The opening prompt still travels, as it always did.
+    expect(text).toContain('Draft the launch posts and store them in internal_docs/.')
+    // ⛔ And so does everything t557 lost.
+    expect(text).toContain('Too many posts — lead with what the tool does instead.')
+    expect(text).toContain('Drafted seven posts leading with the reviewer-bias finding.')
+    expect(text).toContain('Revised to five posts, product first.')
+  })
+
+  it('marks the earlier turns as context rather than as instructions', () => {
+    const task = switchedMidConversation('Context not instructions')
+    const text = promptText(task, 'claude-code', false, { markDelivered: false })
+    expect(text).toContain('You are picking up a conversation that is already under way')
+    expect(text).toContain('they are context, not instructions to carry out again')
+    expect(text).toContain('[earlier turn — the person]')
+    // ⚠️ Never "you": the reader did not write these replies and must not defend them.
+    expect(text).toContain('[earlier turn — the agent that was working on this]')
+    expect(text).not.toContain('[earlier turn — you]')
+  })
+
+  it('keeps the recap in thread order, with a new note still last', () => {
+    const task = switchedMidConversation('Order holds')
+    tasks.addMessage(task.id, 'human', 'Also add a LinkedIn variant.')
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: false })
+    const at = (needle: string) => text.indexOf(needle)
+    expect(at('Draft the launch posts')).toBeGreaterThan(-1)
+    expect(at('Drafted seven posts')).toBeGreaterThan(at('Draft the launch posts'))
+    expect(at('Too many posts')).toBeGreaterThan(at('Drafted seven posts'))
+    expect(at('Revised to five posts')).toBeGreaterThan(at('Too many posts'))
+    // ⛔ The thing actually being asked now is the newest thing in the prompt.
+    expect(at('Also add a LinkedIn variant.')).toBeGreaterThan(at('Revised to five posts'))
+  })
+
+  /**
+   * ⛔ The half t557 had no answer for at all. `openai-compatible` has no MCP, so this block is the
+   * whole record that agent will ever see, and it must not be sent after a tool it has not got.
+   */
+  it('gives an MCP-less adapter the recap and no tool it does not have', () => {
+    const task = switchedMidConversation('Codex picks it up')
+    const text = promptText(task, 'openai-compatible', false, { markDelivered: false })
+    expect(text).toContain('Too many posts — lead with what the tool does instead.')
+    expect(text).toContain('Revised to five posts, product first.')
+    expect(text).toContain('re-read any file one of them refers to')
+    expect(text).not.toContain('`task_read`')
+  })
+
+  it('points an MCP adapter at task_read for the unabridged thread', () => {
+    const task = switchedMidConversation('Claude picks it up')
+    const text = promptText(task, 'claude-code', false, { markDelivered: false })
+    expect(text).toContain('Call the MCP tool `task_read` for the complete thread and every prior run')
+  })
+
+  /**
+   * ⛔ The subtraction that pays for all of this. A resumed session holds these turns in its own
+   * transcript; replaying them is the double charge `outstanding` exists to prevent.
+   */
+  it('sends no recap into the session that already holds the conversation', () => {
+    const task = switchedMidConversation('Same session carries on')
+    tasks.addMessage(task.id, 'human', 'One more tweak.')
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', true, { markDelivered: false })
+    expect(text).toContain('One more tweak.')
+    expect(text).not.toContain('[earlier turn')
+    expect(text).not.toContain('Drafted seven posts')
+  })
+
+  /**
+   * ⚠️ A compaction makes `holdsPrompt` false, which is what restores the task's own instruction —
+   * but the session still holds a summary somebody has already paid for, so the recap stays out.
+   */
+  it('sends no recap into a compacted resume, which holds a paid-for summary', () => {
+    const task = switchedMidConversation('Compacted carries on')
+    tasks.addMessage(task.id, 'human', 'Carry on after the compaction.')
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', true, {
+      markDelivered: false,
+      compacted: true
+    })
+    expect(text).toContain('Carry on after the compaction.')
+    expect(text).not.toContain('[earlier turn')
+  })
+
+  it('costs a task with no prior conversation nothing', () => {
+    const task = tasks.createTask({ title: 'Brand new', prompt: 'Do the thing.', status: 'ready' })
+    const text = promptText(task, 'claude-code', false, { markDelivered: false })
+    expect(text).toContain('Do the thing.')
+    expect(text).not.toContain('[earlier turn')
+    expect(text).not.toContain('picking up a conversation')
+  })
+
+  /**
+   * ⛔ A recap is not consumed by being sent. `markDelivered` governs what is carried *in full*;
+   * these turns were delivered long ago and are recapped for every cold successor, because a second
+   * reassignment needs the history exactly as much as the first did — t557 had two.
+   */
+  it('recaps the same turns again for a second reassignment', () => {
+    const task = switchedMidConversation('Switched twice')
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    const again = promptText(tasks.requireTask(task.id), 'openai-compatible', false, {
+      markDelivered: false
+    })
+    expect(again).toContain('Too many posts — lead with what the tool does instead.')
+    expect(again).toContain('Revised to five posts, product first.')
+  })
+
+  /** ⛔ Bounded, and the bound announces itself — the t529 failure was a silent `slice(0, 400)`. */
+  it('abridges an oversized agent turn and says that it did', () => {
+    const task = tasks.createTask({
+      title: 'Long reply',
+      prompt: 'Write the whole thing.',
+      status: 'ready'
+    })
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    const head = 'HEAD-OF-THE-REPLY'
+    const tail = 'TAIL-OF-THE-REPLY'
+    tasks.addMessage(task.id, 'agent', [head, 'filler line\n'.repeat(1200), tail].join('\n'))
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: false })
+    expect(text).toContain(head)
+    expect(text).not.toContain(tail)
+    expect(text).toContain('[earlier turn — the agent that was working on this, abridged]')
+  })
+
+  it('leaves a turn inside its budget unmarked and whole', () => {
+    const task = tasks.createTask({ title: 'Short reply', prompt: 'Go.', status: 'ready' })
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(task.id, 'agent', 'Done, and here is the whole of it.')
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: false })
+    expect(text).toContain('Done, and here is the whole of it.')
+    expect(text).toContain('[earlier turn — the agent that was working on this]')
+    expect(text).not.toContain(', abridged]')
+  })
+
+  /**
+   * ⛔ The turns that fall off the end are the earliest ones, and the header says how many. A
+   * successor most needs the last thing asked and the last thing done.
+   */
+  it('drops the oldest turns past the total budget and counts them', () => {
+    const task = tasks.createTask({ title: 'Very long thread', prompt: 'Start.', status: 'ready' })
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    for (let i = 0; i < 12; i++) {
+      tasks.addMessage(task.id, 'agent', `TURN-${i} ${'x'.repeat(1900)}`)
+    }
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: false })
+    expect(text).toContain('TURN-11 ')
+    expect(text).not.toContain('TURN-0 ')
+    expect(text).toMatch(/\d+ earlier turns before those are not shown/)
+  })
+
+  /** ⚠️ Singular where there is one, because a prompt that says *1 turns* reads as a bug. */
+  it('agrees the omitted count with the turns it kept', () => {
+    const task = tasks.createTask({ title: 'Boundary', prompt: 'Start.', status: 'ready' })
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    for (let i = 0; i < 7; i++) tasks.addMessage(task.id, 'agent', `T${i} ${'x'.repeat(1990)}`)
+    const { turns, omitted } = prompt.recapTurns(task.id, new Set<number>())
+    expect(turns.length).toBeGreaterThan(0)
+    expect(omitted).toBeGreaterThan(0)
+    // 7 agent turns plus the opening prompt, none of which is being carried in full here.
+    expect(turns.length + omitted).toBe(8)
+  })
+
+  /**
+   * ⛔ **A message carried in full is never also recapped.** The opening prompt is in `outstanding`
+   * on every cold prompt, and a duplicate of it would be paid for twice and read as two asks.
+   */
+  it('never repeats a message it is already carrying in full', () => {
+    const task = switchedMidConversation('No duplicates')
+    tasks.addMessage(task.id, 'human', 'The newest ask.')
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: false })
+    const occurrences = (needle: string) => text.split(needle).length - 1
+    expect(occurrences('Draft the launch posts and store them in internal_docs/.')).toBe(1)
+    expect(occurrences('The newest ask.')).toBe(1)
+    expect(occurrences('Too many posts — lead with what the tool does instead.')).toBe(1)
+  })
+
+  /**
+   * ⛔ `system` rows stay out of the recap. The two that matter — `landing.failed`, `finish.held` —
+   * already travel through `outstanding` and are delivery-tracked there (t446); recapping them too
+   * would resend a landing failure the previous run had already been told about and fixed.
+   */
+  it('leaves system timeline entries to the outcome filter that owns them', () => {
+    const task = tasks.createTask({ title: 'Timeline stays out', prompt: 'Land it.', status: 'ready' })
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(task.id, 'system', 'Worker switched to CodexFirst', null, [], {
+      event: 'worker.switched'
+    })
+    tasks.addMessage(task.id, 'system', 'Not landed: no commits were produced', null, [], {
+      event: 'landing.failed',
+      detail: 'no commits were produced'
+    })
+    promptText(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: true })
+    const again = promptText(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: false })
+    expect(again).not.toContain('Worker switched to CodexFirst')
+    expect(again).not.toContain('Not landed: no commits were produced')
+  })
+
+  /** ⚠️ A controller's own note to the agent is part of what was said, and is labelled as its own. */
+  it('labels a controller turn as Warmstart', () => {
+    const task = tasks.createTask({ title: 'Controller spoke', prompt: 'Go.', status: 'ready' })
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(task.id, 'controller', 'Rebased onto main for you.')
+    tasks.markDelivered(tasks.messagesFor(task.id).map((m) => m.id))
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: false })
+    expect(text).toContain('[earlier turn — Warmstart]')
+    expect(text).toContain('Rebased onto main for you.')
+  })
+
+  /** ⚠️ An empty or whitespace-only row is not a turn and must not earn a label of its own. */
+  it('skips an empty turn', () => {
+    const task = tasks.createTask({ title: 'Empty row', prompt: 'Go.', status: 'ready' })
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(task.id, 'agent', '   ')
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: false })
+    expect(text).not.toContain('[earlier turn')
+  })
+})

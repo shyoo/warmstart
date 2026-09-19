@@ -227,6 +227,40 @@ live under `prompt` in `.warmstart/project.json` and are set from the project's
 post-compaction runs, and no others. A project that turns orientation `off` and writes no seed is back
 to the prompt as it was before t286.
 
+## What a cold successor is told about the conversation it is joining
+
+⛔ **A cold prompt carries the turns of this task the new session was never in.** The opening prompt
+and anything undelivered travel in full, as they always have. Everything between them — each
+follow-up the operator typed, each reply the agent gave — was delivered to a session that no longer
+exists, so before t562 none of it travelled: an operator who switched worker mid-thread got a
+successor holding the original instruction and nothing since. Measured on t557, 2026-09-19: the
+worker was switched twice, and the prompt the incoming codex run received was the opening request
+verbatim, without either of the two revisions it was being asked to make or the draft it was being
+asked to revise.
+
+Each of those turns arrives labelled `[earlier turn — the person]`,
+`[earlier turn — the agent that was working on this]` or `[earlier turn — Warmstart]`, under a
+sentence saying they are **context, not instructions to carry out again** — an agent handed a
+transcript otherwise reads the last imperative in it as its own, and the last imperative in a recap
+is usually a request the previous agent already carried out.
+
+⛔ **Cold only, and *cold* means the session, not the task.** A resumed session holds these turns in
+its own transcript and a compacted one holds a summary somebody has already paid for; replaying the
+thread into either is the double charge the delivery bookkeeping exists to prevent. `system` timeline
+rows stay out too — the two that matter to a successor, `landing.failed` and `finish.held`, already
+travel through the outcome filter and are delivery-tracked there.
+
+⚠️ **Bounded, and the bound says so.** A turn over its budget (4,000 characters for a person's,
+2,000 for an agent's) is cut at a line boundary and labelled *abridged*; past ~12,000 characters
+total the **earliest** turns fall off and the header says how many are not shown, because what a
+successor most needs is the last thing asked and the last thing done. Nothing is trimmed silently.
+
+⚠️ **Where the rest of it is depends on the adapter, because the channel does.** On an MCP adapter
+the block ends by naming `task_read`, which returns the complete thread and every prior run. On one
+without MCP — codex (`openai-compatible`), agy, every declarative adapter — there is no such tool, so
+this block *is* the whole record that agent will ever see and it is told to re-read the files an
+abridged turn refers to rather than trust its account of them.
+
 ## What a borrower is told
 
 An agent reopening another task's conversation is told so **at the top of its first prompt**: that

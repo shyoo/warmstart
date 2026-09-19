@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-19, **Windows 11**, measured over `0.2.0+dirty`): typecheck, lint
-and build pass; L1 **3,739 passed, 5 skipped** (224 files); L2 **203 checks** (5 skipped); L3 **480
+Baseline (2026-09-19, **Windows 11**, measured over `0.2.0+5.g2fe300f.dirty`): typecheck, lint
+and build pass; L1 **3,757 passed, 5 skipped** (224 files); L2 **203 checks** (5 skipped); L3 **480
 passed, 4 skipped**; L4 **19 checks** against `release/win-unpacked`. All five measured 2026-09-19. macOS 13
 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so is the
 **Release** workflow.
@@ -27,6 +27,20 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **Switching a task's worker mid-conversation sent the successor the opening prompt and nothing
+  since (t562 ← t557, 2026-09-19).** `outstanding` carries the first message plus whatever is
+  undelivered; everything between them had gone to a session that no longer exists, so it never
+  travelled. Measured on t557: the worker was switched twice and the incoming codex run got the
+  opening request verbatim — neither revision it was being asked to make, nor the draft it was being
+  asked to revise — and `openai-compatible` is `mcp: false`, so `task_read` was no route back
+  either. `recapTurns` (`prompt.ts`) now interleaves those turns into a **cold** prompt in thread
+  order, labelled `[earlier turn — …]` and stated to be context, not instructions to carry out
+  again. Cold means the *session*: a resumed one holds them, a compacted one holds a paid-for
+  summary, and `system` rows stay with the outcome filter that owns them. Bounded (4,000/2,000 per
+  person's/agent's turn, ~12,000 total, oldest dropped and counted, every trim marked *abridged* —
+  nothing silent, t529); ends at `task_read` where there is MCP and at *re-read the files* where
+  there is not. 17 L1 checks; 11 go red with the recap off, 6 more if it reaches a resumed session.
+  `docs/sessions.md`, `docs/architecture.md`.
 - **A scrolled task thread left a permanent, unfilled strip between the fleet strip and the sticky
   `← Tasks` header (t561, 2026-09-19).** `.detail-head`'s `position: sticky; top: 0` sticks flush
   with `.content`'s *padding* edge, not its border edge, so `.content`'s `padding: var(--sp-5)`
@@ -142,16 +156,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   and history. Doctor's Projects section flags it fleet-wide too, like `isolationRootExists` for a
   worker. `projectrelocate.test.ts`, `docs/ui.md`.
 - **Thread auto-follow no longer traps a taller right pane (t513, 2026-09-17).** Pinning begins only at the whole page's bottom and follows that bottom, never the shorter chat anchor. `docs/ui.md`.
-- **A `pull-request` task with an already-open PR could get stuck failing forever, and the retry
-  button that should have fixed it disappeared after the first attempt (t509, 2026-09-17).** The
-  closing contract only forbids rewriting commits already on the *landing target*, so a later run
-  legitimately squashes commits an earlier run already pushed as this task's own open PR — and the
-  plain `git push` in `pullRequest.land` then rejected as non-fast-forward, reported misleadingly as
-  "…may already be pushed" when nothing had landed. It now retries once with `--force-with-lease` on
-  that specific rejection (a compare-and-swap, still refused if the remote moved for another reason).
-  Second half of the cascade: `canRelandTask` (`taskview.tsx`) hid **Retry landing** for good after the
-  first `Retry landing failed: …`, a blanket exclusion meant for an empty branch that also caught every
-  retriable cause — only the genuinely unfixable ones do now. `landing.md`.
 - **The fleet divider said `running` while counting slots (t560, 2026-09-19).** `2 / 1 running`
   beside one live task read as two agents at work; the word is now `in use`, matching the tooltip.
   Probes, consults, reviews and chats were verified excluded on every path. `docs/ui.md`.

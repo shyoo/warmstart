@@ -624,7 +624,7 @@ scripts/                ensure-electron, icons, build-mac.sh, build-win.ps1     
 | `db.ts` | `node:sqlite` + numbered migrations → [`data-model.md`](data-model.md) |
 | `paths.ts` | the data directory, and the legacy-install adoption |
 | `scheduler.ts` | `tick`, dispatch, the watchdogs, `continueTask` → [`routing.md`](routing.md). Scoring, session residency, turn-end handling and the resolution RPCs are split into the five files below it |
-| `prompt.ts` | `promptFor` and its helpers — what an agent is actually told, and what a resumed turn withholds |
+| `prompt.ts` | `promptFor` and its helpers — what an agent is actually told, what a resumed turn withholds, and what `recapTurns` gives back to a cold successor of a conversation already under way |
 | `scoring.ts` | `chooseTarget`, the score arithmetic and its explanation (`formatScore`, `briefScore`, `scoreLegend`), `poolPressure` |
 | `residency.ts` | session residency and worker capacity — `atCapacity`, the reservation counters, `leastValuableResident`, `sessionLeaseId`, `evictableResidents` |
 | `turnend.ts` | what happens when a turn ends — `onSessionExit`, `onStreamResult`, the two MCP-less prompt contracts (`needsDecisionIn`, `taskCompletionIn`), the idle-turn note, `overloadFailureRetry`, `deadOnArrival` |

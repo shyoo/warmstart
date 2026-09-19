@@ -1,4 +1,4 @@
-import type { Attachment, DebateVerdict, MessageEvent, Task } from '@shared/tasks.js'
+import type { Attachment, DebateVerdict, MessageEvent, Task, TaskMessage } from '@shared/tasks.js'
 import { isOpenConversation, isPlanExecute, policyVerifies, resolveWorkspaceMode } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { describeAttachment, grantedDirsFor } from './attachments.js'
@@ -518,6 +518,130 @@ function resumedAnchor(mcpLess: boolean): string {
   )
 }
 
+/**
+ * How much of an earlier turn a recap carries, and how much of the prompt the whole recap may be.
+ *
+ * ⛔ **Bounded, and the bound announces itself.** An agent turn on a real task runs to tens of
+ * thousands of characters (t557's revision reply was 8.4 KB), and a task with a dozen of them behind
+ * it would put more of its own history into the prompt than the repository it is about. But a recap
+ * that silently stops mid-sentence is the t529 failure from the other side, so every trimmed turn is
+ * marked *abridged* and the block names the route to the whole thing.
+ *
+ * ⚠️ A person's turn gets twice an agent's, because it is the instruction and the agent's is the
+ * report: the operator's own words are what the successor is being held to, and they are short. The
+ * numbers are a judgement, not a measurement — ~12 KB is roughly 3k tokens, which buys a successor
+ * the conversation for about the price of one file read.
+ */
+const RECAP_BUDGET = { human: 4_000, agent: 2_000, total: 12_000 } as const
+
+interface RecapTurn {
+  message: TaskMessage
+  text: string
+  abridged: boolean
+}
+
+/** Cut at a line boundary where there is one in the back half, so a turn ends on a whole thought. */
+function abridgeTurn(text: string, budget: number): { text: string; abridged: boolean } {
+  const trimmed = text.trim()
+  if (trimmed.length <= budget) return { text: trimmed, abridged: false }
+  const head = trimmed.slice(0, budget)
+  const br = head.lastIndexOf('\n')
+  return { text: (br > budget / 2 ? head.slice(0, br) : head).trimEnd(), abridged: true }
+}
+
+/**
+ * The turns of this task's conversation that a **cold** successor was never told.
+ *
+ * ⛔ **The middle of a conversation is not in the prompt and is not in the new session either.**
+ * `outstanding` carries the opening prompt plus whatever is undelivered; everything between them —
+ * every follow-up the operator typed and every reply the agent made — was delivered to a session
+ * that no longer exists. Measured on t557, 2026-09-19: an operator switched worker twice mid-thread,
+ * and the prompt the incoming codex run received was the opening prompt verbatim and nothing else.
+ * The two revision instructions it was actually being asked to act on, and the draft it was being
+ * asked to revise, were both in the thread and neither reached it.
+ *
+ * ⛔ **Cold only** — gated on `!resumed`, not on `holdsPrompt`. A resumed session holds these turns
+ * in its own transcript, and a *compacted* one holds a summary of them somebody already paid for;
+ * replaying the thread into either is the double-charge `outstanding` exists to prevent.
+ *
+ * ⚠️ Ordered oldest-first, but budgeted newest-first: what a successor most needs is the last thing
+ * asked and the last thing done, so the turns that fall off the end are the earliest ones.
+ */
+export function recapTurns(
+  taskId: string,
+  carried: ReadonlySet<number>
+): { turns: RecapTurn[]; omitted: number } {
+  const prior = messagesFor(taskId).filter(
+    (m) =>
+      (m.role === 'human' || m.role === 'agent' || m.role === 'controller') &&
+      !carried.has(m.id) &&
+      m.text.trim().length > 0
+  )
+  const turns: RecapTurn[] = []
+  let spent = 0
+  let omitted = 0
+  for (let i = prior.length - 1; i >= 0; i--) {
+    const message = prior[i]!
+    const { text, abridged } = abridgeTurn(
+      message.text,
+      message.role === 'agent' ? RECAP_BUDGET.agent : RECAP_BUDGET.human
+    )
+    if (turns.length > 0 && spent + text.length > RECAP_BUDGET.total) {
+      omitted = i + 1
+      break
+    }
+    spent += text.length
+    turns.unshift({ message, text, abridged })
+  }
+  return { turns, omitted }
+}
+
+/**
+ * Who said it, and whether what follows is all of it.
+ *
+ * ⚠️ *the agent that was working on this* rather than *you*: the whole point of this block is that
+ * the reader is a different agent, often on a different vendor's CLI, and a recap that says *you*
+ * invites it to defend a reply it never wrote.
+ */
+function recapLabel(turn: RecapTurn): string {
+  const who =
+    turn.message.role === 'human'
+      ? 'the person'
+      : turn.message.role === 'controller'
+      ? 'Warmstart'
+      : 'the agent that was working on this'
+  return `[earlier turn — ${who}${turn.abridged ? ', abridged' : ''}]`
+}
+
+/**
+ * The sentence that says what the marked turns are, and where the rest of them is.
+ *
+ * ⛔ *context, not instructions* has to be said. An agent handed a transcript reads the last
+ * imperative in it as its own, and the last imperative in a recap is usually the operator's previous
+ * request — which the previous agent already carried out. Same reason the borrowed-session notice
+ * leads with it.
+ *
+ * ⚠️ Two endings, and the difference is real rather than cosmetic. Where there is MCP, the recap is
+ * an index into `task_read` and can be trusted to be abridged; where there is none — codex, agy,
+ * every declarative adapter — this block **is** the whole record the agent will ever see, so it is
+ * told to go back to the files rather than to a tool it has not got.
+ */
+function recapHeader(omitted: number, mcp: boolean): string {
+  return (
+    'You are picking up a conversation that is already under way, in a session that does not hold ' +
+    'it. The turns below marked `[earlier turn — …]` are the record of what has already been said ' +
+    'and done on this task: they are context, not instructions to carry out again. ' +
+    (omitted > 0
+      ? `${omitted} earlier turn${omitted === 1 ? '' : 's'} before those ${omitted === 1 ? 'is' : 'are'} not shown. `
+      : '') +
+    (mcp
+      ? 'Call the MCP tool `task_read` for the complete thread and every prior run before you rely ' +
+        'on anything an abridged turn says.'
+      : 'Nothing else from those turns will be repeated to you, so re-read any file one of them ' +
+        'refers to rather than trusting its account of it.')
+  )
+}
+
 export function promptFor(
   task: Task,
   adapterId: string,
@@ -634,23 +758,43 @@ export function promptFor(
   // borrowed one, and both of those genuinely need the prompt and the contract — see the notes on
   // those two call sites. This is the same-session case alone.
   const followUp = holdsContract && outstanding.length > 0
-  if (thread.length === 0 && !holdsPrompt) {
+
+  // ⛔ **The conversation a cold successor was never told.** See `recapTurns` for the measurement.
+  // ⚠️ Interleaved with `outstanding` in thread order rather than appended as a block of its own:
+  // an operator who switches worker *and* types a new instruction produces both at once, and a
+  // recap appended after that instruction would read as the newest thing said.
+  const { turns: recap, omitted: recapOmitted } = resumed
+    ? { turns: [] as RecapTurn[], omitted: 0 }
+    : recapTurns(task.id, new Set(outstanding.map((m) => m.id)))
+  if (recap.length > 0) {
+    parts.push(recapHeader(recapOmitted, adapter(adapterId).info.capabilities.mcp))
+  }
+
+  type Rendered = { id: number; text: string }
+  const rendered: Rendered[] = [
+    ...outstanding.map((message) => ({
+      id: message.id,
+      // ⚠️ A system outcome's `detail` carries the reason a person would otherwise have to expand
+      // it to read — the failing check's output, where the work still is. `text` alone is the
+      // one-line headline the thread shows collapsed; the next agent needs the rest of it.
+      text:
+        message.role === 'system' && message.detail
+          ? `From an earlier run: ${message.text}\n${message.detail}`
+          : message.text
+    })),
+    ...recap.map((turn) => ({ id: turn.message.id, text: `${recapLabel(turn)}\n${turn.text}` }))
+  ].sort((a, b) => a.id - b.id)
+
+  if (thread.length === 0 && recap.length === 0 && !holdsPrompt) {
     parts.push(task.title)
   } else {
     let opened = false
-    for (const message of outstanding) {
+    for (const message of rendered) {
       if (!holdsPrompt && !opened && message.text !== task.title) {
         parts.push(task.title)
       }
       opened = true
-      // ⚠️ A system outcome's `detail` carries the reason a person would otherwise have to expand
-      // it to read — the failing check's output, where the work still is. `text` alone is the
-      // one-line headline the thread shows collapsed; the next agent needs the rest of it.
-      parts.push(
-        message.role === 'system' && message.detail
-          ? `From an earlier run: ${message.text}\n${message.detail}`
-          : message.text
-      )
+      parts.push(message.text)
     }
   }
   // ⛔ **The attachments that travel are the attachments of the messages that travel**, and this is
