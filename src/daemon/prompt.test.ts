@@ -1369,10 +1369,11 @@ describe('the pre-completion rebase check', () => {
       'Immediately before you call `task_complete`, check whether this branch has fallen behind or ' +
         'diverged from `main`'
     )
-    // ⚠️ Fetch first, or the comparison answers about the target as of whenever the workspace was
-    // last updated — which is the staleness that produced the conflict in the first place.
-    expect(text).toContain('fetch it first, because it can move while you work')
-    expect(text).toContain('rebase onto the latest `main` and resolve every conflict yourself')
+    // ⛔ A task may be sandboxed away from its SSH configuration, and fetch is not required for a
+    // local branch check. Landing refreshes its own target outside the agent sandbox.
+    expect(text).toContain('as it exists in this checkout')
+    expect(text).toContain('Do not fetch or otherwise contact a remote')
+    expect(text).toContain('rebase onto the current `main` and resolve every conflict yourself')
     // ⚠️ The load-bearing half: a rebase changes the code the checks ran against, so a green result
     // from before it answers for a tree that no longer exists.
     expect(text).toContain("re-run this project's checks")
@@ -1415,7 +1416,7 @@ describe('the pre-completion rebase check', () => {
     })
     const own = promptText(onRelease, 'claude-code', false, { markDelivered: false })
     expect(own).toContain('diverged from `release/2.0`')
-    expect(own).toContain('rebase onto the latest `release/2.0`')
+    expect(own).toContain('rebase onto the current `release/2.0`')
     expect(own).not.toContain('diverged from `trunk`')
   })
 

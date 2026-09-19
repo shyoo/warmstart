@@ -426,14 +426,14 @@ free. Compacting a warm prefix discards a valid cache entry, pays ~**2.0·C** to
 stalls the operator ~2 minutes for context that regrows within minutes (measured t130, 2026-09-02:
 121k shrunk to 30k was back to 88k in 6m).
 
-⛔ **And lapsed resumes are declined too (2026-09-05, t231).** The gate above had two regions where
-the economics have three, and its second branch folded *the cheapest moment a compaction ever has*
-together with *the dearest*. There are three:
+⛔ **And lapsed compactions are declined too (2026-09-05, t231).** The gate above had two regions
+where the economics have three, and its second branch folded *the cheapest moment a compaction ever
+has* together with *the dearest*. There are three:
 
 ```
 prefix warm, >15m of TTL left   decline — the prompt reads it at 0.1·C and refreshes the TTL free
 prefix inside its last quarter  COMPACT — it is going anyway, and the read is still 0.1·C
-prefix lapsed                   decline — the read is a ~1.25·C cold rebuild of what is discarded
+prefix lapsed                   do not compact; start fresh if the lapsed context is oversized
 ```
 
 ⭐ **Measured on t231.** Run 1 failed at 10:46 and its process exited. The conversation sat closed for
@@ -442,8 +442,9 @@ run 2 revived it at 16:44:24. Two seconds later `compactOnResume` asked to compa
 the boundary arrived at 16:47:06, leaving **38,235** behind. That is **2m40s of the operator's wall
 clock spent before the run's own prompt was allowed in**, buying a cold rebuild of the whole 306k
 prefix *in order to throw it away*, after which the agent re-read the files it had been holding.
-Declining pays that same rebuild exactly once, on the run's first prompt, and reads it warm at 0.1·C
-for every turn after.
+For a small context, continuing pays that rebuild exactly once, on the run's first prompt, and reads
+it warm at 0.1·C for every turn after. For an oversized one, the scheduler starts a fresh session:
+the lapsed history is neither cheap to read nor worth carrying forward.
 
 ⚠️ **The counter-argument, and why it loses.** Over a long run a smaller prefix does win on
 arithmetic alone — at 306k → 38k the crossover is around ten turns. It is refused anyway, because the

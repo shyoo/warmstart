@@ -206,6 +206,7 @@ import {
 } from './objective.js'
 import {
   compactOnResume,
+  startFreshOnResume,
   mayCompact,
   RESUME_COMPACT_WAIT_MS,
   runCacheClock,
@@ -1674,7 +1675,18 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // *not* resuming costs rebuilding the whole prefix and re-discovering the branch, the files and
   // everything the last run worked out - and it produced an agent that answers a follow-up question
   // having never seen the question it follows.
-  const revive = resumableSession([...past, ...lent], worker.id, cwd)
+  const resumable = resumableSession([...past, ...lent], worker.id, cwd)
+  // ⛔ A lapsed conversation that is already past the compaction break-even is neither warm nor
+  // cheap to compact. Reopening it would rebuild a huge prefix and then carry it forward anyway.
+  // Start clean instead; the old session remains a durable record, but is not made the next run's
+  // context merely because its vendor handle still exists.
+  const revive = resumable && startFreshOnResume(resumable) ? null : resumable
+  if (resumable && !revive) {
+    log.info(
+      `t${task.seq}: starting a fresh conversation instead of resuming ${resumable.id.slice(0, 8)} ` +
+        'because its cached prefix lapsed after it grew past the compaction break-even'
+    )
+  }
   // ⛔ Whose conversation this is, and it is never inferred from the prompt later. A revived
   // conversation that belonged to another task is a disclosure — this task's agent is about to read
   // everything that was said in it — and the two things that follow from that, telling the agent and

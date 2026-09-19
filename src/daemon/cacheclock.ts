@@ -433,6 +433,20 @@ export interface ResumeCompaction {
 }
 
 /**
+ * A lapsed, oversized conversation is not a useful resume candidate.
+ *
+ * Its prefix is no longer cheap to read, and compacting it would first rebuild that whole prefix
+ * only to throw it away. Starting a new conversation is the only option that neither repeats that
+ * expensive compaction nor carries an already-too-large history into the next run. This is kept
+ * beside `compactOnResume`: both answer what a closed conversation should do at dispatch.
+ */
+export function startFreshOnResume(session: Session, now = Date.now()): boolean {
+  if (session.cacheExpiresAt === null || session.cacheExpiresAt > now) return false
+  const model = costModel(adapter(session.adapterId).info.policy.costModelId)
+  return worthCompactingNow(session, model)
+}
+
+/**
  * Should this conversation be compacted *before* the next run's prompt is put into it?
  *
  * ⛔ **The gap the cache clock structurally cannot see.** `runCacheClock` iterates live and idle

@@ -524,7 +524,7 @@ describe('a conversation carried across runs is compacted before the next one sp
     expect(plan.estimatedCost).toBeGreaterThan(0)
   })
 
-  it('⭐ refuses once the prefix has lapsed, however large the context is', () => {
+  it('⭐ starts fresh once an oversized prefix has lapsed, rather than reopening it', () => {
     // ⛔ The correction of 2026-09-05, and the inversion of what this used to assert. t92 as it
     //    really stood at 23:40 — closed two hours, prefix gone for one — is **not** compacted here.
     //    Its cheap moment was ~22:20 and `decideRevive` owns it; buying a small context at a cold
@@ -535,6 +535,7 @@ describe('a conversation carried across runs is compacted before the next one sp
     expect(plan.compact).toBe(false)
     expect(plan.reason).toContain('lapsed')
     expect(plan.estimatedCost).toBeNull()
+    expect(clock.startFreshOnResume(lapsed, NOW)).toBe(true)
   })
 
   it('says how long ago the prefix went, because "lapsed" alone does not size the mistake', () => {
@@ -548,6 +549,7 @@ describe('a conversation carried across runs is compacted before the next one sp
     const unknownExpiry = t92({ cacheExpiresAt: null })
     const plan = clock.compactOnResume(unknownExpiry, settings.DEFAULT_SETTINGS, NOW)
     expect(plan.compact).toBe(true)
+    expect(clock.startFreshOnResume(unknownExpiry, NOW)).toBe(false)
   })
 
   it('leaves a small carried-over context alone: the same two-part test the clock uses', () => {
@@ -557,6 +559,8 @@ describe('a conversation carried across runs is compacted before the next one sp
       .toBe(false)
     expect(clock.compactOnResume(t92({ tokensSinceCompact: 1_000 }), settings.DEFAULT_SETTINGS).compact)
       .toBe(false)
+    expect(clock.startFreshOnResume(t92({ contextTokens: 4_000, cacheExpiresAt: NOW - 1 }), NOW)).toBe(false)
+    expect(clock.startFreshOnResume(t92({ tokensSinceCompact: 1_000, cacheExpiresAt: NOW - 1 }), NOW)).toBe(false)
   })
 
   it('off means off here too, and says so', () => {
@@ -617,13 +621,13 @@ describe('t231: a prefix that lapsed hours ago is not a reason to compact', () =
     expect(plan.compact).toBe(false)
   })
 
-  it('⛔ a very large context does not buy its way past the gate', () => {
-    // The tempting exception, refused on purpose. 306k tokens is exactly the size that makes a
-    // smaller prefix look worth any price — and it is also what makes the cold rebuild ruinous,
-    // because the rebuild is priced on the context being discarded, not on the summary.
+  it('⛔ a lapsed large context is not compacted, but it does start the next run fresh', () => {
+    // The cold rebuild is still too expensive to spend on a compaction. It is also no longer a
+    // saving to attach that large, lapsed history to the next run, so the scheduler starts cold.
     for (const tokens of [306_801, 500_000, 1_000_000]) {
       expect(clock.compactOnResume(t231({ contextTokens: tokens }), settings.DEFAULT_SETTINGS, NOW).compact)
         .toBe(false)
+      expect(clock.startFreshOnResume(t231({ contextTokens: tokens }), NOW)).toBe(true)
     }
   })
 
@@ -651,6 +655,8 @@ describe('t231: a prefix that lapsed hours ago is not a reason to compact', () =
     // ⚠️ Exactly at expiry there is nothing left to read, so it is a lapse.
     expect(clock.compactOnResume(t231({ cacheExpiresAt: NOW }), settings.DEFAULT_SETTINGS, NOW).compact)
       .toBe(false)
+    expect(clock.startFreshOnResume(t231({ cacheExpiresAt: NOW - 1_000 }), NOW)).toBe(true)
+    expect(clock.startFreshOnResume(t231({ cacheExpiresAt: NOW }), NOW)).toBe(true)
   })
 
   it('⭐ leaves the cheap window untouched, which is what this path still exists for', () => {

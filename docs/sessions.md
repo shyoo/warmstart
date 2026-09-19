@@ -21,8 +21,10 @@ Always on, nothing to configure — the workspace, the branch and the context al
 task and nothing is disclosed to anyone.
 
 **2. Resuming.** A task whose session has *exited* — the normal case, since completing a task closes
-it — reopens the same conversation rather than starting a new one. `--resume` on Claude Code,
-`--conversation` on Antigravity. Also always on.
+it — normally reopens the same conversation rather than starting a new one. `--resume` on Claude
+Code, `--conversation` on Antigravity. A conversation whose measured prefix has lapsed and which has
+already grown past the compaction break-even starts fresh instead: rebuilding that entire prefix only
+to compact or carry it forward is a false saving.
 
 > Measured the same day: the resumed turn read back **41,542** cached tokens and wrote **65**.
 > ⚠️ On Antigravity the conversation is restored but no cache read is reported and input tokens roughly

@@ -217,8 +217,9 @@ function integrationClause(target: string, hasChecks: boolean, mcpLess: boolean)
   const declare = mcpLess ? 'write the `TASK COMPLETE: ` line' : 'call `task_complete`'
   return (
     `Immediately before you ${declare}, check whether this branch has fallen behind or diverged from ` +
-    `\`${target}\` — fetch it first, because it can move while you work. If it has, rebase onto the ` +
-    `latest \`${target}\` and resolve every conflict yourself, then re-run ` +
+    `\`${target}\` as it exists in this checkout. Do not fetch or otherwise contact a remote for this ` +
+    `check: the landing tool refreshes and measures its own target. If it has diverged, rebase onto ` +
+    `the current \`${target}\` and resolve every conflict yourself, then re-run ` +
     (hasChecks ? "this project's checks" : 'the validation relevant to what you changed') +
     ' on the rebased branch: a result from before the rebase does not answer for the code after it. ' +
     `Do not ${declare} while a conflict is unresolved or a rebase is still in progress — that signal ` +
