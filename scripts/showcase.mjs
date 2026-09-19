@@ -10,7 +10,7 @@ import { spawn, execFileSync } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { createRequire } from 'node:module'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { electronBinary, freePort, killTree, makeProject, destroyProject, wait } from '../test/lib/harness.mjs'
 
 export { wait }
@@ -581,8 +581,25 @@ export async function launch({ env: extraEnv = {} } = {}) {
     console.log(`wrote docs/images/${name}.png`)
   }
 
+  /**
+   * A bare crop of one element, no backdrop and no frame, written to `dir`. For images the app
+   * itself shows (the welcome tour), where the README's composited backdrop would be a lie about
+   * what the UI looks like. `maxHeight` keeps a tall panel to its top.
+   */
+  const cropElement = async (file, selector, { maxHeight = Infinity } = {}) => {
+    await wait(400)
+    const box = await evaluate(`(() => { const r = document.querySelector(${JSON.stringify(selector)})?.getBoundingClientRect(); return r && { x: r.x, y: r.y, width: r.width, height: Math.min(r.height, ${Number.isFinite(maxHeight) ? maxHeight : 1e9}) } })()`)
+    if (!box) throw new Error(`no element matches ${selector}`)
+    const reply = await send('Page.captureScreenshot', { format: 'png', clip: { ...box, scale: 1 } }, 20_000)
+    if (!reply.result?.data) throw new Error(`no image data for ${file}`)
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, Buffer.from(reply.result.data, 'base64'))
+    console.log(`wrote ${file}`)
+  }
+
   return {
     send,
+    cropElement,
     /** Hear every DevTools event; returns the function that stops listening. */
     listen: (fn) => {
       listeners.add(fn)

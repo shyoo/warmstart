@@ -2491,12 +2491,12 @@ export interface ResolvedSessionSharing {
 }
 
 /**
- * ⛔ **Off**, and deliberately the opposite default from `DEFAULT_FLEET_FINISH`. Finishing has to do
- * *something* when a task ends, so its default is the useful one; sharing changes who can see whose
- * work, and a default that quietly widened that on upgrade would be a change nobody asked for made to
- * every project at once.
+ * ⛔ **On** (changed from `off`, 2026-09-19, after a from-scratch install showed *Fresh* by default).
+ * Reuse is the point of the product - a warm session is the cheap one - and the information boundary
+ * it crosses is already narrow: same project, same account, same model and effort, clean, room to
+ * grow. A project or a task can still say `off`, and a debate's seats always do.
  */
-export const DEFAULT_FLEET_SHARING: SessionSharing = 'off'
+export const DEFAULT_FLEET_SHARING: SessionSharing = 'on'
 
 export const SHARING_LABELS: Record<SessionSharing, string> = {
   on: 'reuse one if possible',

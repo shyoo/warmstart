@@ -108,7 +108,7 @@ describe('what a conversation resolves its two forced settings to', () => {
   it('leaves an ordinary task alone', () => {
     const work = { ...convo(), kind: 'work' } as Task
     expect(resolveFinishPolicy(work, project('commit-and-merge')).policy).toBe('commit-and-merge')
-    expect(resolveSessionSharing(work, project()).sharing).toBe('off')
+    expect(resolveSessionSharing(work, project()).sharing).toBe('on')
   })
 
   it('stands aside the moment a rung is written, because that write is the Commit button', () => {

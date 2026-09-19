@@ -3252,38 +3252,37 @@ try {
   await wait(1200)
 
   section('reusing conversations')
-  // ⛔ Sharing is an information boundary, so the check that matters most is the *default*: an
-  // install that upgrades into this build must not start sharing because it upgraded. The tier
-  // resolution itself is held by sharing.test.ts; these are that the controls exist, reach the
-  // daemon, and ship off.
+  // ⛔ Sharing is an information boundary, so the check that matters most is the *default*: a clean
+  // install ships with reuse ON (2026-09-19). The tier resolution itself is held by sharing.test.ts;
+  // these are that the controls exist, reach the daemon, and ship on.
   const sharePicker = `[...document.querySelectorAll('select')].find(
      s => s.getAttribute('aria-label') === 'Fleet session sharing')`
   check('the fleet tier has a sharing control', (await evaluate(`!!(${sharePicker})`)) === true)
   check(
-    'which ships OFF, so upgrading never widens who sees whose work',
-    (await evaluate(`${sharePicker}?.value`)) === 'off'
+    'which ships ON, so a clean install reuses warm sessions',
+    (await evaluate(`${sharePicker}?.value`)) === 'on'
   )
   check(
     'and the daemon agrees, which is the opinion that gates dispatch',
-    (await evaluate(`window.agentyard.rpc('settings.get', {}).then(s => s.sessionSharing)`)) === 'off'
+    (await evaluate(`window.agentyard.rpc('settings.get', {}).then(s => s.sessionSharing)`)) === 'on'
   )
   await evaluate(`
     (() => {
       const s = ${sharePicker};
-      s.value = 'on';
+      s.value = 'off';
       s.dispatchEvent(new Event('change', { bubbles: true }));
       return true;
     })()
   `)
   await wait(1200)
   check(
-    'turning it on reaches the daemon',
+    'turning it off reaches the daemon',
     (await evaluate(
       `window.agentyard.rpc('settings.get', {}).then(s => s.sessionSharing)`
-    )) === 'on'
+    )) === 'off'
   )
   // ⚠️ Put back, so the rest of the suite runs against the shipped default.
-  await evaluate(`window.agentyard.rpc('settings.set', { sessionSharing: 'off' })`)
+  await evaluate(`window.agentyard.rpc('settings.set', { sessionSharing: 'on' })`)
 
   // ⛔ Global settings: the two probe cadences and the fleet intervention toggles.
   //

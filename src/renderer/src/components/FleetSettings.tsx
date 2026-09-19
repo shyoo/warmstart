@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { FinishPolicy, Objective, ObjectivePreset, SessionSharing } from '@shared/tasks'
 import {
   DEFAULT_FLEET_FINISH,
+  DEFAULT_FLEET_SHARING,
   DEFAULT_OBJECTIVE,
   FINISH_LABELS,
   FINISH_ORDER,
@@ -86,7 +87,7 @@ export function FleetSettings(): React.JSX.Element {
   const modelExplorationRate = settings?.modelExplorationRate ?? 0.1
   const liveNarration = settings?.liveNarration ?? 'summary'
   const finishPolicy = settings?.finishPolicy ?? DEFAULT_FLEET_FINISH
-  const sessionSharing = settings?.sessionSharing ?? 'off'
+  const sessionSharing = settings?.sessionSharing ?? DEFAULT_FLEET_SHARING
   const probeIntervalMinutes = settings?.probeIntervalMinutes ?? 5
   const idleProbeIntervalMinutes = settings?.idleProbeIntervalMinutes ?? 20
   const objective = settings?.objective ?? DEFAULT_OBJECTIVE

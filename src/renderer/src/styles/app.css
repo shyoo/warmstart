@@ -554,7 +554,7 @@ body {
 .welcome-tour h2 { margin: var(--sp-1) 0 var(--sp-2); font-size: var(--text-title); }
 .welcome-tour > p { color: var(--color-text-dim); line-height: 1.55; }
 .welcome-kicker { color: var(--color-accent); font-size: var(--text-meta); font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
-.welcome-mockup-frame {
+.welcome-shot-frame {
   margin: var(--sp-3) 0;
   border-radius: var(--radius);
   overflow: hidden;
@@ -565,7 +565,7 @@ body {
   align-items: center;
   justify-content: center;
 }
-.welcome-mockup-svg {
+.welcome-shot {
   width: 100%;
   height: auto;
   display: block;

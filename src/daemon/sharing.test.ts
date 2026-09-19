@@ -84,11 +84,10 @@ afterAll(() => {
 })
 
 describe('what the three tiers resolve to', () => {
-  it('is off when nobody has said anything at all', () => {
-    // ⛔ The upgrade path. Every task in an existing install is `inherit`, every project has no
-    // `session.share`, and the fleet default is off — so nothing shares until somebody asks.
+  it('is on when nobody has said anything at all', () => {
+    // ⛔ The shipped default (2026-09-19): reuse, so a clean install starts warm.
     expect(sharing.resolveSessionSharing(task(), project())).toEqual({
-      sharing: 'off',
+      sharing: 'on',
       source: 'fleet'
     })
   })

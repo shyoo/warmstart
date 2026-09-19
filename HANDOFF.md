@@ -27,6 +27,12 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **A from-scratch install shared no sessions and showed mock welcome-tour images (t559,
+  2026-09-19).** `DEFAULT_FLEET_SHARING` was `off`; a clean install now ships `on` (reuse) —
+  `sharing.ts`'s gates (same project/account/model/effort, clean, room to grow) keep it narrow, and
+  debate seats still force `off`. The tour's SVG mockups are now real crops of the UI, captured into
+  `src/renderer/src/assets/welcome/*.png` by `scripts/generate-tour-assets.mjs` (reuses
+  `scripts/showcase.mjs`); regenerate after a wizard/Workers/composer change. `docs/sessions.md`, `docs/ui.md`.
 - **Quality Review opens its visible page before recalculating fleet-wide coverage (t558, 2026-09-19).** `quality.queue` validates only its usual 25 rows; exact 0/1/2+ totals come through non-stacking `quality.coverage`, while batch and the opt-in filter keep exact full-history checks. `docs/ui.md`.
 - **`/release rc` bumps patch, not minor, when it opens a new series (2026-09-19).** With no rc above
   the last final it used to jump `0.2.0 → 0.3.0-rc.1`; a minor is now something the operator asks for
@@ -153,11 +159,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   Also fixed: **"Waiting on" sat near the bottom of the status pane despite following "status" in the
   DOM**, because the `Fact` carrying it had no CSS `order` class and fell to the unstyled default.
   `.fact--waiting` now orders it directly below `.fact--status`.
-- **A freshly onboarded project could start with a dirty trunk that blocks its first landing (t506 ←
-  t505, 2026-09-17).** `.warmstart/project.json` is documented as committed, but `writeStarterConfig`
-  only wrote it — it sat untracked until a queued landing found the trunk dirty and refused to merge.
-  `createProject` now commits the scaffolding it just wrote right after writing it; an existing,
-  uncommitted config the operator wrote by hand is left alone. `projectsetup.test.ts`.
 ## Remaining work — ordered by payoff
 
 Each needs a real signed-in account, a macOS machine, release credentials, or a human product

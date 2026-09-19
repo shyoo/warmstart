@@ -30,9 +30,11 @@ to compact or carry it forward is a false saving.
 > ⚠️ On Antigravity the conversation is restored but no cache read is reported and input tokens roughly
 > double, so there it buys *context*, not a discount. See `docs/adapters.md`.
 
-**3. Sharing.** A task uses a conversation **another task** has been having. ⛔ **Off by default**,
-because this one has a cost that is not measured in tokens. It takes two forms, and the second is the
-one that will fire on most fleets:
+**3. Sharing.** A task uses a conversation **another task** has been having. ⛔ **On by default**
+(changed 2026-09-19; was `off`), because a from-scratch install otherwise starts every task cold,
+defeating the product's own point. It still has a cost that is not measured in tokens — an agent
+joining a conversation sees everything said in it — so a project or a task can turn it back off. It
+takes two forms, and the second is the one that will fire on most fleets:
 
 - **joining a live one** — the lender is parked (`awaiting_human`, say) and its session is still up;
 - **reviving a finished one** — the lender is done, its session closed, and the borrower reopens that
@@ -276,8 +278,7 @@ like a win. That is the whole failure: it produces a *wrong answer* rather than 
 
 So `openDebate` ([`src/daemon/debate.ts`](../src/daemon/debate.ts)) files every seat with
 `sessionSharing: 'off'`, unconditionally, and there is no control that changes it. ⚠️ Sharing is
-`off` at every tier today, so this is inert on this install and would become a correctness bug the
-first time somebody turned it on — which is exactly when nobody would be looking for it.
+`on` at the fleet tier by default (2026-09-19), so this override is what keeps a homogeneous debate blind.
 
 ⚠️ **A seat's *own* session across rounds is a different mechanism and is exactly what we want.**
 `warmSessionFor` tries a task's own runs first, needs no permission and discloses nothing to anybody.

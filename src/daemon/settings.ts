@@ -102,10 +102,9 @@ export const DEFAULT_SETTINGS: Settings = {
   /**
    * May a task be given a conversation another task has already been having?
    *
-   * ⛔ **Off**, and the asymmetry with `finishPolicy` above is the point. Finishing has to do
-   * *something* when a task ends, so its default is the useful one. Sharing changes who can see whose
-   * work, so switching it on for every project in an install by upgrading it would be a change nobody
-   * asked for, made everywhere at once. Turn it on per project, and per task from the detail pane.
+   * ⛔ **On** since 2026-09-19 (a from-scratch install showed *Fresh*, which defeats the warm start).
+   * The gates - same project, account, model and effort, clean, room to grow - keep the boundary
+   * narrow; turn it off per project, or per task from the detail pane.
    */
   sessionSharing: DEFAULT_FLEET_SHARING,
 
