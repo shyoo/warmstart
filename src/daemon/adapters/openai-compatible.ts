@@ -180,6 +180,17 @@ const info: AdapterInfo = {
     // ⛔ `workspace-write`, not `danger-full-access`. With no classifier and no approval callback the
     // sandbox is the only remaining boundary, and the agent works in a pooled worktree that is meant
     // to be writable and nothing else.
+    //
+    // ⚠️ **The field's other answer is to remove the sandbox, and it is a choice about where the
+    // work runs rather than a better fix.** Surveyed 2026-09-18 (t538): Untrivial-ai's
+    // agent-orchestrator maps its default permission policy straight onto
+    // `--dangerously-bypass-approvals-and-sandbox` (`agentruntime.CodexPermissionArgs`) and its
+    // app-server driver onto `"never"` / `"danger-full-access"`, on the stated grounds that its
+    // sessions "run in isolated worktrees and are expected to work without prompting" — and it
+    // spends no `--add-dir` on codex at all, because with the sandbox off there is nothing to
+    // grant. ⛔ That reasoning does not transfer here: a worktree is not isolation on a desktop OS
+    // user, which is exactly the gap `headlessAuthority` exists to name. There is no third answer
+    // in the wild — either the sandbox is off, or the grants are enumerated, which is `grants.ts`.
     defaultPermissionMode: 'workspace-write',
     // ⚠️ The one adapter with a real boundary — and `grants.ts` widens it to reach the shared
     // `.git`, which is wider than one task. A boundary that is not the whole user account is

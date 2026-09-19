@@ -150,6 +150,15 @@ export function externalGitRoots(dir: string): string[] {
  * target was never on it. ⛔ Do not read anything into the ACLs on that directory: it carries a
  * `CodexSandboxUsers` ACE and was refused anyway, so the ACE is not what decides.
  *
+ * ⭐ **t538 (2026-09-18) measured *why*, and the answer is that "access" here is two things.** A
+ * sandboxed command runs as `CodexSandboxOffline`/`CodexSandboxOnline` (`whoami` inside one), so
+ * **reading** outside the workspace is decided by an ordinary NTFS ACE — a hand-written
+ * `(OI)(CI)(RX)` for `CodexSandboxUsers` is permanent, flagless read access on every run.
+ * **Writing** is decided by the per-path *capability SID* codex records in `<CODEX_HOME>/cap_sid`,
+ * which only codex mints, and only for a root it is willing to accept: the same ACE at `(M)`,
+ * propagated to every child, was still refused. ⛔ Naming the root is therefore the whole of the
+ * write fix and an ACL is never a substitute for it. See `docs/adapters.md`.
+ *
  * ⚠️ **Depth one, deliberately.** This runs on every spawn, and a link scan of a whole workspace is a
  * walk of `node_modules` — the very directory being linked. The links that exist in practice are
  * top-level shares (`node_modules`, `.venv`, `vendor`), and one `readdir` finds all of them.

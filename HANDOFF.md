@@ -23,6 +23,18 @@ installed CLIs and fonts; `docs/testing.md` records each. Phase 3/4 (write-up, l
 channels) remains off-repo.
 
 ## Closed in this cleanup
+- **Attaching a folder to a codex task could never grant `~\.ssh`, because read and write are
+  decided by two different mechanisms (t538 ← t537, 2026-09-18).** `--add-dir C:\Users\<user>\.ssh`
+  was on three consecutive t537 runs' argv, never appeared in `<CODEX_HOME>/cap_sid` →
+  `writable_root_by_path` (39 roots codex *had* granted, `AppData\Local\*` among them) and produced
+  no audit line — codex declines that root silently, so the agent asked a person for something no
+  attachment could give it. Measured with `codex exec` and nothing on the argv: a sandboxed command
+  runs as `CodexSandboxOffline`/`Online`, so **read** is an ordinary NTFS ACE
+  (`icacls <dir> /grant "CodexSandboxUsers:(OI)(CI)(RX)"`, permanent and flagless) while **write**
+  needs the per-path capability SID only codex mints — the same ACE at `(M)` was still refused.
+  `sandbox_workspace_write.writable_roots` in the isolation root's `config.toml` mints it on every
+  run and survives `-c sandbox_workspace_write.network_access=true`. ⛔ No code change: Warmstart
+  must not write either grant on the operator's own directories. `docs/adapters.md`, `grants.ts`.
 - **A lapsed oversized session was revived instead of starting clean, and a completion prompt told sandboxed agents to fetch (t536 ← t518/t534, 2026-09-19).** Resume now starts a fresh session when the measured cache has lapsed after passing the compaction break-even; compaction remains reserved for its cheap pre-expiry window. The agent completion clause checks the checkout's target and leaves remote refresh to landing, avoiding needless SSH/grant requests. `cacheclock.ts`, `scheduler.ts`, `prompt.ts`, `docs/sessions.md`, `docs/cost-model.md`.
 - **The thread conversation input box gained the `[+]` file and folder attachment menu (t527 ← t525, 2026-09-18).**
   t525 gave question cards the task composer's `[+]` attachment menu, but left the thread's bottom compose box without
@@ -69,10 +81,6 @@ channels) remains off-repo.
   missing path and `project.relocate` points the same project id at its new directory, keeping tasks
   and history. Doctor's Projects section flags it fleet-wide too, like `isolationRootExists` for a
   worker. `projectrelocate.test.ts`, `docs/ui.md`.
-- **Project reordering no longer needs its own drag handle (t515 ← t512, 2026-09-17).** The `⠿`
-  marker before each project name ate sidebar width for no reason. `draggable` moved from a dedicated
-  `.nav-project-drag` span onto `NavItem`'s `<button>` itself — the whole row is now the drag source
-  and still fires its ordinary `onClick`. Dropped the handle's `cursor: grab`/`grabbing` rules, so dragging shows no hand cursor.
 - **Thread auto-follow no longer traps a taller right pane (t513, 2026-09-17).** Pinning begins only at the whole page's bottom and follows that bottom, never the shorter chat anchor. `docs/ui.md`.
 - **A `pull-request` task with an already-open PR could get stuck failing forever, and the retry
   button that should have fixed it disappeared after the first attempt (t509, 2026-09-17).** The
@@ -149,10 +157,6 @@ channels) remains off-repo.
   Plan & Split and Debate tables; `.composer-send` buttons no longer wrap their own label either.
   `docs/ui.md`.
 
-- **Typing a project name in the Add-a-project wizard lost focus mid-keystroke (t504, 2026-09-17).**
-  Its mount-focus effect was keyed on `onClose`, a prop `App.tsx` hands it as a fresh closure every
-  render — App re-renders often (dashboard polling), re-firing the effect and refocusing the modal
-  mid-type. Split in two: Escape still depends on `onClose`; the one-time focus now runs on mount only.
 
 ## Remaining work — ordered by payoff
 
