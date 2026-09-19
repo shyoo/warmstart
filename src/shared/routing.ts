@@ -23,8 +23,12 @@ import type { Objective } from './tasks.js'
  *
  * ⭐ **1.1** added `prepaid`, the term that prefers subscription quota that would otherwise be
  * forfeit at reset over quota paid for now. See `docs/routing.md` §3.3a.
+ *
+ * ⭐ **1.2** re-derives `prepaid` as field-normalized remaining prepaid dollars per hour to reset,
+ * so a window resetting in one hour carries 24× the expiry pressure of the same dollars resetting
+ * in 24. Same name, same weight; the meaning of `prepaid.value` changed.
  */
-export const ROUTING_MODEL_VERSION = '1.1'
+export const ROUTING_MODEL_VERSION = '1.2'
 
 /** The names of the eleven objective-derived weights, in the order the scheduler publishes them. */
 export type WeightName =

@@ -256,8 +256,8 @@ because a chart whose labels cannot be read is not a comparison, whatever its ba
 
 ⭐ **Routing Model is a paper, and is set as one** (t361; `components/RoutingModel.tsx`, `.paper` in
 `app.css`). It is the page where an operator decides whether to trust the scheduler, and a scoreboard
-invites a glance where a paper invites checking: a title (*Routing Model v1.0*, `ROUTING_MODEL_VERSION`
-in `@shared/routing.ts`), a summary, a contents strip, and five numbered sections — §1 the
+invites a glance where a paper invites checking: a title (*Routing Model v{ROUTING_MODEL_VERSION}*, the constant in
+`@shared/routing.ts`), a summary, a contents strip, and five numbered sections — §1 the
 introduction, motivation and the model itself, §2–§4 one per axis, §5 models — in a single measured
 serif column with captioned, booktabs-ruled tables and the arithmetic typeset by **KaTeX**
 (`components/Math.tsx`: `<M>` inline, `<Eq>` display with a caller-set number). ⭐ **The setting

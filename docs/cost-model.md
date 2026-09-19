@@ -1545,6 +1545,11 @@ usd = monthly_usd × pool_share × (billing_window.days / 30.4375) × (percent /
 full window**, and 5% of a week is **$0.230**. That is the operator's own "$5 a week, or slightly
 less if we have 29+ days per month", made exact.
 
+⭐ **Routing reuses this formula to value remaining prepaid allowance** (t552, Routing Model v1.2,
+`docs/routing.md` §3.3a): a candidate's expiry pressure is the unspent share's dollars per hour to
+reset, priced through `priceOfWindowUsage` with the window's own pool share — never re-derived in
+scoring.
+
 ⛔ **`percent` is the account's own window movement, not a token count.** §5 of this document is
 explicit that the window delta and the metered transcript total are never reconciled — the window
 measures *everything* the account spent, including the auto-mode classifier and title generation,

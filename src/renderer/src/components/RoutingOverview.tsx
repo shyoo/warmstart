@@ -53,7 +53,7 @@ const TERM_NOTES: Record<WeightName, { range: string; meaning: string }> = {
   projectSwitch: { range: '0 or 1', meaning: 'the reusable conversation belongs to another project' },
   quotaRisk: {
     range: '0 … 1',
-    meaning: 'the model’s quota pool is at the 92 % high-water mark (0 below 50 %); skips a billing window `prepaid` found genuinely forfeiting; 1 outright on a vendor rate-limit warning'
+    meaning: 'the model’s quota pool is at the 92 % high-water mark (0 below 50 %); skips billing windows behind their spend schedule; 1 outright on a vendor rate-limit warning'
   },
   cold: { range: '0 or 1', meaning: 'no conversation to reuse — the dispatch pays a full cache write' },
   capabilityFit: { range: '0 … 1', meaning: 'every capability the task declared is present (the share, below 1)' },
@@ -72,7 +72,7 @@ const TERM_NOTES: Record<WeightName, { range: string; meaning: string }> = {
   prepaid: {
     range: '−1 … +1',
     meaning:
-      '+1 subscription quota that would otherwise be forfeit at reset, +0.25 subscription on pace, 0 local/free/unknown, −1 money paid now (usage credits or an API rate)'
+      '+1 the fastest expiry pressure in the field, in remaining prepaid dollars per hour to reset; 0 local, free, unknown, or nothing measurable (0 is unmeasurable here, not “safe”); −1 money paid now (usage credits or an API rate)'
   }
 }
 
@@ -334,6 +334,14 @@ export function RoutingOverview(): React.JSX.Element {
           measured at all scores 0 with its absence printed beside it, never a guess. And priorities
           are configured per project: the objective is the only developer input required, while everything
           else is measured from live state.
+        </p>
+        <p className="panel-sub">
+          <strong>Expiry pressure, worked.</strong> A <code>prepaid</code> value is remaining
+          subscription dollars per hour to reset, divided by one denominator shared across the
+          field. Two Claude Pro workers each holding $3.68 of weekly allowance, one resetting in
+          24 hours ($0.15/h) and one in 1 hour ($3.68/h), score 1/24 and 1 — the one-hour
+          candidate carries exactly 24× the expiry pressure, and wins when all other terms are
+          equal. The total score is not 24×: cache, context, fitness, pace and price still count.
         </p>
         <p className="dim">
           <code>cacheWarmth</code> and <code>contextHeld</code> are not the same term twice.{' '}

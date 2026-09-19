@@ -914,51 +914,89 @@ describe('quota as a slope rather than a switch', () => {
 
   /**
    * `windowRisk` no longer has a reset-horizon factor — the t83 arithmetic below used to live here,
-   * scaling risk down for a window about to reset. That preference is now `forfeitShare`'s job
-   * entirely, and it is a separate term (`prepaid`) rather than a discount folded into this one,
-   * which is why `windowRisk` can no longer exceed its documented 0..1 range.
+   * scaling risk down for a window about to reset. That preference is now the `prepaid` term's job
+   * entirely (remaining prepaid dollars per hour, field-normalized), and it is a separate term
+   * rather than a discount folded into this one, which is why `windowRisk` can no longer exceed
+   * its documented 0..1 range.
    */
-  describe('forfeitShare: how much of a billing window is projected to go unspent at reset', () => {
-    it('matches the ClaudeFirst reference number: 90%, resets in 10h, 7 days', () => {
+  /**
+   * Routing Model v1.2 (t552): the same prepaid dollars resetting in 1h carry exactly 24× the
+   * expiry pressure of those dollars resetting in 24h. Both candidates below hold 80% of a
+   * Claude Pro weekly window unspent ($3.6797); the only difference is the reset clock.
+   */
+  describe('prepaid expiry pressure through chooseTarget', () => {
+    const seedWeekly = (workerId: string, percent: number, resetInHours: number, now: number) => {
+      db.db()
+        .prepare(
+          `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+           values (?,?,?,?,?,?,?)`
+        )
+        .run(workerId, 'weekly', 'Claude 7d', percent, now + resetInHours * 3600 * 1000, 'cli', now)
+    }
+
+    const prepaidOf = (choice: WorkerChoice, workerId: string) =>
+      choice.scored?.find((c) => c.workerId === workerId)?.terms.find((t) => t.name === 'prepaid')
+
+    it('scores 1h versus 24h at exactly 24×, and the 1h candidate wins on arithmetic alone', () => {
+      db.db().prepare('update workers set enabled = 0').run()
       const now = Date.now()
-      const fs = scoring.forfeitShare(90, now + 10 * 3600 * 1000, 7, now)
-      expect(fs.forfeit).toBeCloseTo(0.043038, 3)
-      expect(fs.value).toBeCloseTo(0.4304, 3)
+      const day = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeDay', enabled: true })
+      const hour = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeHour', enabled: true })
+      seedWeekly(day.id, 20, 24, now)
+      seedWeekly(hour.id, 20, 1, now)
+
+      const task = tasks.createTask({ title: 'expiry pressure A/B' })
+      const choice = scoring.chooseTarget(tasks.requireTask(task.id))
+
+      expect(choice.worker?.id).toBe(hour.id)
+      expect(choice.routedBy).toBe('score')
+      expect(controller.hasPendingConsult('route', task.id)).toBe(false)
+
+      const a = prepaidOf(choice, day.id)
+      const b = prepaidOf(choice, hour.id)
+      expect(b?.value).toBeCloseTo(1, 10)
+      // ⚠️ Precision 3/2, not 10/8: the seed clock and the scoring clock are milliseconds apart,
+      // and an hour-denominator amplifies that drift to ~4e-5 on the ratio. Exactness at one
+      // shared `now` is pinned in `prepaid.test.ts`; here the behavior is what matters.
+      expect(a?.value).toBeCloseTo(1 / 24, 3)
+      expect(b!.value / a!.value).toBeCloseTo(24, 2)
     })
 
-    it('matches the idle mid-week reference number: 10% used, half the window left', () => {
+    it('holds the 24× ratio at 80% used, independently of the leftover wording', () => {
+      db.db().prepare('update workers set enabled = 0').run()
       const now = Date.now()
-      const fs = scoring.forfeitShare(10, now + 3.5 * 24 * 3600 * 1000, 7, now)
-      expect(fs.forfeit).toBeCloseTo(0.8, 3)
-      expect(fs.value).toBeCloseTo(0.889, 3)
+      const day = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeDay80', enabled: true })
+      const hour = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeHour80', enabled: true })
+      seedWeekly(day.id, 80, 24, now)
+      seedWeekly(hour.id, 80, 1, now)
+
+      const task = tasks.createTask({ title: 'expiry pressure A/B at 80% used' })
+      const choice = scoring.chooseTarget(tasks.requireTask(task.id))
+
+      expect(choice.worker?.id).toBe(hour.id)
+      const a = prepaidOf(choice, day.id)
+      const b = prepaidOf(choice, hour.id)
+      expect(b?.value).toBeCloseTo(1, 10)
+      expect(b!.value / a!.value).toBeCloseTo(24, 2)
     })
 
-    it('matches the behind-pace reference number: 97% used, resets in 33h — nothing forfeit', () => {
+    it('stores the dollars, hours, raw pressure, denominator and value that chose the winner', () => {
+      db.db().prepare('update workers set enabled = 0').run()
       const now = Date.now()
-      const fs = scoring.forfeitShare(97, now + 33 * 3600 * 1000, 7, now)
-      expect(fs.forfeit).toBe(0)
-      expect(fs.value).toBe(0)
-    })
+      const day = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeDayStored', enabled: true })
+      const hour = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeHourStored', enabled: true })
+      seedWeekly(day.id, 20, 24, now)
+      seedWeekly(hour.id, 20, 1, now)
 
-    it('reads pace as unmeasurable under 6h into a 7-day window', () => {
-      const now = Date.now()
-      // 5h elapsed of 7 days (168h): well inside the 6h (1/28) guard.
-      const fs = scoring.forfeitShare(50, now + (168 - 5) * 3600 * 1000, 7, now)
-      expect(fs.value).toBe(0)
-      expect(fs.basis).toContain('pace unmeasurable')
-    })
-
-    it('scores 0 with no trusted reset time — resetsAt null or already past', () => {
-      const now = Date.now()
-      expect(scoring.forfeitShare(90, null, 7, now).value).toBe(0)
-      expect(scoring.forfeitShare(90, now - 1000, 7, now).value).toBe(0)
-    })
-
-    it('scores 0 where nothing is left unspent to forfeit', () => {
-      const now = Date.now()
-      const fs = scoring.forfeitShare(100, now + 10 * 3600 * 1000, 7, now)
-      expect(fs.value).toBe(0)
-      expect(fs.forfeit).toBe(0)
+      const task = tasks.createTask({ title: 'stored prepaid evidence' })
+      const choice = scoring.chooseTarget(tasks.requireTask(task.id))
+      const b = prepaidOf(choice, hour.id)?.basis ?? ''
+      expect(b).toContain('$3.680 left')
+      expect(b).toContain('1.0h to reset')
+      expect(b).toContain('$3.680/h')
+      expect(b).toMatch(/field denominator \$3\.680\/h/)
+      expect(b).toContain('observed')
+      expect(b).toContain('prepaid 1.00')
     })
   })
 
@@ -998,14 +1036,15 @@ describe('quota as a slope rather than a switch', () => {
     const choice = scoring.chooseTarget(tasks.requireTask(task.id))
     expect(choice.worker?.id).toBe(agy.id)
 
-    // ⭐ The `prepaid` term is what does the preferring now: Antigravity's weekly window is genuinely
-    // forfeiting (93% used, resets in 10h), so `quotaRisk` skips it outright rather than merely
-    // discounting it, and `prepaid` reads the forfeit share instead.
+    // ⭐ The `prepaid` term is what does the preferring now: Antigravity's weekly window is
+    // behind its spend schedule (93% used, resets in 10h), so `quotaRisk` skips it outright rather
+    // than merely discounting it, and `prepaid` reads its expiry pressure instead — the fastest in
+    // this two-candidate field, hence 1.
     const terms = choice.breakdown?.terms ?? []
     const quotaRisk = terms.find((t) => t.name === 'quotaRisk')
     const prepaid = terms.find((t) => t.name === 'prepaid')
     expect(quotaRisk?.value).toBe(0)
-    expect(prepaid?.value).toBeCloseTo(0.25 + 0.75 * 0.15918, 3)
+    expect(prepaid?.value).toBeCloseTo(1, 10)
   })
 
   it('prefers a subscription account whose 7d window would otherwise be forfeit at reset over one still on pace', () => {
@@ -1014,7 +1053,8 @@ describe('quota as a slope rather than a switch', () => {
     const forfeiting = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst', enabled: true })
     const onPace = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFourth', enabled: true })
 
-    // ClaudeFirst: 30% 5h, 90% 7d resetting in 10h — the reference scenario, forfeitValue ≈ 0.4304.
+    // ClaudeFirst: 30% 5h, 90% 7d resetting in 10h — behind its spend schedule, and the fastest
+    // expiry pressure in this two-candidate field.
     db.db()
       .prepare(
         `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
@@ -1046,7 +1086,7 @@ describe('quota as a slope rather than a switch', () => {
     const quotaRisk = terms.find((t) => t.name === 'quotaRisk')
     const prepaid = terms.find((t) => t.name === 'prepaid')
     expect(quotaRisk?.value).toBe(0)
-    expect(prepaid?.value).toBeCloseTo(0.5728, 3)
+    expect(prepaid?.value).toBeCloseTo(1, 10)
   })
 
   it('does not let a fresh allowed_warning re-penalise a forfeiting billing window, but a rejected status still saturates', () => {
@@ -1091,7 +1131,7 @@ describe('quota as a slope rather than a switch', () => {
     expect(quotaRiskRejected?.value).toBe(1)
   })
 
-  it('scores prepaid 0 on a local worker (no subscription to forfeit) and >= 0.25 on a subscription one', () => {
+  it('scores prepaid 0 on a local worker and on a subscription worker with no trusted reading', () => {
     db.db().prepare('update workers set enabled = 0').run()
     const local = workers.createWorker({ adapterId: 'local-llm', label: 'qwen-prepaid', enabled: true })
     const claude = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudePrepaid', enabled: true })
@@ -1106,7 +1146,10 @@ describe('quota as a slope rather than a switch', () => {
       tasks.createTask({ title: 'subscription prepaid check', constraints: { workerId: claude.id } })
     )
     const claudePrepaid = claudeChoice.breakdown?.terms.find((t) => t.name === 'prepaid')
-    expect(claudePrepaid?.value).toBeGreaterThanOrEqual(0.25)
+    // No trusted billing-window reading and no stale probe behind the gap: unknown scores 0, and
+    // the 0.25 standing guess is gone with v1.2.
+    expect(claudePrepaid?.value).toBe(0)
+    expect(claudePrepaid?.basis).toContain('no trusted billing-window reading')
   })
 
   /**
@@ -1114,8 +1157,8 @@ describe('quota as a slope rather than a switch', () => {
    * Code blanks its `/usage` panel to "Currently unavailable" until a window's first turn completes
    * (measured over 11 days of its own `quota_samples`, `docs/routing.md` §3.3a), and every probe in
    * that state used to leave `trustedWindows` empty. `prepaid` then had no billing window to read and
-   * parked at its 0.25 standing value indefinitely — including through the exact idle-but-quota-rich
-   * stretch it exists to reward. `inferredFreshWindows` now reads the last *trusted* reading's
+   * scored 0 indefinitely — including through the exact idle-but-quota-rich stretch it exists to
+   * reward. `inferredFreshWindows` now reads the last *trusted* reading's
    * already-passed `resetsAt` and synthesizes a 0%-used window at the projected next reset, so
    * `prepaid` scores it like any other fresh window instead of like no window at all.
    *
@@ -1125,7 +1168,7 @@ describe('quota as a slope rather than a switch', () => {
    * `seedProbeCapable` note), which would refuse before scoring runs at all. Proving the mechanism on
    * an adapter this file already dispatches to successfully is the more honest test of it.
    */
-  it('infers a fresh 0%-used window from a vendor-silent probe, instead of parking prepaid at its standing value', () => {
+  it('infers a fresh 0%-used window from a vendor-silent probe, instead of scoring prepaid 0 for no window', () => {
     db.db().prepare('update workers set enabled = 0').run()
     const now = Date.now()
     const silent = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeSilent', enabled: true })
@@ -1167,10 +1210,13 @@ describe('quota as a slope rather than a switch', () => {
     const silentPrepaid = silentChoice.breakdown?.terms.find((t) => t.name === 'prepaid')
     const ordinaryPrepaid = ordinaryChoice.breakdown?.terms.find((t) => t.name === 'prepaid')
 
-    // 3 days unspent out of 7 projects a full forfeit at the inferred reset: 0.25 + 0.75×1 = 1.0.
+    // 3 days unspent out of 7 at the inferred reset: the only pressure in this one-candidate
+    // field, so it normalizes to 1.0.
     expect(silentPrepaid?.value).toBeCloseTo(1.0, 3)
-    // An ordinary failure explains nothing about the window, so it still gets only the standing value.
-    expect(ordinaryPrepaid?.value).toBe(0.25)
+    expect(silentPrepaid?.basis).toContain('inferred, reset projected')
+    // An ordinary failure explains nothing about the window, and there is no standing value any
+    // more: unknown scores 0.
+    expect(ordinaryPrepaid?.value).toBe(0)
   })
 
   it('refuses dispatch to a worker whose 7d window is >= 92% (t84 scenario)', () => {

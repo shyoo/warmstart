@@ -50,6 +50,7 @@ import {
 } from './objective.js'
 import { reserveState } from './reserve.js'
 import { costModel, type CostModel } from './costmodel.js'
+import { normalizePrepaidField, prepaidEvidence, type PrepaidTerm } from './prepaid.js'
 import { db } from './db.js'
 import type { RoutingBasis } from '@shared/routing.js'
 import type { WorkerChoice, WorkerRefusal } from './scheduler.js'
@@ -248,6 +249,10 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
      * spent now, never a subscription's own prepaid allowance. See `prepaid`'s pay-now case (a).
      */
     payNowBlocking: boolean
+    /** Ids among `trustedWindows` synthesized by `inferredFreshWindows` — projected, not read. */
+    inferredWindowIds: string[]
+    /** The probe reading behind an empty `trustedWindows` is stale rather than absent. */
+    staleEvidence: boolean
   }
   const rawCandidates: RawCandidate[] = []
 
@@ -418,6 +423,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       // pay-now case (a) in `prepaidTermFor`. Set only inside the `onCredits` branch below, never by
       // the override branch, which spends a turn the vendor would have served rather than credits.
       let payNowBlocking = false
+      let inferredWindowIds: string[] = []
       if (quota && quota.windows.length > 0) {
         const verdict = poolVerdict(windowsForPool(quota.windows, pool))
         if (verdict.turnedOver) quotaUnverified = true
@@ -482,6 +488,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       } else {
         quotaUnverified = true
         trustedWindows = inferredFreshWindows(worker, pool, quota)
+        inferredWindowIds = trustedWindows.map((w) => w.id)
       }
 
       const session = reuse
@@ -495,7 +502,9 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
         trustedWindows,
         estimate,
         pool,
-        payNowBlocking
+        payNowBlocking,
+        inferredWindowIds,
+        staleEvidence: (quota?.stale ?? false) && trustedWindows.length === 0
       })
     }
   }
@@ -535,8 +544,33 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     }
   }
 
+  // Field-wide prepaid normalization: one raw expiry-pressure record per candidate, one
+  // denominator shared by the field — the same point where the cheapest price is calculated.
+  // Scoring reads the finalized term; nothing recomputes it per candidate.
+  const prepaidNow = Date.now()
+  const prepaidTerms = normalizePrepaidField(
+    rawCandidates.map((c) => {
+      let cm: CostModel | null
+      try {
+        cm = costModel(adapter(c.worker.adapterId).info.policy.costModelId)
+      } catch {
+        cm = null
+      }
+      return prepaidEvidence({
+        costModel: cm,
+        subscriptionType: c.worker.identity?.subscriptionType ?? null,
+        pool: c.pool,
+        trustedWindows: c.trustedWindows,
+        inferredIds: new Set(c.inferredWindowIds),
+        staleEvidence: c.staleEvidence,
+        payNowBlocking: c.payNowBlocking,
+        now: prepaidNow
+      })
+    })
+  )
+
   const candidates: WorkerChoice[] = []
-  for (const c of rawCandidates) {
+  for (const [index, c] of rawCandidates.entries()) {
     // Fitness term: sufficiency bar
     const required = { low: 0.35, medium: 0.55, high: 0.75 }[complexity.band]
     const fit = modelRouting ? fitnessFor(c.worker.adapterId, c.model, qualityKeys) : null
@@ -594,7 +628,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       pace,
       c.model,
       c.pool,
-      c.payNowBlocking,
+      prepaidTerms[index] as PrepaidTerm,
       { value: fitnessValue, basis: fitnessBasis },
       { value: priceValue, basis: priceBasis }
     )
@@ -1068,7 +1102,7 @@ const VALUE_MEANS: Record<string, string> = {
   contextHeld: '1 = a conversation already holds this task, live or reopenable',
   contextRot: '1 = the context window is full',
   projectSwitch: '1 = the session is on another project',
-  quotaRisk: `1 = at ${WINDOW_HIGH_WATER}% of its window (0 below ${QUOTA_RISK_FLOOR}%; skips a billing window prepaid found forfeiting)`,
+  quotaRisk: `1 = at ${WINDOW_HIGH_WATER}% of its window (0 below ${QUOTA_RISK_FLOOR}%; skips billing windows behind their spend schedule)`,
   cold: '1 = no conversation to reuse, live or reopenable',
   capabilityFit: '1 = every capability the task needs is present',
   // ⚠️ The only signed value in the table, and the only one whose 0 is a *middle* rather than a
@@ -1079,7 +1113,7 @@ const VALUE_MEANS: Record<string, string> = {
   // ⚠️ The other signed value in the table, and its 0 is not "unmeasured" but a real middle: no
   // prepaid allowance to lose (local/free) and no bill to avoid (unknown billing).
   prepaid:
-    '+1 = subscription allowance that would otherwise be forfeit at reset, +0.25 = subscription on pace, 0 = local/free/unknown, -1 = paid now (credits or API rate)',
+    '+1 = the fastest expiry pressure in the field (remaining prepaid $/h to reset), 0 = local/free/unknown or nothing measurable, -1 = paid now (credits or API rate)',
   unproven: '1.5 max = never probed and never worked'
 }
 
@@ -1148,168 +1182,6 @@ function warmthDenominatorFor(session: Session | null): number {
   }
 }
 
-/**
- * Under this much elapsed time in a billing window, a percentage reflects sampling noise, not pace.
- *
- * ⛔ 1/28 of a week is 6 hours. A window that opened 20 minutes ago cannot say anything honest about
- * where it will land at reset — the pace projection would be dividing by a `1 - f` close to 1 on
- * almost no signal, so the whole term stands down to its 0.25 standing value instead of guessing.
- */
-const FORFEIT_PACE_MIN_ELAPSED_FRACTION = 1 / 28
-
-/**
- * How much of a subscription billing window's still-unspent share is projected to go unspent at
- * reset, at that window's own average pace so far.
- *
- * ⭐ **The forfeit measure the operator chose: a pace projection, not a guess about future usage.**
- * `f` is the share of the window's *time* still left; `u` is the share of it still *unspent*. Run at
- * the window's own average rate for the rest of its life (`f × (1 − u) / (1 − f)` more will be
- * spent), whatever is left over after that projected spend is what the window forfeits at reset.
- *
- * Exported for its own tests: constructing a real subscription window through the whole scorer to
- * hit an exact percent and reset time would test the seeding, not the arithmetic.
- */
-export function forfeitShare(
-  percent: number,
-  resetsAt: number | null,
-  days: number,
-  now = Date.now()
-): { value: number; forfeit: number; basis: string } {
-  if (!resetsAt || resetsAt <= now) {
-    return { value: 0, forfeit: 0, basis: 'no trusted reset time on this billing window' }
-  }
-  const durationMs = days * 24 * 3600 * 1000
-  const f = Math.max(0, Math.min(1, (resetsAt - now) / durationMs))
-  if (1 - f < FORFEIT_PACE_MIN_ELAPSED_FRACTION) {
-    return { value: 0, forfeit: 0, basis: 'window just opened; pace unmeasurable' }
-  }
-  const u = Math.max(0, Math.min(1, (100 - percent) / 100))
-  if (u <= 0) {
-    return { value: 0, forfeit: 0, basis: 'nothing left unspent to forfeit' }
-  }
-  const projectedSpend = (f * (1 - u)) / (1 - f)
-  const forfeit = Math.max(0, u - projectedSpend)
-  const value = forfeit / u
-  const basis =
-    `${Math.round(u * 100)}% of the window is unspent; at its own pace so far it projects to spend ` +
-    `${Math.round(Math.min(1, projectedSpend) * 100)}% more before reset, leaving ` +
-    `${Math.round(value * 100)}% of that remainder (${Math.round(forfeit * 100)}% of the window) forfeit`
-  return { value, forfeit, basis }
-}
-
-/** What `prepaidTermFor` found for one candidate: the term's value, its basis, and, only when a
- * subscription window is genuinely about to forfeit, which window `quotaRisk` should skip. */
-interface PrepaidTerm {
-  value: number
-  basis: string
-  forfeitWindow: QuotaWindow | null
-  /** What `quotaRisk` should say when it skips `forfeitWindow`. Empty unless `forfeitWindow` is set. */
-  skipNote: string
-}
-
-/**
- * The `prepaid` term: sunk cost (subscription) versus marginal cost (usage credits, an API rate),
- * read from the billing class and, for a subscription, from how much of its window would otherwise
- * be forfeit at reset. See `docs/routing.md` §3.3a for the classification and the worked numbers.
- *
- * ⛔ **Always evaluated, never behind `modelRoutingActive()`.** `fitness` and `price` compare
- * *models*, and are inert until an operator opts one in; this term reads *quota that already exists*
- * regardless of model choice, so there is no model comparison for the gate to guard against.
- */
-function prepaidTermFor(
-  worker: Worker,
-  pool: string | null,
-  trustedWindows: QuotaWindow[],
-  payNowBlocking: boolean,
-  now: number
-): PrepaidTerm {
-  if (payNowBlocking) {
-    return {
-      value: -1,
-      basis: 'dispatching past a blocking window on usage credits — real money, spent now',
-      forfeitWindow: null,
-      skipNote: ''
-    }
-  }
-
-  let cm: CostModel
-  try {
-    cm = costModel(adapter(worker.adapterId).info.policy.costModelId)
-  } catch {
-    return { value: 0, basis: 'billing is unknown, so this scores 0', forfeitWindow: null, skipNote: '' }
-  }
-
-  if (!cm.hasPlans()) {
-    return {
-      value: 0,
-      basis: 'billing is unknown (no plans declared), so this scores 0',
-      forfeitWindow: null,
-      skipNote: ''
-    }
-  }
-
-  if (cm.plansPriced() === false) {
-    return { value: 0, basis: 'no prepaid allowance (local / free plan)', forfeitWindow: null, skipNote: '' }
-  }
-
-  const plan = cm.resolvePlan({
-    subscriptionType: worker.identity?.subscriptionType ?? null,
-    windowIds: trustedWindows.map((w) => w.id)
-  })
-  if (plan && (plan.priced === false || plan.monthlyUsd === 0)) {
-    return { value: 0, basis: 'no prepaid allowance (local / free plan)', forfeitWindow: null, skipNote: '' }
-  }
-
-  if (!cm.hasBillingWindow()) {
-    return {
-      value: -1,
-      basis: 'money paid now (priced, no subscription window)',
-      forfeitWindow: null,
-      skipNote: ''
-    }
-  }
-
-  // Subscription: 0.25 standing + 0.75 × how much of this billing window's own pace projects to
-  // forfeit at reset. Several billing windows can match (a pooled provider); the largest wins.
-  const billing = cm.billingWindowsFor(
-    trustedWindows.map((w) => w.id),
-    pool
-  )
-  let best: { fs: ReturnType<typeof forfeitShare>; window: QuotaWindow } | null = null
-  for (const ref of billing) {
-    const win = trustedWindows.find((w) => w.id === ref.id)
-    if (!win) continue
-    const fs = forfeitShare(win.percent, win.resetsAt, ref.days, now)
-    if (!best || fs.value > best.fs.value) best = { fs, window: win }
-  }
-  if (!best) {
-    return {
-      value: 0.25,
-      basis: 'subscription, standing value only — no trusted reading of its billing window',
-      forfeitWindow: null,
-      skipNote: ''
-    }
-  }
-  const value = 0.25 + 0.75 * best.fs.value
-  const label = best.window.label ?? best.window.id
-  const p = Math.round(best.window.percent)
-  const resetInfo =
-    best.window.resetsAt && best.window.resetsAt > now
-      ? `, resets in ${formatResetDuration(best.window.resetsAt - now)}`
-      : ''
-  return {
-    value,
-    forfeitWindow: best.fs.forfeit > 0 ? best.window : null,
-    skipNote:
-      best.fs.forfeit > 0
-        ? `projected to reset with ${Math.round(best.fs.value * 100)}% of its remainder unspent`
-        : '',
-    basis:
-      `${label} ${p}%${resetInfo}: ${best.fs.basis}; prepaid ${value.toFixed(2)} ` +
-      `(0.25 standing + 0.75×${best.fs.value.toFixed(2)})`
-  }
-}
-
 function scoreCandidate(
   task: Task,
   worker: Worker,
@@ -1335,8 +1207,12 @@ function scoreCandidate(
   paceModel: string | null,
   /** The quota pool this (worker, model) pair draws on. See `poolFor`. */
   pool: string | null,
-  /** Is this candidate dispatching past a blocking window on usage credits? See `prepaidTermFor`. */
-  payNowBlocking: boolean,
+  /**
+   * This candidate's finalized `prepaid` term — computed field-wide in `chooseTarget`, never here.
+   * A second implementation of the arithmetic beside the ordering would look authoritative and
+   * drift from it.
+   */
+  prepaid: PrepaidTerm,
   fitnessTerm: { value: number; basis: string },
   priceTerm: { value: number; basis: string }
 ): ScoreBreakdown {
@@ -1378,21 +1254,22 @@ function scoreCandidate(
   const reserve = reserveState(worker.id)
   const rate = freshRateLimit(worker.id)
 
-  // ⛔ **Computed before `quotaRisk`, on purpose.** `prepaid` decides which billing window (if any)
-  // `quotaRisk` should skip, and whether a fresh but merely cautionary vendor status should still
-  // saturate it — both questions `quotaRisk` cannot answer about itself.
-  const prepaid = prepaidTermFor(worker, pool, trustedWindows, payNowBlocking, now)
+  // ⛔ **Read before `quotaRisk`, on purpose.** `prepaid` decides which billing windows (if any)
+  // are behind their spend schedule and `quotaRisk` should skip, and whether a fresh but merely
+  // cautionary vendor status should still saturate it — both questions `quotaRisk` cannot answer
+  // about itself.
+  const behindSchedule = new Set(prepaid.behindScheduleWindowIds)
 
   // ⛔ **Two sources, and the worse one wins.** `quotaRiskOf` is the vendor's own word — an
   // `at_risk` reserve or a live status that is no longer `allowed` — and it saturates the term
   // outright, *unless* the only fresh evidence is a non-session `allowed_warning` on a window
-  // `prepaid` has already told us is forfeiting: that warning is exactly what a subscription window
+  // `prepaid` has already told us is behind schedule: that warning is exactly what a subscription window
   // about to reset with money unspent on it would carry, and re-penalising it here would restore the
   // `-0.86` penalty `prepaid` exists to undo. A `rejected` status, a session-window warning, or an
   // `at_risk` reserve still saturates — none of those are explained by a window resetting soon.
   let evidence = quotaRiskOf(worker.id)
   if (
-    prepaid.forfeitWindow &&
+    behindSchedule.size > 0 &&
     evidence === 1 &&
     reserve.verdict !== 'at_risk' &&
     rate &&
@@ -1402,12 +1279,10 @@ function scoreCandidate(
     evidence = 0
   }
 
-  // ⛔ Every trusted window except the one `prepaid` found genuinely forfeiting — that one is skipped
-  // outright below, not discounted: it is about to reset with money already spent sitting unused,
-  // which is a reason to prefer it, not a risk to price twice in the opposite direction.
-  const consideredWindows = trustedWindows.filter(
-    (win) => !prepaid.forfeitWindow || win.id !== prepaid.forfeitWindow.id
-  )
+  // ⛔ Every trusted window except the ones `prepaid` found behind their spend schedule — those are
+  // skipped outright below, not discounted: resetting soon with money unspent is a reason to prefer
+  // them, not a risk to price twice in the opposite direction.
+  const consideredWindows = trustedWindows.filter((win) => !behindSchedule.has(win.id))
 
   let maxWindowRisk = 0
   let worstWindow: QuotaWindow | null = null
@@ -1436,16 +1311,21 @@ function scoreCandidate(
       (evidence > maxWindowRisk ? `. Overridden to 1.0: vendor status ${rate?.status ?? reserve.verdict}` : '')
   } else if (consideredWindows.length > 0) {
     quotaBasis = `all windows below ${QUOTA_RISK_FLOOR}% (${consideredWindows.map((win) => `${win.label ?? win.id} ${Math.round(win.percent)}%`).join(', ')})`
-  } else if (prepaid.forfeitWindow) {
-    quotaBasis = 'no other trusted window: the only reading is the forfeiting billing window, skipped below'
+  } else if (behindSchedule.size > 0) {
+    quotaBasis = 'no other trusted window: the only readings are billing windows behind their spend schedule, skipped below'
   } else {
     quotaBasis =
       `no quota reading this fleet trusts (reserve verdict ${reserve.verdict})` +
       `${rate ? `, vendor status ${rate.status}` : ''} — unknown scores 0, never a guess`
   }
-  if (prepaid.forfeitWindow) {
-    const win = prepaid.forfeitWindow
-    quotaBasis += `; ${win.label ?? win.id} ${Math.round(win.percent)}% skipped: ${prepaid.skipNote}`
+  if (behindSchedule.size > 0) {
+    const skipped = [...behindSchedule]
+      .map((id) => {
+        const win = trustedWindows.find((w) => w.id === id)
+        return win ? `${win.label ?? id} ${Math.round(win.percent)}%` : id
+      })
+      .join(', ')
+    quotaBasis += `; skipped as behind schedule: ${skipped} (${prepaid.skipNote})`
   }
 
   const needs = task.constraints.needs ?? []

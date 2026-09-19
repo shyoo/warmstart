@@ -20,10 +20,9 @@ superseding `v0.2.0-rc.1` (`c42ae06`): it adds t536–t549 and migration 77. ⏭
 regression below: six commits had been pushed together, and `test:ui` was not run on them first.
 Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
-**Routing Model v1.1 does not preserve expiry urgency (t552, measured 2026-09-19).** With the same
-Claude Pro allowance left, its current `prepaid` signal is only 1.03× larger at a 1h reset than at
-24h, not 24×. ⏭ The implementation-ready v1.2 design is
-[`transient_docs/routing_expiry_sensitivity_2026-09-19.md`](transient_docs/routing_expiry_sensitivity_2026-09-19.md).
+**Routing Model v1.2 preserves expiry urgency (t552, 2026-09-19).** `prepaid` is field-normalized
+remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allowance scores 1/24 at a
+24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
 - **The Workers card layout labelled every field after Role one place late (t545 → rc.2, 2026-09-19).**
