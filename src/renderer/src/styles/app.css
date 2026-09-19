@@ -983,8 +983,8 @@ body {
 }
 
 /*
- * `1 / 2 running` at the right end of the divider: slots in use against Max parallel instances.
- * ⚠️ Ordered after the line, so the rule reads `sessions ──── 1 / 2 running`; the words for it are
+ * `1 / 2 in use` at the right end of the divider: slots in use against Max parallel instances.
+ * ⚠️ Ordered after the line, so the rule reads `sessions ──── 1 / 2 in use`; the words for it are
  * the tooltip's (`instanceUse`). Amber once every slot is taken — the account can start nothing new.
  */
 .wcard-instances {

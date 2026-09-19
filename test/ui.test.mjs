@@ -3132,7 +3132,7 @@ try {
   await evaluate(`${densityBtn}?.click()`)
   await wait(300)
   const wideInstances = await evaluate(instancesShown)
-  check('a wide card says N / M running on its sessions divider', /^\d+ \/ \d+ running$/i.test(wideInstances), wideInstances)
+  check('a wide card says N / M in use on its sessions divider', /^\d+ \/ \d+ in use$/i.test(wideInstances), wideInstances)
   check(
     'the instance count says what it counts on hover',
     /parallel instances? in use/.test(await evaluate(`document.querySelector('.wcard-instances')?.title ?? ''`))

@@ -873,8 +873,8 @@ whose entire design is to be invisible.
   tells the rows apart: Antigravity meters two pools on one account, and `Claude/GPT 5h` beside
   `Gemini 5h` shortened would draw two bars claiming to be the same window. The full label is on
   every row's tooltip in both cases.
-- ⛔ **The sessions divider counts slots, not sessions (t549, 2026-09-19).** Every worker card draws
-  `sessions ──── 1 / 2 running` (narrow: `──── 1 / 2 ────`): slots in use against *Max parallel
+- ⛔ **The sessions divider counts slots, not sessions (t549, 2026-09-19; word fixed t560).**
+  Every worker card draws `sessions ──── 1 / 2 in use` (narrow: `──── 1 / 2 ────`): slots in use against *Max parallel
   instances* — open `work` sessions, a warm idle one included, plus `reservedSlots` the daemon serves
   from `retainedReservations()` for tasks holding a slot with no live process. That is the same
   arithmetic as `slotsInUse`, so the card cannot read `0 / 1` beside a task held *at capacity*; it

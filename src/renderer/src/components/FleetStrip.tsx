@@ -510,7 +510,12 @@ function WorkerCard({
           ⚠️ Drawn on every card, sessions or none, because it carries `1 / 2` — slots in use against
           Max parallel instances (`instanceUse`) — and a line that came and went with the first
           session would resize the strip. The most recent three sessions follow; older warm ones are
-          not counted in a `+N more`, which said nothing an operator acts on. */}
+          not counted in a `+N more`, which said nothing an operator acts on.
+          ⛔ The word beside it is `in use`, never `running` (t560): idle-warm sessions and
+          sessionless holds are slots but are not running anything, and `2 / 1 running` beside one
+          live task reads as two agents at work. Probes, consults, reviews and chats never count —
+          every one spawns with its own `purpose` and both halves of the arithmetic filter to
+          `work` (`slotsInUse`, `instanceUse`). */}
       <div className="wcard-sessions">
         <div className="wcard-rule">
           <span>sessions</span>
@@ -522,7 +527,7 @@ function WorkerCard({
             <span className="num">
               {instances.inUse} / {instances.max}
             </span>
-            <span className="wcard-instances-word"> running</span>
+            <span className="wcard-instances-word"> in use</span>
           </span>
         </div>
         {displayedSessions.map((s) => (

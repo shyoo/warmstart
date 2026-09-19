@@ -41,11 +41,9 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 - **The Workers card layout labelled every field after Role one place late (t545 → rc.2, 2026-09-19).**
   t545 added the *Unattended* header without a `<col>` or a positional card label, so `test:ui` failed
   `[14,15]` on CI and blocked the rc. `Workers.tsx` now has fifteen `<col>`s, and `app.css` labels the new cell.
-- **The fleet card counts parallel slots instead of listing `+N more` sessions (t549, 2026-09-19).**
-  The sessions divider now reads `1 / 2 running` (narrow `1 / 2`), slots in use against Max parallel
-  instances by `slotsInUse`'s arithmetic — the daemon serves the half the renderer cannot see
-  (`fleet.list` → `reservedSlots`) — amber when full, with a working / idle / held tooltip. Always
-  drawn; the last three session gauges follow, and the `+N more` line is gone. `docs/ui.md`.
+- **The fleet card counts parallel slots instead of listing `+N more` sessions (t549, 2026-09-19;
+  word fixed t560).** The sessions divider reads `1 / 2 in use` (narrow `1 / 2`), slots in use against
+  Max parallel instances — amber when full, with a working / idle / held tooltip. `docs/ui.md`.
 - **Muse Code runs natively on Windows; the WSL bridge is gone (t547, 2026-09-19).** Muse Code 1.3.0
   ships a Windows build (`irm https://dev.meta.ai/install.ps1 | iex`). `clihost.ts` now knows `posix`
   and `windows` hosts only; `museBinary` starts the installer's `muse-bin-<version>.exe` (never the
@@ -94,10 +92,8 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   run and survives `-c sandbox_workspace_write.network_access=true`. ⛔ No code change: Warmstart
   must not write either grant on the operator's own directories. `docs/adapters.md`, `grants.ts`.
 - **A lapsed oversized session was revived instead of starting clean, and a completion prompt told sandboxed agents to fetch (t536 ← t518/t534, 2026-09-19).** Resume now starts a fresh session when the measured cache has lapsed after passing the compaction break-even; compaction remains reserved for its cheap pre-expiry window. The agent completion clause checks the checkout's target and leaves remote refresh to landing, avoiding needless SSH/grant requests. `cacheclock.ts`, `scheduler.ts`, `prompt.ts`, `docs/sessions.md`, `docs/cost-model.md`.
-- **The thread conversation input box gained the `[+]` file and folder attachment menu (t527 ← t525, 2026-09-18).**
-  t525 gave question cards the task composer's `[+]` attachment menu, but left the thread's bottom compose box without
-  it. `Compose` in `TaskThread.tsx` now renders the same `[+]` Pill button (`COMPOSE_ATTACH_OPTIONS`: file, image, folder),
-  allowing operators to attach files or grant local folders directly to live or resting task turns. `docs/ui.md`.
+- **The thread input box gained the `[+]` attachment menu (t527 ← t525, 2026-09-18).**
+  `Compose` in `TaskThread.tsx` renders the composer's `[+]` Pill button for live or resting turns. `docs/ui.md`.
 - **An idle agent's hand-off discarded everything after character 400 of its final message (t529 ←
   t521, 2026-09-18).** `runWatchdogs` wrote the only durable Thread record for an MCP agent that
   ended a turn without a terminal signal, but formatted it with `idle.said.slice(0, 400)`. The
@@ -159,6 +155,9 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   Also fixed: **"Waiting on" sat near the bottom of the status pane despite following "status" in the
   DOM**, because the `Fact` carrying it had no CSS `order` class and fell to the unstyled default.
   `.fact--waiting` now orders it directly below `.fact--status`.
+- **The fleet divider said `running` while counting slots (t560, 2026-09-19).** `2 / 1 running`
+  beside one live task read as two agents at work; the word is now `in use`, matching the tooltip.
+  Probes, consults, reviews and chats were verified excluded on every path. `docs/ui.md`.
 ## Remaining work — ordered by payoff
 
 Each needs a real signed-in account, a macOS machine, release credentials, or a human product
