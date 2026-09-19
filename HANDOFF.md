@@ -7,17 +7,19 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-19, **Windows 11**, measured over `0.2.0-rc.2+3.g6b3362c.dirty`): typecheck, lint
+Baseline (2026-09-19, **Windows 11**, measured over `0.2.0+dirty`): typecheck, lint
 and build pass; L1 **3,739 passed, 5 skipped** (224 files); L2 **203 checks** (5 skipped); L3 **480
 passed, 4 skipped**; L4 **19 checks** against `release/win-unpacked`. All five measured 2026-09-19. macOS 13
 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so is the
 **Release** workflow.
 
-**`v0.1.1` is `latest`** (tag build 35165991396, 2026-09-17), promoted onto its own rc's commit.
-**`v0.2.0-rc.2` is cut as a pre-release** (2026-09-19), superseding `v0.2.0-rc.1` (`c42ae06`): it adds
-t536–t549 and migration 77. The 0.2.0 series is still open, so the next `/release rc` continues it
-(`0.2.0-rc.3`) rather than bumping. ⏭ **Next: install the newest rc, verify it, then `/release promote`.** Its CI first went red on the t545 Workers-table
-regression below: six commits had been pushed together, and `test:ui` was not run on them first.
+**`v0.2.0` is `latest`** (2026-09-19, tag build 35472709332), promoted onto `v0.2.0-rc.3`'s own
+commit `bfc04b4` — the bytes verified installing on Windows 11, not a rebuild of a later tree. It
+carries t536–t554 and migrations 76–77 over `v0.1.1`. ⏭ **Next: install `v0.2.0` from the Releases
+page on a Mac** — macOS is unverified on this release and CI has no macOS runner. The 0.2.0 series
+is closed, so the next `/release rc` opens `0.2.1-rc.1` (patch is the default; `--bump minor|major`
+is asked for). rc.2's CI first went red on the t545 Workers-table regression: six commits had been
+pushed together, and `test:ui` was not run on them first.
 Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 **Routing Model v1.2 preserves expiry urgency (t552, 2026-09-19).** `prepaid` is field-normalized
@@ -164,7 +166,7 @@ judgement. Do not replace the missing evidence with a unit test.
 2. **Run one more live Plan & Split, and the first live Plan & Execute.** Exercise a `merge-branch` landing while a sibling is genuinely mid-run, and an organizer resolution turn where some pieces fail. Then file the same job as a Plan & Execute with a cheaper executor: confirm the planner's card completes at the handoff, the executor lands on the project's target, and record both tasks' total run cost side by side — the one measurement t456's design rests on and does not have.
 3. **Run a real debate and record its measurements.** Compare total tokens/cost against a strong single-agent answer; record cache reads, resolved/unresolved citations, and whether the organizer changed the operator's decision. The evidence format is in [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §7.
 4. **Run human-in-the-loop, `commit-and-merge`, cross-task reuse and an inherited directory grant with a real agent.** The code and L1–L3 checks exist; none has been demonstrated in flight. For the grant (t462/t470): attach a second repository to a **planner**, let it file one piece that must edit there, and watch a sandboxed codex **commit** in it — proven only by a throwaway-repo probe so far. Then, on `claude-code`, have an agent call `request_directory` for an unattached folder and confirm the restart resumes warm.
-5. **Verify `v0.1.1` as installed from the Releases page**, on Windows and on a Mac — the promoted build is a rebuild of the rc, not the same artefacts.
+5. **Verify `v0.2.0` as installed from the Releases page on a Mac.** Windows 11 is done (rc.3, 2026-09-19, same commit as the final); no macOS machine has opened this build and no CI job runs there.
 6. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from both computers, a revoke on the host cutting the client off, and the ±1 version warning.
 7. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the generic declarative adapter cannot meter, gets no MCP tools and cannot reap orphans); CI watch after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an update-available check that keeps `publish: null`; a full data-directory export (isolation roots, attachments); and a clone-per-worker or container backend, the only thing that closes both the host-authority gap and the shared common-`.git` grant. ⚠️ Not on this list: GitHub/Linear/Slack intake, agent messaging, kanban, voice, cross-machine sync.
 8. **Give Antigravity a real per-worker isolation root.** It shares `~/.gemini` today; changing `HOME` must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
