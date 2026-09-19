@@ -394,6 +394,11 @@ behaviour falls out of it:
   and a `pty` session keeps the default, which is where a person is watching and where Claude Code's
   `auto` actually works. ⛔ A declaration about **the CLI**, not a preference — see the corrected
   assumption below.
+- **`bypassPermissionMode` set** → the escape from `headlessAuthority: 'sandboxed'`, offered only to
+  Codex. A worker whose own `unattendedAuthority` is `full-user` gets this mode instead of
+  `headlessPermissionMode`/`defaultPermissionMode` on a **`work`**/**`stream`** dispatch —
+  `--dangerously-bypass-approvals-and-sandbox`, opt-in per account (t545), never per project. See
+  `docs/security.md`.
 - **`mintsSessionId: false`** → the transcript is discovered after the fact instead of predicted,
   and ⛔ **orphaned processes are never killed**, because identity cannot be proved. Leaving an orphan
   running costs quota; killing the wrong process costs somebody their work.

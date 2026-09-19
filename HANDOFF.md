@@ -32,6 +32,20 @@ channels) remains off-repo.
   initial planner, because a debate's seats never come from one). Every diagram keeps the existing
   rule: schematic only, no mockup of a screen, `--color-*` tokens so it reads in both themes.
   `NewTask.tsx`, `docs/ui.md`.
+- **Unattended authority moved from the project to the worker, and Codex can opt into it (t545,
+  2026-09-19).** The choice between sandboxed and full-user unattended dispatch used to live on
+  `ProjectConfig.permission.unattended`, gating every adapter a project's tasks could reach alike; an
+  account's own reach into the machine is a fact about that account, not the project, so it is now
+  `Worker.unattendedAuthority` (Settings → Workers → **Unattended**), read by `scoring.ts`'s
+  eligibility gate and by `sessions.ts`'s `permissionModeFor` alike. Codex also gained a real
+  `bypassPermissionMode`: a worker set to `full-user` runs `--dangerously-bypass-approvals-and-sandbox`
+  (measured 2026-09-19 against codex-cli 0.151.0 — it runs cleanly, so `plan()` omits `--sandbox` and
+  the network override by choice, not because the CLI refuses them together) instead of the
+  `workspace-write` sandbox, matching the permissive default Claude Code and Antigravity already use.
+  Migration 77 backfills every existing worker to the mode it has always actually run in — Codex to
+  `sandboxed-only`, everything else to `full-user` — so no existing account's dispatch behaviour
+  changes on upgrade; a Codex worker only gets the bypass after an operator explicitly asks for it.
+  `docs/security.md`, `docs/adapters.md`.
 - **Attaching a folder to a codex task could never grant `~\.ssh`, because read and write are
   decided by two different mechanisms (t538 ← t537, 2026-09-18).** `--add-dir C:\Users\<user>\.ssh`
   was on three consecutive t537 runs' argv, never appeared in `<CODEX_HOME>/cap_sid` →
@@ -123,38 +137,16 @@ channels) remains off-repo.
   `docs/ui.md`, `docs/landing.md`.
 
 - **A route consult held a task for 4m49s instead of 90s, and ran tools on Antigravity (t502 ← t501,
-  2026-09-17).** t501 sat at *"waiting on a routing decision"*. Two causes, from the daemon log and the
-  consult's agy conversation store: `CONSULT_TTL_MS` was checked only before a consult *started*, so a
-  route started 49s in waited the full `ANSWER_TIMEOUT_MS`; and a consult took the adapter's default
-  permission mode, which on `antigravity-cli` is `dangerously-skip-permissions` — it listed the data
-  dir, ran python against `warmstart.db` and read `controller.ts` for four minutes, never answering.
-  Now `answerTimeoutFor` bounds a running consult by its window, the queue drains soonest deadline
-  first, `permissionModeFor` gives a consult `readOnlyPermissionMode` (a command attempt is
-  auto-denied in ~1.1s, measured), and a consult cut short by its window no longer marks the account
-  dead.
+  2026-09-17).** `answerTimeoutFor` now bounds a running consult by its window and `permissionModeFor`
+  gives it `readOnlyPermissionMode`, never the adapter's unattended default.
 
-
-- **A held conversation's worker slot never came back (t498 ← t497, 2026-09-17).** ClaudeThird held a
-  conversation resting at `awaiting_human`; a second task pinned to it queued at capacity, exactly as
-  designed — but closing the conversation never freed the worker. `resolveTask` (Finish) and
-  `cancelTask`'s `windDown` (Stop) both found "the session to close" through `sessionOf`, which answers
-  "is a run open right now" — `endConversationTurn` finishes that run the instant the turn ends and
-  keeps the session live for the reply, so neither ever found it. `restingSessionOf` (scheduler.ts)
-  finds the most recent run's session whether or not it is open; both call sites use it now. ⛔ Fixing
-  this exposed a second bug in the same function: `decideSessionFate` read a stale pre-write
-  `task.cancel?.restingState`, so an ordinary human Stop always closed a warm session instead of
-  deciding whether to keep it — now passed in explicitly. `conversationcapacity.test.ts`.
+- **A held conversation's worker slot never came back (t498 ← t497, 2026-09-17).** `restingSessionOf`
+  (scheduler.ts) finds the most recent run's session whether or not it is open; Finish and Stop both
+  use it now. `conversationcapacity.test.ts`.
 
 - **Routing prefers subscription quota that would otherwise be forfeit at reset (t499, 2026-09-17).**
-  `quotaRisk` used to *penalise* an account resetting soon with money already spent on it (90% of a
-  7d window, 10h to reset, scored `−0.491`). New signed term `prepaid` (`scoring.ts`, routing model
-  **v1.1**): `+0.25 + 0.75×forfeitValue` for a forfeiting subscription window (`forfeitShare`'s pace
-  projection), `0` for local/free/unknown billing, `−1` for money spent now (credits past a blocking
-  window, or a priced API rate with no subscription window). Always on, not behind
-  `modelRoutingActive()`. `windowRisk` lost its reset-horizon factor (it could exceed 1.0); `quotaRisk`
-  now skips a billing window `prepaid` finds forfeiting, including a fresh non-session
-  `allowed_warning` on it. `docs/routing.md` §3.3, §3.3a.
-
+  New signed term `prepaid` (`scoring.ts`, routing model **v1.1**) rewards a forfeiting subscription
+  window instead of penalising it. `docs/routing.md` §3.3, §3.3a.
 
 ## Remaining work — ordered by payoff
 

@@ -22,11 +22,9 @@ import {
   type ProjectPolicyPatch,
   type ResourceAvailability,
   type SessionSharingChoice,
-  UNATTENDED_AUTHORITY_LABELS,
   WORKSPACE_MODE_LABELS,
   projectWorkspaceModeChoice,
-  type WorkspaceMode,
-  type UnattendedAuthority
+  type WorkspaceMode
 } from '@shared/tasks'
 import { projectOrientationChoice, resolveCompletionMode, resolveFinishPolicy, resolveSessionSharing } from '@shared/policy'
 import type { Settings } from '@shared/protocol'
@@ -272,10 +270,6 @@ function PolicyPanel({
       .finally(() => setBusy(false))
   }
 
-  // ⚠️ The resolver's own fallback, spelled here too, so the row shows what the scheduler will do
-  // rather than an empty picker for a project that predates the setting.
-  const unattended: UnattendedAuthority = project.config.permission?.unattended ?? 'full-user'
-
   const finishChoice = projectFinishChoice(project)
   const resolvedFinish = resolveFinishPolicy(null, project, fleetFinish)
   const sharingChoice = projectSharingChoice(project)
@@ -380,44 +374,6 @@ function PolicyPanel({
               ariaLabel="Project completion mode"
               title="How far an agent working in this project goes before it stops."
               onChange={(val) => apply({ completion: val as CompletionModeChoice })}
-            />
-          }
-        />
-
-        {/* ⛔ Stated as what it permits, not as a safety feature. A person reading this row is
-            deciding how much of their machine an unattended agent may reach, and the honest framing
-            of the permissive option is the one that names the authority it grants. */}
-        <SettingRow
-          title="Unattended authority"
-          description={
-            unattended === 'sandboxed-only' ? (
-              <>
-                Only adapters whose unattended mode is a real sandbox may be given work here (today:
-                Codex). ⚠️ A task no sandboxed account can take will <strong>hold</strong> rather
-                than run, and say so on its row.
-              </>
-            ) : (
-              <>
-                Any adapter. ⛔ Unattended Claude Code and Antigravity work runs with permission
-                checks bypassed, as your OS user — it can read and write anything you can, including
-                other accounts&rsquo; isolation roots and <code>~/.ssh</code>.
-                {project.config.permission?.unattended === undefined &&
-                  ' This project has never been asked; this is the inherited default.'}
-              </>
-            )
-          }
-          control={
-            <SettingButtonSelect
-              className="finish-picker setting-row-control-select"
-              value={unattended}
-              options={[
-                { value: 'sandboxed-only', label: UNATTENDED_AUTHORITY_LABELS['sandboxed-only'] },
-                { value: 'full-user', label: UNATTENDED_AUTHORITY_LABELS['full-user'] }
-              ]}
-              disabled={busy}
-              ariaLabel="Unattended authority"
-              title="How much of this machine an unattended agent in this project may reach."
-              onChange={(val) => apply({ unattendedAuthority: val as UnattendedAuthority })}
             />
           }
         />

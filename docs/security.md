@@ -9,17 +9,25 @@ repository an agent reads as untrusted input until you have decided otherwise.
 |---|---|---|
 | Claude Code | `bypassPermissions` | Your OS user's full authority |
 | Antigravity | `--dangerously-skip-permissions` | Your OS user's full authority |
-| Codex | `--sandbox workspace-write` | Workspace sandbox, widened to the repository's shared `.git`; outbound network open, no credential inside |
+| Codex, set to Sandboxed adapters only (default) | `--sandbox workspace-write` | Workspace sandbox, widened to the repository's shared `.git`; outbound network open, no credential inside |
+| Codex, set to Full user authority (opt-in) | `--dangerously-bypass-approvals-and-sandbox` | Your OS user's full authority |
 
 Claude Code and Antigravity use their bypass modes because a headless process cannot reliably stop
-and ask for terminal approval. This is a deliberate availability-versus-containment choice, not a
-security boundary supplied by Warmstart. A prompt injection can therefore become arbitrary commands
-with your user's file and network access.
+and ask for terminal approval. Codex is the one adapter with a real sandbox by default; an operator
+may still opt a Codex account into `--dangerously-bypass-approvals-and-sandbox`, the same trade every
+other adapter already makes unattended. This is a deliberate availability-versus-containment choice,
+not a security boundary supplied by Warmstart. A prompt injection can therefore become arbitrary
+commands with your user's file and network access.
 
-Choose **Sandboxed only** in project settings to restrict unattended dispatch to adapters with a real
-sandbox. If no eligible adapter can meet that requirement, the task holds visibly instead of
-silently widening its authority. Projects created before this setting existed retain **Full user
-authority**.
+⛔ **This is a setting on the account, not on the project (t545).** It used to live in project
+settings, gating every adapter a project's tasks could reach alike; an account's own reach into the
+machine is a fact about that account, so it now lives on the worker (Settings → Workers →
+**Unattended**) and applies to every project that dispatches to it. Choose **Sandboxed only** to hold
+a task rather than run it on that account with no real sandbox — if no eligible worker can meet that
+requirement, the task holds visibly instead of silently widening its authority. Workers commissioned
+before this setting existed retain the mode they have always run unattended work in: **Full user
+authority** for every adapter that only ever ran that way, and **Sandboxed adapters only** for Codex,
+which has never run any other way until an operator opts it in.
 
 ## What Warmstart does bound
 

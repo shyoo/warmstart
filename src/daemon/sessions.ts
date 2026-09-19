@@ -11,6 +11,7 @@ import type {
   SessionState,
   SessionStreamLine,
   SessionTransport,
+  UnattendedAuthority,
   Worker
 } from '@shared/protocol.js'
 import { sessionEnded } from '@shared/protocol.js'
@@ -923,12 +924,19 @@ export function whyNoSession(worker: Worker, purpose: SessionPurpose): string | 
  * deliberately, and a consult runs toolless in a scratch directory. This is why the substitution is
  * pinned to `work` on `stream` rather than to the transport alone — a `pty` session is a person at a
  * keyboard, where the real `auto` works and where they can answer for themselves.
+ *
+ * ⭐ `unattendedAuthority` is the worker's own setting (t545), read only for this same `work`/`stream`
+ * case. Codex is the one adapter that declares a `bypassPermissionMode`: when the account is set to
+ * `full-user`, that mode is preferred over `headlessPermissionMode`, which is how a codex worker
+ * opts into `--dangerously-bypass-approvals-and-sandbox` instead of its default sandbox. Every other
+ * adapter leaves `bypassPermissionMode` unset, so this is inert for them regardless of the setting.
  */
 export function permissionModeFor(
   info: AdapterInfo,
   purpose: SessionPurpose,
   transport: SessionTransport,
-  requested: string | undefined
+  requested: string | undefined,
+  unattendedAuthority?: UnattendedAuthority
 ): string | undefined {
   if (requested) return requested
   // ⛔ A consult is unattended judgment and gets no tools, so it runs in the mode that reads and does
@@ -938,6 +946,9 @@ export function permissionModeFor(
   // while the task it was routing sat undispatched. `null` means the adapter declares no such mode.
   if (purpose === 'consult') return info.capabilities.readOnlyPermissionMode ?? undefined
   if (purpose !== 'work' || transport !== 'stream') return undefined
+  if (unattendedAuthority === 'full-user' && info.policy.bypassPermissionMode) {
+    return info.policy.bypassPermissionMode
+  }
   return info.policy.headlessPermissionMode ?? undefined
 }
 
@@ -1041,7 +1052,13 @@ export function spawnSession(opts: SpawnOptions): Session {
         ? writeMcpConfig(id, 'controller')
         : null
   const partialMessages = wantsPartialMessages(ad.info, purpose, transport)
-  const permissionMode = permissionModeFor(ad.info, purpose, transport, opts.permissionMode)
+  const permissionMode = permissionModeFor(
+    ad.info,
+    purpose,
+    transport,
+    opts.permissionMode,
+    worker.unattendedAuthority
+  )
   const plan = ad.plan({
     sessionId: id,
     isolationRoot: worker.isolationRoot,

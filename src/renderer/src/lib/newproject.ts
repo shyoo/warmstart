@@ -1,6 +1,5 @@
 import type {
   CompletionModeChoice,
-  UnattendedAuthority,
   FinishPolicyChoice,
   ProjectDocName,
   ProjectInspection,
@@ -65,15 +64,6 @@ export interface NewProjectDraft {
   landingTarget: string
   sessionShare: SessionSharingChoice
   completion: CompletionModeChoice
-  /**
-   * How much authority unattended work in this project may have.
-   *
-   * ⛔ **The wizard asks, and the safer answer is what it opens on.** An absent key resolves to
-   * `full-user` for every project that predates the setting, which is deliberate — but a project
-   * being created *now* has somebody in front of it, and the one chance to make this a decision
-   * rather than an inheritance is here.
-   */
-  unattendedAuthority: UnattendedAuthority
   poolSize: number
   /** One command per line, exactly as `ChecksPanel` treats it. */
   checksText: string
@@ -90,7 +80,6 @@ export const EMPTY_DRAFT: NewProjectDraft = {
   landingTarget: 'main',
   sessionShare: 'inherit',
   completion: 'inherit',
-  unattendedAuthority: 'sandboxed-only',
   poolSize: 3,
   checksText: '',
   docs: []
@@ -194,17 +183,6 @@ export function creationPlan(
     checks.length > 0
       ? `Record ${checks.length} check command${checks.length === 1 ? '' : 's'}.`
       : 'Record no check commands — verifying finish policies would verify nothing.'
-  )
-
-  // ⛔ On the list of consequences, because it is one. A reader of this step is being told what the
-  // tool will do to their machine, and "an agent here may run as you, with no approval" is the
-  // largest item on it.
-  plan.push(
-    draft.unattendedAuthority === 'sandboxed-only'
-      ? 'Dispatch unattended work only to adapters that sandbox it (today: Codex). A task no ' +
-          'sandboxed account can take will hold rather than run.'
-      : '⛔ Allow unattended work to run with your full user authority — on Claude Code and ' +
-          'Antigravity, with permission checks bypassed and no approvals raised.'
   )
 
   const docs = draft.docs.filter((d) => d.include).map((d) => d.name)

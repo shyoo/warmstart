@@ -144,7 +144,7 @@ Each difference is a declared capability that the scheduler evaluates during rou
 
 ## Security in brief
 
-Unattended Claude Code and Antigravity agents run with permission prompts bypassed, executing with **your full OS-user authority**. Codex executes inside its native sandbox, widened only to access the repository's shared `.git` directory. Projects can enforce a **Sandboxed only** policy to prevent unsandboxed dispatches. Task mandates, landing gates, credential separation, and a scrubbed process environment strictly bound agent activity; read [docs/security.md](docs/security.md).
+Unattended Claude Code and Antigravity agents run with permission prompts bypassed, executing with **your full OS-user authority**. Codex executes inside its native sandbox by default, widened only to access the repository's shared `.git` directory — an operator may opt a Codex account into full user authority too (`--dangerously-bypass-approvals-and-sandbox`), the same permissive mode Claude Code and Antigravity already use. This is a per-account setting; a **Sandboxed only** account holds a task rather than run it with no real sandbox. Task mandates, landing gates, credential separation, and a scrubbed process environment strictly bound agent activity; read [docs/security.md](docs/security.md).
 
 ### Accounts and provider terms
 

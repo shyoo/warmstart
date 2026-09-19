@@ -79,37 +79,10 @@ export interface ProjectConfig {
     mode?: string
     allow?: string[]
     deny?: string[]
-    /**
-     * How much authority **unattended** work may have in this project.
-     *
-     * ⛔ **The absent key means `full-user`**, which is what every project did before this
-     * existed. Defaulting an existing project to the safer value would change what a running
-     * fleet is allowed to do underneath its operator, which is worse than the disclosure — so
-     * the add-project wizard *asks*, and only a project that was asked carries an answer.
-     *
-     * ⚠️ `sandboxed-only` is enforced as an **eligibility gate**, not as a downgrade: a task
-     * that only a bypassing adapter could run holds, visibly, rather than being run sandboxed
-     * into the stall t250 measured. See `docs/adapters.md` and the README's Security model.
-     */
-    unattended?: UnattendedAuthority
   }
   env?: Record<string, string | number>
   resources?: Array<{ ref: string }>
   mandate?: Partial<Mandate>
-}
-
-/**
- * How much authority unattended work may have in a project.
- *
- * ⛔ **A choice about this repository and this machine, not about an adapter.** `sandboxed-only`
- * says *only dispatch work here to a CLI that enforces a boundary*; which CLIs those are is the
- * adapters' own declaration (`AdapterPolicy.headlessAuthority`), so a project never names one.
- */
-export type UnattendedAuthority = 'full-user' | 'sandboxed-only'
-
-export const UNATTENDED_AUTHORITY_LABELS: Record<UnattendedAuthority, string> = {
-  'full-user': 'Full user authority',
-  'sandboxed-only': 'Sandboxed adapters only'
 }
 
 /** Whether a cold prompt names this project's orientation docs. See `ProjectConfig.prompt`. */
@@ -144,11 +117,6 @@ export interface ProjectPolicyPatch {
    * then derives its own sibling rather than inheriting somebody else's.
    */
   workspaceRoot?: string
-  /**
-   * See `ProjectConfig.permission.unattended`. ⚠️ Unlike the other optional keys here, setting this
-   * to its permissive value still **writes** it: an absent key means nobody was asked.
-   */
-  unattendedAuthority?: UnattendedAuthority
   /** See `ProjectConfig.prompt.orientation`. */
   promptOrientation?: OrientationChoice
   /**

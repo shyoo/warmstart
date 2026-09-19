@@ -2011,6 +2011,29 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'quota_samples', 'vendor_silent')) {
       conn.exec(`alter table quota_samples add column vendor_silent integer`)
     }
+  },
+  // 77 - unattended authority moved from the project to the account it actually describes (t545).
+  //
+  // ⛔ **The grandfather rule from the project-level setting, applied per adapter instead of once.**
+  // `full-user` was the absent-key default for every project, because defaulting a running fleet to
+  // the safer value on upgrade is "worse than the disclosure" — the same reasoning applies here, per
+  // worker, with one exception: Codex is the only adapter that has ever actually run sandboxed
+  // (`headlessAuthority: 'sandboxed'`; every other adapter has always run `full-user` regardless of
+  // what any project asked, because it has no sandboxed mode to fall back to). Backfilling every
+  // existing Codex worker to `full-user` would hand it `--dangerously-bypass-approvals-and-sandbox`
+  // on its very next dispatch with nobody having asked for it, which is not grandfathering — it is a
+  // silent escalation this migration exists to avoid. So Codex workers backfill to the mode they
+  // have always run in (`sandboxed-only`), and every other adapter backfills to the mode it has
+  // always run in too (`full-user`). Guarded because migration replay is part of this database's
+  // test contract.
+  (conn) => {
+    if (!hasColumn(conn, 'workers', 'unattended_authority')) {
+      conn.exec(`alter table workers add column unattended_authority text`)
+      conn.exec(
+        `update workers set unattended_authority = case when adapter_id = 'openai-compatible' ` +
+          `then 'sandboxed-only' else 'full-user' end`
+      )
+    }
   }
 ]
 

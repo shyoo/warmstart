@@ -1,6 +1,14 @@
-import { canJudge, canWork, roleOf, sessionEnded } from '@shared/protocol'
+import { canJudge, canWork, roleOf, sessionEnded, UNATTENDED_AUTHORITY_LABELS } from '@shared/protocol'
 import { Fragment, useEffect, useState } from 'react'
-import type { AdapterDetection, AdapterInfo, ModelOptions, Session, Settings, Worker } from '@shared/protocol'
+import type {
+  AdapterDetection,
+  AdapterInfo,
+  ModelOptions,
+  Session,
+  Settings,
+  UnattendedAuthority,
+  Worker
+} from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isWorkerSubscriptionExpired, QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import { age, percent, quotaGap } from '../lib/format'
@@ -123,6 +131,13 @@ const MAX_HELP =
 const ROUTABLE_MODELS_HELP =
   'Allowed models for automated task routing on this worker. If none are selected, tasks will route ' +
   'only to the default model configured above. Only models supported and priced by this adapter are listed.'
+
+const UNATTENDED_AUTHORITY_HELP =
+  'How much of this machine unattended work on this account may reach. "Sandboxed adapters only" ' +
+  'holds a task rather than run it here if this account’s CLI has no real sandbox. "Full user ' +
+  'authority" lets it run with permission checks bypassed, as your OS user — on Codex that means ' +
+  '`--dangerously-bypass-approvals-and-sandbox`; on Claude Code and Antigravity it is what unattended ' +
+  'work has always run as.'
 
 /**
  * What the **Routable models** pill reads. Pure so the L1 suite can pin it without a table.
@@ -521,6 +536,12 @@ export function Workers({
               <th>Grading model</th>
               <th>Summary model</th>
               <th>Role</th>
+              <th>
+                <span className="th-with-info">
+                  Unattended
+                  <ColumnInfo text={UNATTENDED_AUTHORITY_HELP} />
+                </span>
+              </th>
               <th>Usage credits</th>
               <th className="tbl-num">Action</th>
             </tr>
@@ -1003,6 +1024,27 @@ export function Workers({
                           void guard(`grading-role:${worker.id}`, () => rpc('worker.update', { id: worker.id, gradingEnabled: !worker.gradingEnabled }))
                         } /> Grading</label>
                       </div>
+                    </td>
+                    <td>
+                      <SettingButtonSelect
+                        className="worker-grading-select"
+                        value={worker.unattendedAuthority}
+                        options={[
+                          { value: 'sandboxed-only', label: UNATTENDED_AUTHORITY_LABELS['sandboxed-only'] },
+                          { value: 'full-user', label: UNATTENDED_AUTHORITY_LABELS['full-user'] }
+                        ]}
+                        ariaLabel={`Unattended authority for ${worker.label}`}
+                        disabled={busy === `unattended:${worker.id}`}
+                        title={UNATTENDED_AUTHORITY_HELP}
+                        onChange={(value) =>
+                          void guard(`unattended:${worker.id}`, () =>
+                            rpc('worker.update', {
+                              id: worker.id,
+                              unattendedAuthority: value as UnattendedAuthority
+                            })
+                          )
+                        }
+                      />
                     </td>
                     <td>
                       {(() => {

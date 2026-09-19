@@ -117,6 +117,7 @@ function mockWorker(over: Partial<Worker> = {}): Worker {
     humanOccupied: false,
     role: 'both',
     maxConcurrent: 1,
+    unattendedAuthority: 'full-user',
     defaultModel: null,
     defaultEffort: null,
     identity: null,

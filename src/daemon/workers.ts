@@ -5,6 +5,7 @@ import { canWork } from '@shared/protocol.js'
 import type {
   CreditStatus,
   CreditsIntent,
+  UnattendedAuthority,
   Worker,
   WorkerHealth,
   WorkerIdentity,
@@ -29,6 +30,7 @@ interface WorkerRow {
   human_occupied: number
   role: string
   max_concurrent: number
+  unattended_authority: string | null
   default_model: string | null
   grading_model: string | null
   summarising_model: string | null
@@ -56,6 +58,10 @@ function toWorker(r: WorkerRow): Worker {
     humanOccupied: r.human_occupied === 1,
     role: (r.role as WorkerRole) ?? 'both',
     maxConcurrent: r.max_concurrent,
+    // ⛔ `null` reaches here only for a row migration 77 somehow missed; `full-user` is the same
+    // grandfather migration 77 applies to every non-Codex adapter, and the safer `sandboxed-only`
+    // would silently restrict a running fleet, which is worse than the disclosure.
+    unattendedAuthority: (r.unattended_authority as UnattendedAuthority | null) ?? 'full-user',
     defaultModel: r.default_model,
     gradingModel: r.grading_model,
     summarisingModel: r.summarising_model,
@@ -138,6 +144,7 @@ export function createWorker(input: {
   humanOccupied?: boolean | undefined
   maxConcurrent?: number | undefined
   enabled?: boolean | undefined
+  unattendedAuthority?: UnattendedAuthority | undefined
 }): Worker {
   if (!hasAdapter(input.adapterId)) throw new Error(`unknown adapter '${input.adapterId}'`)
   const label = input.label.trim()
@@ -180,14 +187,20 @@ export function createWorker(input: {
   const defaultModelsJson = defaultModels ? JSON.stringify(defaultModels) : null
   const gradingModel = defaultGradingModel(input.adapterId)
   const summarisingModel = defaultSummarisingModel(input.adapterId)
+  // ⛔ The mode this adapter has always run unattended work in, absent an explicit opt-in — the same
+  // rule migration 77 backfills existing rows with. Codex is the only adapter this can name anything
+  // other than `full-user` for; every other adapter's `headlessAuthority` is already `full-user`, so
+  // starting there is not a permissive default, it is naming the CLI's own one mode.
+  const unattendedAuthority: UnattendedAuthority =
+    input.unattendedAuthority ?? (policy.headlessAuthority === 'sandboxed' ? 'sandboxed-only' : 'full-user')
 
   db()
     .prepare(
       `insert into workers (id, adapter_id, label, isolation_root, enabled, human_occupied,
                             max_concurrent, default_model, default_effort, default_models_json,
-                            grading_model, summarising_model, grading_enabled,
+                            grading_model, summarising_model, grading_enabled, unattended_authority,
                             sort_order, created_at)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
     )
     .run(
       id,
@@ -204,6 +217,7 @@ export function createWorker(input: {
       defaultModelsJson,
       gradingModel,
       summarisingModel,
+      unattendedAuthority,
       tail,
       now
     )
@@ -256,6 +270,7 @@ export function updateWorker(
       | 'defaultEffort'
       | 'defaultModels'
       | 'routableModels'
+      | 'unattendedAuthority'
     >
   >
 ): Worker {
@@ -279,7 +294,8 @@ export function updateWorker(
     .prepare(
       `update workers set label = ?, enabled = ?, human_occupied = ?, max_concurrent = ?, role = ?,
                           default_model = ?, default_effort = ?, default_models_json = ?,
-                          routable_models_json = ?, grading_model = ?, summarising_model = ?, grading_effort = ?, grading_enabled = ?
+                          routable_models_json = ?, grading_model = ?, summarising_model = ?, grading_effort = ?, grading_enabled = ?,
+                          unattended_authority = ?
        where id = ?`
     )
     .run(
@@ -299,6 +315,7 @@ export function updateWorker(
       patch.summarisingModel === undefined ? (current.summarisingModel ?? null) : patch.summarisingModel,
       patch.gradingEffort === undefined ? (current.gradingEffort ?? null) : patch.gradingEffort,
       (patch.gradingEnabled ?? current.gradingEnabled) ? 1 : 0,
+      patch.unattendedAuthority ?? current.unattendedAuthority,
       id
     )
   // A lower limit is an admission gate, not a preemption order. Sessions already using the account

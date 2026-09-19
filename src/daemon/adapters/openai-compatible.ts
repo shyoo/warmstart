@@ -62,7 +62,12 @@ const info: AdapterInfo = {
     // Measured from `codex exec --help`. ⛔ These are *sandbox* policies, not approval policies:
     // `exec` has no approval prompt at all, so the sandbox is the only thing standing between the
     // agent and the machine.
-    permissionModes: ['read-only', 'workspace-write', 'danger-full-access'],
+    permissionModes: [
+      'read-only',
+      'workspace-write',
+      'danger-full-access',
+      'dangerously-bypass-approvals-and-sandbox'
+    ],
     readOnlyPermissionMode: 'read-only',
     classifierBackedAuto: false,
     approvalChannel: 'settings_rules',
@@ -178,23 +183,40 @@ const info: AdapterInfo = {
   },
   policy: {
     // ⛔ `workspace-write`, not `danger-full-access`. With no classifier and no approval callback the
-    // sandbox is the only remaining boundary, and the agent works in a pooled worktree that is meant
-    // to be writable and nothing else.
+    // sandbox is the only remaining boundary by default, and the agent works in a pooled worktree
+    // that is meant to be writable and nothing else.
     //
-    // ⚠️ **The field's other answer is to remove the sandbox, and it is a choice about where the
-    // work runs rather than a better fix.** Surveyed 2026-09-18 (t538): Untrivial-ai's
-    // agent-orchestrator maps its default permission policy straight onto
+    // ⚠️ **The field's other answer is to remove the sandbox, and it used to be rejected outright as
+    // a choice about where the work runs rather than a better fix.** Surveyed 2026-09-18 (t538):
+    // Untrivial-ai's agent-orchestrator maps its default permission policy straight onto
     // `--dangerously-bypass-approvals-and-sandbox` (`agentruntime.CodexPermissionArgs`) and its
     // app-server driver onto `"never"` / `"danger-full-access"`, on the stated grounds that its
     // sessions "run in isolated worktrees and are expected to work without prompting" — and it
     // spends no `--add-dir` on codex at all, because with the sandbox off there is nothing to
-    // grant. ⛔ That reasoning does not transfer here: a worktree is not isolation on a desktop OS
-    // user, which is exactly the gap `headlessAuthority` exists to name. There is no third answer
-    // in the wild — either the sandbox is off, or the grants are enumerated, which is `grants.ts`.
+    // grant. A worktree is not isolation on a desktop OS user, which is exactly the gap
+    // `headlessAuthority` exists to name — ⭐ but t545 made that the operator's own call rather than
+    // this file's: `bypassPermissionMode` below is that same flag, offered only to a worker whose
+    // own `unattendedAuthority` says `full-user`, the same permissive opt-in Antigravity and Claude
+    // Code have always defaulted to. `sandbox === 'workspace-write'` stays the default for every
+    // worker that has not asked for it.
     defaultPermissionMode: 'workspace-write',
-    // ⚠️ The one adapter with a real boundary — and `grants.ts` widens it to reach the shared
-    // `.git`, which is wider than one task. A boundary that is not the whole user account is
-    // still the distinction a project is choosing between.
+    /**
+     * ⭐ **The escape from the sandbox above, opt-in per worker (t545).** `exec --help` describes it
+     * as "Skip all confirmation prompts and execute commands without sandboxing"; measured
+     * 2026-09-19 against codex-cli 0.151.0, a real turn with this flag alongside `--sandbox
+     * workspace-write` and `--add-dir` completed cleanly rather than failing on a conflicting
+     * argument — so `plan()` omits `--sandbox` and the network override under this mode by choice,
+     * for a clean argv, not because the CLI would refuse them together. See `permissionModeFor` in
+     * `sessions.ts` for how a worker's own `unattendedAuthority` chooses between this and
+     * `defaultPermissionMode`.
+     */
+    bypassPermissionMode: 'dangerously-bypass-approvals-and-sandbox',
+    // ⚠️ The one adapter with a real boundary **by default** — and `grants.ts` widens it to reach
+    // the shared `.git`, which is wider than one task. A boundary that is not the whole user
+    // account is still the distinction a worker's own `unattendedAuthority` is choosing between;
+    // this stays `'sandboxed'` because it is a capability declaration (this adapter *can* sandbox),
+    // never a claim about what any one dispatch actually ran under. See `scoring.ts`'s eligibility
+    // gate, which reads this field, not the worker's own choice.
     headlessAuthority: 'sandboxed',
     interruptSequence: '\x1b',
     costModelId: 'openai.codex.2026-08',
@@ -1234,23 +1256,34 @@ export const openaiCompatible: AgentAdapter = {
       // ⛔ `--json`, not `--output-format`: measured, `exec` has no `--output-format` flag.
       args.push('exec', '--json')
       const sandbox = req.permissionMode ?? info.policy.defaultPermissionMode
-      args.push('--sandbox', sandbox)
-      // ⛔ `workspace-write` ships with **outbound network off**, and `exec` has no approval prompt
-      // to ask for it with — so every `git fetch`, `git push` and `gh` call dies at the socket:
-      // *"An attempt was made to access a socket in a way forbidden by its access permissions"*.
-      // Measured on t493, 2026-09-16 (rollout `turn_context.sandbox_policy.network_access: false`):
-      // `gh secret list`, `gh issue view`, `gh release list`, `git fetch origin main` and `git push`
-      // all refused, and the agent stopped to ask how a branch could be pushed. ⚠️ The finishing
-      // instruction *tells* every worktree agent to fetch the target before it declares — so this
-      // was failing on every codex run, silently, until one task needed the network for its work.
-      // `sandbox_workspace_write.network_access` is the documented key; ⭐ measured 2026-09-16 on
-      // codex-cli 0.151.0, `-c` on `exec` flips the recorded policy to `network_access: true` and
-      // `git ls-remote` reaches GitHub. ⚠️ What it does **not** do is put a credential inside the
-      // sandbox: the restricted token cannot open Windows Credential Manager, so GCM and `gh`'s
-      // keyring both fail there (`gh auth status` → *"The token in default is invalid"*), and a
-      // push stays the landing's job — which the finishing instruction already says. See
-      // `docs/adapters.md`. Scoped to `workspace-write` because it is the only mode the key names.
-      if (sandbox === 'workspace-write') args.push('-c', 'sandbox_workspace_write.network_access=true')
+      const bypassing = sandbox === info.policy.bypassPermissionMode
+      if (bypassing) {
+        // ⭐ **The worker's own opt-in (t545), never a project's.** Measured 2026-09-19 against
+        // codex-cli 0.151.0: this flag runs cleanly alongside `--sandbox` and `--add-dir` rather
+        // than being refused as a conflicting argument, so nothing below has to change to avoid an
+        // argument error — `--sandbox` is simply not the flag doing anything once this one is
+        // present. It is omitted anyway, because writing a sandbox mode next to the flag that
+        // removes all sandboxing would read as a policy this file no longer holds.
+        args.push('--dangerously-bypass-approvals-and-sandbox')
+      } else {
+        args.push('--sandbox', sandbox)
+        // ⛔ `workspace-write` ships with **outbound network off**, and `exec` has no approval prompt
+        // to ask for it with — so every `git fetch`, `git push` and `gh` call dies at the socket:
+        // *"An attempt was made to access a socket in a way forbidden by its access permissions"*.
+        // Measured on t493, 2026-09-16 (rollout `turn_context.sandbox_policy.network_access: false`):
+        // `gh secret list`, `gh issue view`, `gh release list`, `git fetch origin main` and `git push`
+        // all refused, and the agent stopped to ask how a branch could be pushed. ⚠️ The finishing
+        // instruction *tells* every worktree agent to fetch the target before it declares — so this
+        // was failing on every codex run, silently, until one task needed the network for its work.
+        // `sandbox_workspace_write.network_access` is the documented key; ⭐ measured 2026-09-16 on
+        // codex-cli 0.151.0, `-c` on `exec` flips the recorded policy to `network_access: true` and
+        // `git ls-remote` reaches GitHub. ⚠️ What it does **not** do is put a credential inside the
+        // sandbox: the restricted token cannot open Windows Credential Manager, so GCM and `gh`'s
+        // keyring both fail there (`gh auth status` → *"The token in default is invalid"*), and a
+        // push stays the landing's job — which the finishing instruction already says. See
+        // `docs/adapters.md`. Scoped to `workspace-write` because it is the only mode the key names.
+        if (sandbox === 'workspace-write') args.push('-c', 'sandbox_workspace_write.network_access=true')
+      }
       args.push('--cd', req.cwd)
       // ⛔ Without this the agent can edit and can never commit. `workspace-write` makes `cwd`
       // writable, and a pooled worktree keeps its index, objects and refs in the trunk's `.git`
@@ -1319,7 +1352,9 @@ export const openaiCompatible: AgentAdapter = {
       // project declared `vcs: none` is not, and refusing to start is a worse failure than running.
       args.push('--skip-git-repo-check')
       // ⛔ Deliberately absent: `--ask-for-approval` is interactive-only and would be an argument
-      // error here, and `--dangerously-bypass-approvals-and-sandbox` removes the only boundary left.
+      // error here. `--dangerously-bypass-approvals-and-sandbox` is pushed above, conditionally, as
+      // `bypassing` — never unconditionally, since it removes the only boundary a worker did not
+      // explicitly ask to give up.
     }
     // ⭐ The subcommand, after everything `exec` owns and before everything `resume` owns.
     if (resumeId) args.push('resume')

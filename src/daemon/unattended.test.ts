@@ -2,23 +2,27 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import type { Project } from '@shared/tasks.js'
 
 /**
- * A project's containment choice, and the refusal that enforces it.
+ * An account's own containment choice, and the refusal that enforces it.
  *
- * ⛔ **The gate is a refusal, never a downgrade.** A project set to `sandboxed-only` does not run a
+ * ⛔ **The gate is a refusal, never a downgrade.** A worker set to `sandboxed-only` does not run a
  * bypassing adapter "more carefully" — it declines the candidate, and the task holds with a sentence
  * on its row. Running it sandboxed instead is the t250 stall: a headless CLI that cannot ask turns
  * every command into a denial and spends the window discovering it.
  *
  * ⛔ **The gate asks `headlessAuthority`, never an adapter name.** The test pins that too, by
  * flipping the *declaration* rather than the adapter id and watching the refusal follow it.
+ *
+ * ⭐ **Moved from the project to the worker (t545).** The setting used to live on
+ * `ProjectConfig.permission.unattended`, gating every adapter a project's tasks could reach alike; an
+ * account's own reach into the machine is a fact about that account, so it travels with
+ * `Worker.unattendedAuthority` instead — the same account is exactly as trusted whichever project
+ * hands it work, and a task with no project is gated exactly the same as one with a project.
  */
 
 let dir: string
 let kit: typeof import('./testkit.js')
-let projects: typeof import('./projects.js')
 let scoring: typeof import('./scoring.js')
 let workers: typeof import('./workers.js')
 
@@ -30,7 +34,6 @@ beforeAll(async () => {
   const store = await import('./db.js')
   store.openDb(join(dir, 'unattended.db'))
   kit = await import('./testkit.js')
-  projects = await import('./projects.js')
   scoring = await import('./scoring.js')
   workers = await import('./workers.js')
 
@@ -58,63 +61,63 @@ afterAll(() => {
   }
 })
 
-let seq = 0
-function project(unattended?: 'full-user' | 'sandboxed-only'): Project {
-  seq += 1
-  return kit.makeProject({
-    dir,
-    name: `repo${seq}`,
-    ...(unattended ? { config: { permission: { unattended } } } : {})
-  })
-}
-
-describe('the resolved policy', () => {
+describe('the default a worker is commissioned with', () => {
   /**
-   * ⛔ The grandfathering rule, and the reason it is not the safer value: every project that
-   * existed before this setting did would otherwise stop dispatching to two of three adapters the
-   * moment its operator upgraded, which is changing what a running fleet may do underneath them.
+   * ⛔ Codex is the only adapter this can name anything other than `full-user` for — every other
+   * adapter's `headlessAuthority` is already `full-user`, so `sandboxed-only` on it would simply
+   * refuse the account it was just commissioned on.
    */
-  it('resolves an absent key to full user authority', () => {
-    expect(projects.policyFor(project()).unattendedAuthority).toBe('full-user')
+  it('opens a codex worker on sandboxed-only, its own real mode', () => {
+    const w = workers.createWorker({ adapterId: 'openai-compatible', label: `Codex ${Math.random()}` })
+    expect(w.unattendedAuthority).toBe('sandboxed-only')
   })
 
-  it('reads a committed answer', () => {
-    expect(projects.policyFor(project('sandboxed-only')).unattendedAuthority).toBe('sandboxed-only')
-    expect(projects.policyFor(project('full-user')).unattendedAuthority).toBe('full-user')
+  it('opens a bypass-only adapter on full-user, its own one mode', () => {
+    const w = workers.createWorker({ adapterId: 'claude-code', label: `Claude ${Math.random()}` })
+    expect(w.unattendedAuthority).toBe('full-user')
   })
 
-  it('writes the permissive value rather than deleting the key', async () => {
-    // ⛔ An absent key and `full-user` resolve the same and mean different things: one is a project
-    // nobody was ever asked about. The setting must be able to record "I was asked, and I said yes".
-    const p = project('sandboxed-only')
-    projects.setProjectPolicy(p.id, { unattendedAuthority: 'full-user' })
-    const after = projects.requireProject(p.id)
-    expect(after.config.permission?.unattended).toBe('full-user')
+  it('honours an explicit choice at commissioning', () => {
+    const w = workers.createWorker({
+      adapterId: 'openai-compatible',
+      label: `Codex ${Math.random()}`,
+      unattendedAuthority: 'full-user'
+    })
+    expect(w.unattendedAuthority).toBe('full-user')
   })
+})
 
-  it('refuses a value that is not one of the two', () => {
-    const p = project()
-    expect(() =>
-      projects.setProjectPolicy(p.id, { unattendedAuthority: 'whatever' as 'full-user' })
-    ).toThrow(/unattended authority/)
+describe('updating the setting', () => {
+  it('round-trips through worker.update', () => {
+    const w = workers.createWorker({ adapterId: 'openai-compatible', label: `Codex ${Math.random()}` })
+    expect(w.unattendedAuthority).toBe('sandboxed-only')
+    const after = workers.updateWorker(w.id, { unattendedAuthority: 'full-user' })
+    expect(after.unattendedAuthority).toBe('full-user')
+    expect(workers.requireWorker(w.id).unattendedAuthority).toBe('full-user')
   })
 })
 
 describe('the dispatch gate', () => {
-  it('offers a bypassing adapter to a project that did not ask for a sandbox', () => {
-    const p = project('full-user')
-    workers.createWorker({ adapterId: 'claude-code', label: 'Claude A' })
-    const task = kit.makeTask({ projectId: p.id })
+  it('offers a bypassing worker that did not ask for a sandbox', () => {
+    const worker = workers.createWorker({
+      adapterId: 'claude-code',
+      label: `Claude ${Math.random()}`,
+      unattendedAuthority: 'full-user'
+    })
+    const task = kit.makeTask({ constraints: { workerId: worker.id } })
 
     const choice = scoring.chooseTarget(task)
 
-    expect(choice.worker).not.toBeNull()
+    expect(choice.worker?.id).toBe(worker.id)
   })
 
-  it('refuses a bypassing adapter in a sandboxed-only project, and says why', () => {
-    const p = project('sandboxed-only')
-    const worker = workers.createWorker({ adapterId: 'claude-code', label: 'Claude B' })
-    const task = kit.makeTask({ projectId: p.id })
+  it('refuses a bypassing worker set to sandboxed-only, and says why', () => {
+    const worker = workers.createWorker({
+      adapterId: 'claude-code',
+      label: `Claude ${Math.random()}`,
+      unattendedAuthority: 'sandboxed-only'
+    })
+    const task = kit.makeTask({ constraints: { workerId: worker.id } })
 
     const choice = scoring.chooseTarget(task)
 
@@ -128,14 +131,26 @@ describe('the dispatch gate', () => {
     expect(choice.standing).toBe(true)
   })
 
-  it('still offers a sandboxed adapter to a sandboxed-only project', () => {
-    const p = project('sandboxed-only')
-    workers.createWorker({ adapterId: 'openai-compatible', label: 'Codex A' })
-    const task = kit.makeTask({ projectId: p.id })
+  it('still offers a sandboxed worker set to sandboxed-only', () => {
+    const worker = workers.createWorker({ adapterId: 'openai-compatible', label: `Codex ${Math.random()}` })
+    const task = kit.makeTask({ constraints: { workerId: worker.id } })
 
     const choice = scoring.chooseTarget(task)
 
-    expect(choice.worker).not.toBeNull()
+    expect(choice.worker?.id).toBe(worker.id)
+  })
+
+  it('also offers a codex worker set to full-user: the gate reads headlessAuthority, not the choice', () => {
+    const worker = workers.createWorker({
+      adapterId: 'openai-compatible',
+      label: `Codex ${Math.random()}`,
+      unattendedAuthority: 'full-user'
+    })
+    const task = kit.makeTask({ constraints: { workerId: worker.id } })
+
+    const choice = scoring.chooseTarget(task)
+
+    expect(choice.worker?.id).toBe(worker.id)
   })
 
   it('follows the declaration, not the adapter name', async () => {
@@ -145,9 +160,12 @@ describe('the dispatch gate', () => {
     const original = openaiCompatible.info.policy.headlessAuthority
     openaiCompatible.info.policy.headlessAuthority = 'full-user'
     try {
-      const p = project('sandboxed-only')
-      workers.createWorker({ adapterId: 'openai-compatible', label: 'Codex B' })
-      const task = kit.makeTask({ projectId: p.id })
+      const worker = workers.createWorker({
+        adapterId: 'openai-compatible',
+        label: `Codex ${Math.random()}`,
+        unattendedAuthority: 'sandboxed-only'
+      })
+      const task = kit.makeTask({ constraints: { workerId: worker.id } })
 
       expect(scoring.chooseTarget(task).worker).toBeNull()
     } finally {
@@ -155,15 +173,17 @@ describe('the dispatch gate', () => {
     }
   })
 
-  it('does not gate a task with no project, which has no owner to have chosen', () => {
-    workers.createWorker({ adapterId: 'claude-code', label: 'Claude C' })
-    const task = kit.makeTask()
+  it('gates a task with no project exactly the same as one with a project', () => {
+    const worker = workers.createWorker({
+      adapterId: 'claude-code',
+      label: `Claude ${Math.random()}`,
+      unattendedAuthority: 'sandboxed-only'
+    })
+    const task = kit.makeTask({ constraints: { workerId: worker.id } })
 
     const choice = scoring.chooseTarget(task)
 
-    // ⚠️ Asserts that *this* gate stayed silent, not that a worker was picked. By now the suite has
-    // commissioned several accounts, so a field of tied candidates can legitimately defer to a
-    // quota read — a real outcome that says nothing about containment either way.
-    expect(choice.refusals?.some((r) => r.why.includes('sandboxed adapters only'))).toBeFalsy()
+    expect(choice.worker).toBeNull()
+    expect(choice.refusals?.some((r) => r.why.includes('sandboxed adapters only'))).toBe(true)
   })
 })

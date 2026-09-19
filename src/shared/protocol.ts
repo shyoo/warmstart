@@ -337,6 +337,24 @@ export interface DaemonEndpoint {
 
 // ---------------------------------------------------------------------------- domain
 
+/**
+ * How much authority unattended work on this account may have.
+ *
+ * ⛔ **A choice about this account, not about a project (t545).** It used to live on
+ * `ProjectConfig.permission.unattended`, gating every adapter a project's tasks could reach alike;
+ * an account's own reach into the machine is a fact about that account, so it travels with the
+ * worker instead — the same account is exactly as trusted whichever project hands it work.
+ * `sandboxed-only` is enforced as an **eligibility gate** (`scoring.ts`), not as a downgrade: a task
+ * that only a bypassing adapter could run holds, visibly, rather than being run sandboxed into the
+ * stall t250 measured. See `docs/security.md`.
+ */
+export type UnattendedAuthority = 'full-user' | 'sandboxed-only'
+
+export const UNATTENDED_AUTHORITY_LABELS: Record<UnattendedAuthority, string> = {
+  'full-user': 'Full user authority',
+  'sandboxed-only': 'Sandboxed adapters only'
+}
+
 /** A quota bucket: one account or endpoint. Not a session. See docs/glossary.md. */
 export interface Worker {
   id: string
@@ -362,6 +380,17 @@ export interface Worker {
    */
   role: WorkerRole
   maxConcurrent: number
+  /**
+   * How much of this machine unattended work on this account may reach.
+   *
+   * ⛔ **The absent-key grandfather is `full-user` for every adapter that only ever ran that way**
+   * (Claude Code, Antigravity, Muse, an external declarative adapter, a local model) — moving the
+   * setting here must not silently restrict a running fleet. Codex is the one adapter that offers a
+   * real sandbox, and it grandfathers to `sandboxed-only` — the mode it has always run in — so
+   * upgrading this build does not silently hand it `--dangerously-bypass-approvals-and-sandbox` on
+   * its next dispatch. See migration 77.
+   */
+  unattendedAuthority: UnattendedAuthority
   /**
    * What this account reaches for when the task does not say.
    *
@@ -1319,6 +1348,17 @@ export interface AdapterPolicy {
    */
   headlessPermissionMode?: string | null
   /**
+   * The mode that removes `headlessAuthority: 'sandboxed'`'s boundary, for the one adapter that
+   * has both a sandbox and an escape from it.
+   *
+   * ⛔ **Absent everywhere except Codex, on purpose.** An adapter whose `headlessAuthority` is
+   * already `'full-user'` has no sandboxed tier to opt out of — `headlessPermissionMode` already
+   * names its one unattended mode. This field only means something on an adapter that offers a real
+   * boundary by default, and says what to run instead when a worker's own
+   * `unattendedAuthority: 'full-user'` says to skip it. See `sessions.ts`'s `permissionModeFor`.
+   */
+  bypassPermissionMode?: string | null
+  /**
    * How much authority unattended work on this adapter actually has.
    *
    * ⛔ **A capability, not a branch on a mode name.** The question a project needs answered is *can
@@ -1607,6 +1647,8 @@ export interface RpcMap {
        * does not intend to spend on has to close that window at creation, not just after it.
        */
       enabled?: boolean
+      /** Omit to take the mode this adapter has always run unattended work in. See `Worker`. */
+      unattendedAuthority?: UnattendedAuthority
     }
     result: Worker
   }
@@ -1627,6 +1669,7 @@ export interface RpcMap {
         | 'defaultEffort'
         | 'defaultModels'
         | 'routableModels'
+        | 'unattendedAuthority'
       >
     >
     result: Worker

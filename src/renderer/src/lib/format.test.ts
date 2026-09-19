@@ -270,6 +270,7 @@ describe('an account whose subscription has expired', () => {
       humanOccupied: false,
       role: 'both',
       maxConcurrent: 1,
+      unattendedAuthority: 'full-user',
       defaultModel: null,
       defaultEffort: null,
       defaultModels: null,
