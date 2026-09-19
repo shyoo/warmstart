@@ -23,6 +23,15 @@ installed CLIs and fonts; `docs/testing.md` records each. Phase 3/4 (write-up, l
 channels) remains off-repo.
 
 ## Closed in this cleanup
+- **Only Plan & Split and Plan & Execute drew the composer's dispatch diagram; Single Task,
+  Conversation and Debate were left to a sentence (t546, 2026-09-19).** `PlanShape` is now
+  `WorkflowShape`, one of five schematic topologies keyed on the kind pill instead of two: Single
+  Task draws one accented node running straight to "verifies & lands"; Conversation draws two nodes
+  trading turns with a dashed, unreached "commit" node, since nothing lands automatically; Debate
+  draws independent seats converging on the organizer, the mirror of Plan & Split's fan-out (no
+  initial planner, because a debate's seats never come from one). Every diagram keeps the existing
+  rule: schematic only, no mockup of a screen, `--color-*` tokens so it reads in both themes.
+  `NewTask.tsx`, `docs/ui.md`.
 - **Attaching a folder to a codex task could never grant `~\.ssh`, because read and write are
   decided by two different mechanisms (t538 ← t537, 2026-09-18).** `--add-dir C:\Users\<user>\.ssh`
   was on three consecutive t537 runs' argv, never appeared in `<CODEX_HOME>/cap_sid` →
@@ -145,17 +154,6 @@ channels) remains off-repo.
   `modelRoutingActive()`. `windowRisk` lost its reset-horizon factor (it could exceed 1.0); `quotaRisk`
   now skips a billing window `prepaid` finds forfeiting, including a fresh non-session
   `allowed_warning` on it. `docs/routing.md` §3.3, §3.3a.
-
-- **Three thread-page UI fixes (t500, 2026-09-17).** The thread no longer needs a manual scroll to
-  follow a running agent: a reader already at the bottom is kept pinned there as messages and the
-  live activity tail grow, the same pinned-tail pattern `SessionStream` already used for its own pane
-  (`isNearThreadBottom`, `lib/threadscroll.ts`). `.detail-head` — the back button and the `t<seq> ·
-  title` heading — is now `position: sticky` at the top of `.content`, so a long thread no longer
-  scrolls the way out off the page; the title truncates to one line rather than wrapping the pinned
-  header taller. The composer's ordinary pill row (`.composer-bar`) no longer wraps to a second line
-  at an unpredictable point — it scrolls horizontally instead, the same answer already used for the
-  Plan & Split and Debate tables; `.composer-send` buttons no longer wrap their own label either.
-  `docs/ui.md`.
 
 
 ## Remaining work — ordered by payoff

@@ -6886,10 +6886,10 @@ select:focus-visible,
   overflow-x: auto;
 }
 
-/* ⛔ The shape of a plan task, drawn. It sits directly under the settings that configure it, above
-   the notices, so the picture and the two rows of pills read as one thing. ⚠️ Fixed height: the two
-   diagrams have different topologies and a composer that jumped when the kind pill changed would be
-   moving the Send button under the cursor. */
+/* ⛔ The shape of the task, drawn — one of five, one per kind on the pill above it. It sits directly
+   under the settings that configure it, above the notices, so the picture and the rows of pills read
+   as one thing. ⚠️ Fixed height: the five diagrams have different topologies and a composer that
+   jumped when the kind pill changed would be moving the Send button under the cursor. */
 .composer-shape {
   margin: var(--sp-2) 0 0;
   padding: 0 var(--sp-1);

@@ -194,8 +194,19 @@ const KIND_SHORT: Record<ComposerKind, string> = {
   debate: 'Debate'
 }
 
+/** The five shapes {@link WorkflowShape} can draw, one per composer kind. */
+type WorkflowShapeMode = 'split' | 'execute' | 'task' | 'conversation' | 'debate'
+
+const WORKFLOW_SHAPE_LABEL: Record<WorkflowShapeMode, string> = {
+  split: 'One planner fans out to several executors, which merge back into a second planner turn',
+  execute: 'One planner hands to one executor, which lands the work',
+  task: 'One agent runs, verifies and lands the work in a single turn',
+  conversation: 'You and the agent exchange turns; nothing lands until you commit',
+  debate: 'Several seats propose independently, then the organizer resolves them into one answer'
+}
+
 /**
- * The shape of a plan task, drawn rather than described.
+ * The shape of a task, drawn rather than described.
  *
  * ⛔ **Two turns against three is the whole of the difference, and it is a topology.** A sentence has
  * to say it in the order the words come; the picture says it at a glance, which is what somebody
@@ -204,20 +215,17 @@ const KIND_SHORT: Record<ComposerKind, string> = {
  * have to follow and no detail that goes stale when the composer changes.
  *
  * ⚠️ `--color-*` tokens rather than literals, like every other SVG in this app, so it reads in both
- * themes. The planner node is accented on both diagrams, because it is the same node.
+ * themes. The accented node is always the one the operator's Send button files — the planner on the
+ * two plan shapes, the organizer on debate — so an accent means the same thing across all five.
  */
-function PlanShape({ mode }: { mode: 'split' | 'execute' }): React.JSX.Element {
+function WorkflowShape({ mode }: { mode: WorkflowShapeMode }): React.JSX.Element {
   const R = 5
   return (
     <svg
       viewBox="0 0 240 64"
       className="composer-shape-svg"
       role="img"
-      aria-label={
-        mode === 'split'
-          ? 'One planner fans out to several executors, which merge back into a second planner turn'
-          : 'One planner hands to one executor, which lands the work'
-      }
+      aria-label={WORKFLOW_SHAPE_LABEL[mode]}
     >
       {mode === 'split' ? (
         <>
@@ -244,7 +252,7 @@ function PlanShape({ mode }: { mode: 'split' | 'execute' }): React.JSX.Element {
           <text x="100" y="62" className="composer-shape-tag" textAnchor="middle">pieces</text>
           <text x="172" y="62" className="composer-shape-tag" textAnchor="middle">review</text>
         </>
-      ) : (
+      ) : mode === 'execute' ? (
         <>
           <path d="M34 32 H94" fill="none" stroke="var(--color-border-strong)" strokeWidth="1.5" />
           <path d="M106 32 H166" fill="none" stroke="var(--color-border-strong)" strokeWidth="1.5" />
@@ -254,6 +262,55 @@ function PlanShape({ mode }: { mode: 'split' | 'execute' }): React.JSX.Element {
           <text x="28" y="62" className="composer-shape-tag" textAnchor="middle">plan</text>
           <text x="100" y="62" className="composer-shape-tag" textAnchor="middle">execute</text>
           <text x="186" y="36" className="composer-shape-tag">lands</text>
+        </>
+      ) : mode === 'task' ? (
+        <>
+          {/* one agent, one arrow, lands — the shape with no second turn to draw */}
+          <path d="M34 32 H114" fill="none" stroke="var(--color-border-strong)" strokeWidth="1.5" />
+          <path d="M108 27 l6 5 -6 5" fill="none" stroke="var(--color-border-strong)" strokeWidth="1.5" />
+          <circle cx="28" cy="32" r={R} fill="var(--color-accent)" />
+          <text x="28" y="62" className="composer-shape-tag" textAnchor="middle">agent</text>
+          <text x="128" y="36" className="composer-shape-tag">verifies &amp; lands</text>
+        </>
+      ) : mode === 'conversation' ? (
+        <>
+          {/* you ⇄ agent, back and forth, then an open (dashed) commit rather than an automatic landing */}
+          <path
+            d="M40 26 C64 14 96 14 120 26"
+            fill="none"
+            stroke="var(--color-border-strong)"
+            strokeWidth="1.5"
+          />
+          <path d="M113 22 l7 4 -3 7" fill="none" stroke="var(--color-border-strong)" strokeWidth="1.5" />
+          <path
+            d="M120 38 C96 50 64 50 40 38"
+            fill="none"
+            stroke="var(--color-border-strong)"
+            strokeWidth="1.5"
+          />
+          <path d="M47 42 l-7 -4 3 -7" fill="none" stroke="var(--color-border-strong)" strokeWidth="1.5" />
+          <circle cx="28" cy="32" r={R} fill="var(--color-accent)" />
+          <circle cx="132" cy="32" r={R} fill="var(--color-text-dim)" />
+          <circle cx="196" cy="32" r={R} fill="none" stroke="var(--color-text-faint)" strokeDasharray="2 2" />
+          <text x="28" y="62" className="composer-shape-tag" textAnchor="middle">you</text>
+          <text x="132" y="62" className="composer-shape-tag" textAnchor="middle">agent</text>
+          <text x="196" y="62" className="composer-shape-tag" textAnchor="middle">commit</text>
+        </>
+      ) : (
+        <>
+          {/* three independent seats converge on the organizer — no planner fans them out to begin with */}
+          <path
+            d="M40 16 C64 16 64 32 88 32 M40 32 C64 32 64 32 88 32 M40 48 C64 48 64 32 88 32"
+            fill="none"
+            stroke="var(--color-border-strong)"
+            strokeWidth="1.5"
+          />
+          <circle cx="34" cy="16" r={R} fill="var(--color-text-dim)" />
+          <circle cx="34" cy="32" r={R} fill="var(--color-text-dim)" />
+          <circle cx="34" cy="48" r={R} fill="var(--color-text-dim)" />
+          <circle cx="94" cy="32" r={R} fill="var(--color-accent)" />
+          <text x="34" y="62" className="composer-shape-tag" textAnchor="middle">seats</text>
+          <text x="94" y="62" className="composer-shape-tag" textAnchor="middle">resolve</text>
         </>
       )}
     </svg>
@@ -1725,22 +1782,32 @@ export function NewTask({
       </div>
 
       {/*
-        ⛔ **Drawn, because the difference between the two plan shapes is a topology and a sentence
-        has to say a topology in the order the words come.** Somebody choosing between Plan & Split
-        and Plan & Execute is choosing between three turns and two, and this says which they are
-        looking at before they read a word. ⚠️ It is a diagram of the dispatch and nothing else — no
-        mockup of a screen, so nothing in it goes stale when this composer changes.
+        ⛔ **Drawn, because the difference between the five kinds is a topology and a sentence has to
+        say a topology in the order the words come.** Somebody choosing a kind on this pill is
+        choosing a dispatch shape — how many turns, whether they fan out, whether anything lands
+        without being asked — and this says which one they are looking at before they read a word.
+        ⚠️ It is a diagram of the dispatch and nothing else — no mockup of a screen, so nothing in it
+        goes stale when this composer changes. Every kind gets one now: Plan & Split and Plan &
+        Execute had it first because their difference is the least sentence-shaped, but Single Task,
+        Conversation and Debate are exactly as much a topology and were previously left to a sentence
+        alone.
       */}
-      {isPlan && (
-        <figure className="composer-shape">
-          <PlanShape mode={isExecute ? 'execute' : 'split'} />
-          <figcaption>
-            {isExecute
-              ? 'Two turns: planner generates the instruction, executor completes and lands the work.'
-              : 'Three steps: planner decomposes the goal, subtasks run in parallel and merge back, planner reviews.'}
-          </figcaption>
-        </figure>
-      )}
+      <figure className="composer-shape">
+        <WorkflowShape
+          mode={isExecute ? 'execute' : isPlan ? 'split' : isDebate ? 'debate' : isConversation ? 'conversation' : 'task'}
+        />
+        <figcaption>
+          {isExecute
+            ? 'Two turns: planner generates the instruction, executor completes and lands the work.'
+            : isPlan
+              ? 'Three steps: planner decomposes the goal, subtasks run in parallel and merge back, planner reviews.'
+              : isDebate
+                ? `${debatePrefs.seats.length} seats propose independently, then the organizer resolves them into one answer.`
+                : isConversation
+                  ? 'Interactive turns repeat until you commit; nothing lands automatically.'
+                  : 'One agent completes the task, verifies it and lands the work in a single run.'}
+        </figcaption>
+      </figure>
 
       {isExecute && (
         /*

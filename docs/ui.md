@@ -451,9 +451,11 @@ filed as **1**, on the mandate and on `childDefaults` alike, which `planModeOf` 
 fan-out pill is **absent** rather than reading `<=1` — a control with one option is not a choice, and
 changing it is changing the kind — and the Planner row's finish pill is absent too, because a planner
 that writes no code and abandons its branch at the handoff can only be `report-only`. Added: a small
-inline **diagram** of the dispatch (`PlanShape`, drawn for both plan shapes so the three-turn and
-two-turn topologies can be compared at a glance, and deliberately not a mockup of any screen), and a
-**notice** pair from `executornotice.ts`. ⛔ The notice is the whole guardrail on executor choice —
+inline **diagram** of the dispatch (`WorkflowShape`, one of five schematic topologies keyed on the
+kind pill — Plan & Split's three-turn fan-out-and-back, Plan & Execute's two-turn hand-off, Single
+Task's one-turn run, Conversation's open-ended back-and-forth with no automatic landing, and Debate's
+independent seats converging on the organizer — comparable at a glance and deliberately not a mockup
+of any screen), and a **notice** pair from `executornotice.ts`. ⛔ The notice is the whole guardrail on executor choice —
 decision D2 was *inherit as today, plus a notice that states the trade* — so it says when nobody named
 an executor (the scheduler may hand the work back to the account that just planned, and then the only
 saving is the review turn), and quotes the published trade with the fact that it was **not** measured
