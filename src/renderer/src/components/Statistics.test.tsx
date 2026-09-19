@@ -230,9 +230,11 @@ describe('the trade-off scatters draw one mark per model on every pair of axes',
 
   it('draws three scatters, one per pair of measured axes', () => {
     expect([...markup.matchAll(/class="scatter-plot-svg"/g)]).toHaveLength(3)
-    expect(markup).toMatch(/Quality.*Active time/)
-    expect(markup).toMatch(/Quality.*Cost/)
-    expect(markup).toMatch(/Active time.*Cost/)
+    expect(
+      [...markup.matchAll(/class="scatter-plot-title">([^<]+)<span[^>]*>vs<\/span> ([^<]+)/g)].map((match) =>
+        `${match[1]!.trim()} vs ${match[2]!.trim()}`
+      )
+    ).toEqual(['Quality vs Cost', 'Quality vs Active time', 'Active time vs Cost'])
   })
 
   /** ⛔ Two models measured on all three axes is two marks per scatter, six in total. */

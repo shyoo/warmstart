@@ -955,8 +955,8 @@ export function ScatterPlot({
 }
 
 const SCATTER_PAIRS: Array<{ x: Axis; y: Axis }> = [
-  { x: 'quality', y: 'velocity' },
   { x: 'quality', y: 'cost' },
+  { x: 'quality', y: 'velocity' },
   { x: 'velocity', y: 'cost' }
 ]
 

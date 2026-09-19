@@ -211,7 +211,7 @@ clean has graded has an empty distribution and no bar — an ungraded model has 
 a short one.
 
 ⭐ **Statistics also has a trade-off section, `TradeoffPlots`** (`Statistics.tsx`), above its three
-tabs: three flat x/y scatters — quality against active time, quality against cost, and active time
+tabs: three flat x/y scatters — quality against cost, quality against active time, and active time
 against cost — each plotting only an adapter/model pair with measured price, active time and clean
 quality evidence, so a missing value is never drawn as a deliberate coordinate. ⭐ This replaces an
 earlier single rotatable 3D scatter (retired 2026-09-14, reported confusing to read and hard to

@@ -154,11 +154,11 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   and history. Doctor's Projects section flags it fleet-wide too, like `isolationRootExists` for a
   worker. `projectrelocate.test.ts`, `docs/ui.md`.
 - **Thread auto-follow no longer traps a taller right pane (t513, 2026-09-17).** Pinning begins only at the whole page's bottom and follows that bottom, never the shorter chat anchor. `docs/ui.md`.
-- **The fleet divider said `running` while counting slots (t560, 2026-09-19).** `2 / 1 running`
-  beside one live task read as two agents at work; the word is now `in use`, matching the tooltip.
-  Probes, consults, reviews and chats were verified excluded on every path. `docs/ui.md`.
 - **Projects can run trunk-only (t563, 2026-09-19).** `workspaces.poolSize: 0` runs every task on the trunk
   lease; wizard/settings offer Trunk + worktrees (default) vs Trunk only, changeable either way with confirmation; `project.pruneWorktrees` removes idle trees, keeps occupied/dirty ones. `trunkonly.test.ts`.
+- **Statistics puts quality versus cost first (t565, 2026-09-19).** The three measured trade-off
+  plots now lead with quality against cost on the left, followed by quality against active time and
+  active time against cost. `Statistics.tsx`, `docs/ui.md`.
 ## Remaining work — ordered by payoff
 
 Each needs a real signed-in account, a macOS machine, release credentials, or a human product
