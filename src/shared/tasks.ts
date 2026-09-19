@@ -264,6 +264,16 @@ export interface ProjectDocDraft {
  * halfway and leave a project that is registered but unconfigured. The daemon does the sequence and
  * reports what it could not do in `warnings` rather than failing the whole thing over a scaffold file.
  */
+/**
+ * What `.warmstart/project.json` becomes in git when the wizard creates it.
+ *
+ * ⛔ **`commit` is the default, and the choice is always asked.** Committed policy is what the docs
+ * describe and what every clone pulls — but committing to somebody's repository unasked is what
+ * made the trunk dirty-looking work Warmstart's own doing. Absent keeps the old answer
+ * (`commit`); the wizard always sends an explicit value, so nothing here is silent either way.
+ */
+export type ScaffoldingGitChoice = 'commit' | 'ignore'
+
 export interface ProjectCreateRequest {
   root: string
   name?: string
@@ -271,6 +281,12 @@ export interface ProjectCreateRequest {
   createDirectory?: boolean
   /** `git init -b <landing target>`. Without a repo a project gets one workspace and no branches. */
   gitInit?: boolean
+  /**
+   * `commit` stages the scaffolding beside the starter docs; `ignore` appends
+   * `.warmstart/project.json` to the root `.gitignore` and commits that instead, leaving the
+   * config untracked. Either way the trunk the wizard hands back is clean.
+   */
+  scaffoldingGit?: ScaffoldingGitChoice
   /** Empty or absent keeps the derived `<root>_workspaces`. */
   workspaceRoot?: string
   policy?: ProjectPolicyPatch

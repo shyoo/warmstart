@@ -8,7 +8,7 @@ The maintained reference in [`docs/`](docs/README.md) is the authority on each s
 design and incident history belongs in `transient_docs/`, not here.
 
 Baseline (2026-09-19, **Windows 11**, measured over `0.2.0-rc.2+dirty`): typecheck, lint and build
-pass; L1 **3,725 passed, 5 skipped** (221 files). Lower tiers (2026-09-18): L2 **203 checks** (5
+pass; L1 **3,739 passed, 5 skipped** (224 files, t554 measured 2026-09-19). Lower tiers (2026-09-18): L2 **203 checks** (5
 skipped); L3 **474 passed, 4 skipped**; L4 **19 checks** against `release/win-unpacked`. macOS 13
 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so is the
 **Release** workflow.

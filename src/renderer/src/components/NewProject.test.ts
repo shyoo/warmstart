@@ -161,6 +161,22 @@ describe('what Create will do', () => {
     )
   })
 
+  it('says the scaffolding commits so the trunk starts clean', () => {
+    expect(creationPlan(draft(), inspection())).toContain(
+      'Commit the scaffolding so the trunk starts clean.'
+    )
+  })
+
+  it('states the ignore choice instead of the commit when asked', () => {
+    // ⛔ t554: the wizard asks what project.json becomes in git, so the plan must say the answer —
+    // a review step that hid the git fate would leave it to be discovered in `git status`.
+    const plan = creationPlan(draft({ scaffoldingGit: 'ignore' }), inspection())
+    expect(plan).toContain(
+      'Write .warmstart/project.json with these policies, add it to .gitignore, and commit that rule — the config itself stays untracked.'
+    )
+    expect(plan.join('\n')).not.toContain('Commit the scaffolding')
+  })
+
   it('says out loud that no checks means the verifying policies verify nothing', () => {
     expect(creationPlan(draft(), inspection())).toContain(
       'Record no check commands — verifying finish policies would verify nothing.'

@@ -12,6 +12,7 @@ import {
   type FinishPolicyChoice,
   type Project,
   type ProjectInspection,
+  type ScaffoldingGitChoice,
   type SessionSharingChoice
 } from '@shared/tasks'
 import type { Settings } from '@shared/protocol'
@@ -237,7 +238,8 @@ export function NewProject({
         checks: checksFromText(draft.checksText),
         docs: draft.docs
           .filter((d) => d.include)
-          .map((d) => ({ name: d.name, content: d.content }))
+          .map((d) => ({ name: d.name, content: d.content })),
+        scaffoldingGit: draft.scaffoldingGit
       })
       if (result.warnings.length > 0) {
         // ⛔ Shown, and the wizard stays open. The project exists — closing over a list of things
@@ -818,6 +820,32 @@ function ReviewStep({
             ))}
           </>
         )}
+      </div>
+
+      <div className="wizard-section">
+        <h4>project.json in git</h4>
+        <p className="wizard-sub">
+          Committed policy travels to every clone; an ignored config stays local to this checkout.
+          Either way the trunk starts clean — nothing here happens silently.
+        </p>
+        <div className="setting-list">
+          <SettingRow
+            title="project.json"
+            description="Commit it with the scaffolding, or leave it untracked behind a committed .gitignore entry."
+            control={
+              <SettingButtonSelect
+                className="setting-row-control-select"
+                value={draft.scaffoldingGit}
+                options={[
+                  { value: 'commit', label: 'Commit' },
+                  { value: 'ignore', label: 'Ignore' }
+                ]}
+                ariaLabel="project.json in git"
+                onChange={(val) => patch({ scaffoldingGit: val as ScaffoldingGitChoice })}
+              />
+            }
+          />
+        </div>
       </div>
 
       <div className="wizard-section">

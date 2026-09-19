@@ -43,7 +43,8 @@ expired** is refused the probe too, because there retrying is the thing that can
 **Project** — *a directory plus policy.* Git is **optional**: `vcs: git | none`. Branching,
 committing and parallel workspaces are per-project **capabilities**, not universal assumptions, so a
 media-generation or research project is a first-class citizen with no repo fiction. Policy lives in a
-committed `.warmstart/project.json`; runtime state stays private in the OS app-data directory.
+committed `.warmstart/project.json` — or untracked behind a committed `.gitignore` entry when the
+operator chose *Ignore* while adding the project (t554); runtime state stays private in the OS app-data directory.
 
 **Resident session** — *the conversation currently holding a workspace.* ⛔ **The session owns the
 worktree, not the run and not the task**, so it keeps it for as long as it lives — which is what lets

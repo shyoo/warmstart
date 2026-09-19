@@ -4397,6 +4397,14 @@ try {
     /project\.json/.test(plan) && /README\.md, AGENTS\.md, HANDOFF\.md/.test(plan),
     plan.replace(/\n+/g, ' | ')
   )
+  // ⛔ t554: the git fate of project.json is asked, never assumed — the review step carries the
+  // choice beside the plan that states its consequence, so neither answer happens silently.
+  const gitFate = await evaluate(`document.querySelector('.wizard-body').innerText`)
+  check(
+    'the review step asks what project.json becomes in git',
+    /project\.json in git/i.test(gitFate) && /Commit/.test(gitFate) && /Ignore/.test(gitFate),
+    gitFate.replace(/\n+/g, ' | ').slice(0, 300)
+  )
 
   await evaluate(
     `[...document.querySelectorAll('.wizard-foot button')].find(b => b.innerText.trim() === 'Create project')?.click()`

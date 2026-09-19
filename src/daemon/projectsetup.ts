@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import type {
   Project,
@@ -292,15 +292,26 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
 
   const docsWritten = writeProjectDocs(project, request.docs ?? [], warnings)
 
-  // ⛔ **A file this wizard just wrote is never left uncommitted.** `.warmstart/project.json` is
-  // documented as a *committed* file (data-model.md, glossary.md) so every clone and every landing
+  // ⛔ **A file this wizard just wrote is never left to dirty the trunk.** `.warmstart/project.json`
+  // is documented as a *committed* file (data-model.md, glossary.md) so every clone and every landing
   // check sees the same policy — but nothing wrote it to git, so it sat untracked until a landing
   // discovered a dirty trunk and refused to merge, with no indication the block was Warmstart's own
   // doing. Only the files this call actually wrote are staged; anything the operator already had is
-  // never touched.
+  // never touched. ⚠️ Since t554 the operator chooses the config's git fate in the wizard: `commit`
+  // stages it beside the starter docs, `ignore` leaves it untracked behind a committed `.gitignore`
+  // entry instead. Either way the trunk handed back is clean.
   if (project.vcs === 'git') {
-    const scaffolding = [...(configFreshlyWritten ? [PROJECT_CONFIG_RELATIVE] : []), ...docsWritten]
-    await commitScaffolding(project, scaffolding, warnings)
+    if (request.scaffoldingGit === 'ignore') {
+      await ignoreScaffolding(project, docsWritten, warnings)
+    } else {
+      const scaffolding = [...(configFreshlyWritten ? [PROJECT_CONFIG_RELATIVE] : []), ...docsWritten]
+      await commitScaffolding(project, scaffolding, warnings)
+    }
+  } else if (request.scaffoldingGit === 'ignore') {
+    // ⚠️ No repository, so nothing to commit — but the entry is still written: the config sits
+    // untracked, which is already what `ignore` asked for, and a later `git init` picks the rule
+    // up. Silent on purpose; warning here would hold the wizard open over a choice that holds.
+    ensureIgnoreEntry(project.root)
   }
 
   return { project: reloadProject(project.id), configPath, docsWritten, warnings }
@@ -315,22 +326,104 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
  * committing nothing is quietly correct, not an error.
  */
 async function commitScaffolding(project: Project, paths: string[], warnings: string[]): Promise<void> {
+  await commitIfDirty(
+    project,
+    paths,
+    'Add Warmstart project scaffolding\n\n' +
+      `Warmstart wrote ${paths.join(', ')} for this project and committed them immediately, ` +
+      'so the trunk starts clean rather than blocking the first landing on a file nobody knew to commit.',
+    warnings,
+    (paths) => `could not commit the project scaffolding (${paths.join(', ')}): `
+  )
+}
+
+async function commitIfDirty(
+  project: Project,
+  paths: string[],
+  message: string,
+  warnings: string[],
+  blame: (paths: string[]) => string
+): Promise<void> {
   if (paths.length === 0) return
   try {
     const dirty = await git(project.root, ['status', '--porcelain', '--', ...paths])
     if (!dirty.trim()) return
     await git(project.root, ['add', '--', ...paths])
-    await git(project.root, [
-      'commit',
-      '--no-verify',
-      '-m',
-      'Add Warmstart project scaffolding\n\n' +
-        `Warmstart wrote ${paths.join(', ')} for this project and committed them immediately, ` +
-        'so the trunk starts clean rather than blocking the first landing on a file nobody knew to commit.'
-    ])
+    await git(project.root, ['commit', '--no-verify', '-m', message])
     log.info(`${project.name}: committed ${paths.join(', ')}`)
   } catch (err) {
-    warnings.push(`could not commit the project scaffolding (${paths.join(', ')}): ${errorMessage(err)}`)
+    warnings.push(`${blame(paths)}${errorMessage(err)}`)
+  }
+}
+
+/** `.warmstart/project.json` in gitignore spelling — forward slashes, the way git writes them. */
+const CONFIG_IGNORE_ENTRY = '.warmstart/project.json'
+
+/**
+ * Append the config to the root `.gitignore` when it is not already covered there.
+ *
+ * ⛔ Exact entry or an enclosing directory pattern only. Matching looser — `*.json`, say —
+ * would claim coverage the ignore file may not mean, and skipping the entry over that claim
+ * re-dirties the trunk. Negations (`!…`) simply do not count as coverage, so a negated entry gets
+ * a redundant-but-harmless duplicate rather than a missing rule.
+ *
+ * @returns whether the file was written.
+ */
+export function ensureIgnoreEntry(root: string): boolean {
+  const ignoreFile = join(root, '.gitignore')
+  const existing = existsSync(ignoreFile) ? readFileSync(ignoreFile, 'utf8') : ''
+  let covered = false
+  let negated = false
+  for (const line of existing.split('\n')) {
+    const raw = line.trim()
+    const entry = (raw.startsWith('!') ? raw.slice(1) : raw).replace(/^\/+/, '')
+    const hits = entry === CONFIG_IGNORE_ENTRY || entry === '.warmstart/' || entry === '.warmstart'
+    if (!hits) continue
+    if (raw.startsWith('!')) negated = true
+    else covered = true
+  }
+  // ⚠️ Last match wins in gitignore, so a negation anywhere after a rule re-includes the file —
+  // and a negation anywhere at all means somebody is hand-editing this rule, so appending the
+  // plain entry keeps the file ignored without touching their lines.
+  if (covered && !negated) return false
+  const prefix = existing === '' || existing.endsWith('\n') ? '' : '\n'
+  writeFileSync(ignoreFile, `${existing}${prefix}${CONFIG_IGNORE_ENTRY}\n`)
+  return true
+}
+
+/**
+ * The `ignore` half of the wizard's git-fate choice: the config stays untracked behind a committed
+ * `.gitignore` entry, and the starter docs commit beside that entry, so the trunk handed back is
+ * clean without the config ever being staged.
+ *
+ * ⛔ **An already-tracked config is a warning, not a silent no-op.** `.gitignore` does not untrack,
+ * so without the sentence the operator reads a clean trunk and a policy that still lands on every
+ * clone — the entry did nothing and said nothing.
+ */
+async function ignoreScaffolding(project: Project, docsWritten: string[], warnings: string[]): Promise<void> {
+  try {
+    ensureIgnoreEntry(project.root)
+    try {
+      await git(project.root, ['ls-files', '--error-unmatch', '--', PROJECT_CONFIG_RELATIVE])
+      warnings.push(
+        '.warmstart/project.json is already tracked, so the new .gitignore entry does not untrack it — ' +
+          'run `git rm --cached .warmstart/project.json` in the project to stop tracking it.'
+      )
+    } catch {
+      // Untracked: the entry does its job and there is nothing to say.
+    }
+    await commitIfDirty(
+      project,
+      ['.gitignore', ...docsWritten],
+      'Ignore Warmstart project config\n\n' +
+        'Warmstart was asked to leave .warmstart/project.json untracked, so it recorded that in ' +
+        '.gitignore and committed the rule with the starter docs — the trunk starts clean and the ' +
+        'config stays local to this checkout.',
+      warnings,
+      (paths) => `could not commit the .gitignore rule (${paths.join(', ')}): `
+    )
+  } catch (err) {
+    warnings.push(`could not record .warmstart/project.json in .gitignore: ${errorMessage(err)}`)
   }
 }
 

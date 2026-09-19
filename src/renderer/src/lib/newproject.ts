@@ -3,6 +3,7 @@ import type {
   FinishPolicyChoice,
   ProjectDocName,
   ProjectInspection,
+  ScaffoldingGitChoice,
   SessionSharingChoice
 } from '@shared/tasks'
 
@@ -68,6 +69,12 @@ export interface NewProjectDraft {
   /** One command per line, exactly as `ChecksPanel` treats it. */
   checksText: string
   docs: DocDraftState[]
+  /**
+   * What `.warmstart/project.json` becomes in git. ⚠️ Asked, never assumed — committing to
+   * somebody's repository unasked is what made the trunk dirty-looking work Warmstart's own
+   * doing, and silently gitignoring would be the same surprise in the other direction.
+   */
+  scaffoldingGit: ScaffoldingGitChoice
 }
 
 export const EMPTY_DRAFT: NewProjectDraft = {
@@ -82,7 +89,10 @@ export const EMPTY_DRAFT: NewProjectDraft = {
   completion: 'inherit',
   poolSize: 3,
   checksText: '',
-  docs: []
+  docs: [],
+  // ⚠️ `commit`: the documented default — committed policy is what every clone pulls. The review
+  // step always shows the choice, so a click-through keeps the old answer knowingly, not silently.
+  scaffoldingGit: 'commit'
 }
 
 /** One command per line, trimmed, blanks dropped. ⚠️ The same reading `setProjectChecks` does. */
@@ -172,11 +182,22 @@ export function creationPlan(
     plan.push(`Run git init -b ${draft.landingTarget.trim() || 'main'} in ${root}.`)
   }
   plan.push(`Add “${draft.name.trim()}” as a project.`)
-  plan.push(
-    inspection?.hasConfig
-      ? 'Update the committed .warmstart/project.json with these policies.'
-      : 'Write .warmstart/project.json with these policies — a new file in the repository.'
-  )
+  if (draft.scaffoldingGit === 'ignore') {
+    plan.push(
+      inspection?.hasConfig
+        ? 'Leave the existing .warmstart/project.json in place and add it to .gitignore.'
+        : 'Write .warmstart/project.json with these policies, add it to .gitignore, and commit that rule — the config itself stays untracked.'
+    )
+  } else {
+    plan.push(
+      inspection?.hasConfig
+        ? 'Update the committed .warmstart/project.json with these policies.'
+        : 'Write .warmstart/project.json with these policies — a new file in the repository.'
+    )
+    if (willHaveRepo(inspection, draft)) {
+      plan.push('Commit the scaffolding so the trunk starts clean.')
+    }
+  }
 
   const checks = checksFromText(draft.checksText)
   plan.push(

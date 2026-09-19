@@ -323,6 +323,71 @@ describe('creating a project', () => {
     for (const name of result.docsWritten) expect(committed).toContain(name)
   })
 
+  it('leaves project.json untracked behind a committed .gitignore entry when asked to ignore', async () => {
+    // ⛔ t554: the operator's explicit choice. The config is written but never staged; the
+    // `.gitignore` rule commits beside the starter docs so the trunk handed back is clean.
+    const root = repoDir()
+    const docs = setup.proposeProjectDocs({ root, name: 'Ignored' })
+    const result = await setup.createProject({ root, name: 'Ignored', docs, scaffoldingGit: 'ignore' })
+
+    expect(result.warnings).toEqual([])
+    expect(existsSync(join(root, '.warmstart', 'project.json'))).toBe(true)
+    expect(readFileSync(join(root, '.gitignore'), 'utf8')).toContain('.warmstart/project.json')
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })).toBe('')
+
+    const committed = execFileSync('git', ['show', '--stat', '--format=', 'HEAD'], {
+      cwd: root,
+      encoding: 'utf8'
+    })
+    expect(committed).toContain('.gitignore')
+    expect(committed).not.toContain('.warmstart/project.json')
+    for (const name of result.docsWritten) expect(committed).toContain(name)
+  })
+
+  it('does not duplicate a .gitignore entry that already covers the config', async () => {
+    const root = repoDir({ '.gitignore': 'node_modules/\n.warmstart/\n' })
+    const result = await setup.createProject({ root, name: 'Covered', scaffoldingGit: 'ignore' })
+
+    expect(result.warnings).toEqual([])
+    expect(
+      readFileSync(join(root, '.gitignore'), 'utf8').split('\n').filter((l) => l.includes('warmstart'))
+    ).toEqual(['.warmstart/'])
+  })
+
+  it('appends the entry cleanly with or without a trailing newline, and only once', async () => {
+    const root = plainDir({})
+    writeFileSync(join(root, '.gitignore'), 'node_modules/')
+    expect(setup.ensureIgnoreEntry(root)).toBe(true)
+    expect(readFileSync(join(root, '.gitignore'), 'utf8')).toBe(
+      'node_modules/\n.warmstart/project.json\n'
+    )
+    expect(setup.ensureIgnoreEntry(root)).toBe(false)
+    // ⚠️ A negation means somebody is hand-editing the rule — the plain entry is appended after
+    // it so the file stays ignored without touching their lines.
+    writeFileSync(join(root, '.gitignore'), '.warmstart/\n!.warmstart/project.json\n')
+    expect(setup.ensureIgnoreEntry(root)).toBe(true)
+    expect(readFileSync(join(root, '.gitignore'), 'utf8')).toBe(
+      '.warmstart/\n!.warmstart/project.json\n.warmstart/project.json\n'
+    )
+  })
+
+  it('warns rather than silently no-op when the config is already tracked', async () => {
+    // ⛔ `.gitignore` does not untrack. Without the sentence the operator reads a clean trunk and
+    // a policy that still lands on every clone — the entry did nothing and said nothing.
+    const root = repoDir()
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
+    writeFileSync(join(root, '.warmstart', 'project.json'), '{"schema_version":1}')
+    execFileSync('git', ['add', '--', '.warmstart/project.json'], { cwd: root, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-qm', 'track the config'], { cwd: root, stdio: 'ignore' })
+
+    const result = await setup.createProject({ root, name: 'Tracked', scaffoldingGit: 'ignore' })
+
+    expect(result.warnings).toEqual([
+      expect.stringContaining('already tracked')
+    ])
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })).toBe('')
+  })
+
   it('leaves an existing config alone rather than committing over it', async () => {
     const root = repoDir()
     mkdirSync(join(root, '.warmstart'), { recursive: true })
