@@ -4442,13 +4442,18 @@ select:focus-visible,
    header — the back button and the rename control both keep working stuck as they do unstuck —
    so this pins itself rather than growing a read-only stand-in the way the ledger's peek does. The
    background covers the thread scrolling underneath; the padding is new room the sticky treatment
-   costs, taken back from the margin so the header is not visibly taller unstuck. */
+   costs, taken back from the margin so the header is not visibly taller unstuck.
+   ⛔ `top: 0` sticks flush with `.content`'s *padding* edge, not its border edge — its
+   `padding: var(--sp-5)` (`.content` in this file) would then stay visible above the header as a
+   permanent, unfilled strip once stuck, the one gap in the scroll that scrolling never covers.
+   `top: calc(-1 * var(--sp-5))` lets the header keep sticking past that padding, so its own
+   background reaches the fleet strip with nothing showing through. */
 .detail-head {
   display: flex;
   align-items: baseline;
   gap: var(--sp-3);
   position: sticky;
-  top: 0;
+  top: calc(-1 * var(--sp-5));
   z-index: 5;
   padding: var(--sp-2) 0;
   margin: calc(-1 * var(--sp-2)) 0 var(--sp-1);

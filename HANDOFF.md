@@ -27,6 +27,12 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **A scrolled task thread left a permanent, unfilled strip between the fleet strip and the sticky
+  `← Tasks` header (t561, 2026-09-19).** `.detail-head`'s `position: sticky; top: 0` sticks flush
+  with `.content`'s *padding* edge, not its border edge, so `.content`'s `padding: var(--sp-5)`
+  stayed visible above the header once stuck — the one gap in the scroll nothing ever covered.
+  `top: calc(-1 * var(--sp-5))` lets it keep sticking past that padding instead, so the header's own
+  background now reaches the fleet strip. `app.css`.
 - **A from-scratch install shared no sessions and showed mock welcome-tour images (t559,
   2026-09-19).** `DEFAULT_FLEET_SHARING` was `off`; a clean install now ships `on` (reuse) —
   `sharing.ts`'s gates (same project/account/model/effort, clean, room to grow) keep it narrow, and
@@ -146,15 +152,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   Second half of the cascade: `canRelandTask` (`taskview.tsx`) hid **Retry landing** for good after the
   first `Retry landing failed: …`, a blanket exclusion meant for an empty branch that also caught every
   retriable cause — only the genuinely unfixable ones do now. `landing.md`.
-- **A Plan & Split task could be routed to an adapter with no `task_split` tool at all, and just
-  landed code instead of splitting anything (t507 ← t505, 2026-09-17).** `promptFor`'s MCP-less
-  branch never checked `planPhaseOf`/`debatePhaseOf`, so a plan or debate task landed there fell
-  straight through to the ordinary "do the work and say `TASK COMPLETE`" contract. `createTask` now
-  writes `needs: ['mcp']` into a `plan` or `debate` task's own constraints — the per-worker capability
-  gate `scoreCandidate` already enforces — in the one place both kinds are created. `prompt.test.ts`.
-  Also fixed: **"Waiting on" sat near the bottom of the status pane despite following "status" in the
-  DOM**, because the `Fact` carrying it had no CSS `order` class and fell to the unstyled default.
-  `.fact--waiting` now orders it directly below `.fact--status`.
 - **The fleet divider said `running` while counting slots (t560, 2026-09-19).** `2 / 1 running`
   beside one live task read as two agents at work; the word is now `in use`, matching the tooltip.
   Probes, consults, reviews and chats were verified excluded on every path. `docs/ui.md`.
