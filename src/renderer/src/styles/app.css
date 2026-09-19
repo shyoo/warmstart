@@ -982,12 +982,19 @@ body {
   margin-top: var(--sp-2);
 }
 
-.wcard-more-sessions {
-  font-size: var(--text-meta);
-  color: var(--color-text-faint);
-  text-align: right;
-  margin-top: 2px;
-  padding-right: var(--sp-1);
+/*
+ * `1 / 2 running` at the right end of the divider: slots in use against Max parallel instances.
+ * ⚠️ Ordered after the line, so the rule reads `sessions ──── 1 / 2 running`; the words for it are
+ * the tooltip's (`instanceUse`). Amber once every slot is taken — the account can start nothing new.
+ */
+.wcard-instances {
+  order: 2;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.wcard-instances--full {
+  color: var(--state-warn);
 }
 
 /*
@@ -1011,6 +1018,7 @@ body {
 
 .wcard-rule::after {
   content: '';
+  order: 1;
   flex: 1;
   height: 1px;
   background: var(--color-border);
@@ -1075,13 +1083,26 @@ body {
 
 /* ⚠️ Hidden the same way the gauge labels above are, and for the same reason: the word is what a
    reader has instead of the line. */
-.wcard--narrow .wcard-rule > span {
+.wcard--narrow .wcard-rule > span:first-child,
+.wcard--narrow .wcard-instances-word {
   position: absolute;
   width: 1px;
   height: 1px;
   overflow: hidden;
   clip-path: inset(50%);
   white-space: nowrap;
+}
+
+/* ⚠️ Narrow keeps the count and loses the words, centred on the line: `──── 1 / 2 ────`. */
+.wcard--narrow .wcard-rule::before {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.wcard--narrow .wcard-instances {
+  order: 0;
 }
 
 .tag--suspect {

@@ -54,6 +54,7 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
       listWorkers().map((worker) => {
         const liveSessions = sessionsForWorker(worker.id)
         const sessions = sessionsAndWarmConversationsForWorker(worker.id)
+        const reservedSlots = retainedReservations(worker.id, liveSessions)
         return {
           worker,
           quota: lastQuotaReading(worker.id),
@@ -61,12 +62,8 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
           // ⛔ Both gates called here rather than reimplemented in the renderer. See the fields'
           // notes in protocol.ts: together these are what "ready" means everywhere in the daemon.
           unavailable: accountUnavailability(worker),
-          atCapacity: atCapacity(
-            liveSessions,
-            worker.maxConcurrent,
-            null,
-            retainedReservations(worker.id, liveSessions)
-          )
+          atCapacity: atCapacity(liveSessions, worker.maxConcurrent, null, reservedSlots),
+          reservedSlots
         }
       }),
     'worker.create': async (p) => {

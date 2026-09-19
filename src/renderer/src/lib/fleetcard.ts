@@ -1,4 +1,5 @@
 import { sessionEnded, type Session } from '@shared/protocol'
+import { parallelUse } from '@shared/capacity'
 import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import type { FleetEntry } from './daemon'
 import { age } from './format'
@@ -141,4 +142,46 @@ export function shortWindowLabels(labels: string[]): string[] | null {
   const short = terms as string[]
   if (new Set(short).size !== short.length) return null
   return short
+}
+
+/** How many sessions a card draws as gauges: the most recent few, and no `+N more` beneath them. */
+export const SESSION_GAUGES = 3
+
+/** What the sessions divider says about the account's parallel slots. */
+export interface InstanceUse {
+  /** Slots in use: the number the scheduler compares against `maxConcurrent`. */
+  inUse: number
+  max: number
+  /** Every slot taken, so nothing new can start on this account. */
+  full: boolean
+  /** The divider's tooltip, which is where the words for `1 / 2` live. */
+  title: string
+}
+
+/**
+ * `1 / 2` on the sessions divider: slots in use against Max parallel instances.
+ *
+ * ⛔ **Slots, not busy processes, because that is what the limit is on.** `slotsInUse` in
+ * `residency.ts` counts every open `work` session — a warm idle one included, since it still holds
+ * its slot — plus slots held by a task with no live process. A card counting only sessions mid-turn
+ * would read `0 / 1` beside a task held *at capacity*, which is the mismatch this indicator exists
+ * to prevent. The breakdown in the tooltip is where *working* and *idle* are told apart.
+ *
+ * ⛔ It replaces the `+N more` line. That counted every warm conversation the worker had ever
+ * measured (`+59 more` on a long-lived account), which said nothing an operator acts on; this
+ * says whether the account can take another task.
+ */
+export function instanceUse(entry: Pick<FleetEntry, 'worker' | 'sessions' | 'reservedSlots'>): InstanceUse {
+  const open = entry.sessions.filter((s) => s.purpose === 'work' && !sessionEnded(s.state))
+  const idle = open.filter((s) => s.state === 'idle').length
+  const working = open.length - idle
+  const held = entry.reservedSlots ?? 0
+  const inUse = open.length + held
+  const max = entry.worker.maxConcurrent
+  const lines = [
+    `${parallelUse(inUse, max)} in use on this account`,
+    `${working} working · ${idle} idle but warm · ${held} held by a task waiting on you or landing`,
+    'Change Max parallel instances in Settings > Workers.'
+  ]
+  return { inUse, max, full: inUse >= max, title: lines.join('\n') }
 }

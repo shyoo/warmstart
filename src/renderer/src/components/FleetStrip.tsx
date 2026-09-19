@@ -9,7 +9,14 @@ import {
   writeFleetDensity,
   type FleetDensity
 } from '../lib/prefs'
-import { cardStatus, creditResetDays, gaugedSessions, shortWindowLabels } from '../lib/fleetcard'
+import {
+  cardStatus,
+  creditResetDays,
+  gaugedSessions,
+  instanceUse,
+  SESSION_GAUGES,
+  shortWindowLabels
+} from '../lib/fleetcard'
 import { Working } from '../lib/taskview'
 import { AgentIcon } from './AgentIcon'
 import { cacheUrgency, countdown, money, percent, quotaUrgency, tokens, when } from '../lib/format'
@@ -337,10 +344,8 @@ function WorkerCard({
     isWorkerSubscriptionExpired(worker) ||
     /subscription.*expired|disabled claude subscription access/i.test(quota?.error ?? '')
 
-  const maxDisplay = 3
-  const gauged = gaugedSessions(sessions)
-  const displayedSessions = gauged.slice(0, maxDisplay)
-  const overflowCount = gauged.length - displayedSessions.length
+  const displayedSessions = gaugedSessions(sessions).slice(0, SESSION_GAUGES)
+  const instances = instanceUse(entry)
   const status = cardStatus(entry, now, sessions)
 
   /**
@@ -501,25 +506,29 @@ function WorkerCard({
           quota, shared by every session on it, and it survives the session ending. Everything below
           is **one live session**: its own context, its own cache clock, gone when it closes. Four
           gauges of identical shape with nothing between them read as four measurements of one
-          thing, and they are not — that is the confusion this line exists to end. */}
-      {displayedSessions.length > 0 && (
-        <div className="wcard-sessions">
-          <div className="wcard-rule">
-            <span>sessions</span>
-          </div>
-          {displayedSessions.map((s) => (
-            <SessionGauge key={s.id} session={s} now={now} />
-          ))}
-          {overflowCount > 0 && (
-            <div
-              className="wcard-more-sessions"
-              title={`${overflowCount} more measured conversation(s) on this worker`}
-            >
-              +{overflowCount} more
-            </div>
-          )}
+          thing, and they are not — that is the confusion this line exists to end.
+          ⚠️ Drawn on every card, sessions or none, because it carries `1 / 2` — slots in use against
+          Max parallel instances (`instanceUse`) — and a line that came and went with the first
+          session would resize the strip. The most recent three sessions follow; older warm ones are
+          not counted in a `+N more`, which said nothing an operator acts on. */}
+      <div className="wcard-sessions">
+        <div className="wcard-rule">
+          <span>sessions</span>
+          <span
+            className={`wcard-instances${instances.full ? ' wcard-instances--full' : ''}`}
+            title={instances.title}
+            aria-label={instances.title}
+          >
+            <span className="num">
+              {instances.inUse} / {instances.max}
+            </span>
+            <span className="wcard-instances-word"> running</span>
+          </span>
         </div>
-      )}
+        {displayedSessions.map((s) => (
+          <SessionGauge key={s.id} session={s} now={now} />
+        ))}
+      </div>
     </div>
   )
 }

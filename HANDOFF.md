@@ -23,6 +23,13 @@ installed CLIs and fonts; `docs/testing.md` records each. Phase 3/4 (write-up, l
 channels) remains off-repo.
 
 ## Closed in this cleanup
+- **The fleet card counts parallel slots instead of listing `+N more` sessions (t549, 2026-09-19).**
+  The sessions divider now reads `1 / 2 running` (narrow `1 / 2`), slots in use against Max parallel
+  instances by `slotsInUse`'s arithmetic — the daemon serves the half the renderer cannot see
+  (`fleet.list` → `reservedSlots`) — amber when full, with a working / idle / held tooltip. Always
+  drawn; the last three session gauges follow, and the `+N more` line is gone. `docs/ui.md`.
+  ⚠️ Found, not fixed: `test:ui` fails 2 checks on `main` since t545 — the Workers table gained an
+  *Unattended* header with no matching `<col>` or card label (`[14,15]`), so card labels shift.
 - **Muse Code runs natively on Windows; the WSL bridge is gone (t547, 2026-09-19).** Muse Code 1.3.0
   ships a Windows build (`irm https://dev.meta.ai/install.ps1 | iex`). `clihost.ts` now knows `posix`
   and `windows` hosts only; `museBinary` starts the installer's `muse-bin-<version>.exe` (never the

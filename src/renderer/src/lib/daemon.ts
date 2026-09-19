@@ -41,6 +41,8 @@ export interface FleetEntry {
   unavailable?: string | null
   /** Whether every slot `maxConcurrent` allows is already busy. Daemon-computed; see `unavailable`. */
   atCapacity?: boolean
+  /** Slots held by a task with no live process. Daemon-computed; optional for the same reason. */
+  reservedSlots?: number
 }
 
 /**

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Session } from '@shared/protocol'
-import { cardStatus, creditResetDays, gaugedSessions, shortWindowLabels } from './fleetcard'
+import { cardStatus, creditResetDays, gaugedSessions, instanceUse, shortWindowLabels } from './fleetcard'
 import type { FleetEntry } from './daemon'
 
 /**
@@ -208,5 +208,46 @@ describe('creditResetDays', () => {
     expect(creditResetDays(undefined, NOW)).toBe('')
     expect(creditResetDays(NOW, NOW)).toBe('')
     expect(creditResetDays(NOW - 1000, NOW)).toBe('')
+  })
+})
+
+describe('the instances count on the sessions divider', () => {
+  const worker = (maxConcurrent: number): FleetEntry['worker'] =>
+    ({ enabled: true, maxConcurrent }) as FleetEntry['worker']
+
+  it('reads 0 / max on an account with nothing open', () => {
+    const use = instanceUse(entry({ worker: worker(2) }))
+    expect([use.inUse, use.max, use.full]).toEqual([0, 2, false])
+    expect(use.title).toContain('0 of 2 parallel instances in use')
+  })
+
+  /**
+   * ⛔ The count is slots, the same arithmetic as `slotsInUse`: a warm idle session still holds its
+   * slot, and a task waiting on a person holds one with no process at all. Counting only sessions
+   * mid-turn would read `0 / 1` beside a task held *at capacity*.
+   */
+  it('counts every slot the scheduler counts, and says which is which', () => {
+    const use = instanceUse(
+      entry({
+        worker: worker(3),
+        reservedSlots: 1,
+        sessions: [
+          session({ id: 'a', state: 'live' }),
+          session({ id: 'b', state: 'idle' }),
+          // Not slots: a warm conversation that has ended, a probe, and a consult.
+          session({ id: 'c', state: 'closed' }),
+          session({ id: 'd', purpose: 'probe' }),
+          session({ id: 'e', purpose: 'consult' })
+        ]
+      })
+    )
+    expect([use.inUse, use.max, use.full]).toEqual([3, 3, true])
+    expect(use.title).toContain('1 working · 1 idle but warm · 1 held')
+  })
+
+  it('treats a daemon that sends no reservations as holding none', () => {
+    const e = entry({ worker: worker(1), sessions: [session()] })
+    delete e.reservedSlots
+    expect(instanceUse(e)).toMatchObject({ inUse: 1, max: 1, full: true })
   })
 })

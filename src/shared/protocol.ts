@@ -1630,6 +1630,15 @@ export interface RpcMap {
        * something new", which is strictly the more pessimistic of the two questions the gate asks.
        */
       atCapacity: boolean
+      /**
+       * Slots held by a task with no live process — one parked at `awaiting_human`, or one still
+       * finishing or landing after a one-shot CLI exited. `retainedReservations()`, called.
+       *
+       * ⚠️ Only this half of the in-use count is served. The other half — open `work` sessions — is
+       * already in `sessions`, and the renderer patches those per event without a round-trip, so
+       * counting them there keeps the card's `1 / 2` in step with the rows drawn under it.
+       */
+      reservedSlots: number
     }>
   }
   'worker.create': {

@@ -3105,8 +3105,42 @@ try {
       /wide/i.test(await evaluate(`${densityBtn}?.innerText ?? ''`)) &&
       (await evaluate(`!!document.querySelector('.wcard--narrow')`)) === true
   )
+  // ⛔ `1 / 2` on the sessions divider (t549): slots in use against Max parallel instances, drawn
+  // on every card whether or not it has a session, words in wide and the bare count in narrow.
+  const instancesShown = `(() => {
+    const card = document.querySelector('.wcard');
+    const n = card?.querySelector('.wcard-instances');
+    if (!n) return 'missing';
+    const r = n.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 ? n.innerText.trim() : 'invisible';
+  })()`
+  // ⚠️ The word is clipped, not removed — still read aloud — so `innerText` keeps it; what is
+  // asserted is what is drawn: the count visible, the word collapsed to nothing.
+  const narrowInstances = JSON.parse(
+    await evaluate(`JSON.stringify((() => {
+      const n = document.querySelector('.wcard .wcard-instances');
+      const num = n?.querySelector('.num'), word = n?.querySelector('.wcard-instances-word');
+      if (!num || !word) return { missing: true };
+      return { count: num.innerText.trim(), countW: num.getBoundingClientRect().width, wordW: word.getBoundingClientRect().width };
+    })())`)
+  )
+  check(
+    'a narrow card shows its instance count without the word',
+    /^\d+ \/ \d+$/.test(narrowInstances.count ?? '') && narrowInstances.countW > 0 && narrowInstances.wordW <= 1,
+    JSON.stringify(narrowInstances)
+  )
   await evaluate(`${densityBtn}?.click()`)
   await wait(300)
+  const wideInstances = await evaluate(instancesShown)
+  check('a wide card says N / M running on its sessions divider', /^\d+ \/ \d+ running$/i.test(wideInstances), wideInstances)
+  check(
+    'the instance count says what it counts on hover',
+    /parallel instances? in use/.test(await evaluate(`document.querySelector('.wcard-instances')?.title ?? ''`))
+  )
+  check(
+    'no card counts extra sessions as +N more',
+    (await evaluate(`[...document.querySelectorAll('.wcard')].some(c => /\\+\\d+ more/.test(c.innerText))`)) === false
+  )
 
   // ---- hide / show fleet strip toggle -------------------------------------------------
   const toggleBtn = `document.querySelector('.fleet-toggle-btn')`

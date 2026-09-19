@@ -869,6 +869,15 @@ whose entire design is to be invisible.
   tells the rows apart: Antigravity meters two pools on one account, and `Claude/GPT 5h` beside
   `Gemini 5h` shortened would draw two bars claiming to be the same window. The full label is on
   every row's tooltip in both cases.
+- ⛔ **The sessions divider counts slots, not sessions (t549, 2026-09-19).** Every worker card draws
+  `sessions ──── 1 / 2 running` (narrow: `──── 1 / 2 ────`): slots in use against *Max parallel
+  instances* — open `work` sessions, a warm idle one included, plus `reservedSlots` the daemon serves
+  from `retainedReservations()` for tasks holding a slot with no live process. That is the same
+  arithmetic as `slotsInUse`, so the card cannot read `0 / 1` beside a task held *at capacity*; it
+  turns amber when full, and the tooltip splits working / idle / held (`instanceUse`, `fleetcard.ts`).
+  Drawn on every card, sessions or none, so it never resizes the strip. Below it, the most recent
+  three session gauges and nothing else — the `+N more` line this replaced counted every warm
+  conversation the account had ever measured (`+59 more`) and said nothing an operator acts on.
 - ⛔ **Money accrues in dollars, under the windows it is no longer bounded by.** A quota gauge is a
   share of a fee already paid; a usage-credit meter is a bill being run up now, so the fleet card
   draws it as its own row below the gauges rather than as a fourth gauge among them. ⚠️ Drawn where
