@@ -14,22 +14,21 @@ passed, 4 skipped**; L4 **19 checks** against `release/win-unpacked`. macOS 13 a
 **Release** workflow.
 
 **`v0.1.1` is `latest`** (tag build 35165991396, 2026-09-17), promoted onto its own rc's commit.
-**`v0.2.0-rc.1` is cut and published as a pre-release** (tag on `c42ae06`, Release run 35407248705,
-2026-09-18: Windows + macOS builds, attested, five installers + `SHA256SUMS.txt`). It carries
-everything under *Closed* below plus migration 76. ⏭ **Next: install `v0.2.0-rc.1`, verify it, then
-`/release promote`.** Its first CI pass took four fix commits (`6ddbba5`..`c42ae06`) — 22 commits
-had accumulated unpushed and three suites had been passing only on this machine's git identity,
-installed CLIs and fonts; `docs/testing.md` records each. Phase 3/4 (write-up, landing page,
-channels) remains off-repo.
+**`v0.2.0-rc.2` is cut as a pre-release** (2026-09-19, on the commit that carries this line),
+superseding `v0.2.0-rc.1` (`c42ae06`): it adds t536–t549 and migration 77. ⏭ **Next: install
+`v0.2.0-rc.2`, verify it, then `/release promote`.** Its CI first went red on the t545 Workers-table
+regression below: six commits had been pushed together, and `test:ui` was not run on them first.
+Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 ## Closed in this cleanup
+- **The Workers card layout labelled every field after Role one place late (t545 → rc.2, 2026-09-19).**
+  t545 added the *Unattended* header without a `<col>` or a positional card label, so `test:ui` failed
+  `[14,15]` on CI and blocked the rc. `Workers.tsx` now has fifteen `<col>`s, and `app.css` labels the new cell.
 - **The fleet card counts parallel slots instead of listing `+N more` sessions (t549, 2026-09-19).**
   The sessions divider now reads `1 / 2 running` (narrow `1 / 2`), slots in use against Max parallel
   instances by `slotsInUse`'s arithmetic — the daemon serves the half the renderer cannot see
   (`fleet.list` → `reservedSlots`) — amber when full, with a working / idle / held tooltip. Always
   drawn; the last three session gauges follow, and the `+N more` line is gone. `docs/ui.md`.
-  ⚠️ Found, not fixed: `test:ui` fails 2 checks on `main` since t545 — the Workers table gained an
-  *Unattended* header with no matching `<col>` or card label (`[14,15]`), so card labels shift.
 - **Muse Code runs natively on Windows; the WSL bridge is gone (t547, 2026-09-19).** Muse Code 1.3.0
   ships a Windows build (`irm https://dev.meta.ai/install.ps1 | iex`). `clihost.ts` now knows `posix`
   and `windows` hosts only; `museBinary` starts the installer's `muse-bin-<version>.exe` (never the

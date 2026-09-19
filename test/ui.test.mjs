@@ -3457,7 +3457,7 @@ try {
        document.querySelectorAll('.tbl-workers thead th').length
      ])`
   )
-  check('the workers card fields describe every setting the header declares', colCount === '[14,14]', colCount)
+  check('the workers card fields describe every setting the header declares', colCount === '[15,15]', colCount)
 
   const cardLabels = await evaluate(
     `JSON.stringify([...document.querySelector('.tbl-workers tbody tr:not(.tbl-row--note)').children]
@@ -3468,7 +3468,7 @@ try {
     'every worker card field keeps its own label after Summary model',
     cardLabels === JSON.stringify([
       'Adapter', 'Config location', 'Account', 'Quota', 'Max parallel instances', 'Default model',
-      'Routable models', 'Grading model', 'Summary model', 'Role', 'Usage credits', 'Actions'
+      'Routable models', 'Grading model', 'Summary model', 'Role', 'Unattended', 'Usage credits', 'Actions'
     ]),
     cardLabels
   )

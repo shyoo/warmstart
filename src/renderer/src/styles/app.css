@@ -3090,15 +3090,16 @@ body {
 .tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(6)::before { content: 'Quota'; }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(7)::before { content: 'Max parallel instances'; }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(8)::before { content: 'Default model'; }
-/* ⛔ One label per <td>, counted against the fourteen cells the row actually has — order,
-   worker, then the twelve fields. A new field shifts every subsequent card label, so its label
+/* ⛔ One label per <td>, counted against the fifteen cells the row actually has — order,
+   worker, then the thirteen fields. A new field shifts every subsequent card label, so its label
    belongs in this same edit; `ui.test.mjs` reads the computed sequence to keep that true. */
 .tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(9)::before { content: 'Routable models'; }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(10)::before { content: 'Grading model'; }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(11)::before { content: 'Summary model'; }
 .tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(12)::before { content: 'Role'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(13)::before { content: 'Usage credits'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(14)::before { content: 'Actions'; }
+.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(13)::before { content: 'Unattended'; }
+.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(14)::before { content: 'Usage credits'; }
+.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(15)::before { content: 'Actions'; }
 .tbl-workers .worker-cell { overflow: visible; }
 .tbl-workers .worker-identity { display: flex; align-items: center; gap: var(--sp-2); }
 .tbl-workers .worker-identity-info { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-1); }

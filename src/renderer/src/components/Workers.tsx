@@ -484,7 +484,7 @@ export function Workers({
         </div>
       ) : (
         <table className="tbl tbl-workers">
-          {/* ⛔ Fourteen columns, fourteen <col>s. A missing column makes a fixed-layout table
+          {/* ⛔ Fifteen columns, fifteen <col>s. A missing column makes a fixed-layout table
               hand the final cell no width at all, and Sign in / Probe / Retire then wrap one per
               line inside a cell the width of a button. Keep this count in lockstep with the
               headers and cells; the card layout below also labels by this same position.
@@ -502,6 +502,7 @@ export function Workers({
             <col style={{ width: '11%' }} />
             <col style={{ width: '7%' }} />
             <col style={{ width: '9%' }} />
+            <col style={{ width: '8%' }} />
             <col style={{ width: '8%' }} />
             <col style={{ width: '8%' }} />
             <col style={{ width: '9%' }} />
