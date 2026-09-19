@@ -1,24 +1,16 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { dirname, extname, join, win32 } from 'node:path'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot, QuotaWindow } from '@shared/protocol.js'
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
 import type { TranscriptDecoded } from '../transcript.js'
 import type { StreamEvent } from '../stream.js'
 import { asRecord } from '../stream.js'
 import { log } from '../log.js'
-import { spawnEnv } from '../which.js'
+import { spawnEnv, which } from '../which.js'
 import { paths } from '../paths.js'
-import {
-  gitEnvFor,
-  honoursPosixModes,
-  hostExec,
-  hostFor,
-  hostPath,
-  hostPlan,
-  type CliHost
-} from './clihost.js'
+import { hostAt, hostPlan, type CliHost } from './clihost.js'
 import { errorMessage } from '@shared/errors.js'
 
 const run = promisify(execFile)
@@ -26,10 +18,11 @@ const run = promisify(execFile)
 /**
  * Muse Code — Meta's terminal coding agent.
  *
- * ⛔ **The first adapter whose CLI does not have to live on this machine.** Muse ships for Linux and
- * macOS; on Windows the operator installs it inside WSL. Everything that follows from that lives in
- * `clihost.ts` — this file asks for a host and never asks what platform it is on, which is the only
- * way the macOS and Linux builds stay free of Windows code.
+ * ⛔ **Native on every platform, and never through WSL.** Muse used to ship for Linux and macOS only,
+ * and on Windows this adapter reached a copy inside a WSL distribution. Muse Code 1.3.0 ships a
+ * Windows build, and t547 (2026-09-19) removed the bridge rather than keep two ways to run one CLI.
+ * How a turn is started on each platform lives in `clihost.ts`; where the binary is lives in
+ * `museBinary` below.
  *
  * Three of its differences from every adapter here are structural rather than cosmetic:
  *
@@ -92,14 +85,9 @@ const info: AdapterInfo = {
     // `-w/--worktree` exists and this adapter never passes it: the pool hands out its own.
     nativeWorktree: false,
     // `--image <PATH>` is repeatable on `exec` and there is no stdin channel to send a second one
-    // down — initial prompt only, exactly Codex's shape. ⭐ Flown 2026-09-07: the model answered a
-    // prompt carrying a real PNG.
-    // ⚠️ **A claim about the CLI, and the CLI is not always able to honour it here.** muse installs
-    // the image into an asset store under `XDG_DATA_HOME` that it requires to be `0700`, and on a
-    // WSL bridge whose data home sits on a Windows volume no such mode can exist. `plan()` drops
-    // `--image` in that case rather than spending a run on a turn that cannot start — see there,
-    // and `honoursPosixModes` in clihost.ts. The capability stays `spawn-flag` because it describes
-    // the CLI; a native install, or a data home inside the distribution, takes images.
+    // down — initial prompt only, exactly Codex's shape. ⭐ Flown 2026-09-07 on Linux and again
+    // 2026-09-19 on the native Windows build with its data home on NTFS: the model described a real
+    // PNG. (Under the retired WSL bridge that same data home read `0777` and muse refused it.)
     imageInput: 'spawn-flag',
     // ⛔ Muse reads `mcpServers` out of `settings.json`, which belongs to the **isolation root** and
     // not to one session — so a per-session identity token, which is what `task_complete` needs,
@@ -186,72 +174,96 @@ const info: AdapterInfo = {
   },
   verification: {
     level: 'measured',
-    asOf: '2026-09-06',
+    asOf: '2026-09-19',
     note:
-      'Exercised against Muse Code 1.0.3 (1.0.3-R2198.1) in WSL2 Ubuntu from a Windows host on ' +
-      '2026-09-06, on a live "Everyday Usage" account: real `exec --json` runs (native and with ' +
-      'both XDG roots on a Windows drive), session-id resume, the `/usage` panel, `muse login`, ' +
-      'the fresh-root first-run screens, and the full Windows-spawn bridge end to end. ' +
-      '⭐ `--image` flown 2026-09-07, in both directions: it answers a prompt carrying a real PNG ' +
-      'with the XDG data home on ext4, and refuses with exit 1 — *asset directory permissions must ' +
-      'be 0700, got 0777* — with the data home on a Windows volume, which is how this fleet runs it. ' +
+      'First measured against Muse Code 1.0.3 on Linux (2026-09-06, a live "Everyday Usage" ' +
+      'account): `exec --json`, session-id resume, the `/usage` panel, `muse login` and the ' +
+      'fresh-root first-run screens. Re-measured 2026-09-19 against the native Windows build, ' +
+      '1.3.0 (1.3.0-R3401.1): the same flags, XDG roots honoured with the same ' +
+      '`data/muse/sessions/YYYY/MM/DD/<id>/session.jsonl` layout, the same `model_completed` usage ' +
+      'record, a credential written by the old WSL install accepted as-is, and `--image` answered ' +
+      'with the data home on NTFS. No stdin channel on Windows either: `--prompt-file -` fails. ' +
       '⚠️ 1.2.1 (macOS, 2026-09-13) asks its terminal for the cursor position at startup and exits ' +
-      'when unanswered; the probe PTY answers it (termquery.ts). Not re-measured on 1.0.3.'
+      'when unanswered; the probe PTY answers it (termquery.ts).'
   }
 }
 
 // ---------------------------------------------------------------------------- host
 
-/**
- * Where muse runs, cached.
- *
- * ⛔ `isInstalled()` is asked on every candidate on every tick and must not spawn a process — but a
- * bridged CLI cannot be found with a filesystem lookup, because it is not on this filesystem. So the
- * answer is cached and refreshed in the background, and until the first probe returns the answer is
- * **no**: a worker nobody has checked is not dispatched to. ⚠️ That costs one tick, not a Doctor run.
- */
-const PROBE_TTL_MS = 5 * 60_000
-let installedCache: { at: number; found: boolean; version: string | null } | null = null
-let probing = false
+/** What an operator is told to run where no binary was found. */
+const INSTALL_HINT =
+  process.platform === 'win32'
+    ? 'Install Muse Code for Windows from PowerShell: irm https://dev.meta.ai/install.ps1 | iex'
+    : 'Install Muse Code and put `muse` on PATH.'
 
-function refreshInstalled(): void {
-  if (probing) return
-  const host = hostFor(info.command)
-  if (!host) {
-    installedCache = { at: Date.now(), found: false, version: null }
-    return
+/** The vendor launcher's own spelling of an installed version, e.g. `1.3.0-R3401.1`. */
+const LAUNCHER_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+-R[0-9]+(\.[0-9]+)?$/
+
+/**
+ * The binary the Windows installer made active in `dir`, or null.
+ *
+ * ⛔ **The real executable, never the `muse.cmd` shim.** The installer puts a `muse.cmd` on `PATH`
+ * that runs `powershell.exe -File .muse-launcher.ps1`, which runs `muse-bin-<version>.exe`, the
+ * version being whatever `.muse-version` names. Measured 2026-09-19, three reasons to skip it: a
+ * `.cmd` goes through `cmd /d /s /c`, which splits any path with a space; the launcher breaks when
+ * started from PowerShell 7 (Windows PowerShell inherits pwsh's module path and `Get-FileHash` is
+ * not found — the installer itself failed that way on this machine); and the launcher may
+ * self-update. The layout is read from the launcher's own source (`Get-ActiveBinary`).
+ *
+ * ⚠️ Re-read on every call, which costs two stats and a 14-byte read: a person running `muse` by
+ * hand lets the launcher move `.muse-version` forward, and the next spawn should follow it.
+ */
+function activeWindowsBinary(dir: string): string | null {
+  try {
+    const state = join(dir, '.muse-version')
+    if (!existsSync(state)) return null
+    const version = readFileSync(state, 'utf8').trim()
+    if (!LAUNCHER_VERSION.test(version)) return null
+    const binary = join(dir, `muse-bin-${version}.exe`)
+    return existsSync(binary) ? binary : null
+  } catch {
+    return null
   }
-  if (host.kind === 'native') {
-    // ⚠️ Found is enough here — the binary is on this filesystem, and asking it its version is a
-    // process spawn nobody is waiting on. `detect()` fills the version in when somebody asks.
-    installedCache = { at: Date.now(), found: true, version: installedCache?.version ?? null }
-    return
-  }
-  probing = true
-  void version(host)
-    .then((v) => {
-      installedCache = { at: Date.now(), found: v !== null, version: v }
-    })
-    .catch(() => {
-      installedCache = { at: Date.now(), found: false, version: null }
-    })
-    .finally(() => {
-      probing = false
-    })
 }
 
-async function version(host: CliHost): Promise<string | null> {
+/**
+ * Where muse is on this machine, or null.
+ *
+ * ⛔ A filesystem lookup and never a spawn: `isInstalled()` asks it on every candidate on every tick.
+ * On Windows the installer's default directory is `%LOCALAPPDATA%\Programs\muse`, or
+ * `MUSE_INSTALL_DIR` where the operator chose another; a `muse` found on `PATH` names a third. ⚠️ The
+ * `PATH` the daemon inherited predates an install made while it ran — the installer edits the
+ * *user's* `PATH` — which is why the default directory is asked directly rather than through `which`.
+ */
+export function museBinary(): string | null {
+  if (process.platform !== 'win32') return which(info.command)
+  const onPath = which(info.command)
+  const dirs = [
+    process.env.MUSE_INSTALL_DIR,
+    process.env.LOCALAPPDATA ? join(process.env.LOCALAPPDATA, 'Programs', 'muse') : undefined,
+    onPath ? dirname(onPath) : undefined
+  ]
+  for (const dir of dirs) {
+    if (!dir) continue
+    const binary = activeWindowsBinary(dir)
+    if (binary) return binary
+  }
+  // A `muse.exe` somebody put on PATH by hand is a binary too; a lone `muse.cmd` is not.
+  return onPath && extname(onPath).toLowerCase() === '.exe' ? onPath : null
+}
+
+/** The last version `detect()` read, so an identity probe can report it without a spawn. */
+let seenVersion: string | null = null
+
+async function version(binary: string): Promise<string | null> {
   try {
-    // ⛔ Exported *inside* the script, not handed to the spawn: on a bridged host the environment
-    // stops at `wsl.exe`. Without it the launcher may self-update mid-fleet — see `hostExec`.
-    const probe = hostExec(host, info.command, ['--version'], { MUSE_NO_AUTO_UPDATE: '1' })
-    const { stdout } = await run(probe.command, probe.args, {
+    const { stdout } = await run(binary, ['--version'], {
       timeout: 30_000,
-      env: { ...spawnEnv(), MUSE_NO_AUTO_UPDATE: '1' }
+      env: { ...spawnEnv(), MUSE_NO_AUTO_UPDATE: '1' },
+      windowsHide: true
     })
-    // `Muse Code 1.0.3 (1.0.3-R2198.1)` → `1.0.3 (1.0.3-R2198.1)`. ⚠️ WSL's pipe carries UTF-16 nulls
-    // on some builds; they are stripped rather than left to poison a version string.
-    const text = stdout.replace(/\0/g, '').trim()
+    // `Muse Code 1.3.0 (1.3.0-R3401.1)` → `1.3.0 (1.3.0-R3401.1)`.
+    const text = stdout.trim()
     const match = /Muse Code\s+(.+)/i.exec(text)
     return match?.[1]?.trim() ?? (text || null)
   } catch {
@@ -259,16 +271,11 @@ async function version(host: CliHost): Promise<string | null> {
   }
 }
 
-/** ⚠️ Throws where muse cannot be reached at all, which is what `plan()`'s callers already handle. */
+/** ⚠️ Throws where muse is not installed, which is what `plan()`'s callers already handle. */
 function requireHost(): CliHost {
-  const host = hostFor(info.command)
-  if (!host) {
-    throw new Error(
-      `'${info.command}' is not on PATH and no WSL is available to reach it. Install Muse Code, or ` +
-        'on Windows install it inside a WSL distribution.'
-    )
-  }
-  return host
+  const binary = museBinary()
+  if (!binary) throw new Error(`Muse Code was not found. ${INSTALL_HINT}`)
+  return hostAt(binary)
 }
 
 // ---------------------------------------------------------------------------- isolation root
@@ -298,6 +305,34 @@ function promptFile(isolationRoot: string, sessionId: string): string {
 }
 
 /**
+ * The key muse files a folder under in `trust.json` — its own "Trust target".
+ *
+ * ⛔ **On Windows that is the verbatim, fully resolved path: `\\?\C:\Users\<long name>\…`.**
+ * Measured 2026-09-19 against 1.3.0 by opening the TUI in four fresh folders, each pre-trusted under
+ * one spelling: no pre-answer, the path as given (an 8.3 `C:\Users\ABCDEF~1\…` temp path), and
+ * `realpathSync.native` of it all drew *Do you trust this workspace?*; only `\\?\` + the resolved
+ * path opened straight to the prompt. The dialog prints that spelling itself as its *Trust target*.
+ * A pre-answer under any other key is a file write that changes nothing, and the `/usage` probe's
+ * keystrokes then answer the dialog instead of asking for the panel.
+ *
+ * ⚠️ POSIX keeps the path as given, as measured on Linux 2026-09-06.
+ */
+export function trustKey(dir: string, platform: NodeJS.Platform = process.platform): string {
+  if (platform !== 'win32') return dir
+  let resolved: string
+  try {
+    resolved = realpathSync.native(dir)
+  } catch {
+    // A folder that does not exist yet has no final path to resolve; its absolute path is the best
+    // spelling there is, and the key is derived again the next time it is asked for.
+    resolved = win32.resolve(dir)
+  }
+  if (resolved.startsWith('\\\\?\\')) return resolved
+  if (resolved.startsWith('\\\\')) return `\\\\?\\UNC\\${resolved.slice(2)}`
+  return `\\\\?\\${resolved}`
+}
+
+/**
  * Has the workspace-trust question been answered for the folder a projectless session opens in?
  *
  * ⛔ Reads this root's own `trust.json` and nothing else. A worker adopting a directory somebody
@@ -314,24 +349,25 @@ function firstRunComplete(isolationRoot: string): boolean | null {
     const parsed = JSON.parse(readFileSync(file, 'utf8')) as {
       projects?: Record<string, { decision?: unknown }>
     }
-    const host = hostFor(info.command)
-    const key = host ? hostPath(host, paths.scratch) : paths.scratch
-    return parsed.projects?.[key]?.decision === 'trusted'
+    return parsed.projects?.[trustKey(paths.scratch)]?.decision === 'trusted'
   } catch {
     return null
   }
 }
 
-function envFor(host: CliHost, isolationRoot: string, cwd: string): Record<string, string> {
-  const env: Record<string, string> = {
-    XDG_CONFIG_HOME: hostPath(host, configHome(isolationRoot)),
-    XDG_DATA_HOME: hostPath(host, dataHome(isolationRoot)),
-    // ⛔ A launcher that self-updates mid-fleet swaps a 263 MB binary under a running worker and
+/**
+ * ⚠️ XDG on every platform, Windows included: measured 2026-09-19, the native Windows build keeps its
+ * credential under `%XDG_CONFIG_HOME%\muse` and its session logs under `%XDG_DATA_HOME%\muse` exactly
+ * as the Linux one does, so one isolation root serves either.
+ */
+function envFor(isolationRoot: string): Record<string, string> {
+  return {
+    XDG_CONFIG_HOME: configHome(isolationRoot),
+    XDG_DATA_HOME: dataHome(isolationRoot),
+    // ⛔ A launcher that self-updates mid-fleet swaps a 400 MB binary under a running worker and
     // changes the capability table this adapter was measured against, without anybody asking.
-    MUSE_NO_AUTO_UPDATE: '1',
-    ...gitEnvFor(host, cwd)
+    MUSE_NO_AUTO_UPDATE: '1'
   }
-  return env
 }
 
 // ---------------------------------------------------------------------------- /usage panel
@@ -750,9 +786,10 @@ function decodeTranscript(record: unknown): TranscriptDecoded | null {
  * One of this app's mode names as muse's own flags.
  *
  * ⛔ `never` is unattended work and it is three flags, not one: approvals off (nobody is there),
- * the sandbox off (a pooled worktree on a Windows drive reached through WSL is outside anything the
- * sandbox understands), and the workspace trusted **for this run only** — `--trust-workspace` does
- * not write `trust.json`, so a one-off dispatch never widens what the account trusts afterwards.
+ * the sandbox off (the pooled worktree is already the quarantine, and on Windows the vendor's sandbox
+ * may stop to ask for administrator approval — a UAC prompt nobody is there to answer), and the
+ * workspace trusted **for this run only** — `--trust-workspace` does not write `trust.json`, so a
+ * one-off dispatch never widens what the account trusts afterwards.
  */
 function permissionArgs(mode: string): string[] {
   switch (mode) {
@@ -832,68 +869,49 @@ export const museCode: AgentAdapter = {
     )
   },
 
-  /**
-   * ⛔ Free and synchronous, as the contract requires — see `refreshInstalled` for why a bridged CLI
-   * cannot be answered by a filesystem lookup, and why the first answer is `false`.
-   */
+  /** ⛔ Free and synchronous, as the contract requires: a filesystem lookup — see `museBinary`. */
   isInstalled(): boolean {
-    const cached = installedCache
-    if (!cached || Date.now() - cached.at > PROBE_TTL_MS) refreshInstalled()
-    return cached?.found ?? false
+    return museBinary() !== null
   },
 
   async detect(): Promise<AdapterDetection> {
-    const host = hostFor(info.command)
-    if (!host) {
+    const binary = museBinary()
+    if (!binary) {
       return {
         adapterId: info.id,
         found: false,
         path: null,
         version: null,
-        error:
-          `'${info.command}' is not on PATH` +
-          (process.platform === 'win32'
-            ? ' and wsl.exe was not found. Muse Code ships for Linux and macOS; on Windows, install ' +
-              'it inside a WSL distribution.'
-            : '')
+        error: `Muse Code was not found. ${INSTALL_HINT}`
       }
     }
-    const found = await version(host)
-    installedCache = { at: Date.now(), found: found !== null, version: found }
+    const found = await version(binary)
+    seenVersion = found
     if (!found) {
       return {
         adapterId: info.id,
         found: false,
-        path: null,
+        path: binary,
         version: null,
-        error:
-          host.kind === 'wsl'
-            ? 'wsl.exe is here but `muse --version` answered nothing. Is Muse Code installed inside ' +
-              'the default distribution, and on its login PATH?'
-            : '`muse --version` answered nothing'
+        error: `\`${binary} --version\` answered nothing`
       }
     }
-    return {
-      adapterId: info.id,
-      found: true,
-      path: host.kind === 'native' ? host.path : `${host.wsl} -- ${info.command}`,
-      version: found
-    }
+    return { adapterId: info.id, found: true, path: binary, version: found }
   },
 
   /**
    * ⛔ A file read, and it spends nothing. `auth.json` carries `user_email`, `user_full_name` and
    * `mechanism` once `muse login` has completed — measured 2026-09-06 — so identity needs no command
-   * and works identically whether muse is native or bridged.
+   * and works identically on every platform — the native Windows build read a credential the Linux
+   * one had written, measured 2026-09-19.
    *
    * ⚠️ It says **who is signed in**, which is not the same question as whether the subscription is
    * live. Nothing free separates those on this CLI; only a run can.
    */
   async probeIdentity(isolationRoot: string): Promise<IdentityProbe> {
-    // ⚠️ The version comes off the cache `isInstalled()` keeps rather than a spawn: identity is
-    // probed per worker on a timer, and a WSL hop per worker per probe would be paid for nothing.
-    const seen = installedCache?.version
-    const cliVersion = seen ? { cliVersion: seen } : {}
+    // ⚠️ The version is the one `detect()` last read rather than a spawn: identity is probed per
+    // worker on a timer, and a process per worker per probe would be paid for nothing.
+    const cliVersion = seenVersion ? { cliVersion: seenVersion } : {}
     const file = authFile(isolationRoot)
     if (!existsSync(file)) {
       return { loggedIn: false, raw: `no ${file} yet`, ...cliVersion }
@@ -955,10 +973,9 @@ export const museCode: AgentAdapter = {
         return
       }
     }
-    const host = hostFor(info.command)
-    // ⚠️ Keyed by the path **muse will see**, which is the translated one on a bridged host. The
-    // Windows spelling would sit in the file forever and never match.
-    const key = host ? hostPath(host, dir) : dir
+    // ⚠️ Keyed by muse's own spelling of the folder — see `trustKey`. A root trusted under the retired
+    // WSL bridge holds a `/mnt/c/…` key the native build never matches; this adds its own beside it.
+    const key = trustKey(dir)
     const projects = (existing.projects ?? {}) as Record<string, Record<string, unknown>>
     if (projects[key]?.decision === 'trusted') return
     projects[key] = { ...(projects[key] ?? {}), decision: 'trusted' }
@@ -974,26 +991,23 @@ export const museCode: AgentAdapter = {
 
   plan(req: SpawnRequest): SpawnPlan {
     const host = requireHost()
-    const env = envFor(host, req.isolationRoot, req.cwd)
+    const env = envFor(req.isolationRoot)
     // ⛔ The directories have to exist before the process does: muse creates its own XDG tree, but
-    // the prompt file is written by a `cat` whose parent directory is ours to make.
+    // the prompt file is written by a drain whose parent directory is ours to make.
     mkdirSync(join(req.isolationRoot, 'prompts'), { recursive: true })
     mkdirSync(configHome(req.isolationRoot), { recursive: true })
     mkdirSync(dataHome(req.isolationRoot), { recursive: true })
 
     const shell = (args: string[], stdin?: { path: string }): SpawnPlan => {
       const plan = hostPlan(host, {
-        command: info.command,
+        command: host.path,
         args,
-        cwd: req.cwd,
         env,
         ...(stdin ? { stdin } : {})
       })
-      // ⚠️ `spawnEnv()` and nothing else. It is the *host* process's environment — it reaches
-      // `wsl.exe` and stops there on a bridged host, and is what a native `/bin/sh` inherits. Every
-      // muse variable travels inside the script instead, so the two hosts behave identically and a
-      // Windows path never ends up in a variable only a Linux process reads.
-      return { command: plan.command, args: plan.args, env: spawnEnv() }
+      // ⚠️ `spawnEnv()` plus what the host could not put in a script — nothing on POSIX, where the
+      // script exports it, and the XDG roots on Windows, where there is no script.
+      return { command: plan.command, args: plan.args, env: { ...spawnEnv(), ...plan.env } }
     }
 
     // A one-shot flow (login) supplies its own argv and wants a terminal, not a turn.
@@ -1018,10 +1032,10 @@ export const museCode: AgentAdapter = {
       '--session-id',
       req.resumeFrom ?? req.sessionId,
       '--prompt-file',
-      hostPath(host, prompt),
+      prompt,
       // Roots the policy-gated workspace tools at the worktree this run was given.
       '--workspace',
-      hostPath(host, req.cwd),
+      req.cwd,
       // ⛔ **A resume must say the workspace may move, or it is not a resume at all.** muse records
       // the workspace root a session was *opened* in and compares it to `--workspace` on every
       // later exec: `session <id> was created in workspace <A>; refusing to resume in workspace
@@ -1054,38 +1068,16 @@ export const museCode: AgentAdapter = {
     // ⛔ Images only, and only at spawn: `imageInput: 'spawn-flag'` because there is no stdin channel
     // to send a second one down. A folder or a non-image file travels as a path in the prompt text,
     // the way it does on every adapter.
-    //
-    // ⛔ **And only where muse can build its asset store**, which on this bridge it often cannot.
-    // `--image` does not read the file and pass it on: muse *installs* it into a private asset
-    // directory under `XDG_DATA_HOME` and refuses one whose mode is not `0700`. A Windows volume
-    // seen from WSL is 9p without `metadata`, so that directory is `0777` and `chmod` does not
-    // change it — measured 2026-09-07. The refusal is not a skipped attachment, it is
-    // `runtime driver failed to plan turn.submit user intent: failed to install accepted image
-    // asset: asset is corrupt: asset directory permissions must be 0700, got 0777` and **exit 1**
-    // before the model is ever called (t289: a run that read as the agent having failed the task,
-    // five seconds after dispatch). With the same account and the data home on ext4, the identical
-    // command answers the prompt — so this is the host, not the CLI, and not the account.
-    //
-    // ⚠️ Dropped rather than deferred: the path is already in the prompt text on every adapter, so
-    // the run proceeds with an agent that has been told where the file is instead of a turn that
-    // died before it started.
-    const images = (req.attachments ?? []).filter((file) => file.kind === 'image')
-    if (images.length > 0 && !honoursPosixModes(host, dataHome(req.isolationRoot))) {
-      log.warn(
-        `${info.label} cannot take ${images.length} image(s) at spawn here: its asset store under ` +
-          `${dataHome(req.isolationRoot)} is on a Windows volume, where muse's required 0700 ` +
-          'permissions cannot be set. They travel as paths in the prompt text instead.'
-      )
-    } else {
-      for (const file of images) args.push('--image', hostPath(host, file.file))
+    for (const file of req.attachments ?? []) {
+      if (file.kind === 'image') args.push('--image', file.file)
     }
-    return shell(args, { path: hostPath(host, prompt) })
+    return shell(args, { path: prompt })
   },
 
   /**
    * `<root>/data/muse/sessions/<YYYY>/<MM>/<DD>/<session-id>/session.jsonl`.
    *
-   * ⛔ A **local** date, measured — WSL and Windows agreed to the minute on this machine, and the
+   * ⛔ A **local** date, measured — on the native Windows build too (2026-09-19), and the
    * directory is named for the day the session opened. ⚠️ A session started in the last second
    * before midnight would land in the next day's directory and go unmetered; the failure is
    * *unmetered*, which Doctor reports, rather than metering somebody else's session.

@@ -23,6 +23,18 @@ installed CLIs and fonts; `docs/testing.md` records each. Phase 3/4 (write-up, l
 channels) remains off-repo.
 
 ## Closed in this cleanup
+- **Muse Code runs natively on Windows; the WSL bridge is gone (t547, 2026-09-19).** Muse Code 1.3.0
+  ships a Windows build (`irm https://dev.meta.ai/install.ps1 | iex`). `clihost.ts` now knows `posix`
+  and `windows` hosts only; `museBinary` starts the installer's `muse-bin-<version>.exe` (never the
+  `muse.cmd` shim, whose PowerShell launcher fails under pwsh 7), and `WINDOWS_DRAIN` — the daemon's
+  own Node — replaces `cat > file` because Windows muse has no stdin prompt channel either. Images
+  flow again (the WSL-only `0700` gate is gone), and `trustKey` spells a trusted folder `\\?\<resolved
+  path>`, the only key the Windows TUI honours. Measured live through `spawnSession`/`refreshUsage` on
+  MuseFirst: the WSL-written credential worked unchanged, a turn was metered, `/usage` read 3%/23%.
+  On this machine the Ubuntu distro was unregistered and WSL uninstalled the same day (operator's
+  call; Virtual Machine Platform left on for the Claude desktop VM). ⏭ **MuseFirst cannot run until
+  the installed app is rebuilt with this change** — the old build still looks for `wsl.exe`.
+  `docs/adapters.md`.
 - **Only Plan & Split and Plan & Execute drew the composer's dispatch diagram; Single Task,
   Conversation and Debate were left to a sentence (t546, 2026-09-19).** `PlanShape` is now
   `WorkflowShape`, one of five schematic topologies keyed on the kind pill instead of two: Single
@@ -135,18 +147,6 @@ channels) remains off-repo.
   now emits `project.changed`/`task.changed` on PR recording, sweep reconciliation and branch cleanup,
   so a merged PR check updates the sidebar dot from purple (`pending_pr`) to idle immediately.
   `docs/ui.md`, `docs/landing.md`.
-
-- **A route consult held a task for 4m49s instead of 90s, and ran tools on Antigravity (t502 ← t501,
-  2026-09-17).** `answerTimeoutFor` now bounds a running consult by its window and `permissionModeFor`
-  gives it `readOnlyPermissionMode`, never the adapter's unattended default.
-
-- **A held conversation's worker slot never came back (t498 ← t497, 2026-09-17).** `restingSessionOf`
-  (scheduler.ts) finds the most recent run's session whether or not it is open; Finish and Stop both
-  use it now. `conversationcapacity.test.ts`.
-
-- **Routing prefers subscription quota that would otherwise be forfeit at reset (t499, 2026-09-17).**
-  New signed term `prepaid` (`scoring.ts`, routing model **v1.1**) rewards a forfeiting subscription
-  window instead of penalising it. `docs/routing.md` §3.3, §3.3a.
 
 ## Remaining work — ordered by payoff
 

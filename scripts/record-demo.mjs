@@ -18,7 +18,7 @@
  * ⛔ **Nothing is ever dispatched.** A filed task is `ready`, and a ready task with an enabled worker
  * is a task the scheduler starts — against whatever CLI this machine has, and Antigravity's keyring
  * is the operator's real one. Hiding the CLIs from `PATH` does not work: the Antigravity adapter
- * also looks in `%LOCALAPPDATA%\agy\bin` and Muse is reached through `wsl.exe` (tried 2026-09-16).
+ * also looks in `%LOCALAPPDATA%\agy\bin` and Muse under `%LOCALAPPDATA%\Programs\muse` (tried 2026-09-16, then through `wsl.exe`).
  * So every invented account is set to role `none` — commissioned and measured, but never given work
  * or asked for judgment — and grading is turned off on each, because the reviewer pool reads
  * `gradingEnabled` rather than the role. The fleet strip draws neither. Title summaries must be off

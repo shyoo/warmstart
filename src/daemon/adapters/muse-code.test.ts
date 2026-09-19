@@ -1,65 +1,40 @@
-import { describe, expect, it } from 'vitest'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { spawnSync } from 'node:child_process'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import type { Attachment } from '@shared/tasks.js'
-import { museCode, parseResetTime } from './muse-code.js'
-import {
-  gitEnvFor,
-  honoursPosixModes,
-  hostExec,
-  hostFor,
-  hostPath,
-  hostScript,
-  shQuote,
-  type CliHost
-} from './clihost.js'
+import type { SpawnPlan } from './types.js'
+import { museBinary, museCode, parseResetTime, trustKey } from './muse-code.js'
+import { hostAt, hostPlan, hostScript, shQuote, WINDOWS_DRAIN, type CliHost } from './clihost.js'
 
 /**
- * Muse Code, and the host bridge it is the first adapter to need.
+ * Muse Code, and the per-platform start-up it is the first adapter to need.
  *
  * ⛔ Every fixture here is text this CLI actually produced on 2026-09-06, not text somebody thought
  * it would produce — `transient_docs/muse_code_findings_2026-09-06.md` is the capture. That is the
  * whole reason this file exists: a capability table is easy to write and expensive to be wrong
  * about, and the three things that would have failed on the first spawn (no stdin prompt, usage
- * only in the session log, a worktree WSL git cannot open) were all invisible from the vendor's
+ * only in the session log, a quota that exists only on screen) were all invisible from the vendor's
  * documentation.
  */
 
-const WSL: CliHost = { kind: 'wsl', wsl: 'C:\\Windows\\System32\\wsl.exe' }
-const NATIVE: CliHost = { kind: 'native', path: '/home/me/.local/bin/muse' }
-
-describe('hostPath', () => {
-  it('translates a Windows path for a bridged host and leaves a native one alone', () => {
-    expect(hostPath(WSL, 'C:\\Dev\\ws1')).toBe('/mnt/c/Dev/ws1')
-    expect(hostPath(WSL, 'D:\\a b\\c')).toBe('/mnt/d/a b/c')
-    expect(hostPath(WSL, 'C:\\')).toBe('/mnt/c')
-    expect(hostPath(NATIVE, 'C:\\Dev\\ws1')).toBe('C:\\Dev\\ws1')
-    expect(hostPath(NATIVE, '/home/me/x')).toBe('/home/me/x')
-  })
-
-  it('is idempotent, so a caller may translate twice without harm', () => {
-    expect(hostPath(WSL, hostPath(WSL, 'C:\\Dev\\ws1'))).toBe('/mnt/c/Dev/ws1')
-  })
-
-  /**
-   * ⛔ Refused rather than mangled. A UNC path silently rewritten to something that resolves to a
-   * *different* directory is how a worker ends up reading the wrong isolation root.
-   */
-  it('refuses a UNC path', () => {
-    expect(() => hostPath(WSL, '\\\\server\\share\\x')).toThrow(/UNC/)
+describe('hostAt', () => {
+  it('names the host by this machine’s own platform', () => {
+    expect(hostAt('C:\\m\\muse-bin-1.3.0-R1.exe', 'win32')).toEqual({
+      kind: 'windows',
+      path: 'C:\\m\\muse-bin-1.3.0-R1.exe'
+    })
+    expect(hostAt('/usr/local/bin/muse', 'darwin')).toEqual({ kind: 'posix', path: '/usr/local/bin/muse' })
+    expect(hostAt('/usr/local/bin/muse', 'linux').kind).toBe('posix')
   })
 })
 
 describe('shQuote', () => {
-  /**
-   * ⛔ Load-bearing, because `wsl.exe -- bash -lc <script> arg…` **drops the trailing positional
-   * arguments** — measured, `$#` came back 0 — so every path has to be quoted into the script text
-   * where a `$` would otherwise expand. `$RECYCLE.BIN` sits at the root of every Windows volume.
-   */
+  /** ⛔ A double-quoted string still expands `$`, and a generated path can contain one. */
   it('keeps a dollar sign, a space and a quote literal', () => {
-    expect(shQuote('C:/$RECYCLE.BIN')).toBe("'C:/$RECYCLE.BIN'")
-    expect(shQuote('/mnt/c/a b/c')).toBe("'/mnt/c/a b/c'")
+    expect(shQuote('/a/$RECYCLE.BIN')).toBe("'/a/$RECYCLE.BIN'")
+    expect(shQuote('/a b/c')).toBe("'/a b/c'")
     expect(shQuote("it's")).toBe("'it'\\''s'")
   })
 })
@@ -67,16 +42,15 @@ describe('shQuote', () => {
 describe('hostScript', () => {
   it('exports the environment, drains stdin into the prompt file, then execs', () => {
     const script = hostScript({
-      command: 'muse',
-      args: ['exec', '--prompt-file', '/mnt/c/r/p.txt'],
-      cwd: 'C:\\Dev\\ws1',
-      env: { XDG_CONFIG_HOME: '/mnt/c/r/config' },
-      stdin: { path: '/mnt/c/r/p.txt' }
+      command: '/usr/local/bin/muse',
+      args: ['exec', '--prompt-file', '/r/p.txt'],
+      env: { XDG_CONFIG_HOME: '/r/config' },
+      stdin: { path: '/r/p.txt' }
     })
     expect(script.split('\n')).toEqual([
-      "export XDG_CONFIG_HOME='/mnt/c/r/config'",
-      "cat > '/mnt/c/r/p.txt'",
-      "exec 'muse' 'exec' '--prompt-file' '/mnt/c/r/p.txt'"
+      "export XDG_CONFIG_HOME='/r/config'",
+      "cat > '/r/p.txt'",
+      "exec '/usr/local/bin/muse' 'exec' '--prompt-file' '/r/p.txt'"
     ])
   })
 
@@ -85,101 +59,67 @@ describe('hostScript', () => {
    * reap would land on a shell wrapper while the agent carried on holding the account.
    */
   it('always execs, even with nothing to export and no stdin to drain', () => {
-    const script = hostScript({ command: 'muse', args: [], cwd: 'C:\\x', env: {} })
+    const script = hostScript({ command: 'muse', args: [], env: {} })
     expect(script).toBe("exec 'muse'")
   })
 })
 
-describe('hostExec', () => {
-  /**
-   * ⛔ **The whole of t268.** `wsl.exe -- muse --version` answers
-   * `/bin/bash: line 1: muse: command not found` — measured 2026-09-07 — because the launcher lives
-   * in `~/.local/bin`, which `~/.profile` puts on `PATH` and a bare `wsl.exe --` never reads. So
-   * `isInstalled()` and `detect()` said *no* for a CLI that runs perfectly, a task pinned to that
-   * worker was held with *"Muse Code is not installed"*, and the quota probe — which has always gone
-   * through `hostPlan`'s `bash -lc` — read that same account's windows in the same minute.
-   */
-  it('reaches a bridged CLI through a login shell', () => {
-    expect(hostExec(WSL, 'muse', ['--version'])).toEqual({
-      command: 'C:\\Windows\\System32\\wsl.exe',
-      args: ['--', 'bash', '-lc', "exec 'muse' '--version'"]
+describe('hostPlan', () => {
+  const POSIX: CliHost = { kind: 'posix', path: '/usr/local/bin/muse' }
+  const WINDOWS: CliHost = { kind: 'windows', path: 'C:\\m y\\muse-bin-1.3.0-R1.exe' }
+
+  it('runs one script on POSIX, carrying the environment inside it', () => {
+    const plan = hostPlan(POSIX, { command: POSIX.path, args: ['--version'], env: { A: '1' } })
+    expect(plan.command).toBe('/bin/sh')
+    expect(plan.args[0]).toBe('-c')
+    expect(plan.args[1]).toContain("export A='1'")
+    expect(plan.env).toEqual({})
+  })
+
+  /** ⛔ A terminal needs no drain: the TUI is started directly, with no shell and no wrapper. */
+  it('starts the Windows executable itself when there is no stdin to drain', () => {
+    expect(hostPlan(WINDOWS, { command: WINDOWS.path, args: ['--x'], env: { A: '1' } })).toEqual({
+      command: WINDOWS.path,
+      args: ['--x'],
+      env: { A: '1' }
     })
   })
 
-  /** ⚠️ Quoted into the script, for the same reason `hostScript` quotes: `--` args never survive. */
-  it('quotes what it is given rather than pasting it into a script', () => {
-    const plan = hostExec(WSL, 'muse', ['--config', "/mnt/c/a b/$RECYCLE.BIN/it's"])
-    expect(plan.args[3]).toBe("exec 'muse' '--config' '/mnt/c/a b/$RECYCLE.BIN/it'\\''s'")
-  })
-
   /**
-   * ⛔ Exported into the script, because nothing crosses the boundary — and it matters *now*: this
-   * half only started finding the CLI in t268, and muse's launcher self-updates a 263 MB binary
-   * unless it is told not to. A version check that swaps the binary under a running fleet is the
-   * thing that variable exists to prevent.
+   * ⛔ The Windows half of `cat > file; exec`. Arguments travel as an array — a path with a space
+   * is one argument, never split by `cmd` — and the runtime is the daemon's own.
    */
-  it('exports what the command needs on the far side of the bridge', () => {
-    const plan = hostExec(WSL, 'muse', ['--version'], { MUSE_NO_AUTO_UPDATE: '1' })
-    expect(plan.args[3]).toBe("export MUSE_NO_AUTO_UPDATE='1'\nexec 'muse' '--version'")
-  })
-
-  /** ⛔ A native host is started directly: there is no boundary, and no shell to pay for. */
-  it('runs a native CLI with no shell at all', () => {
-    expect(hostExec(NATIVE, 'muse', ['--version'])).toEqual({
-      command: '/home/me/.local/bin/muse',
-      args: ['--version']
+  it('puts the daemon’s own runtime in front of the executable on Windows to drain stdin', () => {
+    const plan = hostPlan(WINDOWS, {
+      command: WINDOWS.path,
+      args: ['exec', '--session-id', 'abc'],
+      env: { A: '1' },
+      stdin: { path: 'C:\\r\\p.txt' }
     })
+    expect(plan.command).toBe(process.execPath)
+    expect(plan.args).toEqual(['-e', WINDOWS_DRAIN, 'C:\\r\\p.txt', WINDOWS.path, 'exec', '--session-id', 'abc'])
+    expect(plan.env).toEqual({ A: '1', ELECTRON_RUN_AS_NODE: '1' })
   })
-})
 
-describe('gitEnvFor', () => {
   /**
-   * ⛔ The one that would have stopped every dispatch. A Windows-made worktree's `.git` holds
-   * `gitdir: C:/…`, which git inside WSL resolves *relatively* and cannot find. Measured on this
-   * repository, and the first fix was two variables and no file touched.
-   *
-   * ⛔ **And the one that stopped two landings (t446, t447, 2026-09-14).** Those two variables reach
-   * the agent's *whole* environment, so an `npm test` it runs — hundreds of `git init` in temporary
-   * directories — re-initialises the trunk instead and writes `core.worktree = /mnt/c/…/ws3` into
-   * the trunk's config; every Windows git there then dies with *Invalid path '/mnt'*. A **relative**
-   * pointer needs neither variable (measured against WSL git 2.53 the same day), so a workspace
-   * carrying one gets nothing, and only a pointer that cannot be made relative still does.
-   *
-   * ⚠️ Native hosts get nothing: there is no boundary and the pointer is already right.
+   * The drain itself, run for real: stdin becomes the file byte for byte (non-ASCII included), the
+   * child's stdout reaches this pipe untouched, its exit code comes back, and it never inherits
+   * `ELECTRON_RUN_AS_NODE`. The "agent" here is this same Node, so no CLI is needed.
    */
-  it('is empty on a native host', () => {
-    expect(gitEnvFor(NATIVE, process.cwd())).toEqual({})
-  })
-
-  it('is empty for a directory that is not a repository', () => {
-    expect(gitEnvFor(WSL, 'C:\\definitely\\not\\here')).toEqual({})
-  })
-
-  /** A trunk beside a pool member, the way `ensureWorkspacePool` lays them out. */
-  const layout = (pointer: (gitDir: string) => string): { cwd: string; gitDir: string } => {
-    const base = mkdtempSync(join(tmpdir(), 'muse-gitenv-'))
-    const gitDir = join(base, 'trunk', '.git', 'worktrees', 'ws1')
-    const cwd = join(base, 'pool', 'ws1')
-    mkdirSync(gitDir, { recursive: true })
-    mkdirSync(cwd, { recursive: true })
-    writeFileSync(join(cwd, '.git'), `gitdir: ${pointer(gitDir)}\n`)
-    return { cwd, gitDir }
-  }
-
-  it('is empty for a relative pointer, which git on both sides follows with no environment', () => {
-    const { cwd } = layout(() => '../../trunk/.git/worktrees/ws1')
-    expect(gitEnvFor(WSL, cwd)).toEqual({})
-  })
-
-  it('still names the git directory for an absolute pointer, the one spelling WSL cannot open', () => {
-    const { cwd, gitDir } = layout((dir) => dir.split('\\').join('/'))
-    expect(gitEnvFor(WSL, cwd)).toEqual({ GIT_DIR: hostPath(WSL, gitDir), GIT_WORK_TREE: hostPath(WSL, cwd) })
-  })
-
-  it('is empty for an ordinary clone, whose .git is a directory', () => {
-    const base = mkdtempSync(join(tmpdir(), 'muse-gitenv-'))
-    mkdirSync(join(base, '.git'))
-    expect(gitEnvFor(WSL, base)).toEqual({})
+  it('drains stdin to the file, then runs the command with the pipe and exit code intact', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'muse-drain-'))
+    const file = join(dir, 'prompt file.txt')
+    const prompt = 'héllo — 世界\n'
+    const agent =
+      "const t=require('fs').readFileSync(process.argv[1],'utf8');" +
+      'process.stdout.write(JSON.stringify({t,e:process.env.ELECTRON_RUN_AS_NODE??null}));process.exit(7)'
+    const result = spawnSync(process.execPath, ['-e', WINDOWS_DRAIN, file, process.execPath, '-e', agent, file], {
+      input: prompt,
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }
+    })
+    expect(result.status).toBe(7)
+    expect(readFileSync(file, 'utf8')).toBe(prompt)
+    expect(JSON.parse(result.stdout.toString('utf8'))).toEqual({ t: prompt, e: null })
   })
 })
 
@@ -811,42 +751,79 @@ describe('the capability block', () => {
 })
 
 /**
- * Whether a `chmod` on a path actually does anything.
+ * A fake install, laid out the way each platform's installer leaves one, so `plan()` is asserted on
+ * every machine — CI has no Muse — rather than skipped where the CLI is missing.
  *
- * ⛔ Measured 2026-09-07 on this machine: `mkdir` + `chmod 0700` under
- * `/mnt/c/…/workers/musefirst/data/muse` reports `777` immediately afterwards, because a Windows
- * volume reaches WSL2 over 9p with no `metadata` mount option. It is a fact about the **path**, not
- * the host — the distribution's own ext4 honours modes perfectly.
+ * ⚠️ Windows: `MUSE_INSTALL_DIR` holding `.muse-version` and the `muse-bin-<version>.exe` it names,
+ * the layout the vendor launcher's own `Get-ActiveBinary` reads. POSIX: an executable `muse` first
+ * on `PATH`. Neither file is ever run.
  */
-describe('honoursPosixModes', () => {
-  it('says no for anything a bridged host reads off a Windows volume', () => {
-    expect(honoursPosixModes(WSL, 'C:/Users/me/AppData/Roaming/x')).toBe(false)
-    expect(honoursPosixModes(WSL, 'D:/data')).toBe(false)
-    // Already translated, and translating twice is safe — so both spellings answer the same.
-    expect(honoursPosixModes(WSL, '/mnt/c/Users/me/x')).toBe(false)
-    expect(honoursPosixModes(WSL, '/mnt/d')).toBe(false)
+function fakeInstall(): { binary: string; restore: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), 'muse-install-'))
+  const saved = { MUSE_INSTALL_DIR: process.env.MUSE_INSTALL_DIR, PATH: process.env.PATH }
+  let binary: string
+  if (process.platform === 'win32') {
+    writeFileSync(join(dir, '.muse-version'), '1.3.0-R3401.1\n')
+    binary = join(dir, 'muse-bin-1.3.0-R3401.1.exe')
+    writeFileSync(binary, '')
+    writeFileSync(join(dir, 'muse.cmd'), '@echo off\r\n')
+    process.env.MUSE_INSTALL_DIR = dir
+  } else {
+    binary = join(dir, 'muse')
+    writeFileSync(binary, '#!/bin/sh\n')
+    chmodSync(binary, 0o755)
+    process.env.PATH = `${dir}${delimiter}${process.env.PATH ?? ''}`
+  }
+  return {
+    binary,
+    restore: () => {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+    }
+  }
+}
+
+describe('museBinary', () => {
+  let install: ReturnType<typeof fakeInstall>
+  beforeEach(() => {
+    install = fakeInstall()
+  })
+  afterEach(() => install.restore())
+
+  /**
+   * ⛔ On Windows, the real executable and never the `muse.cmd` shim beside it: the shim goes through
+   * `cmd` (which splits a path with a space) and a PowerShell launcher that failed outright when
+   * started from PowerShell 7, measured 2026-09-19.
+   */
+  it('finds the active binary, never the shim', () => {
+    expect(museBinary()).toBe(install.binary)
+    expect(museCode.isInstalled()).toBe(true)
   })
 
-  it('says yes inside the distribution, where modes are real', () => {
-    expect(honoursPosixModes(WSL, '/home/me/.local/share')).toBe(true)
-    expect(honoursPosixModes(WSL, '/var/tmp/x')).toBe(true)
-    // ⚠️ Not every path beginning `/mnt` is a drive: `/mnt/data` is an ordinary directory.
-    expect(honoursPosixModes(WSL, '/mnt/data/x')).toBe(true)
-    expect(honoursPosixModes(WSL, '/mnt/cdrom')).toBe(true)
+  it.runIf(process.platform === 'win32')('follows .muse-version to the binary it names', () => {
+    const dir = process.env.MUSE_INSTALL_DIR ?? ''
+    writeFileSync(join(dir, 'muse-bin-1.4.0-R1.exe'), '')
+    writeFileSync(join(dir, '.muse-version'), '1.4.0-R1\n')
+    expect(museBinary()).toBe(join(dir, 'muse-bin-1.4.0-R1.exe'))
   })
 
-  it('says yes on a native host, because there is no boundary to cross', () => {
-    expect(honoursPosixModes(NATIVE, '/home/me/.local/share')).toBe(true)
-    expect(honoursPosixModes(NATIVE, 'C:/Users/me/AppData')).toBe(true)
+  /** A version file naming a binary that is not there is no install, not a path to a missing file. */
+  it.runIf(process.platform === 'win32')('refuses a version file whose binary is missing', () => {
+    const dir = process.env.MUSE_INSTALL_DIR ?? ''
+    writeFileSync(join(dir, '.muse-version'), '9.9.9-R9\n')
+    expect(museBinary()).not.toBe(join(dir, 'muse-bin-9.9.9-R9.exe'))
   })
 })
 
 describe('plan', () => {
-  /**
-   * ⚠️ Needs a host — muse on `PATH`, or `wsl.exe` to reach it through. On a machine with neither
-   * (CI is one) the whole shape is unassertable, so this states that rather than passing vacuously.
-   */
-  const reachable = hostFor('muse') !== null
+  let install: ReturnType<typeof fakeInstall>
+  beforeEach(() => {
+    install = fakeInstall()
+  })
+  afterEach(() => install.restore())
+
   const root = join(mkdtempSync(join(tmpdir(), 'muse-plan-')), 'root')
   const cwd = mkdtempSync(join(tmpdir(), 'muse-cwd-'))
 
@@ -863,44 +840,83 @@ describe('plan', () => {
     createdAt: 0
   })
 
-  it.runIf(reachable)('sends the prompt as a file and takes stdin for it', () => {
-    const plan = museCode.plan({
-      sessionId: '11111111-1111-4111-8111-111111111111',
-      isolationRoot: root,
-      cwd,
-      transport: 'stream',
-      model: 'muse-spark-1.3',
-      effort: 'medium'
-    })
-    // The whole invocation is one shell script, on both hosts.
-    const script = plan.args[plan.args.length - 1] ?? ''
-    expect(script).toContain('cat > ')
-    expect(script).toContain('--prompt-file')
-    expect(script).toContain('--session-id')
-    expect(script).toContain("'--model' 'muse-spark-1.3'")
-    expect(script).toContain("'--reasoning-effort' 'medium'")
+  /**
+   * The agent's own argv and environment, whichever platform built the plan: the POSIX script's
+   * words and exports, or the Windows drain's trailing arguments and its spawn environment.
+   */
+  const unwrap = (plan: SpawnPlan): { argv: string[]; env: Record<string, string>; drained: string | null } => {
+    if (plan.command === '/bin/sh') {
+      const script = plan.args[1] ?? ''
+      const env: Record<string, string> = {}
+      for (const m of script.matchAll(/^export (\w+)='([^']*)'$/gm)) env[m[1] ?? ''] = m[2] ?? ''
+      const exec = script.split('\n').find((l) => l.startsWith('exec ')) ?? ''
+      const argv = [...exec.matchAll(/'([^']*)'/g)].map((m) => m[1] ?? '')
+      const drained = /^cat > '([^']*)'$/m.exec(script)?.[1] ?? null
+      return { argv, env, drained }
+    }
+    if (plan.args[0] === '-e' && plan.args[1] === WINDOWS_DRAIN) {
+      return { argv: plan.args.slice(3), env: plan.env, drained: plan.args[2] ?? null }
+    }
+    return { argv: [plan.command, ...plan.args], env: plan.env, drained: null }
+  }
+
+  const after = (argv: string[], flag: string): string | undefined => argv[argv.indexOf(flag) + 1]
+
+  it('sends the prompt as a file and drains stdin into it', () => {
+    const { argv, env, drained } = unwrap(
+      museCode.plan({
+        sessionId: '11111111-1111-4111-8111-111111111111',
+        isolationRoot: root,
+        cwd,
+        transport: 'stream',
+        model: 'muse-spark-1.3',
+        effort: 'medium'
+      })
+    )
+    expect(argv[0]).toBe(install.binary)
+    expect(argv[1]).toBe('exec')
+    expect(drained).not.toBeNull()
+    expect(after(argv, '--prompt-file')).toBe(drained)
+    expect(after(argv, '--session-id')).toBe('11111111-1111-4111-8111-111111111111')
+    expect(after(argv, '--workspace')).toBe(cwd)
+    expect(after(argv, '--model')).toBe('muse-spark-1.3')
+    expect(after(argv, '--reasoning-effort')).toBe('medium')
     // ⛔ Unattended work runs with nobody to ask, so approvals are settled before the process starts.
-    expect(script).toContain("'--approval-mode' 'never'")
+    expect(after(argv, '--approval-mode')).toBe('never')
     // ⛔ The session log is the meter on this adapter.
-    expect(script).not.toContain('--no-session-log')
-    // Both XDG roots are exported inside the script, because nothing crosses into a distribution.
-    expect(script).toContain('export XDG_CONFIG_HOME=')
-    expect(script).toContain('export XDG_DATA_HOME=')
-    // ⛔ A self-update swaps a 263 MB binary under a running worker.
-    expect(script).toContain("export MUSE_NO_AUTO_UPDATE='1'")
+    expect(argv).not.toContain('--no-session-log')
+    // ⚠️ Native paths on every platform: nothing is translated any more.
+    expect(env.XDG_CONFIG_HOME).toBe(join(root, 'config'))
+    expect(env.XDG_DATA_HOME).toBe(join(root, 'data'))
+    // ⛔ A self-update swaps the binary under a running worker.
+    expect(env.MUSE_NO_AUTO_UPDATE).toBe('1')
   })
 
-  it.runIf(reachable)('resumes by reusing the conversation’s own id, with no --resume', () => {
+  /** The drain is started as Node; the drain itself strips that before the agent starts. */
+  it.runIf(process.platform === 'win32')('asks for the daemon runtime as Node only for the drain', () => {
     const plan = museCode.plan({
-      sessionId: 'aaaaaaaa-1111-4111-8111-111111111111',
-      resumeFrom: 'bbbbbbbb-2222-4222-8222-222222222222',
+      sessionId: '12121212-1111-4111-8111-111111111111',
       isolationRoot: root,
       cwd,
       transport: 'stream'
     })
-    const script = plan.args[plan.args.length - 1] ?? ''
-    expect(script).toContain("'--session-id' 'bbbbbbbb-2222-4222-8222-222222222222'")
-    expect(script).not.toContain('--resume')
+    expect(plan.command).toBe(process.execPath)
+    expect(plan.env.ELECTRON_RUN_AS_NODE).toBe('1')
+    expect(plan.env.XDG_CONFIG_HOME).toBe(join(root, 'config'))
+  })
+
+  it('resumes by reusing the conversation’s own id, with no --resume', () => {
+    const { argv } = unwrap(
+      museCode.plan({
+        sessionId: 'aaaaaaaa-1111-4111-8111-111111111111',
+        resumeFrom: 'bbbbbbbb-2222-4222-8222-222222222222',
+        isolationRoot: root,
+        cwd,
+        transport: 'stream'
+      })
+    )
+    expect(after(argv, '--session-id')).toBe('bbbbbbbb-2222-4222-8222-222222222222')
+    expect(argv).not.toContain('--resume')
   })
 
   /**
@@ -908,99 +924,126 @@ describe('plan', () => {
    * the root the session was *opened* in and exits 1 with an empty stdout when they differ —
    * `session <id> was created in workspace <A>; refusing to resume in workspace <B>; pass
    * --workspace <A> or --allow-workspace-switch`. Measured 2026-09-11 against muse 1.1.1 on a
-   * `--provider echo` session, so the reading cost nothing: refused without the flag, resumed and
-   * re-rooted its tools with it. t364 hit it for real — a conversation opened under the pre-rename
-   * `multi_agent_controller_workspaces\ws1`, whose **row** `repointIsolationRoots` had moved to
-   * `warmstart_workspaces\ws1` while the vendor's own log still said the old path — and read as the
-   * agent failing the task 4.4 seconds after dispatch.
+   * `--provider echo` session, so the reading cost nothing.
    */
-  it.runIf(reachable)('lets a resumed conversation move to the worktree this run claimed', () => {
-    const resumed = museCode.plan({
-      sessionId: 'aaaaaaaa-1111-4111-8111-111111111111',
-      resumeFrom: 'bbbbbbbb-2222-4222-8222-222222222222',
-      isolationRoot: root,
-      cwd,
-      transport: 'stream'
-    })
-    expect(resumed.args[resumed.args.length - 1] ?? '').toContain("'--allow-workspace-switch'")
+  it('lets a resumed conversation move to the worktree this run claimed', () => {
+    const resumed = unwrap(
+      museCode.plan({
+        sessionId: 'aaaaaaaa-1111-4111-8111-111111111111',
+        resumeFrom: 'bbbbbbbb-2222-4222-8222-222222222222',
+        isolationRoot: root,
+        cwd,
+        transport: 'stream'
+      })
+    )
+    expect(resumed.argv).toContain('--allow-workspace-switch')
     // ⚠️ And not on a cold start, where there is no recorded root to disagree with and the flag
     // would only widen what a fresh session may do.
-    const cold = museCode.plan({
-      sessionId: 'aaaaaaaa-1111-4111-8111-111111111111',
-      isolationRoot: root,
-      cwd,
-      transport: 'stream'
-    })
-    expect(cold.args[cold.args.length - 1] ?? '').not.toContain('--allow-workspace-switch')
+    const cold = unwrap(
+      museCode.plan({
+        sessionId: 'aaaaaaaa-1111-4111-8111-111111111111',
+        isolationRoot: root,
+        cwd,
+        transport: 'stream'
+      })
+    )
+    expect(cold.argv).not.toContain('--allow-workspace-switch')
   })
 
   /**
-   * ⛔ **t289, and it is the host rather than the CLI.** `--image` does not hand muse a path, it
-   * makes muse *install* the file into an asset store under `XDG_DATA_HOME` whose mode it insists
-   * is `0700`. A Windows volume seen from WSL is 9p without `metadata`: everything reads `0777` and
-   * `chmod` is a silent no-op. Measured 2026-09-07 with the real account — data home on ext4, the
-   * model answered; data home on `/mnt/c`, `failed to install accepted image asset: asset is
-   * corrupt: asset directory permissions must be 0700, got 0777` and **exit 1**, five seconds after
-   * dispatch and before the model was called. The run read as the agent having failed the task.
+   * ⭐ Every image, always. The WSL bridge had to drop them — its data home on a Windows volume read
+   * `0777` and muse refused the asset store (t289) — and the native build takes them on NTFS,
+   * measured 2026-09-19 with a real PNG.
    */
-  it.runIf(reachable)('never asks for an image where its asset store cannot be 0700', () => {
-    const plan = museCode.plan({
-      sessionId: 'eeeeeeee-5555-4555-8555-555555555555',
-      isolationRoot: root,
-      cwd,
-      transport: 'stream',
-      attachments: [png('/attachments/one.png'), png('/attachments/two.png')]
-    })
-    const script = plan.args[plan.args.length - 1] ?? ''
-    const dataHomeIsWindowsVolume = /export XDG_DATA_HOME='\/mnt\//.test(script)
-    if (dataHomeIsWindowsVolume) {
-      // ⛔ Not "fewer images" — none, and no stray path left in the argv either.
-      expect(script).not.toContain('--image')
-      expect(script).not.toContain('one.png')
-    } else {
-      expect(script.match(/'--image'/g)).toHaveLength(2)
+  it('passes every image as --image', () => {
+    const { argv } = unwrap(
+      museCode.plan({
+        sessionId: 'eeeeeeee-5555-4555-8555-555555555555',
+        isolationRoot: root,
+        cwd,
+        transport: 'stream',
+        attachments: [png(join(cwd, 'one.png')), png(join(cwd, 'two.png'))]
+      })
+    )
+    expect(argv.filter((a) => a === '--image')).toHaveLength(2)
+    expect(argv).toContain(join(cwd, 'one.png'))
+  })
+
+  it('still takes a folder as a path in the prompt, never as an image', () => {
+    const { argv } = unwrap(
+      museCode.plan({
+        sessionId: '99999999-7777-4777-8777-777777777777',
+        isolationRoot: root,
+        cwd,
+        transport: 'stream',
+        attachments: [{ ...png('/attachments/ctx'), kind: 'folder', mediaType: 'inode/directory' }]
+      })
+    )
+    expect(argv).not.toContain('--image')
+  })
+
+  it('opens a plain TUI for a probe, with no exec and no prompt file', () => {
+    const { argv, drained } = unwrap(
+      museCode.plan({
+        sessionId: 'cccccccc-3333-4333-8333-333333333333',
+        isolationRoot: root,
+        cwd,
+        transport: 'pty'
+      })
+    )
+    expect(drained).toBeNull()
+    expect(argv[0]).toBe(install.binary)
+    expect(argv).not.toContain('exec')
+    expect(after(argv, '--approval-mode')).toBe('on-request')
+  })
+
+  // ⚠️ Windows only: POSIX `which` augments PATH with the user's own bin directories, where a
+  // developer's real install would be found.
+  it.runIf(process.platform === 'win32')('refuses to plan where no Muse Code is installed, and says how to install it', () => {
+    install.restore()
+    const saved = { PATH: process.env.PATH, LOCALAPPDATA: process.env.LOCALAPPDATA }
+    process.env.PATH = ''
+    process.env.LOCALAPPDATA = mkdtempSync(join(tmpdir(), 'muse-none-'))
+    try {
+      expect(() => museCode.plan({ sessionId: 'x', isolationRoot: root, cwd, transport: 'stream' })).toThrow(
+        /Muse Code was not found/
+      )
+    } finally {
+      process.env.PATH = saved.PATH
+      process.env.LOCALAPPDATA = saved.LOCALAPPDATA
     }
   })
+})
 
-  /**
-   * The invariant, stated without reference to the predicate that implements it: whatever host this
-   * runs on, those two things may never appear in the same script.
-   */
-  it.runIf(reachable)('so a Windows data home and an --image flag never share a script', () => {
-    const plan = museCode.plan({
-      sessionId: 'ffffffff-6666-4666-8666-666666666666',
-      isolationRoot: root,
-      cwd,
-      transport: 'stream',
-      attachments: [png('/attachments/one.png')]
-    })
-    const script = plan.args[plan.args.length - 1] ?? ''
-    expect(/export XDG_DATA_HOME='\/mnt\//.test(script) && script.includes('--image')).toBe(false)
+/**
+ * ⛔ Measured 2026-09-19 on 1.3.0: the native Windows build honours a pre-answered trust only under
+ * `\\?\` + the fully resolved path — the spelling its dialog prints as *Trust target*. The path as
+ * given and the resolved path without the prefix both still drew the dialog.
+ */
+describe('trustKey', () => {
+  it('keeps a POSIX path as given', () => {
+    expect(trustKey('/home/me/scratch', 'linux')).toBe('/home/me/scratch')
+    expect(trustKey('/Users/me/scratch', 'darwin')).toBe('/Users/me/scratch')
   })
 
-  it.runIf(reachable)('still takes a folder as a path in the prompt, never as an image', () => {
-    const plan = museCode.plan({
-      sessionId: '99999999-7777-4777-8777-777777777777',
-      isolationRoot: root,
-      cwd,
-      transport: 'stream',
-      attachments: [{ ...png('/attachments/ctx'), kind: 'folder', mediaType: 'inode/directory' }]
-    })
-    const script = plan.args[plan.args.length - 1] ?? ''
-    expect(script).not.toContain('--image')
+  it.runIf(process.platform === 'win32')('spells a Windows folder the way muse files it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'muse-trust-'))
+    expect(trustKey(dir, 'win32')).toBe(`\\\\?\\${realpathSync.native(dir)}`)
   })
 
-  it.runIf(reachable)('opens a plain TUI for a probe, with no exec and no prompt file', () => {
-    const plan = museCode.plan({
-      sessionId: 'cccccccc-3333-4333-8333-333333333333',
-      isolationRoot: root,
-      cwd,
-      transport: 'pty'
-    })
-    const script = plan.args[plan.args.length - 1] ?? ''
-    expect(script).not.toContain('cat > ')
-    expect(script).not.toContain("'exec' '--json'")
-    expect(script).toContain("'--approval-mode' 'on-request'")
+  it.runIf(process.platform === 'win32')('still gives a verbatim key for a folder that is not there yet', () => {
+    expect(trustKey('C:\\no\\such\\folder', 'win32')).toBe('\\\\?\\C:\\no\\such\\folder')
+  })
+
+  it.runIf(process.platform === 'win32')('pre-trusts under that key, beside what is already there', () => {
+    const root = mkdtempSync(join(tmpdir(), 'muse-trustroot-'))
+    const dir = mkdtempSync(join(tmpdir(), 'muse-trustdir-'))
+    mkdirSync(join(root, 'config', 'muse'), { recursive: true })
+    const file = join(root, 'config', 'muse', 'trust.json')
+    writeFileSync(file, JSON.stringify({ schema_version: 1, projects: { '/mnt/c/old': { decision: 'trusted' } } }))
+    museCode.trustDirectory?.(root, dir)
+    const projects = (JSON.parse(readFileSync(file, 'utf8')) as { projects: Record<string, unknown> }).projects
+    expect(Object.keys(projects).sort()).toEqual(['/mnt/c/old', trustKey(dir)].sort())
   })
 })
 

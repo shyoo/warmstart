@@ -20,8 +20,8 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 
 | | `claude-code` | `antigravity-cli` | `openai-compatible` | `local-llm` | `muse-code` |
 |---|---|---|---|---|---|
-| Command | `claude` | `agy` | `codex` | `local-llm-bridge` (node) | `muse` — ⛔ **through `wsl.exe` on Windows** (`clihost.ts`) |
-| Measured against | 2.1.223 | 1.1.20 | 0.151.0 | llama.cpp / Qwen3-Coder | 1.0.3 (1.0.3-R2198.1) |
+| Command | `claude` | `agy` | `codex` | `local-llm-bridge` (node) | `muse` — native everywhere; on Windows the installer's `muse-bin-<version>.exe`, never the `muse.cmd` shim (`museBinary`) |
+| Measured against | 2.1.223 | 1.1.20 | 0.151.0 | llama.cpp / Qwen3-Coder | 1.0.3 (Linux), 1.3.0 (Windows, 2026-09-19) |
 | **Accounts per machine** | **unlimited** (`CLAUDE_CONFIG_DIR`) | ⛔ **1** (OS keyring) | **unlimited** (`CODEX_HOME`) | **unlimited** (by endpoint URL) | **unlimited** (`XDG_CONFIG_HOME`/`XDG_DATA_HOME`) |
 | Credential lives in | a directory | ⛔ the OS keyring | a directory | ⛔ none (local HTTP) | a directory (`config/muse/auth.json`) |
 | Metered from | ⛔ transcript, **by choice** (exact, survives a restart; its stream carries usage too) | **its live stream** | **its live stream** | **its live stream** | ⛔ **its session log** — its stream carries no usage at all |
@@ -32,7 +32,7 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | Raises its own questions | ✔ **`AskUserQuestion` / `ask_human` (single & multi-checkboxes)** | ✔ **`NEEDS DECISION: [multi]` contract** | ✔ **`NEEDS DECISION: [multi]` contract** | ✔ via `ask_human` tool | ✔ **`NEEDS DECISION: [multi]` contract** |
 | Says why a turn stopped | ✔ **`post_turn_summary`** carries `status_category` + `needs_action` | ⛔ none seen | ⛔ none seen | ⛔ none seen | ⚠️ `run.terminal.<verdict>` names the verdict, not the reason |
 | Warmstart MCP tools | ✔ | ⛔ global registration only | ⛔ global registration only | ⛔ function calling in bridge | ⛔ `mcpServers` is per-**root** config, not per session |
-| Prompt arrives on stdin as | a conversation, pipe stays open | a conversation, pipe stays open | ⛔ **one prompt, then EOF** — `codex exec` is one-shot | a conversation, pipe stays open | ⛔ **it does not** — `exec` answers `missing prompt`; the host script writes a `--prompt-file` |
+| Prompt arrives on stdin as | a conversation, pipe stays open | a conversation, pipe stays open | ⛔ **one prompt, then EOF** — `codex exec` is one-shot | a conversation, pipe stays open | ⛔ **it does not** — `exec` answers `missing prompt`; a drain in front of it writes a `--prompt-file` (`cat` on POSIX, the daemon's own Node on Windows) |
 | Accepts our session id | ✔ | ⛔ | ⛔ | ⛔ | ✔ `--session-id` |
 | Resumes a past conversation | ✔ `--resume <id>` | ✔ `--conversation <id>` | ✔ **`exec resume <thread_id>`** — measured 2026-09-02 | ⛔ fresh conversation per dispatch | ✔ **the same `--session-id`** — measured 2026-09-06; ⚠️ plus `--allow-workspace-switch`, or it refuses a new directory and exits 1 |
 | Prompt cache TTL | **60m** (`1h`, 2.0× write) | ⛔ unpriced (storage per token-hour) | **30m** (1.25× write) | ⛔ none | ⛔ unpublished (reads and writes are *reported*, not priced) |
@@ -98,7 +98,7 @@ Written from documentation, then run. Each of these was wrong:
 | *(shared)* | one `stream-json` format, and an *input* half that could be defaulted | ⛔ **Three dialects on the way in as well, and codex has none.** `codex exec` reads its prompt from **stdin to EOF** — `exec --help`: *"If not provided as an argument (or if `-` is used), instructions are read from stdin"* — so there is no envelope, and `sendPrompt`'s Claude-shaped default made the prompt begin with the literal text `{"type":"user"`. The worse half is EOF: with the pipe held open, codex prints `Reading prompt from stdin...` and blocks. Measured 2026-08-29 on 0.151.0 — a reproduction sat 18s for 34 bytes; in production t52 sat **50 minutes on 62ms of CPU**, reporting as `running`. Adapters now declare `streamPrompts: 'conversation' \| 'once'` |
 | *(shared)* | one `assistant_text` event means one thing | ⛔ **It means two, and they are opposites.** `claude-code` emits one per whole assistant message (`{"type":"assistant"}`); `openai-compatible` one per finished `item.completed`. But `muse-code` emits `run.output.delta`, `antigravity-cli` `step_update.text_delta` and the local-LLM bridge a ~60-character rung — a handful of tokens, split mid-word. The peephole guessed, and guessed wrong in both directions: framing every event as a row read `landing / corners.test.ts / pass. The / tree / is clean` on muse (t272, 2026-09-07), and framing every event as a continuation glued Claude's separate messages together with no separator and dropped every linebreak inside them (`…what t269 recorded.Now let me make the edits.`, t284, 2026-09-07). Nothing in the bytes distinguishes them, so adapters now declare `outputFraming: 'message' \| 'delta'`, with `message` — the framing that cannot destroy text — as the default |
 | `muse-code` | the peephole has no more than bare tool names while a run works | ⛔ **Muse emits no working prose:** `run.output.delta` is the final answer, so a live run must be read from lifecycle records. A proposal still shows a tool immediately; when its successful result carries a `command`, `file_path`, `path`, `file`, `query` or `pattern`, the tail adds that concise subject (never arbitrary tool output). This turns `bash / read_file / edit_file` into inspectable activity without pretending the CLI streamed reasoning |
-| `muse-code` | `--image` works wherever the flag is accepted | ⛔ **It needs a filesystem that has permissions, and this fleet does not give it one.** `--image` does not hand muse a path — it *installs* the file into an asset store under `XDG_DATA_HOME` and refuses any whose mode is not `0700`. A Windows volume reaches WSL2 over 9p with no `metadata` option, so everything under `/mnt/c` reads `0777` and `chmod 0700` is a **silent no-op** (`stat` says `777` immediately after). Measured 2026-09-07 against the live account, both ways: data home on ext4 and the model answered a prompt carrying a real PNG; data home on `/mnt/c` and the run died with `failed to install accepted image asset: asset is corrupt: asset directory permissions must be 0700, got 0777` and **exit 1**, five seconds after dispatch and before the model was called — which reads as the agent having failed the task (t289). `plan()` now drops `--image` where `honoursPosixModes()` says the asset store cannot be `0700`, and the paths travel in the prompt text as they do on every adapter. ⚠️ Not fixable from here: `options=metadata` in `/etc/wsl.conf` would do it, and that is the operator's machine to configure |
+| `muse-code` | `--image` works wherever the flag is accepted | ⛔ **It needs a filesystem that has permissions, and this fleet does not give it one.** `--image` does not hand muse a path — it *installs* the file into an asset store under `XDG_DATA_HOME` and refuses any whose mode is not `0700`. A Windows volume reaches WSL2 over 9p with no `metadata` option, so everything under `/mnt/c` reads `0777` and `chmod 0700` is a **silent no-op** (`stat` says `777` immediately after). Measured 2026-09-07 against the live account, both ways: data home on ext4 and the model answered a prompt carrying a real PNG; data home on `/mnt/c` and the run died with `failed to install accepted image asset: asset is corrupt: asset directory permissions must be 0700, got 0777` and **exit 1**, five seconds after dispatch and before the model was called — which reads as the agent having failed the task (t289). ⭐ **Gone with the WSL bridge (t547, 2026-09-19):** the native Windows build takes `--image` with its data home on NTFS — measured with a real PNG — so `plan()` passes every image again |
 | `openai-compatible` | `mcp: true`, because codex has MCP | ⛔ **The capability is about this adapter, not the CLI.** `codex mcp add` registers into the shared config, so a session cannot carry the per-session identity `task_complete` needs — `plan()` warned about that while the field said otherwise. The prompt builder reads it, so every codex prompt ended by naming a tool that was never registered, and the run could only end in `awaiting_human` |
 | `openai-compatible` | `turn.completed` is the usage record | **It is the usage record *and* the terminal one.** `codex exec` runs one turn and exits, so decoding it as usage alone left a successful run with no terminal event at all: nothing completed the task, and the process exit read as *"ended without reporting completion"* |
 | `claude-code` | a turn that ends is a turn that finished | ⛔ **The terminal record cannot tell the two apart.** Measured 2026-08-30 on **2.1.251** (R14.c): an agent that asked a question and stopped emits `{"type":"system","subtype":"post_turn_summary","status_category":"blocked","needs_action":"…"}` — and then a `result` reading `stop_reason: end_turn`, `terminal_reason: completed`, `is_error: false`, i.e. byte-for-byte the shape of success. The reason was on the wire the whole time and was decoded as `other`. Now `StreamEvent.turn_status`, and a run that ends this way is `blocked` rather than `failed` |
@@ -154,6 +154,23 @@ Written from `--help` on 2026-09-06, then run against Muse Code 1.0.3 (1.0.3-R21
 from a Windows host, on a live *Everyday Usage* account. The full capture is
 `transient_docs/muse_code_findings_2026-09-06.md`; each of these was believed and wrong.
 
+⛔ **There is no WSL bridge any more (t547, 2026-09-19).** Muse Code 1.3.0 ships a native Windows
+build (`irm https://dev.meta.ai/install.ps1 | iex`), and `clihost.ts` now knows two hosts only:
+`posix` (`/bin/sh -c`) and `windows` (the executable itself). Measured against 1.3.0 (1.3.0-R3401.1)
+that day, through the daemon's own `spawnSession`/`sendPrompt`/`refreshUsage` on the live account:
+the same flags and `--json` dialect; XDG honoured with the same `data/muse/sessions/YYYY/MM/DD/<id>`
+layout and the same `model_completed` record; the credential the WSL install had written into the
+isolation root accepted as-is, so an existing worker needed nothing re-done; non-ASCII round-tripped
+through the stream; `--image` answered on NTFS; and `/usage` read over ConPTY. The rows marked
+*(Windows)* below are what the bridge cost, kept because the relative worktree pointer and
+`repairTrunkConfig` they produced are still in force. Three Windows facts are new:
+
+| Believed | Measured on the Windows build, 2026-09-19 |
+|---|---|
+| run `muse`, the command the installer puts on `PATH` | ⛔ **That is `muse.cmd`**, which runs `powershell.exe -File .muse-launcher.ps1`, which runs `muse-bin-<version>.exe` as `.muse-version` names it. A `.cmd` goes through `cmd /d /s /c` (splits a path with a space), and started from PowerShell 7 the launcher fails outright — Windows PowerShell inherits pwsh's module path and `Get-FileHash` is not found (the installer died that way on this machine). `museBinary` reads the launcher's own layout under `MUSE_INSTALL_DIR` or `%LOCALAPPDATA%\Programs\muse` and starts the `.exe` |
+| Windows has some stdin prompt channel | ⛔ **None.** `--prompt-file -` is *The system cannot find the file specified*; `\\.\CONIN$` is *Incorrect function*; no prompt is `missing prompt`. So the drain stays, as `WINDOWS_DRAIN`: the daemon's own runtime under `ELECTRON_RUN_AS_NODE` copies stdin to the file and spawns muse with `stdio: 'inherit'` — byte-exact, arguments as an array — having removed `ELECTRON_RUN_AS_NODE` so no shell the agent opens inherits it. PowerShell was rejected because it re-encodes a native command's stdout through the OEM code page |
+| a `trust.json` key is the folder's path | ⛔ **On Windows it is `\\?\` + the fully resolved path** — the dialog prints it as *Trust target*. Pre-trusting four fresh folders under four spellings, only that one opened straight to the prompt; the path as given (an 8.3 temp path) and `realpathSync.native` without the prefix both drew the dialog, and a probe's `/usage ` keystrokes then answer it. `trustKey` spells it |
+
 | Documented | Measured |
 |---|---|
 | `exec` reads its prompt from stdin, like `codex exec` | ⛔ **It has no stdin prompt channel at all.** A piped prompt answers `missing prompt` / `usage: muse exec [OPTIONS] [PROMPT]` and exits 1. The prompt is argv or `--prompt-file` and nothing else — so the host script does `cat > <file>` first and the EOF the `once` transport already sends becomes the go signal. Nothing in the scheduler changed |
@@ -167,25 +184,15 @@ from a Windows host, on a live *Everyday Usage* account. The full capture is
 | *(Windows)* `GIT_DIR` in the environment is a harmless hint | ⛔ **It is sticky, and it cost two landings.** Exported into the agent's whole environment, every git it starts anywhere talks to its worktree — including the `git init` each fixture of an `npm test` runs in a temporary directory. `git init` under a foreign `GIT_DIR` writes `core.worktree = $GIT_WORK_TREE` into the repository's **common** config, i.e. the trunk's `.git/config`, spelled `/mnt/c/…`; from then on every Windows git in the trunk dies with *fatal: Invalid path '/mnt'*. t446 (a muse run in ws3, 2026-09-14) did exactly that, its test commits landed on the task branch and a fixture's `user.name` in the trunk config, and t446 and t447 both finished into *the trunk could not be read*. Reproduced with one `git init`. ⭐ A relative pointer needs neither variable — measured the same day: WSL git in ws3 with no environment read toplevel, git-dir, common-dir, branch and status right, and a commit from there was visible on Windows — so `gitEnvFor` now answers `{}` for one, and exports the pair only for a pointer that cannot be made relative (a pool on another drive). The trunk also repairs its own config on every prepare, park, base lookup and landing (`repairTrunkConfig`) |
 | *(Windows)* the pointer is one file | ⚠️ **Two.** `.git/worktrees/wsN/gitdir` points back at `<worktree>/.git`, absolutely, and WSL git — unable to open `C:/…` — listed every pool member as **prunable** on 2026-09-14: one `git worktree prune` from that side away from losing the pool's admin directories. `git worktree repair --relative-paths` (git ≥ 2.48) rewrites both files; the WSL listing is clean afterwards. Windows only, because git records the choice as `extensions.relativeWorktrees` in the trunk's config, which a git older than 2.48 refuses to open — and Windows is the platform with two gits reading one pool |
 
-⛔ **`clihost.ts` is the whole of the platform-specific part, and that is the requirement rather than
-a convenience.** `hostFor()` answers *native or bridged*, `hostPlan()` produces the command either
-way, and `muse-code.ts` never mentions WSL or `win32`. Native wins where it exists — which is every
-macOS and Linux install — so nobody is routed through a virtual machine they did not ask for, and
-the macOS build carries no Windows code it could never run.
+⛔ **`clihost.ts` is the whole of the per-platform start-up, and that is the requirement rather than a
+convenience.** `hostAt()` names the host, `hostPlan()` produces the command for it, and `muse-code.ts`
+never branches on `win32` to build a turn. ⚠️ `isInstalled()` is a filesystem lookup again: the
+bridge needed a spawn to find a CLI that was not on this filesystem, so it cached the answer and said
+*no* until the first probe returned (t268 was that probe using the wrong shell). Neither is needed now.
 
-⛔ **Both halves of that bridge have to be a *login* shell, and only one of them was.** t268
-(2026-09-07): `hostPlan` has always used `bash -lc`, and `hostExec` — the `execFile` half, which is
-all `isInstalled()` and `detect()` ever use — ran `wsl.exe -- muse --version`. That answers
-`/bin/bash: line 1: muse: command not found`, because the vendor's launcher installs into
-`~/.local/bin` and `~/.profile` is what puts that on `PATH`. So a commissioned worker reported *"Muse
-Code is not installed"* and every task pinned to it was held — **while its quota probe, which goes
-through `hostPlan`, read that same account's windows in the same minute.** ⚠️ The asymmetry is the
-lesson: a bridged CLI has to be reached the same way for a question about itself as for a turn.
-
-⚠️ **Still unflown**: `--image`, for the 0700 reason above. The rest has now been through the
-scheduler — muse workers have taken real dispatches, and the three faults that found are in this
-section: the image asset store (t289), the workspace-bound resume (t364) and the workspace it reads
-before it starts (t436).
+Muse workers have taken real dispatches, and the three faults that found are in this section: the
+image asset store (t289, a WSL-only fault, now gone), the workspace-bound resume (t364) and the
+workspace it reads before it starts (t436).
 
 ### muse reads `<workspace>/.codex/skills` before it starts, and dies on a non-directory (t436, 2026-09-14)
 

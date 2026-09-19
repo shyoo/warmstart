@@ -133,7 +133,7 @@ warmstart.dev its own in `public/demo/`, each captioned as illustrative — copy
 `ffmpeg` on `PATH`. `DEMO_DEBUG=1` writes one PNG per beat; `DEMO_KEEP=1` leaves `out/showcase/`.
 
 ⛔ **A filed task is `ready`, so this one could dispatch.** Hiding the CLIs from `PATH` is not
-enough — Antigravity is also found under `%LOCALAPPDATA%\agy\bin` and Muse through `wsl.exe`. Every
+enough — Antigravity is also found under `%LOCALAPPDATA%\agy\bin` and Muse under `%LOCALAPPDATA%\Programs\muse`. Every
 invented account is set to role `none` with grading off, the script refuses to film unless the
 daemon reports exactly that, and refuses to encode if any session appeared that it did not stage.
 ⚠️ The staged run is unpriced (a run added after the daemon started never shows a price), so no
@@ -448,8 +448,7 @@ including each `git init` an `npm test` runs in a temporary directory — operat
 `git init` then writes `core.worktree = $GIT_WORK_TREE` (spelled `/mnt/c/…`) into the **common**
 config, the trunk's `.git/config`. Every Windows git in the trunk answers `fatal: Invalid path
 '/mnt'` from then on, and so does the operator's own shell; t446 and t447 (2026-09-14) both finished
-into *the trunk could not be read*. The variables are no longer exported for a relative pointer
-(`gitEnvFor` in `adapters/clihost.ts`; both gits follow one with no environment), and
+into *the trunk could not be read*. The WSL bridge that exported them is gone (t547, 2026-09-19: Muse runs natively on Windows), and
 `repairTrunkConfig` (`worktrees.ts`) drops a `core.worktree` naming anywhere but the trunk before
 every base lookup, prepare, park and landing — as text, because `git config --unset` refuses the same
 repository. ⚠️ On Windows the pool's pointers are made relative with `git worktree repair
