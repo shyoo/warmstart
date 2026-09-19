@@ -7,10 +7,10 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-18, **Windows 11**, measured over `0.1.1+32.g183b45c.dirty`): typecheck, lint and
-build pass; L1 **3,723 passed, 5 skipped** (221 files); L2 **203 checks** (5 skipped); L3 **474
-passed, 4 skipped**; L4 **19 checks** against `release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3
-434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so is the
+Baseline (2026-09-19, **Windows 11**, measured over `0.2.0-rc.2+dirty`): typecheck, lint and build
+pass; L1 **3,725 passed, 5 skipped** (221 files). Lower tiers (2026-09-18): L2 **203 checks** (5
+skipped); L3 **474 passed, 4 skipped**; L4 **19 checks** against `release/win-unpacked`. macOS 13
+arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so is the
 **Release** workflow.
 
 **`v0.1.1` is `latest`** (tag build 35165991396, 2026-09-17), promoted onto its own rc's commit.
@@ -19,6 +19,11 @@ superseding `v0.2.0-rc.1` (`c42ae06`): it adds t536–t549 and migration 77. ⏭
 `v0.2.0-rc.2`, verify it, then `/release promote`.** Its CI first went red on the t545 Workers-table
 regression below: six commits had been pushed together, and `test:ui` was not run on them first.
 Phase 3/4 (write-up, landing page, channels) remains off-repo.
+
+**Routing Model v1.1 does not preserve expiry urgency (t552, measured 2026-09-19).** With the same
+Claude Pro allowance left, its current `prepaid` signal is only 1.03× larger at a 1h reset than at
+24h, not 24×. ⏭ The implementation-ready v1.2 design is
+[`transient_docs/routing_expiry_sensitivity_2026-09-19.md`](transient_docs/routing_expiry_sensitivity_2026-09-19.md).
 
 ## Closed in this cleanup
 - **The Workers card layout labelled every field after Role one place late (t545 → rc.2, 2026-09-19).**
