@@ -66,6 +66,11 @@ export function QuotaDecide({
     task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : '')
   )
   const [selectedEffort, setSelectedEffort] = useState<string>(task.constraints.effort ?? '')
+  // ⭐ What the operator wants said alongside the move, if anything. A reassignment used to be the
+  // move alone: the successor got the thread's outstanding turns and nothing about *why* it was
+  // being handed the work, so the operator had to reassign, wait for the run to open, and then
+  // type the instruction into it. One box, sent as the person's own message on the same press.
+  const [reassignNote, setReassignNote] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -149,7 +154,15 @@ export function QuotaDecide({
         workerId: selectedWorkerId || null,
         ...(selectedWorkerId ? { model, modelPolicy, effort: selectedEffort || null } : {})
       })
-      if (isPaused) {
+      const note = reassignNote.trim()
+      if (note) {
+        // ⛔ The note is the resume. `task.message` requeues a `paused_quota` task itself
+        // (`continueTask`) and, on a task still `ready` behind the gate, rides along undelivered
+        // into the run the new account opens — so a second `task.resume` after it would find
+        // nothing to resume and say so.
+        await rpc('task.message', { id: task.id, text: note })
+        setReassignNote('')
+      } else if (isPaused) {
         await rpc('task.resume', { id: task.id })
       }
       await onRefresh()
@@ -439,12 +452,55 @@ export function QuotaDecide({
                     />
                   )}
                 </div>
+                <ReassignNote
+                  value={reassignNote}
+                  disabled={busy}
+                  onChange={setReassignNote}
+                  onSubmit={() => void handleReassign()}
+                />
               </div>
             </div>
           )}
         </>
       )}
     </div>
+  )
+}
+
+/**
+ * The optional message that goes with a reassignment, sent as the person's own turn.
+ *
+ * ⚠️ Kept out of `.reassign-row`: that row is the one-line contract the selectors share, and this
+ * is a second line by design. Ctrl/⌘+Enter presses the button beside it, as the composer does.
+ */
+function ReassignNote({
+  value,
+  disabled,
+  onChange,
+  onSubmit
+}: {
+  value: string
+  disabled: boolean
+  onChange: (value: string) => void
+  onSubmit: () => void
+}): React.JSX.Element {
+  return (
+    <textarea
+      className="compose-input reassign-note"
+      rows={1}
+      value={value}
+      disabled={disabled}
+      aria-label="Message to send with the reassignment"
+      placeholder="Optional: a message for the next agent, sent with Reassign…"
+      title="Sent as your message on the same press, so the next run opens with it. Leave it empty to reassign and continue as-is."
+      onChange={(e) => onChange(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault()
+          onSubmit()
+        }
+      }}
+    />
   )
 }
 
@@ -492,6 +548,8 @@ export function Decide({
     task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : '')
   )
   const [selectedEffort, setSelectedEffort] = useState<string>(task.constraints.effort ?? '')
+  // ⭐ Same box as the quota card's: the message that goes with the move. See `ReassignNote`.
+  const [reassignNote, setReassignNote] = useState('')
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
@@ -711,8 +769,11 @@ export function Decide({
       // switched to …* system line when the worker changes, so the thread needs no second account
       // of it. What it still needs is a run: `task.message` is the one RPC that continues a resting
       // task (`task.resume` only leaves `paused_*`), and it takes a text, so the note is the
-      // smallest thing a person could plausibly have meant by pressing the button.
-      await rpc('task.message', { id: task.id, text: 'Continue.' })
+      // smallest thing a person could plausibly have meant by pressing the button — unless they
+      // typed what they meant into the box beside it, in which case that is the message.
+      const note = reassignNote.trim()
+      await rpc('task.message', { id: task.id, text: note || 'Continue.' })
+      setReassignNote('')
       await onRefresh()
     } finally {
       setBusy(false)
@@ -782,7 +843,8 @@ export function Decide({
     'trunk is clean or another task has finished landing.'
   const reassignTitle =
     'Sets the worker, model and effort for this task’s next run and dispatches it now, on this same ' +
-    'thread. Auto lets the scheduler pick by quota and capacity.'
+    'thread, carrying the message typed below it if there is one. Auto lets the scheduler pick by ' +
+    'quota and capacity.'
 
   // ⚠️ One inline line for the DAG, and only when there is a DAG. "2 tasks wait on this one" is a
   // fact somebody can check, and it is the difference between the rest of a plan running and not —
@@ -1032,6 +1094,12 @@ export function Decide({
           />
         )}
       </div>
+      <ReassignNote
+        value={reassignNote}
+        disabled={busy}
+        onChange={setReassignNote}
+        onSubmit={() => void handleReassign()}
+      />
 
       <p className="decide-hint">Or reply below to carry on in this same thread.</p>
     </div>

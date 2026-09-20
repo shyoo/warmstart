@@ -503,6 +503,15 @@ operator (t336). It now says **router picks**, with the count of routable models
 — `routerPicksModel` in `taskview.tsx` — rather than to write the test out a second time, because a
 row and the page it opens naming different models is its own bug.
 
+⭐ **The ledger says what a task is on now and what it will be on next as two rows each, not one row
+with a caption (t564).** `cur worker` (the live session's account, else `ranOn`) sits over
+`next worker` (the pin picker), and `cur model` (`ModelFact`, the transcript's answer with its
+effort) over `next model` (the model and effort pickers, with the cache-cost `(i)` in their row). A
+task that has never run has no *cur* and reads plain `worker` / `model`, where the model row's
+headline still says what the next dispatch would ask for. The old shape — a picker with *last run on
+X* under it, a headline with *(Current)* and a `next` pill after it — read as one control, and the
+UI suite reads both shapes back: `cur worker` appears once a run is seeded, and never before.
+
 ⛔ **A draft's thread can delete it.** The banner's *Delete draft* asks with the same confirmation the
 Tasks row action uses and then leaves for the list, because a deleted task's thread can re-fetch
 itself into nothing but *that task is no longer here*. Filing was previously the only way out of a
@@ -541,8 +550,14 @@ when it is just `your turn`, which is what every resting conversation reads. *Re
 head of the worker · model · effort row, and pressing it no longer posts *"Reassigned worker to X
 and continued."* in the person's voice: the daemon already writes the *Worker switched to …* system
 line, and the button continues the task with the one-word note `Continue.` — `task.message` is the
-only RPC that continues a resting task and it takes a text. `QuotaDecide` keeps the older
-button-beside-paragraph rows.
+only RPC that continues a resting task and it takes a text. ⭐ Under the row sits `ReassignNote`
+(t564), an optional box whose text is sent *as* that message instead of `Continue.` on the same
+press, so a person can move the work to another account and say what to do differently in one
+step rather than reassigning, waiting for the run to open and then typing into it. `QuotaDecide`
+keeps the older button-beside-paragraph rows and carries the same box on its *Reassign* option:
+with a note, `task.message` is the resume (it requeues a `paused_quota` task itself, and rides
+along undelivered into the next run of a task still `ready` behind the gate); without one,
+`task.resume` as before.
 
 ⛔ **Neither Commit nor Land ends the conversation, and neither writes a rung.** Both used to write
 the chosen rung onto the task, which took it out of `isOpenConversation` for ever — so pressing either

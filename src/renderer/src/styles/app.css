@@ -4706,7 +4706,8 @@ select:focus-visible,
 .detail-side > .detail-side-box:first-child { display: flex; flex-direction: column; }
 .detail-side > .detail-side-box:first-child > :not(.fact) { order: 50; }
 .fact { order: 50; }
-.fact--status { order: 1; align-items: center; } .fact--waiting { order: 2; } .fact--type { order: 3; } .fact--worker { order: 4; }
+.fact--status { order: 1; align-items: center; } .fact--waiting { order: 2; } .fact--type { order: 3; }
+.fact--worker-current { order: 4; } .fact--worker { order: 4; } .fact--model-current { order: 5; }
 .fact--model { order: 5; } .fact--session { order: 6; } .fact--created { order: 7; }
 .fact--started { order: 8; } .fact--parent { order: 9; } .fact--children { order: 9; }
 .fact--depends { order: 10; } .fact--blocks { order: 11; } .fact--workspace { order: 12; }
@@ -4721,9 +4722,9 @@ select:focus-visible,
 .fact--statistics .switch { margin-top: 0; }
 .stats-toggle { display: flex; align-items: center; gap: var(--sp-2); }
 .model-next { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); margin-top: var(--sp-1); }
+/* On its own `next model` row the pickers are the row, so nothing sits above them to clear. */
+.fact-value > .model-next:first-child { margin-top: 0; }
 .model-next .setting-btn-select-wrap { width: auto; max-width: 100%; }
-.model-next-label { color: var(--color-text-faint); font-size: var(--text-meta); text-transform: uppercase; }
-.model-current { color: var(--color-text-dim); font-size: var(--text-meta); }
 .fact-info { color: var(--color-text-faint); cursor: help; font-size: var(--text-meta); }
 .fact-info-details { display: inline; }
 .fact-info-details > summary { display: inline; list-style: none; }
@@ -5272,6 +5273,13 @@ select:focus-visible,
 .reassign-row .reassign-select:last-child .setting-btn-select-menu {
   left: auto;
   right: 0;
+}
+
+/* The message that rides along with a reassignment: a second line under the selectors, full width. */
+.reassign-note {
+  display: block;
+  width: 100%;
+  margin-bottom: var(--sp-1);
 }
 
 /* Below the point where three shares stop being readable, a stack is the honest answer. */

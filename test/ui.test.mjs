@@ -4072,6 +4072,25 @@ try {
     row.height < 40,
     `${row.height}px - three stacked selectors ran to about 80`
   )
+  // ⭐ t564: a reassignment can carry a message. The box is its own line under the selectors — in
+  // the row it would have broken the one-line contract above — and empty by default, so pressing
+  // Reassign with nothing typed still sends the bare *Continue.* it always did.
+  const note = JSON.parse(
+    await evaluate(`
+      (() => {
+        const box = document.querySelector('.decide .reassign-note');
+        return JSON.stringify({
+          present: !!box,
+          inRow: !!box?.closest('.reassign-row'),
+          empty: (box?.value ?? 'x') === '',
+          below: box ? Math.round(box.getBoundingClientRect().top) >= Math.round(document.querySelector('.reassign-row').getBoundingClientRect().bottom) : false
+        });
+      })()
+    `)
+  )
+  check('the reassignment offers a message to send with it', note.present, JSON.stringify(note))
+  check('on its own line under the selectors, not in their row', !note.inRow && note.below, JSON.stringify(note))
+  check('and empty until somebody types', note.empty, JSON.stringify(note))
 
   section('a quota preemption warning')
   // ⛔ t458: `.decide-option` is a two-column grid, and "Compact & pause" / "Hand off & pause" were
@@ -5082,6 +5101,28 @@ try {
     chipAt.on.every((c) => c.role !== 'msg--agent'),
     JSON.stringify(chipAt)
   )
+  // ⭐ t564: the run seeded above names an account, so this pane is the one with a *current* to
+  // show — and it shows it as its own row over the *next* picker, never as a caption under it.
+  const ledgerRows = JSON.parse(
+    await evaluate(`
+      JSON.stringify((() => {
+        const facts = [...document.querySelectorAll('.detail-side .fact')];
+        const at = (re) => facts.find(f => re.test(f.querySelector('.fact-label')?.innerText ?? ''));
+        const val = (re) => at(re)?.querySelector('.fact-value')?.innerText.replace(/\\s+/g, ' ').trim() ?? null;
+        return { cur: val(/^cur worker$/i), next: val(/^next worker$/i), lastRunOn: facts.some(f => /last run on/i.test(f.innerText)) };
+      })())
+    `)
+  )
+  check(
+    'a task that has run shows the account it ran on as its own row',
+    ledgerRows.cur !== null && ledgerRows.cur.length > 0,
+    JSON.stringify(ledgerRows)
+  )
+  check(
+    'and the picker for the next run under it, with no caption repeating the account',
+    ledgerRows.next !== null && !ledgerRows.lastRunOn,
+    JSON.stringify(ledgerRows)
+  )
 
   section('what the thread ledger says a task cost')
   // ⭐ The right pane's two money-adjacent rows, read back from the built app. Price and tokens are
@@ -5145,6 +5186,19 @@ try {
     'the model row names the CLI’s own choice when nobody has pinned one',
     /CLI default/.test(cost.model ?? ''),
     JSON.stringify(cost)
+  )
+  // ⭐ t564: *cur* and *next* are separate rows, and a task that has never run has no *cur* to
+  // show — so the ledger reads `worker` / `model`, not `next worker` / `next model`, and neither
+  // current row exists yet.
+  const labels = JSON.parse(
+    await evaluate(
+      `JSON.stringify([...document.querySelectorAll('.detail-side .fact .fact-label')].map(l => l.innerText.trim().toLowerCase()))`
+    )
+  )
+  check(
+    'a task that has never run shows no current worker or model row',
+    !labels.includes('cur worker') && !labels.includes('cur model') && labels.includes('worker') && labels.includes('model'),
+    labels.join(', ')
   )
 
   section('the three views of a project are the same width')

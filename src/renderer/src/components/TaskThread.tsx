@@ -373,6 +373,13 @@ function TaskDetail({
   const liveSession = sessions.find(
     (s) => s.id === runs[0]?.sessionId && !sessionEnded(s.state)
   )
+  // What the task is on *now*: the live session's account where there is one, else the account the
+  // latest run was dispatched to. Null until something has run, which is what hides the row.
+  const currentWorkerId = liveSession?.workerId ?? task.ranOn ?? null
+  const currentWorker = currentWorkerId
+    ? { id: currentWorkerId, label: ranOnLabel({ ...task, ranOn: currentWorkerId }, fleet) ?? currentWorkerId }
+    : null
+  const currentModel = !!(liveSession?.model || task.ranModel || runs[0]?.model)
   const workspace = workspacePathFor(runs, sessions)
   // ⚠️ Empty for everything that is not a Plan & Split task, which is what keeps the ledger the same
   // shape it has always been for an ordinary one.
@@ -767,18 +774,25 @@ function TaskDetail({
                 </span>
               </Fact>
             )}
-            <Fact label="worker" className="fact--worker">
+            {/* ⭐ **What it runs on now and what it will run on next are two rows, with the same
+                shape for the worker as for the model.** One row held both — a picker with *last run
+                on X* under it, a headline with *(Current)* and a `next` pill after it — and the two
+                facts read as one control. Now each pair lines up: `cur worker` over `next worker`,
+                `cur model` over `next model`, and a task that has never run shows only the next. */}
+            {currentWorker && (
+              <Fact label="cur worker" className="fact--worker-current">
+                <span title={`${currentWorker.id} — the account the latest run is on`}>
+                  {currentWorker.label}
+                </span>
+              </Fact>
+            )}
+            <Fact label={currentWorker ? 'next worker' : 'worker'} className="fact--worker">
               <TaskSettingPicker
                 choice={workerChoice(task, fleet)}
                 ariaLabel="Worker"
                 title="Pin a worker to restrict this task to that worker, or let the scheduler decide."
                 save={(workerId) => rpc('task.setWorker', { id: task.id, workerId: workerId || null })}
                 onChanged={refresh}
-                footer={
-                  task.ranOn && !task.constraints.workerId ? (
-                    <div className="tbl-sub dim">last run on {ranOnLabel(task, fleet)}</div>
-                  ) : null
-                }
               />
             </Fact>
 
@@ -792,20 +806,31 @@ function TaskDetail({
             {/* ⭐ Which model answered, and how hard it was told to think. Both were chosen, stored and
                 metered since M3 and shown nowhere at all — the transcript knew and the operator did
                 not. */}
-            <Fact label="model" className="fact--model">
-              <ModelFact
-                session={liveSession ?? null}
-                ran={task.ranModel ?? runs[0]?.model ?? null}
-                requested={requestedModel}
-                current={!!(liveSession?.model || task.ranModel || runs[0]?.model)}
-              />
+            {currentModel && (
+              <Fact label="cur model" className="fact--model-current">
+                <ModelFact
+                  session={liveSession ?? null}
+                  ran={task.ranModel ?? runs[0]?.model ?? null}
+                  requested={requestedModel}
+                />
+              </Fact>
+            )}
+            <Fact label={currentModel ? 'next model' : 'model'} className="fact--model">
+              {/* ⚠️ With nothing run yet, the headline says what the next dispatch would ask for; with
+                  a run behind it that sentence sits on the row above and the pickers speak for
+                  themselves. */}
+              {!currentModel && (
+                <ModelFact
+                  session={liveSession ?? null}
+                  ran={task.ranModel ?? runs[0]?.model ?? null}
+                  requested={requestedModel}
+                />
+              )}
               {/* ⚠️ Only where the account's CLI has models to offer. A fleet whose cost models failed
                   to load still runs work; it just cannot be re-pointed from here. */}
               {(offered.length > 0 || taskEfforts.length > 0) && (
                 <div className="model-next">
-                  {(liveSession?.model || task.ranModel || runs[0]?.model) && <span className="model-next-label">next</span>}
                 <SettingButtonSelect
-                  style={{ marginTop: 'var(--sp-1)' }}
                   value={
                     task.constraints.model ??
                     (task.constraints.modelPolicy === 'auto' ? '__auto__' : '')
@@ -857,7 +882,6 @@ function TaskDetail({
                 />
               {taskEfforts.length > 0 && (
                 <SettingButtonSelect
-                  style={{ marginTop: 'var(--sp-1)' }}
                   value={task.constraints.effort ?? ''}
                   options={[
                     {
@@ -887,9 +911,13 @@ function TaskDetail({
                   }}
                 />
               )}
+                  {/* In the row with the pickers it warns about, not wrapped under them. */}
+                  <CacheCost session={liveSession ?? null} changing="model" />
                 </div>
               )}
-              <CacheCost session={liveSession ?? null} changing="model" />
+              {offered.length === 0 && taskEfforts.length === 0 && (
+                <CacheCost session={liveSession ?? null} changing="model" />
+              )}
             </Fact>
 
             {/*

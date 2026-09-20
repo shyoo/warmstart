@@ -12,7 +12,7 @@ export interface AgentIconProps {
  * - Claude Code -> Claude asterism (terracotta #D97757)
  * - Antigravity -> Google Antigravity gradient mark
  * - Codex / OpenAI-compatible -> OpenAI / Codex rosette
- * - Muse Code -> Meta infinity mark (brand blue #0064E0)
+ * - Muse Code -> Meta mark (brand blue #0064E0)
  * - Unknown / fallback -> generic agent symbol
  */
 export function AgentIcon({
@@ -86,21 +86,26 @@ export function AgentIcon({
   }
 
   if (id === 'muse-code' || id.includes('muse')) {
-    // Meta's infinity mark, in its brand blue.
+    // Meta's mark, in its brand blue: two wings sharing one stem, each stroke
+    // running from its own wing's foot up through the stem and over into the
+    // other wing's crown, so the pair reads as one looped figure.
     return (
       <svg
-        viewBox="0 0 24 24"
+        viewBox="0 0 64 64"
         width={size}
         height={size}
         fill="none"
         stroke="#0064E0"
-        strokeWidth="2.2"
+        strokeWidth="7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
         className={className}
         aria-hidden={!title}
         role="img"
       >
         {title && <title>{title}</title>}
-        <path d="M3.4 15.2c0 1.9 1 3 2.5 3 1.4 0 2.4-.8 3.7-2.9l2.4-4c1.5-2.5 2.7-3.6 4.3-3.6 2.3 0 4.3 2.4 4.3 6 0 2.6-1.1 4.5-3.1 4.5-1.5 0-2.6-.9-3.9-3.2L12 12" />
+        <path d="M18 37C14 42 4 42 4 30C4 18 8 4 18 4C25 4 30 8 32 16L46 37C50 42 60 42 60 30C60 18 56 4 46 4C40 4 35 7 33 13" />
+        <path d="M46 37C50 42 60 42 60 30C60 18 56 4 46 4C39 4 34 8 32 16L18 37C14 42 4 42 4 30C4 18 8 4 18 4C24 4 29 7 31 13" />
       </svg>
     )
   }

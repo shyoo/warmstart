@@ -21,13 +21,11 @@ import { modelFacts } from '../../lib/taskview'
 export function ModelFact({
   session,
   ran,
-  requested,
-  current = false
+  requested
 }: {
   session: Session | null
   ran: string | null
   requested: { model: string | null; effort: string | null; source: string; undecided?: boolean }
-  current?: boolean
 }): React.JSX.Element {
   const { headline, note } = modelFacts({
     observed: session ? { model: session.model ?? null, effort: session.effort ?? null } : null,
@@ -36,7 +34,7 @@ export function ModelFact({
   })
   return (
     <>
-      <span title={headline.title}>{headline.text}{current && <span className="model-current"> (Current)</span>} <span className="fact-info" title="The model and effort the latest run actually used.">(i)</span></span>
+      <span title={headline.title}>{headline.text} <span className="fact-info" title="The model and effort the latest run actually used.">(i)</span></span>
       {note && note.tone !== 'dim' && (
         <div className={`tbl-sub ${note.tone}`} title={note.title}>
           {note.text}
