@@ -270,6 +270,21 @@ empty ident name`. A fixture repo that will be committed in sets its own `user.n
 every other suite here already did. To see what CI sees: `HOME=/tmp/nohome GIT_CONFIG_GLOBAL=/dev/null
 GIT_CONFIG_NOSYSTEM=1 npx vitest run <file>`.
 
+⛔ **`if (isInstalled()) { … }` is the worst shape of this, because it reports a pass for checking
+nothing** (2026-09-19). `agy-usage.test.ts` held `if (antigravityCli.isInstalled()) { expect(res.found)
+.toBe(true); expect(res.version).toMatch(/^\d+\.\d+\.\d+/) }`. On CI the guard is false, the body never
+runs, and the case is counted green — so the assertion existed only on machines with the vendor CLI
+installed, where it spawned `agy --version` for real. It is §3's *"a check against an empty collection
+passes"* wearing a conditional, and it survived because a guarded test never fails anywhere.
+
+⭐ **Assert the contract, which holds on every host, instead of the outcome, which does not.** That case
+now asserts what `detect()` owes *either* way: a boolean verdict, a path and a semver when it claims to
+have found something, and a non-empty reason when it did not — non-vacuous everywhere, and red under
+mutation (blanking the `error` in the `catch` turns it red; verified). Whether the real `agy` on this
+box reports `3.1.4` is an L2 question, where a real `PATH` is part of the contract. ⚠️ L1 now runs with
+vendor CLIs findable but **not launchable**, so a guard like that can no longer be honest at this tier
+at all.
+
 ### A suite that fails because of the *shape* of the workspace it is in
 
 ⛔ **Pool members are not interchangeable, and the difference is invisible.** On t171, 2026-09-03,
@@ -302,23 +317,50 @@ nothing for a relative pointer, and `repairTrunkConfig` takes the key back out �
 
 ### A suite that fails because of what previous suites left in `%TEMP%`
 
-⛔ **These suites leak their scratch directories, and the leak eventually fails the suite.** Every
-tier below L1 makes its sandbox with `mkdtempSync`, and on Windows a held handle routinely defeats the
-`afterAll` that would remove it — several `afterAll`s say so in as many words. The debris is harmless
-until it is not: on 2026-09-09 `%TEMP%` held **26,234 entries, 17,247 of them `agentyard-*`**, going
-back a fortnight.
+⛔ **Fixed at the cause on 2026-09-19 — `vitest.config.ts`'s `globalSetup` is now the mechanism, and
+no suite is trusted to clean up after itself.** This entry is kept because the symptom is worth
+recognising and because the first fix was the wrong one.
 
-⭐ At that size a `git` invocation whose `cwd` is `%TEMP%` costs **1,247ms instead of 143ms**, so
-`claude-code`'s `plan()` — which asks `workspaceGrants(cwd)`, which shells out to git — took 1,342ms
-per call. Alone that is merely slow; across 156 files in parallel it put a **synchronous** test over
-the 15s timeout, and `adapters.test.ts > claude-code is told to call exactly that tool` failed four
-runs in a row while passing in 1.3s on its own. Deleting the stale directories, and nothing else,
-returned the suite to 156/156 and the whole run from 52s to 35s.
+**What it was.** Every tier makes its sandbox with `mkdtempSync`, and on Windows a held handle
+routinely defeats the `afterAll` that would remove it — several `afterAll`s said so in as many words,
+and one caught the failure and discarded it. On 2026-09-09 `%TEMP%` held **26,234 entries, 17,247 of
+them `agentyard-*`**; the entry then read *delete them by hand, matching on prefix and age*. Ten days
+later it was **24,322 directories and ~161 GB**, because advice is not a mechanism.
+
+⭐ **The cost is not only disk, which is why it was found the first time.** At that size a `git`
+invocation whose `cwd` is `%TEMP%` costs **1,247ms instead of 143ms**, so `claude-code`'s `plan()` —
+which asks `workspaceGrants(cwd)`, which shells out to git — took 1,342ms per call. Alone merely slow;
+across 156 files in parallel it put a **synchronous** test over the 15s timeout, and `adapters.test.ts
+> claude-code is told to call exactly that tool` failed four runs in a row while passing in 1.3s on its
+own. Deleting the debris, and nothing else, returned the suite to 156/156 and the run from 52s to 35s.
+
+**What it actually was, measured 2026-09-19.** ⛔ **94% of the volume was one suite spawning a vendor
+CLI**, and no amount of `rmSync` discipline would have helped. `runfailure.test.ts` settles 69 metered
+runs; each reaches `void captureQuotaAfter` → `refreshNow` → `refreshIdentity`, and for
+`openai-compatible` that runs **`codex doctor --json` with `CODEX_HOME` pointed at the fixture's worker
+root**. A fresh Codex home bootstraps on that command, and bootstrapping does `git fetch --depth 1
+https://github.com/openai/plugins.git` — 23 MB over the network, sixteen at once on that suite's
+sixteen `openai-compatible` workers. They outlived the suite, so `afterAll` hit `EBUSY` on their own
+lockfiles and discarded it: **~250 MB orphaned per run, ~151 GB of the total.** CI never reproduced any
+of it, because CI has no vendor CLI and `which()` failed first.
+
+**The two mechanisms now in place**, both in `vitest.config.ts`:
+
+- **One temp root per run.** `globalSetup` points `TMPDIR`/`TMP`/`TEMP` at a single per-run directory,
+  so every `mkdtempSync(join(tmpdir(), …))` lands inside it and one removal at the end gets all of
+  them — including the two shapes a suite's own `rmSync` structurally cannot reach: the
+  `${root}_workspaces` isolation root, which is a *sibling* of the directory being removed (376 of
+  those), and per-`it` mkdtemps nobody tracked (`prompt.test.ts`, 1,268). A root that still cannot be
+  removed **says so on stderr** and is swept by the next run once it is 2h old. ⛔ Never silently.
+- **Vendor CLIs are findable but not launchable.** `PATH` is prefixed with empty stubs for whichever
+  of `claude`, `codex`, `agy`, `muse`, `local-llm-bridge` this machine actually has, so `which()`
+  resolves and execution fails into the `catch` that is already there. ⚠️ Only what is *already*
+  installed is stubbed: shimming unconditionally would make `isInstalled()` true on CI for CLIs it
+  has never had, flipping every suite that asserts an account with no CLI is undispatchable.
 
 ⚠️ **A synchronous test that times out is never about its own code**, and a test that passes alone and
-fails in the suite is reporting on the machine. Before changing anything, count what is in `%TEMP%`.
-Clearing it is safe for entries older than the current run — but ⛔ match on the suites' own prefixes
-and an age, never the whole directory, because a *live* run's sandbox is in there too.
+fails in the suite is reporting on the machine. If `%TEMP%` fills again, the question is which
+mechanism stopped working — not which suite to go and fix.
 
 ### A test that needs a CLI on PATH, on a machine that has none
 

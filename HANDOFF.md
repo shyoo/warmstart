@@ -7,9 +7,10 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-20, **Windows 11**, on `0.3.0+4` — t577): typecheck, lint and build pass;
-L1 **3,787 passed, 5 skipped** (225 files); L2 **204 checks** (5 skipped); L3 **486 checks** (4
-skipped). L4 **19 checks** against `release/win-unpacked` was measured on `7b5f6e1`, the commit
+Baseline (2026-09-20, **Windows 11**, on `0.3.0+5` — t579): typecheck, lint and build pass;
+L1 **3,789 passed, 5 skipped** (226 files), in **99s** and leaving **0 bytes** in `%TEMP%` — the run
+now owns one temp root and removes it (t579). L2 **204 checks** (5 skipped); L3 **486 checks** (4
+skipped), both last measured on t577 and not re-run since. L4 **19 checks** against `release/win-unpacked` was measured on `7b5f6e1`, the commit
 `v0.3.0` ships, and has not been re-run since. ⚠️ L3 flaked twice under back-to-back suite load
 (*timed out waiting for All filter to restore 3 rows*, a tier it does not touch) and was green on a
 clean run. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
@@ -29,6 +30,18 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **L1 orphaned 24,322 fixture directories and ~161 GB of `%TEMP%`; 94% was one suite spawning a
+  vendor CLI (t579, 2026-09-19).** `runfailure.test.ts` settles 69 metered runs, each reaching `void
+  captureQuotaAfter` → `refreshNow` → `refreshIdentity`, which for `openai-compatible` runs **`codex
+  doctor --json` with `CODEX_HOME` in the fixture root**; a fresh Codex home bootstraps by `git
+  fetch`ing `openai/plugins` (23 MB, network, ×16 at once). Those processes outlived the suite, so
+  `afterAll` hit `EBUSY` and **discarded the error** — ~250 MB/run, ~151 GB. ⛔ Invisible on CI, which
+  has no vendor CLI to find. `vitest.config.ts` now gives each run **one temp root** (catching the
+  `${root}_workspaces` siblings and `prompt.test.ts`'s per-`it` dirs too) and a **`PATH` where
+  already-installed vendor CLIs resolve but cannot execute**, leaving every `isInstalled()` answer as
+  it was; `l1sandbox.test.ts` guards both. ⚠️ The 2026-09-09 note on this said *delete them by hand*;
+  advice is not a mechanism. `agy-usage.test.ts`'s `if (isInstalled())` guard (vacuous on CI) now
+  asserts `detect()`'s contract. 140.26 GB reclaimed. `docs/testing.md` §3.
 - **"Quota probe when idle: every 20 minutes" refreshed nothing, so idle cards read 41m, then hours,
   old (t577, 2026-09-20).** The idle interval only ever re-read a cache file the vendor writes when the
   account is *used*, and screen-answered adapters (Muse Code, Antigravity) were skipped outright — the
@@ -66,12 +79,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   summary. Bounded (~12,000 total, oldest dropped and counted, every trim marked *abridged* —
   nothing silent, t529); ends at `task_read` where there is MCP, *re-read the files* where not.
   17 L1 checks (11 go red with the recap off, 6 more on a resumed session). `docs/sessions.md`, `docs/architecture.md`.
-- **A scrolled task thread left a permanent, unfilled strip between the fleet strip and the sticky
-  `← Tasks` header (t561, 2026-09-19).** `.detail-head`'s `position: sticky; top: 0` sticks flush
-  with `.content`'s *padding* edge, not its border edge, so `.content`'s `padding: var(--sp-5)`
-  stayed visible above the header once stuck — the one gap in the scroll nothing ever covered.
-  `top: calc(-1 * var(--sp-5))` lets it keep sticking past that padding instead, so the header's own
-  background now reaches the fleet strip. `app.css`.
 - **A from-scratch install shared no sessions and showed mock welcome-tour images (t559,
   2026-09-19).** `DEFAULT_FLEET_SHARING` was `off`; a clean install now ships `on` (reuse) —
   `sharing.ts`'s gates (same project/account/model/effort, clean, room to grow) keep it narrow, and
@@ -147,12 +154,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   `quotaRisk`, harmlessly) like a real one. `docs/routing.md` §3.3a, `docs/data-model.md`.
 - **Projects can run trunk-only (t563, 2026-09-19).** `workspaces.poolSize: 0` runs every task on the trunk
   lease; wizard/settings offer Trunk + worktrees (default) vs Trunk only, changeable either way with confirmation; `project.pruneWorktrees` removes idle trees, keeps occupied/dirty ones. `trunkonly.test.ts`.
-- **Statistics puts quality versus cost first (t565, 2026-09-19).** The three measured trade-off
-  plots now lead with quality against cost on the left, followed by quality against active time and
-  active time against cost. `Statistics.tsx`, `docs/ui.md`.
-- **The fleet divider said `running` while counting slots (t560, 2026-09-19).** `2 / 1 running`
-  beside one live task read as two agents at work; the word is now `in use`, matching the tooltip.
-  Probes, consults, reviews and chats were verified excluded on every path. `docs/ui.md`.
 - **A quality-review batch grading in the background was invisible outside the Quality Review page
   (t572, 2026-09-19).** The sidebar's Analytics → Quality Review link now carries the same pulsing
   `Working` dots a running task shows, driven by a new `useQualityBatchRunning` poll of

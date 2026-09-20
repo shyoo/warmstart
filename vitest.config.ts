@@ -10,7 +10,21 @@ import { resolveVersion } from './scripts/version.mjs'
 export default defineConfig({
   define: { __APP_VERSION__: JSON.stringify(resolveVersion()) },
   resolve: {
-    alias: { '@shared': resolve('src/shared'), '@renderer': resolve('src/renderer/src') }
+    alias: {
+      '@shared': resolve('src/shared'),
+      '@renderer': resolve('src/renderer/src'),
+      /**
+       * ⛔ **L1 gets a PTY that refuses to spawn**, so `no L1 test starts a process` fails loudly and
+       * by name rather than as whatever a stubbed `PATH` entry happens to do when executed.
+       *
+       * ⚠️ **Belt to the `PATH` shim's braces, and honestly second.** This was written first on the
+       * theory that `pty.spawn` was the leak's spawn site; it is not, and aliasing it changed nothing
+       * — the clones kept coming. `test/l1-temproot.ts` names the real route (`codex doctor --json`
+       * via `probeIdentity`, an `execFile`) and the shim that closes it. Kept because it is the only
+       * thing that gives a clear message for the PTY route, which `sessions.ts` still has.
+       */
+      '@lydell/node-pty': resolve('test/stubs/node-pty.ts')
+    }
   },
   test: {
     // ⛔ `.test.tsx` as well as `.test.ts`. The pattern was `.test.ts` alone until 2026-09-07, which
@@ -20,6 +34,13 @@ export default defineConfig({
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     environment: 'node',
     testTimeout: 15_000,
+    /**
+     * ⛔ **One temp root per run, removed when the run ends, and a `PATH` no vendor CLI can be
+     * launched from.** Both live in this file because both are answers to the same measurement: 24,322
+     * orphaned fixture directories, ~161 GB. It says which mechanism addresses which half, and what
+     * was ruled out first.
+     */
+    globalSetup: ['./test/l1-temproot.ts'],
     /**
      * ⚠️ **Reported, not enforced.** There are no thresholds here on purpose. A coverage gate makes
      * the cheapest way to a green build *writing a test that executes a line without asserting

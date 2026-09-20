@@ -400,12 +400,34 @@ describe('readAntigravityIdentity', () => {
 })
 
 describe('antigravity-cli detect', () => {
-  it('detects installed agy binary when present on system', async () => {
-    if (antigravityCli.isInstalled()) {
-      const res = await antigravityCli.detect()
-      expect(res.found).toBe(true)
+  /**
+   * ⛔ **What `detect()` promises its caller, not what this machine happens to have installed.**
+   *
+   * This replaced `if (isInstalled()) { expect(res.found).toBe(true) }`, which asserted a host
+   * capability — the thing `docs/testing.md` §3 forbids — and did it in the shape that hides best: on
+   * CI the guard is false, nothing inside runs, and the test reports a pass having checked nothing.
+   * The only machines where it *did* assert anything were the ones with the vendor CLI installed,
+   * where it spawned `agy --version` for real. L1 now runs with vendor CLIs findable but not
+   * launchable (`test/l1-temproot.ts`), so that branch can no longer be honest anywhere.
+   *
+   * ⭐ The contract below holds on every machine and is non-vacuous on all of them: `detect()` resolves
+   * rather than throwing whatever the CLI did, and each verdict carries what a verdict of that kind
+   * owes — a path and a version when it claims to have found something, a reason when it did not.
+   * ⚠️ Whether the real `agy` on this box reports `3.1.4` is an L2 question, where a real `PATH` is
+   * part of the contract.
+   */
+  it('answers with a complete verdict whether or not the CLI can be launched', async () => {
+    const res = await antigravityCli.detect()
+    expect(res.adapterId).toBe('antigravity-cli')
+    expect(typeof res.found).toBe('boolean')
+    if (res.found) {
       expect(res.path).toBeTruthy()
       expect(res.version).toMatch(/^\d+\.\d+\.\d+/)
+    } else {
+      // ⛔ `unknown` is a verdict, not a shrug: a refusal that cannot say why is unactionable.
+      expect(res.path).toBeNull()
+      expect(res.version).toBeNull()
+      expect(res.error?.trim()).toBeTruthy()
     }
   })
 
