@@ -531,7 +531,8 @@ The thread shows the same two as read-only facts.
 ⛔ **A conversation's thread offers Finish · Stop · Commit · Land, and which of the last two is drawn
 is decided by git rather than by the task.** `task.pendingWork` reads the workspace at the moment the
 card renders; `hasDiff` counts **uncommitted** files only, because an unlanded commit is already safe
-on the branch and warning about it would cry wolf on every conversation that did commit. Finish
+on the branch and warning about it would cry wolf on every conversation that did commit. ⛔ The two
+are **independent**, and both buttons can be drawn at once — see `settleControls`. Finish
 releases the workspace, so over a dirty tree it arms once and says what it would lose before it will
 do it.
 
@@ -575,10 +576,13 @@ press leaves the thread open on the next numbered branch ([`landing.md`](landing
   what the conversation is already doing) and `custom` (an instruction about the project's own finish,
   not about this commit). The agent is asked — in the same session, so it still has the context — to
   commit and then land on the rung picked, by calling `land_work`; on an adapter with no MCP it is
-  asked to say the commit is ready so you can press **Land**. `commit-only` asks for the commit and
+  asked to say the commit is ready and stop, and ⭐ **the tool lands it itself when the turn ends**
+  (t581, `tasks.land_after_turn` → `landAfterCommitTurn`). `commit-only` asks for the commit and
   no landing. ⚠️ It asks rather than commits because the daemon never authors a commit; see
-  [`landing.md`](landing.md).
-- **Land ▼** — a clean tree with commits the landing target does not have. ⛔ **Two controls, not one
+  [`landing.md`](landing.md). ⛔ **And a press that would re-ask for a commit already made is
+  refused**, naming **Land** instead: t578's second press spent a whole turn asking its agent to
+  commit work it had committed twelve seconds earlier.
+- **Land ▼** — commits the landing target does not have. ⛔ **Two controls, not one
   that changes meaning:** committing costs a turn and landing does not, so `task.landConversation`
   lands the branch itself — rebase, the project's checks, merge — through the same `decideFinish` bar
   a first completion meets, and the thread comes back open on the branch it names. Its ▼ offers only
@@ -586,7 +590,14 @@ press leaves the thread open on the next numbered branch ([`landing.md`](landing
   `commit-only` would be a button that does nothing. ⚠️ It refuses while a turn is running — the
   agent is editing that tree — where `land_work` does not, because there the agent is blocked on the
   tool's own reply. This state used to have no button at all: Commit had nothing to ask for and
-  *Retry landing* is drawn only after a landing has already failed. ⛔ **No tree on the branch is not
+  *Retry landing* is drawn only after a landing has already failed. ⭐ **It no longer waits for a
+  pristine tree** (t581, 2026-09-20). The condition was `!hasDiff && unlandedCommits > 0`, as though
+  *something to commit* and *something to land* were alternatives; t578's operator had asked its agent
+  to keep backups of the renders it was replacing, the agent rightly left those two untracked
+  directories out of its commit, and from then on Land was never drawn over the squashed commit on the
+  branch — leaving Commit as the card's only control, re-sending its instruction on every press. Both
+  are drawn now, because both are true, and `settleControls` in `lib/finishrung.ts` is where that
+  decision lives so a test can reach it. ⛔ **No tree on the branch is not
   nothing to land** (t481, 2026-09-16): where no pool member has the branch checked out,
   `landConversationWork` borrows a free one (holder `land:<task>`), checks the branch out, lands and
   cuts the next branch there, then parks and releases it — the way *Retry landing* always has.

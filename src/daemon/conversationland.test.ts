@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -218,11 +218,113 @@ describe('a conversation whose tree was parked between turns', () => {
   })
 })
 
+/**
+ * Untracked files, and the landing they used to make impossible.
+ *
+ * ⛔ **t581, from t578 on 2026-09-20.** The operator had asked for backups before a re-render, the
+ * agent made two directories of binaries and rightly kept them out of its commit, and from that
+ * moment the tree was never pristine again — so `decideFinish` step 1 refused every landing with
+ * *"2 file(s) are uncommitted"* about files nobody wanted committed, and the thread card drew Commit
+ * and never Land. Pressing Commit re-sent the same instruction; the agent re-answered *"the commit
+ * is ready to land"*; nothing landed. Measured off `C:\Dev\inkland_workspaces\ws3`: two `??` entries,
+ * one commit ahead of `origin/main`.
+ *
+ * ⭐ The distinction this rests on was measured, not assumed (2026-09-20, scratch repository): a
+ * rebase with untracked files present succeeds and leaves them untouched; a rebase with one tracked
+ * modification refuses with *"cannot rebase: You have unstaged changes"*. So one half of
+ * `git status --porcelain` can break a landing and the other cannot.
+ */
+describe('a conversation landing over files it is not taking with it', () => {
+  it('⭐ lands the commit, and leaves every untracked file exactly where it was', async () => {
+    const { taskId, workspace, root } = await seedConversation('backups stay behind')
+    commitInWorkspace(workspace, 'shot.txt')
+    mkdirSync(join(workspace, 'backup_2026-09-20'), { recursive: true })
+    writeFileSync(join(workspace, 'backup_2026-09-20', 'old.bin'), 'binary\n')
+    writeFileSync(join(workspace, 'notes.log'), 'sitting record\n')
+    expect(git(workspace, 'status', '--porcelain').split(/\r?\n/)).toHaveLength(2)
+
+    const landed = await conversationland.landConversationWork(taskId)
+    expect(landed.reason ?? '').toBe('')
+    expect(landed.ok).toBe(true)
+    expect(git(root, 'log', '--format=%s', 'main')).toContain('the agent wrote shot.txt')
+
+    // ⛔ Untouched, and still untracked: the landing moved the committed half and nothing else.
+    expect(readFileSync(join(workspace, 'backup_2026-09-20', 'old.bin'), 'utf8')).toBe('binary\n')
+    expect(readFileSync(join(workspace, 'notes.log'), 'utf8')).toBe('sitting record\n')
+    expect(git(workspace, 'status', '--porcelain').split(/\r?\n/).sort()).toEqual([
+      '?? backup_2026-09-20/',
+      '?? notes.log'
+    ])
+    // ⭐ And the conversation carried on around them, onto the next numbered branch.
+    expect(git(workspace, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(landed.nextBranch)
+    expect(isOpenConversation(tasks.requireTask(taskId))).toBe(true)
+  })
+
+  it('⛔ still refuses a tracked modification, which is the half a rebase will not run over', async () => {
+    const { taskId, workspace, root } = await seedConversation('mid edit')
+    commitInWorkspace(workspace, 'edited.txt')
+    writeFileSync(join(workspace, 'edited.txt'), 'edited again, not committed\n')
+
+    const trunkBefore = git(root, 'rev-parse', 'main')
+    const refused = await conversationland.landConversationWork(taskId)
+    expect(refused.ok).toBe(false)
+    expect(refused.reason).toMatch(/1 file\(s\) are uncommitted/)
+    expect(git(root, 'rev-parse', 'main')).toBe(trunkBefore)
+    expect(tasks.requireTask(taskId).branchUnit).toBe(1)
+  })
+
+  it('⛔ counts only the tracked half, so the reason names what is actually in the way', async () => {
+    const { taskId, workspace } = await seedConversation('one of each')
+    commitInWorkspace(workspace, 'both.txt')
+    writeFileSync(join(workspace, 'both.txt'), 'modified\n')
+    writeFileSync(join(workspace, 'spare.txt'), 'untracked\n')
+
+    const refused = await conversationland.landConversationWork(taskId)
+    expect(refused.ok).toBe(false)
+    // ⚠️ One, not two. A message that counted the untracked file would send somebody looking for a
+    // second problem that does not exist — and it is the exact sentence t578's operator was given.
+    expect(refused.reason).toMatch(/^1 file\(s\) are uncommitted/)
+  })
+
+  it('⛔ a *finish* still counts both halves, because finishing gives the workspace back', () => {
+    // ⛔ The blast radius of the relaxation above, pinned as an absence. `keepsWorkspace` is the
+    // conversation-landing flag and nothing else may set it: a task that completes releases its
+    // worktree to the pool, where untracked files are exactly the work the gate protects.
+    const state = {
+      path: 'C:\\ws',
+      branch: 'warmstart/t9-work',
+      dirtyFiles: [],
+      untrackedFiles: ['backup/old.bin'],
+      unlandedCommits: 1,
+      targetBehind: 0,
+      landedRef: 'main'
+    } as never
+    const task = { seq: 9, finishAskedAt: null, mandate: { allowed: ['land'] }, finishPolicy: 'commit-and-merge' } as never
+
+    const finishing = finish.decideFinish({ task, project: null, state, hasChecks: true })
+    expect(finishing.kind).toBe('ask-agent')
+    expect('reason' in finishing && finishing.reason).toBe('1 file(s) are uncommitted')
+
+    const landingAConversation = finish.decideFinish({
+      task,
+      project: null,
+      state,
+      hasChecks: true,
+      policy: 'commit-and-merge',
+      keepsWorkspace: true
+    })
+    expect(landingAConversation.kind).toBe('land')
+  })
+})
+
 describe('a refusal moves nothing', () => {
   it('refuses a dirty tree, leaves the branch, the target and the task exactly as they were', async () => {
     const { taskId, workspace, root } = await seedConversation('half finished')
     commitInWorkspace(workspace, 'committed.txt')
-    writeFileSync(join(workspace, 'loose.txt'), 'not committed\n')
+    // ⚠️ A *tracked* modification since t581: an untracked file no longer refuses a conversation
+    // landing, and this test is about what a refusal leaves behind rather than about which dirt
+    // refuses. See the describe above for that distinction.
+    writeFileSync(join(workspace, 'committed.txt'), 'edited after the commit\n')
 
     const before = tasks.requireTask(taskId)
     const trunkBefore = git(root, 'rev-parse', 'main')

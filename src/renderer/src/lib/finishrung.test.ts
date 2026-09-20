@@ -10,6 +10,7 @@ import {
   LAND_RUNGS,
   landRungsForMode,
   rungOrigin,
+  settleControls,
   TRUNK_LAND_FALLBACK
 } from './finishrung'
 
@@ -170,5 +171,91 @@ describe('where that rung came from, said out loud', () => {
     // ⚠️ Silence here would present the fallback as though it were the project's own answer, which
     // is the shape of the bug this whole file exists for.
     expect(rungOrigin('inherit', inherited('await-human'), 'commit-only')).toContain('not one this button can do')
+  })
+})
+
+/**
+ * Which buttons the *your call* card draws — and the one it used to leave out.
+ *
+ * ⛔ **t581, from t578 on 2026-09-20.** A `muse-code` conversation was pressed **Commit** on the
+ * rung *commit, verify and merge into main*. Its agent committed, squashed, ran both project checks
+ * and replied *"the commit is ready to land"* — and the card went on showing **Commit** as its only
+ * control, because two untracked backup directories the operator had asked for kept `hasDiff` true
+ * and `land` was gated on `!hasDiff`. The operator pressed Commit again; the identical instruction
+ * went into the same session twelve seconds later. `pendingWork` for that workspace read
+ * `dirtyFiles: 0, untrackedFiles: 2, unlandedCommits: 1`.
+ */
+describe('which settle-it controls the card draws', () => {
+  const read = (over: Partial<{ supported: boolean; hasDiff: boolean; unlandedCommits: number }> = {}) => ({
+    supported: true,
+    hasDiff: false,
+    unlandedCommits: 0,
+    ...over
+  })
+
+  it('⭐ draws Land over commits even with something uncommitted beside them', () => {
+    // ⛔ t578's exact reading. Before this, `land` was false here and the thread had no way out.
+    const controls = settleControls(true, read({ hasDiff: true, unlandedCommits: 1 }))
+    expect(controls.land).toBe(true)
+    // ⚠️ And Commit stays: there *is* something uncommitted, and both statements are true at once.
+    expect(controls.commit).toBe(true)
+    expect(controls.uncommitted).toBe(true)
+  })
+
+  it('draws Land alone once the tree is clean', () => {
+    expect(settleControls(true, read({ unlandedCommits: 3 }))).toEqual({
+      commit: false,
+      land: true,
+      cannotLook: false,
+      uncommitted: false
+    })
+  })
+
+  it('draws Commit alone when there is something to commit and nothing to land', () => {
+    expect(settleControls(true, read({ hasDiff: true }))).toEqual({
+      commit: true,
+      land: false,
+      cannotLook: false,
+      uncommitted: true
+    })
+  })
+
+  it('draws neither over a branch with nothing on it and nothing in the tree', () => {
+    expect(settleControls(true, read())).toEqual({
+      commit: false,
+      land: false,
+      cannotLook: false,
+      uncommitted: false
+    })
+  })
+
+  it('⛔ shows Commit with the reason when the tree could not be read at all', () => {
+    // ⛔ t280: *I could not look* is not *there is nothing there*, and hiding every control on that
+    // answer left a thread telling an operator to press a button the card had decided not to draw.
+    const controls = settleControls(true, read({ supported: false, unlandedCommits: 4 }))
+    expect(controls.cannotLook).toBe(true)
+    expect(controls.commit).toBe(true)
+    // ⚠️ And Land is not drawn off an unreadable tree: `unlandedCommits` is a neutral zero there,
+    // never a measurement, so a button promising to move four commits would be promising a number
+    // nobody took.
+    expect(controls.land).toBe(false)
+  })
+
+  it('⛔ draws nothing at all before the read comes back', () => {
+    expect(settleControls(true, null)).toEqual({
+      commit: false,
+      land: false,
+      cannotLook: false,
+      uncommitted: false
+    })
+  })
+
+  it('⛔ offers an ordinary task Land but never Commit', () => {
+    // ⚠️ A work task's uncommitted files are the finish path's business — it asks that task's own
+    // agent. Committed work with nowhere to go is the same state on either kind, so Land is shared.
+    const controls = settleControls(false, read({ hasDiff: true, unlandedCommits: 2 }))
+    expect(controls.commit).toBe(false)
+    expect(controls.uncommitted).toBe(false)
+    expect(controls.land).toBe(true)
   })
 })

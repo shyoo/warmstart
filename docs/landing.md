@@ -99,10 +99,23 @@ a conversation could reach `main` exactly once. Only **Finish** and **Stop** end
   policy with the conversation-kind override skipped, which is what the thread shows as
   *inherited*. It is passed *through* the landing rather than persisted.
 - **Commit** still asks the agent rather than committing — the daemon does not author commits, the
-  same rule `commit-after-verified` runs into above — and the instruction now carries the rung: commit,
-  then `land_work` with it. On an MCP-less adapter it says to report the commit ready so the person can
-  press **Land**, decided from `capabilities.mcp` and never from an adapter name.
-- **Land** does the same thing from the operator's side, spending no turn.
+  same rule `commit-after-verified` runs into above — and the instruction carries the rung: commit,
+  then `land_work` with it. On an MCP-less adapter (`capabilities.mcp: false` — read from the
+  adapter, never from a name) there is no such tool, so the agent is told to report the commit ready
+  and stop, and ⭐ **the tool lands it itself when the turn ends** (t581). The rung is written to
+  `tasks.land_after_turn` *before* the turn, so a daemon restart cannot drop it, and
+  `landAfterCommitTurn` re-reads the workspace on the far side rather than acting on it from memory:
+  a branch with nothing on it stands the landing down in silence, because that is the ordinary shape
+  of a turn in which the agent called `land_work` itself. A refusal is said once, on the thread, and
+  the promise is spent either way — a failed landing is never retried on the next unrelated turn.
+  ⛔ Before t581 nothing acted on the rung at all on those adapters: t578 came to rest with one
+  squashed commit, an agent that had said *"the commit is ready to land"*, and no landing.
+- **Land** does the same thing from the operator's side, spending no turn. ⛔ It is offered whenever
+  the branch carries unlanded commits — **not** only over a pristine tree. t578's agent had rightly
+  kept two untracked backup directories out of its commit, so under the old rule Land was never
+  drawn and **Commit** was the card's only control; pressing it re-sent the same instruction.
+  Commit now refuses outright when nothing is uncommitted and commits are waiting, rather than
+  spending a turn asking for a commit that exists.
 
 ⛔ **Each landing cuts the next numbered branch**, because the landing retires the one the work was
 on. `warmstart/t343-<slug>` → `warmstart/t343.2-<slug>` → `.3`, cut from the target the landing just
@@ -155,7 +168,16 @@ straight back with the reason.
 The two rungs that move work — `commit-and-merge` and `commit-and-push` — do it with nobody watching,
 so they are the ones with a bar. All of these must hold:
 
-1. **The workspace is clean** — no modified files, no untracked files.
+1. **The workspace is clean** — no modified files, no untracked files. ⭐ **With one exception, and
+   only one: a conversation landing tolerates untracked files** (t581, 2026-09-20). This condition
+   exists to stop a landing *walking away from* work — finishing releases the worktree to the pool —
+   and a conversation landing releases nothing:
+   the tree, the session standing in it and every untracked file stay where they are while the
+   committed half moves. A *tracked* modification still refuses, and that half is not a judgement
+   call: measured 2026-09-20 in a scratch repository, `git rebase` over untracked files succeeds and
+   leaves them untouched, while one tracked modification refuses outright — *"cannot rebase: You have
+   unstaged changes"*. `LandingContext.keepsWorkspace` carries the distinction and nothing but
+   `landConversationWork` sets it.
 2. **The branch carries commits** `origin/<target>` does not already have — the remote, not your
    local copy of it, for the reason [below](#landed-means-pushed). A task that answered a question
    and changed no file is finished, and reporting it as *landed* would be false.

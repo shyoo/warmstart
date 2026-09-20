@@ -3869,3 +3869,50 @@ rewritten to the test identity, and 228 red suites all failing at `git commit`. 
 ref restored, the config identity removed, and two skill files a foreign stash pop had deleted
 checked back out. Recorded in `docs/testing.md` §3: strip the workspace git env before any
 git-shelling suite, and read `git log` before `git stash`.
+
+## 2026-09-20 — the Commit button that committed and never landed (t581 ← t578)
+
+**What was reported.** An operator pressed **Commit** on t578, a seventeen-turn `muse-code`
+conversation, expecting the tool to run the checks and land. Instead the tool asked the agent to
+prepare a commit and told it explicitly not to land — and then nothing landed. The operator pressed
+Commit again and the identical instruction went into the same session twelve seconds later. Their
+guess was that the agent had not been told to call an MCP tool that would trigger the landing.
+
+**What the thread actually held.** Half right, and there were three faults rather than one. From the
+live database: Commit at 15:31:16 on `commit, verify and merge into main`; the agent replied at
+15:41:40 with one squashed commit `829b3dc`, nine files, both project checks green, and the sentence
+it had been instructed to write — *"the commit is ready to land"*; a second identical human message
+at 15:41:52; cancel at 15:41:54. `C:\Dev\inkland_workspaces\ws3` then read `?? …_backup_2026-09-20/`,
+`?? …/1080p_backup_2026-09-20/`, one commit ahead of `origin/main`.
+
+1. **Nothing in the tool carried the rung.** `muse-code` declares `mcp: false` — deliberately, since
+   muse reads `mcpServers` out of the isolation root and a per-session identity token has nowhere to
+   live — so `commitConversationInstruction` took its `canLand: false` branch, whose whole plan was
+   the sentence *"the person will press **Land**"*. The rung the operator chose reached nobody.
+2. **There was no Land button to press.** `unlandedNow` was `!hasDiff && unlandedCommits > 0`. The
+   operator had asked for backups of the renders being replaced; the agent made them and rightly kept
+   those binaries out of the commit. `hasDiff` was therefore true for ever, so the card drew Commit
+   and only Commit — and pressing the one control on the card re-sent the one instruction.
+3. **And it would have refused anyway.** `decideFinish` step 1 and every strategy's `canLand` read
+   `git status --porcelain` whole, so the same two untracked directories refused the landing with
+   *"2 file(s) are uncommitted"* — about files nobody wanted committed.
+
+**The measurement the fix rests on.** Two scratch repositories: `git rebase` with untracked files
+present succeeds and leaves every one of them where it was; `git rebase` with one tracked
+modification refuses — *"cannot rebase: You have unstaged changes"*. So the two halves of
+`git status` are not one fact, and only one of them can break a landing.
+
+**What changed.** `LandingContext.keepsWorkspace` / `FinishInputs.keepsWorkspace` — set by
+`landConversationWork` and by nothing else, because a *finish* releases the worktree to the pool and
+there the untracked half is exactly the work the gate protects. `tasks.land_after_turn` (migration
+78) records the rung before the turn so a restart cannot drop it; `landAfterCommitTurn`, called from
+`endConversationTurn`, re-reads the workspace and lands, stands down in silence where the agent
+already landed it through `land_work`, or says once why it could not. `endUnfinishedRun` forgets the
+promise, so a failed or cancelled turn never lands on the far side of an unrelated reply. The
+MCP-less instruction now says what happens instead of naming a button. `settleControls` in
+`lib/finishrung.ts` draws Commit and Land independently, and Commit refuses a press that would
+re-ask for a commit that already exists.
+
+**Not flown on a real run.** The evidence above is a live database, two git probes and 21 L1 checks
+across three suites; four separate mutations turn them red. What has not happened is an operator
+pressing Commit on a muse conversation and watching the tool land it.

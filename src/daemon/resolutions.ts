@@ -25,6 +25,7 @@ import {
   messagesFor,
   runsFor,
   setHoldReason,
+  setLandAfterTurn,
   setStatus
 } from './tasks.js'
 import { db } from './db.js'
@@ -428,18 +429,123 @@ export async function commitConversation(
   }
   const branch = task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
+  // ⛔ **A press that would re-ask for a commit already made is the loop this button had** (t581).
+  // t578's agent committed, replied *"the commit is ready to land"*, and the card went on offering
+  // Commit as its only control — so the second press sent the identical instruction into the same
+  // session twelve seconds later and spent a second turn on it. Measured from the tree, at the
+  // moment of the press, exactly as the card's own read is: nothing uncommitted and commits waiting
+  // is not a state a turn can improve, and the answer names the control that does move it.
+  //
+  // ⚠️ `supported` only. *I could not look* is not *there is nothing there*, and this must not turn
+  // an unreadable workspace into a refusal — committing checks the branch out again.
+  const pending = await pendingWorkFor(task.id)
+  if (pending.supported && !pending.hasDiff && pending.unlandedCommits > 0) {
+    return {
+      ok: false,
+      reason:
+        `nothing is uncommitted on \`${pending.branch ?? branch}\` — the agent has already committed ` +
+        `${pending.unlandedCommits === 1 ? 'it' : 'them'}. ` +
+        (policyLands(policy)
+          ? `Press **Land** to move ${pending.unlandedCommits === 1 ? 'that commit' : `those ${pending.unlandedCommits} commits`}; ` +
+            'a turn spent asking for a commit that exists would change nothing.'
+          : 'There is nothing left for this rung to ask for.')
+    }
+  }
 
+  const canLand = agentCanLand(task.id)
   const instruction = commitConversationInstruction({
     policy,
     branch,
     checks: policyVerifies(policy) ? (project.config.check ?? []) : [],
-    canLand: agentCanLand(task.id)
+    canLand
   })
+
+  // ⛔ **Recorded before the turn is asked for, so a daemon restart between the two does not drop
+  // it.** This is the tool's own half of the promise the button's tooltip makes: the agent is told
+  // not to merge or push, and on an MCP-less adapter it has no `land_work` to close the loop with,
+  // so something has to. `landAfterCommitTurn` re-reads the tree when the turn ends rather than
+  // acting on this from memory. ⚠️ Written for an MCP adapter too — it stands down quietly when the
+  // agent landed it itself, and that is cheaper than being wrong about whether it did.
+  setLandAfterTurn(task.id, policyLands(policy) ? policy : null)
 
   addMessage(task.id, 'human', instruction)
   const outcome = continueTask(task.id)
-  log.info(`t${task.seq}: asked the agent to commit this conversation as ${policy} (${outcome})`)
+  log.info(
+    `t${task.seq}: asked the agent to commit this conversation as ${policy} (${outcome})` +
+      (policyLands(policy) ? `; the tool lands it when the turn ends unless ${canLand ? 'land_work' : 'the agent'} got there first` : '')
+  )
   return { ok: true }
+}
+
+/**
+ * The landing a **Commit** press promised, once the turn it asked for has ended.
+ *
+ * ⛔ **The half of the Commit button that did not exist** (t581, from t578 on 2026-09-20). Commit
+ * writes an instruction that ends *"Do not merge or push to the landing target yourself"*, and the
+ * rung the operator chose is carried in that instruction rather than onto `finish_policy`. An
+ * adapter with MCP closes the loop by calling `land_work`; **muse-code and codex declare
+ * `mcp: false`**, so on those the rung reached nobody at all. t578 came to rest with one squashed
+ * commit on its branch, an agent that had correctly reported *"the commit is ready to land"*, and a
+ * card whose only control was the button that had just been pressed.
+ *
+ * ⛔ **It re-reads rather than trusting the ask.** AGENTS.md: record the ask with the evidence that
+ * would prove it landed, and re-read before acting on the far side of the wait. So a branch with
+ * nothing on it — the agent called `land_work` itself, or committed nothing — stands the landing
+ * down in silence rather than posting a refusal about work that is already where it was going.
+ *
+ * ⛔ **And the promise is cleared first, whatever happens next.** A landing that fails must not be
+ * retried on the next unrelated turn: the failure is said once, in the thread, and the operator has
+ * **Land** in front of them.
+ *
+ * ⚠️ Spends no turn. `landConversationWork` is the tool landing by itself, which is the whole reason
+ * this can run unattended at all.
+ */
+export async function landAfterCommitTurn(taskId: string): Promise<void> {
+  const task = getTask(taskId)
+  const rung = task?.landAfterTurn ?? null
+  if (!task || !rung) return
+  setLandAfterTurn(task.id, null)
+  if (!policyLands(rung)) return
+
+  const pending = await pendingWorkFor(task.id)
+  // ⛔ Nothing to land is not a failure and is not reported as one: on an MCP adapter it is the
+  // ordinary shape of a turn in which the agent called `land_work` and the tool already landed.
+  if (pending.supported && pending.unlandedCommits === 0) {
+    log.info(`t${task.seq}: the commit turn left nothing on \`${pending.branch ?? task.branch}\` to land`)
+    return
+  }
+
+  const landed = await landConversationWork(task.id, { rung })
+  if (landed.ok) return
+  // ⚠️ Said once, on the thread, under a headline `salvageLandedCommits` does not match — the
+  // operator asked for this landing and is owed the reason it did not happen, beside the reply that
+  // said the commit was ready.
+  addMessage(
+    task.id,
+    'system',
+    `Not landed: ${oneLine(landed.reason ?? 'the landing did not complete')}`,
+    null,
+    [],
+    {
+      event: 'landing.failed',
+      detail:
+        `${landed.reason ?? 'the landing did not complete'} The commit is intact on ` +
+        `\`${task.branch ?? 'this branch'}\` and nothing has been discarded — press **Land** once ` +
+        'this is resolved, or say what to do next in the thread.'
+    }
+  )
+  log.info(`t${task.seq}: the landing the Commit button promised was refused: ${landed.reason}`)
+}
+
+/**
+ * Forget a landing a **Commit** press promised, because the turn it was waiting on will not arrive.
+ *
+ * ⛔ A run that failed, was cancelled or stopped to ask a question did not produce the commit the
+ * promise was made about. Leaving it set would land — correctly, at the right rung, but on the far
+ * side of whatever the operator said *next*, which is a surprise. The button is still there.
+ */
+export function forgetLandAfterTurn(taskId: string): void {
+  if (getTask(taskId)?.landAfterTurn) setLandAfterTurn(taskId, null)
 }
 
 /**
@@ -475,8 +581,15 @@ export function commitConversationInstruction({
       ? `Then land it by calling the MCP tool \`land_work\` with \`rung: "${policy}"\`. ` +
         'It rebases, runs the checks and merges or pushes per policy, and names the branch to ' +
         'carry on in. Do not merge or push to the landing target yourself. '
-      : 'Then say in your reply that the commit is ready to land, and stop — the person will press ' +
-        '**Land**. Do not merge or push to the landing target yourself. '
+      : // ⛔ **What actually happens next, which is not what this used to say** (t581). It said the
+        // person would press **Land**, and on an MCP-less adapter nothing else was going to land it
+        // — so the sentence was both the agent's only instruction and the tool's whole plan. The
+        // tool lands it itself now (`landAfterCommitTurn`), and the agent is told that rather than
+        // sent to describe a button.
+        'Then say in your reply that the commit is ready to land, and stop. Warmstart lands it from ' +
+        'there — it rebases, runs the checks and merges or pushes per policy, and puts this ' +
+        'conversation on the next numbered branch. Do not merge or push to the landing target ' +
+        'yourself. '
 
   return (
     `Please commit this conversation's work now: ${FINISH_LABELS[policy]}.\n\n` +

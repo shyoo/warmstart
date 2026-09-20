@@ -81,6 +81,7 @@ function draftTask(input: DebatePreviewInput): Task {
     quotaPreemptWarning: null,
     branch: null,
     branchUnit: 1,
+    landAfterTurn: null,
     landingTarget: null,
     childDefaults: null,
     debate: null,

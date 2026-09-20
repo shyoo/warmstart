@@ -193,7 +193,12 @@ async function landIn(
     project,
     state,
     hasChecks: policyFor(project).check.length > 0,
-    policy: rung
+    policy: rung,
+    // ⛔ **The conversation keeps this tree**, so an untracked file in it is not work this landing
+    // walks away from — it is work that stays exactly where it is while the committed half moves.
+    // See `FinishInputs.keepsWorkspace`: tracked changes still refuse, because a rebase refuses
+    // them. ⚠️ Deliberately not set on the trunk branch above: that is the operator's own checkout.
+    keepsWorkspace: true
   })
   if (decision.kind !== 'land') {
     // ⚠️ Every non-`land` verdict carries a sentence naming the condition that failed, including
@@ -211,7 +216,10 @@ async function landIn(
     policy: rung,
     // ⛔ The conversation is not finishing, so nothing may rest it at `awaiting_human` or post a
     // headline of its own. See `LandingContext.quiet`.
-    quiet: true
+    quiet: true,
+    // ⛔ And the same reading of the tree the decision above was made on, or the strategy's own
+    // `canLand` would refuse what `decideFinish` had just allowed. See `LandingContext.keepsWorkspace`.
+    keepsWorkspace: true
   })
   if (!result.ok || !result.commit) {
     return { ok: false, reason: result.reason ?? 'the landing did not complete' }

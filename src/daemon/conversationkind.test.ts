@@ -35,6 +35,7 @@ let scoring: typeof import('./scoring.js')
 let prompt: typeof import('./prompt.js')
 let projects: typeof import('./projects.js')
 let worktrees: typeof import('./worktrees.js')
+let scheduler: typeof import('./scheduler.js')
 
 let claude: Worker
 let second: Worker
@@ -64,6 +65,7 @@ beforeAll(async () => {
   prompt = await import('./prompt.js')
   projects = await import('./projects.js')
   worktrees = await import('./worktrees.js')
+  scheduler = await import('./scheduler.js')
   const { claudeCode } = await import('./adapters/claude-code.js')
   claudeCode.isInstalled = () => true
   db.openDb(join(dir, 'conversationkind.db'))
@@ -456,6 +458,46 @@ describe('what ends a conversation turn', () => {
     expect(tasks.requireTask(task.id).status).toBe('running')
   })
 
+  it('⭐ takes up the landing a Commit press promised, on the far side of the turn', async () => {
+    // ⛔ **The wiring t581 added, pinned at the seam rather than inside it.** `commitConversation`
+    // records the rung and tells the agent not to merge or push; nothing else in the fleet was
+    // going to act on it once the agent had no `land_work` to call. `endConversationTurn` is the
+    // one choke point every clean conversation turn goes through, so it is where the promise is
+    // taken up. ⚠️ This fixture has no project, so the landing itself refuses — which is the
+    // *second* thing being pinned: the promise is spent either way and the refusal is said once.
+    const { task, session } = talking()
+    tasks.setLandAfterTurn(task.id, 'commit-and-merge')
+
+    await turnend.onStreamResult(session, { isError: false, text: 'The commit is ready to land.', terminalReason: null })
+
+    expect(tasks.requireTask(task.id).landAfterTurn).toBeNull()
+    const failed = tasks.messagesFor(task.id).filter((m) => m.event === 'landing.failed')
+    expect(failed).toHaveLength(1)
+    expect(failed[0]?.text).toContain('Not landed')
+  })
+
+  it('⛔ leaves a turn nobody promised a landing for completely alone', async () => {
+    // ⚠️ The blast radius: every conversation turn in the fleet runs through here, and one that was
+    // never pressed Commit must come out with the same thread it went in with.
+    const { task, session } = talking()
+    const before = tasks.messagesFor(task.id).length
+    await turnend.onStreamResult(session, { isError: false, text: 'Still thinking.', terminalReason: null })
+    expect(tasks.messagesFor(task.id).filter((m) => m.event === 'landing.failed')).toHaveLength(0)
+    expect(tasks.messagesFor(task.id).length).toBe(before + 1) // the agent's own reply, and nothing else
+  })
+
+  it('⛔ forgets the promise when the turn it was waiting on does not arrive', async () => {
+    // ⛔ A run that failed, was cancelled or stopped on a question produced no commit — so carrying
+    // the promise forward would land on the far side of whatever the operator said *next*.
+    const { task, runId, session } = talking()
+    tasks.setLandAfterTurn(task.id, 'commit-and-merge')
+
+    await scheduler.endUnfinishedRun(session, tasks.requireRun(runId), 'the agent was stopped', 'failed')
+
+    expect(tasks.requireTask(task.id).landAfterTurn).toBeNull()
+    expect(tasks.messagesFor(task.id).filter((m) => m.event === 'landing.failed')).toHaveLength(0)
+  })
+
   it('does not end the turn once Commit has asked for a landing', async () => {
     // ⛔ A conversation being asked to commit is under the ordinary contract again: it has been told
     // to call `task_complete`, and ending its turn underneath it would close the run it needs.
@@ -489,9 +531,15 @@ describe('what the Commit button does', () => {
     const merge = resolutions.commitConversationInstruction({ ...base, policy: 'commit-and-merge', canLand: true })
     expect(merge).toContain('`land_work` with `rung: "commit-and-merge"`')
     expect(merge).toContain('warmstart/t9.2-chat')
+    // ⛔ **And it names what actually happens next** (t581). This used to send an MCP-less agent to
+    // tell the operator to press **Land** — a button the card would not draw over a tree holding
+    // anything untracked, and a plan nothing in the tool was carrying out. `landAfterCommitTurn` is
+    // what lands it, so the instruction says the tool does it rather than describing a control.
     const noTool = resolutions.commitConversationInstruction({ ...base, policy: 'commit-and-merge', canLand: false })
     expect(noTool).not.toContain('land_work')
-    expect(noTool).toContain('**Land**')
+    expect(noTool).not.toContain('**Land**')
+    expect(noTool).toContain('Warmstart lands it from there')
+    expect(noTool).toContain('Do not merge or push to the landing target yourself')
     // ⛔ Every variant keeps the conversation open.
     for (const said of [verify, only, merge, noTool]) expect(said).toContain('do not call `task_complete`')
   })

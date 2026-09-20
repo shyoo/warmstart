@@ -142,3 +142,55 @@ export function rungOrigin(
   // silence here would present the substitute as though it were the project's own answer.
   return 'the safe default here, because this project’s own answer is not one this button can do'
 }
+
+/**
+ * Which settle-it controls the *your call* card draws, from what the workspace actually holds.
+ *
+ * ⛔ **Three answers to three different questions, and the bug was treating two of them as one**
+ * (t581, from t578 on 2026-09-20). *Something to commit* and *something to land* are independent
+ * facts about a workspace, and the card used to draw Land only when there was nothing to commit —
+ * `!hasDiff && unlandedCommits > 0`. t578's operator had asked their agent to keep backups of the
+ * renders it was replacing; the agent made two directories of binaries and rightly left them out of
+ * its commit. From that moment `hasDiff` was true for ever, so **Land was never drawn over the
+ * squashed commit sitting on the branch** — and Commit, the only control left on the card, re-sent
+ * the same instruction into the same session on every press.
+ *
+ * ⛔ `commit` is a conversation's control only: an ordinary task's uncommitted work is handled by
+ * the finish path, which asks its own agent. `land` is not, because committed work with nowhere to
+ * go is the same state on either kind.
+ *
+ * ⚠️ `pending === null` is *not yet read*, and draws nothing. Every control here is an assertion
+ * about a tree, and asserting one before the answer arrives is how a card tells somebody there is
+ * nothing to lose a moment before there is.
+ */
+export interface SettleControls {
+  /** Draw **Commit**: there are uncommitted files, or the tree could not be read at all. */
+  commit: boolean
+  /** Draw **Land**: commits are sitting on the branch, whatever else is in the tree. */
+  land: boolean
+  /** Say so: the read failed, which is not the same as finding nothing. */
+  cannotLook: boolean
+  /** Warn before Finish: these files go back to the pool with the workspace. */
+  uncommitted: boolean
+}
+
+export function settleControls(
+  conversation: boolean,
+  pending: {
+    supported: boolean
+    hasDiff: boolean
+    unlandedCommits: number
+  } | null
+): SettleControls {
+  if (pending === null) return { commit: false, land: false, cannotLook: false, uncommitted: false }
+  const cannotLook = conversation && !pending.supported
+  const uncommitted = conversation && pending.supported && pending.hasDiff
+  return {
+    commit: uncommitted || cannotLook,
+    // ⛔ No `!hasDiff`. See above: a tree holding something the agent is not going to commit must
+    // not hide the commits it already made.
+    land: pending.supported && pending.unlandedCommits > 0,
+    cannotLook,
+    uncommitted
+  }
+}

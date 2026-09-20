@@ -89,6 +89,25 @@ export interface LandingContext {
    * can name the commits that run made. ⚠️ Only the `trunk` strategy reads it; null records the tip.
    */
   trunkBase?: string | null
+  /**
+   * The caller is **not** giving this workspace back, so an untracked file in it is not at risk.
+   *
+   * ⛔ **The clean-tree gate exists to protect work the landing would walk away from**, and a
+   * conversation landing walks away from nothing: it keeps the tree, keeps the session standing in
+   * it, and cuts the next numbered branch there. ⭐ Measured 2026-09-20 in a scratch repository: a
+   * rebase with untracked files present succeeds and leaves every one of them exactly where it was,
+   * while a rebase with a *tracked* modification refuses outright — *"cannot rebase: You have
+   * unstaged changes"*. So the two halves of `git status --porcelain` are not one fact, and this
+   * flag reads only the half that can actually break a landing.
+   *
+   * ⛔ **Never set on a finish.** A task that completes releases its workspace to the pool, and
+   * there the untracked half is exactly the work the gate is guarding.
+   *
+   * ⚠️ t581: two untracked backup directories the operator had *asked* the agent to create left
+   * t578 unable to land at all — Commit re-asked for a commit that had already happened, and the
+   * Land button was never drawn because the tree was not pristine.
+   */
+  keepsWorkspace?: boolean
 }
 
 export interface LandingStrategy {
@@ -107,8 +126,28 @@ export async function hasRemote(cwd: string): Promise<boolean> {
   }
 }
 
-async function isClean(cwd: string): Promise<boolean> {
-  return (await git(cwd, ['status', '--porcelain'])).length === 0
+/**
+ * ⚠️ One sentence, five strategies. It is matched by `resolveRetryCauses`, so a private rewording
+ * in one strategy would quietly take that strategy off the Resolve & retry path.
+ */
+const UNCOMMITTED_REASON = 'the workspace has uncommitted changes'
+
+/**
+ * The half of `git status --porcelain` that can stop a landing, for this caller.
+ *
+ * ⛔ **`--porcelain` uses leading whitespace as data** (AGENTS.md), so the untracked lines are
+ * matched on their own two-character code at column 0 — ` M x` is a tracked modification and
+ * `?? x` is not, and trimming first would lose the difference.
+ *
+ * ⚠️ `keepsWorkspace` off is the old behaviour byte for byte: every line counts.
+ */
+async function treeBlocksLanding(ctx: LandingContext): Promise<boolean> {
+  const status = await git(ctx.workspacePath, ['status', '--porcelain'])
+  if (status.length === 0) return false
+  if (!ctx.keepsWorkspace) return true
+  return status
+    .split(/\r?\n/)
+    .some((line) => line.trim().length > 0 && !line.startsWith('??'))
 }
 
 /**
@@ -530,8 +569,8 @@ export const verifyOnly: LandingStrategy = {
 
   async canLand(ctx) {
     if (ctx.project.vcs !== 'git') return { ok: false, reason: 'project is not a git repository' }
-    if (!(await isClean(ctx.workspacePath))) {
-      return { ok: false, reason: 'the workspace has uncommitted changes' }
+    if (await treeBlocksLanding(ctx)) {
+      return { ok: false, reason: UNCOMMITTED_REASON }
     }
     return { ok: true }
   },
@@ -591,8 +630,8 @@ export const mergeLocal: LandingStrategy = {
     if (ctx.task.verification === 'required') {
       return { ok: false, reason: 'task requires human verification before landing' }
     }
-    if (!(await isClean(ctx.workspacePath))) {
-      return { ok: false, reason: 'the workspace has uncommitted changes' }
+    if (await treeBlocksLanding(ctx)) {
+      return { ok: false, reason: UNCOMMITTED_REASON }
     }
     if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
     // ⛔ Preflight: refuse before the rebase and the project checks run when the trunk cannot
@@ -813,8 +852,8 @@ export const mergeBranch: LandingStrategy = {
     if (ctx.task.verification === 'required') {
       return { ok: false, reason: 'task requires human verification before landing' }
     }
-    if (!(await isClean(ctx.workspacePath))) {
-      return { ok: false, reason: 'the workspace has uncommitted changes' }
+    if (await treeBlocksLanding(ctx)) {
+      return { ok: false, reason: UNCOMMITTED_REASON }
     }
     if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
     return { ok: true }
@@ -1233,8 +1272,8 @@ export const autoLand: LandingStrategy = {
     if (ctx.task.verification === 'required') {
       return { ok: false, reason: 'task requires human verification before landing' }
     }
-    if (!(await isClean(ctx.workspacePath))) {
-      return { ok: false, reason: 'the workspace has uncommitted changes' }
+    if (await treeBlocksLanding(ctx)) {
+      return { ok: false, reason: UNCOMMITTED_REASON }
     }
     if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
     return { ok: true }
@@ -1376,8 +1415,8 @@ export const pullRequest: LandingStrategy = {
       // narrower authority - and a task that may only push should be able to use this strategy.
       return { ok: false, reason: 'the task has no authority to push' }
     }
-    if (!(await isClean(ctx.workspacePath))) {
-      return { ok: false, reason: 'the workspace has uncommitted changes' }
+    if (await treeBlocksLanding(ctx)) {
+      return { ok: false, reason: UNCOMMITTED_REASON }
     }
     if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
     if (!(await hasRemote(ctx.workspacePath))) {
@@ -1713,7 +1752,7 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     ctx.project.vcs === 'git' &&
     strategy.id !== 'trunk' &&
     ctx.task.verification !== 'required' &&
-    (await isClean(ctx.workspacePath))
+    !(await treeBlocksLanding(ctx))
   ) {
     const target = landingTargetFor(ctx.task, ctx.project)
     const base = await landedRef(ctx.workspacePath, target)

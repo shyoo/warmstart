@@ -1,15 +1,15 @@
 # Warmstart — Session Handoff
 
-## Current state — 2026-09-19
+## Current state — 2026-09-20
 
 Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling, pooled worktrees,
 model-aware routing, quality review, remote access, packaging, and atomic worker/model reassignment.
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-20, **Windows 11**, on `0.3.0+5` — t579): typecheck, lint and build pass;
-L1 **3,789 passed, 5 skipped** (226 files), in **99s** and leaving **0 bytes** in `%TEMP%` — the run
-now owns one temp root and removes it (t579). L2 **204 checks** (5 skipped); L3 **486 checks** (4
+Baseline (2026-09-20, **Windows 11**, on `0.3.0+10` — t581): typecheck, lint and build pass;
+L1 **3,822 passed, 5 skipped** (227 files), in **56s**. ⚠️ The `%TEMP%` figure is t579's, not re-measured
+here. L2 **204 checks** (5 skipped); L3 **486 checks** (4
 skipped), both last measured on t577 and not re-run since. L4 **19 checks** against `release/win-unpacked` was measured on `7b5f6e1`, the commit
 `v0.3.0` ships, and has not been re-run since. ⚠️ L3 flaked twice under back-to-back suite load
 (*timed out waiting for All filter to restore 3 rows*, a tier it does not touch) and was green on a
@@ -30,6 +30,23 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **The Commit button asked for a commit and then nothing landed it (t581 ← t578, 2026-09-20).**
+  Three faults, each enough on its own. (1) Commit tells the agent *not* to merge or push; on an
+  adapter with `mcp: false` — muse-code, codex — there is no `land_work` to close the loop and
+  **nothing in the tool acted on the rung the operator chose**. t578 rested with one squashed commit
+  and an agent that had said *"the commit is ready to land"*. The rung is now recorded on
+  `tasks.land_after_turn` (migration 78) *before* the turn and taken up by `landAfterCommitTurn` from
+  `endConversationTurn`, which **re-reads the workspace** rather than trusting it — silent where the
+  agent landed it itself, one thread line where it is refused, and the promise spent either way
+  (`endUnfinishedRun` forgets it). (2) **Land was gated on a pristine tree** (`!hasDiff`), so the two
+  untracked backup directories the operator had *asked* for meant it was never drawn — Commit was the
+  card's only control and re-sent its instruction on every press. `settleControls`
+  (`lib/finishrung.ts`) draws both when both are true. (3) `decideFinish` and every strategy's
+  `canLand` refused the landing over the same untracked files; a conversation landing keeps its
+  workspace, so `keepsWorkspace` now counts only the **tracked** half — ⭐ measured 2026-09-20: a
+  rebase over untracked files succeeds untouched, one tracked modification refuses outright.
+  Commit also refuses a press that would re-ask for a commit that exists. 11 + 7 + 3 L1 checks; four
+  mutations go red. **Not flown on a real run.** `docs/landing.md`, `ui.md`, `data-model.md`.
 - **A Muse worker set to "Full user authority" now runs `--yolo` (t580, 2026-09-20).** `muse-code` declares `bypassPermissionMode: 'yolo'` (vendor: *disable approval and sandbox and trust this workspace*), chosen by `permissionModeFor` exactly as Codex's bypass is; otherwise headless stays `never`. Unit-tested; **not flown on a real run**. `docs/adapters.md`.
 - **Phone Overview activity is one line per event, and Tasks are tappable cards (t584, 2026-09-20).** Activity rows read age, `t{seq}`, event in the desktop pill language (starts blue, completions green, a human wait violet); task cards carry a `t{seq}` header with jump mark, the fact grid, then age beside the status pill. Every row and card opens its task. `docs/remote.md`.
 - **L1 orphaned 24,322 fixture directories and ~161 GB of `%TEMP%`; 94% was one suite spawning a
@@ -105,15 +122,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   call; Virtual Machine Platform left on for the Claude desktop VM). ⏭ **MuseFirst cannot run until
   the installed app is rebuilt with this change** — the old build still looks for `wsl.exe`.
   `docs/adapters.md`.
-- **Only Plan & Split and Plan & Execute drew the composer's dispatch diagram; Single Task,
-  Conversation and Debate were left to a sentence (t546, 2026-09-19).** `PlanShape` is now
-  `WorkflowShape`, one of five schematic topologies keyed on the kind pill instead of two: Single
-  Task draws one accented node running straight to "verifies & lands"; Conversation draws two nodes
-  trading turns with a dashed, unreached "commit" node, since nothing lands automatically; Debate
-  draws independent seats converging on the organizer, the mirror of Plan & Split's fan-out (no
-  initial planner, because a debate's seats never come from one). Every diagram keeps the existing
-  rule: schematic only, no mockup of a screen, `--color-*` tokens so it reads in both themes.
-  `NewTask.tsx`, `docs/ui.md`.
 - **Unattended authority moved from the project to the worker, and Codex can opt into it (t545,
   2026-09-19).** The choice between sandboxed and full-user unattended dispatch used to live on
   `ProjectConfig.permission.unattended`, gating every adapter a project's tasks could reach alike; an
@@ -128,18 +136,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   `sandboxed-only`, everything else to `full-user` — so no existing account's dispatch behaviour
   changes on upgrade; a Codex worker only gets the bypass after an operator explicitly asks for it.
   `docs/security.md`, `docs/adapters.md`.
-- **Attaching a folder to a codex task could never grant `~\.ssh`, because read and write are
-  decided by two different mechanisms (t538 ← t537, 2026-09-18).** `--add-dir C:\Users\<user>\.ssh`
-  was on three consecutive t537 runs' argv, never appeared in `<CODEX_HOME>/cap_sid` →
-  `writable_root_by_path` (39 roots codex *had* granted, `AppData\Local\*` among them) and produced
-  no audit line — codex declines that root silently, so the agent asked a person for something no
-  attachment could give it. Measured with `codex exec` and nothing on the argv: a sandboxed command
-  runs as `CodexSandboxOffline`/`Online`, so **read** is an ordinary NTFS ACE
-  (`icacls <dir> /grant "CodexSandboxUsers:(OI)(CI)(RX)"`, permanent and flagless) while **write**
-  needs the per-path capability SID only codex mints — the same ACE at `(M)` was still refused.
-  `sandbox_workspace_write.writable_roots` in the isolation root's `config.toml` mints it on every
-  run and survives `-c sandbox_workspace_write.network_access=true`. ⛔ No code change: Warmstart
-  must not write either grant on the operator's own directories. `docs/adapters.md`, `grants.ts`.
 - **A lapsed oversized session was revived instead of starting clean, and a completion prompt told sandboxed agents to fetch (t536 ← t518/t534, 2026-09-19).** Resume now starts a fresh session when the measured cache has lapsed after passing the compaction break-even; compaction remains reserved for its cheap pre-expiry window. The agent completion clause checks the checkout's target and leaves remote refresh to landing, avoiding needless SSH/grant requests. `cacheclock.ts`, `scheduler.ts`, `prompt.ts`, `docs/sessions.md`, `docs/cost-model.md`.
 - **An idle Muse account lost every unpinned routing contest, and it was `prepaid`, not the quota
   gate (t516, 2026-09-17).** MuseFirst went a long stretch never auto-routed; the quota gate itself

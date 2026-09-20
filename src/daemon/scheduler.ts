@@ -144,6 +144,7 @@ import {
   abortRebase,
   beginConflictResolution,
   finishWithoutLanding,
+  isTaskLanding,
   landTask,
   readMergeability
 } from './landing.js'
@@ -241,7 +242,7 @@ import {
   MAX_OVERLOAD_ATTEMPTS,
   overloadFailureRetry
 } from './turnend.js'
-import { resolveRetryOnTask, retryQueuedLandings } from './resolutions.js'
+import { forgetLandAfterTurn, landAfterCommitTurn, resolveRetryOnTask, retryQueuedLandings } from './resolutions.js'
 
 /**
  * The scheduler.
@@ -516,6 +517,14 @@ export async function tick(): Promise<TickResult> {
 
   const ready = listTasks()
     .filter((t) => t.status === 'ready')
+    // ⛔ **Not while its own branch is being rebased under it** (t581). A landing rebases, runs every
+    // check the project declares and merges — minutes, on a real repository — and for all of it the
+    // task can be made `ready` again by a person typing into the thread, which would dispatch an
+    // agent into the tree the rebase is halfway through. The hold is the ordinary kind: no status is
+    // written, nothing is refused, and the next tick picks it up once `landTask` returns. ⚠️ The
+    // window is not new — pressing **Land** has always had it — but a landing the tool starts by
+    // itself at the moment the operator's attention comes back makes it easy to hit.
+    .filter((t) => !isTaskLanding(t.id))
     .sort(schedulingOrder)
 
   let dispatched = 0
@@ -4093,6 +4102,16 @@ export async function endConversationTurn(
   // leaks; the worktree stays with the session, which is still standing in it.
   await releaseFor(run.id, task.id, task.projectId)
   void captureQuotaAfter(requireRun(run.id))
+
+  // ⭐ **The far side of the Commit button's wait** (t581). Pressing Commit asks for a commit and
+  // forbids the agent from merging or pushing; on an adapter with no `land_work` nothing else was
+  // ever going to land the rung the operator chose. This is where the tool does its own half, and
+  // it re-reads the workspace first rather than trusting what was recorded before the turn.
+  //
+  // ⛔ After `releaseFor`, so the run's claims are back before a landing goes looking for a
+  // workspace to borrow, and awaited: the turn is over, nothing is billed, and a landing that runs
+  // the project's checks must finish before the next tick can dispatch on this branch.
+  await landAfterCommitTurn(task.id)
 }
 
 export async function endUnfinishedRun(
@@ -4116,6 +4135,12 @@ export async function endUnfinishedRun(
     Boolean(ad.overloaded?.(why) || (session.id ? ad.overloaded?.(stripAnsi(backscroll(session.id))) : false))
 
   finishRun(run.id, parkAt !== null || overloadRetry !== null ? 'preempted' : outcome, why)
+
+  // ⛔ **A commit that never happened is owed no landing** (t581). The turn a Commit press asked for
+  // failed, was cancelled, or stopped on a question — so the promise recorded against the task is
+  // about work that does not exist, and carrying it forward would land on the far side of whatever
+  // the operator says next. The button is still on the card. See `forgetLandAfterTurn`.
+  if (task) forgetLandAfterTurn(task.id)
 
   // ⛔ A blocked run is never dead on arrival, and the check is skipped rather than merely failing:
   // `deadOnArrival` reports on a dispatch that produced nothing, and this one produced a question.

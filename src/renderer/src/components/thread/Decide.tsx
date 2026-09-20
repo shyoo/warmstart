@@ -30,6 +30,7 @@ import {
   LAND_FALLBACK,
   landRungsForMode,
   rungOrigin,
+  settleControls,
   TRUNK_LAND_FALLBACK
 } from '../../lib/finishrung'
 import { duration } from '../../lib/format'
@@ -627,21 +628,14 @@ export function Decide({
     void readPending()
   }, [readPending, task.updatedAt])
 
-  // ⚠️ `hasDiff` only, and only once the read has come back. `pending === null` means *not yet
-  // known*, and drawing a warning or a Commit button off an unknown is how a card ends up telling
-  // somebody there is nothing to lose a moment before there is.
-  const uncommittedNow = conversation && pending?.supported === true && pending.hasDiff
-
-  /**
-   * Committed work sitting on the branch with nowhere to go.
-   *
-   * ⛔ **The state that had no button on this card at all.** Commit has nothing to ask an agent for,
-   * Finish only records that a person is satisfied, and Retry landing is drawn solely after a landing
-   * has already failed — so a conversation whose agent committed left its commits on the branch and
-   * offered no way to move them. This is where the tool does the last part.
-   */
-  const unlandedNow =
-    pending?.supported === true && !pending.hasDiff && pending.unlandedCommits > 0
+  // ⛔ **Which of these controls the card draws is a decision, so it lives where a test can reach
+  // it** — `settleControls`, which carries the whole of why Land no longer waits for a pristine
+  // tree (t581). ⚠️ `pending === null` means *not yet read*, and draws nothing: asserting anything
+  // about a tree before the answer arrives is how a card tells somebody there is nothing to lose a
+  // moment before there is.
+  const controls = settleControls(conversation, pending)
+  const uncommittedNow = controls.uncommitted
+  const unlandedNow = controls.land
 
   /**
    * The rung each settle-it button starts on, and where that answer came from.
@@ -670,7 +664,7 @@ export function Decide({
    * button it had decided not to draw. The control is shown with the reason instead: committing
    * dispatches a run, which checks the branch out again wherever it has to.
    */
-  const cannotLook = conversation && pending !== null && !pending.supported
+  const cannotLook = controls.cannotLook
 
   const canReland = canRelandTask(task)
 
@@ -828,7 +822,8 @@ export function Decide({
     (uncommittedNow ? `the ${uncommittedShort} on ${branchName}` : `whatever is uncommitted on ${branchName}`) +
     ` and then land it: ${FINISH_LABELS[commitRung]} (${commitRungWhere}). ` +
     'With the land_work MCP tool the agent lands it itself; on an adapter without MCP it says the ' +
-    'commit is ready and you press Land. “Commit only” asks for the commit and no landing. ' +
+    'commit is ready and the tool lands it when the turn ends. “Commit only” asks for the commit ' +
+    'and no landing. ' +
     'This spends a turn and does not finish the task: the conversation stays open, on the next ' +
     'numbered branch once it lands. ▼ picks a different rung for this press.' +
     (uncommittedNow && pending?.unclaimed
@@ -843,7 +838,17 @@ export function Decide({
       'The tool rebases onto the landing target, runs the project’s checks where the rung asks for ' +
       'them, and merges or pushes as the rung says; a refusal leaves the branch exactly where it is. ' +
       'Landing does not finish this conversation — only Finish and Stop do — so the thread comes back ' +
-      'open on the next numbered branch, ready to land again. ▼ picks another rung for this press.'
+      'open on the next numbered branch, ready to land again. ▼ picks another rung for this press.' +
+      // ⛔ The two halves of a dirty tree do different things to a landing, and saying "uncommitted
+      // files" about both would be the fudge that hid t578. Untracked files are not touched by a
+      // rebase — measured — and stay in the workspace the conversation keeps; a tracked change
+      // stops the rebase outright and has to be committed or reverted first.
+      (pending && pending.untrackedFiles > 0
+        ? ` The ${pending.untrackedFiles} untracked file(s) here stay exactly where they are: landing moves only what is committed.`
+        : '') +
+      (pending && pending.dirtyFiles > 0
+        ? ` ⚠️ ${pending.dirtyFiles} tracked file(s) are modified — a rebase will not run over those, so Commit or revert them first.`
+        : '')
     : `Lands ${pending?.unlandedCommits === 1 ? '1 commit' : `${pending?.unlandedCommits ?? 0} commits`} ` +
       `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landRung]} (${landRungWhere}). ` +
       'The tool rebases onto the landing target, runs the project’s checks where the rung asks for ' +
@@ -914,7 +919,7 @@ export function Decide({
           {stopLabel}
         </button>
 
-        {(uncommittedNow || cannotLook) && (
+        {controls.commit && (
           <SplitButton
             className="commit-select"
             label="Commit"

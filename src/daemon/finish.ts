@@ -143,6 +143,25 @@ export interface FinishInputs {
    * ⚠️ Absent on every other path, which resolves task → project → fleet exactly as before.
    */
   policy?: FinishPolicy
+  /**
+   * The caller keeps this workspace, so an untracked file in it is not work anybody walks away from.
+   *
+   * ⛔ **Step 1 is a guard on *losing* work, not a tidiness rule.** A task that finishes gives its
+   * worktree back to the pool, where the next claimant parks it — so the uncommitted half of
+   * `git status` is work about to be left behind, and the agent is rightly asked for a commit. A
+   * **conversation landing** gives nothing back: the tree, the session standing in it and every
+   * untracked file stay exactly where they are, and the next numbered branch is cut around them.
+   *
+   * ⭐ Measured 2026-09-20 in a scratch repository, both directions: `git rebase` with untracked
+   * files present succeeds and leaves them untouched; `git rebase` with one tracked modification
+   * refuses — *"cannot rebase: You have unstaged changes"*. So tracked dirt still stops a landing
+   * here and untracked dirt no longer does, and neither answer is a guess.
+   *
+   * ⚠️ t581: t578's operator had *asked* for two backup directories and the agent had rightly left
+   * those binaries out of its commit. The tree was therefore never pristine again, the landing was
+   * refused every time, and pressing Commit was the only control the card would draw.
+   */
+  keepsWorkspace?: boolean
 }
 
 export interface TrunkReading {
@@ -163,7 +182,8 @@ export function decideFinish({
   merge,
   siblingLanded = [],
   ownLanded = [],
-  policy: policyOverride
+  policy: policyOverride,
+  keepsWorkspace = false
 }: FinishInputs): FinishDecision {
   const resolved = resolveFinishPolicy(task, project)
   // ⚠️ The override replaces the *rung*, never the instruction: `custom` is the only policy that
@@ -171,6 +191,10 @@ export function decideFinish({
   const policy = policyOverride ?? resolved.policy
   const instruction = resolved.instruction
   const loose = state.dirtyFiles.length + state.untrackedFiles.length
+  // ⛔ What would stop *this* caller, which is not the same list. See `FinishInputs.keepsWorkspace`:
+  // a landing that gives the workspace back is guarding every uncommitted file; one that keeps it is
+  // guarding only the tracked changes a rebase refuses to run over.
+  const blocking = keepsWorkspace ? state.dirtyFiles.length : loose
 
   // 0. A rebase this tool started and the agent did not finish. ⛔ Checked before anything else,
   //    because the conflicted files are *dirty* to step 1 and it would tell somebody to commit a
@@ -253,18 +277,18 @@ export function decideFinish({
   //    leave and what to test first is judgement that differs per project and per person, and a
   //    daemon applying a blocklist at the one moment nobody is watching is a worse version of it.
   //    Every serious tool in this space converges here: the agent commits, the tool never does.
-  if (loose > 0) {
+  if (blocking > 0) {
     if (task.finishAskedAt === null) {
       return {
         kind: 'ask-agent',
         instruction:
           policy === 'custom' && instruction
             ? instruction
-            : `You have ${loose} uncommitted file(s). Commit them on \`${state.branch ?? 'your branch'}\`, ` +
+            : `You have ${blocking} uncommitted file(s). Commit them on \`${state.branch ?? 'your branch'}\`, ` +
               'and, if two or more commits ahead of the landing target all belong to this task, squash them ' +
               'into one coherent commit where safe. Do not rewrite commits already on the landing target, ' +
               'force-push, or use a destructive reset. Then report the task complete again. Do not start new work.',
-        reason: `${loose} file(s) are uncommitted`
+        reason: `${blocking} file(s) are uncommitted`
       }
     }
     // ⚠️ Asked once and still loose. The work is preserved exactly where it is — never reset, never
@@ -272,7 +296,7 @@ export function decideFinish({
     return {
       kind: 'await-human',
       reason:
-        `${loose} file(s) are still uncommitted in ${state.path} after the agent was asked to ` +
+        `${blocking} file(s) are still uncommitted in ${state.path} after the agent was asked to ` +
         'commit them. The work is intact; nothing has been discarded.'
     }
   }

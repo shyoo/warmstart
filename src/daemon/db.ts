@@ -2034,6 +2034,25 @@ const MIGRATIONS: Migration[] = [
           `then 'sandboxed-only' else 'full-user' end`
       )
     }
+  },
+  // 78 - the landing the Commit button promised, remembered until it happens (t581).
+  //
+  // ⛔ **An ask the tool made of itself, and it had nowhere to live.** Pressing Commit on a
+  // conversation asks the agent for a commit and tells it *not* to merge or push; on an adapter
+  // with MCP the agent then calls `land_work`, and on one without — muse-code, codex — nothing in
+  // the tool ever acted on the rung the operator chose. t578 sat with one squashed commit on its
+  // branch, an agent that had said *"the commit is ready to land"*, and no landing.
+  //
+  // ⛔ In the row rather than in daemon memory, because a restart between the ask and the turn
+  // ending would otherwise drop it silently — and AGENTS.md's rule is to record the ask *with the
+  // evidence that would prove it landed* and re-read on the far side of the wait, which
+  // `landAfterCommitTurn` does. Null on every existing row: no landing is owed to a press nobody made.
+  //
+  // ⚠️ Guarded by `hasColumn` like migrations 28/31/32/35/39/43/63/68/70: `versionBefore` rewinds.
+  (conn) => {
+    if (!hasColumn(conn, 'tasks', 'land_after_turn')) {
+      conn.exec('alter table tasks add column land_after_turn text;')
+    }
   }
 ]
 

@@ -10,6 +10,7 @@ import {
   type ChildDefaults,
   type DebateState,
   type DependencyRequirement,
+  type FinishPolicy,
   type Mandate,
   type MandateOperation,
   type Objective,
@@ -103,6 +104,7 @@ interface TaskRow {
   quota_preempt_json: string | null
   branch: string | null
   branch_unit: number | null
+  land_after_turn: string | null
   landing_target: string | null
   child_defaults_json: string | null
   debate_json: string | null
@@ -254,6 +256,9 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     // ⚠️ `null` reads as 1: every row written before migration 63, which is every task that has
     // never landed twice. See `Task.branchUnit`.
     branchUnit: r.branch_unit ?? 1,
+    // ⚠️ Null on every row written before migration 78, and on every task nobody has pressed
+    // Commit on. See `Task.landAfterTurn`.
+    landAfterTurn: (r.land_after_turn as FinishPolicy | null) ?? null,
     landingTarget: r.landing_target ?? null,
     childDefaults: parseChildDefaults(r.child_defaults_json),
     debate: parseDebate(r.debate_json),
@@ -1618,6 +1623,25 @@ export function setTaskBranch(taskId: string, branch: string, unit: number): Tas
   db()
     .prepare('update tasks set branch = ?, branch_unit = ?, updated_at = ? where id = ?')
     .run(branch, unit, Date.now(), taskId)
+  const task = requireTask(taskId)
+  emit({ type: 'task.changed', task })
+  return task
+}
+
+/**
+ * Record — or clear — the landing a **Commit** press owes this conversation once its turn ends.
+ *
+ * ⛔ **A promise, not a decision.** Nothing here reads the workspace or judges anything; it writes
+ * down which rung the operator asked for so the far side of the wait can re-read the tree and act.
+ * See `Task.landAfterTurn` and `landAfterCommitTurn`.
+ *
+ * ⚠️ `updated_at` moves with it, because the thread card re-reads `pendingWork` off that column —
+ * a promise nobody can see is how the loop this fixes started.
+ */
+export function setLandAfterTurn(taskId: string, policy: FinishPolicy | null): Task {
+  db()
+    .prepare('update tasks set land_after_turn = ?, updated_at = ? where id = ?')
+    .run(policy, Date.now(), taskId)
   const task = requireTask(taskId)
   emit({ type: 'task.changed', task })
   return task

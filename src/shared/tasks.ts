@@ -1069,6 +1069,24 @@ export interface Task {
    */
   branchUnit: number
   /**
+   * The rung a **Commit** press promised to land on once the agent's turn ends, and has not yet.
+   *
+   * ⛔ **The tool's own half of the Commit button, written down.** Commit asks the agent for a
+   * commit and tells it explicitly not to merge or push. On an adapter with MCP the agent closes
+   * that loop itself with `land_work`; on one without — muse-code, codex — nothing did, so the rung
+   * the operator picked was dropped on the floor. t578 (2026-09-20) ended with one squashed commit
+   * on its branch, an agent that had said *"the commit is ready to land"*, and no landing; pressing
+   * Commit again only re-sent the same instruction.
+   *
+   * ⛔ Recorded before the turn and re-read after it, never acted on from memory —
+   * `landAfterCommitTurn` looks at the workspace again and stands down if the agent already landed
+   * it. That is AGENTS.md's rule about an ask and the evidence that would prove it landed.
+   *
+   * ⚠️ `null` on every task nobody has pressed Commit on, and cleared the moment the turn that was
+   * asked for ends, however it ends.
+   */
+  landAfterTurn: FinishPolicy | null
+  /**
    * The ref this task's work lands onto, or null to take the project's.
    *
    * ⛔ **Null on every task that is not a split**, which is what makes the resolver inert. `landing
