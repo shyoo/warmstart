@@ -1,25 +1,25 @@
 # Warmstart — Session Handoff
 
-## Current state — 2026-09-16
+## Current state — 2026-09-19
 
 Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling, pooled worktrees,
 model-aware routing, quality review, remote access, packaging, and atomic worker/model reassignment.
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-19, **Windows 11**, measured on the rebased t564 branch, `0.2.0+9`): typecheck, lint
-and build pass; L1 **3,765 passed, 5 skipped** (225 files); L3 **486 passed, 4 skipped**; L2 **203
-checks** (5 skipped) and L4 **19 checks** against `release/win-unpacked` as of `2fe300f`. macOS 13
-arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI is **enabled**, and so is the
-**Release** workflow.
+Baseline (2026-09-19, **Windows 11**, all four tiers measured together on `0.2.0+9.g7b5f6e1`, the
+commit `v0.3.0` ships): typecheck, lint and build pass; L1 **3,765 passed, 5 skipped** (225 files);
+L2 **203 checks** (5 skipped); L3 **486 checks** (4 skipped); L4 **19 checks** against
+`release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
+hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
 
-**`v0.2.0` is `latest`** (2026-09-19, tag build 35472709332), promoted onto `v0.2.0-rc.3`'s own
-commit `bfc04b4` — the bytes verified installing on Windows 11, not a rebuild of a later tree. It
-carries t536–t554 and migrations 76–77 over `v0.1.1`. ⏭ **Next: install `v0.2.0` from the Releases
-page on a Mac** — macOS is unverified on this release and CI has no macOS runner. The 0.2.0 series
-is closed, so the next `/release rc` opens `0.2.1-rc.1` (patch is the default; `--bump minor|major`
-is asked for). rc.2's CI first went red on the t545 Workers-table regression: six commits had been
-pushed together, and `test:ui` was not run on them first.
+**`v0.3.0` is `latest`** (2026-09-19, tag build 35482566845), promoted onto `v0.3.0-rc.1`'s own
+commit `7b5f6e1` — verified installed on **both Windows 11 and macOS**, the first release with no
+unverified platform. It carries t559–t565 (trunk-only projects, the mid-conversation worker recap,
+session reuse on by default) over `v0.2.0`, with no migration. The 0.3.0 series is open, so the next
+`/release rc` continues it at `0.3.0-rc.2`; a new series is a patch unless `--bump minor|major` is
+asked for. ⛔ All four tiers are run before a push, not after: rc.2 of the last series went red on
+CI because six commits were pushed together without `test:ui`.
 Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 **Routing Model v1.2 preserves expiry urgency (t552, 2026-09-19).** `prepaid` is field-normalized
@@ -168,14 +168,13 @@ judgement. Do not replace the missing evidence with a unit test.
 2. **Run one more live Plan & Split, and the first live Plan & Execute.** Exercise a `merge-branch` landing while a sibling is genuinely mid-run, and an organizer resolution turn where some pieces fail. Then file the same job as a Plan & Execute with a cheaper executor: confirm the planner's card completes at the handoff, the executor lands on the project's target, and record both tasks' total run cost side by side — the one measurement t456's design rests on and does not have.
 3. **Run a real debate and record its measurements.** Compare total tokens/cost against a strong single-agent answer; record cache reads, resolved/unresolved citations, and whether the organizer changed the operator's decision. The evidence format is in [`transient_docs/debate_mode_2026-09-12.md`](transient_docs/debate_mode_2026-09-12.md) §7.
 4. **Run human-in-the-loop, `commit-and-merge`, cross-task reuse and an inherited directory grant with a real agent.** The code and L1–L3 checks exist; none has been demonstrated in flight. For the grant (t462/t470): attach a second repository to a **planner**, let it file one piece that must edit there, and watch a sandboxed codex **commit** in it — proven only by a throwaway-repo probe so far. Then, on `claude-code`, have an agent call `request_directory` for an unattached folder and confirm the restart resumes warm.
-5. **Verify `v0.2.0` as installed from the Releases page on a Mac.** Windows 11 is done (rc.3, 2026-09-19, same commit as the final); no macOS machine has opened this build and no CI job runs there.
-6. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from both computers, a revoke on the host cutting the client off, and the ±1 version warning.
-7. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the generic declarative adapter cannot meter, gets no MCP tools and cannot reap orphans); CI watch after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an update-available check that keeps `publish: null`; a full data-directory export (isolation roots, attachments); and a clone-per-worker or container backend, the only thing that closes both the host-authority gap and the shared common-`.git` grant. ⚠️ Not on this list: GitHub/Linear/Slack intake, agent messaging, kanban, voice, cross-machine sync.
-8. **Give Antigravity a real per-worker isolation root.** It shares `~/.gemini` today; changing `HOME` must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
-9. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data; compare small and large quality-review models on the same five tasks; verify the Claude credits gauge against one real invoice; decide whether preempted runs should contribute to estimates.
-10. **Increase thread UI coverage where behaviour changes.** Most thread interactions remain hand-tested; extract pure decisions into `src/renderer/src/lib/` first.
-11. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines against a ~1,500 target; no extracted module may read a scheduler binding at module evaluation time.
-12. **Drive t423's live views in the packaged app, with a real run behind them.** Watch a dispatched Claude task narrate its tool calls into the thread peephole and the Session TUI; open **Open a real terminal** on it and confirm the fork holds the context while the run carries on; turn `liveNarration` to `streaming` and see whether the typing is worth ten times the stream lines. ⚠️ None of it is covered by `test/ui.test.mjs`, which never opens a project tab.
+5. **Pair two real machines over Tailscale (t419).** Generate a desktop code on one, pair from the other, then drive a terminal, add a worker and file a task remotely. Confirm notifications from both computers, a revoke on the host cutting the client off, and the ±1 version warning.
+6. **Post-launch, in the order the t392 debate ranked them:** a first-class OpenCode adapter (the generic declarative adapter cannot meter, gets no MCP tools and cannot reap orphans); CI watch after `gh pr create` ([`src/daemon/landing.ts`](src/daemon/landing.ts) ~l.1391); an update-available check that keeps `publish: null`; a full data-directory export (isolation roots, attachments); and a clone-per-worker or container backend, the only thing that closes both the host-authority gap and the shared common-`.git` grant. ⚠️ Not on this list: GitHub/Linear/Slack intake, agent messaging, kanban, voice, cross-machine sync.
+7. **Give Antigravity a real per-worker isolation root.** It shares `~/.gemini` today; changing `HOME` must first be proven not to disturb the OS-keyring credential. See [`docs/adapters.md`](docs/adapters.md).
+8. **Finish the metering and calibration measurements.** Meter PTY-hosted Codex from rollout data; compare small and large quality-review models on the same five tasks; verify the Claude credits gauge against one real invoice; decide whether preempted runs should contribute to estimates.
+9. **Increase thread UI coverage where behaviour changes.** Most thread interactions remain hand-tested; extract pure decisions into `src/renderer/src/lib/` first.
+10. **Continue the scheduler split only when touching it.** `scheduler.ts` remains about 3,780 lines against a ~1,500 target; no extracted module may read a scheduler binding at module evaluation time.
+11. **Drive t423's live views in the packaged app, with a real run behind them.** Watch a dispatched Claude task narrate its tool calls into the thread peephole and the Session TUI; open **Open a real terminal** on it and confirm the fork holds the context while the run carries on; turn `liveNarration` to `streaming` and see whether the typing is worth ten times the stream lines. ⚠️ None of it is covered by `test/ui.test.mjs`, which never opens a project tab.
 
 ## Open questions and quiet-worker measurements
 
