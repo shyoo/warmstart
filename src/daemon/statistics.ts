@@ -56,7 +56,7 @@ function limitFor(window: StatisticsWindow): number | null {
   return window === 'all' ? null : SAMPLE_LIMIT
 }
 
-/** The absent rung of a key, written the same way `pace.ts` writes it. */
+/** The absent level of a key, written the same way `pace.ts` writes it. */
 const NO_MODEL = '?'
 
 /**
@@ -99,7 +99,7 @@ export function percentile(sorted: number[], p: number): number | null {
   return low + (high - low) * (rank - lower)
 }
 
-/** ⚠️ Sorts a copy. The caller's array is grouped by key and is read again for other rungs. */
+/** ⚠️ Sorts a copy. The caller's array is grouped by key and is read again for other levels. */
 export function distributionOf(values: number[]): Distribution {
   if (values.length === 0) {
     return { samples: 0, average: null, p50: null, p99: null, p100: null }
@@ -312,23 +312,23 @@ export function compareModelPower(a: string, b: string): number {
 }
 
 /**
- * The three rungs every table on this page has, in order.
+ * The three levels every table on this page has, in order.
  *
- * ⛔ **An agent row is not the sum of its model rows, it is the fold of the same tasks one rung
+ * ⛔ **An agent row is not the sum of its model rows, it is the fold of the same tasks one level
  * up.** A median of medians is not a median, and a p99 of p99s is not anything at all — so each
- * depth re-folds the raw samples it covers rather than combining the rung below it.
+ * depth re-folds the raw samples it covers rather than combining the level below it.
  */
 function tree<T extends Sample, R>(
   all: T[],
   agentLabel: (adapterId: string) => string,
   fold: (level: 'agent' | 'model' | 'effort', label: string, key: string, group: T[]) => R,
   /**
-   * Splits the model rung: one row per distinct value the classifier names.
+   * Splits the model level: one row per distinct value the classifier names.
    *
    * ⛔ Price only. A model whose tasks were billed two ways must not average an amortised
    * subscription share with money really billed on top — the mean of the two is a number in
-   * neither currency (t285). The agent rung above stays the fold of everything, so the totals
-   * still reconcile; the model rung below names which dollars each row is in.
+   * neither currency (t285). The agent level above stays the fold of everything, so the totals
+   * still reconcile; the model level below names which dollars each row is in.
    */
   modelSplit?: (s: T) => string | null
 ): R[] {
@@ -375,7 +375,7 @@ function tree<T extends Sample, R>(
 
         const byEffort = new Map<string, T[]>()
         for (const s of splitGroup) {
-          // ⛔ A task whose effort was never recorded gets no effort row at all. A `?` rung under a
+          // ⛔ A task whose effort was never recorded gets no effort row at all. A `?` level under a
           //    model is a bucket nobody can act on, and it would sit in the table looking like a
           //    setting somebody chose.
           if (!s.effort) continue
@@ -417,7 +417,7 @@ function priceStats(all: Sample[], label: (id: string) => string): PriceStats {
     }
   },
   // ⛔ A task is billed exactly one way: subscription-only, billed on top, or both. Splitting the
-  //    model rung on it is what keeps an account crossing into overage mid-month from averaging
+  //    model level on it is what keeps an account crossing into overage mid-month from averaging
   //    the two layers into one row. A task nobody could price lands in `unknown`, whose row the
   //    samples filter below drops — the fleet-wide `unpriced` count is where that fact belongs.
   (s) =>
@@ -426,7 +426,7 @@ function priceStats(all: Sample[], label: (id: string) => string): PriceStats {
       : basisOf([{ subscription: s.subscriptionUsd, overage: s.overageUsd }])
   )
   return {
-    // ⛔ A rung nobody could price at all is dropped rather than rendered as a row of `n/a`. The
+    // ⛔ A level nobody could price at all is dropped rather than rendered as a row of `n/a`. The
     //    fleet-wide `unpriced` count below is where that fact belongs; a table of blanks is not.
     rows: rowsOut.filter((r) => r.distribution.samples > 0),
     tasks: all.length,
@@ -480,7 +480,7 @@ function qualityStats(all: Sample[], label: (id: string) => string): QualityStat
     const effort = level === 'effort' ? (group[0]?.effort ?? null) : null
 
     // ⛔ Scored from the reviews of *these* tasks, not from `qualityReport().keys`. The report
-    //    buckets every review the fleet has ever taken; this table's rungs are the tasks in its
+    //    buckets every review the fleet has ever taken; this table's levels are the tasks in its
     //    sample window, and the two are only the same thing on a fleet that has never pruned.
     const ids = new Set(group.map((s) => s.taskId))
     const mine = clean.filter((r) => ids.has(r.taskId))
@@ -493,7 +493,7 @@ function qualityStats(all: Sample[], label: (id: string) => string): QualityStat
 
     // ⛔ **A prior and a fitness are properties of a model, and only of a model.** A benchmark is
     //    published per model, so there is no such thing as one for `claude-code` in general or for
-    //    `high` in particular. Both rungs above and below get `null`, which the table draws as a
+    //    `high` in particular. Both levels above and below get `null`, which the table draws as a
     //    dash rather than as `unknown` — *nobody has measured this* and *this quantity does not
     //    exist at this depth* are different sentences and must not share a cell.
     const modelLevel = level === 'model'

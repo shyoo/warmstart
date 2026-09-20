@@ -12,7 +12,7 @@ import {
   resolveWorkspaceMode,
   trunkPolicyConflict,
 } from '@shared/tasks.js'
-import { landingRungFor as sharedLandingRungFor, resolveFinishPolicy as sharedResolveFinishPolicy } from '@shared/policy.js'
+import { landingLevelFor as sharedLandingLevelFor, resolveFinishPolicy as sharedResolveFinishPolicy } from '@shared/policy.js'
 import { db, rows } from './db.js'
 import { log } from './log.js'
 import { landingTargetFor, listProjects, policyFor } from './projects.js'
@@ -33,18 +33,18 @@ export function resolveFinishPolicy(task: Task | null, project: Project | null):
 }
 
 /**
- * The rung a landing will really run for this task, with the fleet setting bound.
+ * The level a landing will really run for this task, with the fleet setting bound.
  *
  * ⛔ **Ask this, not `resolveFinishPolicy`, wherever the answer decides a ref, a check list or a
- * landing strategy.** See `landingRungFor` in `shared/policy.ts` for the conversation case that
+ * landing strategy.** See `landingLevelFor` in `shared/policy.ts` for the conversation case that
  * makes the two answers differ, and for t578, the landing loop it caused.
  */
-export function landingRung(
+export function landingLevel(
   task: Task | null,
   project: Project | null,
   explicit?: FinishPolicy
 ): FinishPolicy {
-  return sharedLandingRungFor(task, project, settings().finishPolicy, explicit)
+  return sharedLandingLevelFor(task, project, settings().finishPolicy, explicit)
 }
 
 // ---------------------------------------------------------------------------- the decision
@@ -146,12 +146,12 @@ export interface FinishInputs {
    */
   merge?: MergeReading | null
   /**
-   * The rung to judge against, when the caller has one the three tiers do not answer with.
+   * The level to judge against, when the caller has one the three tiers do not answer with.
    *
    * ⛔ **The one caller is a conversation landing**, and without it this function is unusable
    * there: a `conversation` on `inherit` resolves to `await-human` *from its kind*, which is the
    * whole point of the kind, so `decideFinish` would refuse to land a conversation on principle
-   * every time. The override says which rung is being asked about; it does not widen anything
+   * every time. The override says which level is being asked about; it does not widen anything
    * — `mandateAllows('land')`, the checks, the clean tree and the rescue-tip rule are all
    * still ahead of it.
    *
@@ -201,8 +201,8 @@ export function decideFinish({
   keepsWorkspace = false
 }: FinishInputs): FinishDecision {
   const resolved = resolveFinishPolicy(task, project)
-  // ⚠️ The override replaces the *rung*, never the instruction: `custom` is the only policy that
-  // carries one, it is not a rung anything lands on, and `policyLands` refuses it at the caller.
+  // ⚠️ The override replaces the *level*, never the instruction: `custom` is the only policy that
+  // carries one, it is not a level anything lands on, and `policyLands` refuses it at the caller.
   const policy = policyOverride ?? resolved.policy
   const instruction = resolved.instruction
   const loose = state.dirtyFiles.length + state.untrackedFiles.length
@@ -231,11 +231,11 @@ export function decideFinish({
   //     placement is the whole of it.** Step 3's empty-branch guard is correct and earned (t17) —
   //     an empty branch is indistinguishable from an agent that committed in the trunk — so the
   //     only safe way to exempt a task that was never going to write a commit is for the operator
-  //     to have said so *in advance*, which is what choosing this rung is. Ahead of step 1 as well,
+  //     to have said so *in advance*, which is what choosing this level is. Ahead of step 1 as well,
   //     because asking a report-only task to *commit* a stray file is asking for the opposite of
   //     what it is for.
   //
-  // ⛔ **Done means the branch is as it started**, because this rung lands nothing and so anything
+  // ⛔ **Done means the branch is as it started**, because this level lands nothing and so anything
   //     left behind can only ever become a loose end. Before 2026-09-12 a seat that committed or left
   //     files was `done` anyway, and `rescueDirt` then turned its files into a `wip:` commit on a
   //     branch nobody would land. So the agent that made the mess is asked, once, to put it back —
@@ -392,7 +392,7 @@ export function decideFinish({
     }
   }
 
-  // 4. ⛔ The two rungs that stop at the branch. Neither moves the work anywhere, so neither
+  // 4. ⛔ The two levels that stop at the branch. Neither moves the work anywhere, so neither
   //    needs `land` authority and neither can be blocked by a conflict it is not going to hit. What
   //    separates them is only whether the checks ran.
   if (policy === 'commit-only') {
@@ -401,7 +401,7 @@ export function decideFinish({
       reason: `${state.unlandedCommits} commit(s) on \`${state.branch}\`, not verified and not merged`
     }
   }
-  // ⛔ `land`, not `done`, because the checks have not run yet and this is the rung that runs them.
+  // ⛔ `land`, not `done`, because the checks have not run yet and this is the level that runs them.
   //    `verifyOnly` reports the verdict and moves nothing; saying `done` here would be claiming a
   //    verification that had not happened.
   if (policy === 'commit-and-verify') return { kind: 'land' }
@@ -430,9 +430,9 @@ export function decideFinish({
 export interface TrunkFinishInputs {
   task: Task
   project: Project
-  /** The resolved rung. */
+  /** The resolved level. */
   policy: FinishPolicy
-  /** `custom`'s instruction, when that is the rung. */
+  /** `custom`'s instruction, when that is the level. */
   instruction: string | null
   target: string
   /** What the checkout holds now. */

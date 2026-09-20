@@ -686,8 +686,8 @@ export function promptFor(
   //
   // ⚠️ A compaction answers `false` to both, which is what makes it safe to withhold anything at all.
   const holdsPrompt = resumed && !opts.compacted
-  // ⛔ A conversation carrying a real rung is not an open conversation any more, and the contract it
-  // is holding is the wrong one. ⚠️ **Neither button writes a rung now** — Commit asks, Land lands,
+  // ⛔ A conversation carrying a real level is not an open conversation any more, and the contract it
+  // is holding is the wrong one. ⚠️ **Neither button writes a level now** — Commit asks, Land lands,
   // and both leave `finish_policy` on `inherit` so the thread stays open — so the only thing that
   // reaches this today is an operator setting the task's own **finish** dropdown, which is them
   // saying the conversation is to be finished like a work task. `isOpenConversation` is still the
@@ -1079,7 +1079,7 @@ export function promptFor(
     // was denied the WMI query one test needed, could not tell a denied query from a regression it
     // had caused, and stopped to ask about a suite that passes unsandboxed on the same machine.
     //
-    // ⚠️ Only when the policy actually verifies *and* commands are declared. On any other rung, or
+    // ⚠️ Only when the policy actually verifies *and* commands are declared. On any other level, or
     // an empty list, nothing runs them afterwards and telling the agent otherwise would be a lie
     // that talks it out of the only checking anybody does.
     const checks = policyVerifies(policy) ? (project?.config?.check ?? []) : []

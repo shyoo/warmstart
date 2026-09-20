@@ -38,7 +38,7 @@ marginal median, shrunk by sample count, clamped, and always reported with its b
 
 ⛔ **The `calibration` table is empty** (0 rows). `remainingTokens()` returns null on every worker, so
 "share of this worker's own quota window" — the unit that would be most honest for subscription
-accounts — is not computable yet. It is a later rung, not this change.
+accounts — is not computable yet. It is a later level, not this change.
 
 ⚠️ Antigravity's metering has a different shape: 36 turn rows for 35 runs (one aggregate usage record
 per run, against ~21 per run for claude-code), `cache_write` always 0, `input` averaging 616k/turn.
@@ -86,7 +86,7 @@ expected(task, key) = size(task) × factor(key)
 
 Shipped 2026-08-30. Decisions taken with the operator: priced input-token-equivalents as the unit;
 estimator and gates only, **no routing change**; keyed on `(adapter, model)` with an adapter-only
-fallback rung and warmth as a separate factor; shrinkage by sample count with a wide clamp.
+fallback level and warmth as a separate factor; shrinkage by sample count with a wide clamp.
 
 Two pieces of the arithmetic changed shape once they met the real data:
 

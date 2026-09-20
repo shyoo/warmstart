@@ -289,7 +289,7 @@ function stager(ids, task) {
     }),
     say: (text) => write((db) => message(db, 'agent', text)),
     landing: () => write((db) => message(db, 'system', `Landing \`${branch}\` onto \`main\``, 'landing.started',
-      'The tool fetches the landing target, rebases this branch onto it, runs the project’s check commands where this rung asks for them, and only then merges or pushes.')),
+      'The tool fetches the landing target, rebases this branch onto it, runs the project’s check commands where this level asks for them, and only then merges or pushes.')),
     landed: () => write((db, s) => {
       const ended = Date.now()
       message(db, 'system', 'Landed as `3f9c2a1e` onto `main` and pushed to `origin/main`', 'landing.landed',

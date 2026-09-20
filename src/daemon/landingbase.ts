@@ -48,7 +48,7 @@ export function landingStrategyIdFor(
   task?: (Pick<Task, 'landingTarget'> & Partial<Pick<Task, 'workspaceMode'>>) | null
 ): LandingStrategyId {
   // ⛔ From the task's workspace, which is data: a trunk task's work is on the target already, so
-  // every rung that would move it verifies (and pushes) in place instead. The rungs that move nothing
+  // every level that would move it verifies (and pushes) in place instead. The levels that move nothing
   // keep their own strategy, and `custom` and `report-only` never reach a landing in the trunk.
   if (
     task?.workspaceMode !== undefined &&

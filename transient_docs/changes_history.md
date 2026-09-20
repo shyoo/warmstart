@@ -117,7 +117,7 @@ Three findings changed the code. All are in `docs/cost-model.md`; the short vers
 
 1. ⛔ **`claude -p /usage` is not free and does not report usage.** The slash command is taken as a
    prompt and spends a real turn. The plan inherited the opposite claim from prior art. There is now
-   no free live quota probe, so `quota.ts` reports a **rung** and an **age**, and stale readings
+   no free live quota probe, so `quota.ts` reports a **level** and an **age**, and stale readings
    render as *unknown*. Closing this properly is M3 work (see below).
 2. **`claude auth status --json` is free, local and exits 1 while still printing valid JSON.** It is
    what commissioning and Doctor verify with.
@@ -811,7 +811,7 @@ weaker one.
 
 Three operator reports, one session.
 
-**The background probe would not stop.** Rung 0 is free in tokens and **not** free in processes: it
+**The background probe would not stop.** Level 0 is free in tokens and **not** free in processes: it
 opens a real interactive session and types `/usage` into it. On an account whose subscription had
 expired, that meant spawning a CLI every thirty minutes to watch it fail to authenticate, recording
 `unknown`, and doing it again. The sweep now skips any `suspect` worker — effectively the same
@@ -2119,13 +2119,13 @@ Driven over stdio it answers in **~600–700ms**, no turn, no token.
 
 ⛔ **And it is live, not cached**, which is the whole reason it outranks the rollout: two readings
 minutes apart returned `resetsAt` values **1311s apart**. A cache cannot do that. So `probeQuota`
-became two rungs — app-server first, rollout when it cannot be reached — reporting **different
+became two levels — app-server first, rollout when it cannot be reached — reporting **different
 `source` values on purpose (`'cli'` vs `'config-cache'`)**, because `sampledAt` alone cannot say that
 one reading is current and the other is as old as the worker's last turn.
 
 ⚠️ **Two spellings, one normaliser.** The app-server answers camelCase (`usedPercent`,
 `windowDurationMins`) and the rollout snake_case (`used_percent`, `window_minutes`). Same server
-payload, two writers. `windowsFromRateLimits` reads both so no caller has to know which rung answered.
+payload, two writers. `windowsFromRateLimits` reads both so no caller has to know which level answered.
 
 ⚠️ **`usageRefresh` stays null, deliberately.** That field means *type a command into a PTY session*,
 which this is not. This is a local subprocess like `claude auth status --json`, so it belongs inside
@@ -2456,9 +2456,9 @@ cannot be separated by author and the 103 is not attributed. What is certain is 
 
 ### The ladder
 
-The replacement is five rungs on one axis - how far the work travels - each doing everything the one
+The replacement is five levels on one axis - how far the work travels - each doing everything the one
 below does plus one thing: `await-human`, `commit-only`, `commit-and-verify`, **`commit-and-merge`**
-(the new default), `commit-and-push`. `pull-request` and `custom` are deliberately *not* rungs and
+(the new default), `commit-and-push`. `pull-request` and `custom` are deliberately *not* levels and
 are documented as such: a PR is a different destination, and `custom` is an instruction to the agent
 rather than an action the daemon takes.
 
@@ -2503,7 +2503,7 @@ daemon no longer understands.
 
 ### The check list
 
-The verifying rungs are only as good as the commands a project declares, and **an empty list verifies
+The verifying levels are only as good as the commands a project declares, and **an empty list verifies
 nothing** - which is every project on its first day. Left alone, `commit-and-merge` would have merged
 unverified work and reported it verified, so the emptiness is stated in three places: the settings
 panel, the strategy's own result, and the finish decision's reason.
@@ -2606,7 +2606,7 @@ the resolved policy really is `custom`. The one-shot prompt branch — added the
 const custom = project?.config?.landing?.finishInstruction?.trim()
 ```
 
-So it fired on every rung. This repo runs `commit-and-merge`, and its config still carried an
+So it fired on every level. This repo runs `commit-and-merge`, and its config still carried an
 instruction written for the old default: *"Run /commit and follow every one of its six steps. Do not
 stop until the work is committed. Do not push."* Codex was handed a Claude Code skill it does not
 have, told to follow all six of its steps, and told not to do the sixth — which is the push. Three
@@ -3026,10 +3026,10 @@ let `resumeQuotaPaused` argue with the person who pressed it.
 
 Three settings in this app resolve **task → project → fleet**: the finish policy, session sharing and
 completion mode. `resolveFinishPolicy`, `resolveSessionSharing` and `resolveCompletionMode` have
-consulted the project rung since M2, the task pane has offered `inherit (…)` beside each of them, and
+consulted the project level since M2, the task pane has offered `inherit (…)` beside each of them, and
 Settings › Global has always been able to set the fleet's answer.
 
-The middle rung had no writer at all. The only way to make a project decide anything was to edit
+The middle level had no writer at all. The only way to make a project decide anything was to edit
 `.multi_agent_controller/project.json` by hand — a committed file, in a repository the app knows the
 path to, from a page that was already open. So the app shipped a dropdown whose most interesting
 value pointed at a tier the operator could not reach from inside it.
@@ -3257,7 +3257,7 @@ stale sample and a window whose reset has already passed are both refused, exact
 refuses them.
 
 ⚠️ **No percentage is promoted to a token count.** `remainingTokens` stays null and the reason names
-the rung. The formula in cost-model.md §5 asks whether what is left covers what saving costs, and a
+the level. The formula in cost-model.md §5 asks whether what is left covers what saving costs, and a
 percentage cannot answer that; it answers the other question, which is the one that matters here —
 this account is at the mark where the fleet has already stopped giving it work, so what it is still
 holding should be saved while there is window left to pay for saving it. R2 is still owed.
@@ -3669,7 +3669,7 @@ task's commits are in the trunk's history with **nothing identifying which ones 
 that landed before `landed_base_sha`/`landed_head_sha` existed is permanently unreviewable, and there
 is no backfill — `runs.trunk_sha_before` is read at *dispatch*, before the rebase, so it is not a
 parent of what landed and diffing from it would produce somebody else's changes. The resolution
-ladder therefore has three rungs and the third is a **refusal**: a review of the wrong commits is
+ladder therefore has three levels and the third is a **refusal**: a review of the wrong commits is
 worse than no review, because it produces a number indistinguishable from a real one.
 
 ⛔ **`runs.kind` was the riskiest part, and it was risky by breadth rather than depth.** 25 `from runs`
@@ -3704,7 +3704,7 @@ Every cost figure in §9.1 of the plan is an estimate, and whether a small model
 seven-dimension rubric and produce non-clustered scores is unmeasured (R17). The experiment is one
 field on every record: review the same five tasks on the small and the large model of one provider
 and compare the spread. If the small model clusters everything at 7–8 it is not a judge and
-`REVIEW_MODELS` moves up a rung.
+`REVIEW_MODELS` moves up a level.
 
 ## M6 — session narratives displaced from HANDOFF.md (archived 2026-09-09)
 
@@ -3885,10 +3885,10 @@ it had been instructed to write — *"the commit is ready to land"*; a second id
 at 15:41:52; cancel at 15:41:54. `C:\Dev\inkland_workspaces\ws3` then read `?? …_backup_2026-09-20/`,
 `?? …/1080p_backup_2026-09-20/`, one commit ahead of `origin/main`.
 
-1. **Nothing in the tool carried the rung.** `muse-code` declares `mcp: false` — deliberately, since
+1. **Nothing in the tool carried the level.** `muse-code` declares `mcp: false` — deliberately, since
    muse reads `mcpServers` out of the isolation root and a per-session identity token has nowhere to
    live — so `commitConversationInstruction` took its `canLand: false` branch, whose whole plan was
-   the sentence *"the person will press **Land**"*. The rung the operator chose reached nobody.
+   the sentence *"the person will press **Land**"*. The level the operator chose reached nobody.
 2. **There was no Land button to press.** `unlandedNow` was `!hasDiff && unlandedCommits > 0`. The
    operator had asked for backups of the renders being replaced; the agent made them and rightly kept
    those binaries out of the commit. `hasDiff` was therefore true for ever, so the card drew Commit
@@ -3905,12 +3905,12 @@ modification refuses — *"cannot rebase: You have unstaged changes"*. So the tw
 **What changed.** `LandingContext.keepsWorkspace` / `FinishInputs.keepsWorkspace` — set by
 `landConversationWork` and by nothing else, because a *finish* releases the worktree to the pool and
 there the untracked half is exactly the work the gate protects. `tasks.land_after_turn` (migration
-78) records the rung before the turn so a restart cannot drop it; `landAfterCommitTurn`, called from
+78) records the level before the turn so a restart cannot drop it; `landAfterCommitTurn`, called from
 `endConversationTurn`, re-reads the workspace and lands, stands down in silence where the agent
 already landed it through `land_work`, or says once why it could not. `endUnfinishedRun` forgets the
 promise, so a failed or cancelled turn never lands on the far side of an unrelated reply. The
 MCP-less instruction now says what happens instead of naming a button. `settleControls` in
-`lib/finishrung.ts` draws Commit and Land independently, and Commit refuses a press that would
+`lib/finishlevel.ts` draws Commit and Land independently, and Commit refuses a press that would
 re-ask for a commit that already exists.
 
 **Not flown on a real run.** The evidence above is a live database, two git probes and 21 L1 checks

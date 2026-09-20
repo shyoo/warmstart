@@ -1,7 +1,7 @@
 import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { FinishPolicy, Project, ResourceClaim, Task, WorkspaceMode } from '@shared/tasks.js'
-import { landingRungFor } from '@shared/policy.js'
+import { landingLevelFor } from '@shared/policy.js'
 import { landingBaseFor } from './landingbase.js'
 import { landingTargetFor, policyFor } from './projects.js'
 import { settings } from './settings.js'
@@ -110,14 +110,14 @@ export async function trunkBaseRef(
  * the planner branch in `task.landingTarget`; ordinary work resolves to the project's trunk.
  */
 export async function baseRef(project: Project, task?: Task | null): Promise<string> {
-  // ⛔ **`landingRungFor`, not `resolveFinishPolicy`** — the rung the landing will *run*. An open
+  // ⛔ **`landingLevelFor`, not `resolveFinishPolicy`** — the level the landing will *run*. An open
   // conversation answers `await-human` from its kind, which maps to `leave-branch`, whose base is
   // `origin/<target>`; its Land press rebases onto the local target. ⭐ Measured on t578 (inkland),
   // 2026-09-20: local `main` stood 9 commits ahead of `origin/main` under `commit-and-merge`, so
   // every conversation branch was cut nine commits behind where it had to land, and the rebase at
   // the end had to replay work the conversation had itself already landed. The same two-definitions
   // failure this function's own ⭐ note records from 2026-09-04, through a door built later.
-  const policy = landingRungFor(task ?? null, project, settings().finishPolicy)
+  const policy = landingLevelFor(task ?? null, project, settings().finishPolicy)
   return trunkBaseRef(project, policy, task)
 }
 

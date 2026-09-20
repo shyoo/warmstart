@@ -332,7 +332,7 @@ describe('the compaction the full window never asked for', () => {
     const state = reserve.reserveState(workerId)
     expect(state.verdict).toBe('at_risk')
     expect(state.reason).toContain('92%')
-    // Still honest about the rung: no token count was invented to get here.
+    // Still honest about the level: no token count was invented to get here.
     expect(state.remainingTokens).toBeNull()
   })
 

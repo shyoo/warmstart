@@ -1632,7 +1632,7 @@ export function setTaskBranch(taskId: string, branch: string, unit: number): Tas
  * Record — or clear — the landing a **Commit** press owes this conversation once its turn ends.
  *
  * ⛔ **A promise, not a decision.** Nothing here reads the workspace or judges anything; it writes
- * down which rung the operator asked for so the far side of the wait can re-read the tree and act.
+ * down which level the operator asked for so the far side of the wait can re-read the tree and act.
  * See `Task.landAfterTurn` and `landAfterCommitTurn`.
  *
  * ⚠️ `updated_at` moves with it, because the thread card re-reads `pendingWork` off that column —

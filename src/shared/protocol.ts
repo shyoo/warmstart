@@ -224,7 +224,7 @@ export interface Settings {
 export interface CostFactorReport {
   keys: Array<{
     adapterId: string
-    /** Null is the adapter-wide rung: that agent's runs whose model was never recorded. */
+    /** Null is the adapter-wide level: that agent's runs whose model was never recorded. */
     model: string | null
     samples: number
     medianPriced: number
@@ -234,11 +234,11 @@ export interface CostFactorReport {
     factor: number
     assumed: boolean
     /**
-     * The median run on this rung in **dollars** rather than priced tokens.
+     * The median run on this level in **dollars** rather than priced tokens.
      *
      * ⛔ Carried beside `medianPriced` rather than replacing it: money is now the primary
      * indicator, but the two are measured from different things (§5) and neither is derived from
-     * the other. `null` where no run on this rung could be priced at all.
+     * the other. `null` where no run on this level could be priced at all.
      */
     medianUsd: number | null
     /** ⚠️ How many of `samples` yielded a price. Always ≤ `samples`, and often far fewer. */
@@ -247,8 +247,8 @@ export interface CostFactorReport {
      * Which series `ratio` was actually measured in.
      *
      * ⛔ Carried because a ×12 learned from dollars and a ×12 learned from priced tokens are
-     * different claims about the same rung, and the number alone cannot tell them apart. Every
-     * belief carries its basis (AGENTS.md), and for this rung the basis is *which unit*.
+     * different claims about the same level, and the number alone cannot tell them apart. Every
+     * belief carries its basis (AGENTS.md), and for this level the basis is *which unit*.
      */
     learnedFrom: 'usd' | 'priced_tokens'
   }>
@@ -1247,7 +1247,7 @@ export interface AdapterCapabilities {
    *    Code emits one per `{"type":"assistant"}` record; Codex one per `item.completed`. Its
    *    linebreaks are the agent's own, and the next event is a *different* message.
    *  - `delta`   — the event carries however many tokens happened to arrive together. Muse's
-   *    `run.output.delta`, Antigravity's `text_delta`, the local-LLM bridge's ~60-character rungs.
+   *    `run.output.delta`, Antigravity's `text_delta`, the local-LLM bridge's ~60-character chunks.
    *    Consecutive events spell one sentence, and the boundary between two of them is usually
    *    mid-word.
    *
@@ -2158,9 +2158,9 @@ export interface RpcMap {
    */
   'task.commitFile': { params: { id: string; sha: string; path: string }; result: TaskDiffFile }
   /**
-   * Ask this conversation's agent to commit, on the rung the operator picked.
+   * Ask this conversation's agent to commit, on the level the operator picked.
    *
-   * ⛔ **The rung is a parameter rather than a separate `setFinishPolicy` call**, because the two
+   * ⛔ **The level is a parameter rather than a separate `setFinishPolicy` call**, because the two
    * writes have to be one decision: the policy is what the landing will read *and* what switches the
    * next turn out of the conversation contract. Split across two round trips there is a window in
    * which the task has a landing policy and still the conversation prompt, and a turn dispatched in
@@ -2171,13 +2171,13 @@ export interface RpcMap {
     result: { ok: boolean; reason?: string }
   }
   /**
-   * Land this conversation's branch on the rung the operator picked, with no turn spent.
+   * Land this conversation's branch on the level the operator picked, with no turn spent.
    *
    * ⛔ **Separate from `task.commitConversation` because it is a different action**, not the same one
    * in a different state: nothing is asked of an agent and nothing is dispatched — the branch is
    * already committed, and the tool does the rebase, the checks and the merge itself. The card draws
    * whichever of the two the workspace actually calls for, so a person is never offered one button
-   * that means two things. ⚠️ Only rungs the tool acts on are valid (`policyLands`).
+   * that means two things. ⚠️ Only levels the tool acts on are valid (`policyLands`).
    */
   'task.landConversation': {
     params: { id: string; finishPolicy: FinishPolicy }
@@ -2859,12 +2859,12 @@ export interface RpcMap {
    * here would have its branch merged while the finish path was still waiting for `task_complete`,
    * and would then be judged against a branch that no longer exists.
    *
-   * ⚠️ `rung` is limited by the tool to the three that land (`policyLands`); absent, the landing
-   * takes the project's own rung with the conversation-kind override skipped. It is never persisted
+   * ⚠️ `level` is limited by the tool to the three that land (`policyLands`); absent, the landing
+   * takes the project's own level with the conversation-kind override skipped. It is never persisted
    * onto the task — it says what this landing does, not what this task's finish policy is.
    */
   'agent.land': {
-    params: { sessionId: string; summary?: string; rung?: FinishPolicy }
+    params: { sessionId: string; summary?: string; finishPolicy?: FinishPolicy }
     result: {
       ok: boolean
       /** The refusal, verbatim. The agent is shown exactly this and nothing is moved. */

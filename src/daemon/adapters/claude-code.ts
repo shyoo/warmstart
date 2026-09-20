@@ -593,7 +593,7 @@ function decodeStream(
     return { kind: 'thinking', tokens, start: tokens > 0 && tokens === delta }
   }
 
-  // The partial-output rung. ⛔ Only the two deltas that say something a whole record does not:
+  // The partial-output chunk. ⛔ Only the two deltas that say something a whole record does not:
   // prose as it is typed, and a thinking estimate that ticks while it is still thinking. Every
   // other `stream_event` is the framing of a record that arrives whole a moment later.
   if (type === 'stream_event') {

@@ -870,15 +870,15 @@ describe('run prompt persistence and task.get preview', () => {
   /**
    * The ref a **conversation's** recovery prompt names, which was a different answer again.
    *
-   * ⛔ **A conversation answers `await-human` from its kind, and no landing ever runs that rung.**
-   * `landConversationWork` hands `decideFinish` the project's own rung instead, so pressing **Land**
+   * ⛔ **A conversation answers `await-human` from its kind, and no landing ever runs that level.**
+   * `landConversationWork` hands `decideFinish` the project's own level instead, so pressing **Land**
    * on a `commit-and-merge` project rebases onto the local target — while this prompt, asking
    * `resolveFinishPolicy`, got `await-human`, whose strategy is `leave-branch`, whose base is
    * `origin/<target>`.
    *
    * ⭐ Measured on t578 (inkland), 2026-09-20, from the daemon's own log and store: the project
    * finishes `commit-and-merge` and local `main` stood **9 commits ahead of `origin/main`** because
-   * that rung merges locally and never pushes. `Landing failed: rebase onto main conflicted` at
+   * that level merges locally and never pushes. `Landing failed: rebase onto main conflicted` at
    * 20:01:54; the instruction that followed said *"does not rebase cleanly onto `origin/main`"*; the
    * agent rebased onto `origin/main`, reported it clean at 20:10:52, and the next press failed at
    * 20:11:12 on the identical commit. There is no state in which that loop converges, which is what
@@ -1222,7 +1222,7 @@ describe('a resumed run into the session that already has the framing', () => {
 
   /**
    * ⛔ **A run with nothing outstanding is not a follow-up.** It is the finish ask — the Commit
-   * button re-entering the ordinary contract with the rung the operator picked — and the contract is
+   * button re-entering the ordinary contract with the level the operator picked — and the contract is
    * the entire content of that turn. Withholding it would send a prompt that asks for nothing.
    */
   it('keeps the contract on a resumed run that carries no new message', () => {

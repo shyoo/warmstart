@@ -115,7 +115,7 @@ export type RangeResolution =
  *
  * The ladder, in order:
  *  1. The commits recorded in `task_commits`, when they still resolve and are reachable from the
- *     target. ⭐ **The only rung that is exact for a task that landed more than once** — it names
+ *     target. ⭐ **The only level that is exact for a task that landed more than once** — it names
  *     the commits instead of bracketing them, so the five foreign commits between t124's two
  *     landings are not graded as t124's work.
  *  2. `landedBaseSha`/`landedHeadSha`, when both still resolve in the trunk. After a fast-forward
@@ -123,9 +123,9 @@ export type RangeResolution =
  *  3. The task's branch, when it still exists: `merge-base(target, branch)..branch`.
  *  4. None of those → refuse, in one sentence that says why.
  *
- * ⛔ **Rung 4 refuses rather than guesses, and that has not changed.** What changed is how much
+ * ⛔ **Level 4 refuses rather than guesses, and that has not changed.** What changed is how much
  * reaches it: `salvageLandedCommits` reads *"Landed as `<sha>` onto `<target>`"* back off each
- * task's own thread, so a task that landed before migration 39 existed now answers on rung 1. A
+ * task's own thread, so a task that landed before migration 39 existed now answers on level 1. A
  * review of the wrong commits is still worse than no review, because it produces a number that
  * looks exactly like a real one and is indistinguishable from one later.
  */
@@ -152,7 +152,7 @@ export async function resolveRange(
   const cwd = project.root
   const trunkSha = await resolves(cwd, target)
 
-  // ---- rung 1: the recorded commits, which are exact even when no single range is.
+  // ---- level 1: the recorded commits, which are exact even when no single range is.
   const recorded = task.id ? taskCommits(task.id).map((c) => c.sha) : []
   if (recorded.length > 0) {
     const projectTrunk = target === projectTarget ? trunkSha : await resolves(cwd, projectTarget)
@@ -191,7 +191,7 @@ export async function resolveRange(
     }
   }
 
-  // ---- rung 2: the recorded range.
+  // ---- level 2: the recorded range.
   if (task.landedBaseSha && task.landedHeadSha) {
     const base = await resolves(cwd, task.landedBaseSha)
     const head = await resolves(cwd, task.landedHeadSha)
@@ -209,7 +209,7 @@ export async function resolveRange(
     }
   }
   if (!trunkSha) return { ok: false, reason: `the landing target '${target}' does not resolve` }
-  // ---- rung 3: the branch, when it is still there.
+  // ---- level 3: the branch, when it is still there.
   if (task.branch) {
     const branch = await resolves(cwd, task.branch)
     if (branch) {

@@ -384,15 +384,15 @@ describe('a refusal moves nothing', () => {
     expect(git(root, 'rev-parse', 'main')).toBe(trunkBefore)
   })
 
-  it('⛔ refuses a rung that lands nothing by falling back, never by landing under it', async () => {
-    // ⚠️ `commit-only` is not a landing rung. Rather than refuse an explicit ask outright, the
-    // fallback is the fleet's own landing rung — what is never allowed is treating `commit-only`
+  it('⛔ refuses a level that lands nothing by falling back, never by landing under it', async () => {
+    // ⚠️ `commit-only` is not a landing level. Rather than refuse an explicit ask outright, the
+    // fallback is the fleet's own landing level — what is never allowed is treating `commit-only`
     // as though it merged.
-    const { taskId, workspace, root } = await seedConversation('rung fallback')
-    commitInWorkspace(workspace, 'rung.txt')
-    const landed = await conversationland.landConversationWork(taskId, { rung: 'commit-only' })
+    const { taskId, workspace, root } = await seedConversation('level fallback')
+    commitInWorkspace(workspace, 'level.txt')
+    const landed = await conversationland.landConversationWork(taskId, { finishPolicy: 'commit-only' })
     expect(landed.ok).toBe(true)
-    expect(git(root, 'log', '--format=%s', 'main')).toContain('the agent wrote rung.txt')
+    expect(git(root, 'log', '--format=%s', 'main')).toContain('the agent wrote level.txt')
   })
 })
 
@@ -437,11 +437,11 @@ describe('the agent.land RPC', () => {
 })
 
 /**
- * The reset a build that used to write rungs onto conversations left behind.
+ * The reset a build that used to write levels onto conversations left behind.
  *
  * ⛔ **A deliberate decision, not a tidy-up.** Before this change the Commit and Land buttons wrote
- * the chosen rung onto `finish_policy`, which is precisely what took the task out of
- * `isOpenConversation`. Landing writes no rung now, so a row still carrying one is a record of a
+ * the chosen level onto `finish_policy`, which is precisely what took the task out of
+ * `isOpenConversation`. Landing writes no level now, so a row still carrying one is a record of a
  * mechanism that no longer exists — and left alone it would hold a conversation the operator is
  * still talking in under the one-shot **work** contract, told to commit and report complete on every
  * turn. So the migration puts every `conversation` back on `inherit`.
@@ -449,7 +449,7 @@ describe('the agent.land RPC', () => {
  * ⚠️ Run by rewinding `user_version` and reopening, which is the shipped SQL rather than a copy of
  * it — and which re-runs every migration after it, so this doubles as the replay-safety check.
  */
-describe('migration 64, on a conversation an old build left carrying a rung', () => {
+describe('migration 64, on a conversation an old build left carrying a level', () => {
   it('puts it back on inherit, so the thread is an open conversation again', async () => {
     const { taskId } = await seedConversation('committed by the old build')
     db.db().prepare("update tasks set finish_policy = 'commit-and-merge' where id = ?").run(taskId)
@@ -463,7 +463,7 @@ describe('migration 64, on a conversation an old build left carrying a rung', ()
     const after = tasks.requireTask(taskId)
     expect(after.finishPolicy).toBe('inherit')
     expect(isOpenConversation(after)).toBe(true)
-    // ⚠️ And it is scoped: nothing else has ever had its rung written by a button.
+    // ⚠️ And it is scoped: nothing else has ever had its level written by a button.
     const work = tasks.createTask({ title: 'ordinary, set by hand' })
     tasks.updateTask(work.id, { finishPolicy: 'commit-and-push' })
     db.db().exec(`pragma user_version = ${db.versionBefore("where kind = 'conversation'")}`)

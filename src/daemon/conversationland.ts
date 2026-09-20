@@ -1,6 +1,6 @@
 import type { FinishPolicy } from '@shared/tasks.js'
 import { resolveWorkspaceMode } from '@shared/tasks.js'
-import { decideFinish, landingRung } from './finish.js'
+import { decideFinish, landingLevel } from './finish.js'
 import { hasRemote, landTask, landingBaseFor } from './landing.js'
 import { landingTargetFor, policyFor, reloadProjectIfPresent } from './projects.js'
 import { addMessage, getTask, runsFor, setTaskBranch } from './tasks.js'
@@ -25,12 +25,12 @@ import { errorMessage } from '@shared/errors.js'
  * Landing a conversation's work **without ending the conversation**.
  *
  * ⛔ **The whole point is what this does *not* do.** Every other route to `landTask` is a task
- * finishing: it writes a rung onto `finish_policy`, the task goes `completed`, the branch is retired
+ * finishing: it writes a level onto `finish_policy`, the task goes `completed`, the branch is retired
  * and `isOpenConversation` is false for ever. Under the old build that meant a chat could land
  * exactly once and then stopped being a chat — measured by reading `commitConversation` and
- * `landConversation`, both of which wrote the rung as their *first* action and documented why.
+ * `landConversation`, both of which wrote the level as their *first* action and documented why.
  *
- * ⛔ So this lands and leaves everything else alone: no rung is persisted, the status is not
+ * ⛔ So this lands and leaves everything else alone: no level is persisted, the status is not
  * touched, and an open run is not closed. What moves instead is the **branch**. The landing retired
  * the one the work was on, so the conversation is put on the next numbered one —
  * `warmstart/t343-…` → `warmstart/t343.2-…` → `.3` — cut from the target the landing just updated,
@@ -56,7 +56,7 @@ export interface ConversationLanding {
 }
 
 /**
- * The rung a conversation lands on, when nobody named one.
+ * The level a conversation lands on, when nobody named one.
  *
  * ⛔ **The project's own answer with the conversation-kind override skipped**, which is exactly what
  * the thread shows as `inheritedFinish` (`resolveFinishPolicy(null, project)` — a null task cannot
@@ -68,29 +68,29 @@ export interface ConversationLanding {
  * something about *finishing*, not about a landing a person has just asked for out loud. The fleet
  * default is the honest floor for an explicit request.
  */
-function rungFor(
-  task: Parameters<typeof landingRung>[0],
-  project: Parameters<typeof landingRung>[1],
+function levelFor(
+  task: Parameters<typeof landingLevel>[0],
+  project: Parameters<typeof landingLevel>[1],
   explicit: FinishPolicy | undefined
 ): FinishPolicy {
   // ⛔ Delegated, not reimplemented. This rule used to live only here, so every other reader of
   // the policy — `baseRef`, `resolveConflictOnTask`, the pre-flight mergeability check — asked
-  // `resolveFinishPolicy` instead and got `await-human`, a rung that lands nothing and whose base is
-  // the remote. One answer, in `landingRungFor`; see t578 for what two of them cost.
-  return landingRung(task, project, explicit)
+  // `resolveFinishPolicy` instead and got `await-human`, a level that lands nothing and whose base is
+  // the remote. One answer, in `landingLevelFor`; see t578 for what two of them cost.
+  return landingLevel(task, project, explicit)
 }
 
 /**
  * Land what this conversation has committed, and give it the next branch to carry on in.
  *
  * ⛔ **The same bar as a first completion, not a shortcut past it.** `decideFinish` is asked with
- * the chosen rung, against a workspace read at this moment and a project re-read from disk — the
+ * the chosen level, against a workspace read at this moment and a project re-read from disk — the
  * mandate, the clean tree, real commits and the project's declared checks all have to hold, and a
  * refusal returns the reason and moves nothing.
  */
 export async function landConversationWork(
   taskId: string,
-  opts: { sessionId?: string; rung?: FinishPolicy } = {}
+  opts: { sessionId?: string; finishPolicy?: FinishPolicy } = {}
 ): Promise<ConversationLanding> {
   const task = getTask(taskId)
   if (!task) return { ok: false, reason: 'no such task' }
@@ -115,19 +115,19 @@ export async function landConversationWork(
   // ⛔ **A conversation in the trunk has no branch to land and none to cut next.** Everything below
   // retires a branch and then `switch -c`s the next numbered one in the tree the conversation sits in
   // — which, for this task, is the operator's checkout. Its commits are already on the target, so
-  // "landing" it is the trunk strategy: verify in place, push if the rung pushes.
+  // "landing" it is the trunk strategy: verify in place, push if the level pushes.
   if (resolveWorkspaceMode(task, project).mode === 'trunk') {
-    const rung = rungFor(task, project, opts.rung)
+    const level = levelFor(task, project, opts.finishPolicy)
     const target = landingTargetFor(task, project)
-    if (rung !== 'commit-and-verify' && rung !== 'commit-and-merge' && rung !== 'commit-and-push') {
-      return { ok: false, reason: `this conversation works in the trunk, where ${rung} has nothing to do` }
+    if (level !== 'commit-and-verify' && level !== 'commit-and-merge' && level !== 'commit-and-push') {
+      return { ok: false, reason: `this conversation works in the trunk, where ${level} has nothing to do` }
     }
     const state = await workspaceState(project.root, target)
     if (state.branch !== target) {
       return { ok: false, reason: `the trunk is not on \`${target}\`, so there is nothing of this conversation's to verify there` }
     }
     const trunkBase = runsFor(task.id).filter((r) => r.kind === 'work').at(0)?.trunkShaBefore ?? null
-    const result = await landTask({ project, task, workspacePath: project.root, branch: target, policy: rung, quiet: true, trunkBase })
+    const result = await landTask({ project, task, workspacePath: project.root, branch: target, policy: level, quiet: true, trunkBase })
     if (!result.ok || !result.commit) return { ok: false, reason: result.reason ?? 'the landing did not complete' }
     addMessage(task.id, 'system', result.message?.headline ?? `Landed as \`${result.commit.slice(0, 8)}\` onto \`${target}\``, null, [], {
       event: 'landing.landed',
@@ -139,7 +139,7 @@ export async function landConversationWork(
   const branch = task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
 
-  const rung = rungFor(task, project, opts.rung)
+  const level = levelFor(task, project, opts.finishPolicy)
 
   // ⛔ **The workspace the conversation is already holding, found the way `pendingWorkFor` finds
   // it**, in all three places a holder can be: the session (a live turn), the task (a conversation
@@ -153,7 +153,7 @@ export async function landConversationWork(
   const found = held
     ? await workspaceState(held.path, target)
     : await workspaceOnBranch(project, branch, target)
-  if (found) return landIn(task, project, found, branch, rung, target, session)
+  if (found) return landIn(task, project, found, branch, level, target, session)
 
   // ⛔ **The fourth place, and the one t481 needed: nowhere.** A conversation on an adapter whose
   // turn ends its process has its tree parked when the process exits — measured on ws1's reflog,
@@ -174,7 +174,7 @@ export async function landConversationWork(
   try {
     const prepared = await prepareWorkspace(project, borrowed, branch, task)
     if (!prepared.ok) return { ok: false, reason: prepared.error ?? 'could not prepare a workspace to land from' }
-    return await landIn(task, project, await workspaceState(borrowed.path, target), branch, rung, target, null)
+    return await landIn(task, project, await workspaceState(borrowed.path, target), branch, level, target, null)
   } finally {
     await parkWorkspace(project, borrowed.path)
     releaseWorkspace(borrowed.claimId)
@@ -187,7 +187,7 @@ async function landIn(
   project: NonNullable<ReturnType<typeof reloadProjectIfPresent>>,
   state: Awaited<ReturnType<typeof workspaceState>>,
   branch: string,
-  rung: FinishPolicy,
+  level: FinishPolicy,
   target: string,
   session: { id: string } | null
 ): Promise<ConversationLanding> {
@@ -196,7 +196,7 @@ async function landIn(
     project,
     state,
     hasChecks: policyFor(project).check.length > 0,
-    policy: rung,
+    policy: level,
     // ⛔ **The conversation keeps this tree**, so an untracked file in it is not work this landing
     // walks away from — it is work that stays exactly where it is while the committed half moves.
     // See `FinishInputs.keepsWorkspace`: tracked changes still refuse, because a rebase refuses
@@ -216,7 +216,7 @@ async function landIn(
     task,
     workspacePath: state.path,
     branch,
-    policy: rung,
+    policy: level,
     // ⛔ The conversation is not finishing, so nothing may rest it at `awaiting_human` or post a
     // headline of its own. See `LandingContext.quiet`.
     quiet: true,
@@ -233,7 +233,7 @@ async function landIn(
   // thing the agent commits is on top of what just landed.
   const nextUnit = task.branchUnit + 1
   const nextBranch = branchNameFor(task.seq, task.title, nextUnit)
-  const base = landingBaseFor(project, rung, await hasRemote(project.root), task)
+  const base = landingBaseFor(project, level, await hasRemote(project.root), task)
   try {
     await git(state.path, ['switch', '-c', nextBranch, base])
   } catch (err) {
@@ -267,7 +267,7 @@ async function landIn(
     }
   )
   log.info(
-    `t${task.seq}: landed ${result.commit.slice(0, 8)} onto ${target} as ${rung}; ` +
+    `t${task.seq}: landed ${result.commit.slice(0, 8)} onto ${target} as ${level}; ` +
       `the conversation continues on ${nextBranch}`
   )
   return { ok: true, landedSha: result.commit, target, nextBranch }

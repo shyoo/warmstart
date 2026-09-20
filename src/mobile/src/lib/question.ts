@@ -9,11 +9,11 @@ import {
 import { canRelandTask, isQuotaGated, resolveRetryCauses } from '@renderer/lib/taskview'
 import {
   COMMIT_FALLBACK,
-  commitRungsForMode,
-  defaultRung,
+  commitLevelsForMode,
+  defaultLevel,
   effectiveWorkspaceMode,
   settleControls
-} from '@renderer/lib/finishrung'
+} from '@renderer/lib/finishlevel'
 
 /**
  * The rules behind the phone's answer card and its decision row, kept out of the components so
@@ -88,16 +88,16 @@ export function decisionsFor(task: Task, now = Date.now(), pending?: PendingWork
 }
 
 /**
- * The rung the phone's Commit press sends: the same default the desktop menu opens on — the
- * task's own rung, else the project's, else the quiet `commit-only` fallback — restricted to the
- * rungs Commit can offer in this task's workspace mode. Same functions, so the two menus cannot
+ * The level the phone's Commit press sends: the same default the desktop menu opens on — the
+ * task's own level, else the project's, else the quiet `commit-only` fallback — restricted to the
+ * levels Commit can offer in this task's workspace mode. Same functions, so the two menus cannot
  * disagree about what "commit" means.
  */
-export function commitRungFor(
+export function commitLevelFor(
   task: Pick<Task, 'finishPolicy' | 'workspaceMode'>,
   inheritedFinish: { policy: FinishPolicy } | null | undefined,
   inheritedMode: WorkspaceMode | undefined
 ): FinishPolicy {
   const mode = effectiveWorkspaceMode(task.workspaceMode, inheritedMode ?? 'worktree')
-  return defaultRung(task.finishPolicy, inheritedFinish?.policy, commitRungsForMode(mode), COMMIT_FALLBACK)
+  return defaultLevel(task.finishPolicy, inheritedFinish?.policy, commitLevelsForMode(mode), COMMIT_FALLBACK)
 }

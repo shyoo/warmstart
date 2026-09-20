@@ -89,9 +89,9 @@ export function tieredChoice(
 /**
  * What happens to this task's work when it is done.
  *
- * ⛔ On the trunk the ladder loses the two rungs that need a branch: `commit-and-merge`, whose
+ * ⛔ On the trunk the ladder loses the two levels that need a branch: `commit-and-merge`, whose
  * merge cannot happen there, and `pull-request`, which the daemon refuses outright (t583). The
- * rung the task already carries stays offered even so — a control that hid its own state would
+ * level the task already carries stays offered even so — a control that hid its own state would
  * be lying about what the next finish will do, and moving off it is one press away.
  */
 export function finishChoice(
@@ -157,7 +157,7 @@ export function compactionChoice(task: Task, inherited: ResolvedAutoCompact | un
   )
 }
 
-/** The queue order. ⚠️ Four fixed rungs and no `inherit`: every task has a priority of its own. */
+/** The queue order. ⚠️ Four fixed levels and no `inherit`: every task has a priority of its own. */
 export function priorityChoice(task: Task): SettingChoice {
   return {
     value: task.priority,

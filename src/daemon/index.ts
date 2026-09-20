@@ -314,7 +314,7 @@ async function main(): Promise<void> {
   // a look thirty seconds after any parked task's window is due back. `probeDemand` is passed in
   // rather than imported by `quota.ts` so the module that decides *when to look* stays out of the
   // module that decides *what to run*.
-  // ⛔ No listener. `quota.changed` is emitted where a reading is *stored*, so every rung — the
+  // ⛔ No listener. `quota.changed` is emitted where a reading is *stored*, so every level — the
   // sweep, the dispatch gate, the end of a run, the Probe button — reaches the strip by the same
   // route. Wiring the sweep's own callback to `emit` here is what made the other three silent.
   const poller = new QuotaPoller({ demand: probeDemand })

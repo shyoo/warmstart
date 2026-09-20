@@ -351,8 +351,8 @@ export function PillOptions({
 }): React.JSX.Element {
   const listRef = useRef<HTMLDivElement>(null)
 
-  // ⚠️ Focus lands on the current answer, not the first row: an eight-rung ladder opened with the
-  // top rung focused makes the arrow keys walk away from where you already are.
+  // ⚠️ Focus lands on the current answer, not the first row: an eight-level ladder opened with the
+  // top level focused makes the arrow keys walk away from where you already are.
   useEffect(() => {
     const list = listRef.current
     if (!list) return

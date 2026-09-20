@@ -72,9 +72,9 @@ export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
         recent: recentClockEvents(30) as CostReport['recent'],
         medianHumanLatencyMs: medianHumanLatencyMs(),
         // ⚠️ Published whole, `learnedFrom` and all. The money fields are measured now, and
-        // `null` still means "nothing on this rung could be priced" rather than $0.00. `usdSamples`
-        // is its own count on every rung: a key's priced runs are a subset of its runs, so it is
-        // routinely far below `samples`. ⛔ Never re-mapped field by field on the way out — a rung
+        // `null` still means "nothing on this level could be priced" rather than $0.00. `usdSamples`
+        // is its own count on every level: a key's priced runs are a subset of its runs, so it is
+        // routinely far below `samples`. ⛔ Never re-mapped field by field on the way out — a level
         // that gains a basis the estimator publishes would silently lose it here.
         costFactors: costFactors(),
         // ⚠️ One entry per worker that has ever been probed, and none for the rest — an account

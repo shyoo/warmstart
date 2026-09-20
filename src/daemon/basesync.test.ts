@@ -108,7 +108,7 @@ describe('a trunk whose remote has been left behind', () => {
   })
 
   /**
-   * ⛔ **A conversation was cut from the remote, whatever its project's rung said.**
+   * ⛔ **A conversation was cut from the remote, whatever its project's level said.**
    * `baseRef` asked `resolveFinishPolicy`, and an open conversation answers `await-human` from its
    * kind — which maps to `leave-branch`, whose base is `origin/<target>`. So the one kind of task
    * that lands over and over, on the same branch, all day, was the one kind always cut behind.

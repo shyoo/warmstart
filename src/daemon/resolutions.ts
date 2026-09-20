@@ -2,7 +2,7 @@ import type { FinishPolicy, PendingWork, ResolveRetryCause } from '@shared/tasks
 import { FINISH_LABELS, isOpenConversation, policyLands, policyVerifies, resolveRetryCauses, resolveWorkspaceMode } from '@shared/tasks.js'
 import type { Project, Task } from '@shared/tasks.js'
 import { getProject, landingTargetFor, policyFor, reloadProjectIfPresent } from './projects.js'
-import { decideFinish, landingRung, resolveFinishPolicy } from './finish.js'
+import { decideFinish, landingLevel, resolveFinishPolicy } from './finish.js'
 import { landingBaseFor, hasRemote, landTask, localBaseNote, trunkNotReady, trunkOccupiedBy } from './landing.js'
 import {
   branchExists,
@@ -101,15 +101,15 @@ export async function resolveConflictOnTask(
   // The prompt is the whole of the agent's picture of where its work goes; a wrong ref here is not a
   // wrong sentence, it is work put on the wrong branch by an agent doing exactly as it was told.
   //
-  // ⛔ **And the rung a *landing* runs, not the one `resolveFinishPolicy` answers with.** An open
+  // ⛔ **And the level a *landing* runs, not the one `resolveFinishPolicy` answers with.** An open
   // conversation answers `await-human` from its kind — which maps to `leave-branch`, whose base is
   // `origin/<target>` — while the Land press that just failed rebased onto the local target. On
   // t578, 2026-09-20, that told the agent to rebase onto `origin/main` while local `main` stood 9
   // commits ahead: it did exactly that, reported the rebase clean, and the next press failed on the
-  // identical conflict. A loop with no converging state. See `landingRungFor`.
-  const rung = landingRung(task, project)
-  const base = landingBaseFor(project, rung, await hasRemote(project.root), task)
-  const checks = policyVerifies(rung) ? (project.config.check ?? []) : []
+  // identical conflict. A loop with no converging state. See `landingLevelFor`.
+  const level = landingLevel(task, project)
+  const base = landingBaseFor(project, level, await hasRemote(project.root), task)
+  const checks = policyVerifies(level) ? (project.config.check ?? []) : []
   const checkStep =
     checks.length > 0
       ? `Run every project check (${checks.map((check) => `\`${check}\``).join(', ')}) after the final commit state is ready, and fix any failure before reporting complete. `
@@ -247,15 +247,15 @@ export async function resolveTrunkMovedOnTask(
   // The prompt is the whole of the agent's picture of where its work goes; a wrong ref here is not a
   // wrong sentence, it is work put on the wrong branch by an agent doing exactly as it was told.
   //
-  // ⛔ **And the rung a *landing* runs, not the one `resolveFinishPolicy` answers with.** An open
+  // ⛔ **And the level a *landing* runs, not the one `resolveFinishPolicy` answers with.** An open
   // conversation answers `await-human` from its kind — which maps to `leave-branch`, whose base is
   // `origin/<target>` — while the Land press that just failed rebased onto the local target. On
   // t578, 2026-09-20, that told the agent to rebase onto `origin/main` while local `main` stood 9
   // commits ahead: it did exactly that, reported the rebase clean, and the next press failed on the
-  // identical conflict. A loop with no converging state. See `landingRungFor`.
-  const rung = landingRung(task, project)
-  const base = landingBaseFor(project, rung, await hasRemote(project.root), task)
-  const checks = policyVerifies(rung) ? (project.config.check ?? []) : []
+  // identical conflict. A loop with no converging state. See `landingLevelFor`.
+  const level = landingLevel(task, project)
+  const base = landingBaseFor(project, level, await hasRemote(project.root), task)
+  const checks = policyVerifies(level) ? (project.config.check ?? []) : []
   const checkStep =
     checks.length > 0
       ? `Run every project check (${checks.map((check) => `\`${check}\``).join(', ')}) after the final commit state is ready, and fix any failure before reporting complete. `
@@ -411,7 +411,7 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
 }
 
 /**
- * Ask the agent to commit this thread's work, on the rung the operator picked.
+ * Ask the agent to commit this thread's work, on the level the operator picked.
  *
  * ⛔ **It asks rather than commits, because the daemon does not author commits** — the rule
  * `decideFinish` is built on, and the reason `commit-after-verified` cannot exist. This is the
@@ -422,10 +422,10 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
  * asked an agent or landed by itself depending on state nobody can see would be two actions wearing
  * one label; the card draws Commit when there are uncommitted files and Land when there are not.
  *
- * ⛔ **And it no longer writes the rung, which is the change of 2026-09-10.** It used to, and that
+ * ⛔ **And it no longer writes the level, which is the change of 2026-09-10.** It used to, and that
  * write ended the conversation: `finish_policy` stopped being `inherit`, `isOpenConversation` went
  * false for ever, the kind stopped answering `await-human`, and the next `task_complete` completed
- * the task. A chat could be committed exactly once and then was no longer a chat. The rung is
+ * the task. A chat could be committed exactly once and then was no longer a chat. The level is
  * carried in the *instruction* instead — the agent commits and then lands with it — so the turn
  * contract never changes and only Finish or Stop ends the thread.
  *
@@ -434,7 +434,7 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
  * is ready so that the person can press **Land**. Decided from `capabilities.mcp`, never from an
  * adapter name — a missing feature is a missing capability.
  *
- * ⛔ `commit-only` is the rung that means *commit and stop there*, so it asks for no landing at all.
+ * ⛔ `commit-only` is the level that means *commit and stop there*, so it asks for no landing at all.
  */
 export async function commitConversation(
   taskId: string,
@@ -468,7 +468,7 @@ export async function commitConversation(
         (policyLands(policy)
           ? `Press **Land** to move ${pending.unlandedCommits === 1 ? 'that commit' : `those ${pending.unlandedCommits} commits`}; ` +
             'a turn spent asking for a commit that exists would change nothing.'
-          : 'There is nothing left for this rung to ask for.')
+          : 'There is nothing left for this level to ask for.')
     }
   }
 
@@ -502,9 +502,9 @@ export async function commitConversation(
  *
  * ⛔ **The half of the Commit button that did not exist** (t581, from t578 on 2026-09-20). Commit
  * writes an instruction that ends *"Do not merge or push to the landing target yourself"*, and the
- * rung the operator chose is carried in that instruction rather than onto `finish_policy`. An
+ * level the operator chose is carried in that instruction rather than onto `finish_policy`. An
  * adapter with MCP closes the loop by calling `land_work`; **muse-code and codex declare
- * `mcp: false`**, so on those the rung reached nobody at all. t578 came to rest with one squashed
+ * `mcp: false`**, so on those the level reached nobody at all. t578 came to rest with one squashed
  * commit on its branch, an agent that had correctly reported *"the commit is ready to land"*, and a
  * card whose only control was the button that had just been pressed.
  *
@@ -522,10 +522,10 @@ export async function commitConversation(
  */
 export async function landAfterCommitTurn(taskId: string): Promise<void> {
   const task = getTask(taskId)
-  const rung = task?.landAfterTurn ?? null
-  if (!task || !rung) return
+  const level = task?.landAfterTurn ?? null
+  if (!task || !level) return
   setLandAfterTurn(task.id, null)
-  if (!policyLands(rung)) return
+  if (!policyLands(level)) return
 
   const pending = await pendingWorkFor(task.id)
   // ⛔ Nothing to land is not a failure and is not reported as one: on an MCP adapter it is the
@@ -535,7 +535,7 @@ export async function landAfterCommitTurn(taskId: string): Promise<void> {
     return
   }
 
-  const landed = await landConversationWork(task.id, { rung })
+  const landed = await landConversationWork(task.id, { finishPolicy: level })
   if (landed.ok) return
   // ⚠️ Said once, on the thread, under a headline `salvageLandedCommits` does not match — the
   // operator asked for this landing and is owed the reason it did not happen, beside the reply that
@@ -561,7 +561,7 @@ export async function landAfterCommitTurn(taskId: string): Promise<void> {
  * Forget a landing a **Commit** press promised, because the turn it was waiting on will not arrive.
  *
  * ⛔ A run that failed, was cancelled or stopped to ask a question did not produce the commit the
- * promise was made about. Leaving it set would land — correctly, at the right rung, but on the far
+ * promise was made about. Leaving it set would land — correctly, at the right level, but on the far
  * side of whatever the operator said *next*, which is a surprise. The button is still there.
  */
 export function forgetLandAfterTurn(taskId: string): void {
@@ -571,7 +571,7 @@ export function forgetLandAfterTurn(taskId: string): void {
 /**
  * What the Commit button asks a conversation's agent to do. Pure, and exported for its test.
  *
- * ⛔ **Only a rung that lands names a landing.** `land_work` accepts the three `policyLands` rungs
+ * ⛔ **Only a level that lands names a landing.** `land_work` accepts the three `policyLands` levels
  * and nothing else, so `commit-and-verify` — which the Commit ▼ offers — used to produce an
  * instruction to call the tool with a value its own schema refuses. `commit-only` and
  * `commit-and-verify` both end at the commit; the second runs the checks first.
@@ -598,7 +598,7 @@ export function commitConversationInstruction({
   const after = !policyLands(policy)
     ? 'Stop there — nothing is to be merged or pushed. '
     : canLand
-      ? `Then land it by calling the MCP tool \`land_work\` with \`rung: "${policy}"\`. ` +
+      ? `Then land it by calling the MCP tool \`land_work\` with \`finishPolicy: "${policy}"\`. ` +
         'It rebases, runs the checks and merges or pushes per policy, and names the branch to ' +
         'carry on in. Do not merge or push to the landing target yourself. '
       : // ⛔ **What actually happens next, which is not what this used to say** (t581). It said the
@@ -642,7 +642,7 @@ function agentCanLand(taskId: string): boolean {
 }
 
 /**
- * Land this thread's branch on the rung the operator picked, with no turn spent.
+ * Land this thread's branch on the level the operator picked, with no turn spent.
  *
  * ⛔ **The other half of settling a conversation, and the half that had no button at all.** A
  * conversation whose agent committed leaves a clean tree and commits sitting on its branch: Commit
@@ -650,13 +650,13 @@ function agentCanLand(taskId: string): boolean {
  * drawn only after a landing has already failed. So the work stayed on the branch and the thread
  * offered no way to move it.
  *
- * ⛔ **It delegates to `landConversationWork`, and writes no rung.** Pressing Land used to write
- * the chosen rung onto `finish_policy` and call `relandTask`, which completed the task — so one
- * landing was the last thing a conversation ever did. Now the rung is passed *through* the landing
+ * ⛔ **It delegates to `landConversationWork`, and writes no level.** Pressing Land used to write
+ * the chosen level onto `finish_policy` and call `relandTask`, which completed the task — so one
+ * landing was the last thing a conversation ever did. Now the level is passed *through* the landing
  * rather than persisted, the task stays an open conversation, and it comes back on the next numbered
  * branch ready for the next thing the person says. Only Finish and Stop end a conversation.
  *
- * ⚠️ Only the rungs the *tool* acts on are accepted (`policyLands`) — landing under `commit-only`
+ * ⚠️ Only the levels the *tool* acts on are accepted (`policyLands`) — landing under `commit-only`
  * would be a button that does nothing. ⛔ And no shortcut past `decideFinish`: the identical bar a
  * first completion meets, so a dirty tree is refused with the ordinary reason rather than landed
  * because somebody pressed a button.
@@ -673,7 +673,7 @@ function agentCanLand(taskId: string): boolean {
  *
  * ⛔ **It is written to the thread, not flashed at the person, because it is a real event.** A
  * landing that takes four minutes and then fails leaves two rows that read in order — *landing
- * under this rung* then *this is why it did not* — and the first of them is the timestamp that says
+ * under this level* then *this is why it did not* — and the first of them is the timestamp that says
  * how long the failure took to arrive. A transient toast would have said the same thing and then
  * destroyed it.
  *
@@ -695,7 +695,7 @@ function announceLandingStarted(
       event: 'landing.started',
       detail:
         'The tool fetches the landing target, rebases this branch onto it, runs the project’s ' +
-        'check commands where this rung asks for them, and only then merges or pushes. Nothing ' +
+        'check commands where this level asks for them, and only then merges or pushes. Nothing ' +
         'moves until every step passes; a refusal leaves the branch exactly where it is and says ' +
         'why in the next line.'
     }
@@ -720,7 +720,7 @@ export async function landConversation(
   }
   log.info(`t${task.seq}: landing this conversation as ${policy} at the operator's request`)
   announceLandingStarted(task, policy)
-  const result = await landConversationWork(task.id, { rung: policy })
+  const result = await landConversationWork(task.id, { finishPolicy: policy })
   if (!result.ok) {
     // ⚠️ Kept on the task as well as returned, for the reason `relandTask` gives: the renderer
     // refreshes the task the moment the call returns and has nowhere to put a reason that only
@@ -762,7 +762,7 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
 
   // ⛔ **A conversation retries the landing its own Land button performs, not this one.**
   // Everything below resolves the task's *finish* policy, which an open conversation answers
-  // `await-human` from its kind — a rung that lands nothing — and then writes `completed`, which
+  // `await-human` from its kind — a level that lands nothing — and then writes `completed`, which
   // is the one thing a conversation landing must never do (`landConversationWork`: only Finish and
   // Stop end a conversation). ⚠️ Inferred from reading both paths, not observed: `canRelandTask`
   // hides this button on a conflict, which is how every conversation landing has failed so far.
@@ -846,7 +846,7 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
 }
 
 /**
- * Land a **trunk** task again: verify in the trunk, push if the rung pushes.
+ * Land a **trunk** task again: verify in the trunk, push if the level pushes.
  *
  * ⛔ The same bar a first completion gets, minus what does not exist in the trunk — no branch, no
  * rebase. Its commits are already on the target, so a retry can only ever verify them or push them.

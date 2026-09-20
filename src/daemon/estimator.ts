@@ -145,7 +145,7 @@ interface Sample {
 
 export interface CostFactor {
   adapterId: string
-  /** Null is the adapter-wide rung: that agent's runs whose model was never recorded. */
+  /** Null is the adapter-wide level: that agent's runs whose model was never recorded. */
   model: string | null
   samples: number
   /** Median priced cost of a run on this key, in input-token-equivalents. */
@@ -331,7 +331,7 @@ function fingerprint(): string {
 /**
  * What each agent and model costs relative to the fleet, learned from completed runs.
  *
- * Two rungs of key, and both are published: `(adapter, model)` and `adapter` alone. The second rung
+ * Two levels of key, and both are published: `(adapter, model)` and `adapter` alone. The second level
  * is not a formality — 17 of this install's 52 Antigravity runs never recorded a model, because the
  * session that knew it was closed and rewritten before anything asked.
  */
@@ -348,7 +348,7 @@ export function costFactors(): CostFactors {
   const groups = new Map<string, Sample[]>()
   for (const s of samples) {
     if (!s.adapterId) continue
-    // A run with no model belongs to the adapter-wide rung only; adding it to both would count it
+    // A run with no model belongs to the adapter-wide level only; adding it to both would count it
     // twice in the same number.
     const ids = s.model === null ? [keyId(s.adapterId, null)] : [keyId(s.adapterId, s.model), keyId(s.adapterId, null)]
     for (const id of ids) {
@@ -459,8 +459,8 @@ function factorFor(
   const exact = factors.keys.find(
     (k) => k.adapterId === on.adapterId && k.model === (on.model ?? null)
   )
-  const rung = exact ?? factors.keys.find((k) => k.adapterId === on.adapterId && k.model === null)
-  if (!rung) {
+  const level = exact ?? factors.keys.find((k) => k.adapterId === on.adapterId && k.model === null)
+  if (!level) {
     return {
       factor: 1,
       samples: 0,
@@ -477,22 +477,22 @@ function factorFor(
   // learned from priced tokens are different claims about the same key, and a reader chasing a
   // routing decision cannot tell them apart from the number alone.
   const unitNote =
-    rung.learnedFrom === 'usd'
-      ? `, learned from ${rung.usdSamples} priced run(s) in dollars`
+    level.learnedFrom === 'usd'
+      ? `, learned from ${level.usdSamples} priced run(s) in dollars`
       : `, learned in priced tokens${
-          rung.usdSamples > 0
-            ? ` — only ${rung.usdSamples} of its run(s) could be priced in money`
+          level.usdSamples > 0
+            ? ` — only ${level.usdSamples} of its run(s) could be priced in money`
             : ' — none of its runs could be priced in money'
         }`
   return {
-    factor: rung.factor * warmth,
-    samples: rung.samples,
-    usdSamples: rung.usdSamples,
+    factor: level.factor * warmth,
+    samples: level.samples,
+    usdSamples: level.usdSamples,
     basis:
-      `, ×${rung.factor.toFixed(2)} for ${keyId(rung.adapterId, rung.model)} ` +
-      `(${rung.samples} run(s), raw ratio ${rung.ratio.toFixed(2)} shrunk toward 1)${unitNote}${warmthNote}` +
-      (exact ? '' : ' — that model has no runs of its own, so the adapter-wide rung is used'),
-    assumed: rung.assumed
+      `, ×${level.factor.toFixed(2)} for ${keyId(level.adapterId, level.model)} ` +
+      `(${level.samples} run(s), raw ratio ${level.ratio.toFixed(2)} shrunk toward 1)${unitNote}${warmthNote}` +
+      (exact ? '' : ' — that model has no runs of its own, so the adapter-wide level is used'),
+    assumed: level.assumed
   }
 }
 

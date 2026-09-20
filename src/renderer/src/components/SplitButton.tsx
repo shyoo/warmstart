@@ -13,9 +13,9 @@ import { Pill, PillOptions, type PillOption } from './Pill'
  * Commit.
  *
  * ⭐ **So the common answer is the button and the rest are behind the arrow.** The main half does the
- * thing with the rung this task would use anyway (`defaultRung`); the ▼ half opens the same ladder
- * for the press that wants something else. The chosen rung is not stored — each press is one
- * decision about one branch — which is why the menu is a list of *actions* and picking the rung
+ * thing with the level this task would use anyway (`defaultLevel`); the ▼ half opens the same ladder
+ * for the press that wants something else. The chosen level is not stored — each press is one
+ * decision about one branch — which is why the menu is a list of *actions* and picking the level
  * already shown still acts.
  *
  * ⚠️ Built on `Pill`, not on a menu of its own. That component already owns the portal, the flip
@@ -45,7 +45,7 @@ export function SplitButton({
    */
   tone: 'warn' | 'primary'
   options: PillOption[]
-  /** The rung the main half acts with, and the one the menu ticks. */
+  /** The level the main half acts with, and the one the menu ticks. */
   value: string
   onAct: (value: string) => void
   disabled?: boolean
@@ -83,7 +83,7 @@ export function SplitButton({
             ariaLabel={menuAriaLabel}
             onPick={(next) => {
               close()
-              // ⛔ Always, even when it is the rung already shown. This is an action: re-picking it
+              // ⛔ Always, even when it is the level already shown. This is an action: re-picking it
               // means *do it with this one*, where a setting re-picking its own value means nothing.
               onAct(next)
             }}

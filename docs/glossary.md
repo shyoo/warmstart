@@ -438,7 +438,7 @@ it lapses: send it queued work, keepalive, compact, or let it go. See `cost-mode
 `0.1·C`, buys another hour, does not reduce context.
 
 **Compaction reserve** — quota held back so every live session on a worker can still be compacted.
-`/compact` fails at true 100%, which strands the context entirely. Two rungs: a token comparison
+`/compact` fails at true 100%, which strands the context entirely. Two levels: a token comparison
 (needs R2, still unanswerable here) and the **percentage** — at the 92% `WINDOW_HIGH_WATER`, the same
 reading that stops the fleet dispatching to an account says to save what it is holding. See
 `cost-model.md` §5.
@@ -506,9 +506,9 @@ ends differently: no window is closing, so there is nothing to resume after and 
 successor's prompt.
 
 **Finish policy** — what happens to the work when an agent reports a task complete, as a ladder of
-five rungs each doing one thing more than the last: `await-human` · `commit-only` ·
+five levels each doing one thing more than the last: `await-human` · `commit-only` ·
 `commit-and-verify` · **`commit-and-merge`** (the default) · `commit-and-push`. Plus two that are not
-rungs: `pull-request` (a different destination) and `custom` (an instruction to the agent, not a
+levels: `pull-request` (a different destination) and `custom` (an instruction to the agent, not a
 daemon action). Resolved task → project → fleet, each of the lower two able to say `inherit`.
 ⛔ **Preference, not authority** — `mandate.allowed ⊇ 'land'` still decides whether a task may land at
 all, and no UI control may widen it. ⚠️ Not the same as **`Task.verification`**, which asks whether a
@@ -516,7 +516,7 @@ all, and no UI control may widen it. ⚠️ Not the same as **`Task.verification
 
 **Check commands** — the ordered shell commands a project declares in `project.json`, run in the
 task's workspace after the agent commits, stopping at the first failure. They are what the verifying
-rungs mean by *verified*. ⛔ **An empty list verifies nothing** — every project on day one — and the
+levels mean by *verified*. ⛔ **An empty list verifies nothing** — every project on day one — and the
 tool says so rather than reporting a clean result. Proposed from `package.json` when a project is
 added, edited in Project → Settings, or worked out by an agent as an ordinary task with a diff you
 review.

@@ -51,9 +51,9 @@ export const STATISTICS_TABS: Array<{ id: StatisticsTab; label: string }> = [
 /**
  * How the three depths are drawn.
  *
- * ⚠️ Indent alone, no expanders. The tree is at most three rungs and the whole point of the page is
+ * ⚠️ Indent alone, no expanders. The tree is at most three levels and the whole point of the page is
  * comparing an agent against its own models; a collapsed table hides exactly the comparison the
- * reader came for, and a table that remembers which rungs were open is state nobody asked for.
+ * reader came for, and a table that remembers which levels were open is state nobody asked for.
  */
 const LEVEL_CLASS: Record<StatRow['level'], string> = {
   agent: 'stat-row stat-row--agent',
@@ -107,7 +107,7 @@ export function graphLabel(
   row: { level: StatRow['level']; label: string; model: string | null; adapterId: string; basis?: PriceBasis },
   agents: Map<string, string>,
   /**
-   * The price chart splits the model rung by billing basis, so a bar has to say which dollars it is
+   * The price chart splits the model level by billing basis, so a bar has to say which dollars it is
    * in — but only when the chart it sits in holds more than one basis. ⛔ *Opus 5 (subs)* under a
    * title that already reads *Subscription* said the same thing twice and took the width a model
    * name needed (t361); the API & mixed chart still needs it, because those two bars are different

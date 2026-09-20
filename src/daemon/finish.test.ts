@@ -260,13 +260,13 @@ describe('landing work that is committed', () => {
 })
 
 /**
- * The rung whose deliverable is the **thread**.
+ * The level whose deliverable is the **thread**.
  *
  * ⛔ **A finish policy that silently does nothing looks exactly like one that worked**, so the
  * first assertion here is the empty-branch guard going red for the same state under the default
  * policy. Without that, a `report-only` that was never wired up would pass this suite.
  *
- * ⛔ And it is not a rung: it does strictly *less* than `await-human`, which is why it sits at the
+ * ⛔ And it is not a level: it does strictly *less* than `await-human`, which is why it sits at the
  * end of `FINISH_ORDER` beside `pull-request` and `custom` rather than anywhere in the ladder.
  */
 describe('a task whose deliverable is the thread', () => {
@@ -292,10 +292,10 @@ describe('a task whose deliverable is the thread', () => {
   })
 
   /**
-   * ⛔ **Done means the branch is as it started.** This rung lands nothing, so a file or a commit
+   * ⛔ **Done means the branch is as it started.** This level lands nothing, so a file or a commit
    * left behind can only become a loose end — `rescueDirt` would turn the files into a `wip:` commit
    * on a branch nobody lands. The agent that left them is asked once to put them back, and never to
-   * *commit* them, which is the opposite of what the rung is for.
+   * *commit* them, which is the opposite of what the level is for.
    */
   it('asks a report-only task to put back its loose files, never to commit them', () => {
     const decision = finish.decideFinish({

@@ -7,7 +7,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
  * Fitness: the benchmark prior blended with this fleet's own clean peer reviews.
  *
  * ⛔ What this pins: the blend moves only a little on one review and most of the way on twenty, each
- * of the three degenerate cases answers exactly what `fitness.ts` documents, the adapter-wide rung
+ * of the three degenerate cases answers exactly what `fitness.ts` documents, the adapter-wide level
  * answers when the exact key has nothing, and — the one easy way to get this wrong — a key with ten
  * reviews of which two are clean shrinks as though it had two, never ten.
  */
@@ -153,7 +153,7 @@ describe('fitnessFor', () => {
     expect(dirty.value).toBeCloseTo(clean.value!, 6)
   })
 
-  it('falls back to the adapter-wide rung when the exact model has no reviews', () => {
+  it('falls back to the adapter-wide level when the exact model has no reviews', () => {
     for (let i = 0; i < 6; i++) review({ adapter: 'claude-code', model: null, composite: 1 })
     const f = fitness.fitnessFor('claude-code', 'claude-opus-5')
     expect(f.samples).toBe(6)

@@ -267,7 +267,7 @@ describe('what an agent costs', () => {
       adapterId: 'antigravity-cli',
       model: 'gemini-3.6-flash-low'
     })
-    expect(estimate.basis).toContain('adapter-wide rung')
+    expect(estimate.basis).toContain('adapter-wide level')
     expect(estimate.factor).toBeGreaterThan(2)
   })
 

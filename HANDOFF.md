@@ -30,10 +30,12 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **The ladder word is gone; a finish step is a level (t587, 2026-09-20).** `finishlevel.ts`,
+  `COMMIT/LAND_LEVELS`, `landingLevelFor` et al.; `agent.land`/`land_work` take `finishPolicy`.
 - **A conversation's landing conflicted for ever, because two halves of the tool disagreed about
   which `main` (t586 ← t578, 2026-09-20).** An open conversation resolves its finish policy to
   `await-human` *from its kind* — that is what stops it landing by itself — but **no landing ever
-  runs that rung**: `landConversationWork` hands `decideFinish` the project's own. `await-human` maps
+  runs that level**: `landConversationWork` hands `decideFinish` the project's own. `await-human` maps
   to `leave-branch`, whose base is `origin/<target>`, so every reader that asked `resolveFinishPolicy`
   got the remote while the Land press rebased onto the local target. ⭐ Measured off the daemon log
   and store for t578 (inkland): the project finishes `commit-and-merge`, local `main` stood **9
@@ -41,27 +43,24 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   *Resolve & retry* instruction said *"does not rebase cleanly onto `origin/main`"*, the agent rebased
   there and reported it clean at 20:10:52, and the next press failed at 20:11:12 on the identical
   commit — **a loop with no converging state**. `baseRef` had the same reading, so the branch had also
-  been *cut* nine commits behind where it had to land. One authority now: `landingRungFor`
+  been *cut* nine commits behind where it had to land. One authority now: `landingLevelFor`
   (`shared/policy.ts`), read by `baseRef`, `resolveConflictOnTask`, `resolveTrunkMovedOnTask`, the
-  pre-flight `readMergeability` and `landConversationWork`'s own `rungFor`. `localBaseNote` adds the
+  pre-flight `readMergeability` and `landConversationWork`'s own `levelFor`. `localBaseNote` adds the
   measured gap to both recovery prompts — *"⛔ … and **not** onto `origin/main`: … 9 commits ahead"* —
-  because naming the right ref never stopped an agent reaching for the habitual one. Retry landing on a
-  conversation now routes to `landConversationWork` too, so it cannot land nothing under `await-human`
-  and then write `completed` (⚠️ inferred; `canRelandTask` hides that button on a conflict). 11 L1
-  checks across four files; four separate mutations go red. **Not flown on a real run** — t578 is
-  still at `awaiting_human` with its branch on `origin/main`. `docs/landing.md`.
+  because naming the right ref never stopped an agent reaching for the habitual one. 11 L1
+  checks across four files; four separate mutations go red. **Not flown on a real run.** `docs/landing.md`.
 - **The Commit button asked for a commit and then nothing landed it (t581 ← t578, 2026-09-20).**
   Three faults, each enough on its own. (1) Commit tells the agent *not* to merge or push; on an
   adapter with `mcp: false` — muse-code, codex — there is no `land_work` to close the loop and
-  **nothing in the tool acted on the rung the operator chose**. t578 rested with one squashed commit
-  and an agent that had said *"the commit is ready to land"*. The rung is now recorded on
+  **nothing in the tool acted on the level the operator chose**. t578 rested with one squashed commit
+  and an agent that had said *"the commit is ready to land"*. The level is now recorded on
   `tasks.land_after_turn` (migration 78) *before* the turn and taken up by `landAfterCommitTurn` from
   `endConversationTurn`, which **re-reads the workspace** rather than trusting it — silent where the
   agent landed it itself, one thread line where it is refused, and the promise spent either way
   (`endUnfinishedRun` forgets it). (2) **Land was gated on a pristine tree** (`!hasDiff`), so the two
   untracked backup directories the operator had *asked* for meant it was never drawn — Commit was the
   card's only control and re-sent its instruction on every press. `settleControls`
-  (`lib/finishrung.ts`) draws both when both are true. (3) `decideFinish` and every strategy's
+  (`lib/finishlevel.ts`) draws both when both are true. (3) `decideFinish` and every strategy's
   `canLand` refused the landing over the same untracked files; a conversation landing keeps its
   workspace, so `keepsWorkspace` now counts only the **tracked** half — ⭐ measured 2026-09-20: a
   rebase over untracked files succeeds untouched, one tracked modification refuses outright.
@@ -69,7 +68,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   mutations go red. **Not flown on a real run.** `docs/landing.md`, `ui.md`, `data-model.md`.
 - **A Muse worker set to "Full user authority" now runs `--yolo` (t580, 2026-09-20).** `muse-code` declares `bypassPermissionMode: 'yolo'` (vendor: *disable approval and sandbox and trust this workspace*), chosen by `permissionModeFor` exactly as Codex's bypass is; otherwise headless stays `never`. Unit-tested; **not flown on a real run**. `docs/adapters.md`.
 - **Phone Overview activity is one line per event, and Tasks are tappable cards (t584, 2026-09-20).** Activity rows read age, `t{seq}`, event in the desktop pill language (starts blue, completions green, a human wait violet); task cards carry a `t{seq}` header with jump mark, the fact grid, then age beside the status pill. Every row and card opens its task. `docs/remote.md`.
-- **Phone task page overhauled (t585, 2026-09-20).** Header is `t{seq} | title` at full ink with status pill and branch on their own row; the detail box holds Status, cur → next worker/model, Price, Tokens, Took, and Priority as a row; the thread is a bare chat log with no card or label. The Status card drops Stop (kept on desktop) and gains Commit (`task.commitConversation` allowlisted as project-scoped write); `parity.test.ts` pins phone decisions to desktop `settleControls`, rung defaults, and the allowlist. `docs/remote.md`.
+- **Phone task page overhauled (t585, 2026-09-20).** Header is `t{seq} | title` at full ink with status pill and branch on their own row; the detail box holds Status, cur → next worker/model, Price, Tokens, Took, and Priority as a row; the thread is a bare chat log with no card or label. The Status card drops Stop (kept on desktop) and gains Commit (`task.commitConversation` allowlisted as project-scoped write); `parity.test.ts` pins phone decisions to desktop `settleControls`, level defaults, and the allowlist. `docs/remote.md`.
 - **L1 orphaned 24,322 fixture directories and ~161 GB of `%TEMP%`; 94% was one suite spawning a
   vendor CLI (t579, 2026-09-19).** `runfailure.test.ts` settles 69 metered runs, each reaching `void
   captureQuotaAfter` → `refreshNow` → `refreshIdentity`, which for `openai-compatible` runs **`codex

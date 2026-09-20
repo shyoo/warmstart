@@ -33,12 +33,12 @@ import {
  * outlived its policy is the rename bug back again).
  */
 describe('the pill-sized names for the two policies a task carries', () => {
-  it('names every rung of the finish ladder and no rung that is gone', () => {
+  it('names every level of the finish ladder and no level that is gone', () => {
     expect(Object.keys(FINISH_SHORT).sort()).toEqual([...FINISH_ORDER].sort())
     expect(Object.keys(FINISH_SHORT).sort()).toEqual(Object.keys(FINISH_LABELS).sort())
   })
 
-  it('gives each rung something short enough to sit beside five other controls', () => {
+  it('gives each level something short enough to sit beside five other controls', () => {
     for (const policy of FINISH_ORDER) {
       const short = FINISH_SHORT[policy]
       expect(short.trim()).not.toBe('')
@@ -58,13 +58,13 @@ describe('the pill-sized names for the two policies a task carries', () => {
 })
 
 /**
- * Which rungs the tool itself acts on, which is what the thread's Land button may offer.
+ * Which levels the tool itself acts on, which is what the thread's Land button may offer.
  *
  * ⛔ The list is derived from this predicate rather than written out beside the button, for the
  * reason above: a hand-written second copy of the ladder is how three dropdowns went on offering
  * `agent-lands` after it was renamed.
  */
-describe('the rungs where the tool does the last part', () => {
+describe('the levels where the tool does the last part', () => {
   it('names the three that move a branch, and none of the ones that leave it alone', () => {
     expect(FINISH_ORDER.filter(policyLands)).toEqual([
       'commit-and-merge',
@@ -73,7 +73,7 @@ describe('the rungs where the tool does the last part', () => {
     ])
   })
 
-  it('never offers landing under a rung that only commits', () => {
+  it('never offers landing under a level that only commits', () => {
     // ⛔ The refusal `landConversation` enforces: pressing Land on `commit-only` would write a
     // policy, move nothing, and look like it had worked.
     expect(policyLands('commit-only')).toBe(false)
@@ -85,7 +85,7 @@ describe('the rungs where the tool does the last part', () => {
   })
 
   it('is a different question from whether the checks run', () => {
-    // ⚠️ They overlap on the two merge rungs and disagree at both ends, which is why there are two
+    // ⚠️ They overlap on the two merge levels and disagree at both ends, which is why there are two
     // predicates: `commit-and-verify` verifies and lands nothing; `pull-request` lands and does not.
     expect(policyVerifies('commit-and-verify')).toBe(true)
     expect(policyLands('commit-and-verify')).toBe(false)

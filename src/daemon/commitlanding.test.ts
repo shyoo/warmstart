@@ -10,7 +10,7 @@ import { isOpenConversation } from '@shared/tasks.js'
  * The **Commit** button's other half: the landing the tool owes once the agent's turn ends.
  *
  * ⛔ **t581, and the state it was reported from is worth writing down.** On 2026-09-20 t578 — a
- * `muse-code` conversation, seventeen turns deep — was pressed **Commit** at 15:31:16 on the rung
+ * `muse-code` conversation, seventeen turns deep — was pressed **Commit** at 15:31:16 on the level
  * `commit, verify and merge into main`. The instruction it produced ended *"Then say in your reply
  * that the commit is ready to land, and stop — the person will press **Land**. Do not merge or push
  * to the landing target yourself."* At 15:41:40 the agent replied that the commit was ready: one
@@ -20,7 +20,7 @@ import { isOpenConversation } from '@shared/tasks.js'
  * Three separate faults, each of which alone would have left the work on the branch:
  *
  * 1. `muse-code` declares `mcp: false`, so there is no `land_work` for the agent to call — and
- *    nothing else in the tool ever acted on the rung the operator had chosen. The instruction was
+ *    nothing else in the tool ever acted on the level the operator had chosen. The instruction was
  *    the whole plan, and it named a button rather than a mechanism.
  * 2. The workspace held two untracked backup directories — which the operator had *asked* for and
  *    the agent had rightly kept out of the commit — so `pendingWork.hasDiff` stayed true for ever,
@@ -144,7 +144,7 @@ afterAll(() => {
 })
 
 describe('t578: Commit on an adapter with no land_work', () => {
-  it('⭐ records the rung, and lands it itself when the turn ends', async () => {
+  it('⭐ records the level, and lands it itself when the turn ends', async () => {
     const { taskId, workspace, root } = await seedConversation('re-render the shots', 'muse-code')
     agentCommits(workspace, 'draft.txt')
     writeFileSync(join(workspace, 'prompts.txt'), 'still being written\n')
@@ -248,7 +248,7 @@ describe('t578: Commit on an adapter with no land_work', () => {
     expect(tasks.messagesFor(taskId)).toHaveLength(before)
   })
 
-  it('⛔ `commit-only` promises no landing, because that rung means stop at the commit', async () => {
+  it('⛔ `commit-only` promises no landing, because that level means stop at the commit', async () => {
     const { taskId, workspace, root } = await seedConversation('commit and stop', 'muse-code')
     writeFileSync(join(workspace, 'wip.txt'), 'uncommitted\n')
 

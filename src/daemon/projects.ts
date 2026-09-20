@@ -453,7 +453,7 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
       if (patch.workspaceMode === 'worktree') delete config.workspaces.mode
     }
     // ⛔ Checked after both halves of the patch are applied, so turning trunk mode on and the pull
-    // request rung off in one save is allowed, and either one alone into the conflict is not.
+    // request level off in one save is allowed, and either one alone into the conflict is not.
     if (config.workspaces?.mode === 'trunk' && project.vcs === 'git') {
       const finish = config.landing?.finish ? readFinishPolicy(config.landing.finish) : null
       const conflict = finish && finish !== 'inherit' ? trunkPolicyConflict(finish) : null

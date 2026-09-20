@@ -1811,15 +1811,15 @@ const MIGRATIONS: Migration[] = [
     }
     conn.exec('update tasks set branch_unit = 1 where branch_unit is null;')
   },
-  // 64 - a conversation stays open after it lands, so no conversation carries a real rung any more.
+  // 64 - a conversation stays open after it lands, so no conversation carries a real level any more.
   //
   // ⛔ **A deliberate reset, not a cleanup.** Before this build the thread's Commit and Land buttons
-  // wrote the chosen rung onto `tasks.finish_policy`, which took the task out of
+  // wrote the chosen level onto `tasks.finish_policy`, which took the task out of
   // `isOpenConversation` for ever: the kind stopped answering `await-human`, the conversation
-  // contract was withdrawn, and one landing ended the chat. Landing no longer writes a rung at all,
+  // contract was withdrawn, and one landing ended the chat. Landing no longer writes a level at all,
   // so a row left carrying one is a record of a mechanism that no longer exists — and left alone it
   // would keep a conversation the operator is still talking in under the one-shot work contract.
-  // ⚠️ Scoped to `kind = 'conversation'`; nothing else has ever had its rung written by a button.
+  // ⚠️ Scoped to `kind = 'conversation'`; nothing else has ever had its level written by a button.
   (conn) => {
     conn.exec("update tasks set finish_policy = 'inherit' where kind = 'conversation';")
   },
@@ -2040,7 +2040,7 @@ const MIGRATIONS: Migration[] = [
   // ⛔ **An ask the tool made of itself, and it had nowhere to live.** Pressing Commit on a
   // conversation asks the agent for a commit and tells it *not* to merge or push; on an adapter
   // with MCP the agent then calls `land_work`, and on one without — muse-code, codex — nothing in
-  // the tool ever acted on the rung the operator chose. t578 sat with one squashed commit on its
+  // the tool ever acted on the level the operator chose. t578 sat with one squashed commit on its
   // branch, an agent that had said *"the commit is ready to land"*, and no landing.
   //
   // ⛔ In the row rather than in daemon memory, because a restart between the ask and the turn

@@ -2373,7 +2373,7 @@ body {
 
 /* Analytics › Statistics: the agent → model → effort tree, drawn as indent alone.
 
-   ⛔ No expanders. The tree is three rungs deep and the whole point of the page is comparing an
+   ⛔ No expanders. The tree is three levels deep and the whole point of the page is comparing an
    agent against its own models, so a collapsed table hides exactly the comparison the reader came
    for. ⚠️ The indent is padding on the first cell rather than a nested table: the columns have to
    stay aligned across all three depths or the percentiles cannot be read down the page, which is
@@ -2391,7 +2391,7 @@ body {
   color: var(--color-text-dim);
 }
 
-/* The agent rung carries the whole of its models' work, so it gets the rule that groups them. */
+/* The agent level carries the whole of its models' work, so it gets the rule that groups them. */
 .stat-row--agent > td {
   border-top: 1px solid var(--color-border);
 }
@@ -2489,7 +2489,7 @@ body {
   .tbl--tasks .tbl-col-quality { visibility: collapse; width: 0; }
 }
 
-/* ⚠️ The rungs are arithmetic, not taste: seq, Status and Action are 202px and never yield, so with
+/* ⚠️ The levels are arithmetic, not taste: seq, Status and Action are 202px and never yield, so with
    the dates gone the fixed columns are 672px and with From and Quality gone 504 — which at a 562px
    panel (a 1024px screen with the sidebar at 400) left the title 58px, and 102 before the columns
    were sized for Linux. Dep and Took go together at 660px: 370px fixed leaves the title 160px at a
@@ -5062,7 +5062,7 @@ select:focus-visible,
 /*
  * ⛔ One row, every action on it, and what each does on its tooltip. The card used to draw one row
  * per choice with a paragraph beside each button — what it does, what it does to the DAG, which
- * rung and where the rung came from — and six of those stacked under a resting conversation was a
+ * level and where the level came from — and six of those stacked under a resting conversation was a
  * wall of text nobody read. The paragraphs are the buttons' `title`s now; the row wraps rather than
  * scrolls, so a narrow thread gets two lines of buttons and never a clipped one.
  */

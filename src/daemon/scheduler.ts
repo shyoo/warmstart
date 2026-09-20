@@ -159,7 +159,7 @@ import {
   STALL_CONFIRM_AFTER_MS,
   type TreeSample
 } from './stall.js'
-import { decideFinish, decideTrunkFinish, landingRung, resolveFinishPolicy, type TrunkReading } from './finish.js'
+import { decideFinish, decideTrunkFinish, landingLevel, resolveFinishPolicy, type TrunkReading } from './finish.js'
 import {
   mismatch,
   rank,
@@ -265,7 +265,7 @@ import { forgetLandAfterTurn, landAfterCommitTurn, resolveRetryOnTask, retryQueu
  * would be a second copy of the threshold, and the pair would disagree the day one of them moved.
  *
  * ⚠️ And the value comes from `WINDOW_HIGH_WATER` rather than being written here, for the same
- * reason one rung up: `reserveState` reads it to decide that an account's live sessions need saving,
+ * reason one level up: `reserveState` reads it to decide that an account's live sessions need saving,
  * and the whole point of that pairing is that the tick which refuses a dispatch is the tick which
  * asks for the compaction.
  */
@@ -1336,7 +1336,7 @@ export function reopenableFor(task: Task, workerId: string): Session | null {
  *
  * ⚠️ The most recent session that still exists, by run start. A conversation whose session was
  * evicted still names its account — reviving a closed conversation on the account that holds its
- * transcript is the same continuity, one rung colder.
+ * transcript is the same continuity, one level colder.
  */
 export function stickyWorkerFor(task: Task): string | null {
   if (task.kind !== 'conversation') return null
@@ -3030,7 +3030,7 @@ async function preempt(
 
   // ⛔ The evidence, not just the verdict. A run wrapped up for being at the top of its window while
   // the fleet card over it read 63% is the single most confusing thing this scheduler can do (t70),
-  // and the cause is that the two numbers come from different rungs: the trigger can be a *live*
+  // and the cause is that the two numbers come from different levels: the trigger can be a *live*
   // signal riding the turn, the card is the last cached reading. Both go in the message.
   const shown = because === 'runaway' ? null : lastQuota(run?.workerId ?? session.workerId)
   const shownLine =
@@ -3756,10 +3756,10 @@ async function landCompletion(
     // `awaiting_human` discovered inside `landTask` two branches later. See `readMergeability`.
     // ⛔ The *finish* policy, not the project policy beside it. It decides which ref the landing
     // will rebase onto, so the mergeability check has to be told it or it answers about another.
-    // ⛔ And the *landing* rung, which for an open conversation is not `finishPolicy`: the kind
+    // ⛔ And the *landing* level, which for an open conversation is not `finishPolicy`: the kind
     // answers `await-human`, and asking about `origin/<target>` under a Land that rebases onto the
-    // local one is exactly how t59 was told a conflicted branch was clean. See `landingRungFor`.
-    const merge = await readMergeability(project, held.workspace.path, task.branch, landingRung(task, project), task)
+    // local one is exactly how t59 was told a conflicted branch was clean. See `landingLevelFor`.
+    const merge = await readMergeability(project, held.workspace.path, task.branch, landingLevel(task, project), task)
     const decision = decideFinish({
       task,
       project,
@@ -3981,7 +3981,7 @@ async function landCompletion(
       //    cannot rule out the kinds that carry no reason. `relandTask` reads it the same way.
       const why = 'reason' in decision ? decision.reason : 'nothing to land'
       // ⛔ **A report-only `done` retires its branch**, or every seat of every debate round leaves
-      // a name under Loose ends. `decideFinish` only says `done` on that rung once the branch holds
+      // a name under Loose ends. `decideFinish` only says `done` on that level once the branch holds
       // nothing of its own and the tree is clean — the same licence `nothing-to-land` retires on.
       const retired =
         decision.kind === 'done' && finishPolicy === 'report-only'
@@ -4108,7 +4108,7 @@ export async function endConversationTurn(
 
   // ⭐ **The far side of the Commit button's wait** (t581). Pressing Commit asks for a commit and
   // forbids the agent from merging or pushing; on an adapter with no `land_work` nothing else was
-  // ever going to land the rung the operator chose. This is where the tool does its own half, and
+  // ever going to land the level the operator chose. This is where the tool does its own half, and
   // it re-reads the workspace first rather than trusting what was recorded before the turn.
   //
   // ⛔ After `releaseFor`, so the run's claims are back before a landing goes looking for a

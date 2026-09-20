@@ -474,7 +474,7 @@ ${agreement}
       if (!run?.taskId) return { ok: false, reason: 'this session is not working on a task' }
       const result = await landConversationWork(run.taskId, {
         sessionId: p.sessionId,
-        ...(p.rung ? { rung: p.rung } : {})
+        ...(p.finishPolicy ? { finishPolicy: p.finishPolicy } : {})
       })
       // ⚠️ The summary is recorded on the thread rather than used to decide anything. It is what
       // the agent says the landing contains, and the operator reads it beside the landing line.

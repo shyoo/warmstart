@@ -558,16 +558,16 @@ There is **no free live quota probe** on this CLI. That is not a gap to route ar
 two things downstream depend on knowing how much window is left: the compaction reserve below, and
 the preemption deadline in the plan §8.7.
 
-So the probe is a **ladder, and its rung is always reported**:
+So the probe is a **ladder, and its level is always reported**:
 
-| Rung | Source | Trust |
+| Level | Source | Trust |
 |---|---|---|
 | 1 | `cachedUsageUtilization` with a fresh `fetchedAtMs` | current |
 | 1b | the same, fresh, but the window's own `resetsAt` has passed | ⛔ **expired — unknown, never zero.** Age is not the only way a percentage stops being true |
 | 2 | the same, stale | **reported as *unknown*, with its age** — never as a number |
 | 3 | nothing | unknown; degrade conservatively. ⚠️ Two distinct causes, and the UI separates them: **never probed**, and **probed but the account has no usage cache yet** — the CLI writes `cachedUsageUtilization` only after real work, so a freshly signed-in worker reports nothing until it has been used once |
 
-⚠️ **Rung 1b is fresh and wrong at the same time**, which is why it is not a special case of rung 2.
+⚠️ **Level 1b is fresh and wrong at the same time**, which is why it is not a special case of level 2.
 A reading taken two minutes before a reset is as fresh as a reading gets, and every number in it
 expires with the window it counted — while `STALE_AFTER_MS` keeps vouching for it for hours.
 Measured on t60, 2026-08-31: a 5h window read `percent: 88` with `resetsAt` 06:39:59Z and was still
@@ -588,7 +588,7 @@ adapter's own error text. Measured 2026-08-26: neither commissioned worker on th
 written `cachedUsageUtilization`, and both had been rendering the bare word "unknown" since
 commissioning.
 
-### Rung 0 — making the cache current, for free (2026-08-27)
+### Level 0 — making the cache current, for free (2026-08-27)
 
 ⭐ **There is a free live probe after all, and the reason it took three months to find is worth more
 than the probe.** `claude -p /usage` spends a turn — that measurement is correct and still holds.
@@ -639,7 +639,7 @@ says 90% where the truth is 0%, and a card that said so for hours under a "20 mi
 broken control, not a saving. The bound that replaces the retired clock is the operator's own number,
 one terminal per account per interval (three an hour at the default), never a constant. A worker about
 to take a task still gets a fresh reading first. And what
-makes the cheap rung still worth running every few minutes: the vendor's on-disk cache is refreshed
+makes the cheap level still worth running every few minutes: the vendor's on-disk cache is refreshed
 by **any** use of that account, including this fleet's own work sessions, so a busy account keeps
 its own reading current for the price of a file read. The command is declared per adapter as
 `usageRefresh`, never branched on an adapter name; only `claude-code` declares one today.
@@ -748,7 +748,7 @@ through the store (which is every gate) saw windows with no group and silently f
 
 ### ⛔ An account that cannot authenticate is not asked again (2026-08-27)
 
-Rung 0 is free in tokens and **not** free in processes: it opens a real interactive session and types
+Level 0 is free in tokens and **not** free in processes: it opens a real interactive session and types
 into it. So `mayRefreshUsage()` skips any worker whose failed run **measured its subscription as
 expired** (`health.subscriptionExpired`). Before this, a lapsed subscription meant a CLI spawned on
 every eligible sweep, forever, to watch it fail to authenticate - and the reading stayed `unknown`
@@ -789,7 +789,7 @@ A run now carries two readings:
 ⚠️ The tick never awaits either. `refreshUsage()` opens a terminal for ~30s and the scheduler loop is
 arithmetic; a half-minute stall in it would be a worse bug than the one this fixes. And it **gives
 up**: after one attempt per worker per 10 minutes the run goes ahead marked `quotaUnverified`, because
-a worker that cannot answer `/usage` (§ Rung 0's two dialogs) would otherwise hold its tasks forever.
+a worker that cannot answer `/usage` (§ Level 0's two dialogs) would otherwise hold its tasks forever.
 A run that metered nothing is not re-read at all — no spend, no difference to take.
 
 ⭐ **This is R1's instrument, made visible.** The window delta and the transcript token count are shown
@@ -807,7 +807,7 @@ pairing by id showed one pool's spend on the other's row (`Gemini 5h 0% → 100%
 by contract, and the pane matches on `(group, kind)` with the bare id as fallback for rows stored
 before `group` was recorded.
 
-### Rung 0 on Antigravity — the same probe, with the answer in a different place (2026-08-27)
+### Level 0 on Antigravity — the same probe, with the answer in a different place (2026-08-27)
 
 ⭐ **R9 is closed, the opposite way round from how it was asked.** The question was whether
 `agy -p /usage` runs the slash command for free in *print* mode. It does not — measured 2026-08-25,
@@ -889,7 +889,7 @@ carries the server's `rate_limits` verbatim:
     "credits":{"has_credits":false,"unlimited":false,"balance":null}}}}
 ```
 
-⭐ **And there is a better rung, which is what the TUI's `/status` uses.** `codex app-server` speaks
+⭐ **And there is a better level, which is what the TUI's `/status` uses.** `codex app-server` speaks
 JSON-RPC over stdio and answers **`account/rateLimits/read`** — no params, **~600–700ms measured**, no
 turn, no token:
 
@@ -905,9 +905,9 @@ readings taken minutes apart returned `resetsAt` values **1311s apart**. A cache
 protocol is discoverable locally and for free — `codex app-server generate-json-schema --out <dir>`
 writes `v2/GetAccountRateLimitsResponse.json`, which is where the field names below come from.
 
-So `probeQuota` has two rungs, both free, and they report **different `source` values on purpose**:
+So `probeQuota` has two levels, both free, and they report **different `source` values on purpose**:
 
-| | Rung 0 — `account/rateLimits/read` | Fallback — the rollout |
+| | Level 0 — `account/rateLimits/read` | Fallback — the rollout |
 |---|---|---|
 | How | `codex app-server` over stdio, `initialize` then one request | `$CODEX_HOME/sessions/**/rollout-*.jsonl`, newest first, last `event_msg` → `token_count` |
 | Cost | a local subprocess, ~700ms, one network call | a file read |
@@ -918,7 +918,7 @@ So `probeQuota` has two rungs, both free, and they report **different `source` v
 
 ⚠️ **Spelling.** The app-server answers in camelCase (`usedPercent`, `windowDurationMins`, `resetsAt`)
 and the rollout in snake_case (`used_percent`, `window_minutes`, `resets_at`). Same server payload,
-two writers; one normaliser reads both so no caller has to know which rung answered.
+two writers; one normaliser reads both so no caller has to know which level answered.
 
 ⛔ **Still no `usageRefresh`.** That field means *drive a command into a PTY session*, which is not
 what this is. This is a local subprocess like `claude auth status --json`, and it belongs in
@@ -965,9 +965,9 @@ is R9, on Antigravity, in the section before it.
 
 ### ⛔ The reserve is a gate, not a routing input
 
-Until R2 lands, `remainingTokens` is null on every Claude account, so the reserve's token rung can
+Until R2 lands, `remainingTokens` is null on every Claude account, so the reserve's token level can
 only answer `ok` (this worker holds no live sessions) or `unknown` (it holds some) — the `at_risk`
-verdicts a real fleet sees today all come from the percentage rung above. Feeding that into scheduler
+verdicts a real fleet sees today all come from the percentage level above. Feeding that into scheduler
 scoring at 0.5 therefore did not express caution — it expressed **"penalise any worker that has a
 session"**, at a weight several times larger than every term that actually compares candidates.
 Measured 2026-08-27: an account nobody had ever signed in to won a dispatch over two working ones on
@@ -1075,16 +1075,16 @@ worker.remaining  >=  Σ over live sessions on that worker of (0.1·C + 5·S)
 
 Running out of room to *finish* a task is recoverable. Running out of room to *save* one is not.
 
-⭐ **Two rungs, because the first one has never been able to answer** (2026-08-31, t73). The formula
+⭐ **Two levels, because the first one has never been able to answer** (2026-08-31, t73). The formula
 above needs `remaining` in tokens, which needs the `tokens_per_percent` conversion of R2 — and on
 this install the `calibration` table is empty, so `reserveState` answered `unknown` for every worker
-holding a session and the clock's move 5 had never once fired. The second rung is the percentage
+holding a session and the clock's move 5 had never once fired. The second level is the percentage
 itself: at or above `WINDOW_HIGH_WATER` (92%, the same number the dispatch gate refuses on) the
 worker's live sessions are `at_risk`, per metered pool, on a reading that is neither stale nor from a
 window that has already reset.
 
 ⚠️ **The percentage is not converted into tokens anywhere.** It cannot say whether what is left
-covers what saving costs; `remainingTokens` stays null and says which rung it is on. It says the one
+covers what saving costs; `remainingTokens` stays null and says which level it is on. It says the one
 thing a percentage can: this account is at the mark where the fleet has already stopped sending it
 work, so what it still holds should be saved while there is window left to pay for saving it. R2 is
 still owed for the arithmetic above.
@@ -1238,8 +1238,8 @@ watchdogs for stalls and runaways.
 
 ⚠️ **But be precise about what is live.** The reserve's *token* gate needs `remaining` in tokens,
 which needs a fresh percentage **and** a learned `tokens_per_percent`; that conversion is still R2, so
-that rung still answers **`unknown`** on a real worker and the code says so everywhere it surfaces.
-⭐ Since 2026-08-31 the reserve is load-bearing anyway, on the percentage rung: at the high-water
+that level still answers **`unknown`** on a real worker and the code says so everywhere it surfaces.
+⭐ Since 2026-08-31 the reserve is load-bearing anyway, on the percentage level: at the high-water
 mark (92% for 5h windows, 97% for 7-day windows, which have significantly more runway) a worker's
 live sessions are `at_risk` and the clock compacts them. Where an operator overrides the quota gate
 for a task, Move 5 honors that override and active runs are protected against mid-run compaction and closure.

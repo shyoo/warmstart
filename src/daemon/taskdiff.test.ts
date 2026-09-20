@@ -14,10 +14,10 @@ import type { Project, Task } from '@shared/tasks.js'
  * the code believed. Two of the tests below fail against the plain `split('\t')` and the bare
  * pathspec this replaced.
  *
- * ⛔ **The cache trap that is not one.** `resolveRange`'s rung 3 returns the branch answer *without*
+ * ⛔ **The cache trap that is not one.** `resolveRange`'s level 3 returns the branch answer *without*
  * writing `rangeCache`, so a branch that advances between two reads is re-resolved each time. That
  * was worth checking rather than assuming — the cache key holds the branch name and not its head
- * sha, so had rung 3 cached, a moving branch would have served a stale head forever. The test pins
+ * sha, so had level 3 cached, a moving branch would have served a stale head forever. The test pins
  * the behaviour rather than the reasoning.
  */
 
@@ -97,7 +97,7 @@ describe('the summary', () => {
     kit.git(project.root, 'commit', '-m', 'more work')
     kit.git(project.root, 'switch', 'main')
 
-    // ⛔ The whole point: had rung 3 cached, this would still say one file.
+    // ⛔ The whole point: had level 3 cached, this would still say one file.
     const after = await taskdiff.diffSummaryFor(task.id)
     expect(after.files.map((f) => f.path).sort()).toEqual(['first.ts', 'second.ts'])
     expect(after.head).not.toBe(before.head)

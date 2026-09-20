@@ -55,7 +55,7 @@ operator as *something needs deciding* rather than *this is done and waiting to 
 
 ## The ladder
 
-**Five** rungs, each doing everything the rung below does **plus one thing**. That is what keeps this one
+**Five** levels, each doing everything the level below does **plus one thing**. That is what keeps this one
 decision rather than five.
 
 | Policy | Agent commits | Daemon verifies | Merges clean trunk | Deletes branch | Pushes |
@@ -66,7 +66,7 @@ decision rather than five.
 | **`commit-and-merge`** ⭐ *default* | ✔ | ✔ | ✔ | ✔ | - |
 | `commit-and-push` *(today's `agent-lands`)* | ✔ | ✔ | ✔ | ✔ | ✔ |
 
-And two that are **not rungs**, which is worth saying rather than pretending:
+And two that are **not levels**, which is worth saying rather than pretending:
 
 - `pull-request` - pushes the *branch* and opens a PR. It never touches the trunk, so it is not "one
   more than push"; it is a different destination.
@@ -82,7 +82,7 @@ thing this tool refuses to do.
 
 ⚠️ Verification is not named in `commit-and-merge` or `commit-and-push` because **merging always
 verifies** - merging unverified work into the trunk is worse than leaving it on a branch. The name
-hides nothing; the rung below is where verification is the headline.
+hides nothing; the level below is where verification is the headline.
 
 ⚠️ **`commit-only` and `commit-and-verify` are the same thing on a project with no `check`
 commands**, which is every project on day one. They diverge as a suite grows. So a project that
@@ -109,9 +109,9 @@ fixture. Any design that merges into the local trunk has to answer this first. S
 
 | # | Decision |
 |---|---|
-| D1 | The ladder above. **`commit-verify-and-merge` is the new fleet default**; `commit-only` is the rung below it, for early-phase or single-trunk work |
-| D2 | `commit-only` **does not run checks**. Each rung does strictly more than the one below, and the early-phase case it exists for often has no suite yet |
-| D3 | The daemon runs the project's **declared** `check` commands on the verifying rungs - `runChecks` shells `project.json`'s list verbatim, in order, stopping at the first non-zero exit. No inference. A red check rests the task carrying the last 8KB of output, and spends no tokens |
+| D1 | The ladder above. **`commit-verify-and-merge` is the new fleet default**; `commit-only` is the level below it, for early-phase or single-trunk work |
+| D2 | `commit-only` **does not run checks**. Each level does strictly more than the one below, and the early-phase case it exists for often has no suite yet |
+| D3 | The daemon runs the project's **declared** `check` commands on the verifying levels - `runChecks` shells `project.json`'s list verbatim, in order, stopping at the first non-zero exit. No inference. A red check rests the task carrying the last 8KB of output, and spends no tokens |
 | D4 | Merge **only when the trunk is clean**: `git -C trunk merge --ff-only <branch>`, and if the trunk has uncommitted work, skip it, keep the branch, and rest the task saying so. ⛔ The tool never stashes, resets or otherwise reaches into the checkout the operator is typing in |
 | D5 | This repo's `project.json` migrates to the new default, and `finishInstruction` loses *"and pushed"* |
 | D6 | CI keeps Linux and Windows on every push and PR; the three **macOS** jobs move to `workflow_dispatch` and tags. Roughly three quarters of the billable weight, made deliberate rather than constant |
@@ -126,7 +126,7 @@ verified landing. Otherwise the policy's name is a lie on every new project.
 1. **`FinishPolicy` gains `commit-only` and `commit-verify-and-merge`**; `agent-lands` becomes
    `commit-and-push`, with the old name accepted on read. `FINISH_LABELS`, `DEFAULT_FLEET_FINISH`,
    the settings default and both dropdowns follow.
-2. **`LandingStrategyId` gains the two new rungs**, implemented beside `autoLand`/`leaveBranch`.
+2. **`LandingStrategyId` gains the two new levels**, implemented beside `autoLand`/`leaveBranch`.
    ⛔ Neither writes a commit - the tool never authors one. They verify, merge, and report.
 3. **`decideFinish` learns them** (`finish.ts`): uncommitted files still produce the one `ask-agent`
    then rest; a clean branch with passing checks rests as **done**, not as `awaiting_human`.

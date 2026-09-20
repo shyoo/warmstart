@@ -48,7 +48,7 @@ silence.
 
 - **`benchmarks/coding-agents.2026-09.json` + `benchmarks.ts`.** A versioned, checked-in 0..1
   "agentic coding" prior per model id, covering all 26 ids across `costmodels/*.json`. Resolution is
-  exact id → longest matching family prefix → `null`, mirroring the two-rung ladder `factorFor`
+  exact id → longest matching family prefix → `null`, mirroring the two-level ladder `factorFor`
   (`estimator.ts`) and `paceFor` (`pace.ts`) already climb. Every entry states its own `basis`:
   `published` (a leaderboard scores this exact id, with a source and a retrieval date), `inferred` (a
   neighbouring or predecessor model stands in, with the mapping stated), or `unknown`. Researched

@@ -274,7 +274,7 @@ async function chatCompletion(
               if (thought) {
                 thinkingChars += thought.length
                 thinkingSinceEmit += thought.length
-                // ⚠️ Same 60-character rung the visible deltas use: often enough that a watcher can
+                // ⚠️ Same 60-character chunk the visible deltas use: often enough that a watcher can
                 // tell working from stopped, rare enough not to write a line per token.
                 if (thinkingSinceEmit >= 60) {
                   thinkingSinceEmit = 0

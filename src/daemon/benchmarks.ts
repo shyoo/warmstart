@@ -12,7 +12,7 @@ import builtin from '../../benchmarks/coding-agents.2026-09.json' with { type: '
  * ⛔ **Data, never code** — the same rule `costmodel.ts` states at its own top, and for the same
  * reason: a leaderboard number moves on its own schedule, and a version of it embedded in a
  * conditional is a fact nobody can find to update. `benchmarks/*.json` is versioned the same way
- * `costmodels/*.json` is, and this file is nothing but the loader and the two-rung lookup ladder.
+ * `costmodels/*.json` is, and this file is nothing but the loader and the two-level lookup ladder.
  *
  * ⛔ **`agentic: null` means unknown, and is never read as 0.** A model this fleet has never seen
  * benchmarked is a missing input, not a model that scored the floor — conflating the two would make
@@ -114,8 +114,8 @@ export function resetBenchmarks(): void {
  * What the leaderboards say about one model, exact id first, then the longest matching family
  * prefix, then unknown.
  *
- * ⭐ The same two-rung ladder `factorFor` (`estimator.ts`) and `paceFor` (`pace.ts`) already climb —
- * exact key, then a wider rung, then an honest "nothing measured" — so all three read the same way.
+ * ⭐ The same two-level ladder `factorFor` (`estimator.ts`) and `paceFor` (`pace.ts`) already climb —
+ * exact key, then a wider level, then an honest "nothing measured" — so all three read the same way.
  */
 export function benchmarkPrior(modelId: string | null | undefined): BenchmarkPrior {
   if (!modelId) {

@@ -138,13 +138,13 @@ function gradingEffort(worker: Worker): string | undefined {
 }
 
 /**
- * The cheap rung of each provider's pool, by adapter.
+ * The cheap level of each provider's pool, by adapter.
  *
  * ⚠️ **A guess, and an important one.** Whether a small model can hold a seven-dimension rubric and
  * produce calibrated, non-clustered scores is unmeasured. It is one field on every review record
  * (`reviewerModel`), so the experiment is available: review the same five tasks on the small and the
  * large model of one provider and compare the spread. If the small model clusters everything at 7–8
- * it is not a judge and this table moves up a rung.
+ * it is not a judge and this table moves up a level.
  *
  * ⚠️ A missing entry is a real answer — the adapter's own default model is used.
  */
@@ -407,7 +407,7 @@ export async function reviewRange(taskId: string): Promise<{ ok: boolean; reason
   const project = task.projectId ? getProject(task.projectId) : null
   if (!project) return { ok: false, reason: 'this task has no project to read' }
   // ⛔ **The task's own target.** A split child lands onto its plan branch and never onto `main`, so
-  // measured against `main` the ladder's first rung fails (its head is not an ancestor of the trunk)
+  // measured against `main` the ladder's first level fails (its head is not an ancestor of the trunk)
   // and the second resolves `merge-base(main, child)` — which is where the *plan branch* diverged,
   // putting the planner's commits and every earlier sibling's work inside the range this child is
   // graded on. `resolveRange` refuses to review the wrong commits by name; this is the reference

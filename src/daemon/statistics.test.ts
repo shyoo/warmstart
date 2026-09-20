@@ -9,7 +9,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
  * ⛔ **What these pin is the shape of the claim.** Every number on this page is a *description* of
  * what happened, sitting one nav item away from three pages of numbers that are deliberately
  * shrunk, blended and clamped — so the ways this can be wrong are all ways it could quietly become
- * one of those: a zero standing in for an unknown, a rung summed from the rung below it instead of
+ * one of those: a zero standing in for an unknown, a level summed from the level below it instead of
  * re-folded, a percentile that has silently dropped the tail it exists to show.
  *
  * ⚠️ The arithmetic is tested directly and the folding through a real database, because those are
@@ -170,7 +170,7 @@ describe('a distribution', () => {
     })
   })
 
-  it('does not disturb the caller’s array, which is read again for other rungs', () => {
+  it('does not disturb the caller’s array, which is read again for other levels', () => {
     const values = [3, 1, 2]
     stats.distributionOf(values)
     expect(values).toEqual([3, 1, 2])
@@ -279,7 +279,7 @@ describe('the sample set', () => {
 })
 
 describe('the agent → model → effort tree', () => {
-  it('folds each rung from the raw samples, never from the rung below it', () => {
+  it('folds each level from the raw samples, never from the level below it', () => {
     // ⛔ A median of medians is not a median and a p99 of p99s is not anything at all. The agent row
     //    has to re-fold the four tasks, not average its two model rows.
     finishedTask({ adapter: 'claude-code', model: 'opus', activeMs: 1 * MIN })
@@ -312,7 +312,7 @@ describe('the agent → model → effort tree', () => {
   })
 
   it('gives a task whose effort was never recorded no effort row at all', () => {
-    // ⛔ A `?` rung under a model is a bucket nobody can act on, sitting in the table looking like a
+    // ⛔ A `?` level under a model is a bucket nobody can act on, sitting in the table looking like a
     //    setting somebody chose.
     finishedTask({ adapter: 'claude-code', model: 'opus', effort: null, activeMs: 6 * MIN })
     finishedTask({ adapter: 'claude-code', model: 'opus', effort: 'high', activeMs: 2 * MIN })
@@ -372,7 +372,7 @@ describe('price', () => {
     price.bumpPricingEpoch()
   }
 
-  it('drops a rung nothing could be priced at all rather than drawing a table of n/a', () => {
+  it('drops a level nothing could be priced at all rather than drawing a table of n/a', () => {
     // ⛔ The count is where the fact belongs. A table of `n/a` reads as a rendering fault, and
     //    dropping the row without saying how many were dropped would hide the gap entirely.
     finishedTask({ adapter: 'claude-code', model: 'opus', activeMs: 4 * MIN })
@@ -411,10 +411,10 @@ describe('price', () => {
     expect(row?.basis).toBe('mixed')
   })
 
-  it('splits the model rung by billing basis instead of averaging subs with overage', () => {
+  it('splits the model level by billing basis instead of averaging subs with overage', () => {
     // ⛔ The mean of an amortised subscription share and money really billed on top is a number in
     // neither currency. One account crossing into overage mid-month puts the two layers on the
-    // same model, so the model rung carries one row per basis while the agent rung above keeps
+    // same model, so the model level carries one row per basis while the agent level above keeps
     // folding everything (t285).
     const plain = finishedTask({ adapter: 'claude-code', model: 'opus', activeMs: 4 * MIN, costModel: CLAUDE })
     const billed = finishedTask({ adapter: 'claude-code', model: 'opus', activeMs: 4 * MIN, costModel: CLAUDE })
@@ -465,7 +465,7 @@ describe('quality', () => {
     expect(prior === null || prior > 0).toBe(true)
   })
 
-  it('carries a prior and a fitness on the model rung and on no other', () => {
+  it('carries a prior and a fitness on the model level and on no other', () => {
     // ⛔ Both are properties of a *model*. There is no benchmark for `claude-code` in general or
     //    for `high` in particular, and copying the model's number up or down would print it three
     //    times as though it had been measured three ways. The table draws these as a dash rather
@@ -478,11 +478,11 @@ describe('quality', () => {
       expect(row.prior, row.level).toBeNull()
       expect(row.fitness, row.level).toBeNull()
     }
-    // ⚠️ And the model rung really does carry one, or the assertion above passes vacuously.
+    // ⚠️ And the model level really does carry one, or the assertion above passes vacuously.
     expect(rowsOut.filter((r) => r.level === 'model').some((r) => r.prior !== null)).toBe(true)
   })
 
-  it('still counts the tasks and the reviews on every rung, which are not model-only', () => {
+  it('still counts the tasks and the reviews on every level, which are not model-only', () => {
     finishedTask({ adapter: 'claude-code', model: 'opus', effort: 'high', activeMs: 6 * MIN })
     finishedTask({ adapter: 'claude-code', model: 'opus', effort: 'low', activeMs: 2 * MIN })
     const agent = stats.statisticsReport().quality.rows.find((r) => r.level === 'agent')
@@ -512,7 +512,7 @@ describe('quality', () => {
     expect(model?.distribution).toEqual({ samples: 1, average: 8, p50: 8, p99: 8, p100: 8 })
   })
 
-  it('carries an empty distribution, never a zero, on a rung nothing clean has graded', () => {
+  it('carries an empty distribution, never a zero, on a level nothing clean has graded', () => {
     finishedTask({ adapter: 'claude-code', model: 'opus', activeMs: 4 * MIN })
     const model = stats.statisticsReport().quality.rows.find((r) => r.level === 'model')
     expect(model?.distribution).toEqual({ samples: 0, average: null, p50: null, p99: null, p100: null })
@@ -549,7 +549,7 @@ describe('ordering by power in statistics tree', () => {
     expect(sorted).toEqual(['max', 'xhigh', 'high', 'medium', 'low', 'min'])
   })
 
-  it('merges dated Claude model ids and omits an unrecorded model rung', () => {
+  it('merges dated Claude model ids and omits an unrecorded model level', () => {
     finishedTask({ adapter: 'claude-code', model: 'claude-haiku-4-5-20251001', activeMs: MIN })
     finishedTask({ adapter: 'claude-code', model: 'claude-haiku-4-5', activeMs: 2 * MIN })
     finishedTask({ adapter: 'claude-code', model: null, activeMs: 3 * MIN })

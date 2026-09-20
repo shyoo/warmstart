@@ -4,7 +4,7 @@ Measured 2026-08-31 from `%APPDATA%\multi_agent_controller\logs\orchestratord-20
 **Nothing hung and nothing crashed.** The poller ran on time throughout; the reading it produced
 was old by construction.
 
-## The two rungs are not the same operation
+## The two levels are not the same operation
 
 - `probeWorker` (`src/daemon/quota.ts:69`) reads the CLI's on-disk `cachedUsageUtilization` and
   stores the reading with **the vendor's** `fetchedAtMs` as `sampledAt`

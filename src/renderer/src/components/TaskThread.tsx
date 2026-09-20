@@ -38,7 +38,7 @@ import { showsLiveOutput } from '../lib/live'
 import { supersededAskIds } from '../lib/compactionstatus'
 import { useScrolledPast } from '../lib/scrolledpast'
 import { isNearPageBottom, shouldJumpToThreadBottom } from '../lib/threadscroll'
-import { effectiveWorkspaceMode } from '../lib/finishrung'
+import { effectiveWorkspaceMode } from '../lib/finishlevel'
 import { codeSpans } from '../lib/codespans'
 import { bubbleSide, buildThreadItems, promptAnchors } from '../lib/threadbubble'
 import { duration, tokens, when } from '../lib/format'
@@ -609,7 +609,7 @@ function TaskDetail({
               alone, the diff disappeared the second a task finished — which is exactly when somebody
               opening the thread wants to know what it did, and the operator reported it as the panel
               having gone away (2026-09-13). A finished task still resolves: `resolveRange`'s first
-              rung is the recorded commits, which outlive the branch. The panel opens itself only at
+              level is the recorded commits, which outlive the branch. The panel opens itself only at
               the gate and says nothing at all where there is no change to resolve. */}
           {(task.branch || commits.length > 0) && (
             <DiffPanel
@@ -952,7 +952,7 @@ function TaskDetail({
                 `await-human` and `on` off a conversation task above the project and the fleet. A
                 dropdown here would offer a choice that is not on the table, and the one write that
                 *is* allowed to change the finish policy is the Commit button, which is a decision
-                about this commit rather than a setting. ⚠️ The finish fact still shows a real rung
+                about this commit rather than a setting. ⚠️ The finish fact still shows a real level
                 once Commit has written one — at that point it is the answer, and hiding it would
                 hide what the landing is about to do. */}
             {task.kind === 'conversation' && task.finishPolicy === 'inherit' ? (
@@ -984,7 +984,7 @@ function TaskDetail({
                       task,
                       detail.inheritedFinish,
                       // ⛔ The ladder answers to where this task's work sits: on the trunk the merge
-                      // and pull-request rungs are not offered (t583). See `finishChoice`.
+                      // and pull-request levels are not offered (t583). See `finishChoice`.
                       effectiveWorkspaceMode(task.workspaceMode, detail.inheritedWorkspaceMode)
                     )}
                     ariaLabel="Finish policy"

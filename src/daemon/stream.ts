@@ -274,7 +274,7 @@ export function describeStream(
   switch (event.kind) {
     case 'assistant_text':
       return event.streamed || !event.text.trim() ? null : { kind: 'text', text: event.text }
-    // ⛔ The typing is carried by `session.data` into the terminal rung, never as its own record
+    // ⛔ The typing is carried by `session.data` into the terminal level, never as its own record
     // here: a structured view that appended a row per fragment would draw one word per line, which
     // is the t272 failure with a different renderer.
     case 'assistant_delta':

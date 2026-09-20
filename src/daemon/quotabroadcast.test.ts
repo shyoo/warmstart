@@ -8,7 +8,7 @@ import type { DaemonEvent } from '@shared/protocol.js'
  * A reading was written and nobody was told.
  *
  * ⛔ **The measured bug (t86, 2026-09-01).** The fleet strip sat on a three-hour-old percentage
- * across the resume of a task, on an account the dispatch gate had just refreshed. Every rung that
+ * across the resume of a task, on an account the dispatch gate had just refreshed. Every level that
  * *reads* a window was working; what was missing is that only two of the four callers that store one
  * announced it. `QuotaPoller.sweep` called its listener, `worker.probe` emitted by hand, and the two
  * paths that matter most to somebody watching a run — `ensureFreshQuota` at the dispatch gate, and
@@ -26,7 +26,7 @@ let events: typeof import('./events.js')
 let quota: typeof import('./quota.js')
 
 const WORKER = 'dddddddd-0000-4000-8000-000000000001'
-/** An adapter with no `usageRefresh` to drive, so the refresh rung degrades to the file read. */
+/** An adapter with no `usageRefresh` to drive, so the refresh level degrades to the file read. */
 const NO_REFRESH_WORKER = 'dddddddd-0000-4000-8000-000000000002'
 
 const heard: DaemonEvent[] = []

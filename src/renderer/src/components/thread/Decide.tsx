@@ -24,15 +24,15 @@ import { SettingButtonSelect } from '../SettingButtonSelect'
 import { SplitButton } from '../SplitButton'
 import {
   COMMIT_FALLBACK,
-  commitRungsForMode,
-  defaultRung,
+  commitLevelsForMode,
+  defaultLevel,
   effectiveWorkspaceMode,
   LAND_FALLBACK,
-  landRungsForMode,
-  rungOrigin,
+  landLevelsForMode,
+  levelOrigin,
   settleControls,
   TRUNK_LAND_FALLBACK
-} from '../../lib/finishrung'
+} from '../../lib/finishlevel'
 import { duration } from '../../lib/format'
 import { effortLabel, modelLabel } from '../../lib/modelname'
 import {
@@ -541,13 +541,13 @@ export function Decide({
    *
    * ⛔ Passed in rather than read off `resolvedFinish`, because on a conversation that answers
    * `await-human` from the kind and would make every settle-it button here default to doing nothing.
-   * See `defaultRung`.
+   * See `defaultLevel`.
    */
   inheritedFinish?: ResolvedFinishPolicy
   /**
-   * The project's resolved workspace mode, so the rung menus answer to where this task's work
+   * The project's resolved workspace mode, so the level menus answer to where this task's work
    * actually sits. A trunk task's commits are already on the landing target, so the merge and
-   * pull-request rungs are not offered (t583).
+   * pull-request levels are not offered (t583).
    */
   inheritedWorkspaceMode?: WorkspaceMode
   onResolve: () => Promise<void>
@@ -638,24 +638,24 @@ export function Decide({
   const unlandedNow = controls.land
 
   /**
-   * The rung each settle-it button starts on, and where that answer came from.
+   * The level each settle-it button starts on, and where that answer came from.
    *
    * ⭐ **t283.** Both controls used to open on `commit-only` — not as a decision, but because a
-   * picker with no value shows the first item in its list, and `commit-only` is the bottom rung of
+   * picker with no value shows the first item in its list, and `commit-only` is the bottom level of
    * the ladder. On a project configured for commit·verify·merge the offered answer was therefore the
    * one that leaves the work sitting on the branch, every single time.
    */
   // ⛔ The menus answer to where this task's work sits, not to the fleet default. On the trunk the
-  // merge rung would promise a merge that cannot happen and the pull-request rung a branch the task
+  // merge level would promise a merge that cannot happen and the pull-request level a branch the task
   // does not have — both are refused or meaningless downstream, so they are not offered (t583).
   const mode = effectiveWorkspaceMode(task.workspaceMode, inheritedWorkspaceMode)
-  const commitOffered = commitRungsForMode(mode)
-  const landOffered = landRungsForMode(mode)
+  const commitOffered = commitLevelsForMode(mode)
+  const landOffered = landLevelsForMode(mode)
   const landFallback = mode === 'trunk' ? TRUNK_LAND_FALLBACK : LAND_FALLBACK
-  const commitRung = defaultRung(task.finishPolicy, inheritedFinish?.policy, commitOffered, COMMIT_FALLBACK)
-  const commitRungWhere = rungOrigin(task.finishPolicy, inheritedFinish, commitRung)
-  const landRung = defaultRung(task.finishPolicy, inheritedFinish?.policy, landOffered, landFallback)
-  const landRungWhere = rungOrigin(task.finishPolicy, inheritedFinish, landRung)
+  const commitLevel = defaultLevel(task.finishPolicy, inheritedFinish?.policy, commitOffered, COMMIT_FALLBACK)
+  const commitLevelWhere = levelOrigin(task.finishPolicy, inheritedFinish, commitLevel)
+  const landLevel = defaultLevel(task.finishPolicy, inheritedFinish?.policy, landOffered, landFallback)
+  const landLevelWhere = levelOrigin(task.finishPolicy, inheritedFinish, landLevel)
 
   /**
    * ⛔ **"I could not look" is not "there is nothing there", and it must not render as one.** The
@@ -803,8 +803,8 @@ export function Decide({
   const branchName = pending?.branch ?? task.branch
 
   // ⛔ **The prose moved into the tooltips, and none of it was dropped.** The card used to carry a
-  // paragraph beside every button — what it does, what it does to the DAG, which rung, where the
-  // rung came from — and six of them stacked under a resting conversation was a wall nobody read.
+  // paragraph beside every button — what it does, what it does to the DAG, which level, where the
+  // level came from — and six of them stacked under a resting conversation was a wall nobody read.
   // Each button's `title` now says the whole of it; what stays on the card is what protects work.
   const finishTitle = conversation
     ? (uncommittedNow
@@ -820,12 +820,12 @@ export function Decide({
   const commitTitle =
     'Asks this conversation’s agent — in the same session, so it still has the context — to commit ' +
     (uncommittedNow ? `the ${uncommittedShort} on ${branchName}` : `whatever is uncommitted on ${branchName}`) +
-    ` and then land it: ${FINISH_LABELS[commitRung]} (${commitRungWhere}). ` +
+    ` and then land it: ${FINISH_LABELS[commitLevel]} (${commitLevelWhere}). ` +
     'With the land_work MCP tool the agent lands it itself; on an adapter without MCP it says the ' +
     'commit is ready and the tool lands it when the turn ends. “Commit only” asks for the commit ' +
     'and no landing. ' +
     'This spends a turn and does not finish the task: the conversation stays open, on the next ' +
-    'numbered branch once it lands. ▼ picks a different rung for this press.' +
+    'numbered branch once it lands. ▼ picks a different level for this press.' +
     (uncommittedNow && pending?.unclaimed
       ? ' This task is not holding that workspace any more; the branch and these files are still in it, and the run prefers that tree.'
       : '') +
@@ -834,11 +834,11 @@ export function Decide({
       : '')
   const landTitle = conversation
     ? `Lands ${pending?.unlandedCommits === 1 ? '1 commit' : `${pending?.unlandedCommits ?? 0} commits`} ` +
-      `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landRung]} (${landRungWhere}). ` +
-      'The tool rebases onto the landing target, runs the project’s checks where the rung asks for ' +
-      'them, and merges or pushes as the rung says; a refusal leaves the branch exactly where it is. ' +
+      `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landLevel]} (${landLevelWhere}). ` +
+      'The tool rebases onto the landing target, runs the project’s checks where the level asks for ' +
+      'them, and merges or pushes as the level says; a refusal leaves the branch exactly where it is. ' +
       'Landing does not finish this conversation — only Finish and Stop do — so the thread comes back ' +
-      'open on the next numbered branch, ready to land again. ▼ picks another rung for this press.' +
+      'open on the next numbered branch, ready to land again. ▼ picks another level for this press.' +
       // ⛔ The two halves of a dirty tree do different things to a landing, and saying "uncommitted
       // files" about both would be the fudge that hid t578. Untracked files are not touched by a
       // rebase — measured — and stay in the workspace the conversation keeps; a tracked change
@@ -850,10 +850,10 @@ export function Decide({
         ? ` ⚠️ ${pending.dirtyFiles} tracked file(s) are modified — a rebase will not run over those, so Commit or revert them first.`
         : '')
     : `Lands ${pending?.unlandedCommits === 1 ? '1 commit' : `${pending?.unlandedCommits ?? 0} commits`} ` +
-      `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landRung]} (${landRungWhere}). ` +
-      'The tool rebases onto the landing target, runs the project’s checks where the rung asks for ' +
-      'them, and merges or pushes as the rung says; a refusal leaves the branch exactly where it is. ' +
-      '▼ picks another rung for this press.'
+      `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landLevel]} (${landLevelWhere}). ` +
+      'The tool rebases onto the landing target, runs the project’s checks where the level asks for ' +
+      'them, and merges or pushes as the level says; a refusal leaves the branch exactly where it is. ' +
+      '▼ picks another level for this press.'
   const resolveTitle =
     'Dispatches a landing-repair run on this thread with the worker and model selected below. It carries ' +
     'the landing failure, check output, branch and required landing procedure into that run, so the new ' +
@@ -924,16 +924,16 @@ export function Decide({
             className="commit-select"
             label="Commit"
             tone="warn"
-            value={commitRung}
+            value={commitLevel}
             disabled={busy}
             title={commitTitle}
             ariaLabel="Commit this conversation"
             menuAriaLabel="Landing strategy for this commit"
-            options={commitOffered.map((rung) => ({
-              value: rung,
-              label: `${FINISH_SHORT[rung]} — ${FINISH_LABELS[rung]}`
+            options={commitOffered.map((level) => ({
+              value: level,
+              label: `${FINISH_SHORT[level]} — ${FINISH_LABELS[level]}`
             }))}
-            onAct={(rung) => void handleCommit(rung as FinishPolicy)}
+            onAct={(level) => void handleCommit(level as FinishPolicy)}
           />
         )}
 
@@ -946,16 +946,16 @@ export function Decide({
             className="commit-select"
             label="Land"
             tone="primary"
-            value={landRung}
+            value={landLevel}
             disabled={busy}
             title={landTitle}
             ariaLabel={conversation ? 'Land this conversation' : 'Land this task'}
             menuAriaLabel="Landing strategy for this branch"
-            options={landOffered.map((rung) => ({
-              value: rung,
-              label: `${FINISH_SHORT[rung]} — ${FINISH_LABELS[rung]}`
+            options={landOffered.map((level) => ({
+              value: level,
+              label: `${FINISH_SHORT[level]} — ${FINISH_LABELS[level]}`
             }))}
-            onAct={(rung) => void handleLand(rung as FinishPolicy)}
+            onAct={(level) => void handleLand(level as FinishPolicy)}
           />
         )}
 

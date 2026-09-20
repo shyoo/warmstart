@@ -14,7 +14,7 @@ import type { RubricDimension } from './review.js'
 /** One (agent, model) key's measured quality. */
 export interface QualityKey {
   adapterId: string
-  /** Null is the adapter-wide rung: work whose model was never recorded. */
+  /** Null is the adapter-wide level: work whose model was never recorded. */
   model: string | null
   /** Every complete peer grade or direct user rating of this key's work. */
   samples: number

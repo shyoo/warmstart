@@ -207,7 +207,7 @@ describe('the base a landing will actually use', () => {
     expect(landingBaseFor(proj(), 'report-only', true)).toBe('main')
   })
 
-  it('leaves the rungs that never rebase on the remote reading', () => {
+  it('leaves the levels that never rebase on the remote reading', () => {
     // ⚠️ `commit-and-verify` maps to `verify-only`, which runs the checks against the branch exactly
     //    as committed and rebases nothing — so its base is advisory and the remote is the more
     //    useful thing to have been told about. Asserted so that a future change to `FOR_POLICY`
@@ -241,7 +241,7 @@ describe('the base a landing will actually use', () => {
    * The sentence that stops an agent reaching past the ref it was given.
    *
    * ⛔ **Naming `main` is not the same as ruling out `origin/main`.** t578's agent was told the
-   * landing failed on `origin/main` (a separate defect, fixed in `landingRungFor`), rebased there,
+   * landing failed on `origin/main` (a separate defect, fixed in `landingLevelFor`), rebased there,
    * and reported the rebase clean — twice. Every agent has been trained on `git rebase origin/main`,
    * and under `commit-and-merge` that ref is the one guaranteed to be stale. So the instruction
    * carries the measured gap: two refs, a count, and which one the landing uses.

@@ -154,7 +154,7 @@ const info: AdapterInfo = {
     quotaProbe: 'cli',
     // ⭐ **The balance was already on disk too.** Every rollout that records `rate_limits` records
     // `credits` beside it, and only `unlimited` was ever read — the number itself was parsed and
-    // dropped. So the money rung is the same rung as the quota one: a file read, no process, no
+    // dropped. So the money level is the same level as the quota one: a file read, no process, no
     // token. See `rolloutSpend`.
     spendProbe: 'config-cache',
     /**
@@ -412,7 +412,7 @@ function readUsage(usage: Record<string, unknown>): StreamUsage {
  *   "credits":   { "has_credits": false, "unlimited": false, "balance": null } }
  * ```
  *
- * So this is the **cheap rung** `probeWorker` was built for: a file read, no process, no token. It is
+ * So this is the **cheap level** `probeWorker` was built for: a file read, no process, no token. It is
  * the same shape of source as claude-code's `cachedUsageUtilization` and it is dated the same way —
  * by the vendor's own timestamp, never by ours, so the staleness ladder in `quota.ts` can do its job.
  *
@@ -823,7 +823,7 @@ async function readAccountRateLimits(isolationRoot: string): Promise<CodexRateLi
 }
 
 /**
- * The fallback rung: the newest rollout that recorded a `rate_limits`.
+ * The fallback level: the newest rollout that recorded a `rate_limits`.
  *
  * ⚠️ Separate from `probeQuota` so it can be tested without a codex on PATH. Spawning the
  * app-server inside a unit test would make the result depend on whether the machine running the
@@ -1144,7 +1144,7 @@ export const openaiCompatible: AgentAdapter = {
   /**
    * Ask the app-server; fall back to the newest rollout. Both free. See `readAccountRateLimits`.
    *
-   * ⚠️ The two rungs report **different `source` values on purpose**, because they are not equally
+   * ⚠️ The two levels report **different `source` values on purpose**, because they are not equally
    * trustworthy and `sampledAt` alone cannot say so. `'cli'` is a reading taken *now*; `'config-cache'`
    * is one left behind by a turn, dated when that turn happened, and the staleness ladder in
    * `quota.ts` treats it accordingly.

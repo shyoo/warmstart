@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { PendingWork, Task } from '@shared/tasks'
-import { settleControls } from '@renderer/lib/finishrung'
+import { settleControls } from '@renderer/lib/finishlevel'
 import { REMOTE_METHODS } from '../../../daemon/remote/policy.js'
-import { commitRungFor, decisionsFor, type TaskDecision } from './question.js'
+import { commitLevelFor, decisionsFor, type TaskDecision } from './question.js'
 
 /**
  * The phone must not drift from the desktop thread: when the desktop's settle card changes what
@@ -46,13 +46,13 @@ describe('phone Commit agrees with the desktop settle card', () => {
     expect(decisionsFor(task({ status: 'completed' }), NOW, DIRTY).includes('commit')).toBe(false)
   })
 
-  it('sends the rung the desktop menu opens on', () => {
-    // The task's own rung wins; the project's answers next; otherwise the quiet fallback.
-    expect(commitRungFor(task({ finishPolicy: 'commit-and-verify' }), { policy: 'commit-and-merge' }, 'worktree')).toBe('commit-and-verify')
-    expect(commitRungFor(task(), { policy: 'commit-and-merge' }, 'worktree')).toBe('commit-and-merge')
-    expect(commitRungFor(task(), null, 'worktree')).toBe('commit-only')
-    // A rung Commit cannot offer is never sent, even when the project answers with it.
-    expect(commitRungFor(task(), { policy: 'await-human' }, 'worktree')).toBe('commit-only')
+  it('sends the level the desktop menu opens on', () => {
+    // The task's own level wins; the project's answers next; otherwise the quiet fallback.
+    expect(commitLevelFor(task({ finishPolicy: 'commit-and-verify' }), { policy: 'commit-and-merge' }, 'worktree')).toBe('commit-and-verify')
+    expect(commitLevelFor(task(), { policy: 'commit-and-merge' }, 'worktree')).toBe('commit-and-merge')
+    expect(commitLevelFor(task(), null, 'worktree')).toBe('commit-only')
+    // A level Commit cannot offer is never sent, even when the project answers with it.
+    expect(commitLevelFor(task(), { policy: 'await-human' }, 'worktree')).toBe('commit-only')
   })
 })
 

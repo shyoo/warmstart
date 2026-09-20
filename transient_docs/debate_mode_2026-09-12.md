@@ -123,8 +123,8 @@ on its first round, N times, each one holding a worker slot through `awaitingHum
 
 → **A new finish policy, `report-only`**: the deliverable is on the thread, nothing is expected on the
 branch, so the verdict is `done` and the task completes. ⛔ Listed **outside** `FINISH_ORDER`'s ladder
-beside `pull-request` and `custom`, because it is not a rung — it does strictly *less* than
-`await-human`, not one thing more than the rung below. Checked before step 3, after the
+beside `pull-request` and `custom`, because it is not a level — it does strictly *less* than
+`await-human`, not one thing more than the level below. Checked before step 3, after the
 rebase-in-progress guard. Any incidental dirt in the seat's workspace is carried by `rescueDirt` onto
 the seat's own branch exactly as it is today; nothing is discarded and nothing is swept into a commit.
 

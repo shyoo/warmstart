@@ -8,7 +8,7 @@ import type { Session, Worker } from '@shared/protocol.js'
 import {
   isOpenConversation,
 } from '@shared/tasks.js'
-import { landingRungFor, resolveFinishPolicy, resolveSessionSharing } from '@shared/policy.js'
+import { landingLevelFor, resolveFinishPolicy, resolveSessionSharing } from '@shared/policy.js'
 
 /**
  * The `conversation` kind: a task with the single-turn contract taken out of it.
@@ -113,7 +113,7 @@ describe('what a conversation resolves its two forced settings to', () => {
     expect(resolveSessionSharing(work, project()).sharing).toBe('on')
   })
 
-  it('stands aside the moment a rung is written, because that write is the Commit button', () => {
+  it('stands aside the moment a level is written, because that write is the Commit button', () => {
     // ⛔ Not a loophole — the mechanism. `isOpenConversation` is false from here on, which is what
     // switches the next turn back to the ordinary "commit and report complete" instruction.
     const asked = { ...convo(), finishPolicy: 'commit-and-merge' } as Task
@@ -127,33 +127,33 @@ describe('what a conversation resolves its two forced settings to', () => {
   })
 
   /**
-   * ⛔ **And the rung a *landing* runs, which is never `await-human`.** The kind's answer stops a
+   * ⛔ **And the level a *landing* runs, which is never `await-human`.** The kind's answer stops a
    * conversation landing *by itself*; it says nothing about the landing a person just asked for, and
-   * `landConversationWork` has always passed its own rung to `decideFinish`. Every other reader
+   * `landConversationWork` has always passed its own level to `decideFinish`. Every other reader
    * — `baseRef`, the conflict prompt, the pre-flight mergeability check — kept asking
    * `resolveFinishPolicy` and got `await-human`, whose strategy is `leave-branch`, whose base is
    * `origin/<target>`, while the Land press rebased onto the local one. See t578.
    */
-  it('⛔ answers the project’s own rung when asked what a landing will run', () => {
-    expect(landingRungFor(convo(), project('commit-and-merge'))).toBe('commit-and-merge')
-    expect(landingRungFor(convo(), project('commit-and-push'))).toBe('commit-and-push')
+  it('⛔ answers the project’s own level when asked what a landing will run', () => {
+    expect(landingLevelFor(convo(), project('commit-and-merge'))).toBe('commit-and-merge')
+    expect(landingLevelFor(convo(), project('commit-and-push'))).toBe('commit-and-push')
   })
 
-  it('falls to commit-and-merge when even the project’s rung lands nothing', () => {
+  it('falls to commit-and-merge when even the project’s level lands nothing', () => {
     // ⚠️ A project set to `commit-only` has said something about *finishing*, not about a landing
     //    somebody has just pressed a button for.
-    expect(landingRungFor(convo(), project('commit-only'))).toBe('commit-and-merge')
+    expect(landingLevelFor(convo(), project('commit-only'))).toBe('commit-and-merge')
   })
 
-  it('lets an explicit rung win, and ignores one that lands nothing', () => {
-    expect(landingRungFor(convo(), project('commit-and-merge'), undefined, 'pull-request')).toBe('pull-request')
-    expect(landingRungFor(convo(), project('commit-and-merge'), undefined, 'commit-only')).toBe('commit-and-merge')
+  it('lets an explicit level win, and ignores one that lands nothing', () => {
+    expect(landingLevelFor(convo(), project('commit-and-merge'), undefined, 'pull-request')).toBe('pull-request')
+    expect(landingLevelFor(convo(), project('commit-and-merge'), undefined, 'commit-only')).toBe('commit-and-merge')
   })
 
   it('is the ordinary answer for everything that is not an open conversation', () => {
     const work = { ...convo(), kind: 'work' } as Task
-    expect(landingRungFor(work, project('commit-only'))).toBe('commit-only')
-    expect(landingRungFor(work, project('commit-and-merge'))).toBe('commit-and-merge')
+    expect(landingLevelFor(work, project('commit-only'))).toBe('commit-only')
+    expect(landingLevelFor(work, project('commit-and-merge'))).toBe('commit-and-merge')
   })
 })
 
@@ -225,7 +225,7 @@ describe('what a conversation is told at the end of its turn', () => {
     expect(prompt).toContain('never merge or push to the landing target yourself')
   })
 
-  it('goes back to the ordinary instruction once a real rung is written', () => {
+  it('goes back to the ordinary instruction once a real level is written', () => {
     // ⚠️ **No button writes one any more** — Commit asks and Land lands, and both leave the task an
     // open conversation. The only thing that reaches this is an operator setting the task's own
     // finish dropdown, which is them saying to finish it like a work task. The mechanism is pinned
@@ -313,8 +313,8 @@ describe('what a follow-up into a live conversation is sent', () => {
     expect(text).toContain('call the MCP tool `task_complete`')
   })
 
-  it('says the whole thing again once Commit has written a rung', () => {
-    // ⛔ The rung takes the task out of `isOpenConversation`, and the turn it is asking for is an
+  it('says the whole thing again once Commit has written a level', () => {
+    // ⛔ The level takes the task out of `isOpenConversation`, and the turn it is asking for is an
     // ordinary landing turn — which needs the landing instruction whether the session is warm or not.
     const task = followUp('Chat, then commit', 'ok, land it')
     tasks.updateTask(task.id, { finishPolicy: 'commit-and-merge' })
@@ -490,7 +490,7 @@ describe('what ends a conversation turn', () => {
 
   it('⭐ takes up the landing a Commit press promised, on the far side of the turn', async () => {
     // ⛔ **The wiring t581 added, pinned at the seam rather than inside it.** `commitConversation`
-    // records the rung and tells the agent not to merge or push; nothing else in the fleet was
+    // records the level and tells the agent not to merge or push; nothing else in the fleet was
     // going to act on it once the agent had no `land_work` to call. `endConversationTurn` is the
     // one choke point every clean conversation turn goes through, so it is where the promise is
     // taken up. ⚠️ This fixture has no project, so the landing itself refuses — which is the
@@ -548,9 +548,9 @@ describe('what the Commit button does', () => {
   })
 
   // ⛔ The seam between the Commit ▼ and `land_work`: the menu offers `commit-and-verify`, and the
-  // tool's schema accepts only the three rungs that land. Naming the tool with that rung was an
+  // tool's schema accepts only the three levels that land. Naming the tool with that level was an
   // instruction the agent could not follow.
-  it('names `land_work` only for a rung that lands, and only to an agent that has the tool', () => {
+  it('names `land_work` only for a level that lands, and only to an agent that has the tool', () => {
     const base = { branch: 'warmstart/t9.2-chat', checks: ['npm test'] }
     const verify = resolutions.commitConversationInstruction({ ...base, policy: 'commit-and-verify', canLand: true })
     expect(verify).not.toContain('land_work')
@@ -559,7 +559,7 @@ describe('what the Commit button does', () => {
     const only = resolutions.commitConversationInstruction({ ...base, checks: [], policy: 'commit-only', canLand: true })
     expect(only).not.toContain('land_work')
     const merge = resolutions.commitConversationInstruction({ ...base, policy: 'commit-and-merge', canLand: true })
-    expect(merge).toContain('`land_work` with `rung: "commit-and-merge"`')
+    expect(merge).toContain('`land_work` with `finishPolicy: "commit-and-merge"`')
     expect(merge).toContain('warmstart/t9.2-chat')
     // ⛔ **And it names what actually happens next** (t581). This used to send an MCP-less agent to
     // tell the operator to press **Land** — a button the card would not draw over a tree holding
@@ -691,9 +691,9 @@ describe('a conversation whose workspace went back to the pool', () => {
   /**
    * ⛔ **Retry landing must not be the button that ends a conversation.**
    * `relandTask` resolves the task's *finish* policy, lands under it, and writes `completed`. An
-   * open conversation answers `await-human` from its kind — a rung that lands nothing — so the
+   * open conversation answers `await-human` from its kind — a level that lands nothing — so the
    * retry would have landed nothing and then retired the chat anyway. Its Land button has always
-   * gone through `landConversationWork`, which lands on the project's own rung and keeps the
+   * gone through `landConversationWork`, which lands on the project's own level and keeps the
    * conversation open on the next numbered branch; the retry now goes to the same place.
    *
    * ⚠️ Inferred from reading both paths rather than observed in flight: `canRelandTask` hides
@@ -769,7 +769,7 @@ describe('a conversation whose workspace went back to the pool', () => {
 
 /** Landing a conversation from the thread — the half of settling it that costs no turn. */
 describe('what the Land button does', () => {
-  it('refuses a rung that would land nothing, rather than appearing to land it', async () => {
+  it('refuses a level that would land nothing, rather than appearing to land it', async () => {
     // ⛔ `commit-only` and `commit-and-verify` leave the branch where it is. Accepting one here
     // would write a finish policy, land nothing, and report success for a branch that never moved.
     const task = tasks.createTask({ title: 'Nothing to land', kind: 'conversation', status: 'ready' })
@@ -810,7 +810,7 @@ describe('what the Land button does', () => {
   })
 
   it('refuses before it says anything, when the refusal costs nothing', async () => {
-    // ⚠️ A rung that cannot land is decided in microseconds; a *landing under way* line for it
+    // ⚠️ A level that cannot land is decided in microseconds; a *landing under way* line for it
     //    would read as a landing that started and vanished.
     const task = tasks.createTask({ title: 'No line for this', kind: 'conversation', status: 'ready' })
     await resolutions.landConversation(task.id, 'commit-only')

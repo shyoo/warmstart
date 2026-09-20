@@ -270,13 +270,13 @@ the most code.
 
 ### 3.10 ⛔ A child's quality grade would be computed over its siblings' code
 
-`resolveRange` (`review.ts:163`) finds the commits to review on a two-rung ladder, and both rungs
+`resolveRange` (`review.ts:163`) finds the commits to review on a two-level ladder, and both levels
 are wrong for a split child measured against `main`.
 
-- Rung 1 requires `landedHeadSha` to be an ancestor of the target (`headOnTrunk`). A child lands onto
+- Level 1 requires `landedHeadSha` to be an ancestor of the target (`headOnTrunk`). A child lands onto
   the **plan branch** and never onto `main`, so this fails for every child until the plan itself
   lands.
-- Rung 2 is then `merge-base(target, childBranch)..childBranch`. The child was cut from the plan
+- Level 2 is then `merge-base(target, childBranch)..childBranch`. The child was cut from the plan
   branch, so `merge-base(main, child)` is where the *plan branch* diverged from `main` — and the
   range therefore contains the planner's own commits and every sibling merged in before this child
   was cut.
@@ -287,7 +287,7 @@ and the diff is other agents' work. That is the failure `resolveRange`'s own com
 anticipate.
 
 → Both `reviewer.ts` call sites take `landingTargetFor(task, project)`. With the child's target set
-to the plan branch, rung 1 resolves (the child *did* land onto it) and the range is the child's own
+to the plan branch, level 1 resolves (the child *did* land onto it) and the range is the child's own
 commits. ⚠️ This is the one call site where getting §3.4 half-done is worse than not starting: a
 partially-wired resolver produces grades, and a grade is stored.
 

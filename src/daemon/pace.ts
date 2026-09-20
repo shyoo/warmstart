@@ -53,7 +53,7 @@ const MIN_ACTIVE_MS = 60_000
 
 export interface PaceKey {
   adapterId: string
-  /** Null is the adapter-wide rung: that agent's tasks whose model was never recorded. */
+  /** Null is the adapter-wide level: that agent's tasks whose model was never recorded. */
   model: string | null
   samples: number
   /** The median finished task on this key, in active milliseconds. */
@@ -224,7 +224,7 @@ export function paceFactors(now = Date.now()): PaceFactors {
 }
 
 /**
- * A key's pace, with the adapter-wide rung as its fallback.
+ * A key's pace, with the adapter-wide level as its fallback.
  *
  * ⚠️ Exact key first, then the adapter's other models pooled. A model nobody has finished a task on
  * inherits what its account has been measured to do rather than being called average, which is the

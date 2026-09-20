@@ -835,7 +835,7 @@ export function NewTask({
         const filedLimit = isExecute ? PLAN_EXECUTE_PIECES : pieceLimit
         /**
          * ⛔ **A Plan & Execute planner reports; it never lands.** It writes no code — the executor
-         * is what reaches the trunk — and its branch is abandoned at the handoff, so any rung above
+         * is what reaches the trunk — and its branch is abandoned at the handoff, so any level above
          * `report-only` would ask the daemon to verify and merge a branch with nothing on it and
          * trip the empty-branch guard on a task that was never going to write a commit. Same reason
          * a debate's seats are filed `report-only`, one level up.

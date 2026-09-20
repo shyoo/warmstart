@@ -125,7 +125,7 @@ the sibling repo and no next agent could read it.
     *pointed at* from `AGENTS.md`, never written out twice.
   - `docs/data-model.md` — a migration, a column, or a change to a load-bearing union. ⛔ A new
     migration also bumps the `MIGRATION_COUNT` figure in §2 of that page.
-  - `docs/cost-model.md` — any measured number, cache or compaction behaviour, quota rung, or a
+  - `docs/cost-model.md` — any measured number, cache or compaction behaviour, quota level, or a
     measurement run that landed. ⛔ Every number carries where it came from and when.
   - `docs/routing.md` — an eligibility gate, a weight, a tie-break, or the controller consult.
   - `docs/adapters.md` — anything learned about what a CLI can actually do. ⛔ Never promote a

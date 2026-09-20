@@ -76,7 +76,7 @@ export const REMOTE_METHODS = {
   'task.commitDiff': 'deny',
   'task.commitFile': 'deny',
   // ⚠️ Allowed on t585's decision, and only the commit half: asking an agent to commit a
-  // conversation's work is no more powerful than the retry the phone already offers, and the rung
+  // conversation's work is no more powerful than the retry the phone already offers, and the level
   // is the task's own default, not a picker. `landConversation` stays denied — merging to the
   // trunk from a phone is a decision of its own, and `task.land` already covers retrying a landing.
   'task.commitConversation': 'write',

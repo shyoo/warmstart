@@ -148,7 +148,7 @@ describe('picking a reviewer', () => {
     expect(reviewer.pickReviewer(task()).reason).toContain('no peer to review this work')
   })
 
-  it('offers the cheap rung of the chosen provider, so a grade costs a fraction of the work', () => {
+  it('offers the cheap level of the chosen provider, so a grade costs a fraction of the work', () => {
     worker(CLAUDE_A, 'ClaudeFirst', 'claude-code')
     worker(CODEX, 'CodexFirst', 'openai-compatible')
     workRun(CLAUDE_A, 'claude-code', 'claude-opus-5')

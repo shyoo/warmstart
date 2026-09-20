@@ -26,7 +26,7 @@ export interface Fitness {
   prior: number | null
   /** `cleanComposite / 10`. `null` when nothing clean has been graded. */
   measured: number | null
-  /** ⚠️ The **clean** review count, never `samples` — see the note on `rungFor` below. */
+  /** ⚠️ The **clean** review count, never `samples` — see the note on `levelFor` below. */
   samples: number
   /** The blend, or `null` when neither a prior nor a clean review exists. Never 0, never 0.5. */
   value: number | null
@@ -52,13 +52,13 @@ function blend(prior: number, measured: number, n: number): number {
 }
 
 /**
- * The quality-review rung for one key: the exact `(adapterId, model)` bucket, then the adapter-wide
+ * The quality-review level for one key: the exact `(adapterId, model)` bucket, then the adapter-wide
  * one `qualityReport()` already produces for reviews whose subject model was never recorded — the
- * same fallback shape `paceFor` climbs, except this rung is real data rather than something
+ * same fallback shape `paceFor` climbs, except this level is real data rather than something
  * synthesized on the way past: `qualityKeys` (`quality.ts`) buckets a review with no recorded
  * `subject_model` under `model: null` on its own, and this just asks for that bucket by name.
  */
-function rungFor(keys: QualityKey[], adapterId: string, model: string | null): QualityKey | null {
+function levelFor(keys: QualityKey[], adapterId: string, model: string | null): QualityKey | null {
   return (
     keys.find((k) => k.adapterId === adapterId && k.model === (model ?? null)) ??
     keys.find((k) => k.adapterId === adapterId && k.model === null) ??
@@ -67,7 +67,7 @@ function rungFor(keys: QualityKey[], adapterId: string, model: string | null): Q
 }
 
 /**
- * @param keys The quality rungs to read, from a `qualityReport()` the caller already has.
+ * @param keys The quality levels to read, from a `qualityReport()` the caller already has.
  *
  * ⛔ **Pass these in from any loop.** `qualityReport()` reads the whole reviews table and runs four
  * more counting queries, and this function is called once per routing candidate — the same reason
@@ -79,11 +79,11 @@ export function fitnessFor(
   model: string | null,
   keys?: QualityKey[]
 ): Fitness {
-  const rungs = keys ?? qualityReport().keys
-  const exact = rungs.find((k) => k.adapterId === adapterId && k.model === (model ?? null))
-  const rung = rungFor(rungs, adapterId, model)
-  const rungIsExact = !!exact
-  const rungIsAdapterWide = !rungIsExact && !!rung
+  const levels = keys ?? qualityReport().keys
+  const exact = levels.find((k) => k.adapterId === adapterId && k.model === (model ?? null))
+  const level = levelFor(levels, adapterId, model)
+  const levelIsExact = !!exact
+  const levelIsAdapterWide = !levelIsExact && !!level
 
   const priorInfo = benchmarkPrior(model)
   const prior = priorInfo.agentic
@@ -91,13 +91,13 @@ export function fitnessFor(
   // on"; a review of a task two adapters both worked on, or one whose blinding leaked, is counted
   // but excluded from `cleanComposite` for the same reason, and shrinking on the wrong count would
   // let a key with ten reviews and two clean ones shrink as if it had earned all ten.
-  const n = rung?.clean ?? 0
-  const measured = rung && rung.cleanComposite !== null && n > 0 ? rung.cleanComposite / 10 : null
+  const n = level?.clean ?? 0
+  const measured = level && level.cleanComposite !== null && n > 0 ? level.cleanComposite / 10 : null
 
-  const rungNote = rungIsExact
+  const levelNote = levelIsExact
     ? `the exact (${adapterId}, ${model ?? '?'}) key`
-    : rungIsAdapterWide
-      ? `${adapterId}'s adapter-wide rung (no review of this model recorded a model id)`
+    : levelIsAdapterWide
+      ? `${adapterId}'s adapter-wide level (no review of this model recorded a model id)`
       : 'no quality review of this key at all'
 
   let value: number | null
@@ -131,7 +131,7 @@ export function fitnessFor(
     measured,
     samples: n,
     value,
-    basis: `${rungNote}: ${blendNote}`
+    basis: `${levelNote}: ${blendNote}`
   }
 }
 

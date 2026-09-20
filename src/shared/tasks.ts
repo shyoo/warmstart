@@ -513,10 +513,10 @@ export function adapterSpread(adapterIds: Array<string | null | undefined>): num
  * stored so it cannot disagree with the finish policy beside it. A conversation's finish policy is
  * `inherit` for its whole life — `resolveFinishPolicy` reads the kind and answers `await-human`,
  * which is what keeps a project set to `commit-and-merge` from landing a chat on its own.
- * ⚠️ **Neither Commit nor Land writes a rung any more** (t343): a conversation lands through
+ * ⚠️ **Neither Commit nor Land writes a level any more** (t343): a conversation lands through
  * `land_work` or the Land button as often as it is asked to and stays open, and migration 64 reset
  * the rows an older build had left carrying one. The only thing that takes a conversation out of this
- * contract now is an operator choosing a real rung on the task's own *finish* setting.
+ * contract now is an operator choosing a real level on the task's own *finish* setting.
  */
 export function isOpenConversation(
   task: Pick<Task, 'kind' | 'finishPolicy'> | null | undefined
@@ -1069,11 +1069,11 @@ export interface Task {
    */
   branchUnit: number
   /**
-   * The rung a **Commit** press promised to land on once the agent's turn ends, and has not yet.
+   * The level a **Commit** press promised to land on once the agent's turn ends, and has not yet.
    *
    * ⛔ **The tool's own half of the Commit button, written down.** Commit asks the agent for a
    * commit and tells it explicitly not to merge or push. On an adapter with MCP the agent closes
-   * that loop itself with `land_work`; on one without — muse-code, codex — nothing did, so the rung
+   * that loop itself with `land_work`; on one without — muse-code, codex — nothing did, so the level
    * the operator picked was dropped on the floor. t578 (2026-09-20) ended with one squashed commit
    * on its branch, an agent that had said *"the commit is ready to land"*, and no landing; pressing
    * Commit again only re-sent the same instruction.
@@ -1362,7 +1362,7 @@ export interface Run {
    *
    * ⚠️ Both are nullable. `adapterId` is null only on runs that predate the column; `model` is null
    * there too, and on any run whose session never learned one. The estimator treats a null model as
-   * "this adapter, model unknown" and falls back a rung rather than inventing one.
+   * "this adapter, model unknown" and falls back a level rather than inventing one.
    */
   adapterId: string | null
   model: string | null
@@ -2258,7 +2258,7 @@ export type LandingStrategyId =
   | 'merge-branch'
   /**
    * A trunk-mode task: its commits are already on the local target. Verify them in the trunk, and
-   * push the target if the rung pushes. No rebase, no branch. See `landTrunk`.
+   * push the target if the level pushes. No rebase, no branch. See `landTrunk`.
    */
   | 'trunk'
 
@@ -2328,7 +2328,7 @@ export type FinishPolicy =
    * The deliverable is on the **thread**. Nothing is expected on the branch, so a clean branch with
    * no commits completes rather than being handed back to a person.
    *
-   * ⛔ **Not a rung, and it does strictly *less* than `await-human`** — hence its place at the end
+   * ⛔ **Not a level, and it does strictly *less* than `await-human`** — hence its place at the end
    * of `FINISH_ORDER` beside `pull-request` and `custom` rather than anywhere in the ladder.
    * `decideFinish`'s empty-branch guard (t17) is correct and stays: a `work` task whose branch is
    * empty is indistinguishable from one whose agent committed in the trunk. This policy is the
@@ -2396,9 +2396,9 @@ export function readFinishPolicy(raw: unknown): FinishPolicyChoice | null {
 }
 
 /**
- * The ladder, in order. Each rung does everything the one below does plus one thing.
+ * The ladder, in order. Each level does everything the one below does plus one thing.
  *
- * ⚠️ `pull-request` and `custom` are deliberately last and are **not rungs**: a PR pushes the
+ * ⚠️ `pull-request` and `custom` are deliberately last and are **not levels**: a PR pushes the
  * branch and never touches the trunk, and `custom` is an instruction to the agent rather than an
  * action the daemon takes.
  */
@@ -2410,7 +2410,7 @@ export const FINISH_ORDER: FinishPolicy[] = [
   'commit-and-push',
   'pull-request',
   'custom',
-  // ⚠️ Last, and deliberately not a rung: it does strictly *less* than `await-human`. See the
+  // ⚠️ Last, and deliberately not a level: it does strictly *less* than `await-human`. See the
   // union member's own note.
   'report-only'
 ]
@@ -2448,7 +2448,7 @@ export const FINISH_SHORT: Record<FinishPolicy, string> = {
 /**
  * Does this policy ask the daemon to run the project's checks?
  *
- * ⛔ `commit-only` deliberately does not. Each rung does strictly more than the one below, and
+ * ⛔ `commit-only` deliberately does not. Each level does strictly more than the one below, and
  * the early-phase case it exists for usually has no suite to run.
  */
 export function policyVerifies(policy: FinishPolicy): boolean {
@@ -2469,7 +2469,7 @@ export function policyLands(policy: FinishPolicy): boolean {
 }
 
 /**
- * May this rung be *offered* for work already sitting on the landing target?
+ * May this level be *offered* for work already sitting on the landing target?
  *
  * ⛔ A narrower question than `trunkPolicyConflict`, which answers what cannot *run*.
  * `commit-and-merge` runs fine on a trunk task — the daemon verifies in place — but its name
@@ -2820,7 +2820,7 @@ export interface TaskDiffSummary {
   reason: string
   base: string | null
   head: string | null
-  /** Which rung of `resolveRange` answered — the vocabulary is `review.ts`'s, not a second one. */
+  /** Which level of `resolveRange` answered — the vocabulary is `review.ts`'s, not a second one. */
   from: 'commits' | 'landed' | 'branch' | 'commit' | null
   /**
    * How many commits are being shown separately rather than as one range.

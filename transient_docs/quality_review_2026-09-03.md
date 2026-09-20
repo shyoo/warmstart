@@ -537,7 +537,7 @@ long after the branch is gone. The same two lines go into `autoLand` and `pullRe
 ```
 
 ⛔ **Never guess.** A review of the wrong commits is worse than no review, because it produces a
-number that looks exactly like a real one. Rung 3 is the honest answer for every task that landed
+number that looks exactly like a real one. Level 3 is the honest answer for every task that landed
 before this ships, and the plan accepts that the existing backlog is largely unreviewable — which is
 precisely why §7.2 is the first thing built.
 
@@ -690,15 +690,15 @@ Default per adapter, in a published table beside the rubric weights:
 
 | Adapter | Review model | Why |
 |---|---|---|
-| `claude-code` | `claude-haiku-4-5` | The cheap rung of the pool that is already metered. |
+| `claude-code` | `claude-haiku-4-5` | The cheap level of the pool that is already metered. |
 | `antigravity-cli` | `gemini-3.7-flash-medium` | ⚠️ Already the Gemini-pool default for this fleet. |
-| `openai-compatible` | `gpt-5.4-mini` | The cheap rung of the codex model list. |
+| `openai-compatible` | `gpt-5.4-mini` | The cheap level of the codex model list. |
 
 ⚠️ **A guess, and an important one.** Whether a small model can hold a seven-dimension rubric and
 produce calibrated, non-clustered scores is unmeasured — R17, §12. The choice is one field on the
 review record (`reviewer_model`), so the experiment is: review the same five tasks on the small and
 the large model of one provider and compare the spread. If the small model clusters everything at
-7–8, it is not a judge and the default moves up a rung.
+7–8, it is not a judge and the default moves up a level.
 
 ---
 
@@ -760,7 +760,7 @@ Each step is shippable and each is testable without the one after it.
 | **2** | `runs.kind`, and the fifteen-query audit (§5.2). | `db.ts`, `tasks.ts`, `estimator.ts`, `activetime.ts`, `conversations.ts` | `estimator.test.ts`, `activetime.test.ts`, `metering.test.ts` — a review run changes none of their numbers. |
 | **3** | `quality_reviews` table + `recordReview` + the composite. | `db.ts`, new `review.ts` | `review.test.ts` — the §3.4 fixture scores 8.6; a `null` renormalises; a malformed reply fails without writing a score. |
 | **4** | `blind()`. | `review.ts` | `blinding.test.ts` — real trailers from this repo's history are stripped; a prose mention sets `leaked`. |
-| **5** | Diff assembly, truncation, and the §7.3 resolution ladder. | `review.ts`, `worktrees.ts` | `reviewdiff.test.ts` — each rung, including rung 3 refusing rather than guessing. |
+| **5** | Diff assembly, truncation, and the §7.3 resolution ladder. | `review.ts`, `worktrees.ts` | `reviewdiff.test.ts` — each level, including level 3 refusing rather than guessing. |
 | **6** | `readOnlyPermissionMode` capability + `purpose: 'review'`. | `adapters/*.ts`, `sessions.ts`, `protocol.ts` | `adapters.test.ts` — every built-in declares one or declares null; a review session gets no MCP config. |
 | **7** | `pickReviewer` + dispatch + parse. | `review.ts` | `reviewer.test.ts` — an author's adapter is never chosen; an empty candidate set names every rejection. |
 | **8** | `review.request` / `review.get` RPC. | `api.ts`, `protocol.ts` | `taskpage.test.ts` |
@@ -790,7 +790,7 @@ file moves to `transient_docs/changes_history.md`.
 - ⚠️ **No reference solution**, so the strongest axis in the literature is unavailable (§3.1).
 - ⚠️ **Blinding leaks on prose**, measured at 20 of the last 60 commits (§2.3). Recorded, not fixed.
 - ⛔ **The existing backlog is largely unreviewable** — tasks that already landed have no recorded
-  commit range and no branch (§7.3, rung 3). Accepted, and the reason step 1 ships first.
+  commit range and no branch (§7.3, level 3). Accepted, and the reason step 1 ships first.
 - ⚠️ **Nothing calibrates the scale across providers.** A 7 from Gemini and a 7 from Claude are
   assumed comparable and have not been shown to be. The §3.4 worked example is the only fixed point,
   and it is one hand-written sample. Until several agents have scored the *same* task, cross-agent

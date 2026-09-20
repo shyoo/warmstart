@@ -151,7 +151,7 @@ export function recordCalibration(input: {
 /**
  * What is left on this worker, in tokens, or null.
  *
- * Three rungs, most trustworthy first, and the rung is reported rather than hidden:
+ * Three levels, most trustworthy first, and the level is reported rather than hidden:
  *   1. a **fresh** percentage plus a calibration for this exact (worker, model, tokenizer)
  *   2. nothing usable — a live `rate_limit_event` gives a *status* and a reset time but no size
  *   3. nothing at all
@@ -191,7 +191,7 @@ export function remainingTokens(workerId: string): { tokens: number | null; basi
 /**
  * How full is the window the sessions on this worker are actually drawing on?
  *
- * ⛔ **The rung that made the reserve reachable at all.** `remainingTokens` needs a learned
+ * ⛔ **The level that made the reserve reachable at all.** `remainingTokens` needs a learned
  * percent→token conversion (R2), the `calibration` table on this install is *empty*, and so every
  * worker holding a session has reported `unknown` since the reserve was written — which meant move 5
  * of the cache clock, "the reserve is at risk, compact now regardless", had never once fired.
@@ -275,7 +275,7 @@ export function reserveState(workerId: string): ReserveState {
     }
   }
 
-  // ⛔ Before the token rungs, and it may overrule a satisfied one. `remaining` is derived from a
+  // ⛔ Before the token levels, and it may overrule a satisfied one. `remaining` is derived from a
   // learned conversion that half this fleet has no samples for, and where it *is* known it answers
   // "does the window cover one compaction" - not "is this account still being given work". At the
   // high-water mark the answer to the second question is no, and a session left uncompacted there is
@@ -292,7 +292,7 @@ export function reserveState(workerId: string): ReserveState {
         `${Math.round(pressure.percent)}% of its ${pressure.label} window used - at or past the ` +
         `${pressure.threshold}% mark where this fleet stops sending it work, so the ` +
         `${sessions} session(s) it still holds should be saved now` +
-        (remaining === null ? ` (${basis}, so this is the percentage rung)` : '')
+        (remaining === null ? ` (${basis}, so this is the percentage level)` : '')
     }
   }
 

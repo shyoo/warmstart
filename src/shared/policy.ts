@@ -94,9 +94,9 @@ function pickCustomInstruction(policy: FinishPolicy, instruction: string): strin
  * ⛔ **A conversation answers `await-human` from its kind, above the project and the fleet.** Not as
  * a default it merely starts on: a chat filed into a project set to `commit-and-merge` would
  * otherwise land the repository every time the agent said something conclusive, which is the one
- * thing the kind exists to stop. ⚠️ Only while its own policy is `inherit` — a real rung set on the
+ * thing the kind exists to stop. ⚠️ Only while its own policy is `inherit` — a real level set on the
  * task's own finish setting is the operator's answer from that moment. Landing a conversation does not
- * pass through here at all: `landConversationWork` hands `decideFinish` its rung directly, and leaves
+ * pass through here at all: `landConversationWork` hands `decideFinish` its level directly, and leaves
  * the task on `inherit`. `isOpenConversation` is that same test read from the other side.
  */
 export function resolveFinishPolicy(task: Task | null | undefined, project: Project | null | undefined, fleetFinish: FinishPolicy = DEFAULT_FLEET_FINISH): ResolvedFinishPolicy {
@@ -108,13 +108,13 @@ export function resolveFinishPolicy(task: Task | null | undefined, project: Proj
 }
 
 /**
- * The rung a **landing** will really run for this task — which is not always the rung
+ * The level a **landing** will really run for this task — which is not always the level
  * `resolveFinishPolicy` answers with.
  *
  * ⛔ **An open conversation answers `await-human` from its kind, and no landing ever uses that
- * answer.** `landConversationWork` hands `decideFinish` its own rung, so the ref a conversation's
+ * answer.** `landConversationWork` hands `decideFinish` its own level, so the ref a conversation's
  * landing rebases onto, the checks it runs and the strategy it picks all come from the project's
- * inherited rung with the kind override skipped. Every other reader of the policy kept asking
+ * inherited level with the kind override skipped. Every other reader of the policy kept asking
  * `resolveFinishPolicy` and got `await-human`, which maps to `leave-branch`, whose base is
  * `origin/<target>` — so two answers to one question, again.
  *
@@ -126,12 +126,12 @@ export function resolveFinishPolicy(task: Task | null | undefined, project: Proj
  * state in which the loop could ever converge. `baseRef` had the same reading, so the branch had
  * also been *cut* from `origin/main`, nine commits behind where it had to land.
  *
- * ⚠️ `explicit` is an operator who named a rung out loud (the Land menu, `land_work`), and it wins
- * whenever it lands anything. `commit-and-merge` is the floor when even the project's own rung does
+ * ⚠️ `explicit` is an operator who named a level out loud (the Land menu, `land_work`), and it wins
+ * whenever it lands anything. `commit-and-merge` is the floor when even the project's own level does
  * not land: a project set to `commit-only` has said something about *finishing*, not about a landing
  * somebody has just asked for.
  */
-export function landingRungFor(
+export function landingLevelFor(
   task: Task | null | undefined,
   project: Project | null | undefined,
   fleetFinish: FinishPolicy = DEFAULT_FLEET_FINISH,

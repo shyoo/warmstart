@@ -718,7 +718,7 @@ function applyGate(task: Task, answer: Record<string, unknown>): ApplyResult {
 /**
  * What the candidate would be starting from.
  *
- * ⛔ `reopen` is not a rung of cold. The scorer treats a closed-but-reopenable conversation as
+ * ⛔ `reopen` is not a level of cold. The scorer treats a closed-but-reopenable conversation as
  * holding the task — `affinity 1 · cold 0`, see `reopenableFor` — and the dispatch really does
  * reopen it, so a question that called it a "cold start" was describing a candidate the arithmetic
  * beside it had already priced as warm.

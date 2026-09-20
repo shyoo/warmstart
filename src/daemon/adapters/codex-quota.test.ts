@@ -88,7 +88,7 @@ describe('codex rate_limits, read from a rollout', () => {
   })
 })
 
-describe('the rollout rung', () => {
+describe('the rollout level', () => {
   // ⚠️ `rolloutQuota`, not `probeQuota`. The probe asks the app-server first, and spawning that
   // here would make the suite depend on whether the machine running it is signed in to codex.
   it('reads the newest rollout under the isolation root', () => {
@@ -251,7 +251,7 @@ describe("codex's credit meter", () => {
   })
 })
 
-describe('the two rungs, and why they are not interchangeable', () => {
+describe('the two levels, and why they are not interchangeable', () => {
   // ⭐ Measured 2026-08-29, codex-cli 0.151.0: `codex app-server` answers `account/rateLimits/read`
   // in ~700ms with no params, no turn and no token — the same reading the TUI's `/status` shows. It
   // is a live server call, not a cache: two readings minutes apart returned `resetsAt` 1311s apart.

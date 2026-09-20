@@ -26,7 +26,7 @@ export function Decide({
   modelOptions,
   now,
   pending,
-  commitRung,
+  commitLevel,
   onChanged
 }: {
   task: Task
@@ -35,8 +35,8 @@ export function Decide({
   now: number
   /** The `task.pendingWork` read: Commit is offered exactly when the tree holds something. */
   pending: PendingWork | null
-  /** The rung a Commit press sends, computed like the desktop menu's default. */
-  commitRung: FinishPolicy | null
+  /** The level a Commit press sends, computed like the desktop menu's default. */
+  commitLevel: FinishPolicy | null
   onChanged: () => void
 }): React.JSX.Element | null {
   const [busy, setBusy] = useState(false)
@@ -102,8 +102,8 @@ export function Decide({
           await rpc('task.resolve', { id: task.id })
           return null
         case 'commit': {
-          if (!commitRung) return 'could not pick a commit rung for this task'
-          const answer = await rpc('task.commitConversation', { id: task.id, finishPolicy: commitRung })
+          if (!commitLevel) return 'could not pick a commit level for this task'
+          const answer = await rpc('task.commitConversation', { id: task.id, finishPolicy: commitLevel })
           return answer.ok ? null : (answer.reason ?? 'the commit could not be started')
         }
         case 'reassign':
@@ -155,9 +155,9 @@ export function Decide({
           <strong>Mark done</strong> completes the task and releases anything waiting on it.
         </p>
       )}
-      {decisions.includes('commit') && commitRung && (
+      {decisions.includes('commit') && commitLevel && (
         <p className="m-detail">
-          <strong>Commit</strong> asks an agent to commit on the branch — {FINISH_LABELS[commitRung]}.
+          <strong>Commit</strong> asks an agent to commit on the branch — {FINISH_LABELS[commitLevel]}.
         </p>
       )}
       <div className="m-actions">

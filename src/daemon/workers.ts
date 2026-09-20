@@ -355,7 +355,7 @@ export function inheritedModelFor(worker: Worker): Array<string | null> {
 }
 
 /**
- * Smallest configured review rung for a built-in adapter; external adapters use their CLI default.
+ * Smallest configured review level for a built-in adapter; external adapters use their CLI default.
  *
  * ⛔ No entry for `local-llm`, on purpose. Its model is whatever the operator loaded, and a name
  * written here was a claim about a server nobody had asked: every local grade filed until

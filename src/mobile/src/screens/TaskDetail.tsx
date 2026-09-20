@@ -10,7 +10,7 @@ import { Decide } from '../components/Decide.js'
 import { QuestionCard } from '../components/QuestionCard.js'
 import { useNow } from '../hooks.js'
 import { duration, price, relTime, statusTone } from '../lib/format.js'
-import { commitRungFor, openQuestions } from '../lib/question.js'
+import { commitLevelFor, openQuestions } from '../lib/question.js'
 
 /**
  * One task as a reading view: current state, every open question in full, what a person can do
@@ -188,7 +188,7 @@ export function TaskDetailScreen({ id, refreshKey }: { id: string; refreshKey: n
         modelOptions={models}
         now={now}
         pending={pending}
-        commitRung={commitRungFor(task, inheritedFinish, inheritedMode)}
+        commitLevel={commitLevelFor(task, inheritedFinish, inheritedMode)}
         onChanged={refresh}
       />
 

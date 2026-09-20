@@ -215,7 +215,7 @@ describe('what a worktree task is told about where it is', () => {
 })
 
 describe('landing a trunk task', () => {
-  it('verifies in place for every rung that would move work, and keeps the others', () => {
+  it('verifies in place for every level that would move work, and keeps the others', () => {
     const t = { landingTarget: null, workspaceMode: 'trunk' as const }
     expect(landingbase.landingStrategyIdFor(project, 'commit-and-merge', t)).toBe('trunk')
     expect(landingbase.landingStrategyIdFor(project, 'commit-and-push', t)).toBe('trunk')
@@ -373,7 +373,7 @@ describe('the trunk finish ladder', () => {
     expect(d.kind).toBe('await-human')
   })
 
-  it('maps the rungs: wait, stop, verify, and push only with checks', () => {
+  it('maps the levels: wait, stop, verify, and push only with checks', () => {
     expect(finish.decideTrunkFinish(base({ policy: 'await-human' })).kind).toBe('await-human')
     expect(finish.decideTrunkFinish(base({ policy: 'commit-only' })).kind).toBe('done')
     expect(finish.decideTrunkFinish(base({ policy: 'commit-and-verify' })).kind).toBe('land')

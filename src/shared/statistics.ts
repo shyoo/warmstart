@@ -60,7 +60,7 @@ export interface Distribution {
 
 /** One row of the Price or Velocity table. The `level` is what the UI indents on. */
 export interface StatRow {
-  /** Stable across refreshes: `adapterId/model/effort` with the absent rungs left empty. */
+  /** Stable across refreshes: `adapterId/model/effort` with the absent levels left empty. */
   key: string
   level: StatLevel
   /** What to print in the first column at this depth — an agent label, a model, or an effort. */
@@ -75,9 +75,9 @@ export interface StatRow {
 
 export interface PriceStatRow extends StatRow {
   /**
-   * Which dollars this row is in. ⛔ On the model rung (and the effort rungs under it) one row
+   * Which dollars this row is in. ⛔ On the model level (and the effort levels under it) one row
    * is one basis: a model whose tasks were billed two ways gets a `subscription` row and a
-   * `mixed` row rather than one average in neither currency. The agent rung above still folds
+   * `mixed` row rather than one average in neither currency. The agent level above still folds
    * everything, so the totals reconcile.
    */
   basis: PriceBasis

@@ -24,7 +24,7 @@ declines to land stays exactly where it is and appears under **Loose ends** on t
 
 ## The ladder
 
-Five rungs, each doing everything the one below does **plus one thing**. That is what keeps this one
+Five levels, each doing everything the one below does **plus one thing**. That is what keeps this one
 decision rather than five.
 
 | policy | agent commits | daemon verifies | merges local trunk | deletes branch | pushes |
@@ -35,7 +35,7 @@ decision rather than five.
 | **`commit-and-merge`** ⭐ default | ✔ | ✔ | ✔ | ✔ | |
 | `commit-and-push` | ✔ | ✔ | ✔ | ✔ | ✔ |
 
-And three that are **not rungs**:
+And three that are **not levels**:
 
 | policy | what happens |
 |---|---|
@@ -51,7 +51,7 @@ committed in the trunk. The check sits **before** the uncommitted-work step as w
 guard — a report-only task is never asked to *commit* — and **after** the rebase-in-progress guard,
 which outranks everything.
 
-⛔ **`done` means the branch is exactly as it started, and then the branch is retired.** This rung
+⛔ **`done` means the branch is exactly as it started, and then the branch is retired.** This level
 lands nothing, so a commit or a file left behind can only become a loose end (t393–t395, 2026-09-12).
 So: a clean tree with no commit of its own is `done`, and `landCompletion` deletes the branch through
 `finishWithoutLanding`. Anything left is `ask-agent` **once** — keep what matters in the summary, undo
@@ -60,13 +60,13 @@ the edits, `git reset --keep` its own commits off — and still anything left on
 `commitsOnlyOn` (commits on neither the local target nor `origin/<target>`), never `landedRef`: the
 branch is cut from the local target, so on a trunk ahead of its remote the `landedRef` count is the
 trunk's unpushed history. ⚠️ The closing contract in `prompt.ts` drops the squash, rebase and "commit
-what you have" clauses for this rung on every adapter.
+what you have" clauses for this level on every adapter.
 
 ⭐ **It is wider than the debate that motivated it.** Migration 51 added `non_gradable` because *"some
 tasks complete valid work with no commits"* and the only answer was an operator ticking a box
 afterwards. A research task, a question, a review can now be filed as what it is. ⚠️ It is offered in
 the composer's finish menus and refused by the thread's **Commit** button, where it is the one option
-guaranteed to do nothing (`COMMIT_RUNGS`, `src/renderer/src/lib/finishrung.ts`).
+guaranteed to do nothing (`COMMIT_LEVELS`, `src/renderer/src/lib/finishlevel.ts`).
 
 ⛔ **`commit-after-verified` cannot exist**, and was asked for. The daemon never authors a commit, so
 verification can only happen once there *is* one. `commit-and-verify` is the achievable shape: the
@@ -80,12 +80,12 @@ verifies** — merging unverified work into a trunk is worse than leaving it on 
 ⛔ **A `conversation` task answers `await-human` from its kind, above all three tiers.** Not a default
 it starts on — a chat filed into a project set to `commit-and-merge` would otherwise land the
 repository every time the agent said something conclusive. The override holds only while the task's own
-policy is `inherit` (`isOpenConversation`), and **nothing in the thread writes a real rung**: the only
+policy is `inherit` (`isOpenConversation`), and **nothing in the thread writes a real level**: the only
 thing that does is an operator setting the task's own **finish** dropdown, which is them saying to
 finish this like a work task.
 
 ⛔ **A conversation lands as often as it is asked to, and a landing never ends it.** This is the
-2026-09-10 change, and it is a correction: Commit and Land both used to write the chosen rung onto
+2026-09-10 change, and it is a correction: Commit and Land both used to write the chosen level onto
 `finish_policy` first, and that write took the task out of `isOpenConversation` **for ever**. One
 landing and the chat stopped being a chat — the kind stopped answering `await-human`, the turn
 contract switched to the one-shot work contract, and the next `task_complete` completed the task. So
@@ -95,20 +95,20 @@ a conversation could reach `main` exactly once. Only **Finish** and **Stop** end
   preemption, and is told so in `conversationInstruction`. What it may never do is merge or push to
   the landing target by hand.
 - **It lands only when the person asks**, by calling the `land_work` MCP tool
-  ([`mcp.md`](mcp.md) §3). The rung comes from the ask, or — absent one — from the project's own
+  ([`mcp.md`](mcp.md) §3). The level comes from the ask, or — absent one — from the project's own
   policy with the conversation-kind override skipped, which is what the thread shows as
   *inherited*. It is passed *through* the landing rather than persisted.
 - **Commit** still asks the agent rather than committing — the daemon does not author commits, the
-  same rule `commit-after-verified` runs into above — and the instruction carries the rung: commit,
+  same rule `commit-after-verified` runs into above — and the instruction carries the level: commit,
   then `land_work` with it. On an MCP-less adapter (`capabilities.mcp: false` — read from the
   adapter, never from a name) there is no such tool, so the agent is told to report the commit ready
-  and stop, and ⭐ **the tool lands it itself when the turn ends** (t581). The rung is written to
+  and stop, and ⭐ **the tool lands it itself when the turn ends** (t581). The level is written to
   `tasks.land_after_turn` *before* the turn, so a daemon restart cannot drop it, and
   `landAfterCommitTurn` re-reads the workspace on the far side rather than acting on it from memory:
   a branch with nothing on it stands the landing down in silence, because that is the ordinary shape
   of a turn in which the agent called `land_work` itself. A refusal is said once, on the thread, and
   the promise is spent either way — a failed landing is never retried on the next unrelated turn.
-  ⛔ Before t581 nothing acted on the rung at all on those adapters: t578 came to rest with one
+  ⛔ Before t581 nothing acted on the level at all on those adapters: t578 came to rest with one
   squashed commit, an agent that had said *"the commit is ready to land"*, and no landing.
 - **Land** does the same thing from the operator's side, spending no turn. ⛔ It is offered whenever
   the branch carries unlanded commits — **not** only over a pristine tree. t578's agent had rightly
@@ -131,7 +131,7 @@ anything once the task itself is the thing that moved the target. See the tripwi
 ⚠️ **Nothing about the landing bar is relaxed.** `land_work` and **Land** both run the identical
 `decideFinish` — the mandate, a clean tree, real commits, the project's checks read from disk, the
 rescue-tip rule — under the same per-project landing lease. A refusal moves nothing at all: it does
-not write a rung, does not rest the task, does not touch the branch, and hands back the reason
+not write a level, does not rest the task, does not touch the branch, and hands back the reason
 verbatim.
 
 ⚠️ `agent-lands` is the pre-2026-08-30 spelling of `commit-and-push` and is still read from an
@@ -165,7 +165,7 @@ straight back with the reason.
 
 ## What "safe" means
 
-The two rungs that move work — `commit-and-merge` and `commit-and-push` — do it with nobody watching,
+The two levels that move work — `commit-and-merge` and `commit-and-push` — do it with nobody watching,
 so they are the ones with a bar. All of these must hold:
 
 1. **The workspace is clean** — no modified files, no untracked files. ⭐ **With one exception, and
@@ -331,16 +331,16 @@ way — aborting a rebase returns the branch to exactly where it started.
 ### Which ref the conflict prompt names, and why a conversation kept getting it wrong
 
 ⛔ **The instruction names the ref the landing will *actually* rebase onto, and that ref comes from
-the rung the landing will *actually* run.** Those are two different questions and both had a wrong
+the level the landing will *actually* run.** Those are two different questions and both had a wrong
 answer at some point:
 
 - `landingBaseFor` ([`landingbase.ts`](../src/daemon/landingbase.ts)) answers the first. `merge-local`,
   `merge-branch` and `trunk` rebase onto the **local** target; everything else onto `origin/<target>`
   where a remote exists. Fixed on t59 after `merge-tree origin/main` said clean and `git rebase main`
   then failed.
-- `landingRungFor` ([`shared/policy.ts`](../src/shared/policy.ts)) answers the second. An **open
+- `landingLevelFor` ([`shared/policy.ts`](../src/shared/policy.ts)) answers the second. An **open
   conversation** resolves its finish policy to `await-human` *from its kind* — that is what stops it
-  landing by itself — but no landing ever runs that rung: `landConversationWork` hands `decideFinish`
+  landing by itself — but no landing ever runs that level: `landConversationWork` hands `decideFinish`
   the project's own. `await-human` maps to `leave-branch`, whose base is `origin/<target>`.
 
 ⭐ **Measured on t578 (inkland), 2026-09-20**, from the daemon log and store. The project finishes
@@ -353,8 +353,8 @@ reading in `baseRef` had also *cut* the conversation's branch from `origin/main`
 where it had to land, so every press had to replay history the conversation had itself already landed.
 
 ⛔ So every reader of the policy that decides a ref, a check list or a landing strategy asks
-`landingRungFor`, never `resolveFinishPolicy`: `baseRef`, `resolveConflictOnTask`,
-`resolveTrunkMovedOnTask`, the pre-flight `readMergeability` and `landConversationWork`'s own rung.
+`landingLevelFor`, never `resolveFinishPolicy`: `baseRef`, `resolveConflictOnTask`,
+`resolveTrunkMovedOnTask`, the pre-flight `readMergeability` and `landConversationWork`'s own level.
 
 ⚠️ **And naming the right ref is not the same as ruling out the wrong one.** `origin/main` is the
 ref every agent reaches for by habit, and under `commit-and-merge` it is the one guaranteed to be
@@ -780,7 +780,7 @@ and only then fetches, rebases, runs the project's checks and pushes. Until t369
 minutes of work was the buttons going grey and a status in a pane the operator had to scroll away from
 the conversation to reach. ⚠️ It is written to the **thread**, not flashed: a landing that takes four
 minutes and then fails leaves two rows that read in order, and the first is the timestamp that says how
-long the failure took to arrive. ⚠️ It is written after the cheap refusals, so a rung that cannot land
+long the failure took to arrive. ⚠️ It is written after the cheap refusals, so a level that cannot land
 does not produce a landing that started and vanished.
 
 ⭐ **Everything that landed before any of this existed was recovered from its own thread.** The
@@ -885,18 +885,18 @@ Five decisions were taken with the operator and each is enforced in code:
 operation left in progress, or files the agent changed and did not commit, are asked about once; a
 checkout left on another branch goes to a person. There is **no trunk tripwire** — it exists to catch an
 agent working in the trunk, which is what this mode is — so a run that committed nothing is simply
-`done`. The rungs map as: `await-human` rests, `commit-only` is done, and `commit-and-verify`,
+`done`. The levels map as: `await-human` rests, `commit-only` is done, and `commit-and-verify`,
 `commit-and-merge` and `commit-and-push` all land with the **`trunk` strategy**: under the landing lease,
 run the checks in the trunk and, for push, `git push origin <target>`. ⚠️ A red check undoes nothing —
 the commits are on `main` already — and the retry that follows asks an agent to fix forward. Commits
 are recorded in `task_commits` as the run's own (`<trunk_sha_before>..HEAD` minus anything another task
 recorded), so the diff and the quality review work without a branch.
 
-⛔ **And the rung menus match the shorter ladder, because offering the full one would be offering a
-lie** (t583). A trunk task's Commit menu is commit · verify · push with no merge rung — the work is
+⛔ **And the level menus match the shorter ladder, because offering the full one would be offering a
+lie** (t583). A trunk task's Commit menu is commit · verify · push with no merge level — the work is
 already on the target, so there is nothing to merge — and neither its menus nor its ledger Finish
 picker offer pull-request, which needs a branch and is refused downstream. The Land button's fallback
-is push rather than the merging fleet default, so its ✓ is always on a rung the menu lists. The
+is push rather than the merging fleet default, so its ✓ is always on a level the menu lists. The
 project-level default keeps the full ladder: it governs trunk and worktree tasks alike.
 
 ⚠️ **Known limit.** A *worktree* task whose branch stays empty while a trunk task commits can still trip
@@ -926,10 +926,10 @@ it to a person with the commits listed, which is the right outcome for evidence 
   the push the same sentence forbids. ⚠️ This repo's `/commit` has since been split — it commits
   locally and `/push` publishes — which fixes that one sentence and not the hazard: the instruction
   still names a skill the receiving CLI may not have, and a skill's steps can be renumbered under a
-  project that quoted them. Under every other rung the tool composes the sentence itself and says
+  project that quoted them. Under every other level the tool composes the sentence itself and says
   plainly whether to push.
 - `landing.target` — the branch to land on. Defaults to `main`.
-- `check` — the commands every verifying rung runs. ⛔ An **empty list verifies nothing**, which
+- `check` — the commands every verifying level runs. ⛔ An **empty list verifies nothing**, which
   is every project on day one; the tool says so on the task rather than reporting a clean result.
   Edit them in Project → Settings, or file a task to work them out.
   ⚠️ Keep them fast and deterministic; the heavier

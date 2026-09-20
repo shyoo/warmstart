@@ -578,7 +578,7 @@ server.registerTool(
         .string()
         .optional()
         .describe('One line: what this landing contains. Recorded on the thread beside it.'),
-      rung: z
+      finishPolicy: z
         .enum(['commit-and-merge', 'commit-and-push', 'pull-request'])
         .optional()
         .describe(
@@ -592,7 +592,7 @@ server.registerTool(
       const result = await rpc('agent.land', {
         sessionId,
         ...(args.summary ? { summary: args.summary } : {}),
-        ...(args.rung ? { rung: args.rung } : {})
+        ...(args.finishPolicy ? { finishPolicy: args.finishPolicy } : {})
       })
       if (!result.ok) {
         // ⚠️ The daemon's reason, verbatim and alone. Every one of them names a condition that

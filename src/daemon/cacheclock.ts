@@ -904,7 +904,7 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   // ⛔ **`worthCompactingNow`, and the reserve alone is not enough without it.** Until t73 the
   // verdict could only come from a token comparison nothing on this fleet could compute, so this
   // branch had never run and "at risk with any context at all" was safe by never happening. The
-  // percentage rung makes it reachable, and reachable it stays true for *hours* - a whole window,
+  // percentage level makes it reachable, and reachable it stays true for *hours* - a whole window,
   // not an instant - so a condition that ignored what the last compaction did would send `/compact`
   // every four minutes until the window reset. That is the 2026-08-26 repeat with a new trigger.
   // The growth half of `worthCompactingNow` is what ends it: a landed compaction zeroes

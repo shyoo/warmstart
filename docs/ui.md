@@ -191,8 +191,8 @@ t446's preemption ask died unhonoured at 17:14 while the clock's 17:18 retry lan
 choice: every number on it is shrunk toward a prior, blended or clamped, because it is about to be
 acted on. *Statistics* (`components/Statistics.tsx`, one `statistics.report` call for all three tabs)
 describes what happened: nothing on it is smoothed. Price, Velocity and Quality each fold finished
-tasks into an agent → model → effort tree, **re-folding the raw samples at every rung** rather than
-averaging the rung below, and every table prints `n` beside its percentiles. ⭐ **How far back it
+tasks into an agent → model → effort tree, **re-folding the raw samples at every level** rather than
+averaging the level below, and every table prints `n` beside its percentiles. ⭐ **How far back it
 reads is the reader's choice** (t361): the *Window* control in the head reads the last 200 finished
 tasks (the same ceiling `paceFactors` uses, so the two surfaces agree about which tasks exist) or
 *all* of them, remembered per display in `localStorage` (`readStatisticsWindow`, `prefs.ts`) and
@@ -201,7 +201,7 @@ read, and the daemon reads the default for anything but the literal `all`. The t
 disagree — a shrunk pace factor is not a measured p50 — and the page says so rather than reconciling
 them quietly. Price additionally names its basis per row: `subs`, `API rate` or `mixed`, since
 averaging an amortised share of a flat fee together with money billed on top means nothing — and the
-model rung (with the effort rungs under it) is split one row per basis, so a model billed both ways
+model level (with the effort levels under it) is split one row per basis, so a model billed both ways
 gets a row per basis while the agent row above still folds everything.
 ⚠️ An `unknown` renders `n/a`, never `$0.00`, and the benchmark prior and fitness columns are drawn
 on **model** rows only — a prior is published per model, so there is no prior for `high` alone.
@@ -538,12 +538,12 @@ do it.
 
 ⭐ **The card is one row of buttons, and the explanation of each is its tooltip** (2026-09-10). It
 used to draw one row per action with a paragraph beside every button — what it does, what it does
-to the DAG, which rung and where the rung came from — and six of those under a resting conversation
+to the DAG, which level and where the level came from — and six of those under a resting conversation
 was a wall nobody read. `Decide` now renders `.decide-actions`: `Finish · Stop · Commit ▼ · Land ▼`
 (plus *Resolve & retry* and *Retry landing* when a landing has failed), Commit and Land by the same
 `pendingWork` rules as before, and every paragraph moved verbatim into that button's `title`. ⛔ **The
-▼ rung menus answer to where the task's work sits**: on the trunk the merge rung (a merge that cannot
-happen) and the pull-request rung (no branch to open one from) are not offered, and the Land fallback
+▼ level menus answer to where the task's work sits**: on the trunk the merge level (a merge that cannot
+happen) and the pull-request level (no branch to open one from) are not offered, and the Land fallback
 is push rather than the merging fleet default (t583). The
 ordinary `awaiting_human` card takes the same shape with *Mark done · Stop here* (plus *Land ▼*
 when unlanded commits are present on the branch, and *Resolve & retry* / *Retry landing* when a landing
@@ -566,8 +566,8 @@ with a note, `task.message` is the resume (it requeues a `paused_quota` task its
 along undelivered into the next run of a task still `ready` behind the gate); without one,
 `task.resume` as before.
 
-⛔ **Neither Commit nor Land ends the conversation, and neither writes a rung.** Both used to write
-the chosen rung onto the task, which took it out of `isOpenConversation` for ever — so pressing either
+⛔ **Neither Commit nor Land ends the conversation, and neither writes a level.** Both used to write
+the chosen level onto the task, which took it out of `isOpenConversation` for ever — so pressing either
 one, once, turned a chat into an ordinary work task that the next `task_complete` would complete. Only
 **Finish** and **Stop** end a conversation. Press Land as often as there is something to land; each
 press leaves the thread open on the next numbered branch ([`landing.md`](landing.md)).
@@ -575,7 +575,7 @@ press leaves the thread open on the next numbered branch ([`landing.md`](landing
 - **Commit ▼** — uncommitted files. The ▼ offers the finish ladder minus `await-human` (which is
   what the conversation is already doing) and `custom` (an instruction about the project's own finish,
   not about this commit). The agent is asked — in the same session, so it still has the context — to
-  commit and then land on the rung picked, by calling `land_work`; on an adapter with no MCP it is
+  commit and then land on the level picked, by calling `land_work`; on an adapter with no MCP it is
   asked to say the commit is ready and stop, and ⭐ **the tool lands it itself when the turn ends**
   (t581, `tasks.land_after_turn` → `landAfterCommitTurn`). `commit-only` asks for the commit and
   no landing. ⚠️ It asks rather than commits because the daemon never authors a commit; see
@@ -586,7 +586,7 @@ press leaves the thread open on the next numbered branch ([`landing.md`](landing
   that changes meaning:** committing costs a turn and landing does not, so `task.landConversation`
   lands the branch itself — rebase, the project's checks, merge — through the same `decideFinish` bar
   a first completion meets, and the thread comes back open on the branch it names. Its ▼ offers only
-  the rungs the tool acts on (`policyLands`: merge, push, pull request), because landing under
+  the levels the tool acts on (`policyLands`: merge, push, pull request), because landing under
   `commit-only` would be a button that does nothing. ⚠️ It refuses while a turn is running — the
   agent is editing that tree — where `land_work` does not, because there the agent is blocked on the
   tool's own reply. This state used to have no button at all: Commit had nothing to ask for and
@@ -596,7 +596,7 @@ press leaves the thread open on the next numbered branch ([`landing.md`](landing
   to keep backups of the renders it was replacing, the agent rightly left those two untracked
   directories out of its commit, and from then on Land was never drawn over the squashed commit on the
   branch — leaving Commit as the card's only control, re-sending its instruction on every press. Both
-  are drawn now, because both are true, and `settleControls` in `lib/finishrung.ts` is where that
+  are drawn now, because both are true, and `settleControls` in `lib/finishlevel.ts` is where that
   decision lives so a test can reach it. ⛔ **No tree on the branch is not
   nothing to land** (t481, 2026-09-16): where no pool member has the branch checked out,
   `landConversationWork` borrows a free one (holder `land:<task>`), checks the branch out, lands and
@@ -609,13 +609,13 @@ press leaves the thread open on the next numbered branch ([`landing.md`](landing
   `--warn` and Land in `--primary` (never `ok` or `danger`: those two are spoken for on this card).
   The ▼ half is a `Pill` wearing the button's colour, so the portal, the flip and the arrow keys are
   the same code every other menu uses.
-- ⭐ **The rung it starts on is the task's, else the project's, else the fleet's** — `defaultRung`
-  in `lib/finishrung.ts`, and the button's tooltip says where the answer came from. ⛔ Deliberately **not**
+- ⭐ **The level it starts on is the task's, else the project's, else the fleet's** — `defaultLevel`
+  in `lib/finishlevel.ts`, and the button's tooltip says where the answer came from. ⛔ Deliberately **not**
   `resolveFinishPolicy`, which answers `await-human` for a conversation above every other tier: that
   is right for what happens when a task finishes on its own and useless for the button whose purpose
   is to overrule it. Before this the controls had no value at all, so their menus opened on the first
-  rung of the ladder — `commit-only` — and a project configured for commit·verify·merge was offered
-  the one rung that leaves the work on the branch. ⚠️ Where the tier below asks for something the
+  level of the ladder — `commit-only` — and a project configured for commit·verify·merge was offered
+  the one level that leaves the work on the branch. ⚠️ Where the tier below asks for something the
   button cannot do (`await-human`, `custom`), Commit falls back to `commit-only` rather than to the
   fleet default, because merging a trunk on behalf of a project that asked for a person is the
   expensive direction to be wrong in; Land falls back to `commit-and-merge`, because a Land that does

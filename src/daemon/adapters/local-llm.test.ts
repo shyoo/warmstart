@@ -27,7 +27,7 @@ describe('local-llm adapter unit tests', () => {
       // Nothing to bill: the model runs on the operator's own machine.
       spendProbe: 'none',
       streamPrompts: 'conversation',
-      // The bridge flushes on a rung, not on a message: the peephole must reassemble it.
+      // The bridge flushes in chunks, not in messages: the peephole must reassemble them.
       outputFraming: 'delta',
       // ⚠️ Already as partial as it gets. `false` here means *nothing to turn on*, not less detail.
       streamsPartialOutput: false,

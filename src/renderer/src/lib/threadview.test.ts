@@ -94,8 +94,8 @@ describe('what `inherit` resolves to', () => {
 })
 
 describe('the four three-tier settings', () => {
-  it('offers every finish rung the fleet has, under the inherited one', () => {
-    // ⛔ Derived from `FINISH_ORDER` rather than listed, so a rung added or renamed there cannot
+  it('offers every finish level the fleet has, under the inherited one', () => {
+    // ⛔ Derived from `FINISH_ORDER` rather than listed, so a level added or renamed there cannot
     // leave this menu behind.
     const choice = finishChoice(task(), { policy: 'commit-and-merge', source: 'project', instruction: null })
     expect(choice.options.map((o) => o.value)).toEqual(['inherit', ...FINISH_ORDER])
@@ -119,7 +119,7 @@ describe('the four three-tier settings', () => {
     expect(compactionChoice(task({ autoCompact: 'off' }), undefined).value).toBe('off')
   })
 
-  it('hides the merge and pull-request rungs from a trunk task, but never its own answer', () => {
+  it('hides the merge and pull-request levels from a trunk task, but never its own answer', () => {
     // ⛔ The t583 shape: the work is already on the landing target, so Commit·Verify·Merge is a
     // promise the pane cannot keep and pull-request is refused downstream.
     const choice = finishChoice(task(), undefined, 'trunk')
@@ -219,7 +219,7 @@ describe('which account last ran this task', () => {
 })
 
 describe('priority', () => {
-  it('offers the four rungs and no inherit', () => {
+  it('offers the four levels and no inherit', () => {
     const choice = priorityChoice(task({ priority: 'P0' }))
     expect(choice.value).toBe('P0')
     expect(choice.options.map((o) => o.value)).toEqual(['P0', 'P1', 'P2', 'P3'])

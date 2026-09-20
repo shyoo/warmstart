@@ -1776,7 +1776,7 @@ try {
       )
     ).trim()
 
-  // ⛔ The finish policy reaches every rung of the ladder plus `inherit`, which is the value that
+  // ⛔ The finish policy reaches every level of the ladder plus `inherit`, which is the value that
   // keeps following the project as it changes.
   // ⚠️ And the list comes from FINISH_ORDER rather than a hand-written copy: three dropdowns each
   // carried their own and all three still offered `agent-lands` after it was renamed. Drift here is
@@ -1784,7 +1784,7 @@ try {
   await openPill('Finish policy')
   const finishOptions = await menuValues('Finish policy')
   check(
-    'the finish pill offers every rung of the ladder, inherit included',
+    'the finish pill offers every level of the ladder, inherit included',
     finishOptions.includes('inherit') &&
       ['commit-only', 'commit-and-verify', 'commit-and-merge', 'commit-and-push'].every((p) =>
         finishOptions.includes(p)
@@ -5882,7 +5882,7 @@ try {
   await wait(200)
 
   // ⭐ t283: the card says which landing strategy the button will use, and it is the project's
-  // answer rather than the bottom rung of the ladder. `ui project` inherits the fleet default.
+  // answer rather than the bottom level of the ladder. `ui project` inherits the fleet default.
   const landTitle = await evaluate(
     `[...document.querySelectorAll('.decide .commit-select .split-btn-main')].pop()?.title ?? ''`
   )
@@ -5907,24 +5907,24 @@ try {
     `[...document.querySelectorAll('.decide .commit-select')].pop()?.querySelector('.split-btn-more .pill')?.click()`
   )
   await wait(500)
-  const landRungs = JSON.parse(
+  const landLevels = JSON.parse(
     await evaluate(
       `JSON.stringify([...document.querySelectorAll('.pill-menu [role=option]')].map(o => o.innerText.trim()))`
     )
   )
   check(
-    'and its ▼ offers only the rungs the tool itself acts on',
-    landRungs.some((o) => /merge into main/i.test(o)) &&
-      !landRungs.some((o) => /^Commit — commit only/i.test(o)),
-    JSON.stringify(landRungs)
+    'and its ▼ offers only the levels the tool itself acts on',
+    landLevels.some((o) => /merge into main/i.test(o)) &&
+      !landLevels.some((o) => /^Commit — commit only/i.test(o)),
+    JSON.stringify(landLevels)
   )
-  // ⚠️ The tick is on the rung the button would use, so opening the menu confirms the default
+  // ⚠️ The tick is on the level the button would use, so opening the menu confirms the default
   // rather than presenting a list with nothing chosen — which is what t283 was reported for.
   const landTicked = await evaluate(
     `document.querySelector('.pill-menu [role=option][aria-selected=true]')?.innerText.trim() ?? ''`
   )
   check(
-    'and the rung it would use is the one already ticked',
+    'and the level it would use is the one already ticked',
     /merge into main/i.test(landTicked),
     landTicked
   )
@@ -5941,7 +5941,7 @@ try {
   section('the diff of one commit a task landed')
   // ⛔ **A landing will not merge a project that proves nothing.** `commit-and-merge` refuses where
   // no check commands are configured — correctly, and it is the fixture's job to give it one rather
-  // than the test's job to pick a rung that skips the proof. One trivial command, which is enough for
+  // than the test's job to pick a level that skips the proof. One trivial command, which is enough for
   // the verify step to have actually run something.
   await evaluate(`
     window.agentyard.rpc('project.setChecks', {

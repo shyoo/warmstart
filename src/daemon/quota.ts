@@ -31,7 +31,7 @@ import { markRunOverage } from './tasks.js'
  * exactly that, and a cache that had been 20 days stale came back seconds old. The claim that this
  * project had no free quota probe was true of one code path and repeated everywhere.
  *
- * So there are two rungs and they are not the same operation. `probeWorker` **reads** the CLI's
+ * So there are two levels and they are not the same operation. `probeWorker` **reads** the CLI's
  * `cachedUsageUtilization`, which the vendor refreshes on its own schedule and may leave for weeks.
  * `refreshUsage` **makes** that cache current, at the price of a process rather than a token. Both
  * report a number *with its age attached*, and everything downstream may still refuse a stale one.
@@ -206,7 +206,7 @@ export async function probeWorker(workerId: string): Promise<DatedQuota> {
   // ⚠️ `probeSpendFor` never throws and never touches the quota reading above it: an adapter that
   // breaks its own contract must not cost this account its window. See spend.ts.
   await probeSpendFor(workerId)
-  // ⛔ Logged whether it worked or not. This is the cheap rung — a file read, no process — and it is
+  // ⛔ Logged whether it worked or not. This is the cheap level — a file read, no process — and it is
   // the one that runs on its own every few minutes, so it is also the one an operator is most likely
   // to be asking about: *when did it last look at that account, and what did it see?* It said
   // nothing at all until 2026-08-28, which made a poller that was working indistinguishable from one
@@ -639,7 +639,7 @@ function sampleAt(workerId: string, at: number | null): DatedQuota | null {
   })
 }
 
-// ---------------------------------------------------------------------------- the live rung
+// ---------------------------------------------------------------------------- the live level
 
 export interface LiveRateLimit {
   status: string
@@ -1517,7 +1517,7 @@ export function ensureFreshQuota(workerId: string): boolean {
  * refreshed within seconds of each other, and two ledgers would open two terminals on it.
  *
  * ⚠️ `minGapMs` is the caller's floor rather than a fixed ten minutes, and that is the only place
- * the two rungs differ. Ten minutes is right for *a task is about to run here* — asked again a
+ * the two levels differ. Ten minutes is right for *a task is about to run here* — asked again a
  * minute later the answer has not moved. It is wrong for an account with a run **in flight**, which
  * is the one window actually moving and the one the operator chose a cadence for.
  * ⛔ Never below `MIN_FORCED_GAP_MS`, so no setting can turn this into a terminal per sweep.
@@ -1538,7 +1538,7 @@ export async function refreshNow(
   return true
 }
 
-/** ⛔ The whole of "may we, and is it worth it?", in one place, for both rungs. */
+/** ⛔ The whole of "may we, and is it worth it?", in one place, for both levels. */
 function claimRefresh(workerId: string, minGapMs: number): 'start' | 'in-flight' | 'too-soon' | 'no' {
   if (!mayRefreshUsage(workerId)) return 'no'
   const prior = refreshAttempts.get(workerId)

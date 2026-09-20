@@ -229,7 +229,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       if (workspaceMode !== undefined) setWorkspaceModeChecked(id, workspaceMode)
       return updateTask(id, patch)
     },
-    /** ⛔ Refused once the task has run, and refused into the trunk beside a pull-request rung. */
+    /** ⛔ Refused once the task has run, and refused into the trunk beside a pull-request level. */
     'task.setWorkspaceMode': (p) => setWorkspaceModeChecked(p.id, p.workspaceMode),
     /**
      * Set a task's finish policy, and act on it if the task is already sitting on finished work.
@@ -248,7 +248,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         if (conflict) throw new Error(`t${before.seq} works in the trunk: ${conflict}`)
       }
       const task = updateTask(p.id, { finishPolicy: p.finishPolicy })
-      // ⚠️ Every rung that moves the work somewhere, not just the one that pushes. Choosing
+      // ⚠️ Every level that moves the work somewhere, not just the one that pushes. Choosing
       // `commit-and-merge` on a parked task is as much a decision to land it as `commit-and-push` is.
       const wantsLanding =
         p.finishPolicy === 'commit-and-merge' ||
@@ -273,7 +273,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
     'task.diffFile': (p) => diffFileFor(p.id, p.path),
     'task.commitDiff': (p) => commitDiffFor(p.id, p.sha),
     'task.commitFile': (p) => commitFileFor(p.id, p.sha, p.path),
-    /** ⛔ One call, because the rung it writes decides both the landing and the next turn's prompt. */
+    /** ⛔ One call, because the level it writes decides both the landing and the next turn's prompt. */
     'task.commitConversation': (p) => commitConversation(p.id, p.finishPolicy),
     /** ⛔ The clean-tree half of the same decision: no turn, the tool lands it. See `landConversation`. */
     'task.landConversation': (p) => landConversation(p.id, p.finishPolicy),

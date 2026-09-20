@@ -526,7 +526,7 @@ Every commit that changes behaviour owes an edit to whichever of these it made w
 
 | Change | Owes |
 |---|---|
-| a measured number, cache/compaction behaviour, a quota rung, a landed measurement run | [`cost-model.md`](cost-model.md) — ⛔ with its source and date |
+| a measured number, cache/compaction behaviour, a quota level, a landed measurement run | [`cost-model.md`](cost-model.md) — ⛔ with its source and date |
 | what a CLI can actually do | [`adapters.md`](adapters.md) — ⛔ never promote to `measured` without watching it be true |
 | routing, scoring, gates, the consult | [`routing.md`](routing.md) |
 | a migration, a column, a status or a union | [`data-model.md`](data-model.md) |

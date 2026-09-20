@@ -102,7 +102,7 @@ afterAll(() => {
 })
 
 /**
- * The rungs that never touch a remote.
+ * The levels that never touch a remote.
  *
  * ⛔ The default pushed the trunk until 2026-08-30, and every push to `main` started a ten-job CI
  * matrix — 103 runs in five days on this install, and an exhausted allowance. `commit-and-merge`

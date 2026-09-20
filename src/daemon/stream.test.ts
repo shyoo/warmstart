@@ -650,7 +650,7 @@ describe('describeStream', () => {
   })
 
   /**
-   * ⛔ The typing goes to the terminal rung and nowhere else. A structured view that appended a row
+   * ⛔ The typing goes to the terminal level and nowhere else. A structured view that appended a row
    * per fragment would draw one word per line, which is the t272 failure with a different renderer.
    */
   it('draws no row for a fragment, and none for a message already drawn as fragments', () => {
