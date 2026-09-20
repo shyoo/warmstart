@@ -5262,6 +5262,7 @@ select:focus-visible,
 .reassign-select {
   flex: 1 1 0;
   min-width: 0;
+  max-width: 240px; /* a selector holds a name, not a paragraph: on a wide pane it stays a control */
   width: auto;
 }
 
@@ -5290,6 +5291,7 @@ select:focus-visible,
 
   .reassign-select {
     flex: 1 1 140px;
+    max-width: none;
   }
 }
 
