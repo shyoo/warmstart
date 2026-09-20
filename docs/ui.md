@@ -540,7 +540,10 @@ used to draw one row per action with a paragraph beside every button — what it
 to the DAG, which rung and where the rung came from — and six of those under a resting conversation
 was a wall nobody read. `Decide` now renders `.decide-actions`: `Finish · Stop · Commit ▼ · Land ▼`
 (plus *Resolve & retry* and *Retry landing* when a landing has failed), Commit and Land by the same
-`pendingWork` rules as before, and every paragraph moved verbatim into that button's `title`. The
+`pendingWork` rules as before, and every paragraph moved verbatim into that button's `title`. ⛔ **The
+▼ rung menus answer to where the task's work sits**: on the trunk the merge rung (a merge that cannot
+happen) and the pull-request rung (no branch to open one from) are not offered, and the Land fallback
+is push rather than the merging fleet default (t583). The
 ordinary `awaiting_human` card takes the same shape with *Mark done · Stop here* (plus *Land ▼*
 when unlanded commits are present on the branch, and *Resolve & retry* / *Retry landing* when a landing
 has failed). ⛔ **What stays

@@ -38,6 +38,7 @@ import { showsLiveOutput } from '../lib/live'
 import { supersededAskIds } from '../lib/compactionstatus'
 import { useScrolledPast } from '../lib/scrolledpast'
 import { isNearPageBottom, shouldJumpToThreadBottom } from '../lib/threadscroll'
+import { effectiveWorkspaceMode } from '../lib/finishrung'
 import { codeSpans } from '../lib/codespans'
 import { bubbleSide, buildThreadItems, promptAnchors } from '../lib/threadbubble'
 import { duration, tokens, when } from '../lib/format'
@@ -624,6 +625,7 @@ function TaskDetail({
               fleet={fleet}
               modelOptions={modelOptions}
               inheritedFinish={detail.inheritedFinish}
+              inheritedWorkspaceMode={detail.inheritedWorkspaceMode}
               onResolve={resolve}
               onStop={cancel}
               onRefresh={refresh}
@@ -978,7 +980,13 @@ function TaskDetail({
                     would be the worst kind of lie this app could tell. */}
                 <Fact label="landing" className="fact--landing">
                   <TaskSettingPicker
-                    choice={finishChoice(task, detail.inheritedFinish)}
+                    choice={finishChoice(
+                      task,
+                      detail.inheritedFinish,
+                      // ⛔ The ladder answers to where this task's work sits: on the trunk the merge
+                      // and pull-request rungs are not offered (t583). See `finishChoice`.
+                      effectiveWorkspaceMode(task.workspaceMode, detail.inheritedWorkspaceMode)
+                    )}
                     ariaLabel="Finish policy"
                     title="What happens to this task's work when it is done."
                     save={(value) =>

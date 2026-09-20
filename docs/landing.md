@@ -830,6 +830,13 @@ the commits are on `main` already — and the retry that follows asks an agent t
 are recorded in `task_commits` as the run's own (`<trunk_sha_before>..HEAD` minus anything another task
 recorded), so the diff and the quality review work without a branch.
 
+⛔ **And the rung menus match the shorter ladder, because offering the full one would be offering a
+lie** (t583). A trunk task's Commit menu is commit · verify · push with no merge rung — the work is
+already on the target, so there is nothing to merge — and neither its menus nor its ledger Finish
+picker offer pull-request, which needs a branch and is refused downstream. The Land button's fallback
+is push rather than the merging fleet default, so its ✓ is always on a rung the menu lists. The
+project-level default keeps the full ladder: it governs trunk and worktree tasks alike.
+
 ⚠️ **Known limit.** A *worktree* task whose branch stays empty while a trunk task commits can still trip
 the trunk tripwire, because a trunk task's commits are recorded only at its finish. The tripwire hands
 it to a person with the commits listed, which is the right outcome for evidence it cannot attribute.

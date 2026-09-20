@@ -118,6 +118,28 @@ describe('the four three-tier settings', () => {
     expect(finishChoice(task({ finishPolicy: 'await-human' }), undefined).value).toBe('await-human')
     expect(compactionChoice(task({ autoCompact: 'off' }), undefined).value).toBe('off')
   })
+
+  it('hides the merge and pull-request rungs from a trunk task, but never its own answer', () => {
+    // ⛔ The t583 shape: the work is already on the landing target, so Commit·Verify·Merge is a
+    // promise the pane cannot keep and pull-request is refused downstream.
+    const choice = finishChoice(task(), undefined, 'trunk')
+    expect(choice.options.map((o) => o.value)).toEqual([
+      'inherit',
+      'await-human',
+      'commit-only',
+      'commit-and-verify',
+      'commit-and-push',
+      'custom',
+      'report-only'
+    ])
+    const pinned = finishChoice(task({ finishPolicy: 'commit-and-merge' }), undefined, 'trunk')
+    expect(pinned.value).toBe('commit-and-merge')
+    expect(pinned.options.map((o) => o.value)).toContain('commit-and-merge')
+    expect(finishChoice(task(), undefined, 'worktree').options.map((o) => o.value)).toEqual([
+      'inherit',
+      ...FINISH_ORDER
+    ])
+  })
 })
 
 describe('the objective, which has three shapes and one control', () => {

@@ -6,6 +6,7 @@ import {
   FINISH_ORDER,
   OBJECTIVE_PRESET_ORDER,
   SHARING_LABELS,
+  policyOfferedInTrunk,
   presetOf,
   type Objective,
   type ResolvedAutoCompact,
@@ -85,13 +86,25 @@ export function tieredChoice(
   }
 }
 
-/** What happens to this task's work when it is done. */
-export function finishChoice(task: Task, inherited: ResolvedFinishPolicy | undefined): SettingChoice {
-  return tieredChoice(
-    task.finishPolicy,
-    inheritedLabel(FINISH_LABELS, inherited?.policy, 'agent lands it'),
-    FINISH_ORDER.map((p) => ({ value: p, label: FINISH_LABELS[p] }))
-  )
+/**
+ * What happens to this task's work when it is done.
+ *
+ * ⛔ On the trunk the ladder loses the two rungs that need a branch: `commit-and-merge`, whose
+ * merge cannot happen there, and `pull-request`, which the daemon refuses outright (t583). The
+ * rung the task already carries stays offered even so — a control that hid its own state would
+ * be lying about what the next finish will do, and moving off it is one press away.
+ */
+export function finishChoice(
+  task: Task,
+  inherited: ResolvedFinishPolicy | undefined,
+  mode?: WorkspaceMode
+): SettingChoice {
+  const options = FINISH_ORDER.map((p) => ({ value: p, label: FINISH_LABELS[p] }))
+  const offered =
+    !mode || mode === 'worktree'
+      ? options
+      : options.filter((o) => o.value === task.finishPolicy || policyOfferedInTrunk(o.value))
+  return tieredChoice(task.finishPolicy, inheritedLabel(FINISH_LABELS, inherited?.policy, 'agent lands it'), offered)
 }
 
 /** Whether this task may borrow a conversation somebody else has been having. */

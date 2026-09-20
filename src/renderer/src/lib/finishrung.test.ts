@@ -3,10 +3,14 @@ import { DEFAULT_FLEET_FINISH, FINISH_ORDER, policyLands, type FinishPolicy } fr
 import {
   COMMIT_FALLBACK,
   COMMIT_RUNGS,
+  commitRungsForMode,
   defaultRung,
+  effectiveWorkspaceMode,
   LAND_FALLBACK,
   LAND_RUNGS,
-  rungOrigin
+  landRungsForMode,
+  rungOrigin,
+  TRUNK_LAND_FALLBACK
 } from './finishrung'
 
 /**
@@ -106,6 +110,40 @@ describe('the rung a button starts on', () => {
   it('answers something offerable when nothing above it said anything at all', () => {
     expect(defaultRung('inherit', null, COMMIT_RUNGS, COMMIT_FALLBACK)).toBe(COMMIT_FALLBACK)
     expect(defaultRung('inherit', undefined, LAND_RUNGS, LAND_FALLBACK)).toBe(LAND_FALLBACK)
+  })
+})
+
+describe('which rungs a trunk task is offered', () => {
+  it('leaves the worktree menus exactly as they were', () => {
+    expect(commitRungsForMode('worktree')).toEqual(COMMIT_RUNGS)
+    expect(landRungsForMode('worktree')).toEqual(LAND_RUNGS)
+  })
+
+  it('drops the merge rung the trunk cannot perform and the PR rung it cannot open', () => {
+    // ⛔ The t583 shape: the work is already on the landing target, so Commit·Verify·Merge
+    // promises a merge that cannot happen and pull-request needs a branch the task does not have.
+    expect(commitRungsForMode('trunk')).toEqual(['commit-only', 'commit-and-verify', 'commit-and-push'])
+    expect(landRungsForMode('trunk')).toEqual(['commit-and-push'])
+  })
+
+  it('falls back to a rung the trunk menu actually offers', () => {
+    // ⛔ The fleet default merges, which no trunk menu lists — a fallback that is not on its own
+    // menu is a button whose ✓ is nowhere.
+    expect(TRUNK_LAND_FALLBACK).toBe('commit-and-push')
+    expect(landRungsForMode('trunk')).toContain(TRUNK_LAND_FALLBACK)
+    expect(commitRungsForMode('trunk')).toContain(COMMIT_FALLBACK)
+  })
+
+  it('answers to the task pin first and the project behind it', () => {
+    expect(effectiveWorkspaceMode('trunk', 'worktree')).toBe('trunk')
+    expect(effectiveWorkspaceMode('worktree', 'trunk')).toBe('worktree')
+    expect(effectiveWorkspaceMode('inherit', 'trunk')).toBe('trunk')
+    expect(effectiveWorkspaceMode('inherit', 'worktree')).toBe('worktree')
+  })
+
+  it('reads unknown as the worktree every menu was written for', () => {
+    expect(effectiveWorkspaceMode('inherit', undefined)).toBe('worktree')
+    expect(effectiveWorkspaceMode(undefined, undefined)).toBe('worktree')
   })
 })
 

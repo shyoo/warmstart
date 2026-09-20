@@ -2,8 +2,11 @@ import {
   DEFAULT_FLEET_FINISH,
   FINISH_ORDER,
   policyLands,
+  policyOfferedInTrunk,
   type FinishPolicy,
-  type FinishPolicyChoice
+  type FinishPolicyChoice,
+  type WorkspaceMode,
+  type WorkspaceModeChoice
 } from '@shared/tasks'
 
 /**
@@ -33,6 +36,42 @@ export const COMMIT_RUNGS: FinishPolicy[] = FINISH_ORDER.filter(
  * part. ⚠️ `commit·verify·merge` is the one an operator means by "merge it into main".
  */
 export const LAND_RUNGS: FinishPolicy[] = FINISH_ORDER.filter(policyLands)
+
+/**
+ * The rungs a settle-it menu offers when the task holds the trunk lease.
+ *
+ * ⛔ The work is already on the landing target, so `commit-and-merge` would promise a merge that
+ * cannot happen (t583) and `pull-request` needs a branch the task does not have — the daemon
+ * refuses that combination outright (`trunkPolicyConflict`). Everything else is honest in both
+ * modes, so worktree menus are the full lists unchanged.
+ */
+export function commitRungsForMode(mode: WorkspaceMode): FinishPolicy[] {
+  return mode === 'trunk' ? COMMIT_RUNGS.filter(policyOfferedInTrunk) : COMMIT_RUNGS
+}
+
+export function landRungsForMode(mode: WorkspaceMode): FinishPolicy[] {
+  return mode === 'trunk' ? LAND_RUNGS.filter(policyOfferedInTrunk) : LAND_RUNGS
+}
+
+/**
+ * ⚠️ The fleet default merges, which a trunk menu cannot offer. A Land button whose fallback is
+ * not on its own menu is a button whose ✓ is nowhere, so the trunk fallback is the one landing
+ * rung left: pushing the target is still landing.
+ */
+export const TRUNK_LAND_FALLBACK: FinishPolicy = 'commit-and-push'
+
+/**
+ * Which workspace mode a task's menus answer to: the task's own pin, else the project's answer
+ * the detail carries, else the default pool. Unknown reads as worktree, the mode every menu was
+ * written for — hiding rungs on a guess would be worse than showing them.
+ */
+export function effectiveWorkspaceMode(
+  taskMode: WorkspaceModeChoice | undefined,
+  inherited: WorkspaceMode | undefined
+): WorkspaceMode {
+  if (taskMode && taskMode !== 'inherit') return taskMode
+  return inherited ?? 'worktree'
+}
 
 /**
  * ⛔ **`commit-only`, and not the fleet default.** Where a project's own answer is one the Commit

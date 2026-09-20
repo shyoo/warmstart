@@ -15,7 +15,8 @@ import {
   resolveModelChoice,
   type PendingWork,
   type ResolvedFinishPolicy,
-  type Task
+  type Task,
+  type WorkspaceMode
 } from '@shared/tasks'
 import type { ModelOptions } from '@shared/protocol'
 import { rpc, useNow, type FleetEntry } from '../../lib/daemon'
@@ -23,11 +24,13 @@ import { SettingButtonSelect } from '../SettingButtonSelect'
 import { SplitButton } from '../SplitButton'
 import {
   COMMIT_FALLBACK,
-  COMMIT_RUNGS,
+  commitRungsForMode,
   defaultRung,
+  effectiveWorkspaceMode,
   LAND_FALLBACK,
-  LAND_RUNGS,
-  rungOrigin
+  landRungsForMode,
+  rungOrigin,
+  TRUNK_LAND_FALLBACK
 } from '../../lib/finishrung'
 import { duration } from '../../lib/format'
 import { effortLabel, modelLabel } from '../../lib/modelname'
@@ -523,6 +526,7 @@ export function Decide({
   fleet,
   modelOptions,
   inheritedFinish,
+  inheritedWorkspaceMode,
   onResolve,
   onStop,
   onRefresh
@@ -539,6 +543,12 @@ export function Decide({
    * See `defaultRung`.
    */
   inheritedFinish?: ResolvedFinishPolicy
+  /**
+   * The project's resolved workspace mode, so the rung menus answer to where this task's work
+   * actually sits. A trunk task's commits are already on the landing target, so the merge and
+   * pull-request rungs are not offered (t583).
+   */
+  inheritedWorkspaceMode?: WorkspaceMode
   onResolve: () => Promise<void>
   onStop: () => Promise<void>
   onRefresh: () => Promise<void>
@@ -641,9 +651,16 @@ export function Decide({
    * the ladder. On a project configured for commit·verify·merge the offered answer was therefore the
    * one that leaves the work sitting on the branch, every single time.
    */
-  const commitRung = defaultRung(task.finishPolicy, inheritedFinish?.policy, COMMIT_RUNGS, COMMIT_FALLBACK)
+  // ⛔ The menus answer to where this task's work sits, not to the fleet default. On the trunk the
+  // merge rung would promise a merge that cannot happen and the pull-request rung a branch the task
+  // does not have — both are refused or meaningless downstream, so they are not offered (t583).
+  const mode = effectiveWorkspaceMode(task.workspaceMode, inheritedWorkspaceMode)
+  const commitOffered = commitRungsForMode(mode)
+  const landOffered = landRungsForMode(mode)
+  const landFallback = mode === 'trunk' ? TRUNK_LAND_FALLBACK : LAND_FALLBACK
+  const commitRung = defaultRung(task.finishPolicy, inheritedFinish?.policy, commitOffered, COMMIT_FALLBACK)
   const commitRungWhere = rungOrigin(task.finishPolicy, inheritedFinish, commitRung)
-  const landRung = defaultRung(task.finishPolicy, inheritedFinish?.policy, LAND_RUNGS, LAND_FALLBACK)
+  const landRung = defaultRung(task.finishPolicy, inheritedFinish?.policy, landOffered, landFallback)
   const landRungWhere = rungOrigin(task.finishPolicy, inheritedFinish, landRung)
 
   /**
@@ -907,7 +924,7 @@ export function Decide({
             title={commitTitle}
             ariaLabel="Commit this conversation"
             menuAriaLabel="Landing strategy for this commit"
-            options={COMMIT_RUNGS.map((rung) => ({
+            options={commitOffered.map((rung) => ({
               value: rung,
               label: `${FINISH_SHORT[rung]} — ${FINISH_LABELS[rung]}`
             }))}
@@ -929,7 +946,7 @@ export function Decide({
             title={landTitle}
             ariaLabel={conversation ? 'Land this conversation' : 'Land this task'}
             menuAriaLabel="Landing strategy for this branch"
-            options={LAND_RUNGS.map((rung) => ({
+            options={landOffered.map((rung) => ({
               value: rung,
               label: `${FINISH_SHORT[rung]} — ${FINISH_LABELS[rung]}`
             }))}

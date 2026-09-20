@@ -2451,6 +2451,20 @@ export function policyLands(policy: FinishPolicy): boolean {
 }
 
 /**
+ * May this rung be *offered* for work already sitting on the landing target?
+ *
+ * ⛔ A narrower question than `trunkPolicyConflict`, which answers what cannot *run*.
+ * `commit-and-merge` runs fine on a trunk task — the daemon verifies in place — but its name
+ * promises a merge that cannot happen, so offering it is offering a lie (t583). `pull-request`
+ * needs a branch the trunk task does not have and is refused downstream. Everything else means
+ * the same thing on the trunk as on a branch: committing commits, verifying verifies, pushing
+ * pushes.
+ */
+export function policyOfferedInTrunk(policy: FinishPolicy): boolean {
+  return policy !== 'commit-and-merge' && policy !== 'pull-request'
+}
+
+/**
  * A policy that promises verification, on a project that has declared none.
  *
  * ⛔ An empty `check` list must never read as a clean verification. Every project starts this
