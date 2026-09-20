@@ -6,6 +6,7 @@ import { delimiter, join } from 'node:path'
 import type { Attachment } from '@shared/tasks.js'
 import type { SpawnPlan } from './types.js'
 import { museBinary, museCode, parseResetTime, trustKey } from './muse-code.js'
+import { permissionModeFor } from '../sessions.js'
 import { hostAt, hostPlan, hostScript, shQuote, WINDOWS_DRAIN, type CliHost } from './clihost.js'
 
 /**
@@ -941,6 +942,24 @@ describe('plan', () => {
     expect(plan.command).toBe(process.execPath)
     expect(plan.env.ELECTRON_RUN_AS_NODE).toBe('1')
     expect(plan.env.XDG_CONFIG_HOME).toBe(join(root, 'config'))
+  })
+
+  it('runs `--yolo` when a worker with full user authority asks for the bypass mode', () => {
+    const mode = permissionModeFor(museCode.info, 'work', 'stream', undefined, 'full-user')
+    expect(mode).toBe('yolo')
+    const { argv } = unwrap(
+      museCode.plan({
+        sessionId: '13131313-1111-4111-8111-111111111111',
+        isolationRoot: root,
+        cwd,
+        transport: 'stream',
+        permissionMode: mode
+      })
+    )
+    expect(argv).toContain('--yolo')
+    expect(after(argv, '--approval-mode')).toBe('never')
+    // Without the worker's opt-in the headless mode is unchanged.
+    expect(permissionModeFor(museCode.info, 'work', 'stream', undefined, 'sandboxed-only')).toBe('never')
   })
 
   it('resumes by reusing the conversation’s own id, with no --resume', () => {

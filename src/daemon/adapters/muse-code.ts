@@ -60,7 +60,7 @@ const info: AdapterInfo = {
     transports: ['pty', 'stream'],
     // ⚠️ Names for *this app's* modes, not muse's flag values — `read-only` is three flags together
     // and has no single spelling on the CLI. `plan()` is where each becomes argv.
-    permissionModes: ['on-request', 'untrusted', 'never', 'read-only'],
+    permissionModes: ['on-request', 'untrusted', 'never', 'yolo', 'read-only'],
     // `--approval-mode never --disable-write --disable-shell`: it may read the repository and has no
     // channel through which to change it. That is what a quality review in the operator's own trunk
     // needs, and it is the only mode this adapter is ever offered one in.
@@ -126,6 +126,10 @@ const info: AdapterInfo = {
     // ⛔ `never` here means never *ask*, not never act — the same call as claude-code and
     // antigravity above, and it carries the same authority.
     headlessAuthority: 'full-user',
+    // ⭐ A worker set to "Full user authority" runs `--yolo`: the vendor's own single flag for "disable
+    // approval and sandbox and trust this workspace (this run)" (`muse exec --help`, 1.3.0), rather
+    // than this file's three-flag spelling of the same thing. See `permissionModeFor` in `sessions.ts`.
+    bypassPermissionMode: 'yolo',
     interruptSequence: '\x1b',
     costModelId: 'meta.muse.2026-09',
     // No `/compact` to send, so a run that has to wrap up says so in words.
@@ -829,6 +833,8 @@ function permissionArgs(mode: string): string[] {
       ]
     case 'never':
       return ['--approval-mode', 'never', '--disable-approval', '--disable-sandbox', '--trust-workspace']
+    case 'yolo':
+      return ['--approval-mode', 'never', '--yolo']
     case 'untrusted':
       return ['--approval-mode', 'untrusted']
     default:

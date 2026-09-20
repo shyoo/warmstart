@@ -30,6 +30,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **A Muse worker set to "Full user authority" now runs `--yolo` (t580, 2026-09-20).** `muse-code` declares `bypassPermissionMode: 'yolo'` (vendor: *disable approval and sandbox and trust this workspace*), chosen by `permissionModeFor` exactly as Codex's bypass is; otherwise headless stays `never`. Unit-tested; **not flown on a real run**. `docs/adapters.md`.
 - **L1 orphaned 24,322 fixture directories and ~161 GB of `%TEMP%`; 94% was one suite spawning a
   vendor CLI (t579, 2026-09-19).** `runfailure.test.ts` settles 69 metered runs, each reaching `void
   captureQuotaAfter` → `refreshNow` → `refreshIdentity`, which for `openai-compatible` runs **`codex
@@ -187,7 +188,6 @@ judgement. Do not replace the missing evidence with a unit test.
 | R8: controller reply shape | Designate a controller, file a `plan`, drain once, then record whether the validator accepted an answer or used its fallback. | Proves the one M4 path L1 cannot reach. |
 | Vertex/Antigravity cache price | Find a published vendor price; do not infer it experimentally. | Keeps `cache.kind: "unpriced"` honest. |
 | Expected-idle estimator | Gather real queue data first. | No honest design exists without it. |
-
 Record results, CLI versions and dates in [`docs/cost-model.md`](docs/cost-model.md), then remove the row.
 
 ## Durable constraints
