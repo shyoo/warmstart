@@ -18,6 +18,9 @@ export const REMOTE_METHODS = {
   'worker.reorder': 'deny',
   'worker.retire': 'deny',
   'worker.probe': 'deny',
+  // ⛔ Spends a turn on the operator's own subscription. Worker administration is desktop-only, and
+  // a method that bills an account is not the one to make the first exception.
+  'worker.warmUsage': 'deny',
   'costmodel.list': 'deny',
   'model.options': 'read',
   'daemon.shutdown': 'deny',

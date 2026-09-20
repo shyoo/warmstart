@@ -178,6 +178,66 @@ describe('screen-answered probes', () => {
   })
 })
 
+/**
+ * **The one probe that spends money** (t570).
+ *
+ * ⛔ Muse Code publishes a subscription window only once something has been spent in it, so on a
+ * freshly reset account every free probe in the world returns `Currently unavailable`. The warm-up
+ * is the operator's way out: one very small turn, then the ordinary panel drive again.
+ *
+ * ⚠️ What is asserted here is the *shape of the wait*, because that is the part that could quietly
+ * become a screen-scrape. It waits by the clock and reads nothing back — the pane is never asked
+ * whether the turn looks finished.
+ */
+describe('the warm-up turn', () => {
+  it('sends the prompt, then waits the declared time before anything else happens', async () => {
+    let now = 0
+    const writes: Array<{ at: number; data: string }> = []
+    await quota.driveWarmupTurn(
+      'What model are you?',
+      90_000,
+      (data) => writes.push({ at: now, data }),
+      {
+        pause: async (ms) => {
+          now += ms
+        }
+      }
+    )
+
+    expect(writes.map((w) => w.data)).toEqual(['What model are you?\r'])
+    // ⛔ The whole wait, spent before the caller re-drives `/usage`. A warm-up that returned early
+    // would ask the panel about a turn that is still running and read `Currently unavailable` back
+    // — a paid probe reporting the state it was bought to clear.
+    expect(now).toBe(90_000)
+  })
+
+  /**
+   * ⛔ Same two-write rule as the probe, for the same measured reason: on this CLI a carriage
+   * return arriving in the same chunk as the text is not a keypress, so a one-write warm-up spends
+   * nothing and leaves the prompt sitting in the composer — the worst of both outcomes, since the
+   * operator is told a turn was sent.
+   */
+  it('sends the return separately when the adapter asks for a gap', async () => {
+    let now = 0
+    const writes: Array<{ at: number; data: string }> = []
+    await quota.driveWarmupTurn(
+      'What model are you?',
+      60_000,
+      (data) => writes.push({ at: now, data }),
+      {
+        submitDelayMs: 400,
+        pause: async (ms) => {
+          now += ms
+        }
+      }
+    )
+
+    expect(writes.map((w) => w.data)).toEqual(['What model are you?', '\r'])
+    expect(writes[1]!.at - writes[0]!.at).toBe(400)
+    expect(now).toBe(60_400)
+  })
+})
+
 /** A worker that exists, is signed in as far as anything knows, and can never be dispatched to. */
 function seedWorker(label: string, adapterId = 'claude-code'): string {
   return workers.createWorker({ adapterId, label, enabled: false }).id

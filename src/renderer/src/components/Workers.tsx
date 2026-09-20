@@ -372,15 +372,45 @@ export function Workers({
     return adapters.find((a) => a.id === worker?.adapterId)?.capabilities.quotaProbe
   }
 
+  /**
+   * The turn this worker's adapter says it can spend to make its provider publish — or null.
+   *
+   * ⛔ Read off the adapter's declaration, never off its id. An adapter that grows a warm-up gets
+   * the button by declaring one, and this file never learns another vendor's name. See `UsageWarmup`.
+   */
+  const warmupOf = (workerId: string): { prompt: string; completeMs: number; note: string } | null => {
+    const worker = fleet.find((f) => f.worker.id === workerId)?.worker
+    return adapters.find((a) => a.id === worker?.adapterId)?.usageRefresh?.warmup ?? null
+  }
+
   const probe = (workerId: string, label: string) =>
     guard(`probe:${workerId}`, async () => {
       const quota = await rpc('worker.probe', { id: workerId })
       const worker = fleet.find((f) => f.worker.id === workerId)?.worker
-      const gap = quotaGap(quota, probeKind(workerId), worker)
+      const gap = quotaGap(quota, probeKind(workerId), worker, Boolean(warmupOf(workerId)))
       setNotice(
         gap
           ? `${label}: ${gap.label}. ${gap.hint}`
           : `${label}: ${quota.windows.map((w) => `${w.label} ${percent(w.percent)}`).join(' · ')}`
+      )
+    })
+
+  /**
+   * Spend one small turn on this account, then read the panel again.
+   *
+   * ⚠️ Reports what it *found*, not that it ran. The turn is spent either way, so the one thing the
+   * operator needs back is whether the provider started publishing — and where it did not, the
+   * daemon's sentence already says not to press this again.
+   */
+  const warmUp = (workerId: string, label: string) =>
+    guard(`warm:${workerId}`, async () => {
+      const quota = await rpc('worker.warmUsage', { id: workerId })
+      const worker = fleet.find((f) => f.worker.id === workerId)?.worker
+      const gap = quotaGap(quota, probeKind(workerId), worker, Boolean(warmupOf(workerId)))
+      setNotice(
+        gap
+          ? `${label}: a warm-up turn was sent. ${gap.label}. ${gap.hint}`
+          : `${label}: warmed up — ${quota.windows.map((w) => `${w.label} ${percent(w.percent)}`).join(' · ')}`
       )
     })
 
@@ -569,7 +599,8 @@ export function Workers({
               // account table follows the same display rule as the fleet card: a few-minute-old
               // last good reading does not need an age label or an amber warning.
               const readingIsOld = Boolean(reading && reading.ageMs > QUOTA_STALE_AFTER_MS)
-              const gap = quotaGap(reading, probeKind(worker.id), worker)
+              const warmup = warmupOf(worker.id)
+              const gap = quotaGap(reading, probeKind(worker.id), worker, Boolean(warmup))
               /**
                * ⛔ Out of the Account cell and onto a row of their own.
                *
@@ -589,8 +620,31 @@ export function Workers({
                 tone: string
                 label: string
                 text: string
-                fix?: { label: string; busyKey: string; run: () => void }
+                fix?: { label: string; busyKey: string; run: () => void; title?: string }
               }> = []
+              // ⛔ **Offered only where the provider has actually gone quiet**, which is the `gap`
+              // above saying so — not on every worker whose adapter happens to declare a warm-up.
+              // A button that spends a turn must not be sitting on an account that already has a
+              // reading, where pressing it buys nothing at all.
+              if (warmup && gap?.label === 'no usage data yet') {
+                notes.push({
+                  key: 'warmup',
+                  tone: 'warn',
+                  label: 'No usage published',
+                  // ⚠️ The adapter's own sentence, which says what it costs. The renderer does not
+                  // write the price of another vendor's turn.
+                  text: warmup.note,
+                  fix: {
+                    label: 'Warm up',
+                    busyKey: `warm:${worker.id}`,
+                    run: () => void warmUp(worker.id, worker.label),
+                    title:
+                      'Sends one very small turn on this account — a question about the model, ' +
+                      'touching no files — and then reads the usage panel again. It is a real turn ' +
+                      'on your subscription.'
+                  }
+                })
+              }
               if (needsFirstRun) {
                 notes.push({
                   key: 'setup',
@@ -1125,7 +1179,10 @@ export function Workers({
                                 className="btn btn--primary"
                                 disabled={busy === n.fix.busyKey}
                                 onClick={n.fix.run}
-                                title="Opens a terminal so you can answer the CLI's first-run screens once."
+                                // ⚠️ The note's own title where it has one. This string was written
+                                // for Finish setup and read as a lie under any other fix — the
+                                // warm-up opens no terminal and asks nothing.
+                                title={n.fix.title ?? "Opens a terminal so you can answer the CLI's first-run screens once."}
                               >
                                 {n.fix.label}
                               </button>
@@ -1251,6 +1308,14 @@ function AdapterFacts({ adapter }: { adapter: AdapterInfo }): React.JSX.Element 
           : 'Reports its own usage'
     }
   ]
+
+  // ⛔ **Said at commissioning, not discovered later.** An operator who signs an account in and
+  // watches its quota read "no usage data yet" for a day has no way to know the provider is waiting
+  // to be spent in rather than the app being broken — and this is the moment before they wait. It is
+  // a fact about *this adapter*, declared by it, so an adapter with no warm-up says nothing here.
+  if (adapter.usageRefresh?.warmup) {
+    facts.push({ ok: false, text: adapter.usageRefresh.warmup.note })
+  }
 
   return (
     <div className="note">

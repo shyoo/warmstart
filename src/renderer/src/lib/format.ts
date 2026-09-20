@@ -272,7 +272,16 @@ export function quotaGap(
    * as one, not as a number that has gone missing.
    */
   quotaProbe?: 'cli' | 'api' | 'none',
-  worker?: Worker | null
+  worker?: Worker | null,
+  /**
+   * Does this worker's adapter declare a `usageRefresh.warmup` — a turn this app can spend to make
+   * the provider publish?
+   *
+   * ⚠️ It changes the *advice*, not the diagnosis. "Start a session on this worker and probe again"
+   * is the right sentence where nothing else is on offer and the wrong one where a button beside it
+   * will do exactly that for one small turn.
+   */
+  canWarmUp?: boolean
 ): { label: string; hint: string } | null {
   if (quotaProbe === 'none') {
     return {
@@ -320,7 +329,11 @@ export function quotaGap(
         hint:
           'Signing in does not produce a usage reading. The reading exists only once the account ' +
           'has done real work — the CLI writes its usage cache then, or the provider publishes the ' +
-          'windows then — so start a session on this worker and probe again once it has run. ' +
+          'windows then — so ' +
+          (canWarmUp
+            ? 'either dispatch work here, or press Warm up to spend one very small turn on this ' +
+              'account and read the panel again. '
+            : 'start a session on this worker and probe again once it has run. ') +
           `(${quota.error})`
       }
     }

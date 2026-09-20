@@ -7,10 +7,12 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-19, **Windows 11**, all four tiers measured together on `0.2.0+9.g7b5f6e1`, the
-commit `v0.3.0` ships): typecheck, lint and build pass; L1 **3,765 passed, 5 skipped** (225 files);
-L2 **203 checks** (5 skipped); L3 **486 checks** (4 skipped); L4 **19 checks** against
-`release/win-unpacked`. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
+Baseline (2026-09-19, **Windows 11**, on `0.3.0+3` — t570 rebased): typecheck, lint and build pass;
+L1 **3,771 passed, 5 skipped** (225 files); L2 **204 checks** (5 skipped); L3 **486 checks** (4
+skipped). L4 **19 checks** against `release/win-unpacked` was measured on `7b5f6e1`, the commit
+`v0.3.0` ships, and has not been re-run since. ⚠️ L3 flaked twice under back-to-back suite load
+(*timed out waiting for All filter to restore 3 rows*, a tier it does not touch) and was green on a
+clean run. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
 hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
 
 **`v0.3.0` is `latest`** (2026-09-19, tag build 35482566845), promoted onto `v0.3.0-rc.1`'s own
@@ -27,6 +29,13 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **A fresh Muse window could not be read at all, and now one turn buys the reading (t570,
+  2026-09-19).** The vendor publishes a window only once something has been spent in it, so every
+  free probe on a just-reset account answers `Currently unavailable`. `usageRefresh.warmup` declares
+  a tiny turn; `worker.warmUsage` sends it in the probe session already open, then re-drives
+  `/usage `. ⛔ Operator press only (`RefreshOptions.warmUp` defaults false — the scheduler still
+  spends nothing), drawn on the `no usage data yet` gap alone, priced in the note shown at
+  commissioning. ⚠️ **Inferred, not yet watched working.** `docs/adapters.md`, `architecture.md`, `ui.md`.
 - **Three thread fixes (t564, 2026-09-19).** *Muse Code's icon* was one open stroke that read as an
   earring; `AgentIcon` now draws the Meta mark — two wings crossing through a shared stem, traced
   from the 64px favicon at dev.meta.ai, brand blue, `viewBox 0 0 64 64` — and `agenticon.test.ts`
@@ -115,17 +124,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   run and survives `-c sandbox_workspace_write.network_access=true`. ⛔ No code change: Warmstart
   must not write either grant on the operator's own directories. `docs/adapters.md`, `grants.ts`.
 - **A lapsed oversized session was revived instead of starting clean, and a completion prompt told sandboxed agents to fetch (t536 ← t518/t534, 2026-09-19).** Resume now starts a fresh session when the measured cache has lapsed after passing the compaction break-even; compaction remains reserved for its cheap pre-expiry window. The agent completion clause checks the checkout's target and leaves remote refresh to landing, avoiding needless SSH/grant requests. `cacheclock.ts`, `scheduler.ts`, `prompt.ts`, `docs/sessions.md`, `docs/cost-model.md`.
-- **An idle agent's hand-off discarded everything after character 400 of its final message (t529 ←
-  t521, 2026-09-18).** `runWatchdogs` wrote the only durable Thread record for an MCP agent that
-  ended a turn without a terminal signal, but formatted it with `idle.said.slice(0, 400)`. The
-  hand-off now carries the complete final message; `idleturn.test.ts` proves a message longer than
-  that boundary reaches the thread intact. `docs/architecture.md`.
-- **An Antigravity run that ran out of quota went to a person as a bare `ERROR` (t528 ← t527,
-  2026-09-18).** agy's own `cli.log` showed `RESOURCE_EXHAUSTED (code 429): Individual quota reached
-  … Resets in 52h16m45s` after eight retries, but the decoder read the result's `response` (the
-  whole narration) before its `error`, and the adapter had no `outOfQuota`. Now a non-`SUCCESS`
-  result prefers `error`, `antigravityCli.outOfQuota` recognises the refusal, and `quotaFailurePark`
-  asks for the refused model's own pool's reset, as the watchdog does. `docs/adapters.md`.
 - **Concurrent worktree pool expansion failed on `index.lock`, and capacity reduction blocked held tasks (t524 ← t523, 2026-09-17).**
   Dynamically increasing workspace pool size (`ws4`) unblocked queued tasks, but dispatch raced with in-flight
   `git worktree add` (which takes ~41s on large repositories) because `.git` was created early; `prepareWorkspace`
@@ -183,6 +181,7 @@ judgement. Do not replace the missing evidence with a unit test.
 | R1: Claude auto-mode classifier cost | Run the same shell-heavy task on a quiet subscription worker in `auto` and `default`; compare quota delta with transcript tokens. | If billed, `auto` cannot remain a free default. |
 | R2: tokens per quota percent | Sample `/usage` around known transcript work for each worker/model/tokenizer. | Lets quota gates work in tokens rather than percentages. |
 | R4: end-to-end compaction cost | Record a known-size compaction's transcript delta and duration. Six samples exist; `post_tokens` is still null. | Tunes the T+53-minute deadline. |
+| Does a warm-up turn end a `Currently unavailable` streak? | Press **Warm up** on a Muse worker inside a silent window and record whether the next panel publishes. | The feature rests on an inference; if it is wrong the button costs a turn and buys nothing. |
 | R8: controller reply shape | Designate a controller, file a `plan`, drain once, then record whether the validator accepted an answer or used its fallback. | Proves the one M4 path L1 cannot reach. |
 | Vertex/Antigravity cache price | Find a published vendor price; do not infer it experimentally. | Keeps `cache.kind: "unpriced"` honest. |
 | Expected-idle estimator | Gather real queue data first. | No honest design exists without it. |

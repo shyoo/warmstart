@@ -155,6 +155,36 @@ export async function driveScreenProbe(
   return { screen, windows: null, attempts, unavailable: null }
 }
 
+/**
+ * Send the adapter's declared warm-up prompt, then wait for the turn by the clock.
+ *
+ * ⛔ **By the clock, and never by reading the pane.** Waiting on "the agent looks finished" means
+ * deciding state from rendered text, which this codebase forbids everywhere except the usage parser
+ * — and that parser is allowed to produce a quota reading and nothing else. The wait is a declared
+ * duration (`UsageWarmup.completeMs`); if it was short, the panel drawn afterwards says
+ * *Currently unavailable* again and the operator is told exactly that, which is a true answer rather
+ * than a guessed one.
+ *
+ * ⚠️ Same two-write rule as the probe itself: on this CLI a carriage return arriving in the same
+ * chunk as the text is not a keypress. See `UsageRefresh.submitDelayMs`.
+ */
+export async function driveWarmupTurn(
+  prompt: string,
+  completeMs: number,
+  write: (data: string) => void,
+  opts: { submitDelayMs?: number; pause?: (ms: number) => Promise<void> } = {}
+): Promise<void> {
+  const { submitDelayMs, pause = wait } = opts
+  if (submitDelayMs) {
+    write(prompt)
+    await pause(submitDelayMs)
+    write('\r')
+  } else {
+    write(`${prompt}\r`)
+  }
+  await pause(completeMs)
+}
+
 export interface DatedQuota extends QuotaSnapshot {
   ageMs: number
   stale: boolean
@@ -206,8 +236,8 @@ export async function probeWorker(workerId: string): Promise<DatedQuota> {
  * process and takes the better part of thirty seconds, so it belongs on a slow timer and on the
  * button a person pressed — never in a scheduler tick.
  */
-export async function refreshUsage(workerId: string): Promise<DatedQuota> {
-  const quota = await readUsage(workerId)
+export async function refreshUsage(workerId: string, opts: RefreshOptions = {}): Promise<DatedQuota> {
+  const quota = await readUsage(workerId, opts)
   // ⛔ **After the refresh, not instead of it, and on every path out of it.** A screen-answered
   // refresh never reaches `probeWorker`, so without this the one adapter whose quota is hardest to
   // read would be the one whose meters were never asked about. ⚠️ Cheap twice over: the probe is a
@@ -216,9 +246,23 @@ export async function refreshUsage(workerId: string): Promise<DatedQuota> {
   return quota
 }
 
-async function readUsage(workerId: string): Promise<DatedQuota> {
+export interface RefreshOptions {
+  /**
+   * May this refresh spend a turn to make a silent provider publish?
+   *
+   * ⛔ **Never defaulted true, and never set by anything on a timer.** Only `worker.warmUsage`,
+   * which exists for a person's press, passes it — see `UsageWarmup`. A refresh that arrives here
+   * without it behaves exactly as it always has and bills nothing.
+   */
+  warmUp?: boolean
+}
+
+async function readUsage(workerId: string, opts: RefreshOptions = {}): Promise<DatedQuota> {
   const w = requireWorker(workerId)
   const refresh = adapter(w.adapterId).info.usageRefresh
+  // ⚠️ Both halves asked once, here: the operator's request *and* whether this adapter has anything
+  // to spend it on. Below, `warmup` being non-null is the whole of "was a turn paid for?".
+  const warmup = opts.warmUp ? (refresh?.warmup ?? null) : null
 
   if (!refresh) {
     // Not a failure. Most CLIs have nothing to drive, and saying so beats a probe that quietly
@@ -247,6 +291,9 @@ async function readUsage(workerId: string): Promise<DatedQuota> {
   // ⛔ The CLI's own words for *there is no reading yet*, kept apart from the screen. It is not a
   // failure of this probe and it is not a reading, and the operator is owed the difference.
   let unavailable: string | null = null
+  // ⚠️ Whether a turn was actually spent, as opposed to offered: it changes what the operator is
+  // told, because "probe again later" is the wrong advice to give somebody who has just paid.
+  let warmedUp = false
   try {
     const session = spawnSession({
       workerId,
@@ -266,17 +313,37 @@ async function readUsage(workerId: string): Promise<DatedQuota> {
     if (refresh.answer === 'screen') {
       const parse = adapter(w.adapterId).parseUsage
       if (!parse) throw new Error(`${w.adapterId} declares a screen usage refresh without a parser`)
-      const driven = await driveScreenProbe(
-        refresh.command,
-        refresh.settleMs,
-        (data) => writeSession(session.id, data),
-        () => backscroll(session.id),
-        parse,
-        {
-          unavailable: adapter(w.adapterId).usageUnavailable,
-          ...(refresh.submitDelayMs ? { submitDelayMs: refresh.submitDelayMs } : {})
-        }
-      )
+      const drive = async (): Promise<ScreenProbeResult> =>
+        await driveScreenProbe(
+          refresh.command,
+          refresh.settleMs,
+          (data) => writeSession(session.id, data),
+          () => backscroll(session.id),
+          parse,
+          {
+            unavailable: adapter(w.adapterId).usageUnavailable,
+            ...(refresh.submitDelayMs ? { submitDelayMs: refresh.submitDelayMs } : {})
+          }
+        )
+
+      let driven = await drive()
+      // ⛔ **Only where the provider itself said it has nothing** — `driven.unavailable`, the
+      // adapter's own words, never a panel that merely failed to parse. A screen this app could not
+      // read is a probe problem, and paying for a turn would not fix it; spending one on that
+      // confusion is how a diagnostic becomes a bill.
+      // ⚠️ In the session already open, not a second one: it is the same account, it is already past
+      // its slow TUI start, and a fresh spawn would pay that start twice for one turn.
+      if (driven.unavailable && warmup) {
+        log.info(`warming up ${w.label} with one turn: ${driven.unavailable}`)
+        warmedUp = true
+        await driveWarmupTurn(
+          warmup.prompt,
+          warmup.completeMs,
+          (data) => writeSession(session.id, data),
+          refresh.submitDelayMs ? { submitDelayMs: refresh.submitDelayMs } : {}
+        )
+        driven = await drive()
+      }
       screen = driven.screen
       unavailable = driven.unavailable
       log.info(`drove \`${refresh.command}\` ${driven.attempts} time(s) on ${w.label}`)
@@ -312,8 +379,16 @@ async function readUsage(workerId: string): Promise<DatedQuota> {
       // broken probe, and the sentence underneath it sent the operator to look for a folder-trust
       // dialog that was not there. The adapter knows its own CLI's wording, so it says why.
       const stated = screen !== null ? (unavailable ?? adapter(w.adapterId).usageUnavailable?.(screen) ?? null) : null
+      // ⛔ A turn was spent and the provider still published nothing. Saying only *Currently
+      // unavailable* here would read as "try the button again", and the button is the thing that
+      // just cost money — so the sentence names what was already done and stops asking for it.
+      const spent = warmedUp
+        ? ' A warm-up turn was sent on this account and the panel still reads the same, so the ' +
+          'provider has not published this window yet; leave it and probe again later rather than ' +
+          'spending another.'
+        : ''
       const why = stated
-        ? `${w.label}: ${stated}`
+        ? `${w.label}: ${stated}${spent}`
         : `\`${refresh.command}\` was typed into ${w.label} but its usage panel did not appear. ` +
           (screen === null
             ? 'The probe session did not start, so nothing was read.'
@@ -1371,10 +1446,14 @@ export function ensureFreshQuota(workerId: string): boolean {
  * is the one window actually moving and the one the operator chose a cadence for.
  * ⛔ Never below `MIN_FORCED_GAP_MS`, so no setting can turn this into a terminal per sweep.
  */
-export async function refreshNow(workerId: string, minGapMs = REFRESH_BACKOFF_MS): Promise<boolean> {
+export async function refreshNow(
+  workerId: string,
+  minGapMs = REFRESH_BACKOFF_MS,
+  opts: RefreshOptions = {}
+): Promise<boolean> {
   if (claimRefresh(workerId, Math.max(MIN_FORCED_GAP_MS, minGapMs)) !== 'start') return false
   try {
-    await refreshUsage(workerId)
+    await refreshUsage(workerId, opts)
   } catch (err) {
     log.warn(`quota refresh failed for ${workerId}:`, err)
   } finally {

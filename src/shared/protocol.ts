@@ -1497,6 +1497,49 @@ export interface UsageRefresh {
    * they keep.
    */
   submitDelayMs?: number
+  /**
+   * What this CLI needs *done* before its provider will publish a window at all.
+   *
+   * `null`/absent is the ordinary case: the refresh above is the whole of it, and it spends nothing.
+   */
+  warmup?: UsageWarmup
+}
+
+/**
+ * A turn spent to make a silent provider start publishing its numbers.
+ *
+ * ⛔ **This is the one probe in this app that costs money, and it is why it may only ever run from
+ * a person's own press.** The scheduler spends zero tokens (see the invariant in AGENTS.md); a
+ * refresh that quietly sent a prompt every time a window reset would bill a fleet for sitting idle,
+ * which is the exact failure that invariant exists to forbid. Nothing on a timer may reach it.
+ *
+ * ⚠️ Declared by the adapter, never inferred from its id — an adapter that does not declare this
+ * has no warm-up, and the button that offers one is not drawn. A missing feature is a missing
+ * capability, never an `if` on a name.
+ *
+ * ⛔ **Completion is not read off the screen.** The TUI is for humans: the warm-up writes the
+ * prompt, waits `completeMs` by the clock, and then re-drives the ordinary `/usage` probe, whose
+ * parser is the only thing in this codebase allowed to turn rendered text into state — and into a
+ * quota reading and nothing else. There is no "is it finished yet?" scraped from the pane.
+ */
+export interface UsageWarmup {
+  /**
+   * The prompt typed into the CLI, kept as small as a turn can be.
+   *
+   * ⚠️ It is a *question about the model itself* on purpose: it needs no workspace, no file and no
+   * tool, so it cannot fail on a folder this account has not been told it trusts, and it cannot do
+   * anything to a repository.
+   */
+  prompt: string
+  /** How long the turn is given to finish before the usage panel is asked again. */
+  completeMs: number
+  /**
+   * What a person is told — at commissioning, and again beside the button before they press it.
+   *
+   * ⚠️ It says what it costs. An operator who did not know a probe could spend a turn is the one
+   * person this whole declaration is written for.
+   */
+  note: string
 }
 
 export interface AdapterDetection {
@@ -1703,6 +1746,18 @@ export interface RpcMap {
   'worker.reorder': { params: { ids: string[] }; result: Worker[] }
   'worker.retire': { params: { id: string }; result: Worker }
   'worker.probe': { params: { id: string }; result: QuotaSnapshot }
+  /**
+   * Spend one small turn on this account, then read its usage panel again.
+   *
+   * ⛔ **Separate from `worker.probe` on purpose.** Probe is free and is allowed to run from a
+   * timer; this is neither. A single method with a `warmUp` flag would have put a paid path one
+   * defaulted argument away from every caller that already refreshes quota on a schedule.
+   *
+   * ⚠️ Refuses, rather than falling back to a free probe, where the worker's adapter declares no
+   * `usageRefresh.warmup`: the operator asked for the paid thing and is owed the news that this
+   * provider does not have one.
+   */
+  'worker.warmUsage': { params: { id: string }; result: QuotaSnapshot }
 
   'costmodel.list': { params: void; result: CostModelSummary[] }
   /**

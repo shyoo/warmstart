@@ -883,6 +883,15 @@ whose entire design is to be invisible.
   number. ⚠️ "Unknown" is not the whole answer either — never probed, no usage cache yet, stale, a
   failed probe, and `quotaProbe: 'none'` are **five** states with five different things to do about
   them. Collapsing them is what made a working Probe button look broken. See `quotaGap()`.
+- ⛔ **A control that spends the operator's money says so before it is pressed, and is drawn only
+  where it can help** (t570). *Warm up* appears on a worker's note row when that worker's adapter
+  declares `usageRefresh.warmup` **and** its reading is the `no usage data yet` gap — never beside an
+  account that already has a number, where the turn would buy nothing. Its sentence is the adapter's
+  own (the renderer does not price another vendor's turn), it is repeated at commissioning by
+  `AdapterFacts`, and `quotaGap`'s hint switches from *start a session and probe again* to the button
+  only when one is on offer. ⚠️ Where a warm-up ran and the provider still published nothing, the
+  daemon's sentence says a turn was already spent and not to send another — the one state in which
+  "try again" is the wrong advice.
 - ⛔ **A window label names the window, not the card it is on.** Adapters name a quota window by its
   pool *and* its length — `Muse 5h` — because a reading has to be legible wherever it is quoted. On a
   worker card the pool half is the card's own title repeated down the rows, paid for out of the

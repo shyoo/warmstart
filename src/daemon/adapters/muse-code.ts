@@ -152,7 +152,28 @@ const info: AdapterInfo = {
     answer: 'screen',
     cols: 100,
     rows: 30,
-    submitDelayMs: 400
+    submitDelayMs: 400,
+    // ⛔ **The one probe in this app that spends money, and the only adapter that declares one.**
+    // ⭐ *Inferred*, not measured (2026-09-19): it rests on the 427-sample reading of MuseFirst's own
+    // `quota_samples` history described under `usageUnavailable` — every `Currently unavailable`
+    // streak begins as a window's `resetsAt` passes and ends with a low first reading, which is this
+    // provider publishing a window only once something has been spent in it. Nobody has yet watched
+    // a deliberate warm-up turn end a streak; the button says so, and this note moves to `measured`
+    // the day one is watched.
+    //
+    // ⚠️ 90 seconds because it is a cold TUI start plus one trivial turn, and because being early is
+    // cheap: the panel is re-driven with the ordinary retry loop afterwards, so a turn that is still
+    // running simply reads unavailable again and the operator is told exactly that.
+    warmup: {
+      prompt: 'What model are you? Answer in one short sentence and do nothing else.',
+      completeMs: 90_000,
+      note:
+        'Muse Code publishes no `/usage` figures for a window until a turn has completed in it, so a ' +
+        'freshly reset (or freshly signed-in) account reads "Currently unavailable" however many ' +
+        'times it is probed. Warmstart can send one very small turn — a question about the model ' +
+        'itself, touching no files — to bring the reading back. ⚠️ It is a real turn on your ' +
+        'subscription, so it is only ever sent when you ask for it.'
+    }
   },
   // ⛔ Measured on a fresh config root, 2026-09-06: a bare `muse` opens **"Do you trust this
   // workspace?"** and then the login chooser, and swallows every keystroke until both are answered.
@@ -461,9 +482,13 @@ function parseUsage(screen: string, now: number = Date.now()): QuotaWindow[] | n
  * own way of saying *this window has not started publishing*. `scoring.ts`'s `inferredFreshWindows`
  * reads exactly that: a window whose last known `resetsAt` is behind us, reported unavailable now, is
  * inferred at 0% used rather than scored as no evidence at all — the one thing this fleet can say for
- * certain about a window nobody has spent anything in yet. The app still must not tell an operator to
- * dispatch paid work as a remedy: nothing here claims the window will *stay* at 0%, only that nothing
- * has been read there so far.
+ * certain about a window nobody has spent anything in yet. Nothing here claims the window will *stay*
+ * at 0%, only that nothing has been read there so far.
+ *
+ * ⭐ **And that is what `usageRefresh.warmup` offers to end** (t570): if the provider publishes only
+ * once a window has been spent in, the cheapest way to a real reading is to spend the smallest turn
+ * there is. ⛔ Offered on a button and never taken on a timer — it costs a turn, and the scheduler
+ * spends nothing.
  */
 function usageUnavailable(screen: string): string | null {
   // ⚠️ Unanchored, for the reason `parseUsage` is: through a PTY this panel arrives on one line.
@@ -471,8 +496,9 @@ function usageUnavailable(screen: string): string | null {
   if (!/currently unavailable/i.test(screen)) return null
   return (
     'Muse Code drew its `/usage` panel, but it reads "Currently unavailable" instead of publishing ' +
-    'subscription windows. No quota reading is available from this probe; this can occur even after ' +
-    'completed work, so the app does not infer a cause or ask you to spend a turn to clear it.'
+    'subscription windows. No quota reading is available from this probe. This state begins when a ' +
+    'window resets and ends once something has been spent in the new one, so probing again cannot ' +
+    'clear it — a warm-up turn can, and costs one.'
   )
 }
 

@@ -143,6 +143,19 @@ try {
     skip('a quota reading is never presented without its age', `no credential root at ${realRoot}`)
   }
 
+  /**
+   * ⛔ The paid probe, refused before it can spend anything (t570). `claude-code` declares no
+   * `usageRefresh.warmup`, and the one thing this must not do on such an adapter is quietly run the
+   * free probe instead: the operator asked for the turn, and a silent downgrade leaves them pressing
+   * a button that can never do what it says.
+   */
+  const noWarmup = await daemon.rpcResult('worker.warmUsage', { id: fresh.id })
+  check(
+    'a warm-up on an adapter that declares none is refused, and says why',
+    !noWarmup.ok && /no usage warm-up/.test(noWarmup.message),
+    noWarmup.message
+  )
+
   const freshQuota = await daemon.rpc('worker.probe', { id: fresh.id })
   check(
     'an unreadable quota degrades to unknown rather than throwing',

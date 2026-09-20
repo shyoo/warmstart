@@ -325,6 +325,14 @@ LLM controller is consulted only on discrete judgment events, is **never in the 
 every question has a deterministic fallback on a timer. When you add a judgment event, **write the
 fallback first** — it is the normal path, not the error path.
 
+⚠️ **The usage warm-up is the one probe that bills, and it is a person's press, not a loop.** One
+provider publishes a subscription window only once something has been spent in it, so a freshly
+reset account cannot be read for free at all (`adapters.md`). `usageRefresh.warmup` declares a turn
+small enough to buy that reading; `worker.warmUsage` is the only caller, `RefreshOptions.warmUp`
+defaults false, and the poller, the dispatch gate and `worker.probe` all still spend nothing. ⛔ This
+widens *who may spend*, not *what a timer may do*: the moment anything scheduled can reach it, the
+invariant above is broken.
+
 ### A decision that triggers an action, re-evaluated before the action lands, is a loop
 
 ⛔ Three components learned this separately: the cache clock re-issued `/compact` thirteen times

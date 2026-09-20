@@ -297,11 +297,39 @@ TUI publish windows:
 | one `muse exec` turn, then a **fresh** TUI on `Turns 0` | `Current 0% used · Weekly 2% used` |
 | a **second** isolation root holding a copy of the same `auth.json` | the same windows, immediately |
 
-That correlation was not a general rule. On 2026-09-08, MuseFirst had already completed work and
-its probes had read 5h values from **35% to 80%** and 7d values from **46% to 62%**; after the
-window reset, the same accepted `/usage` command again read `Currently unavailable`. The provider
-publishes no reason and no local file contains these windows, so the app records an unknown reading
-and does not tell an operator to spend a turn as a remedy.
+That correlation was not a general rule *as stated*. On 2026-09-08, MuseFirst had already completed
+work and its probes had read 5h values from **35% to 80%** and 7d values from **46% to 62%**; after
+the window reset, the same accepted `/usage` command again read `Currently unavailable`. The
+provider publishes no reason and no local file contains these windows.
+
+⭐ **Eleven days of samples reconciled the two.** Read against MuseFirst's own `quota_samples`
+(2026-09-06 → 2026-09-17, 427 attempts), every `Currently unavailable` streak *begins* as a window's
+`resetsAt` passes and the first real reading after one is consistently low: the vendor publishes a
+window once something has been spent in it, and a freshly reset window has had nothing spent in it.
+The 2026-09-07 observation and the 2026-09-08 recurrence are the same rule seen at two different
+resets. `scoring.ts`'s `inferredFreshWindows` reads that as 0% used (t516).
+
+### The one probe that spends money: `usageRefresh.warmup`
+
+⛔ **If a provider publishes only once a window has been spent in, no free probe can ever produce a
+reading on a fresh one.** Since t570 an adapter may declare `usageRefresh.warmup` — a prompt, a
+completion wait, and the sentence a person is shown — and `worker.warmUsage` sends that one small
+turn in the probe session already open, then re-drives `/usage `. Muse Code is the only adapter that
+declares one. ⚠️ **Inferred, not measured** (2026-09-19): it rests on the sample reading above, and
+nobody has yet watched a deliberate warm-up turn end a streak. The button says so.
+
+The rules it is bound by, each of which is an invariant rather than a preference:
+
+- ⛔ **Nothing on a timer may reach it.** The scheduler spends zero tokens; `RefreshOptions.warmUp`
+  is passed by `worker.warmUsage` and by nothing else, and `worker.probe` stays free.
+- ⛔ **Only where the provider itself said it has nothing** — `driveScreenProbe`'s `unavailable`, the
+  adapter's own words. A screen that merely failed to parse is a probe fault, and a turn cannot fix it.
+- ⛔ **Completion is waited out by the clock, never read off the pane.** `driveWarmupTurn` writes the
+  prompt and waits `completeMs`; the TUI is still for humans, and the usage parser is still the only
+  thing allowed to turn rendered text into state.
+- ⛔ **An adapter that declares no warm-up is refused, not quietly downgraded** to the free probe.
+- ⚠️ The prompt asks the model about *itself* — no file, no tool — so it cannot fail on an untrusted
+  folder, and it cannot touch a repository.
 
 **4. The TUI asks its terminal a question, and a probe PTY has nobody to answer it.** ⭐ Measured
 2026-09-13 on macOS against Muse Code 1.2.1 (t1, t3): every probe on a signed-in, folder-trusted

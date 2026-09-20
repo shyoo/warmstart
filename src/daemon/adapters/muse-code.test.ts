@@ -269,12 +269,19 @@ describe('usageUnavailable', () => {
     expect(museCode.parseUsage?.(UNAVAILABLE, NOW)).toBeNull()
   })
 
-  it('names the provider response without inventing a remedy', () => {
+  /**
+   * ⚠️ The remedy it may now name, and the one it still may not (t570). Eleven days of
+   * `quota_samples` say this state begins at a reset and ends once the window has been spent in, so
+   * *probing again* is the advice that cannot work and is the advice this sentence must not give.
+   * It points at the warm-up turn instead, and says a turn is what it costs.
+   */
+  it('names the provider response, and the one remedy that is not another probe', () => {
     const why = museCode.usageUnavailable?.(UNAVAILABLE)
     expect(why).toContain('Currently unavailable')
     expect(why).toContain('No quota reading')
-    expect(why).toContain('even after completed work')
-    expect(why).not.toContain('give this worker a task')
+    expect(why).toContain('probing again cannot clear it')
+    expect(why).toContain('warm-up turn')
+    expect(why).toContain('costs one')
   })
 
   /**
@@ -747,6 +754,37 @@ describe('the capability block', () => {
   /** The prompt is a file, so what goes down stdin is the prompt itself and not an envelope. */
   it('encodes a prompt as itself', () => {
     expect(museCode.encodeStreamPrompt?.('hello')).toBe('hello')
+  })
+
+  /**
+   * ⛔ **The one paid probe in the fleet, and the declaration is what makes it exist** (t570). This
+   * provider publishes a window only once something has been spent in it, so the warm-up is the
+   * only route to a reading on a freshly reset account — and because it costs a turn, the thing
+   * being asserted here is that it says so, in the sentence an operator is shown.
+   */
+  describe('the usage warm-up', () => {
+    const warmup = museCode.info.usageRefresh?.warmup
+
+    it('is declared, with a prompt small enough to be worth spending', () => {
+      expect(warmup).toBeTruthy()
+      expect(warmup?.prompt.length).toBeLessThan(120)
+      expect(warmup?.completeMs).toBeGreaterThan(0)
+    })
+
+    /**
+     * ⛔ It must not need a workspace. A prompt that reads a file fails on a folder this account has
+     * not been told it trusts — the dialog that swallows keystrokes — and the turn is spent anyway.
+     */
+    it('asks about the model itself rather than about anything on disk', () => {
+      expect(warmup?.prompt).toMatch(/model/i)
+      expect(warmup?.prompt).not.toMatch(/file|repo|directory|folder|read|run/i)
+    })
+
+    /** ⚠️ The price, in the operator's own sentence: this is the whole reason the note exists. */
+    it('says what it costs, where a person will read it', () => {
+      expect(warmup?.note).toContain('real turn')
+      expect(warmup?.note).toContain('only ever sent when you ask')
+    })
   })
 })
 

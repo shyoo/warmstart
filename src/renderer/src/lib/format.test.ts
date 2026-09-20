@@ -174,6 +174,24 @@ describe('quotaGap', () => {
     expect(gap?.hint).toContain('cachedUsageUtilization')
   })
 
+  /**
+   * ⛔ **The advice changes where a warm-up exists, and it has to** (t570). On Muse Code "start a
+   * session and probe again once it has run" describes work the operator would have to invent a
+   * reason for; the button beside this cell does exactly that for one small turn, and the hint is
+   * the only thing that tells them the button is the answer rather than another probe.
+   */
+  it('points at the warm-up where the adapter declares one', () => {
+    const silent = { windows: [], error: 'the panel reads Currently unavailable' }
+    const offered = quotaGap(silent, 'cli', null, true)
+    expect(offered?.label).toBe('no usage data yet')
+    expect(offered?.hint).toMatch(/press Warm up/i)
+    // ⚠️ And it still says what it costs, in the one sentence that is on screen by default.
+    expect(offered?.hint).toMatch(/very small turn/i)
+    // The same reading on an adapter with no warm-up must not advertise a button it will not draw.
+    expect(quotaGap(silent, 'cli', null, false)?.hint).toMatch(/start a session/i)
+    expect(quotaGap(silent, 'cli', null, false)?.hint).not.toMatch(/warm up/i)
+  })
+
   it('keeps an unrecognised probe failure as a failure rather than as advice', () => {
     const gap = quotaGap({ windows: [], error: 'EACCES reading .claude.json' })
     expect(gap?.label).toBe('unknown')

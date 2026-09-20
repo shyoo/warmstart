@@ -34,7 +34,8 @@ export function supportTools(): DoctorReport['tools'] {
 
 type WorkerMethod =
   | 'health' | 'adapter.list' | 'adapter.detect' | 'tool.detect' | 'fleet.list' | 'worker.create' | 'worker.update'
-  | 'worker.setCreditsIntent' | 'worker.reorder' | 'worker.retire' | 'worker.probe' | 'costmodel.list'
+  | 'worker.setCreditsIntent' | 'worker.reorder' | 'worker.retire' | 'worker.probe' | 'worker.warmUsage'
+  | 'costmodel.list'
   | 'model.options' | 'daemon.shutdown' | 'doctor.run' | 'session.list' | 'session.spawn' | 'session.write'
   | 'session.resize' | 'session.close' | 'session.backscroll' | 'session.streamlog' | 'session.attach'
   | 'settings.get' | 'settings.set' | 'log.tail'
@@ -120,6 +121,44 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
           windows: [],
           sampledAt: Date.now(),
           source: 'unknown',
+          ageMs: 0,
+          stale: true
+        }
+      emit({ type: 'quota.changed', quota: reading })
+      return reading
+    },
+    /**
+     * ⛔ **The paid probe, and the only one.** It exists because one provider publishes a window
+     * only once something has been spent in it, so on a freshly reset account no amount of free
+     * probing can produce a number — see `UsageWarmup`. A person presses this; nothing else calls it.
+     */
+    'worker.warmUsage': async (p) => {
+      const w = requireWorker(p.id)
+      const info = adapter(w.adapterId).info
+      // ⛔ Refuse rather than quietly running the free probe instead. The operator asked for the one
+      // thing that costs a turn, and an adapter with no warm-up has no cheaper version of it — a
+      // silent downgrade would have them pressing a button that can never do what it says.
+      if (!info.usageRefresh?.warmup) {
+        throw new Error(
+          `${info.label} declares no usage warm-up: there is no turn this app can spend to make it ` +
+            'publish a reading. Probe reads whatever it already reports.'
+        )
+      }
+      // ⛔ Through the same refresh ledger as Probe and the poller — a warm-up racing a sweep ends
+      // with `spawnSession` refusing the second one, and the failed attempt overwriting the reading
+      // the turn was just paid for.
+      if (!(await refreshNow(p.id, 0, { warmUp: true }))) {
+        throw new Error(
+          `${w.label} is already being refreshed. Nothing was spent; wait for that probe to finish ` +
+            'and read what it found before sending a turn.'
+        )
+      }
+      const reading = lastQuotaReading(p.id) ??
+        lastQuota(p.id) ?? {
+          workerId: p.id,
+          windows: [],
+          sampledAt: Date.now(),
+          source: 'unknown' as const,
           ageMs: 0,
           stale: true
         }
