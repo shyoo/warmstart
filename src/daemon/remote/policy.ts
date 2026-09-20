@@ -75,7 +75,11 @@ export const REMOTE_METHODS = {
   // very same patch text, and nothing about a commit row makes unbounded text fit on a phone.
   'task.commitDiff': 'deny',
   'task.commitFile': 'deny',
-  'task.commitConversation': 'deny',
+  // ⚠️ Allowed on t585's decision, and only the commit half: asking an agent to commit a
+  // conversation's work is no more powerful than the retry the phone already offers, and the rung
+  // is the task's own default, not a picker. `landConversation` stays denied — merging to the
+  // trunk from a phone is a decision of its own, and `task.land` already covers retrying a landing.
+  'task.commitConversation': 'write',
   'task.landConversation': 'deny',
   'task.overrideQuota': 'write',
   'task.resolve': 'write',
@@ -283,7 +287,8 @@ export const REMOTE_SCOPES = {
   'task.resolveConflict': byId,
   'task.resolveRetry': byId,
   'task.resolveChecks': byId,
-  'task.resolveCommit': byId
+  'task.resolveCommit': byId,
+  'task.commitConversation': byId
 } as const satisfies Record<RemoteAllowedMethod, RemoteScope>
 
 export function remoteScopeOf(method: RemoteAllowedMethod): RemoteScope {

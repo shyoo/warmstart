@@ -1,5 +1,19 @@
-import { isMultiSelectQuestion, type Question, type Task } from '@shared/tasks'
+import {
+  isMultiSelectQuestion,
+  type FinishPolicy,
+  type PendingWork,
+  type Question,
+  type Task,
+  type WorkspaceMode
+} from '@shared/tasks'
 import { canRelandTask, isQuotaGated, resolveRetryCauses } from '@renderer/lib/taskview'
+import {
+  COMMIT_FALLBACK,
+  commitRungsForMode,
+  defaultRung,
+  effectiveWorkspaceMode,
+  settleControls
+} from '@renderer/lib/finishrung'
 
 /**
  * The rules behind the phone's answer card and its decision row, kept out of the components so
@@ -37,18 +51,27 @@ export function answerIsEmpty(optionIds: string[], text: string): boolean {
   return optionIds.length === 0 && text.trim().length === 0
 }
 
-/** Every way a person can settle or redirect a task from the phone. */
-export type TaskDecision = 'override' | 'retry' | 'reland' | 'resume' | 'reassign' | 'resolve' | 'stop'
+/** Every way a person can settle or redirect a task from the phone detail page. */
+export type TaskDecision = 'override' | 'retry' | 'reland' | 'resume' | 'reassign' | 'resolve' | 'commit'
 
 /**
  * What one task offers, in the order it is drawn.
  *
  * ⛔ Read off the task, never off what was clicked, and every entry names an RPC the remote
- * allowlist permits — a 403 here would be a bug in this list. `landing_queued` is a hold the tick
- * ends by itself (`retryQueuedLandings`), so it is not somebody's job and gets no Reassign; a
- * `running` task cannot be marked done without stopping it first.
+ * allowlist permits — a 403 here would be a bug in this list, and `parity.test.ts` holds it to
+ * the map. `landing_queued` is a hold the tick ends by itself (`retryQueuedLandings`), so it is
+ * not somebody's job and gets no Reassign; a `running` task cannot be marked done without
+ * stopping it first.
+ *
+ * ⛔ No Stop here, on purpose: the detail page keeps one-tap buttons for answers, and stopping a
+ * live run from a phone is the easiest tap to make by accident. The desktop keeps it; the phone
+ * asks for the run to be wound down from there instead.
+ *
+ * ⚠️ `pending` is the `task.pendingWork` read, passed through rather than re-read: the Commit
+ * rule below is desktop `settleControls` bit for bit (conversation kind, something uncommitted or
+ * an unreadable tree), so a `null` — not yet read — offers nothing, exactly as over there.
  */
-export function decisionsFor(task: Task, now = Date.now()): TaskDecision[] {
+export function decisionsFor(task: Task, now = Date.now(), pending?: PendingWork | null): TaskDecision[] {
   if (task.deletedAt) return []
   if (task.status === 'completed' || task.status === 'cancelled' || task.status === 'cancelling') return []
   const out: TaskDecision[] = []
@@ -59,7 +82,22 @@ export function decisionsFor(task: Task, now = Date.now()): TaskDecision[] {
   if (task.status !== 'landing_queued') {
     out.push('reassign')
     if (task.status !== 'running') out.push('resolve')
+    if (settleControls(task.kind === 'conversation', pending ?? null).commit) out.push('commit')
   }
-  if (task.status !== 'paused_user') out.push('stop')
   return out
+}
+
+/**
+ * The rung the phone's Commit press sends: the same default the desktop menu opens on — the
+ * task's own rung, else the project's, else the quiet `commit-only` fallback — restricted to the
+ * rungs Commit can offer in this task's workspace mode. Same functions, so the two menus cannot
+ * disagree about what "commit" means.
+ */
+export function commitRungFor(
+  task: Pick<Task, 'finishPolicy' | 'workspaceMode'>,
+  inheritedFinish: { policy: FinishPolicy } | null | undefined,
+  inheritedMode: WorkspaceMode | undefined
+): FinishPolicy {
+  const mode = effectiveWorkspaceMode(task.workspaceMode, inheritedMode ?? 'worktree')
+  return defaultRung(task.finishPolicy, inheritedFinish?.policy, commitRungsForMode(mode), COMMIT_FALLBACK)
 }

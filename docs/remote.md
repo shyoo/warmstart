@@ -21,6 +21,11 @@ into a live agent's terminal (`session.write`). Two more are denied for a reason
   back short with a `total` counting rows the phone was never allowed to know about. The phone uses
   `task.list` and paginates the already-filtered result locally.
 
+`task.commitConversation` is allowed since t585: asking an agent to commit a conversation's work
+is no more powerful than the retry the phone already offers, and it is scoped to enabled projects
+like every other task write. `task.landConversation` stays denied — merging to the trunk from a
+phone is a decision of its own, and `task.land` already covers retrying a landing.
+
 There are two switches, and both must be on. Remote access must be enabled for the machine, then each
 project must be enabled individually. ⛔ Project exposure is stored in the daemon database, never in
 the committed `.warmstart/project.json` — that file is pulled by every clone and by every
@@ -47,10 +52,15 @@ whoever asked, so the list takes only a short closed `choice` inline and every c
 open is drawn once — as the question — rather than twice, and it no longer offers **Resolve** from a
 row that never showed what was asked. The task page draws each open question in full: options with
 the asker's own `detail` on each, a single/multiple toggle, an **Other** row, and a free-text box on
-every kind, because the useful answer is very often a choice plus a caveat. Beneath it, **What now**
-draws what the task itself permits — Override & continue, Send back to an agent, Retry landing,
-Resume, Mark done, Stop, and an atomic worker/model/effort **Reassign** that dispatches a resting
-task again — and shows the daemon's refusal where one is refused.
+every kind, because the useful answer is very often a choice plus a caveat. Beneath it, the
+task page leads with `t{seq}` and the title at full ink, status pill and branch on their own row,
+then a detail box — Status, current → next worker and model, Price, Tokens, Took, and Priority as
+one of its rows — and the thread reads as a bare chat log with no card around it. The **Status**
+card draws what the task itself permits — Override & continue, Send back to an agent, Retry
+landing, Resume, Mark done, **Commit**, and an atomic worker/model/effort **Reassign** that
+dispatches a resting task again — and shows the daemon's refusal where one is refused. There is no
+Stop on the phone: stopping a live run is the easiest tap to make by accident, so the desktop
+keeps it and the phone does not offer it.
 
 The selected project is retained in a same-site browser cookie, and Tasks requests that project directly
 so rows from one remote project never appear under another. Quota shows enabled workers only, with

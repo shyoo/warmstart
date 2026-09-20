@@ -15,5 +15,8 @@
     "baseUrl": ".",
     "paths": { "@shared/*": ["src/shared/*"], "@renderer/*": ["src/renderer/src/*"] }
   },
-  "include": ["src/renderer/**/*", "src/mobile/**/*", "src/shared/**/*", "src/preload/**/*.d.ts"]
+  "include": ["src/renderer/**/*", "src/mobile/**/*", "src/shared/**/*", "src/preload/**/*.d.ts",
+    // ⚠️ Only for `parity.test.ts`, which holds the phone's offered actions to this map: the file
+    // is types-only beside what it maps, so including it pulls in no daemon code.
+    "src/daemon/remote/policy.ts"]
 }

@@ -51,11 +51,11 @@ describe('answerIsEmpty', () => {
 })
 
 describe('decisionsFor', () => {
-  it('offers a resting task the whole set, Mark done and Stop included', () => {
-    expect(decisionsFor(task(), NOW)).toEqual(['reassign', 'resolve', 'stop'])
+  it('offers a resting task answers, never a Stop button', () => {
+    expect(decisionsFor(task(), NOW)).toEqual(['reassign', 'resolve'])
   })
 
-  it('adds Resume to a user-paused task and never offers to stop it again', () => {
+  it('adds Resume to a user-paused task', () => {
     expect(decisionsFor(task({ status: 'paused_user' }), NOW)).toEqual(['resume', 'reassign', 'resolve'])
   })
 
@@ -64,7 +64,7 @@ describe('decisionsFor', () => {
   })
 
   it('does not offer to mark a running task done', () => {
-    expect(decisionsFor(task({ status: 'running' }), NOW)).toEqual(['reassign', 'stop'])
+    expect(decisionsFor(task({ status: 'running' }), NOW)).toEqual(['reassign'])
   })
 
   it('offers the retry a landing failure asks for', () => {
@@ -79,6 +79,16 @@ describe('decisionsFor', () => {
   })
 
   it('leaves a queued landing to the tick that ends it', () => {
-    expect(decisionsFor(task({ status: 'landing_queued' }), NOW)).toEqual(['stop'])
+    expect(decisionsFor(task({ status: 'landing_queued' }), NOW)).toEqual([])
+  })
+
+  it('offers Commit to a conversation holding uncommitted work, and nothing else', () => {
+    const dirty = { supported: true, reason: '', branch: 'warmstart/t7-sweep', unclaimed: false, dirtyFiles: 1, untrackedFiles: 0, unlandedCommits: 0, hasDiff: true }
+    expect(decisionsFor(task({ kind: 'conversation' }), NOW, dirty)).toContain('commit')
+    expect(decisionsFor(task({ kind: 'conversation' }), NOW, null)).not.toContain('commit')
+    const clean = { ...dirty, dirtyFiles: 0, hasDiff: false }
+    expect(decisionsFor(task({ kind: 'conversation' }), NOW, clean)).not.toContain('commit')
+    expect(decisionsFor(task({ kind: 'work' }), NOW, dirty)).not.toContain('commit')
+    expect(decisionsFor(task({ kind: 'conversation', status: 'completed' }), NOW, dirty)).not.toContain('commit')
   })
 })

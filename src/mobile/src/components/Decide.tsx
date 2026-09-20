@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ModelOptions, RpcResult } from '@shared/protocol'
-import { resolveModelChoice, type Task } from '@shared/tasks'
+import { FINISH_LABELS, resolveModelChoice, type FinishPolicy, type PendingWork, type Task } from '@shared/tasks'
+import { statusTone } from '../lib/format.js'
 import { rpc } from '../api.js'
 import { decisionsFor, type TaskDecision } from '../lib/question.js'
 
@@ -24,12 +25,18 @@ export function Decide({
   fleet,
   modelOptions,
   now,
+  pending,
+  commitRung,
   onChanged
 }: {
   task: Task
   fleet: FleetList
   modelOptions: ModelOptions[]
   now: number
+  /** The `task.pendingWork` read: Commit is offered exactly when the tree holds something. */
+  pending: PendingWork | null
+  /** The rung a Commit press sends, computed like the desktop menu's default. */
+  commitRung: FinishPolicy | null
   onChanged: () => void
 }): React.JSX.Element | null {
   const [busy, setBusy] = useState(false)
@@ -44,7 +51,7 @@ export function Decide({
     setEffort(task.constraints.effort ?? '')
   }, [task.constraints.workerId, task.constraints.model, task.constraints.modelPolicy, task.constraints.effort])
 
-  const decisions = decisionsFor(task, now)
+  const decisions = decisionsFor(task, now, pending)
   if (decisions.length === 0) return null
 
   const entry = fleet.find((e) => e.worker.id === workerId) ?? null
@@ -94,9 +101,11 @@ export function Decide({
         case 'resolve':
           await rpc('task.resolve', { id: task.id })
           return null
-        case 'stop':
-          await rpc('task.cancel', { id: task.id })
-          return null
+        case 'commit': {
+          if (!commitRung) return 'could not pick a commit rung for this task'
+          const answer = await rpc('task.commitConversation', { id: task.id, finishPolicy: commitRung })
+          return answer.ok ? null : (answer.reason ?? 'the commit could not be started')
+        }
         case 'reassign':
           return reassign()
       }
@@ -135,12 +144,20 @@ export function Decide({
   const reassignLabel = resting ? 'Reassign & continue' : 'Reassign'
   return (
     <section className="m-card">
-      <h3 className="m-section-title">What now</h3>
+      <div className="m-statusline">
+        <h3 className="m-section-title">Status</h3>
+        <span className={`m-status m-status--${statusTone(task.landing ? 'landing' : task.status)}`}>
+          {task.landing ? 'landing' : task.status.replace(/_/g, ' ')}
+        </span>
+      </div>
       {decisions.includes('resolve') && (
         <p className="m-detail">
-          <strong>Mark done</strong> completes the task and releases anything waiting on it.{' '}
-          <strong>Stop</strong> parks it in a resting state, which Resume picks back up; nothing waiting on it
-          is released and nothing is destroyed.
+          <strong>Mark done</strong> completes the task and releases anything waiting on it.
+        </p>
+      )}
+      {decisions.includes('commit') && commitRung && (
+        <p className="m-detail">
+          <strong>Commit</strong> asks an agent to commit on the branch — {FINISH_LABELS[commitRung]}.
         </p>
       )}
       <div className="m-actions">
@@ -149,7 +166,7 @@ export function Decide({
           .map((decision) => (
             <button
               key={decision}
-              className={`m-btn${PRIMARY.has(decision) ? ' m-btn--primary' : ''}${decision === 'stop' ? ' m-btn--danger' : ''}`}
+              className={`m-btn${PRIMARY.has(decision) ? ' m-btn--primary' : ''}`}
               disabled={busy}
               onClick={() => press(decision)}
             >
@@ -218,10 +235,10 @@ const LABEL: Record<TaskDecision, string> = {
   resume: 'Resume',
   reassign: 'Reassign',
   resolve: 'Mark done',
-  stop: 'Stop'
+  commit: 'Commit'
 }
 
-const PRIMARY: ReadonlySet<TaskDecision> = new Set<TaskDecision>(['override', 'retry', 'reland', 'resume'])
+const PRIMARY: ReadonlySet<TaskDecision> = new Set<TaskDecision>(['override', 'retry', 'reland', 'resume', 'commit'])
 
 const CONFIRM: Record<TaskDecision, string> = {
   override: 'Override the quota gate and let this task continue now?',
@@ -230,5 +247,5 @@ const CONFIRM: Record<TaskDecision, string> = {
   resume: 'Resume this task now?',
   reassign: 'Apply this worker and model to the task?',
   resolve: 'Mark this task done? It completes the task and releases anything waiting on it.',
-  stop: 'Stop this task? It winds down into a resting state; nothing is destroyed.'
+  commit: 'Ask an agent to commit this conversation’s work on its branch?'
 }
