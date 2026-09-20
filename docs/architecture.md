@@ -195,10 +195,19 @@ without one.
 ### The quota poller
 
 No fixed refresh clock. `probeDemand()` asks what the fleet is doing and the poller computes its own
-delay, refreshing only where something is about to act on the number: a run in flight, a parked task
-past its reset, or a live rate-limit warning (`requestUrgentProbe`). `ensureFreshQuota()` at the
-dispatch gate and at run end shares the same ledger, so two terminals never open on one account.
+delay, refreshing where something is about to act on the number — a run in flight, a parked task past
+its reset, a live rate-limit warning (`requestUrgentProbe`) — **and on the operator's own idle
+interval** for every account nothing is running on (t577). `ensureFreshQuota()` at the dispatch gate
+and at run end shares the same ledger, so two terminals never open on one account.
 Details and the staleness ladder: [`cost-model.md`](cost-model.md) §5.
+
+⛔ **`idleProbeIntervalMinutes` is a bound on a reading's age, and the poller enforces it.** For weeks
+it was only how often a cache file was re-read, which the vendor rewrites when the account is *used*
+— so an account nothing ran on was never refreshed and its card read 41 minutes, then hours, old under
+a setting of twenty. Two things keep it honest: `forcedRefresh`'s idle rule (one terminal per account
+when its newest *attempt* nears the interval), and a wake every `IDLE_SWEEP_TICK_MS` (5m) rather than
+once per interval, because a sweep that lands seconds early skips a reading that crosses the line a
+moment later and doubles its age. `quotaprobing.test.ts` runs the property over twelve simulated hours.
 
 ⛔ **It reads money on the same pass, and deliberately owns no second timer.** `probeSpendFor`
 (`spend.ts`) asks whatever the adapter's `spendProbe` capability says can be asked — never which

@@ -1018,6 +1018,23 @@ const MIN_FORCED_GAP_MS = 60_000
 const MIN_DELAY_MS = 1_000
 
 /**
+ * How often a fleet with nothing running wakes to ask *is anyone's reading about to be too old?*
+ *
+ * ⛔ **Not the idle interval itself, and the difference is the t577 bug.** The poller used to sleep
+ * exactly `idleProbeIntervalMinutes` between sweeps and a sweep refreshed nothing on an account
+ * without a run, so "every 20 minutes" was a file re-read of a cache the vendor writes only when the
+ * account is used. Once idle accounts *are* refreshed, sleeping the whole interval is still wrong:
+ * a sweep that lands seconds before a reading crosses the line skips it, and the reading is then
+ * two intervals old — the "41 minutes ago" on a 20-minute setting. Waking every few minutes and
+ * refreshing what is *about to* cross keeps the age at or under the setting.
+ *
+ * ⚠️ Cheap on purpose: a wake that finds nothing due is a file read and an identity check that is
+ * itself gated at fifteen minutes. The cost of an idle account is the terminal it is refreshed
+ * with, and that is bounded by the interval, never by this.
+ */
+const IDLE_SWEEP_TICK_MS = 5 * 60_000
+
+/**
  * What the fleet needs looked at right now, asked of the scheduler rather than derived here.
  *
  * ⛔ Injected, not imported. The poller decides *when* to look at an account; only the scheduler
@@ -1118,6 +1135,31 @@ export class QuotaPoller {
     return Math.max(configured, this.activeMs())
   }
 
+  /**
+   * How long the poller sleeps between sweeps when no release or signal shortens it.
+   *
+   * ⭐ The active cadence while a run is in flight; otherwise the idle interval *capped at a short
+   * tick* (`IDLE_SWEEP_TICK_MS`), so the idle refresh below can act before a reading reaches the age
+   * the operator set rather than after.
+   */
+  private sweepTickMs(demand: ProbeDemand): number {
+    return demand.activeWorkerIds.length > 0
+      ? this.activeMs()
+      : Math.min(this.idleMs(), IDLE_SWEEP_TICK_MS)
+  }
+
+  /**
+   * The age at which an account nobody is running work on is refreshed.
+   *
+   * ⭐ One sweep tick *short of* the idle interval: the next sweep would otherwise find the reading
+   * already past it, so the age an operator sees is bounded by the interval they chose instead of by
+   * the interval plus a sweep. ⚠️ Never below `MIN_FORCED_GAP_MS` — no setting turns this into a
+   * terminal per sweep.
+   */
+  idleRefreshAfterMs(demand: ProbeDemand = NO_DEMAND): number {
+    return Math.max(MIN_FORCED_GAP_MS, this.idleMs() - this.sweepTickMs(demand))
+  }
+
   setIntervalMinutes(minutes: number): void {
     const safeMinutes = Math.max(1, Math.min(1440, minutes))
     const ms = safeMinutes * 60 * 1000
@@ -1148,7 +1190,7 @@ export class QuotaPoller {
   nextDelayMs(now = Date.now()): number {
     if (urgentProbes.size > 0) return MIN_DELAY_MS
     const demand = this.readDemand()
-    let delay = demand.activeWorkerIds.length > 0 ? this.activeMs() : this.idleMs()
+    let delay = this.sweepTickMs(demand)
     for (const release of this.pendingReleases(demand, now)) {
       delay = Math.min(delay, Math.max(0, release.at + RELEASE_PROBE_GRACE_MS - now))
     }
@@ -1247,7 +1289,7 @@ export class QuotaPoller {
     workerId: string,
     demand: ProbeDemand,
     now: number
-  ): { why: string; release?: number } | null {
+  ): { why: string; release?: number; idle?: true } | null {
     const urgent = urgentProbes.get(workerId)
     if (urgent) return { why: urgent }
 
@@ -1264,45 +1306,76 @@ export class QuotaPoller {
         return { why: 'a run is in flight on this account' }
       }
     }
+
+    // ⛔ **The rule whose absence was t577: an account with nothing running was never refreshed.**
+    // The idle interval was a control over how often a *file was re-read*, and the file is written by
+    // the vendor only when the account is used — so on a quiet account the reading aged without
+    // limit (41 minutes, then hours) while the setting said twenty. Asked last, after every reason
+    // with a deadline, and only of an account this fleet may open a terminal on at all.
+    // ⚠️ Keyed on the newest *attempt*, not the newest reading with windows: an account whose panel
+    // says it has nothing (Muse's `Currently unavailable`) would otherwise read as overdue forever
+    // and be retried every sweep, where the attempt's own age holds it to one try per interval.
+    if (mayRefreshUsage(workerId)) {
+      const last = lastQuota(workerId)
+      const dueAfter = this.idleRefreshAfterMs(demand)
+      if (!last) return { why: 'no reading has ever been taken on this account', idle: true }
+      if (last.ageMs >= dueAfter) {
+        return {
+          why: `its reading is ${Math.round(last.ageMs / 60_000)}m old and nothing is running on it`,
+          idle: true
+        }
+      }
+    }
     return null
   }
 
   /**
-   * Read every worker's cache off disk. **Nothing here starts a process.**
+   * Look at every worker: refresh those with a reason to be refreshed, and re-read the rest's cache.
    *
-   * ⛔ **The sweep no longer refreshes anything, and that is the point.** It used to open one
+   * ⛔ **History, because this function has been wrong in both directions.** It used to open one
    * interactive session per pass on whichever worker's reading had aged past a two-hour gate — a
    * clock, spending a terminal on accounts nobody was about to route work to. Measured 2026-08-30:
    * **150 probe PTY sessions against 14 that did any work** over four days, each registering with
-   * the vendor's bridge and accumulating in the desktop app until somebody archived it by hand.
-   * Raising the gate 30m → 2h cut the count and bought nothing else: a reading is *trusted* for
-   * fifteen minutes, so an idle worker still read `stale` for 1h50 of every 2h05 (measured on
-   * ClaudeSecond, 2026-08-31 — `transient_docs/quota_staleness_2026-08-31.md`), and the operator
-   * reasonably read a five-minute probe interval as a promise of a five-minute-old number.
+   * the vendor's bridge and accumulating in the desktop app until somebody archived it by hand. The
+   * clock was retired (2026-08-31) and freshness moved to where it is *used* — `ensureFreshQuota` at
+   * the dispatch gate and when a run ends. That fixed the terminals and broke the operator's
+   * control: **an idle account was never refreshed at all**, so "Quota probe when idle: every 20
+   * minutes" re-read a file the vendor writes only when the account is used, and cards read 41
+   * minutes, then hours, old (t577, 2026-09-20).
    *
-   * ⭐ So freshness moved to where it is *used*: `ensureFreshQuota` at the dispatch gate, and again
-   * when a run ends. A worker nothing is about to dispatch to keeps whatever reading it has, which
-   * costs nothing and is honest — and an idle account's window is not moving anyway.
+   * ⭐ The two are reconciled by *who asked and how often*: the idle refresh is the operator's own
+   * setting, one terminal per account per interval and never faster (`idleRefreshAfterMs`), run last
+   * and one at a time. At the default that is three an hour per account — a bound they chose,
+   * where the retired clock's was a constant nobody could see. Accounts a person has switched off,
+   * retired, or that cannot host a probe are never opened.
    *
    * Every failure is swallowed on purpose. A quota probe that throws must never stall the loop that
    * schedules work - the fleet degrades to "unknown, treat conservatively" and keeps running.
    */
   async sweep(): Promise<void> {
-    // ⛔ **The sweep starts no process on its own account, and asks for one where the fleet has
-    // named a reason.** Those are the same rule rather than two: a terminal is worth spending
-    // exactly when something is about to act on the number. A run in flight *is* acting on it; a
-    // task parked on a window whose reset has passed is about to; a live rate-limit warning has just
-    // changed it. An account nobody is routing work to is none of those and keeps the reading it
-    // has — which is what retiring the refresh clock (2026-08-31) was for.
+    // ⛔ **A terminal is worth spending when something will act on the number, or when the operator
+    // asked to be told it.** A run in flight *is* acting on it; a task parked on a window whose reset
+    // has passed is about to; a live rate-limit warning has just changed it; and the idle interval is
+    // the operator saying *I want to see this account no older than that*. Anything else keeps the
+    // reading it has.
     const now = Date.now()
     const demand = this.readDemand()
 
-    for (const w of listWorkers()) {
-      // ⛔ The queued request is consumed with the worker it names, serviceable or not. A signal
-      // about an account nobody may probe must not sit in the queue forever holding the loop at its
-      // floor.
+    // ⛔ Decided for every worker before any terminal opens, and the queued request is consumed with
+    // the worker it names, serviceable or not. A signal about an account nobody may probe must not
+    // sit in the queue forever holding the loop at its floor.
+    const plan = listWorkers().map((w) => {
       const forced = this.forcedRefresh(w.id, demand, now)
       urgentProbes.delete(w.id)
+      return { w, forced }
+    })
+    // ⭐ **Idle refreshes go last, one terminal at a time.** Each holds a PTY for the better part of
+    // half a minute, and a fleet whose readings all aged out together — the first sweep after the
+    // daemon starts — must not make an account with a run in flight wait behind a queue of accounts
+    // nobody is using. Stable sort: everything else keeps the fleet's own order.
+    plan.sort((a, b) => Number(a.forced?.idle === true) - Number(b.forced?.idle === true))
+
+    for (const { w, forced } of plan) {
       if (w.retiredAt || !w.enabled) continue
 
       // ⭐ **The one probe the sweep spends on an account it may not dispatch to** (t309). A
@@ -1335,7 +1408,7 @@ export class QuotaPoller {
           // ⛔ Through the same ledger the dispatch gate uses, so two reasons to refresh one account
           // inside a minute open one terminal between them rather than two. The floor is the
           // caller's: see `refreshNow` and `forcedGapMs`.
-          if (await refreshNow(w.id, this.forcedGapMs(forced))) {
+          if (await refreshNow(w.id, this.forcedGapMs(forced, demand))) {
             log.info(`refreshed ${w.label}'s quota: ${forced.why}`)
             continue
           }
@@ -1365,7 +1438,10 @@ export class QuotaPoller {
    * come due, a live warning — takes the floor: asking twice inside a minute cannot produce a
    * different answer.
    */
-  private forcedGapMs(forced: { release?: number }): number {
+  private forcedGapMs(forced: { release?: number; idle?: true }, demand: ProbeDemand): number {
+    // ⭐ An idle refresh is held to the age it is due at, so a refresh that changed nothing (the
+    // vendor's own fetch failed, so the reading's timestamp did not move) is not retried every tick.
+    if (forced.idle) return this.idleRefreshAfterMs(demand)
     return forced.release === undefined ? this.activeMs() : MIN_FORCED_GAP_MS
   }
 }

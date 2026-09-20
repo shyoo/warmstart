@@ -396,7 +396,10 @@ export function FleetSettings(): React.JSX.Element {
           title="Quota probe when idle"
           description={
             <>
-              Polls CLI usage cache when workers are idle. Always runs <strong>within 30 seconds of the reset time</strong> for parked tasks and immediately after a rate-limit warning.
+              The longest an idle account&rsquo;s quota reading is left before it is <strong>refreshed</strong> —
+              a short probe terminal that spends no tokens, one account at a time. Always runs{' '}
+              <strong>within 30 seconds of the reset time</strong> for parked tasks and immediately after a
+              rate-limit warning.
             </>
           }
           control={

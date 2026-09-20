@@ -632,9 +632,13 @@ ClaudeSecond, 2026-08-31), while the operator's 5-minute probe setting looked li
 5-minute-old number. It never was — the sweep re-reads the vendor's cache, and only the vendor
 rewrites that.
 
-⭐ **So the question moved from "is this number old?" to "is anything about to use it?"** A worker
-nothing is dispatching to keeps whatever reading it has, at no cost and with no pretence: an idle
-account's window is not moving. A worker about to take a task gets a fresh reading first. And what
+⭐ **So the question moved from "is this number old?" to "is anything about to use it?"** — and t577
+(2026-09-20) put half of it back, because the answer was too clever for what an operator sees. A window
+that is not moving is still *wrong* once it resets: a reading of a window that has since rolled over
+says 90% where the truth is 0%, and a card that said so for hours under a "20 minutes" setting is a
+broken control, not a saving. The bound that replaces the retired clock is the operator's own number,
+one terminal per account per interval (three an hour at the default), never a constant. A worker about
+to take a task still gets a fresh reading first. And what
 makes the cheap rung still worth running every few minutes: the vendor's on-disk cache is refreshed
 by **any** use of that account, including this fleet's own work sessions, so a busy account keeps
 its own reading current for the price of a file read. The command is declared per adapter as
@@ -667,7 +671,7 @@ So the poller no longer runs on one interval. It asks the scheduler (`probeDeman
 | state | what happens |
 |---|---|
 | a run in flight on an account | `probeIntervalMinutes` (**5m**), and on that account a **refresh**, not a re-read — the account whose window is actually being spent is the one worth a terminal, so the ten-minute backoff yields to the operator's own cadence there |
-| nothing running | `idleProbeIntervalMinutes` (**20m**), a re-read only. ⛔ No refresh at all: an idle account's window does not move, and the clock that used to refresh one was retired the same day (above) |
+| nothing running | a **refresh** of each enabled, signed-in account whose newest attempt is about to pass `idleProbeIntervalMinutes` (**20m**), one terminal at a time and after every account with a run in flight. ⛔ Until t577 (2026-09-20) this row said *a re-read only*, and that is why idle cards read 41m, then hours, old: the vendor rewrites its cache only when the account is used, so a re-read of an idle account returns the same stale file, and a screen-answered adapter (Muse Code, Antigravity) had no file at all. The interval is now a bound on the reading's age. The poller wakes every `IDLE_SWEEP_TICK_MS` (5m), not once per interval, and refreshes one tick *short of* the interval so a sweep landing early cannot skip a cycle |
 | a task parked `paused_quota` | a forced refresh **`RELEASE_PROBE_GRACE_MS` (30s) after its `not_before`**, so an unattended resume happens on the window's clock and not on the poller's |
 | a live rate-limit warning, or a quota preemption | a forced refresh **at once** (`requestUrgentProbe`), because the operator has just been shown a decision made on a number their screen does not have |
 

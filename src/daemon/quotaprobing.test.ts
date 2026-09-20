@@ -251,6 +251,11 @@ function enable(workerId: string): void {
   db.db().prepare('update workers set enabled = 1 where id = ?').run(workerId)
 }
 
+/** Start a worker's reading history over, so a test can say what the *newest* attempt is. */
+function forgetSamples(workerId: string): void {
+  db.db().prepare('delete from quota_samples where worker_id = ?').run(workerId)
+}
+
 /** A reading of a given age, written straight to the store. */
 function sample(workerId: string, opts: { ageMs: number; percent?: number; windows?: boolean }): void {
   const at = Date.now() - opts.ageMs
@@ -309,12 +314,27 @@ afterAll(() => {
 })
 
 describe('how long the poller waits before looking again', () => {
-  it('uses the idle cadence when nothing is running', () => {
+  it('wakes on a short tick when nothing is running, not once per idle interval', () => {
+    // ⛔ t577. This used to assert `20 * MIN`, and that was half the bug: a sweep that fires exactly
+    // once per interval and lands seconds early skips an account whose reading crosses the line a
+    // moment later, so a 20-minute setting produced 40-minute-old readings. The interval is now the
+    // *age* an idle account is refreshed at; the poller wakes often enough to honour it.
     settings.setSetting('probeIntervalMinutes', 5)
     settings.setSetting('idleProbeIntervalMinutes', 20)
     const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
-    expect(poller.nextDelayMs()).toBe(20 * MIN)
+    expect(poller.nextDelayMs()).toBe(5 * MIN)
+    // One tick short of the interval, so the reading is refreshed before it reaches the age, not after.
+    expect(poller.idleRefreshAfterMs()).toBe(15 * MIN)
+  })
+
+  it('never wakes less often than the idle interval, however long that is', () => {
+    settings.setSetting('probeIntervalMinutes', 5)
+    settings.setSetting('idleProbeIntervalMinutes', 2)
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
+
+    // Clamped up to the active cadence (5m); the tick can never exceed what the interval allows.
+    expect(poller.nextDelayMs()).toBeLessThanOrEqual(5 * MIN)
   })
 
   it('uses the active cadence the moment a run is in flight', () => {
@@ -338,7 +358,10 @@ describe('how long the poller waits before looking again', () => {
     settings.setSetting('idleProbeIntervalMinutes', 5)
     const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
-    expect(poller.nextDelayMs()).toBe(30 * MIN)
+    // The 5-minute idle setting is clamped up to the 30-minute active one, so an idle account is
+    // refreshed at ~25-30m, never at 5.
+    expect(poller.idleRefreshAfterMs()).toBe(25 * MIN)
+    expect(poller.nextDelayMs()).toBe(5 * MIN)
   })
 
   it('wakes just after a parked task is due back, not at the end of the interval', () => {
@@ -375,7 +398,7 @@ describe('how long the poller waits before looking again', () => {
       demand: demandOf({ releases: [{ workerId: worker, at: Date.now() + 5 * 3600_000 }] })
     })
 
-    expect(poller.nextDelayMs()).toBe(20 * MIN)
+    expect(poller.nextDelayMs()).toBe(5 * MIN)
   })
 
   it('drops to its floor when something urgent is queued', () => {
@@ -397,7 +420,184 @@ describe('how long the poller waits before looking again', () => {
       }
     })
 
-    expect(poller.nextDelayMs()).toBe(20 * MIN)
+    expect(poller.nextDelayMs()).toBe(5 * MIN)
+  })
+})
+
+/**
+ * ⛔ **t577: "Quota probe when idle: every 20 minutes", and readings 41 minutes and hours old.**
+ *
+ * The idle interval only ever re-read a cache file the vendor writes when the account is *used*, so
+ * an account nothing was running on was never refreshed at all and its card aged without bound. What
+ * is asserted here is the promise the setting makes — *no idle account's reading is left older than
+ * this* — as arithmetic over a long quiet stretch, because a single-decision test cannot see the
+ * failure: every individual sweep looked reasonable, and the bug was in what they added up to.
+ */
+describe('refreshing an account nothing is running on', () => {
+  const now = () => Date.now()
+  const quiet = { activeWorkerIds: [], releases: [] }
+
+  it('refreshes an idle account once its reading is about to pass the idle interval', () => {
+    settings.setSetting('probeIntervalMinutes', 5)
+    settings.setSetting('idleProbeIntervalMinutes', 20)
+    const worker = seedWorker('quiet')
+    enable(worker)
+    sample(worker, { ageMs: 16 * MIN, percent: 40 })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
+
+    const forced = poller.forcedRefresh(worker, quiet, now())
+    expect(forced?.idle).toBe(true)
+    expect(forced?.why).toMatch(/16m old and nothing is running/)
+  })
+
+  it('leaves a recently read idle account alone', () => {
+    settings.setSetting('probeIntervalMinutes', 5)
+    settings.setSetting('idleProbeIntervalMinutes', 20)
+    const worker = seedWorker('quiet-and-fresh')
+    enable(worker)
+    sample(worker, { ageMs: 8 * MIN, percent: 40 })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
+
+    expect(poller.forcedRefresh(worker, quiet, now())).toBeNull()
+  })
+
+  it('refreshes an idle account that has never been read', () => {
+    const worker = seedWorker('never-read')
+    enable(worker)
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
+
+    expect(poller.forcedRefresh(worker, quiet, now())?.why).toMatch(/ever been taken/)
+  })
+
+  /**
+   * ⛔ The measured shape of "hours old": the old sweep refreshed nothing here, so a reading from
+   * three hours ago stayed three hours old for as long as the account sat unused.
+   */
+  it('refreshes an idle account whose reading is hours old', () => {
+    const worker = seedWorker('hours-old')
+    enable(worker)
+    sample(worker, { ageMs: 3 * 3600_000, percent: 80 })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
+
+    expect(poller.forcedRefresh(worker, quiet, now())?.idle).toBe(true)
+  })
+
+  /**
+   * ⚠️ Keyed on the newest *attempt*. An account whose panel says it has nothing to show (Muse Code's
+   * `Currently unavailable`) writes a failed row each time; if only readings *with windows* counted
+   * it would look overdue on every sweep and be retried every five minutes.
+   */
+  it('counts a recent failed attempt as an attempt', () => {
+    settings.setSetting('idleProbeIntervalMinutes', 20)
+    const worker = seedWorker('just-tried')
+    enable(worker)
+    sample(worker, { ageMs: 2 * MIN, windows: false })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
+
+    expect(poller.forcedRefresh(worker, quiet, now())).toBeNull()
+
+    // ⚠️ `sample` adds a row and the store answers with the *newest*, so the earlier attempt has to
+    // go or it would still be the one asked about.
+    forgetSamples(worker)
+    sample(worker, { ageMs: 30 * MIN, windows: false })
+    expect(poller.forcedRefresh(worker, quiet, now())?.idle).toBe(true)
+  })
+
+  it('never opens a terminal on an account the operator switched off', () => {
+    const worker = seedWorker('switched-off') // seeded disabled
+    sample(worker, { ageMs: 5 * 3600_000, percent: 50 })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
+
+    expect(poller.forcedRefresh(worker, quiet, now())).toBeNull()
+  })
+
+  it('never opens a terminal on an account whose subscription the failed run measured as expired', () => {
+    const worker = seedWorker('expired')
+    enable(worker)
+    db.db()
+      .prepare('update workers set health_json = ? where id = ?')
+      .run(JSON.stringify({ state: 'suspect', reason: 'subscription expired', subscriptionExpired: true }), worker)
+    sample(worker, { ageMs: 5 * 3600_000, percent: 50 })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
+
+    expect(poller.forcedRefresh(worker, quiet, now())).toBeNull()
+  })
+
+  it('leaves an adapter with no usage command to the free read it already gets', () => {
+    // ⚠️ Nothing to drive: `probeWorker` reads it. A "refresh" here would be the same file read.
+    const worker = seedWorker('endpoint', 'local-llm')
+    enable(worker)
+    sample(worker, { ageMs: 5 * 3600_000, percent: 50 })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
+
+    expect(poller.forcedRefresh(worker, quiet, now())).toBeNull()
+  })
+
+  it('reaches a screen-answered adapter, which the file re-read skipped entirely', () => {
+    // ⛔ Muse Code and Antigravity write no cache, so the sweep's `continue` past them meant their
+    // idle readings were not refreshed by *any* path. This is why they were the worst cases.
+    const worker = seedWorker('muse', 'muse-code')
+    enable(worker)
+    sample(worker, { ageMs: 3 * 3600_000, percent: 30 })
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
+
+    expect(poller.forcedRefresh(worker, quiet, now())?.idle).toBe(true)
+  })
+
+  it('yields to every reason that has a deadline', () => {
+    const worker = seedWorker('warned')
+    enable(worker)
+    sample(worker, { ageMs: 3 * 3600_000, percent: 50 })
+    quota.requestUrgentProbe(worker, 'rate-limit rejected')
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
+
+    const forced = poller.forcedRefresh(worker, quiet, now())
+    expect(forced?.why).toMatch(/rejected/)
+    expect(forced?.idle).toBeUndefined()
+  })
+
+  /**
+   * ⭐ **The property the setting promises**, run over a long quiet stretch rather than asserted at
+   * one instant. Sweeps happen every `nextDelayMs()`; whenever the poller would refresh, the
+   * reading's age resets to zero; at no sweep may an idle account be found older than the interval.
+   * This is the test that fails on the old logic, where nothing ever reset the age.
+   */
+  it.each([
+    { idle: 20, active: 5 },
+    { idle: 10, active: 5 },
+    { idle: 60, active: 5 },
+    { idle: 30, active: 30 },
+    { idle: 5, active: 5 }
+  ])('never leaves an idle account older than $idle minutes (active cadence $active)', ({ idle, active }) => {
+    settings.setSetting('probeIntervalMinutes', active)
+    settings.setSetting('idleProbeIntervalMinutes', idle)
+    const worker = seedWorker(`quiet-${idle}-${active}`)
+    enable(worker)
+    const poller = new quota.QuotaPoller({ demand: demandOf({}) })
+    const tick = poller.nextDelayMs()
+    const limit = Math.max(idle, active) * MIN
+
+    let refreshedAt = 0
+    let oldest = 0
+    let refreshes = 0
+    for (let t = 0; t <= 12 * 3600_000; t += tick) {
+      // ⚠️ Replace, never add: the store answers with the newest row, and a row written at an
+      // earlier step is always newer than one this step back-dates, which would read as fresh forever.
+      forgetSamples(worker)
+      sample(worker, { ageMs: t - refreshedAt, percent: 30 })
+      oldest = Math.max(oldest, t - refreshedAt)
+      if (poller.forcedRefresh(worker, quiet, now())) {
+        refreshedAt = t
+        refreshes += 1
+      }
+    }
+
+    // Found no older than the operator's setting at any wake-up...
+    expect(oldest).toBeLessThanOrEqual(limit)
+    // ...and refreshed at most about once per interval, so the bound on terminals is the setting
+    // itself: the retired two-hour clock was a constant, and this one is theirs.
+    expect(refreshes).toBeLessThanOrEqual(Math.ceil((12 * 3600_000) / Math.max(MIN, limit - tick)))
+    expect(refreshes).toBeGreaterThan(0)
   })
 })
 
@@ -521,17 +721,19 @@ describe('deciding to refresh rather than merely re-read', () => {
     )
   })
 
-  it('forces nothing for an account nothing is happening on, however old its reading', () => {
-    // ⛔ Age is not a reason on its own, and after the two branches met that is the rule the whole
-    // sweep rests on: a three-hour-old reading of an account nobody is routing work to describes a
-    // window that has not moved. The account is still refreshable — the dispatch gate asks the
-    // moment there is a task for it — but no clock asks on its behalf.
+  it('refreshes an account nothing is happening on once its reading passes the idle interval', () => {
+    // ⛔ **This asserted the opposite until t577** — *"age is not a reason on its own"* — and that
+    // rule is what left idle cards 41 minutes and hours old under a setting that said twenty. Its
+    // premise, that an idle account's window has not moved, is also false at a reset: a reading of a
+    // window that has since reset is not merely old, it is *wrong* (90% where the truth is 0%).
+    // The operator's idle interval is the age they will tolerate; see `refreshing an account nothing
+    // is running on` for the bound and for everything that still exempts an account.
     const worker = seedWorker('quiet')
     enable(worker)
     sample(worker, { ageMs: 3 * 3600_000, percent: 40 })
     const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
-    expect(poller.forcedRefresh(worker, { activeWorkerIds: [], releases: [] }, now())).toBeNull()
+    expect(poller.forcedRefresh(worker, { activeWorkerIds: [], releases: [] }, now())?.idle).toBe(true)
     expect(quota.mayRefreshUsage(worker)).toBe(true)
   })
 })

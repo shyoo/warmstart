@@ -150,6 +150,12 @@ export const DEFAULT_SETTINGS: Settings = {
    * fleet is background processes — 150 probe sessions against 14 that did work, measured over four
    * days, which is what made `REFRESH_AFTER_MS` two hours in the first place.
    *
+   * ⭐ **It is the longest an idle account's reading is left, and it is enforced** (t577). For weeks
+   * it was only how often a file was re-read: an account with nothing running was never refreshed,
+   * and its card aged without bound while this said twenty. `QuotaPoller.forcedRefresh` now opens
+   * one probe terminal per idle account when its newest attempt is about to pass this age — the
+   * bound on terminals is this number, not a constant nobody could see.
+   *
    * ⚠️ Idle is not the same as *nothing to wait for*: a task parked on a quota window is probed at
    * its release time regardless of this number. See `QuotaPoller.nextDelayMs`.
    */

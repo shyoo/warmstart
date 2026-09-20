@@ -184,6 +184,9 @@ export interface Settings {
   /**
    * How often (in minutes) orchestratord sweeps workers when **nothing is running**. Default 20.
    *
+   * ⭐ The longest an idle account's reading is left before a real refresh (t577) — not merely how
+   * often a cache file is re-read.
+   *
    * ⛔ A separate control on purpose. An idle account's window is, by construction, not moving, so
    * the frequent cadence buys nothing there and costs a background process per sweep. The two
    * questions — *how closely do we watch work in flight* and *how often do we look at a quiet fleet*

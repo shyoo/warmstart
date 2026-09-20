@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-19, **Windows 11**, on `0.3.0+3` — t570 rebased): typecheck, lint and build pass;
-L1 **3,771 passed, 5 skipped** (225 files); L2 **204 checks** (5 skipped); L3 **486 checks** (4
+Baseline (2026-09-20, **Windows 11**, on `0.3.0+4` — t577): typecheck, lint and build pass;
+L1 **3,787 passed, 5 skipped** (225 files); L2 **204 checks** (5 skipped); L3 **486 checks** (4
 skipped). L4 **19 checks** against `release/win-unpacked` was measured on `7b5f6e1`, the commit
 `v0.3.0` ships, and has not been re-run since. ⚠️ L3 flaked twice under back-to-back suite load
 (*timed out waiting for All filter to restore 3 rows*, a tier it does not touch) and was green on a
@@ -29,6 +29,15 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **"Quota probe when idle: every 20 minutes" refreshed nothing, so idle cards read 41m, then hours,
+  old (t577, 2026-09-20).** The idle interval only ever re-read a cache file the vendor writes when the
+  account is *used*, and screen-answered adapters (Muse Code, Antigravity) were skipped outright — the
+  refresh clock retired 2026-08-31 had taken the only path with it. `forcedRefresh` now refreshes any
+  enabled, signed-in account whose newest attempt nears the interval, one terminal at a time and after
+  every account with a run in flight; the poller wakes every 5m (`IDLE_SWEEP_TICK_MS`) instead of once
+  per interval, since an early sweep skipped a cycle and doubled the age. Bound on terminals: the
+  operator's own number (3/hour/account at 20m). ⚠️ `quotaprobing.test.ts` simulates 12h per cadence;
+  the mutation (rule off) turns 11 red. **Not run on a real fleet.** `docs/cost-model.md` §5.
 - **A fresh Muse window could not be read at all, and now one turn buys the reading (t570,
   2026-09-19).** The vendor publishes a window only once something has been spent in it, so every
   free probe on a just-reset account answers `Currently unavailable`. `usageRefresh.warmup` declares
@@ -124,14 +133,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   run and survives `-c sandbox_workspace_write.network_access=true`. ⛔ No code change: Warmstart
   must not write either grant on the operator's own directories. `docs/adapters.md`, `grants.ts`.
 - **A lapsed oversized session was revived instead of starting clean, and a completion prompt told sandboxed agents to fetch (t536 ← t518/t534, 2026-09-19).** Resume now starts a fresh session when the measured cache has lapsed after passing the compaction break-even; compaction remains reserved for its cheap pre-expiry window. The agent completion clause checks the checkout's target and leaves remote refresh to landing, avoiding needless SSH/grant requests. `cacheclock.ts`, `scheduler.ts`, `prompt.ts`, `docs/sessions.md`, `docs/cost-model.md`.
-- **Concurrent worktree pool expansion failed on `index.lock`, and capacity reduction blocked held tasks (t524 ← t523, 2026-09-17).**
-  Dynamically increasing workspace pool size (`ws4`) unblocked queued tasks, but dispatch raced with in-flight
-  `git worktree add` (which takes ~41s on large repositories) because `.git` was created early; `prepareWorkspace`
-  ran `git switch -c` while `git worktree add` still held `index.lock`. `ensurePool(project)` is now serialized per
-  project, and `cleanStaleGitLocks` cleans orphaned `.lock` files before preparing or switching worktrees. In reverse,
-  reducing pool size is now graceful: idle extra workspaces are parked off held branches, while occupied ones finish
-  undisturbed; and `poolPressure` in `scoring.ts` checks held workspaces and warm sessions before capacity check so held
-  tasks are never blocked by pool narrowing. `worktrees.ts`, `scoring.ts`, `docs/architecture.md`.
 - **An idle Muse account lost every unpinned routing contest, and it was `prepaid`, not the quota
   gate (t516, 2026-09-17).** MuseFirst went a long stretch never auto-routed; the quota gate itself
   was already proven not to block a worker with no reading (t309). Measured against MuseFirst's own
