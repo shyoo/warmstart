@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { duration, price, quotaAge, quotaLine, quotaTone, relTime, shortTitle, statusTone } from './format.js'
+import { activityTone, duration, price, quotaAge, quotaLine, quotaTone, relTime, shortTitle, statusTone } from './format.js'
 
 const NOW = 1_700_000_000_000
 
@@ -48,5 +48,15 @@ describe('phone row formatting', () => {
     expect(quotaTone(74.9)).toBe('ok')
     expect(quotaTone(75)).toBe('warn')
     expect(quotaTone(92)).toBe('danger')
+  })
+
+  it('colors activity rows like the desktop pills they point at', () => {
+    expect(activityTone('run_started')).toBe('active')
+    expect(activityTone('completed')).toBe('success')
+    expect(activityTone('status_changed', 'awaiting_human')).toBe('human')
+    expect(activityTone('status_changed', 'failed')).toBe('danger')
+    expect(activityTone('status_changed', 'blocked')).toBe('warning')
+    expect(activityTone('run_finished')).toBe('idle')
+    expect(activityTone('filed')).toBe('idle')
   })
 })

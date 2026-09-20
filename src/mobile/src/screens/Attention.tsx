@@ -3,7 +3,7 @@ import type { Approval, ProjectActivity, Question, Task } from '@shared/tasks'
 import { RemoteError, rpc } from '../api.js'
 import { useNow } from '../hooks.js'
 import { actionsFor, buildAttentionItems, itemSummary, type AttentionAction, type AttentionItem } from '../lib/attention.js'
-import { duration, price, relTime } from '../lib/format.js'
+import { activityTone, relTime } from '../lib/format.js'
 
 /**
  * The reason this app exists: everything waiting on a person, newest first, answerable in place.
@@ -172,10 +172,20 @@ function AttentionCard({
 }
 
 function ActivityRow({ entry, now, openTask }: { entry: ProjectActivity; now: number; openTask: (id: string) => void }): React.JSX.Element {
-  const event = entry.kind === 'filed' ? 'filed' : entry.kind === 'run_started' ? 'started a run' : entry.kind === 'run_finished' ? 'finished a run' : entry.kind === 'completed' ? 'completed' : `changed to ${entry.status?.replace('_', ' ') ?? 'a new state'}`
-  return <button className="m-activity" onClick={() => openTask(entry.taskId)}>
-    <span><strong>t{entry.taskSeq}</strong> {event}</span>
-    <span className="m-meta">{entry.title}{entry.kind === 'completed' ? ` · ${duration(entry.activeMs ?? 0, null, now)} · ${price(entry.priceUsd ?? null)}` : ''} · {relTime(entry.at, now)}</span>
+  // ⚠️ One line, time first: the two-line row with the title, duration and price repeated the
+  // task card below it. The title, timing and cost live one tap away on the task page.
+  const event = entry.kind === 'filed'
+    ? 'filed'
+    : entry.kind === 'run_started'
+      ? 'run started'
+      : entry.kind === 'run_finished'
+        ? 'run finished'
+        : entry.kind === 'completed'
+          ? 'run completed'
+          : (entry.status ?? 'changed').replace(/_/g, ' ')
+  return <button className={`m-activity m-activity--${activityTone(entry.kind, entry.status)}`} onClick={() => openTask(entry.taskId)}>
+    <span className="m-activity-time">{relTime(entry.at, now)}</span>
+    <span className="m-activity-body"><strong>t{entry.taskSeq}</strong> <span className="m-activity-event">{event}.</span></span>
   </button>
 }
 

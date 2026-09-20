@@ -3,6 +3,7 @@
  * a percentage is never shown without its age — and times read relative, because "in 4m" answers
  * the only question a quota countdown ever asks.
  */
+import type { ProjectActivity, TaskStatus } from '@shared/tasks'
 export function relTime(at: number, now: number): string {
   const diff = at - now
   if (Math.abs(diff) < 45_000) return 'just now'
@@ -62,4 +63,17 @@ export function statusTone(status: string): StatusTone {
 
 export function quotaTone(percent: number): 'ok' | 'warn' | 'danger' {
   return percent >= 92 ? 'danger' : percent >= 75 ? 'warn' : 'ok'
+}
+
+/**
+ * An activity row's color, in the desktop status language: a started run is blue, a completed one
+ * green, a wait on a person violet. Lifecycle rows that settle nothing stay dim; a status change
+ * borrows the status's own tone, so the row and the task pill never disagree.
+ */
+export type ActivityTone = StatusTone
+export function activityTone(kind: ProjectActivity['kind'], status?: TaskStatus | null): ActivityTone {
+  if (kind === 'completed') return 'success'
+  if (kind === 'run_started') return 'active'
+  if (kind === 'run_finished' || kind === 'filed') return 'idle'
+  return statusTone(status ?? '')
 }

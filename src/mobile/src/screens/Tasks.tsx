@@ -53,17 +53,25 @@ export function TasksScreen({ refreshKey, projectId, openTask, newTask }: { refr
         <button className="m-add" aria-label="New task" onClick={newTask}>+</button>
       </div>
       {shown.map((t) => (
-        <article className="m-task" key={t.id}>
-          <div className="m-task-top"><span className="m-row-seq">t{t.seq}</span><span className={`m-status m-status--${statusTone(t.landing ? 'landing' : t.status)}`}>{t.landing ? 'landing' : t.status.replace('_', ' ')}</span></div>
-          <h2 className="m-row-title">{shortTitle(t.titleSummary, t.title)}</h2>
-          <div className="m-task-facts">
+        <button
+          className="m-task"
+          key={t.id}
+          onClick={() => openTask(t.id)}
+          aria-label={`Open t${t.seq}: ${shortTitle(t.titleSummary, t.title)}`}
+        >
+          <span className="m-task-head">
+            <span className="m-row-seq">t{t.seq}</span>
+            <span className="m-row-title">{shortTitle(t.titleSummary, t.title)}</span>
+            <span className="m-task-go" aria-hidden="true">↗</span>
+          </span>
+          <span className="m-task-facts">
             <span><small>Worker</small>{workerLabels[t.ranOn ?? t.constraints.workerId ?? t.assignee ?? ''] ?? t.ranOn ?? t.constraints.workerId ?? t.assignee ?? 'Automatic'}</span>
             <span><small>Model</small>{t.ranModel ?? t.constraints.model ?? 'Automatic'}</span>
             <span><small>Took</small>{duration(t.activeMs, t.activeSince, now)}</span>
             <span><small>Price</small>{price(t.budget.spentUsd, t.budget.spentUsdEstimated, t.budget.spentUsdPartial)}</span>
-          </div>
-          <div className="m-task-foot"><span>Updated {relTime(t.updatedAt, now)}</span><button className="m-open" onClick={() => openTask(t.id)}>Open <span aria-hidden="true">→</span></button></div>
-        </article>
+          </span>
+          <span className="m-task-foot"><span>Updated {relTime(t.updatedAt, now)}</span><span className={`m-status m-status--${statusTone(t.landing ? 'landing' : t.status)}`}>{t.landing ? 'landing' : t.status.replace('_', ' ')}</span></span>
+        </button>
       ))}
       {tasks.length === 0 && <p className="m-empty">No tasks in this project.</p>}
       {tasks.length > 0 && <nav className="m-pager" aria-label="Task pages">

@@ -31,6 +31,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 - **A Muse worker set to "Full user authority" now runs `--yolo` (t580, 2026-09-20).** `muse-code` declares `bypassPermissionMode: 'yolo'` (vendor: *disable approval and sandbox and trust this workspace*), chosen by `permissionModeFor` exactly as Codex's bypass is; otherwise headless stays `never`. Unit-tested; **not flown on a real run**. `docs/adapters.md`.
+- **Phone Overview activity is one line per event, and Tasks are tappable cards (t584, 2026-09-20).** Activity rows read age, `t{seq}`, event in the desktop pill language (starts blue, completions green, a human wait violet); task cards carry a `t{seq}` header with jump mark, the fact grid, then age beside the status pill. Every row and card opens its task. `docs/remote.md`.
 - **L1 orphaned 24,322 fixture directories and ~161 GB of `%TEMP%`; 94% was one suite spawning a
   vendor CLI (t579, 2026-09-19).** `runfailure.test.ts` settles 69 metered runs, each reaching `void
   captureQuotaAfter` → `refreshNow` → `refreshIdentity`, which for `openai-compatible` runs **`codex
@@ -91,8 +92,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   (`--bump minor|major`), and the first release of all is still `0.1.0`. Same commit fixed t554's L3
   check, which asserted an option label a closed popover never renders — `docs/testing.md` §3.
 - **The Workers card layout labelled every field after Role one place late (t545 → rc.2, 2026-09-19).**
-  t545 added the *Unattended* header without a `<col>` or a positional card label, so `test:ui` failed
-  `[14,15]` on CI and blocked the rc. `Workers.tsx` now has fifteen `<col>`s, and `app.css` labels the new cell.
+  t545 added the *Unattended* header without a `<col>` or a positional card label, so `test:ui` failed `[14,15]` on CI and blocked the rc; `Workers.tsx` now has fifteen `<col>`s, and `app.css` labels the new cell.
 - **Muse Code runs natively on Windows; the WSL bridge is gone (t547, 2026-09-19).** Muse Code 1.3.0
   ships a Windows build (`irm https://dev.meta.ai/install.ps1 | iex`). `clihost.ts` now knows `posix`
   and `windows` hosts only; `museBinary` starts the installer's `muse-bin-<version>.exe` (never the
