@@ -321,7 +321,10 @@ than the fetch.**
 While a batch runs the page polls every three seconds; a spinner bound to the fetch therefore blinked
 on and off across both the Refresh button and the "Filter out cannot be graded" label, at a cadence
 that described the poll and nothing an operator cares about. The mark is drawn for as long as
-`batch.state === 'running'` and the button keeps its label and stays clickable throughout.
+`batch.state === 'running'` and the button keeps its label and stays clickable throughout. The same
+mark rides the sidebar's own **Analytics → Quality Review** link (`useQualityBatchRunning` in
+`lib/daemon.ts`, its own 3s poll of `quality.batch`), so a batch grading in the background is visible
+without opening the page.
 
 ⛔ **A poll may not stack on itself, and this page is where that rule was learned.** The in-flight
 flag here was once argued away — *"the fetch is over in well under the three seconds between

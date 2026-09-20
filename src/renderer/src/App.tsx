@@ -9,6 +9,7 @@ import {
   useDaemonStatus,
   useFleet,
   useNow,
+  useQualityBatchRunning,
   useUpdateStatus
 } from './lib/daemon'
 import {
@@ -133,6 +134,7 @@ export function App({
   const { fleet, refresh } = useFleet(connected)
   const counts = fleetCounts(fleet)
   const now = useNow()
+  const qualityBatchRunning = useQualityBatchRunning(connected)
   const [route, setRouteNow] = useState<Route>({ kind: 'overview', page: 'dashboard' })
   /**
    * Where you have been, and where you came back from.
@@ -653,6 +655,7 @@ export function App({
               onClick={() => setRoute({ kind: 'analytics', page: 'quality-review' })}
             >
               Quality Review
+              {qualityBatchRunning && <Working />}
             </NavItem>
           </nav>
 

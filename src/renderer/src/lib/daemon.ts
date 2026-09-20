@@ -170,6 +170,40 @@ export function useFleet(connected: boolean): {
   return { fleet, error, refresh }
 }
 
+/**
+ * Whether a quality-review batch is currently grading, for the sidebar's own indicator.
+ *
+ * ⚠️ A poll, for the same reason `QualityReview.tsx` polls: the batch lives in the daemon's memory,
+ * not the database, so nothing emits when an entry starts or finishes grading. This is the one place
+ * that needs to know it *without* the Quality Review page being open, so it keeps its own low-rate
+ * timer rather than reading state that only exists while that page is mounted.
+ */
+export function useQualityBatchRunning(connected: boolean): boolean {
+  const [running, setRunning] = useState(false)
+  useEffect(() => {
+    if (!connected) {
+      setRunning(false)
+      return
+    }
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const batch = await rpc('quality.batch')
+        if (!cancelled) setRunning(batch?.state === 'running')
+      } catch {
+        // Transient failure; the next tick corrects it.
+      }
+    }
+    void poll()
+    const timer = setInterval(() => void poll(), 3000)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [connected])
+  return running
+}
+
 /** A ticking clock for countdowns, shared by every component that needs one. */
 export function useNow(intervalMs = 1000): number {
   const [now, setNow] = useState(() => Date.now())

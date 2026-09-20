@@ -146,11 +146,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   adapter's own `usageUnavailable` matched) now lets `scoring.ts`'s `inferredFreshWindows` synthesize a
   0%-used window at the projected next reset from the last trusted reading, feeding `prepaid` (and
   `quotaRisk`, harmlessly) like a real one. `docs/routing.md` §3.3a, `docs/data-model.md`.
-- **A project whose directory moved outside Warmstart had no error of its own (t514, 2026-09-17).**
-  `Project` now carries `rootExists` (`existsSync` on every `toProject`); the Project header banners a
-  missing path and `project.relocate` points the same project id at its new directory, keeping tasks
-  and history. Doctor's Projects section flags it fleet-wide too, like `isolationRootExists` for a
-  worker. `projectrelocate.test.ts`, `docs/ui.md`.
 - **Projects can run trunk-only (t563, 2026-09-19).** `workspaces.poolSize: 0` runs every task on the trunk
   lease; wizard/settings offer Trunk + worktrees (default) vs Trunk only, changeable either way with confirmation; `project.pruneWorktrees` removes idle trees, keeps occupied/dirty ones. `trunkonly.test.ts`.
 - **Statistics puts quality versus cost first (t565, 2026-09-19).** The three measured trade-off
@@ -159,6 +154,11 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 - **The fleet divider said `running` while counting slots (t560, 2026-09-19).** `2 / 1 running`
   beside one live task read as two agents at work; the word is now `in use`, matching the tooltip.
   Probes, consults, reviews and chats were verified excluded on every path. `docs/ui.md`.
+- **A quality-review batch grading in the background was invisible outside the Quality Review page
+  (t572, 2026-09-19).** The sidebar's Analytics → Quality Review link now carries the same pulsing
+  `Working` dots a running task shows, driven by a new `useQualityBatchRunning` poll of
+  `quality.batch` (the batch lives in daemon memory, so nothing emits when it starts or finishes).
+
 ## Remaining work — ordered by payoff
 
 Each needs a real signed-in account, a macOS machine, release credentials, or a human product
