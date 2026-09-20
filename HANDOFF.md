@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-20, **Windows 11**, on `0.3.0+10` — t581): typecheck, lint and build pass;
-L1 **3,822 passed, 5 skipped** (227 files), in **56s**. ⚠️ The `%TEMP%` figure is t579's, not re-measured
+Baseline (2026-09-20, **Windows 11**, on `0.3.0+10` — t586): typecheck, lint and build pass;
+L1 **3,844 passed, 5 skipped** (228 files), in **67s**. ⚠️ The `%TEMP%` figure is t579's, not re-measured
 here. L2 **204 checks** (5 skipped); L3 **486 checks** (4
 skipped), both last measured on t577 and not re-run since. L4 **19 checks** against `release/win-unpacked` was measured on `7b5f6e1`, the commit
 `v0.3.0` ships, and has not been re-run since. ⚠️ L3 flaked twice under back-to-back suite load
@@ -30,6 +30,26 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **A conversation's landing conflicted for ever, because two halves of the tool disagreed about
+  which `main` (t586 ← t578, 2026-09-20).** An open conversation resolves its finish policy to
+  `await-human` *from its kind* — that is what stops it landing by itself — but **no landing ever
+  runs that rung**: `landConversationWork` hands `decideFinish` the project's own. `await-human` maps
+  to `leave-branch`, whose base is `origin/<target>`, so every reader that asked `resolveFinishPolicy`
+  got the remote while the Land press rebased onto the local target. ⭐ Measured off the daemon log
+  and store for t578 (inkland): the project finishes `commit-and-merge`, local `main` stood **9
+  commits ahead of `origin/main`**, Land ran `git rebase main` and conflicted at 20:01:54, the
+  *Resolve & retry* instruction said *"does not rebase cleanly onto `origin/main`"*, the agent rebased
+  there and reported it clean at 20:10:52, and the next press failed at 20:11:12 on the identical
+  commit — **a loop with no converging state**. `baseRef` had the same reading, so the branch had also
+  been *cut* nine commits behind where it had to land. One authority now: `landingRungFor`
+  (`shared/policy.ts`), read by `baseRef`, `resolveConflictOnTask`, `resolveTrunkMovedOnTask`, the
+  pre-flight `readMergeability` and `landConversationWork`'s own `rungFor`. `localBaseNote` adds the
+  measured gap to both recovery prompts — *"⛔ … and **not** onto `origin/main`: … 9 commits ahead"* —
+  because naming the right ref never stopped an agent reaching for the habitual one. Retry landing on a
+  conversation now routes to `landConversationWork` too, so it cannot land nothing under `await-human`
+  and then write `completed` (⚠️ inferred; `canRelandTask` hides that button on a conflict). 11 L1
+  checks across four files; four separate mutations go red. **Not flown on a real run** — t578 is
+  still at `awaiting_human` with its branch on `origin/main`. `docs/landing.md`.
 - **The Commit button asked for a commit and then nothing landed it (t581 ← t578, 2026-09-20).**
   Three faults, each enough on its own. (1) Commit tells the agent *not* to merge or push; on an
   adapter with `mcp: false` — muse-code, codex — there is no `land_work` to close the loop and
@@ -109,8 +129,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   the last final it used to jump `0.2.0 → 0.3.0-rc.1`; a minor is now something the operator asks for
   (`--bump minor|major`), and the first release of all is still `0.1.0`. Same commit fixed t554's L3
   check, which asserted an option label a closed popover never renders — `docs/testing.md` §3.
-- **The Workers card layout labelled every field after Role one place late (t545 → rc.2, 2026-09-19).**
-  t545 added the *Unattended* header without a `<col>` or a positional card label, so `test:ui` failed `[14,15]` on CI and blocked the rc; `Workers.tsx` now has fifteen `<col>`s, and `app.css` labels the new cell.
 - **Muse Code runs natively on Windows; the WSL bridge is gone (t547, 2026-09-19).** Muse Code 1.3.0
   ships a Windows build (`irm https://dev.meta.ai/install.ps1 | iex`). `clihost.ts` now knows `posix`
   and `windows` hosts only; `museBinary` starts the installer's `muse-bin-<version>.exe` (never the
@@ -138,24 +156,8 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   changes on upgrade; a Codex worker only gets the bypass after an operator explicitly asks for it.
   `docs/security.md`, `docs/adapters.md`.
 - **A lapsed oversized session was revived instead of starting clean, and a completion prompt told sandboxed agents to fetch (t536 ← t518/t534, 2026-09-19).** Resume now starts a fresh session when the measured cache has lapsed after passing the compaction break-even; compaction remains reserved for its cheap pre-expiry window. The agent completion clause checks the checkout's target and leaves remote refresh to landing, avoiding needless SSH/grant requests. `cacheclock.ts`, `scheduler.ts`, `prompt.ts`, `docs/sessions.md`, `docs/cost-model.md`.
-- **An idle Muse account lost every unpinned routing contest, and it was `prepaid`, not the quota
-  gate (t516, 2026-09-17).** MuseFirst went a long stretch never auto-routed; the quota gate itself
-  was already proven not to block a worker with no reading (t309). Measured against MuseFirst's own
-  11-day `quota_samples` history: Muse Code blanks `/usage` to "Currently unavailable" until a
-  window's first turn completes, every such streak begins right at that window's `resetsAt`, and the
-  first real reading after one is always low — so "vendor silent" means *fresh window, nothing spent*,
-  not *broken probe*. `trustedWindows` used to stay empty on that state, so `prepaidTermFor` never
-  found a billing window and parked at its 0.25 standing value through the exact idle, quota-rich
-  stretch `prepaid` exists to reward. `QuotaSnapshot.vendorSilent` (migration 76, set only where the
-  adapter's own `usageUnavailable` matched) now lets `scoring.ts`'s `inferredFreshWindows` synthesize a
-  0%-used window at the projected next reset from the last trusted reading, feeding `prepaid` (and
-  `quotaRisk`, harmlessly) like a real one. `docs/routing.md` §3.3a, `docs/data-model.md`.
 - **Projects can run trunk-only (t563, 2026-09-19).** `workspaces.poolSize: 0` runs every task on the trunk
   lease; wizard/settings offer Trunk + worktrees (default) vs Trunk only, changeable either way with confirmation; `project.pruneWorktrees` removes idle trees, keeps occupied/dirty ones. `trunkonly.test.ts`.
-- **A quality-review batch grading in the background was invisible outside the Quality Review page
-  (t572, 2026-09-19).** The sidebar's Analytics → Quality Review link now carries the same pulsing
-  `Working` dots a running task shows, driven by a new `useQualityBatchRunning` poll of
-  `quality.batch` (the batch lives in daemon memory, so nothing emits when it starts or finishes).
 
 ## Remaining work — ordered by payoff
 

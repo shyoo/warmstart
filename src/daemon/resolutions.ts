@@ -1,9 +1,9 @@
 import type { FinishPolicy, PendingWork, ResolveRetryCause } from '@shared/tasks.js'
-import { FINISH_LABELS, policyLands, policyVerifies, resolveRetryCauses, resolveWorkspaceMode } from '@shared/tasks.js'
+import { FINISH_LABELS, isOpenConversation, policyLands, policyVerifies, resolveRetryCauses, resolveWorkspaceMode } from '@shared/tasks.js'
 import type { Project, Task } from '@shared/tasks.js'
 import { getProject, landingTargetFor, policyFor, reloadProjectIfPresent } from './projects.js'
-import { decideFinish, resolveFinishPolicy } from './finish.js'
-import { landingBaseFor, hasRemote, landTask, trunkNotReady, trunkOccupiedBy } from './landing.js'
+import { decideFinish, landingRung, resolveFinishPolicy } from './finish.js'
+import { landingBaseFor, hasRemote, landTask, localBaseNote, trunkNotReady, trunkOccupiedBy } from './landing.js'
 import {
   branchExists,
   branchNameFor,
@@ -100,8 +100,16 @@ export async function resolveConflictOnTask(
   // task — so this instruction told a split child to rebase onto `main` and commit there. It did.
   // The prompt is the whole of the agent's picture of where its work goes; a wrong ref here is not a
   // wrong sentence, it is work put on the wrong branch by an agent doing exactly as it was told.
-  const base = landingBaseFor(project, resolveFinishPolicy(task, project).policy, await hasRemote(project.root), task)
-  const checks = policyVerifies(resolveFinishPolicy(task, project).policy) ? (project.config.check ?? []) : []
+  //
+  // ⛔ **And the rung a *landing* runs, not the one `resolveFinishPolicy` answers with.** An open
+  // conversation answers `await-human` from its kind — which maps to `leave-branch`, whose base is
+  // `origin/<target>` — while the Land press that just failed rebased onto the local target. On
+  // t578, 2026-09-20, that told the agent to rebase onto `origin/main` while local `main` stood 9
+  // commits ahead: it did exactly that, reported the rebase clean, and the next press failed on the
+  // identical conflict. A loop with no converging state. See `landingRungFor`.
+  const rung = landingRung(task, project)
+  const base = landingBaseFor(project, rung, await hasRemote(project.root), task)
+  const checks = policyVerifies(rung) ? (project.config.check ?? []) : []
   const checkStep =
     checks.length > 0
       ? `Run every project check (${checks.map((check) => `\`${check}\``).join(', ')}) after the final commit state is ready, and fix any failure before reporting complete. `
@@ -109,6 +117,9 @@ export async function resolveConflictOnTask(
   const instruction =
     `The landing failed because \`${task.branch}\` does not rebase cleanly onto \`${base}\`. ` +
     `Run \`git rebase ${base}\`, resolve every conflict, and finish the rebase. ` +
+    // ⛔ The measured gap, where there is one. Naming `main` did not stop t578's agent rebasing
+    // onto `origin/main` and calling it clean; being told the two are nine commits apart would have.
+    (await localBaseNote(project.root, base)) +
     'Keep both sides of the change wherever they are compatible — the other side is work that has ' +
     'already landed, so discarding it is never the answer. ' +
     `Once the rebase is clean, if two or more commits ahead of \`${base}\` all belong to this task, ` +
@@ -235,8 +246,16 @@ export async function resolveTrunkMovedOnTask(
   // task — so this instruction told a split child to rebase onto `main` and commit there. It did.
   // The prompt is the whole of the agent's picture of where its work goes; a wrong ref here is not a
   // wrong sentence, it is work put on the wrong branch by an agent doing exactly as it was told.
-  const base = landingBaseFor(project, resolveFinishPolicy(task, project).policy, await hasRemote(project.root), task)
-  const checks = policyVerifies(resolveFinishPolicy(task, project).policy) ? (project.config.check ?? []) : []
+  //
+  // ⛔ **And the rung a *landing* runs, not the one `resolveFinishPolicy` answers with.** An open
+  // conversation answers `await-human` from its kind — which maps to `leave-branch`, whose base is
+  // `origin/<target>` — while the Land press that just failed rebased onto the local target. On
+  // t578, 2026-09-20, that told the agent to rebase onto `origin/main` while local `main` stood 9
+  // commits ahead: it did exactly that, reported the rebase clean, and the next press failed on the
+  // identical conflict. A loop with no converging state. See `landingRungFor`.
+  const rung = landingRung(task, project)
+  const base = landingBaseFor(project, rung, await hasRemote(project.root), task)
+  const checks = policyVerifies(rung) ? (project.config.check ?? []) : []
   const checkStep =
     checks.length > 0
       ? `Run every project check (${checks.map((check) => `\`${check}\``).join(', ')}) after the final commit state is ready, and fix any failure before reporting complete. `
@@ -247,6 +266,7 @@ export async function resolveTrunkMovedOnTask(
     `${failureDetail}\n\n` +
     `If you made commits directly to \`${base}\`, or if changes need to be rebased onto \`${base}\`, ` +
     `rebase \`${branch}\` onto \`${base}\`, ensure all intended changes are committed on \`${branch}\`. ` +
+    (await localBaseNote(project.root, base)) +
     'If two or more commits ahead of this task branch’s landing target all belong to this task, squash ' +
     'them into one coherent commit where safe; do not rewrite commits already on the landing target, ' +
     'force-push, or use a destructive reset. ' +
@@ -738,6 +758,19 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
   {
     const home = task.projectId ? reloadProjectIfPresent(task.projectId) : null
     if (home && resolveWorkspaceMode(task, home).mode === 'trunk') return relandTrunkTask(task, home, didNotLand)
+  }
+
+  // ⛔ **A conversation retries the landing its own Land button performs, not this one.**
+  // Everything below resolves the task's *finish* policy, which an open conversation answers
+  // `await-human` from its kind — a rung that lands nothing — and then writes `completed`, which
+  // is the one thing a conversation landing must never do (`landConversationWork`: only Finish and
+  // Stop end a conversation). ⚠️ Inferred from reading both paths, not observed: `canRelandTask`
+  // hides this button on a conflict, which is how every conversation landing has failed so far.
+  if (isOpenConversation(task)) {
+    const result = await landConversationWork(task.id)
+    if (!result.ok) return didNotLand(result.reason ?? 'the landing did not complete')
+    setHoldReason(task.id, null)
+    return { ok: true }
   }
   if (!task.branch) return didNotLand('this task has no branch')
   if (/trunk moved.*branch is empty/i.test(task.holdReason ?? '')) {

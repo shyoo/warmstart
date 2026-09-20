@@ -12,7 +12,7 @@ import {
   resolveWorkspaceMode,
   trunkPolicyConflict,
 } from '@shared/tasks.js'
-import { resolveFinishPolicy as sharedResolveFinishPolicy } from '@shared/policy.js'
+import { landingRungFor as sharedLandingRungFor, resolveFinishPolicy as sharedResolveFinishPolicy } from '@shared/policy.js'
 import { db, rows } from './db.js'
 import { log } from './log.js'
 import { landingTargetFor, listProjects, policyFor } from './projects.js'
@@ -30,6 +30,21 @@ export { projectFinishChoice, finishInstructionFor }
  */
 export function resolveFinishPolicy(task: Task | null, project: Project | null): ResolvedFinishPolicy {
   return sharedResolveFinishPolicy(task, project, settings().finishPolicy)
+}
+
+/**
+ * The rung a landing will really run for this task, with the fleet setting bound.
+ *
+ * ⛔ **Ask this, not `resolveFinishPolicy`, wherever the answer decides a ref, a check list or a
+ * landing strategy.** See `landingRungFor` in `shared/policy.ts` for the conversation case that
+ * makes the two answers differ, and for t578, the landing loop it caused.
+ */
+export function landingRung(
+  task: Task | null,
+  project: Project | null,
+  explicit?: FinishPolicy
+): FinishPolicy {
+  return sharedLandingRungFor(task, project, settings().finishPolicy, explicit)
 }
 
 // ---------------------------------------------------------------------------- the decision

@@ -25,6 +25,7 @@ import {
   finishInstructionFor,
   isMultiSelectQuestion,
   isOpenConversation,
+  policyLands,
   projectCompletionChoice,
   projectFinishChoice,
   projectSharingChoice,
@@ -104,6 +105,44 @@ export function resolveFinishPolicy(task: Task | null | undefined, project: Proj
   if (task && task.finishPolicy !== 'inherit') return { policy: task.finishPolicy, source: 'task', instruction: pickCustomInstruction(task.finishPolicy, instruction) }
   if (project) { const choice = projectFinishChoice(project); if (choice !== 'inherit') return { policy: choice, source: 'project', instruction: pickCustomInstruction(choice, instruction) } }
   return { policy: fleetFinish, source: 'fleet', instruction: pickCustomInstruction(fleetFinish, instruction) }
+}
+
+/**
+ * The rung a **landing** will really run for this task — which is not always the rung
+ * `resolveFinishPolicy` answers with.
+ *
+ * ⛔ **An open conversation answers `await-human` from its kind, and no landing ever uses that
+ * answer.** `landConversationWork` hands `decideFinish` its own rung, so the ref a conversation's
+ * landing rebases onto, the checks it runs and the strategy it picks all come from the project's
+ * inherited rung with the kind override skipped. Every other reader of the policy kept asking
+ * `resolveFinishPolicy` and got `await-human`, which maps to `leave-branch`, whose base is
+ * `origin/<target>` — so two answers to one question, again.
+ *
+ * ⭐ Measured on t578 (inkland), 2026-09-20: the project finishes `commit-and-merge`, whose local
+ * `main` stood **9 commits ahead of `origin/main`**. Pressing **Land** ran `git rebase main` and
+ * conflicted; the *Resolve & retry* instruction that followed named `origin/main`, because it asked
+ * `resolveFinishPolicy` about a conversation. The agent rebased onto `origin/main` exactly as told,
+ * reported the rebase clean, and the next press failed on the identical conflict — twice, with no
+ * state in which the loop could ever converge. `baseRef` had the same reading, so the branch had
+ * also been *cut* from `origin/main`, nine commits behind where it had to land.
+ *
+ * ⚠️ `explicit` is an operator who named a rung out loud (the Land menu, `land_work`), and it wins
+ * whenever it lands anything. `commit-and-merge` is the floor when even the project's own rung does
+ * not land: a project set to `commit-only` has said something about *finishing*, not about a landing
+ * somebody has just asked for.
+ */
+export function landingRungFor(
+  task: Task | null | undefined,
+  project: Project | null | undefined,
+  fleetFinish: FinishPolicy = DEFAULT_FLEET_FINISH,
+  explicit?: FinishPolicy
+): FinishPolicy {
+  if (explicit && policyLands(explicit)) return explicit
+  if (!isOpenConversation(task)) return resolveFinishPolicy(task, project, fleetFinish).policy
+  // ⛔ `null`, not `task`: a null task cannot be an open conversation, so this is the project's own
+  // answer with the kind override skipped — the same thing the thread shows as `inheritedFinish`.
+  const inherited = resolveFinishPolicy(null, project, fleetFinish).policy
+  return policyLands(inherited) ? inherited : 'commit-and-merge'
 }
 
 /**

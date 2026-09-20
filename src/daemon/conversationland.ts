@@ -1,6 +1,6 @@
 import type { FinishPolicy } from '@shared/tasks.js'
-import { policyLands, resolveWorkspaceMode } from '@shared/tasks.js'
-import { decideFinish, resolveFinishPolicy } from './finish.js'
+import { resolveWorkspaceMode } from '@shared/tasks.js'
+import { decideFinish, landingRung } from './finish.js'
 import { hasRemote, landTask, landingBaseFor } from './landing.js'
 import { landingTargetFor, policyFor, reloadProjectIfPresent } from './projects.js'
 import { addMessage, getTask, runsFor, setTaskBranch } from './tasks.js'
@@ -69,12 +69,15 @@ export interface ConversationLanding {
  * default is the honest floor for an explicit request.
  */
 function rungFor(
-  project: Parameters<typeof resolveFinishPolicy>[1],
+  task: Parameters<typeof landingRung>[0],
+  project: Parameters<typeof landingRung>[1],
   explicit: FinishPolicy | undefined
 ): FinishPolicy {
-  if (explicit && policyLands(explicit)) return explicit
-  const inherited = resolveFinishPolicy(null, project).policy
-  return policyLands(inherited) ? inherited : 'commit-and-merge'
+  // ⛔ Delegated, not reimplemented. This rule used to live only here, so every other reader of
+  // the policy — `baseRef`, `resolveConflictOnTask`, the pre-flight mergeability check — asked
+  // `resolveFinishPolicy` instead and got `await-human`, a rung that lands nothing and whose base is
+  // the remote. One answer, in `landingRungFor`; see t578 for what two of them cost.
+  return landingRung(task, project, explicit)
 }
 
 /**
@@ -114,7 +117,7 @@ export async function landConversationWork(
   // — which, for this task, is the operator's checkout. Its commits are already on the target, so
   // "landing" it is the trunk strategy: verify in place, push if the rung pushes.
   if (resolveWorkspaceMode(task, project).mode === 'trunk') {
-    const rung = rungFor(project, opts.rung)
+    const rung = rungFor(task, project, opts.rung)
     const target = landingTargetFor(task, project)
     if (rung !== 'commit-and-verify' && rung !== 'commit-and-merge' && rung !== 'commit-and-push') {
       return { ok: false, reason: `this conversation works in the trunk, where ${rung} has nothing to do` }
@@ -136,7 +139,7 @@ export async function landConversationWork(
   const branch = task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
 
-  const rung = rungFor(project, opts.rung)
+  const rung = rungFor(task, project, opts.rung)
 
   // ⛔ **The workspace the conversation is already holding, found the way `pendingWorkFor` finds
   // it**, in all three places a holder can be: the session (a live turn), the task (a conversation

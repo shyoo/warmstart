@@ -867,6 +867,98 @@ describe('run prompt persistence and task.get preview', () => {
       expect(asked).not.toContain('onto `main`')
     })
 
+  /**
+   * The ref a **conversation's** recovery prompt names, which was a different answer again.
+   *
+   * ⛔ **A conversation answers `await-human` from its kind, and no landing ever runs that rung.**
+   * `landConversationWork` hands `decideFinish` the project's own rung instead, so pressing **Land**
+   * on a `commit-and-merge` project rebases onto the local target — while this prompt, asking
+   * `resolveFinishPolicy`, got `await-human`, whose strategy is `leave-branch`, whose base is
+   * `origin/<target>`.
+   *
+   * ⭐ Measured on t578 (inkland), 2026-09-20, from the daemon's own log and store: the project
+   * finishes `commit-and-merge` and local `main` stood **9 commits ahead of `origin/main`** because
+   * that rung merges locally and never pushes. `Landing failed: rebase onto main conflicted` at
+   * 20:01:54; the instruction that followed said *"does not rebase cleanly onto `origin/main`"*; the
+   * agent rebased onto `origin/main`, reported it clean at 20:10:52, and the next press failed at
+   * 20:11:12 on the identical commit. There is no state in which that loop converges, which is what
+   * "I keep getting landing errors" was.
+   */
+  describe('a conversation whose landing conflicted', () => {
+    const conversationInRepoAheadOfItsRemote = async (): Promise<{ taskId: string; branch: string }> => {
+      const { execFileSync } = await import('node:child_process')
+      const projects = await import('./projects.js')
+      const dir = mkdtempSync(join(tmpdir(), 'agentyard-conversation-base-'))
+      const remote = join(dir, 'origin.git')
+      const root = join(dir, 'work')
+      const git = (args: string[], cwd: string): void => {
+        execFileSync('git', args, { cwd, stdio: 'ignore' })
+      }
+      execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote], { stdio: 'ignore' })
+      execFileSync('git', ['clone', '-q', remote, root], { stdio: 'ignore' })
+      git(['config', 'user.email', 't@example.com'], root)
+      git(['config', 'user.name', 'Test'], root)
+      writeFileSync(join(root, 'm.txt'), 'base\n')
+      git(['add', '-A'], root)
+      git(['commit', '-qm', 'base'], root)
+      git(['push', '-q', 'origin', 'main'], root)
+      // Two commits on local `main` only — exactly what `commit-and-merge` leaves behind.
+      for (const n of ['one', 'two']) {
+        writeFileSync(join(root, 'm.txt'), `landed locally: ${n}\n`)
+        git(['commit', '-qam', `landed while the conversation ran: ${n}`], root)
+      }
+      mkdirSync(join(root, '.warmstart'), { recursive: true })
+      writeFileSync(
+        join(root, '.warmstart', 'project.json'),
+        JSON.stringify({ schema_version: 1, check: ['npm run test', 'npm run build'] })
+      )
+      const project = projects.addProject({ root })
+      const task = tasks.createTask({
+        title: 'A conversation that has been landing all day',
+        status: 'ready',
+        projectId: project.id,
+        kind: 'conversation'
+      })
+      const branch = `warmstart/t${task.seq}-a-conversation`
+      tasks.setStatus(task.id, 'awaiting_human', { branch, holdReason: 'Landing failed: rebase onto main conflicted' })
+      return { taskId: task.id, branch }
+    }
+
+    it('⛔ names the local trunk, because that is the ref its Land button rebases onto', async () => {
+      const { taskId, branch } = await conversationInRepoAheadOfItsRemote()
+      await expect(resolutions.resolveConflictOnTask(taskId)).resolves.toEqual({ ok: true })
+      const asked = tasks.messagesFor(taskId).filter((m) => m.role === 'human').at(-1)?.text ?? ''
+
+      expect(asked).toContain(`does not rebase cleanly onto \`main\``)
+      expect(asked).toContain('git rebase main')
+      // ⛔ The whole defect in one assertion: the ref the agent obeyed, and could never land on.
+      expect(asked).not.toContain('git rebase origin/main')
+      expect(asked).not.toContain('rebase cleanly onto `origin/main`')
+      expect(branch).toContain('a-conversation')
+    })
+
+    it('⛔ says how far ahead the local trunk is, so the remote is not reached for anyway', async () => {
+      const { taskId } = await conversationInRepoAheadOfItsRemote()
+      await expect(resolutions.resolveConflictOnTask(taskId)).resolves.toEqual({ ok: true })
+      const asked = tasks.messagesFor(taskId).filter((m) => m.role === 'human').at(-1)?.text ?? ''
+
+      // Measured, not asserted in prose: two local-only commits above `origin/main`.
+      expect(asked).toContain('2 commits ahead of `origin/main`')
+      expect(asked).toContain('**not** onto `origin/main`')
+    })
+
+    it('names the project’s own checks, which the `await-human` reading withheld', async () => {
+      const { taskId } = await conversationInRepoAheadOfItsRemote()
+      await expect(resolutions.resolveConflictOnTask(taskId)).resolves.toEqual({ ok: true })
+      const asked = tasks.messagesFor(taskId).filter((m) => m.role === 'human').at(-1)?.text ?? ''
+
+      // ⚠️ `policyVerifies('await-human')` is false, so this used to read "the relevant project
+      // checks" — vaguer than the bar the landing itself then applied.
+      expect(asked).toContain('`npm run test`')
+      expect(asked).toContain('`npm run build`')
+    })
+  })
+
     it('still names the trunk for an ordinary task, which is what makes the change inert elsewhere', async () => {
       const { execFileSync } = await import('node:child_process')
       const projects = await import('./projects.js')

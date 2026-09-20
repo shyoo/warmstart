@@ -159,7 +159,7 @@ import {
   STALL_CONFIRM_AFTER_MS,
   type TreeSample
 } from './stall.js'
-import { decideFinish, decideTrunkFinish, resolveFinishPolicy, type TrunkReading } from './finish.js'
+import { decideFinish, decideTrunkFinish, landingRung, resolveFinishPolicy, type TrunkReading } from './finish.js'
 import {
   mismatch,
   rank,
@@ -3756,7 +3756,10 @@ async function landCompletion(
     // `awaiting_human` discovered inside `landTask` two branches later. See `readMergeability`.
     // ⛔ The *finish* policy, not the project policy beside it. It decides which ref the landing
     // will rebase onto, so the mergeability check has to be told it or it answers about another.
-    const merge = await readMergeability(project, held.workspace.path, task.branch, finishPolicy, task)
+    // ⛔ And the *landing* rung, which for an open conversation is not `finishPolicy`: the kind
+    // answers `await-human`, and asking about `origin/<target>` under a Land that rebases onto the
+    // local one is exactly how t59 was told a conflicted branch was clean. See `landingRungFor`.
+    const merge = await readMergeability(project, held.workspace.path, task.branch, landingRung(task, project), task)
     const decision = decideFinish({
       task,
       project,

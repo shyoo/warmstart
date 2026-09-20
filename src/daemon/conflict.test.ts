@@ -9,6 +9,7 @@ import {
   abortRebase,
   beginConflictResolution,
   landingBaseFor,
+  localBaseNote,
   parseMergeTreeConflicts,
   readMergeability
 } from './landing.js'
@@ -234,5 +235,33 @@ describe('the base a landing will actually use', () => {
     const pushing = await readMergeability(proj(), ahead, 'topic', 'commit-and-push')
     expect(pushing?.base).toBe('origin/main')
     expect(pushing?.clean).toBe(true)
+  })
+
+  /**
+   * The sentence that stops an agent reaching past the ref it was given.
+   *
+   * ⛔ **Naming `main` is not the same as ruling out `origin/main`.** t578's agent was told the
+   * landing failed on `origin/main` (a separate defect, fixed in `landingRungFor`), rebased there,
+   * and reported the rebase clean — twice. Every agent has been trained on `git rebase origin/main`,
+   * and under `commit-and-merge` that ref is the one guaranteed to be stale. So the instruction
+   * carries the measured gap: two refs, a count, and which one the landing uses.
+   */
+  describe('localBaseNote', () => {
+    it('⛔ names the gap when the local base is ahead of its remote namesake', async () => {
+      const note = await localBaseNote(ahead, 'main')
+      expect(note).toContain('**not** onto `origin/main`')
+      expect(note).toContain('1 commit ahead of `origin/main`')
+      // ⚠️ Singular, because there is one commit. A count is evidence, and evidence reads wrong
+      //    when the grammar contradicts it.
+      expect(note).not.toContain('1 commits')
+    })
+
+    it('says nothing about a base that is already the remote', async () => {
+      expect(await localBaseNote(ahead, 'origin/main')).toBe('')
+    })
+
+    it('says nothing in a repository with no remote at all, which is ordinary', async () => {
+      expect(await localBaseNote(repo, 'main')).toBe('')
+    })
   })
 })

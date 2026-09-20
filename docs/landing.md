@@ -328,6 +328,46 @@ If the agent cannot be reached, or is asked and the branch still does not rebase
 back and the task rests in `awaiting_human` naming the conflicting files. Nothing is discarded either
 way — aborting a rebase returns the branch to exactly where it started.
 
+### Which ref the conflict prompt names, and why a conversation kept getting it wrong
+
+⛔ **The instruction names the ref the landing will *actually* rebase onto, and that ref comes from
+the rung the landing will *actually* run.** Those are two different questions and both had a wrong
+answer at some point:
+
+- `landingBaseFor` ([`landingbase.ts`](../src/daemon/landingbase.ts)) answers the first. `merge-local`,
+  `merge-branch` and `trunk` rebase onto the **local** target; everything else onto `origin/<target>`
+  where a remote exists. Fixed on t59 after `merge-tree origin/main` said clean and `git rebase main`
+  then failed.
+- `landingRungFor` ([`shared/policy.ts`](../src/shared/policy.ts)) answers the second. An **open
+  conversation** resolves its finish policy to `await-human` *from its kind* — that is what stops it
+  landing by itself — but no landing ever runs that rung: `landConversationWork` hands `decideFinish`
+  the project's own. `await-human` maps to `leave-branch`, whose base is `origin/<target>`.
+
+⭐ **Measured on t578 (inkland), 2026-09-20**, from the daemon log and store. The project finishes
+`commit-and-merge`, so local `main` stood **9 commits ahead of `origin/main`**. Pressing **Land** ran
+`git rebase main` and conflicted at 20:01:54. The *Resolve & retry* instruction that followed said the
+branch *"does not rebase cleanly onto `origin/main`"*; the agent rebased onto `origin/main`, reported
+it clean at 20:10:52, and the next press failed at 20:11:12 on the identical commit. **There is no
+state in which that loop converges** — which is what "I keep getting landing errors" was. The same
+reading in `baseRef` had also *cut* the conversation's branch from `origin/main`, nine commits behind
+where it had to land, so every press had to replay history the conversation had itself already landed.
+
+⛔ So every reader of the policy that decides a ref, a check list or a landing strategy asks
+`landingRungFor`, never `resolveFinishPolicy`: `baseRef`, `resolveConflictOnTask`,
+`resolveTrunkMovedOnTask`, the pre-flight `readMergeability` and `landConversationWork`'s own rung.
+
+⚠️ **And naming the right ref is not the same as ruling out the wrong one.** `origin/main` is the
+ref every agent reaches for by habit, and under `commit-and-merge` it is the one guaranteed to be
+stale. `localBaseNote` ([`landing.ts`](../src/daemon/landing.ts)) adds the measured gap to the
+instruction — *"⛔ Rebase onto `main` … and **not** onto `origin/main`: … 9 commits ahead …"* — and
+says nothing at all when there is no remote, no such remote branch, or no gap.
+
+⚠️ **Retry landing on a conversation goes to `landConversationWork` too.** `relandTask` resolves the
+*finish* policy, lands under it and writes `completed`; on an open conversation that would have landed
+nothing under `await-human` and retired the chat anyway. Inferred from reading both paths rather than
+observed: `canRelandTask` hides that button on a conflict, which is how every conversation landing has
+failed so far.
+
 ## When the agent leaves work uncommitted
 
 The tool asks it to commit, **once**:

@@ -8,7 +8,7 @@ import type { Session, Worker } from '@shared/protocol.js'
 import {
   isOpenConversation,
 } from '@shared/tasks.js'
-import { resolveFinishPolicy, resolveSessionSharing } from '@shared/policy.js'
+import { landingRungFor, resolveFinishPolicy, resolveSessionSharing } from '@shared/policy.js'
 
 /**
  * The `conversation` kind: a task with the single-turn contract taken out of it.
@@ -124,6 +124,36 @@ describe('what a conversation resolves its two forced settings to', () => {
   it('still lets somebody turn sharing off on one conversation', () => {
     const solo = { ...convo(), sessionSharing: 'off' } as Task
     expect(resolveSessionSharing(solo, project()).sharing).toBe('off')
+  })
+
+  /**
+   * ⛔ **And the rung a *landing* runs, which is never `await-human`.** The kind's answer stops a
+   * conversation landing *by itself*; it says nothing about the landing a person just asked for, and
+   * `landConversationWork` has always passed its own rung to `decideFinish`. Every other reader
+   * — `baseRef`, the conflict prompt, the pre-flight mergeability check — kept asking
+   * `resolveFinishPolicy` and got `await-human`, whose strategy is `leave-branch`, whose base is
+   * `origin/<target>`, while the Land press rebased onto the local one. See t578.
+   */
+  it('⛔ answers the project’s own rung when asked what a landing will run', () => {
+    expect(landingRungFor(convo(), project('commit-and-merge'))).toBe('commit-and-merge')
+    expect(landingRungFor(convo(), project('commit-and-push'))).toBe('commit-and-push')
+  })
+
+  it('falls to commit-and-merge when even the project’s rung lands nothing', () => {
+    // ⚠️ A project set to `commit-only` has said something about *finishing*, not about a landing
+    //    somebody has just pressed a button for.
+    expect(landingRungFor(convo(), project('commit-only'))).toBe('commit-and-merge')
+  })
+
+  it('lets an explicit rung win, and ignores one that lands nothing', () => {
+    expect(landingRungFor(convo(), project('commit-and-merge'), undefined, 'pull-request')).toBe('pull-request')
+    expect(landingRungFor(convo(), project('commit-and-merge'), undefined, 'commit-only')).toBe('commit-and-merge')
+  })
+
+  it('is the ordinary answer for everything that is not an open conversation', () => {
+    const work = { ...convo(), kind: 'work' } as Task
+    expect(landingRungFor(work, project('commit-only'))).toBe('commit-only')
+    expect(landingRungFor(work, project('commit-and-merge'))).toBe('commit-and-merge')
   })
 })
 
@@ -656,6 +686,67 @@ describe('a conversation whose workspace went back to the pool', () => {
     expect(answer.reason).toContain('no workspace has')
     // ⚠️ And the branch is still named, so the card can say which one it went looking for.
     expect(answer.branch).toContain('parked-off')
+  })
+
+  /**
+   * ⛔ **Retry landing must not be the button that ends a conversation.**
+   * `relandTask` resolves the task's *finish* policy, lands under it, and writes `completed`. An
+   * open conversation answers `await-human` from its kind — a rung that lands nothing — so the
+   * retry would have landed nothing and then retired the chat anyway. Its Land button has always
+   * gone through `landConversationWork`, which lands on the project's own rung and keeps the
+   * conversation open on the next numbered branch; the retry now goes to the same place.
+   *
+   * ⚠️ Inferred from reading both paths rather than observed in flight: `canRelandTask` hides
+   * this button on a conflict, and a conflict is how every conversation landing has failed so far
+   * (t578). The guard is here so the next non-conflict failure does not find the hole.
+   */
+  it('⛔ retries a conversation’s landing without ending the conversation', async () => {
+    // ⚠️ Its own repository, because this one has to *land*: `decideFinish` refuses an unattended
+    //    landing in a project that declares no checks, and `abandonedOn` declares none.
+    repoSeq += 1
+    const root = join(dir, `convo-reland${repoSeq}`)
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
+    git(root, 'init', '--initial-branch=main')
+    git(root, 'config', 'user.name', 'agentyard test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    writeFileSync(
+      join(root, '.warmstart', 'project.json'),
+      JSON.stringify({
+        schema_version: 1,
+        name: `convo-reland${repoSeq}`,
+        vcs: 'git',
+        check: ['node --version'],
+        workspaces: { poolSize: 1 },
+        landing: { target: 'main' }
+      })
+    )
+    writeFileSync(join(root, 'README.md'), '# fixture\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'initial')
+    const home = projects.addProject({ root })
+    const [member] = await worktrees.ensurePool(home)
+    const workspace = member as string
+    const chat = tasks.createTask({ title: 'retry-me', kind: 'conversation', status: 'ready', projectId: home.id })
+    const taskId = chat.id
+    const branch = `warmstart/t${chat.seq}-retry-me`
+    git(workspace, 'switch', '-c', branch)
+    writeFileSync(join(workspace, 'work.txt'), 'real work\n')
+    git(workspace, 'add', '-A')
+    git(workspace, 'commit', '-m', 'the conversation committed something')
+    tasks.setStatus(taskId, 'awaiting_human', { branch, holdReason: 'Landing failed: the trunk was busy' })
+
+    const answer = await resolutions.relandTask(taskId)
+    expect(answer.reason ?? '').toBe('')
+    expect(answer.ok).toBe(true)
+
+    const after = tasks.requireTask(taskId)
+    // ⛔ The two facts that say it is still a conversation. `relandTask`'s own path writes
+    //    `completed` on a successful landing, which `isOpenConversation` never recovers from.
+    expect(after.status).not.toBe('completed')
+    expect(after.finishPolicy).toBe('inherit')
+    // ⭐ And it really landed: the next numbered branch is the receipt `landConversationWork` leaves.
+    expect(after.branch).toContain('retry-me')
+    expect(tasks.messagesFor(taskId).some((m) => m.event === 'landing.landed')).toBe(true)
   })
 
   it('reports nothing rather than a failed look once the branch itself is gone', async () => {

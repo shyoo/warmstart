@@ -107,6 +107,29 @@ describe('a trunk whose remote has been left behind', () => {
     expect(git(root, 'rev-list', '--count', `${base}..main`)).toBe('0')
   })
 
+  /**
+   * ⛔ **A conversation was cut from the remote, whatever its project's rung said.**
+   * `baseRef` asked `resolveFinishPolicy`, and an open conversation answers `await-human` from its
+   * kind — which maps to `leave-branch`, whose base is `origin/<target>`. So the one kind of task
+   * that lands over and over, on the same branch, all day, was the one kind always cut behind.
+   *
+   * ⭐ Measured on t578 (inkland), 2026-09-20: local `main` stood 9 commits ahead of `origin/main`,
+   * and the conversation's branch sat on `origin/main` — so its landing had to replay nine commits
+   * of history, several of them its own earlier landing, and conflicted on every press.
+   */
+  it('⛔ cuts a conversation from the local trunk too, which is where its Land button merges', async () => {
+    const { project, root } = makeProject('commit-and-merge')
+    landLocally(root, 'one')
+    const head = landLocally(root, 'two')
+    const chat = makeTask(project, 'a conversation that lands again and again', undefined, 'conversation')
+
+    const base = await worktrees.baseRef(project, chat)
+    expect(base).toBe('main')
+    expect(git(root, 'rev-parse', base)).toBe(head)
+    // ⭐ The measurement that matters: nothing between where it starts and where it must land.
+    expect(git(root, 'rev-list', '--count', `${base}..main`)).toBe('0')
+  })
+
   it('still prefers origin/<target> when the policy is the one that pushes there', async () => {
     const { project, root } = makeProject('commit-and-push')
     landLocally(root, 'one')

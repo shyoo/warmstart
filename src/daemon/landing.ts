@@ -28,7 +28,7 @@ import { claimedByAnotherTask, landedCommits, recordTaskCommits } from './taskco
 import { landedRef, parkOtherHolders, parkPooledHolders, repairTrunkConfig, rescueAtTip, trunkHolder } from './worktrees.js'
 import { launchArgs, spawnEnv, which } from './which.js'
 import { log } from './log.js'
-import { git } from './git.js'
+import { git, tryGit } from './git.js'
 import { errorMessage } from '@shared/errors.js'
 import { oneLine } from './threadline.js'
 import * as spawn from './spawn.js'
@@ -124,6 +124,36 @@ export async function hasRemote(cwd: string): Promise<boolean> {
   } catch {
     return false
   }
+}
+
+/**
+ * The sentence an instruction needs when the landing's base is a **local** ref that its remote
+ * namesake is behind — and nothing when it is not.
+ *
+ * ⛔ **Naming the right ref is not the same as stopping an agent reaching for the wrong one.**
+ * `origin/main` is the ref every agent has been trained to rebase onto, and under
+ * `commit-and-merge` — the fleet default, which merges locally and never pushes — it is the one
+ * ref that is guaranteed to be stale. ⭐ Measured on t578 (inkland), 2026-09-20: local `main` stood
+ * **9 commits ahead of `origin/main`**, including a merge of this very conversation's earlier work,
+ * so a branch rebased onto `origin/main` re-applied changes the target already had and conflicted
+ * on every one of them.
+ *
+ * ⚠️ Silent unless it has something measured to say: no remote, no such remote branch, or a
+ * remote that is level or ahead all return `''`, so an instruction never carries a warning about a
+ * gap that is not there.
+ */
+export async function localBaseNote(cwd: string, base: string): Promise<string> {
+  if (base.startsWith('origin/')) return ''
+  const remote = `origin/${base}`
+  const ahead = await tryGit(cwd, ['rev-list', '--count', `${remote}..${base}`])
+  const count = Number((ahead ?? '').trim())
+  if (!Number.isFinite(count) || count <= 0) return ''
+  return (
+    `⛔ Rebase onto \`${base}\`, the local ref, and **not** onto \`${remote}\`: this project lands ` +
+    `by merging into the local \`${base}\`, which is ${count} commit${count === 1 ? '' : 's'} ahead of ` +
+    `\`${remote}\` right now. A branch rebased onto \`${remote}\` will fail the landing again with the ` +
+    'same conflict. '
+  )
 }
 
 /**
