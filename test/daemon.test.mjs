@@ -326,7 +326,7 @@ try {
     check(
       'a probe PTY answers a cursor-position request',
       probeReply.includes('cpr:[1;1R'),
-      probeReply.replace(/\x1b/g, 'ESC')
+      probeReply.replaceAll(String.fromCharCode(27), 'ESC')
     )
     await closeAndWait(cprProbe.id)
 

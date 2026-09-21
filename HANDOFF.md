@@ -33,7 +33,8 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 - **The cursor-position PTY test ran in L1 even though it deliberately starts `sh` (2026-09-21).**
   The L1 `node-pty` alias correctly refused it on Linux CI, making `npm test` red. The two checks
   now run in L2 through the daemon's real PTY: a probe receives `ESC[1;1R`; a human-facing login
-  does not receive the daemon's synthetic keystroke. Windows skips the POSIX `stty` fixture visibly.
+  does not receive the daemon's synthetic keystroke. Its diagnostic formatter uses `String.fromCharCode(27)`
+  rather than a control-character regex, which Lint forbids. Windows skips the POSIX `stty` fixture visibly.
 - **Codex upgraded to 0.155.1 with GPT-6 Astra access on ChatGPT Plus (t594, 2026-09-20).** Upgraded
   `@openai/codex` to 0.155.1 (0.151.0 refused `gpt-6-astra` on a vendor version error); verified live
   that `gpt-6-astra` executes and completes tasks on a ChatGPT Plus subscription with reasoning effort
