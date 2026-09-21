@@ -30,6 +30,10 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **Fleet cards double-counted and phantom-held slots (t597, 2026-09-21).** ClaudeSecond read
+  `1 / 1` empty; CodexFirst read `2 / 1` beside one task. An unlinked live session now covers one
+  sessionless running task (`unclaimedLiveWorkSessions`); a parked task reassigned elsewhere frees
+  its old worker. 15 L1 in `slotcount.test.ts` + 2 in `fleetcard.test.ts`. `docs/routing.md` §2.2.
 - **The cursor-position PTY test ran in L1 even though it deliberately starts `sh` (2026-09-21).**
   The L1 `node-pty` alias correctly refused it on Linux CI, making `npm test` red. The two checks
   now run in L2 through the daemon's real PTY: a probe receives `ESC[1;1R`; a human-facing login
@@ -108,17 +112,12 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   `/usage `. ⛔ Operator press only (`RefreshOptions.warmUp` defaults false — the scheduler still
   spends nothing), drawn on the `no usage data yet` gap alone, priced in the note shown at
   commissioning. ⚠️ **Inferred, not yet watched working.** `docs/adapters.md`, `architecture.md`, `ui.md`.
-- **Three thread fixes (t564, 2026-09-19).** Muse's icon now draws the real Meta mark; the ledger
-  splits `cur`/`next` worker and model into separate rows; Reassign gained `ReassignNote`, an
-  optional message sent as the person's own turn. Six L3 checks; `docs/ui.md`.
-- **Google Docs/Slides access researched, no Warmstart change (t591, 2026-09-20).** Not native to
-  any adapter. Possible today with zero engineering: `claude-code`'s per-session `--mcp-config` merges
-  additively with whatever an operator registers globally in that worker's `CLAUDE_CONFIG_DIR`
-  (`claude mcp add`), and codex/agy/muse are global-config-only for MCP already, so the same trick
-  applies. ⚠️ It inherits full unattended-bypass authority with **no approval gate** — a real risk on
-  a live Google account. A first-class version needs a bundled MCP server, isolated credentials, and
-  a forced-approval path (`request_directory`'s pattern), enforceable only on `claude-code` today.
-  `transient_docs/google_docs_slides_access_2026-09-20.md`.
+- **Three thread fixes (t564, 2026-09-19).** Real Meta mark for Muse's icon; ledger splits
+  cur/next worker+model; Reassign gained optional `ReassignNote`. Six L3; `docs/ui.md`.
+- **Google Docs/Slides access researched, no Warmstart change (t591, 2026-09-20).** Zero-engineering
+  path exists via per-session/global MCP configs, but it inherits full bypass authority with no
+  approval gate; first-class needs isolated credentials + forced approval, enforceable only on
+  `claude-code` today. `transient_docs/google_docs_slides_access_2026-09-20.md`.
 - **Switching a task's worker mid-conversation sent the successor the opening prompt and nothing
   since (t562 ← t557, 2026-09-19).** `outstanding` carries the first message plus whatever is
   undelivered; everything between them had gone to a session that no longer exists, so it never

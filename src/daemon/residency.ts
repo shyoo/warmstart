@@ -1,6 +1,6 @@
 import type { Session } from '@shared/protocol.js'
 import { cacheHasLapsed, getSession, hasOpenRun } from './sessions.js'
-import { listTasks, runsFor } from './tasks.js'
+import { lastRunForSession, listTasks, runForSession, runsFor } from './tasks.js'
 import { workspaces } from './scheduler.js'
 
 /**
@@ -53,6 +53,29 @@ export function slotsInUse(
 }
 
 /**
+ * Live `work` sessions no run references, by id.
+ *
+ * A session row and the run serving it normally name each other — dispatch starts every run with
+ * its session's id — and both reservation counters below excuse a task whose runs name a live
+ * session. When the linkage is missing, the task would be counted once for its live session and
+ * once more for its reservation, and a one-slot worker would read `2 / 1` beside a single task
+ * (t597). An unclaimed live session on the same worker is that task's process far more often than
+ * a second one, so each covers one sessionless running task. Computed once per
+ * `retainedReservations` call and shared, so one session never covers two tasks. Parked tasks
+ * never consume cover: their hold protects a workspace, not a process, and a stray live session
+ * does not invalidate it.
+ */
+export function unclaimedLiveWorkSessions(sessions: Session[]): Set<string> {
+  const unclaimed = new Set<string>()
+  for (const session of sessions) {
+    if (session.purpose !== 'work' && session.purpose != null) continue
+    if (runForSession(session.id) ?? lastRunForSession(session.id)) continue
+    unclaimed.add(session.id)
+  }
+  return unclaimed
+}
+
+/**
  * Closed sessions are absent from `sessionsForWorker`, but a task they parked at `awaiting_human`
  * still owns one worker slot. Do not count one whose session is live: that session is already in the
  * ordinary concurrency total.
@@ -61,6 +84,10 @@ export function awaitingHumanReservations(workerId: string, sessions: Session[])
   const liveSessionIds = new Set(sessions.map((session) => session.id))
   return listTasks().filter((task) => {
     if (task.status !== 'awaiting_human' || task.ranOn !== workerId) return false
+    // ⛔ Reassigned while parked (t597): the reply will run on the new worker, so the old one
+    // holds nothing for it any more. Counting it there wedged the old worker at `1 / 1` with no
+    // process on it. A task waiting on a person (`human`) or pinned here still holds this slot.
+    if (task.assignee && task.assignee !== 'human' && task.assignee !== workerId) return false
     return !runsFor(task.id).some((run) => run.sessionId && liveSessionIds.has(run.sessionId))
   }).length
 }
@@ -71,7 +98,11 @@ export function awaitingHumanReservations(workerId: string, sessions: Session[])
  * still owns one worker slot. Do not count one whose session is live: that session is already in the
  * ordinary concurrency total.
  */
-export function runningTaskReservations(workerId: string, sessions: Session[]): number {
+export function runningTaskReservations(
+  workerId: string,
+  sessions: Session[],
+  cover: Set<string> = unclaimedLiveWorkSessions(sessions)
+): number {
   const liveSessionIds = new Set(sessions.map((session) => session.id))
   return listTasks().filter((task) => {
     // ⛔ Only tasks actively in flight ('running' or 'assigned') can reserve a running slot.
@@ -86,7 +117,20 @@ export function runningTaskReservations(workerId: string, sessions: Session[]): 
       (run) => run.workerId === workerId && run.endedAt === null && (run.kind === 'work' || !run.kind)
     )
     if (!isRunningOnWorker && !hasOpenRunOnWorker) return false
-    return !runsFor(task.id).some((run) => run.workerId === workerId && run.sessionId && liveSessionIds.has(run.sessionId))
+    if (runsFor(task.id).some((run) => run.workerId === workerId && run.sessionId && liveSessionIds.has(run.sessionId))) return false
+    // ⛔ An unclaimed live session covers one sessionless task (t597): the task is demonstrably
+    // mid-flight on this worker and the session is demonstrably serving nobody on the books, so
+    // counting both would read `2 / 1` for one process. Each session covers one task — it is
+    // deleted from the shared set — and an `assigned` task with no run yet is never covered,
+    // because nothing has started that the session could belong to.
+    if (cover && cover.size > 0 && hasOpenRunOnWorker) {
+      const sessionId = cover.values().next().value
+      if (sessionId !== undefined) {
+        cover.delete(sessionId)
+        return false
+      }
+    }
+    return true
   }).length
 }
 
@@ -95,7 +139,8 @@ export function runningTaskReservations(workerId: string, sessions: Session[]): 
  * (both tasks parked at `awaiting_human` and tasks still `running` while completing/landing).
  */
 export function retainedReservations(workerId: string, sessions: Session[]): number {
-  return awaitingHumanReservations(workerId, sessions) + runningTaskReservations(workerId, sessions)
+  const cover = unclaimedLiveWorkSessions(sessions)
+  return awaitingHumanReservations(workerId, sessions) + runningTaskReservations(workerId, sessions, cover)
 }
 
 

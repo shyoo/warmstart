@@ -72,7 +72,7 @@ Before scoring, every worker in the fleet is evaluated against hard admission ru
 Each worker defines `maxConcurrent` (default `1` parallel run):
 - `atCapacity(sessions, maxConcurrent, reuse, retained)` counts active work sessions plus retained task reservations on that worker.
 - ⛔ **The 1-Slot Continuation Rule:** Reusing an existing idle session (`reuse`) starts **no new process**. Therefore, `reuse` is explicitly **exempt** from the capacity count.
-- ⛔ **Retained Task Reservations:** Closed sessions are absent from `sessionsForWorker`. However, tasks parked at `awaiting_human` or tasks still `running` (such as completing/landing work after a one-shot CLI like Codex has exited) still own a slot. `retainedReservations()` counts these uncounted tasks so the scheduler and `spawnSession` do not dispatch into an occupied worker.
+- ⛔ **Retained Task Reservations:** Closed sessions are absent from `sessionsForWorker`. However, tasks parked at `awaiting_human` or tasks still `running` (such as completing/landing work after a one-shot CLI like Codex has exited) still own a slot. `retainedReservations()` counts these uncounted tasks so the scheduler and `spawnSession` do not dispatch into an occupied worker. One task holds one slot: a live session no run references covers one sessionless running task instead of doubling it, and a parked task reassigned elsewhere frees its old worker (t597).
 
 ```typescript
 // src/daemon/residency.ts

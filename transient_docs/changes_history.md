@@ -3916,3 +3916,24 @@ re-ask for a commit that already exists.
 **Not flown on a real run.** The evidence above is a live database, two git probes and 21 L1 checks
 across three suites; four separate mutations turn them red. What has not happened is an operator
 pressing Commit on a muse conversation and watching the tool land it.
+
+## t597 ? the fleet card's in-running number lied twice (2026-09-21)
+
+## t597 — the fleet card's in-running number lied twice (2026-09-21)
+
+Measured on the live fleet: ClaudeSecond read `1 / 1` with nothing running on it, and CodexFirst
+read `2 / 1` beside a single task on a one-slot worker. A spike against the real functions
+(`sessionsForWorker` + `retainedReservations` + the card's `open + held`) reproduced both from
+ordinary rows. First, a running task whose open run does not reference its live session was counted
+twice — once in `open` for the session, once in `held` for the task — because both reservation
+counters excuse only tasks whose runs name a live session id. A live `work` session no run
+references (`unclaimedLiveWorkSessions`) now covers one sessionless running task each, computed
+once per `retainedReservations` call and shared so one session never covers two; parked tasks never
+consume cover, and probes/consults/reviews are not cover at all. Second, a task parked at
+`awaiting_human` and then reassigned kept reserving its old worker (`ranOn`), so the old card read
+occupied though the reply would run elsewhere; `awaitingHumanReservations` now skips tasks whose
+assignee names a different worker, while a task waiting on a person still holds its slot. 15 L1
+checks in `slotcount.test.ts` pin the card number end to end, plus 2 in `fleetcard.test.ts` for the
+held-only and over-max shapes; the t117 warm-hold, the landing hold and the genuine `2 / 1` are
+pinned unchanged. Not flown beyond the suites: the live rows that produced the screenshot are not
+available to a test, so the two defects are reproduced from equivalent seeded rows.

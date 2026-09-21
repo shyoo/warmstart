@@ -250,4 +250,22 @@ describe('the instances count on the sessions divider', () => {
     delete e.reservedSlots
     expect(instanceUse(e)).toMatchObject({ inUse: 1, max: 1, full: true })
   })
+
+  /**
+   * ⛔ The t597 shapes, at the rendering half. The daemon owes these numbers exactly one holder
+   * each — a task parked with no live process, and a live task beside a genuine second hold — and
+   * the card must not invent or erase one: it adds what it is sent, and the tooltip says which is
+   * which so `2 / 1` never reads as two agents at work.
+   */
+  it('reads 1 / 1 held with no sessions, and says what holds it', () => {
+    const use = instanceUse(entry({ worker: worker(1), reservedSlots: 1, sessions: [] }))
+    expect([use.inUse, use.max, use.full]).toEqual([1, 1, true])
+    expect(use.title).toContain('0 working · 0 idle but warm · 1 held by a task waiting on you or landing')
+  })
+
+  it('reads 2 / 1 for a live task beside a genuine second hold', () => {
+    const use = instanceUse(entry({ worker: worker(1), reservedSlots: 1, sessions: [session()] }))
+    expect([use.inUse, use.max, use.full]).toEqual([2, 1, true])
+    expect(use.title).toContain('1 working · 0 idle but warm · 1 held by a task waiting on you or landing')
+  })
 })
