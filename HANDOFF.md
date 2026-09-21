@@ -1,16 +1,16 @@
 # Warmstart — Session Handoff
 
-## Current state — 2026-09-20
+## Current state — 2026-09-21
 
 Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling, pooled worktrees,
 model-aware routing, quality review, remote access, packaging, and atomic worker/model reassignment.
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-20, **Windows 11**, on `0.3.0+14` — t594): typecheck, lint and build pass;
-L1 **3,844 passed, 5 skipped** (228 files), in **119s**. ⚠️ The `%TEMP%` figure is t579's, not re-measured
-here. L2 **204 checks** (5 skipped); L3 **486 checks** (4
-skipped), both last measured on t577 and not re-run since. L4 **19 checks** against `release/win-unpacked` was measured on `7b5f6e1`, the commit
+Baseline (2026-09-21, **Windows 11**, on `0.3.0+18`): typecheck, lint and build pass;
+L1 **3,861 passed, 3 skipped** (228 files), in **55s**; L2 **204 checks** (7 skipped — the two POSIX-only
+cursor-position checks skip here). ⚠️ The `%TEMP%` figure is t579's, not re-measured
+here. L3 **486 checks** (4 skipped), last measured on t577 and not re-run since. L4 **19 checks** against `release/win-unpacked` was measured on `7b5f6e1`, the commit
 `v0.3.0` ships, and has not been re-run since. ⚠️ L3 flaked twice under back-to-back suite load
 (*timed out waiting for All filter to restore 3 rows*, a tier it does not touch) and was green on a
 clean run. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
@@ -30,6 +30,12 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **The new L2 cursor-position probe could never pass on POSIX (2026-09-21).** `whyNoSession` exempts
+  `login` from the enabled gate and nothing else, so `purpose: 'probe'` on the suite's deliberately
+  disabled `exit probe` worker was refused — *worker 'exit probe' is disabled* — and CI run
+  35609481443 went red on `daemon · ubuntu-latest` alone, the one job that does not skip the branch.
+  The seat is opened for that single spawn and closed again after. ⚠️ Windows skips the section, so
+  this is proven by Linux CI only.
 - **Fleet cards double-counted and phantom-held slots (t597, 2026-09-21).** ClaudeSecond read
   `1 / 1` empty; CodexFirst read `2 / 1` beside one task. An unlinked live session now covers one
   sessionless running task (`unclaimedLiveWorkSessions`); a parked task reassigned elsewhere frees
@@ -152,10 +158,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   call; Virtual Machine Platform left on for the Claude desktop VM). ⏭ **MuseFirst cannot run until
   the installed app is rebuilt with this change** — the old build still looks for `wsl.exe`.
   `docs/adapters.md`.
-- **Unattended authority moved from the project to the worker, and Codex can opt into it (t545, 2026-09-19).** `Worker.unattendedAuthority` (Settings → Workers → **Unattended**), read by `scoring.ts`'s eligibility gate and `sessions.ts`'s `permissionModeFor`. A Codex worker set to `full-user` runs `--dangerously-bypass-approvals-and-sandbox` (codex-cli 0.151.0+). Migration 77 backfills existing workers. `docs/security.md`, `docs/adapters.md`.
-- **A lapsed oversized session was revived instead of starting clean, and a completion prompt told sandboxed agents to fetch (t536 ← t518/t534, 2026-09-19).** Resume now starts a fresh session when the measured cache has lapsed after passing the compaction break-even; compaction remains reserved for its cheap pre-expiry window. The agent completion clause checks the checkout's target and leaves remote refresh to landing, avoiding needless SSH/grant requests. `cacheclock.ts`, `scheduler.ts`, `prompt.ts`, `docs/sessions.md`, `docs/cost-model.md`.
-- **Projects can run trunk-only (t563, 2026-09-19).** `workspaces.poolSize: 0` runs every task on the trunk
-  lease; wizard/settings offer Trunk + worktrees (default) vs Trunk only, changeable either way with confirmation; `project.pruneWorktrees` removes idle trees, keeps occupied/dirty ones. `trunkonly.test.ts`.
 
 ## Remaining work — ordered by payoff
 

@@ -313,6 +313,11 @@ try {
       }
     }
 
+    // ⛔ `purpose: 'probe'` is gated on the worker being enabled — `whyNoSession` exempts `login`
+    // and nothing else — and every worker this suite commissions is closed to work. So the seat is
+    // opened for exactly this spawn and closed again below. Windows skips this branch, which is why
+    // the first push of this section went red on Linux CI alone (2026-09-21).
+    await daemon.rpc('worker.update', { id: probeWorker.id, enabled: true })
     const cprProbe = await daemon.rpc('session.spawn', {
       workerId: probeWorker.id,
       cwd: tmpdir(),
@@ -329,6 +334,7 @@ try {
       probeReply.replaceAll(String.fromCharCode(27), 'ESC')
     )
     await closeAndWait(cprProbe.id)
+    await daemon.rpc('worker.update', { id: probeWorker.id, enabled: false })
 
     // A login session is rendered by xterm, whose own answer is the only keystroke that may reach
     // the CLI. The daemon must not inject a second reply into a terminal a person is watching.
