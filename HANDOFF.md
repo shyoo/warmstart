@@ -19,10 +19,10 @@ hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
 **`v0.3.0` is `latest`** (2026-09-19, tag build 35482566845), promoted onto `v0.3.0-rc.1`'s own
 commit `7b5f6e1` — verified installed on **both Windows 11 and macOS**, the first release with no
 unverified platform. It carries t559–t565 (trunk-only projects, the mid-conversation worker recap,
-session reuse on by default) over `v0.2.0`, with no migration. The 0.3.0 series is open, so the next
-`/release rc` continues it at `0.3.0-rc.2`; a new series is a patch unless `--bump minor|major` is
-asked for. ⛔ All four tiers are run before a push, not after: rc.2 of the last series went red on
-CI because six commits were pushed together without `test:ui`.
+session reuse on by default) over `v0.2.0`, with no migration. The next `/release rc` opens the
+patch series at `0.3.1-rc.1` unless `--bump minor|major` is asked for. ⛔ All four tiers are run
+before a push, not after: rc.2 of the last series went red on CI because six commits were pushed
+together without `test:ui`.
 Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 **Routing Model v1.2 preserves expiry urgency (t552, 2026-09-19).** `prepaid` is field-normalized
@@ -30,6 +30,10 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **The cursor-position PTY test ran in L1 even though it deliberately starts `sh` (2026-09-21).**
+  The L1 `node-pty` alias correctly refused it on Linux CI, making `npm test` red. The two checks
+  now run in L2 through the daemon's real PTY: a probe receives `ESC[1;1R`; a human-facing login
+  does not receive the daemon's synthetic keystroke. Windows skips the POSIX `stty` fixture visibly.
 - **Codex upgraded to 0.155.1 with GPT-6 Astra access on ChatGPT Plus (t594, 2026-09-20).** Upgraded
   `@openai/codex` to 0.155.1 (0.151.0 refused `gpt-6-astra` on a vendor version error); verified live
   that `gpt-6-astra` executes and completes tasks on a ChatGPT Plus subscription with reasoning effort

@@ -279,6 +279,73 @@ try {
     gone ? `${said.length} bytes after exit` : 'the session never left the live list'
   )
 
+  // A usage-probe PTY has no terminal behind it. Muse Code 1.2.1 writes ESC[6n at startup and
+  // exits at +6.4s unless somebody replies, before its usage command is typed. xterm.js answers
+  // that query for a person's login terminal, but a probe has no xterm, so sessions.ts does.
+  //
+  // ⛔ This starts `sh` in a real pseudo-terminal and therefore belongs at L2, not vitest's L1
+  // source-only tier. The script puts the PTY in raw mode, asks for the cursor position and echoes
+  // the six-byte reply with ESC stripped. `cpr:[1;1R` proves the wiring through `spawnSession`.
+  section('probe PTY terminal queries')
+  if (process.platform === 'win32') {
+    skip('a probe PTY answers a cursor-position request', 'the real-PTY fixture uses POSIX stty and sh')
+    skip('a login PTY leaves cursor-position replies to xterm', 'the real-PTY fixture uses POSIX stty and sh')
+  } else {
+    const ASK_CPR = [
+      '-c',
+      'stty raw -echo; printf "\\033[6n"; x=$(head -c 6 | tr -d "\\033"); echo "cpr:$x"'
+    ]
+    const waitForBackscroll = async (id, wants, timeout = 10_000) => {
+      const by = Date.now() + timeout
+      let data = ''
+      while (Date.now() < by) {
+        data = (await daemon.rpc('session.backscroll', { id })).data ?? ''
+        if (wants(data)) break
+        await wait(100)
+      }
+      return data
+    }
+    const closeAndWait = async (id) => {
+      await daemon.rpc('session.close', { id })
+      const by = Date.now() + 5_000
+      while (Date.now() < by && (await daemon.rpc('session.list', {})).some((s) => s.id === id)) {
+        await wait(50)
+      }
+    }
+
+    const cprProbe = await daemon.rpc('session.spawn', {
+      workerId: probeWorker.id,
+      cwd: tmpdir(),
+      transport: 'pty',
+      purpose: 'probe',
+      argv: ASK_CPR,
+      cols: 80,
+      rows: 24
+    })
+    const probeReply = await waitForBackscroll(cprProbe.id, (data) => data.includes('cpr:'))
+    check(
+      'a probe PTY answers a cursor-position request',
+      probeReply.includes('cpr:[1;1R'),
+      probeReply.replace(/\x1b/g, 'ESC')
+    )
+    await closeAndWait(cprProbe.id)
+
+    // A login session is rendered by xterm, whose own answer is the only keystroke that may reach
+    // the CLI. The daemon must not inject a second reply into a terminal a person is watching.
+    const cprLogin = await daemon.rpc('session.spawn', {
+      workerId: probeWorker.id,
+      cwd: tmpdir(),
+      transport: 'pty',
+      purpose: 'login',
+      argv: ASK_CPR,
+      cols: 80,
+      rows: 24
+    })
+    const loginReply = await waitForBackscroll(cprLogin.id, (data) => data.includes('cpr:'), 1_500)
+    check('a login PTY leaves cursor-position replies to xterm', !loginReply.includes('cpr:[1;1R'))
+    await closeAndWait(cprLogin.id)
+  }
+
   // ⛔ The bug that made commissioning useless. Identity was written once at `worker.create` - when
   // the true answer is "nobody is signed in yet" - and nothing ever read it again. A worker signed
   // in successfully therefore kept `loggedIn: false` for the rest of its life, and the scheduler's
