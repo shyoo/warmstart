@@ -172,6 +172,13 @@
       "note": "62.4% SWE-bench Verified is the figure reported against OpenAI's gpt-oss-120b model card; no reasoning-effort ('medium' vs 'low'/'high') breakdown for this benchmark was found, so the general-model figure stands in for the medium tier. Not a Terminal-Bench number, so it is not directly comparable to the Anthropic/Google/OpenAI rows above."
     },
     {
+      "id": "gpt-6-astra",
+      "agentic": 0.885,
+      "basis": "inferred",
+      "source": "artificial-analysis-coding-agents-index",
+      "note": "OpenAI frontier coding/agentic model leading the Artificial Analysis Coding Agent Index; scaled relative to GPT-5.6 Sol (85.77%)."
+    },
+    {
       "id": "gpt-5.6-sol",
       "agentic": 0.858,
       "basis": "published",
@@ -262,6 +269,12 @@
       "agentic": 0.708,
       "basis": "inferred",
       "note": "The inferred high-tier figure for gemini-3.1-pro-high stands in for any effort suffix this file does not name exactly."
+    },
+    {
+      "match": "gpt-6",
+      "agentic": 0.885,
+      "basis": "inferred",
+      "note": "gpt-6-astra's figure stands in for any other GPT-6 id this file does not name exactly."
     },
     {
       "match": "gpt-5.6",

@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-20, **Windows 11**, on `0.3.0+10` — t586): typecheck, lint and build pass;
-L1 **3,844 passed, 5 skipped** (228 files), in **67s**. ⚠️ The `%TEMP%` figure is t579's, not re-measured
+Baseline (2026-09-20, **Windows 11**, on `0.3.0+14` — t594): typecheck, lint and build pass;
+L1 **3,844 passed, 5 skipped** (228 files), in **119s**. ⚠️ The `%TEMP%` figure is t579's, not re-measured
 here. L2 **204 checks** (5 skipped); L3 **486 checks** (4
 skipped), both last measured on t577 and not re-run since. L4 **19 checks** against `release/win-unpacked` was measured on `7b5f6e1`, the commit
 `v0.3.0` ships, and has not been re-run since. ⚠️ L3 flaked twice under back-to-back suite load
@@ -30,6 +30,12 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **Codex upgraded to 0.155.1 with GPT-6 Astra access on ChatGPT Plus (t594, 2026-09-20).** Upgraded
+  `@openai/codex` to 0.155.1 (0.151.0 refused `gpt-6-astra` on a vendor version error); verified live
+  that `gpt-6-astra` executes and completes tasks on a ChatGPT Plus subscription with reasoning effort
+  low through ultra. Added `gpt-6-astra` to `costmodels/openai.codex.2026-08.json` (1.05M context
+  window, priority 1 in `models_cache.json`), `benchmarks/coding-agents.2026-09.json` (0.885 agentic),
+  and `statistics.ts` model power sorting. `docs/adapters.md` updated.
 - **The ladder word is gone; a finish step is a level (t587, 2026-09-20).** `finishlevel.ts`,
   `COMMIT/LAND_LEVELS`, `landingLevelFor` et al.; `agent.land`/`land_work` take `finishPolicy`.
 - **A conversation's landing conflicted for ever, because two halves of the tool disagreed about
@@ -142,20 +148,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   call; Virtual Machine Platform left on for the Claude desktop VM). ⏭ **MuseFirst cannot run until
   the installed app is rebuilt with this change** — the old build still looks for `wsl.exe`.
   `docs/adapters.md`.
-- **Unattended authority moved from the project to the worker, and Codex can opt into it (t545,
-  2026-09-19).** The choice between sandboxed and full-user unattended dispatch used to live on
-  `ProjectConfig.permission.unattended`, gating every adapter a project's tasks could reach alike; an
-  account's own reach into the machine is a fact about that account, not the project, so it is now
-  `Worker.unattendedAuthority` (Settings → Workers → **Unattended**), read by `scoring.ts`'s
-  eligibility gate and by `sessions.ts`'s `permissionModeFor` alike. Codex also gained a real
-  `bypassPermissionMode`: a worker set to `full-user` runs `--dangerously-bypass-approvals-and-sandbox`
-  (measured 2026-09-19 against codex-cli 0.151.0 — it runs cleanly, so `plan()` omits `--sandbox` and
-  the network override by choice, not because the CLI refuses them together) instead of the
-  `workspace-write` sandbox, matching the permissive default Claude Code and Antigravity already use.
-  Migration 77 backfills every existing worker to the mode it has always actually run in — Codex to
-  `sandboxed-only`, everything else to `full-user` — so no existing account's dispatch behaviour
-  changes on upgrade; a Codex worker only gets the bypass after an operator explicitly asks for it.
-  `docs/security.md`, `docs/adapters.md`.
+- **Unattended authority moved from the project to the worker, and Codex can opt into it (t545, 2026-09-19).** `Worker.unattendedAuthority` (Settings → Workers → **Unattended**), read by `scoring.ts`'s eligibility gate and `sessions.ts`'s `permissionModeFor`. A Codex worker set to `full-user` runs `--dangerously-bypass-approvals-and-sandbox` (codex-cli 0.151.0+). Migration 77 backfills existing workers. `docs/security.md`, `docs/adapters.md`.
 - **A lapsed oversized session was revived instead of starting clean, and a completion prompt told sandboxed agents to fetch (t536 ← t518/t534, 2026-09-19).** Resume now starts a fresh session when the measured cache has lapsed after passing the compaction break-even; compaction remains reserved for its cheap pre-expiry window. The agent completion clause checks the checkout's target and leaves remote refresh to landing, avoiding needless SSH/grant requests. `cacheclock.ts`, `scheduler.ts`, `prompt.ts`, `docs/sessions.md`, `docs/cost-model.md`.
 - **Projects can run trunk-only (t563, 2026-09-19).** `workspaces.poolSize: 0` runs every task on the trunk
   lease; wizard/settings offer Trunk + worktrees (default) vs Trunk only, changeable either way with confirmation; `project.pruneWorktrees` removes idle trees, keeps occupied/dirty ones. `trunkonly.test.ts`.

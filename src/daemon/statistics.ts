@@ -288,7 +288,7 @@ export function modelPowerScore(modelId: string): number {
 
   // 4. Tier keyword adjustments on baseModel
   if (baseModel.includes('opus')) score += 900
-  else if (baseModel.includes('pro') || baseModel.includes('ultra') || baseModel.includes('sol')) score += 800
+  else if (baseModel.includes('pro') || baseModel.includes('ultra') || baseModel.includes('sol') || baseModel.includes('astra')) score += 800
   else if (baseModel.includes('plus') || baseModel.includes('terra')) score += 700
   else if (baseModel.includes('sonnet')) score += 600
   else if (baseModel.includes('flash')) score += 500

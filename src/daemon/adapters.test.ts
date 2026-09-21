@@ -233,11 +233,21 @@ describe('capability consequences, not capability fields', () => {
 
 describe('a cost model may say it does not know', () => {
   it('offers the Codex CLI models verified in its refreshed model cache', () => {
-    // Measured 2026-09-03 from codex-cli 0.151.0's `$CODEX_HOME/models_cache.json`: Sol is
-    // `visibility: list` (unlike gpt-reserve and codex-auto-review) and accepts all six levels.
+    // Measured 2026-09-03 and 2026-09-20 from codex-cli's `$CODEX_HOME/models_cache.json`:
+    // Astra and Sol are `visibility: list` (unlike gpt-reserve and codex-auto-review) and accept all six levels.
     // The cache is the CLI's own account-aware model catalogue, so it proves a Codex subscription
-    // may select Sol; the public API catalogue alone would not establish that.
+    // may select them; the public API catalogue alone would not establish that.
     const codex = costModel('openai.codex.2026-08')
+    expect(codex.modelIds()).toContain('gpt-6-astra')
+    expect(codex.modelSpec('gpt-6-astra')?.effort_levels).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra'
+    ])
+    expect(codex.modelSpec('gpt-6-astra')?.context_window).toBe(1050000)
     expect(codex.modelIds()).toContain('gpt-5.6-sol')
     expect(codex.modelSpec('gpt-5.6-sol')?.effort_levels).toEqual([
       'low',

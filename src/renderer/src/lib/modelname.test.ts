@@ -9,6 +9,7 @@ import { compactModelLabel, effortLabel, modelLabel } from './modelname.js'
 describe('modelLabel', () => {
   it('writes the ids in costmodels/ the way a person says them', () => {
     // openai.codex.2026-08
+    expect(modelLabel('gpt-6-astra')).toBe('GPT 6 Astra')
     expect(modelLabel('gpt-5.6-terra')).toBe('GPT 5.6 Terra')
     expect(modelLabel('gpt-5.6-luna')).toBe('GPT 5.6 Luna')
     expect(modelLabel('gpt-5.5')).toBe('GPT 5.5')
@@ -89,6 +90,7 @@ describe('compactModelLabel', () => {
   it('drops what the agent icon beside a chart mark already says', () => {
     expect(compactModelLabel('gemini-3.1-pro-high')).toBe('3.1 Pro High')
     expect(compactModelLabel('gemini-3.7-flash-medium')).toBe('3.7 Flash Med')
+    expect(compactModelLabel('gpt-6-astra')).toBe('6 Astra')
     expect(compactModelLabel('gpt-5.6-sol')).toBe('5.6 Sol')
     expect(compactModelLabel('muse-spark-1.3-contributor')).toBe('Spark 1.3 C')
   })

@@ -39,11 +39,11 @@
     "brackets the TTL only as (5m, 10h]: it corroborates the documented 30m and does not measure it.",
     "The rollout field used is the same one probeQuota reads, so the check is free to repeat.",
     "",
-    "MODELS: refreshed from OpenAI's ChatGPT Codex model documentation on 2026-09-09. ChatGPT-authenticated",
-    "Codex retired `gpt-5.4` and `gpt-5.4-mini` on 2026-08-31, replacing the latter with `gpt-5.6-luna`.",
-    "The API and Codex authenticated with an API key are unaffected; this subscription model list is for",
-    "the ChatGPT-backed Codex adapter. `gpt-reserve` and `codex-auto-review` remain omitted: the first is",
-    "not a model an operator should route to by name, and the second is the review agent rather than a coding model."
+    "MODELS: refreshed from OpenAI's ChatGPT Codex model documentation on 2026-09-09 and verified live",
+    "with codex-cli 0.155.1 on 2026-09-20. ChatGPT-authenticated Codex supports `gpt-6-astra` (priority 1,",
+    "visibility: list, effort levels low through ultra) on ChatGPT Plus, Pro, and Business plans.",
+    "`gpt-5.4` and `gpt-5.4-mini` were retired for ChatGPT on 2026-08-31; `gpt-reserve` and `codex-auto-review`",
+    "remain omitted: the first is not an operator-routable model, and the second is the approval review agent."
   ],
   "id": "openai.codex.2026-08",
   "provider": "openai",
@@ -66,6 +66,7 @@
     "default_ttl": "30m",
     "scope": "organization",
     "min_cacheable_tokens": {
+      "gpt-6-astra": 1024,
       "gpt-5.6-sol": 1024,
       "gpt-5.6-terra": 1024,
       "gpt-5.6-luna": 1024,
@@ -93,6 +94,22 @@
     "min_tokens_since_compact": 0
   },
   "models": [
+    {
+      "id": "gpt-6-astra",
+      "context_window": 1050000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "o200k",
+      "context_awareness": false,
+      "effort_levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
     {
       "id": "gpt-5.6-sol",
       "context_window": 400000,
