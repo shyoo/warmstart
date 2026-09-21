@@ -97,15 +97,17 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   `/usage `. ⛔ Operator press only (`RefreshOptions.warmUp` defaults false — the scheduler still
   spends nothing), drawn on the `no usage data yet` gap alone, priced in the note shown at
   commissioning. ⚠️ **Inferred, not yet watched working.** `docs/adapters.md`, `architecture.md`, `ui.md`.
-- **Three thread fixes (t564, 2026-09-19).** *Muse Code's icon* was one open stroke that read as an
-  earring; `AgentIcon` now draws the Meta mark — two wings crossing through a shared stem, traced
-  from the 64px favicon at dev.meta.ai, brand blue, `viewBox 0 0 64 64` — and `agenticon.test.ts`
-  asserts two strokes reaching both edges. *The ledger* shows `cur worker` / `next worker` and
-  `cur model` / `next model` as separate rows (a never-run task reads plain `worker` / `model`);
-  the *last run on* caption, *(Current)* suffix and `next` pill are gone. *Reassign* on both the
-  `awaiting_human` card and the quota card gained `ReassignNote`: an optional message sent as the
-  person's own turn on the same press (`task.message` in place of `Continue.` / `task.resume`).
-  Six L3 checks; `docs/ui.md`.
+- **Three thread fixes (t564, 2026-09-19).** Muse's icon now draws the real Meta mark; the ledger
+  splits `cur`/`next` worker and model into separate rows; Reassign gained `ReassignNote`, an
+  optional message sent as the person's own turn. Six L3 checks; `docs/ui.md`.
+- **Google Docs/Slides access researched, no Warmstart change (t591, 2026-09-20).** Not native to
+  any adapter. Possible today with zero engineering: `claude-code`'s per-session `--mcp-config` merges
+  additively with whatever an operator registers globally in that worker's `CLAUDE_CONFIG_DIR`
+  (`claude mcp add`), and codex/agy/muse are global-config-only for MCP already, so the same trick
+  applies. ⚠️ It inherits full unattended-bypass authority with **no approval gate** — a real risk on
+  a live Google account. A first-class version needs a bundled MCP server, isolated credentials, and
+  a forced-approval path (`request_directory`'s pattern), enforceable only on `claude-code` today.
+  `transient_docs/google_docs_slides_access_2026-09-20.md`.
 - **Switching a task's worker mid-conversation sent the successor the opening prompt and nothing
   since (t562 ← t557, 2026-09-19).** `outstanding` carries the first message plus whatever is
   undelivered; everything between them had gone to a session that no longer exists, so it never
