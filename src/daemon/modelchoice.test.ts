@@ -102,6 +102,40 @@ describe('resolving effort, where the CLI can be told one', () => {
     expect(r.modelSource).toBe('worker')
     expect(r.effort).toBeNull()
   })
+
+  it('inherits model-specific effort from worker.modelEfforts when model is resolved', () => {
+    const acc = {
+      defaultModel: 'claude-opus-5',
+      defaultEffort: 'low',
+      modelEfforts: { 'claude-opus-5': 'high', 'claude-sonnet-5': 'max' }
+    }
+    const r = resolveModelChoice(constraints(), acc, true)
+    expect(r.model).toBe('claude-opus-5')
+    expect(r.effort).toBe('high')
+    expect(r.effortSource).toBe('worker')
+  })
+
+  it('task constraints effort overrides worker.modelEfforts', () => {
+    const acc = {
+      defaultModel: 'claude-opus-5',
+      defaultEffort: 'low',
+      modelEfforts: { 'claude-opus-5': 'high' }
+    }
+    const r = resolveModelChoice(constraints({ effort: 'xhigh' }), acc, true)
+    expect(r.effort).toBe('xhigh')
+    expect(r.effortSource).toBe('task')
+  })
+
+  it('falls back to worker.defaultEffort when model has no entry in modelEfforts', () => {
+    const acc = {
+      defaultModel: 'claude-haiku-4-5',
+      defaultEffort: 'low',
+      modelEfforts: { 'claude-opus-5': 'high' }
+    }
+    const r = resolveModelChoice(constraints(), acc, true)
+    expect(r.effort).toBe('low')
+    expect(r.effortSource).toBe('worker')
+  })
 })
 
 let dir: string

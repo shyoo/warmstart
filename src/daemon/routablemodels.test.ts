@@ -175,4 +175,70 @@ describe('the routable-models column', () => {
 
     expect(workers.requireWorker(w.id).modelClasses).toEqual({ 'claude-opus-5': 'high' })
   })
+
+  it('modelEfforts round-trips through worker.update and getWorker', () => {
+    const w = claudeWorker()
+    workers.updateWorker(w.id, {
+      modelEfforts: { 'claude-sonnet-5': 'high', 'claude-opus-5': 'max' }
+    })
+    const reread = workers.requireWorker(w.id)
+    expect(reread.modelEfforts).toEqual({
+      'claude-sonnet-5': 'high',
+      'claude-opus-5': 'max'
+    })
+  })
+
+  it('modelEfforts clears back to null when unset', () => {
+    const w = claudeWorker()
+    workers.updateWorker(w.id, {
+      modelEfforts: { 'claude-opus-5': 'high' }
+    })
+    workers.updateWorker(w.id, { modelEfforts: null })
+    expect(workers.requireWorker(w.id).modelEfforts).toBeNull()
+  })
+
+  it('validates modelEfforts keys against cost model and values against model effort levels', () => {
+    expect(() =>
+      api.checkWorkerDefaults('claude-code', {
+        modelEfforts: { 'unknown-model': 'high' }
+      })
+    ).toThrow(/not a model/)
+
+    expect(() =>
+      api.checkWorkerDefaults('claude-code', {
+        modelEfforts: { 'claude-haiku-4-5': 'high' }
+      })
+    ).toThrow(/has no effort level/)
+
+    expect(() =>
+      api.checkWorkerDefaults('claude-code', {
+        modelEfforts: { 'claude-opus-5': 'invalid-effort' }
+      })
+    ).toThrow(/has no effort level/)
+
+    expect(() =>
+      api.checkWorkerDefaults('antigravity-cli', {
+        modelEfforts: { 'gemini-3.7-flash-high': 'high' }
+      })
+    ).toThrow(/takes no effort flag/)
+
+    expect(() =>
+      api.checkWorkerDefaults('claude-code', {
+        modelEfforts: { 'claude-opus-5': 'high', 'claude-sonnet-5': 'medium' }
+      })
+    ).not.toThrow()
+  })
+
+  it('migration 80 replays cleanly after versionBefore rewinds it', () => {
+    const w = claudeWorker()
+    workers.updateWorker(w.id, {
+      modelEfforts: { 'claude-opus-5': 'high' }
+    })
+
+    db.db().exec(`pragma user_version = ${db.versionBefore('model_efforts_json')}`)
+    db.closeDb()
+    expect(() => db.openDb(dbPath)).not.toThrow()
+
+    expect(workers.requireWorker(w.id).modelEfforts).toEqual({ 'claude-opus-5': 'high' })
+  })
 })

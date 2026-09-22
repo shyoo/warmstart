@@ -20,6 +20,7 @@ import { useTarget } from '../lib/target'
 import { errorMessage } from '@shared/errors.js'
 import { isLocalModelId, localModelLabel } from '@shared/localmodel'
 import { resolveModelClass, type ModelClass } from '@shared/modelclass'
+import { effortLabel } from '../lib/modelname'
 
 /**
  * The (i) beside a column heading whose number needs a sentence.
@@ -150,27 +151,29 @@ const UNATTENDED_AUTHORITY_HELP =
  * default, matching `ROUTABLE_MODELS_HELP` — because a blank beside `Model` would read as
  * "nothing chosen yet" rather than its opposite.
  */
-export function routableModelsLabel(selected: string[]): string {
-  if (selected.length === 0) return 'default model only'
-  return selected.join(', ')
-}
+import { routableModelsLabel } from '../lib/routablelabel'
+export { routableModelsLabel }
 function RoutableModelsPill({
   worker,
   models,
+  selectableEffort,
   disabled,
   busy,
   onChange,
-  onModelClassesChange
+  onModelClassesChange,
+  onModelEffortsChange
 }: {
   worker: Worker
-  models: Array<{ id: string }>
+  models: Array<{ id: string; effortLevels?: string[] }>
+  selectableEffort?: boolean
   disabled: boolean
   busy: boolean
   onChange: (next: string[]) => void
   onModelClassesChange?: (next: Record<string, ModelClass> | null) => void
+  onModelEffortsChange?: (next: Record<string, string | null> | null) => void
 }): React.JSX.Element {
   const selected = worker.routableModels ?? []
-  const label = routableModelsLabel(selected)
+  const label = routableModelsLabel(selected, worker)
 
   const toggle = (id: string): void => {
     onChange(selected.includes(id) ? selected.filter((m) => m !== id) : [...selected, id])
@@ -182,7 +185,7 @@ function RoutableModelsPill({
         className={`routable-models-value${selected.length === 0 ? ' routable-models-value--muted' : ''}`}
         title={
           selected.length > 0
-            ? `Routable models: ${selected.map((id) => `${id} [${resolveModelClass(id, worker)}]`).join(', ')}`
+            ? `Routable models: ${label}`
             : ROUTABLE_MODELS_HELP
         }
       >
@@ -197,11 +200,21 @@ function RoutableModelsPill({
         menu={() => (
           <div className="workers-menu">
             <div className="workers-menu-head">
-              <span className="workers-menu-title">Routable models & classes</span>
+              <span className="workers-menu-title">Routable models, efforts & classes</span>
               <div style={{ display: 'flex', gap: '8px' }}>
                 {selected.length > 0 && (
                   <button type="button" className="workers-menu-action" onClick={() => onChange([])} disabled={busy}>
                     Reset routable
+                  </button>
+                )}
+                {worker.modelEfforts && Object.keys(worker.modelEfforts).length > 0 && onModelEffortsChange && (
+                  <button
+                    type="button"
+                    className="workers-menu-action"
+                    onClick={() => onModelEffortsChange(null)}
+                    disabled={busy}
+                  >
+                    Reset efforts
                   </button>
                 )}
                 {worker.modelClasses && Object.keys(worker.modelClasses).length > 0 && onModelClassesChange && (
@@ -217,42 +230,93 @@ function RoutableModelsPill({
               </div>
             </div>
             <div className="workers-menu-list">
-              {models.map((m) => {
-                const currentClass = resolveModelClass(m.id, worker)
-                return (
-                  <div key={m.id} className="workers-menu-worker-row">
-                    <label className="workers-menu-worker-info">
-                      <input
-                        type="checkbox"
-                        checked={selected.includes(m.id)}
-                        onChange={() => toggle(m.id)}
-                        disabled={busy}
-                      />
-                      <span className="workers-menu-worker-name">{m.id}</span>
-                    </label>
-                    {onModelClassesChange && (
-                      <select
-                        className="workers-menu-class-select"
-                        value={currentClass}
-                        disabled={busy}
-                        aria-label={`Capability tier for ${m.id}`}
-                        onChange={(e) => {
-                          const cls = e.target.value as ModelClass
-                          const nextMap: Record<string, ModelClass> = {
-                            ...(worker.modelClasses ?? {}),
-                            [m.id]: cls
-                          }
-                          onModelClassesChange(nextMap)
-                        }}
-                      >
-                        <option value="high">High</option>
-                        <option value="med">Med</option>
-                        <option value="low">Low</option>
-                      </select>
-                    )}
-                  </div>
-                )
-              })}
+              <table className="workers-routable-table">
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left' }}>Model</th>
+                    <th style={{ textAlign: 'left', width: '95px' }}>Effort</th>
+                    <th style={{ textAlign: 'left', width: '80px' }}>Class</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {models.map((m) => {
+                    const currentClass = resolveModelClass(m.id, worker)
+                    const currentEffort = worker.modelEfforts?.[m.id] ?? ''
+                    const hasEfforts = Boolean(selectableEffort && m.effortLevels && m.effortLevels.length > 0)
+
+                    return (
+                      <tr key={m.id} className="workers-routable-row">
+                        <td className="workers-routable-model-cell">
+                          <label className="workers-menu-worker-info">
+                            <input
+                              type="checkbox"
+                              checked={selected.includes(m.id)}
+                              onChange={() => toggle(m.id)}
+                              disabled={busy}
+                            />
+                            <span className="workers-menu-worker-name">{m.id}</span>
+                          </label>
+                        </td>
+                        <td className="workers-routable-effort-cell">
+                          {hasEfforts && onModelEffortsChange ? (
+                            <select
+                              className="workers-menu-effort-select"
+                              value={currentEffort}
+                              disabled={busy}
+                              aria-label={`Effort level for ${m.id}`}
+                              onChange={(e) => {
+                                const val = e.target.value
+                                const nextMap: Record<string, string | null> = {
+                                  ...(worker.modelEfforts ?? {})
+                                }
+                                if (val) {
+                                  nextMap[m.id] = val
+                                } else {
+                                  delete nextMap[m.id]
+                                }
+                                onModelEffortsChange(Object.keys(nextMap).length > 0 ? nextMap : null)
+                              }}
+                            >
+                              <option value="">Default</option>
+                              {m.effortLevels!.map((lvl) => (
+                                <option key={lvl} value={lvl}>
+                                  {effortLabel(lvl) ?? lvl}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span className="workers-menu-effort-none">—</span>
+                          )}
+                        </td>
+                        <td className="workers-routable-class-cell">
+                          {onModelClassesChange ? (
+                            <select
+                              className="workers-menu-class-select"
+                              value={currentClass}
+                              disabled={busy}
+                              aria-label={`Capability tier for ${m.id}`}
+                              onChange={(e) => {
+                                const cls = e.target.value as ModelClass
+                                const nextMap: Record<string, ModelClass> = {
+                                  ...(worker.modelClasses ?? {}),
+                                  [m.id]: cls
+                                }
+                                onModelClassesChange(nextMap)
+                              }}
+                            >
+                              <option value="high">High</option>
+                              <option value="med">Med</option>
+                              <option value="low">Low</option>
+                            </select>
+                          ) : (
+                            <span className="dim">{currentClass}</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         )}
@@ -1033,6 +1097,7 @@ export function Workers({
                       <RoutableModelsPill
                         worker={worker}
                         models={modelsFor(worker.adapterId, worker.id)?.models ?? []}
+                        selectableEffort={Boolean(modelsFor(worker.adapterId, worker.id)?.selectableEffort)}
                         disabled={false}
                         busy={busy === `routable:${worker.id}`}
                         onChange={(next) =>
@@ -1048,6 +1113,14 @@ export function Workers({
                             rpc('worker.update', {
                               id: worker.id,
                               modelClasses: next
+                            })
+                          )
+                        }
+                        onModelEffortsChange={(next) =>
+                          void guard(`routable:${worker.id}`, () =>
+                            rpc('worker.update', {
+                              id: worker.id,
+                              modelEfforts: next
                             })
                           )
                         }

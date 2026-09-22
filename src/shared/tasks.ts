@@ -3285,6 +3285,7 @@ export function resolveModelChoice(
         defaultModel: string | null
         defaultEffort: string | null
         defaultModels?: Record<string, string | null> | null
+        modelEfforts?: Record<string, string | null> | null
       }
     | null
     | undefined,
@@ -3348,7 +3349,10 @@ export function resolveModelChoice(
       ? constraints.effortsByWorker[worker.id]
       : undefined
   const effort = workerSpecificEffort || constraints?.effort || null
-  const workerEffort = worker?.defaultEffort ?? null
+  const workerEffort =
+    (resolvedModel && worker?.modelEfforts?.[resolvedModel]) ??
+    worker?.defaultEffort ??
+    null
   return {
     model: resolvedModel,
     modelSource,

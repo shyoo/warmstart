@@ -1666,6 +1666,9 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   const picked = resolveModelChoice(task.constraints, worker, canSetEffort, lastQuota(worker.id))
   if (choice.model) {
     picked.model = choice.model
+    if (!task.constraints.effort && worker.modelEfforts?.[choice.model]) {
+      picked.effort = worker.modelEfforts[choice.model] ?? null
+    }
   }
   // ⛔ An effort the *model* has no levels for is dropped here, the same way one the *adapter* cannot
   // take is dropped above. claude-code takes the flag and haiku-4.5 takes no effort at all (measured

@@ -104,6 +104,7 @@ export function checkWorkerDefaults(
     defaultModels?: Record<string, string | null> | null
     routableModels?: string[] | null
     modelClasses?: Record<string, ModelClass> | null
+    modelEfforts?: Record<string, string | null> | null
   }
 ): void {
   const info = adapter(adapterId).info
@@ -152,6 +153,20 @@ export function checkWorkerDefaults(
       if (!cm.modelSpec(m)) throw refused(m)
       if (!MODEL_CLASSES.includes(cls)) {
         throw new Error(`invalid model class '${cls}' for model '${m}'`)
+      }
+    }
+  }
+
+  if (patch.modelEfforts) {
+    for (const [m, eff] of Object.entries(patch.modelEfforts)) {
+      if (!eff) continue
+      const spec = cm.modelSpec(m)
+      if (!spec) throw refused(m)
+      if (!info.capabilities.selectableEffort) {
+        throw new Error(`${info.label} takes no effort flag, so it has no effort to set`)
+      }
+      if (Array.isArray(spec.effort_levels) && !spec.effort_levels.includes(eff)) {
+        throw new Error(`'${m}' has no effort level '${eff}'`)
       }
     }
   }

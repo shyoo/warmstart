@@ -443,6 +443,10 @@ export interface Worker {
    * Overrides built-in defaults for model routing candidate selection.
    */
   modelClasses?: Record<string, ModelClass> | null
+  /**
+   * Custom preferred reasoning effort overrides per model ID on this account.
+   */
+  modelEfforts?: Record<string, string | null> | null
   identity: WorkerIdentity | null
   /**
    * What the vendor last said about this account spending past its plan limit.
@@ -1734,6 +1738,7 @@ export interface RpcMap {
         | 'defaultModels'
         | 'routableModels'
         | 'modelClasses'
+        | 'modelEfforts'
         | 'unattendedAuthority'
       >
     >

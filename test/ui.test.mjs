@@ -3797,7 +3797,7 @@ try {
   const routableTwo = await evaluate(`${routableValue}?.textContent.trim()`)
   check(
     'checking a second reads as both model names',
-    routableNames.split('|').length === 2 && routableTwo === routableNames.split('|').join(', '),
+    routableNames.split('|').length === 2 && routableNames.split('|').every((name) => routableTwo.includes(name)),
     `${routableTwo} vs ${routableNames}`
   )
   await evaluate(`document.body.click()`)

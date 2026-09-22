@@ -2063,6 +2063,16 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'workers', 'model_classes_json')) {
       conn.exec('alter table workers add column model_classes_json text;')
     }
+  },
+  // 80 - routable model reasoning effort levels per worker (t622).
+  //
+  // ⛔ Allows operators to configure preferred reasoning effort levels per routable model
+  // on a worker account.
+  // Guarded because migration replay is part of this database's test contract.
+  (conn) => {
+    if (!hasColumn(conn, 'workers', 'model_efforts_json')) {
+      conn.exec('alter table workers add column model_efforts_json text;')
+    }
   }
 ]
 

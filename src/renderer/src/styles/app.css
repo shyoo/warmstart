@@ -7073,8 +7073,8 @@ select:focus-visible,
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  min-width: 300px;
-  max-width: 420px;
+  min-width: 320px;
+  max-width: 500px;
   padding: var(--sp-1);
 }
 
@@ -7111,6 +7111,55 @@ select:focus-visible,
   gap: var(--sp-1);
   max-height: 280px;
   overflow-y: auto;
+}
+
+.workers-routable-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-dense);
+}
+
+.workers-routable-table th {
+  padding: 4px 6px;
+  font-size: var(--text-meta);
+  font-weight: 600;
+  color: var(--color-text-dim);
+  border-bottom: 1px solid var(--color-border);
+  user-select: none;
+}
+
+.workers-routable-table td {
+  padding: 4px 6px;
+  vertical-align: middle;
+}
+
+.workers-routable-row:hover {
+  background: var(--color-surface);
+}
+
+.workers-routable-model-cell {
+  cursor: pointer;
+}
+
+.workers-routable-effort-cell,
+.workers-routable-class-cell {
+  white-space: nowrap;
+}
+
+.workers-menu-effort-select {
+  font-size: var(--text-meta);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+  max-width: 100px;
+}
+
+.workers-menu-effort-none {
+  display: inline-block;
+  padding-left: 8px;
+  color: var(--color-text-dim);
 }
 
 .workers-menu-item {
