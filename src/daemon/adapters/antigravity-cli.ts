@@ -1000,6 +1000,30 @@ export const antigravityCli: AgentAdapter = {
     return said.includes('resource_exhausted') || said.includes('individual quota reached')
   },
 
+  /**
+   * ⚠️ Measured, not imagined: verbatim from t610, 2026-09-22 — `UNAUTHENTICATED (code 401): Request
+   * had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other
+   * valid authentication credential.` — on a run that had already produced 28k output tokens over
+   * roughly 55 minutes before this arrived, i.e. a credential that died mid-session rather than one
+   * that was never good. The identity probe (`readAntigravityIdentity`) had read `loggedIn: true`
+   * from the on-disk token files three minutes earlier - those files are not asked whether the token
+   * they name still works, only whether one is present - so nothing short of a real turn could have
+   * caught this ahead of time. ⛔ There is exactly one credential for this adapter (see the module
+   * doc's "No credential isolation"), so this account, not this task, is what needs the fix.
+   *
+   * ⛔ Anchored on the gRPC status and the vendor's own sentence, never on `ERROR` or `401` alone,
+   * for the same reason `outOfQuota` is: a tool call that hit an unrelated unauthenticated endpoint
+   * is a bad turn, not a dead account.
+   */
+  needsReauth: (reason: string): boolean => {
+    const said = reason.toLowerCase()
+    return (
+      said.includes('unauthenticated') ||
+      said.includes('invalid authentication credentials') ||
+      said.includes('expected oauth 2 access token')
+    )
+  },
+
   // ⚠️ Not just PATH: the installer leaves `agy` somewhere it does not add until `agy install`
   // runs, so a perfectly usable install would otherwise be invisible to the scheduler.
   isInstalled(): boolean {

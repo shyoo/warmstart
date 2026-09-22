@@ -1,14 +1,14 @@
 # Warmstart — Session Handoff
 
-## Current state — 2026-09-21
+## Current state — 2026-09-22
 
 Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling, pooled worktrees,
 model-aware routing, quality review, remote access, packaging, and atomic worker/model reassignment.
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-21, **Windows 11**, on `0.3.0+18`): typecheck, lint and build pass;
-L1 **3,861 passed, 3 skipped** (228 files), in **55s**; L2 **204 checks** (7 skipped — the two POSIX-only
+Baseline (2026-09-22, **Windows 11**, on `0.3.1+1`): typecheck, lint and build pass;
+L1 **3,866 passed, 3 skipped** (228 files), in **113s**; L2 **204 checks** (7 skipped — the two POSIX-only
 cursor-position checks skip here). ⚠️ The `%TEMP%` figure is t579's, not re-measured
 here. L3 **486 checks** (4 skipped), last measured on t577 and not re-run since. L4 **19 checks** against `release/win-unpacked` was measured on `7b5f6e1`, the commit
 `v0.3.0` ships, and has not been re-run since. ⚠️ L3 flaked twice under back-to-back suite load
@@ -33,6 +33,19 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 - **Tasks wait visibly for their first page (t612, 2026-09-22).** `Tasks` no longer renders its
   actionable **No tasks yet** state from its initial empty array while `task.page` is in flight;
   it draws two spinning marks and *Loading tasks…* until the first completed answer. `docs/ui.md`.
+- **An Antigravity account whose token died mid-run went back into the fleet unmarked (t610/t611,
+  2026-09-22).** t601 (a debate seat) was a false lead — the real report was t610, `/videoaudit
+  region 4`, which failed 55 minutes and 28k output tokens in with `UNAUTHENTICATED (code 401):
+  Request had invalid authentication credentials. Expected OAuth 2 access token…`. Not a warmstart
+  bug: a genuine expired/revoked Google OAuth credential — **yes, sign back in to the Antigravity
+  worker.** Two real gaps closed alongside the diagnosis: `antigravity-cli` had no `needsReauth`
+  classifier at all (`claude-code` and `muse-code` both do), so this adapter could never mark an
+  account as needing re-sign-in; and `endUnfinishedRun`'s "who failed" rule (a run that produced
+  turns is charged to the work, not the account) wrongly applied to an unambiguous auth refusal —
+  the same dead credential will fail the *next* turn too, whether or not this one produced 28k
+  tokens first. `scheduler.ts` now benches the worker on a `needsReauth` match regardless of turns
+  produced; `antigravity-cli.ts` classifies the measured phrase. 3 L1 in `agy-usage.test.ts` +
+  `runfailure.test.ts`. `docs/adapters.md`.
 - **Preemption reassign layout fixed and turn refusal honored (t604, 2026-09-22).** (1) `t592` compaction
   investigation: compaction shrank context 80% (528k → 107k tokens), but 5h rolling quota was already at 88%
   and `claude-opus-5` with `effort: xhigh` consumed the remaining 12% in seconds, triggering Anthropic's session
@@ -145,18 +158,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   the last final it used to jump `0.2.0 → 0.3.0-rc.1`; a minor is now something the operator asks for
   (`--bump minor|major`), and the first release of all is still `0.1.0`. Same commit fixed t554's L3
   check, which asserted an option label a closed popover never renders — `docs/testing.md` §3.
-- **Muse Code runs natively on Windows; the WSL bridge is gone (t547, 2026-09-19).** Muse Code 1.3.0
-  ships a Windows build (`irm https://dev.meta.ai/install.ps1 | iex`). `clihost.ts` now knows `posix`
-  and `windows` hosts only; `museBinary` starts the installer's `muse-bin-<version>.exe` (never the
-  `muse.cmd` shim, whose PowerShell launcher fails under pwsh 7), and `WINDOWS_DRAIN` — the daemon's
-  own Node — replaces `cat > file` because Windows muse has no stdin prompt channel either. Images
-  flow again (the WSL-only `0700` gate is gone), and `trustKey` spells a trusted folder `\\?\<resolved
-  path>`, the only key the Windows TUI honours. Measured live through `spawnSession`/`refreshUsage` on
-  MuseFirst: the WSL-written credential worked unchanged, a turn was metered, `/usage` read 3%/23%.
-  On this machine the Ubuntu distro was unregistered and WSL uninstalled the same day (operator's
-  call; Virtual Machine Platform left on for the Claude desktop VM). ⏭ **MuseFirst cannot run until
-  the installed app is rebuilt with this change** — the old build still looks for `wsl.exe`.
-  `docs/adapters.md`.
+- **Muse Code runs natively on Windows; the WSL bridge is gone (t547, 2026-09-19).** `docs/adapters.md`.
 
 ## Remaining work — ordered by payoff
 

@@ -466,3 +466,26 @@ describe('Antigravity outOfQuota recognition (t527)', () => {
     expect(antigravityCli.outOfQuota?.('curl returned HTTP 429 from example.com')).toBe(false)
   })
 })
+
+/**
+ * ⛔ **t610, 2026-09-22.** A run that had already produced 28k output tokens over ~55 minutes ended
+ * with this, verbatim, after the identity probe had read `loggedIn: true` from the on-disk token
+ * files three minutes earlier. Unrecognised, the account was sent straight back into the fleet with
+ * nothing on its row saying the credential was dead.
+ */
+describe('Antigravity needsReauth recognition (t610)', () => {
+  const EXACT_T610 =
+    'UNAUTHENTICATED (code 401): Request had invalid authentication credentials. Expected OAuth 2 ' +
+    'access token, login cookie or other valid authentication credential. See ' +
+    'https://developers.google.com/identity/sign-in/web/devconsole-project.'
+
+  it('recognises the refusal agy ended the turn with', () => {
+    expect(antigravityCli.needsReauth?.(EXACT_T610)).toBe(true)
+    expect(antigravityCli.needsReauth?.(`The agent reported a failure (ERROR): ${EXACT_T610}`)).toBe(true)
+  })
+
+  it('does not read an ordinary failure, or a bare 401, as an auth failure', () => {
+    expect(antigravityCli.needsReauth?.('rebase stopped with a conflict in HANDOFF.md')).toBe(false)
+    expect(antigravityCli.needsReauth?.('curl returned HTTP 401 from example.com')).toBe(false)
+  })
+})

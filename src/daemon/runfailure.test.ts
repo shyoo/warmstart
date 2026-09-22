@@ -21,7 +21,9 @@ import { messageBody } from './threadline.js'
  * The distinction every case here turns on is **who failed**. A run that produced no metered turn
  * failed at the account; a run that produced turns and then broke failed at the work. Charging the
  * second to the worker benches a healthy fleet one bad prompt at a time; charging the first to the
- * task sends a person to debug a prompt that was never delivered to anything.
+ * task sends a person to debug a prompt that was never delivered to anything. ⛔ One exception: a
+ * failure an adapter's `needsReauth` recognises is always the account's, turns or no turns — see
+ * "benches the account anyway…" below.
  */
 
 let dir: string
@@ -427,6 +429,31 @@ describe('a run that did work and then failed', () => {
     })
     expect(workers.requireWorker(worker.id).health).toBeNull()
     expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+  })
+
+  /**
+   * ⛔ **The exception to "who failed" (t610, 2026-09-22).** An authentication refusal is never
+   * task-shaped, no matter how much the run got done first: the credential that just failed will
+   * fail on every turn after it, on this worker, until somebody signs back in. Measured on t610: an
+   * Antigravity run that had already metered 28k output tokens over ~55 minutes died on
+   * `UNAUTHENTICATED (code 401)` and went straight back into the fleet with nothing on the worker
+   * row saying so.
+   */
+  it('benches the account anyway when the vendor says the credential is the problem', async () => {
+    const { worker, task, session } = seedRunningTask({ adapterId: 'antigravity-cli', metered: 28_000 })
+    await turnend.onStreamResult(session, {
+      isError: true,
+      text:
+        'UNAUTHENTICATED (code 401): Request had invalid authentication credentials. Expected ' +
+        'OAuth 2 access token, login cookie or other valid authentication credential.',
+      terminalReason: 'ERROR'
+    })
+    const health = workers.requireWorker(worker.id).health
+    expect(health?.state).toBe('suspect')
+    expect(health?.needsReauth).toBe(true)
+    expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+    // Antigravity holds one account on this machine; free the slot for the tests after this one.
+    workers.retireWorker(worker.id)
   })
 })
 

@@ -494,10 +494,22 @@ behaviour falls out of it:
 - **`needsReauth(reason)`** → the *presentation* of a held-out account: `re-sign-in required` and a
   Sign in button, rather than a reason to go and read. ⛔ Optional, and the adapter answers because
   the sentence is its CLI's — an expired subscription, a revoked key and a crash all arrive as the
-  same `api_error` and differ only in the words after it. ⚠️ It changes nothing about gating: a
-  suspect worker is held out either way, and an adapter that does not implement it says `false`,
-  which is the safe answer. Never keyed on `api_error` alone — that code also covers an outage, and
-  sending somebody to re-authenticate through one is how a working account gets signed out.
+  same `api_error` and differ only in the words after it. On a dead-on-arrival run it changes only
+  the presentation: a suspect worker is held out either way, and an adapter that does not implement
+  it says `false`, which is the safe answer. ⚠️ **It does change gating on a run that produced turns
+  before it broke (t610, 2026-09-22).** `endUnfinishedRun`'s ordinary rule is "who failed" — a run
+  that metered turns and then broke is charged to the work, not the account, so a bad prompt cannot
+  bench a healthy worker. An authentication refusal is the one exception: it is never task-shaped,
+  because the same dead credential fails the next turn too. So a `needsReauth` match benches the
+  worker (`recordDispatchFailure`) regardless of how much the run had already produced. Never keyed
+  on `api_error` alone — that code also covers an outage, and sending somebody to re-authenticate
+  through one is how a working account gets signed out.
+  - **`antigravity-cli`: implemented (t610, 2026-09-22)**, anchored on `UNAUTHENTICATED`, `invalid
+    authentication credentials` and `expected oauth 2 access token` — verbatim from a run that had
+    already metered 28k output tokens over ~55 minutes when its OAuth token died mid-session. The
+    identity probe (`readAntigravityIdentity`) only decodes the on-disk token files for an email and
+    a presence bit; it never asks whether the token still works, so `loggedIn: true` three minutes
+    before this run's end told nothing about it — only a real turn could.
 
 ### Antigravity Tool Permissions & Future Improvement Options
 

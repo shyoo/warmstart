@@ -4346,6 +4346,18 @@ export async function endUnfinishedRun(
         detail: msg
       })
       setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: msg })
+    } else if (outcome === 'failed' && ad.needsReauth?.(why)) {
+      // ⛔ **Not task-shaped, even though this run produced turns.** The `dead`-on-arrival branch
+      // above already holds a worker out over a `needsReauth` failure when nothing ran; this run
+      // may have done real work first and still be sitting on a credential that will fail every
+      // turn from here on. Measured on t610, 2026-09-22: the account had already spent 55 minutes
+      // and 28k output tokens before its token died mid-session, and without this branch it went
+      // straight back into the fleet with nothing on the worker row saying it was broken.
+      recordDispatchFailure(run.workerId, why, run.id)
+      addMessage(task.id, 'system', `${ad.info.label} needs to sign in again`, null, [], {
+        detail: `${why} This account is held out of dispatch until it signs back in.`
+      })
+      setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
     } else {
       addMessage(task.id, 'system', oneLine(why), null, [], { ...(oneLine(why) === why ? {} : { detail: why }) })
       // ⛔ The deterministic outcome happens first and unconditionally, so the task is already in a
