@@ -31,10 +31,15 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **The Tasks board blipped blank every 10-20s (t624 ← t612, 2026-09-22).** t612's loading state
+  (spinner + *Loading tasks…* until `task.page` first answers) reset on *every* `refresh`, not only
+  the first — and `refresh` also re-runs on `task.changed`/`run.changed`, which the scheduler tick
+  fires that often. A fully drawn table tore down to the spinner and redrew a moment later on a
+  timer. A `loadedOnce` ref in `Tasks.tsx` now gates the reset to the page's first-ever fetch;
+  later refreshes swap data in without a loading flash. `docs/ui.md`.
 - **Routable model effort picking and annotated UI display (t622, 2026-09-22).**
   (1) Routable models editor in Settings > Workers now displays in a table format (Model, Effort, Class) supporting per-model reasoning effort selection (`workers.model_efforts_json`, migration 80) across all adapter-supported effort levels, with "Reset efforts" alongside routable and class resets. Dispatched routed runs inherit the worker's per-model effort when tasks pin no explicit effort.
   (2) Routable models display in the Workers table cell and tooltip now annotates each selected model with its capability class and configured effort level (`${id} (${cls}, ${eff} effort)` or `${id} (${cls})`), replacing the unannotated model-only string. 12 new L1 tests across `routablelabel.test.ts`, `routablemodels.test.ts`, and `modelchoice.test.ts`. `docs/routing.md`, `data-model.md`.
-
 - **A queued landing waited for ever on the operator's own dirty trunk (t621 ← t614, 2026-09-22).**
   t614 (autotrade) reported complete at 19:42:19Z with one real commit on its branch; the trunk
   `C:\Dev\autotrade` held 16 uncommitted files dated **2026-08-12** — five weeks before the project

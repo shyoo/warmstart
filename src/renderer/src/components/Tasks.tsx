@@ -299,8 +299,16 @@ export function Tasks({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [pendingDelete])
 
+  // ⛔ Loading is a first-load state, not a between-polls state. `refresh` re-runs on every
+  // `task.changed`/`run.changed` broadcast — the scheduler tick fires those every 10-20s — and
+  // flipping `tasksLoaded` back to false on each one tore the table down to the spinner and redrew
+  // it a moment later: a fully rendered board blipping blank every ten seconds. The table the
+  // operator is looking at stays up while a background refresh is in flight; only the page's first
+  // ever fetch (or a fetch that changed page-of-range) has no prior data to keep showing.
+  const loadedOnce = useRef(false)
+
   const refresh = useCallback(async () => {
-    setTasksLoaded(false)
+    if (!loadedOnce.current) setTasksLoaded(false)
     const got = await rpc('task.page', {
       ...(projectId ? { projectId } : {}),
       views,
@@ -318,6 +326,7 @@ export function Tasks({
     setTotal(got.total)
     setCounts(got.counts)
     setTasksLoaded(true)
+    loadedOnce.current = true
   }, [projectId, views, sort, asc, page, pageSize, deferredSearch])
 
   useEffect(() => {
