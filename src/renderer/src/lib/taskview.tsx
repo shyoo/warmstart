@@ -592,6 +592,21 @@ export function reassignmentModel(model: string, offeredModels: ReadonlyArray<{ 
 }
 
 /**
+ * Which model a reassign row's effort levels should be read off, given the model picker's raw value.
+ *
+ * ⛔ **`'__auto__'` and `''` are not model ids** — they mean "no pin chosen", and the effort levels
+ * on offer belong to whichever model will actually run once that choice resolves: the account's own
+ * inherited default. Looking `effortLevels` up by the literal sentinel value found nothing, so effort
+ * could only ever be picked once an operator had also picked one exact, named model — not the
+ * ordinary case of leaving the model on Auto or on the account default.
+ */
+export function effortLookupModel(selectedModel: string, inheritedModel: string | null): string {
+  return selectedModel && selectedModel !== '__auto__' && selectedModel !== '__inherit__'
+    ? selectedModel
+    : (inheritedModel ?? '')
+}
+
+/**
  * How long an agent was actually working on this task.
  *
  * ⛔ **Active time, not wall-clock, and the column that shows it is the one headed "Took".** The

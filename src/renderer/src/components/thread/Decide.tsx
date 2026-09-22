@@ -37,6 +37,7 @@ import { duration } from '../../lib/format'
 import { effortLabel, modelLabel } from '../../lib/modelname'
 import {
   canRelandTask,
+  effortLookupModel,
   holdLine,
   resolveRetryCauses,
   type ResolveRetryCause,
@@ -98,7 +99,7 @@ export function QuotaDecide({
   const canSetEffort = adapterOptions?.selectableEffort ?? false
   const inheritedModel = resolveModelChoice(null, selectedWorker, canSetEffort, selectedEntry?.quota).model
   const offeredEfforts = canSetEffort
-    ? (offeredModels.find((m) => m.id === selectedModel)?.effortLevels ?? [])
+    ? (offeredModels.find((m) => m.id === effortLookupModel(selectedModel, inheritedModel))?.effortLevels ?? [])
     : []
 
   const isPaused = task.status === 'paused_quota'
@@ -469,8 +470,8 @@ export function QuotaDecide({
                         {
                           value: '',
                           label: selectedWorker?.defaultEffort
-                            ? `account default (${effortLabel(selectedWorker.defaultEffort)})`
-                            : 'CLI default effort'
+                            ? `Auto effort (${effortLabel(selectedWorker.defaultEffort)})`
+                            : 'Auto effort (CLI default)'
                         },
                         ...offeredEfforts.map((level) => ({
                           value: level,
@@ -601,7 +602,7 @@ export function Decide({
   const canSetEffort = adapterOptions?.selectableEffort ?? false
   const inheritedModel = resolveModelChoice(null, selectedWorker, canSetEffort, selectedEntry?.quota).model
   const offeredEfforts = canSetEffort
-    ? (offeredModels.find((m) => m.id === selectedModel)?.effortLevels ?? [])
+    ? (offeredModels.find((m) => m.id === effortLookupModel(selectedModel, inheritedModel))?.effortLevels ?? [])
     : []
 
   // ⚠️ Both numbers agree with their verb. "The 2 tasks waiting on it stays blocked" is the kind of
@@ -1122,8 +1123,8 @@ export function Decide({
               {
                 value: '',
                 label: selectedWorker?.defaultEffort
-                  ? `account default (${effortLabel(selectedWorker.defaultEffort)})`
-                  : 'CLI default effort'
+                  ? `Auto effort (${effortLabel(selectedWorker.defaultEffort)})`
+                  : 'Auto effort (CLI default)'
               },
               ...offeredEfforts.map((level) => ({
                 value: level,
@@ -1133,8 +1134,8 @@ export function Decide({
             displayLabel={
               !selectedEffort
                 ? selectedWorker?.defaultEffort
-                  ? (effortLabel(selectedWorker.defaultEffort) ?? selectedWorker.defaultEffort)
-                  : 'CLI default effort'
+                  ? `Auto effort (${effortLabel(selectedWorker.defaultEffort) ?? selectedWorker.defaultEffort})`
+                  : 'Auto effort (CLI default)'
                 : undefined
             }
             onChange={(val) => setSelectedEffort(val)}

@@ -145,18 +145,15 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   `/usage `. ⛔ Operator press only (`RefreshOptions.warmUp` defaults false — the scheduler still
   spends nothing), drawn on the `no usage data yet` gap alone, priced in the note shown at
   commissioning. ⚠️ **Inferred, not yet watched working.** `docs/adapters.md`, `architecture.md`, `ui.md`.
-- **Switching a task's worker mid-conversation sent the successor the opening prompt and nothing
-  since (t562 ← t557, 2026-09-19).** `outstanding` carries the first message plus whatever is
-  undelivered; everything between them had gone to a session that no longer exists, so it never
-  travelled. Measured on t557: the worker was switched twice and the incoming codex run got the
-  opening request verbatim — neither revision it was being asked to make, nor the draft it was being
-  asked to revise — and `openai-compatible` is `mcp: false`, so `task_read` was no route back
-  either. `recapTurns` (`prompt.ts`) now interleaves those turns into a **cold** prompt in thread
-  order, labelled `[earlier turn — …]` and stated to be context, not instructions to carry out
-  again. Cold means the *session*: a resumed one holds them, a compacted one a paid-for
-  summary. Bounded (~12,000 total, oldest dropped and counted, every trim marked *abridged* —
-  nothing silent, t529); ends at `task_read` where there is MCP, *re-read the files* where not.
-  17 L1 checks (11 go red with the recap off, 6 more on a resumed session). `docs/sessions.md`, `docs/architecture.md`.
+- **Reassign's effort picker could only ever appear for one exact, named model (t619,
+  2026-09-22).** `offeredEfforts` looked `effortLevels` up by the literal selection value, and
+  neither Auto Model (`'__auto__'`) nor the blank account-default choice is a real model id — so
+  the effort control vanished in both of the two states an operator actually leaves the model in,
+  and only reappeared once they had also picked one specific model by name. `effortLookupModel`
+  (`renderer/lib/taskview.tsx`) now resolves effort against the model that would actually run —
+  the inherited default — in both of those states; the blank effort option itself is relabelled
+  `Auto effort (…)` to read the same way Auto Model does. Fixed in both reassign rows
+  (`QuotaDecide`, `Decide`) and mirrored on the phone card. 5 new L1 checks in `taskview.test.ts`.
 
 ## Remaining work — ordered by payoff
 

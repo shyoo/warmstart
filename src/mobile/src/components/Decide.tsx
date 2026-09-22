@@ -59,7 +59,12 @@ export function Decide({
   const offeredModels = adapter?.models ?? []
   const canSetEffort = adapter?.selectableEffort ?? false
   const inherited = resolveModelChoice(null, entry?.worker ?? null, canSetEffort, entry?.quota).model
-  const offeredEfforts = canSetEffort ? (offeredModels.find((m) => m.id === model)?.effortLevels ?? []) : []
+  // ⚠️ Same fix as the desktop card's: Automatic and worker-default both mean "no pin chosen yet",
+  // so effort levels are read off the model that would actually run, not the literal selection.
+  const effectiveModelForEffort = model && model !== '__auto__' ? model : inherited
+  const offeredEfforts = canSetEffort
+    ? (offeredModels.find((m) => m.id === effectiveModelForEffort)?.effortLevels ?? [])
+    : []
 
   /** A task nothing is currently moving: reassigning one has to dispatch it as well. */
   const resting =
@@ -205,7 +210,7 @@ export function Decide({
             <label className="m-field">
               <span>Effort</span>
               <select className="m-input" value={effort} disabled={busy} onChange={(e) => setEffort(e.target.value)}>
-                <option value="">Default</option>
+                <option value="">Automatic</option>
                 {offeredEfforts.map((level) => (
                   <option key={level} value={level}>
                     {level}

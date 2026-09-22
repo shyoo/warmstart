@@ -17,6 +17,7 @@ import {
   canRelandTask,
   chronologicalRuns,
   chronologicalTimeline,
+  effortLookupModel,
   elapsed,
   hasQuotaGate,
   holdLine,
@@ -840,6 +841,28 @@ describe('model reassignment', () => {
     expect(reassignmentModel('gemini-3.8-medium', [{ id: 'gemini-3.8-medium' }])).toBe(
       'gemini-3.8-medium'
     )
+  })
+})
+
+describe('effortLookupModel', () => {
+  it('reads Auto Model’s effort levels off the inherited model, not the sentinel', () => {
+    expect(effortLookupModel('__auto__', 'claude-opus-5')).toBe('claude-opus-5')
+  })
+
+  it('reads the account-default (blank) choice’s effort levels off the inherited model too', () => {
+    expect(effortLookupModel('', 'claude-opus-5')).toBe('claude-opus-5')
+  })
+
+  it('reads the explicit inherit sentinel the same way as blank', () => {
+    expect(effortLookupModel('__inherit__', 'claude-opus-5')).toBe('claude-opus-5')
+  })
+
+  it('uses the named model once one is actually pinned', () => {
+    expect(effortLookupModel('claude-sonnet-5', 'claude-opus-5')).toBe('claude-sonnet-5')
+  })
+
+  it('falls back to empty when nothing is inherited either, rather than a sentinel string', () => {
+    expect(effortLookupModel('__auto__', null)).toBe('')
   })
 })
 
