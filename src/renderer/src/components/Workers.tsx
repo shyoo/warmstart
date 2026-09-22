@@ -19,6 +19,7 @@ import { TerminalPane } from './Terminal'
 import { useTarget } from '../lib/target'
 import { errorMessage } from '@shared/errors.js'
 import { isLocalModelId, localModelLabel } from '@shared/localmodel'
+import { resolveModelClass, type ModelClass } from '@shared/modelclass'
 
 /**
  * The (i) beside a column heading whose number needs a sentence.
@@ -158,13 +159,15 @@ function RoutableModelsPill({
   models,
   disabled,
   busy,
-  onChange
+  onChange,
+  onModelClassesChange
 }: {
   worker: Worker
   models: Array<{ id: string }>
   disabled: boolean
   busy: boolean
   onChange: (next: string[]) => void
+  onModelClassesChange?: (next: Record<string, ModelClass> | null) => void
 }): React.JSX.Element {
   const selected = worker.routableModels ?? []
   const label = routableModelsLabel(selected)
@@ -177,7 +180,11 @@ function RoutableModelsPill({
     <div className="routable-models-control">
       <span
         className={`routable-models-value${selected.length === 0 ? ' routable-models-value--muted' : ''}`}
-        title={selected.length > 0 ? `Routable models: ${selected.join(', ')}` : ROUTABLE_MODELS_HELP}
+        title={
+          selected.length > 0
+            ? `Routable models: ${selected.map((id) => `${id} [${resolveModelClass(id, worker)}]`).join(', ')}`
+            : ROUTABLE_MODELS_HELP
+        }
       >
         {label}
       </span>
@@ -190,27 +197,62 @@ function RoutableModelsPill({
         menu={() => (
           <div className="workers-menu">
             <div className="workers-menu-head">
-              <span className="workers-menu-title">Routable models</span>
-              {selected.length > 0 && (
-                <button type="button" className="workers-menu-action" onClick={() => onChange([])} disabled={busy}>
-                  Reset to default model only
-                </button>
-              )}
+              <span className="workers-menu-title">Routable models & classes</span>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                {selected.length > 0 && (
+                  <button type="button" className="workers-menu-action" onClick={() => onChange([])} disabled={busy}>
+                    Reset routable
+                  </button>
+                )}
+                {worker.modelClasses && Object.keys(worker.modelClasses).length > 0 && onModelClassesChange && (
+                  <button
+                    type="button"
+                    className="workers-menu-action"
+                    onClick={() => onModelClassesChange(null)}
+                    disabled={busy}
+                  >
+                    Reset classes
+                  </button>
+                )}
+              </div>
             </div>
             <div className="workers-menu-list">
-              {models.map((m) => (
-                <label key={m.id} className="workers-menu-worker-row">
-                  <div className="workers-menu-worker-info">
-                    <input
-                      type="checkbox"
-                      checked={selected.includes(m.id)}
-                      onChange={() => toggle(m.id)}
-                      disabled={busy}
-                    />
-                    <span className="workers-menu-worker-name">{m.id}</span>
+              {models.map((m) => {
+                const currentClass = resolveModelClass(m.id, worker)
+                return (
+                  <div key={m.id} className="workers-menu-worker-row">
+                    <label className="workers-menu-worker-info">
+                      <input
+                        type="checkbox"
+                        checked={selected.includes(m.id)}
+                        onChange={() => toggle(m.id)}
+                        disabled={busy}
+                      />
+                      <span className="workers-menu-worker-name">{m.id}</span>
+                    </label>
+                    {onModelClassesChange && (
+                      <select
+                        className="workers-menu-class-select"
+                        value={currentClass}
+                        disabled={busy}
+                        aria-label={`Capability tier for ${m.id}`}
+                        onChange={(e) => {
+                          const cls = e.target.value as ModelClass
+                          const nextMap: Record<string, ModelClass> = {
+                            ...(worker.modelClasses ?? {}),
+                            [m.id]: cls
+                          }
+                          onModelClassesChange(nextMap)
+                        }}
+                      >
+                        <option value="high">High</option>
+                        <option value="med">Med</option>
+                        <option value="low">Low</option>
+                      </select>
+                    )}
                   </div>
-                </label>
-              ))}
+                )
+              })}
             </div>
           </div>
         )}
@@ -998,6 +1040,14 @@ export function Workers({
                             rpc('worker.update', {
                               id: worker.id,
                               routableModels: next.length > 0 ? next : null
+                            })
+                          )
+                        }
+                        onModelClassesChange={(next) =>
+                          void guard(`routable:${worker.id}`, () =>
+                            rpc('worker.update', {
+                              id: worker.id,
+                              modelClasses: next
                             })
                           )
                         }

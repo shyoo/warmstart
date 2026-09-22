@@ -384,8 +384,9 @@ export function modelLine(
   // ⚠️ Only where nothing has run. `ranModel` is a measurement, and a measurement outranks the
   // question of who would choose next — that is the "what ran beats what would run" rule above.
   if (task.ranModel === null && routerPicksModel(task.constraints, entry?.worker, resolved.modelSource)) {
+    const label = task.constraints.modelClass ? `router picks (${task.constraints.modelClass})` : 'router picks'
     return {
-      label: 'router picks',
+      label,
       id: null,
       ran: false,
       undecided: true,

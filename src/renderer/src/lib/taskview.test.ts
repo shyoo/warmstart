@@ -731,6 +731,11 @@ describe('the model under the account, in the Worker column', () => {
       expect(line?.routable).toBe(2)
     })
 
+    it('names the requested model class when the choice is pending', () => {
+      const line = modelLine(routed({ constraints: { modelClass: 'high' } }), fleet(routable), options)
+      expect(line).toMatchObject({ label: 'router picks (high)', id: null, ran: false, undecided: true })
+    })
+
     it('names what ran the instant a run records one', () => {
       // ⚠️ Half the claim: the cell must not simply go quiet forever on a routable account.
       const line = modelLine(routed({ ranOn: 'w1', ranModel: 'gpt-5.6-terra' }), fleet(routable), options)

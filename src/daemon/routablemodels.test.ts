@@ -121,4 +121,58 @@ describe('the routable-models column', () => {
     // The column, and the data written before the rewind, both survived the replay.
     expect(workers.requireWorker(w.id).routableModels).toEqual(['claude-sonnet-5'])
   })
+
+  it('modelClasses round-trips through worker.update and getWorker', () => {
+    const w = claudeWorker()
+    workers.updateWorker(w.id, {
+      modelClasses: { 'claude-sonnet-5': 'high', 'claude-haiku-4-5': 'low' }
+    })
+    const reread = workers.requireWorker(w.id)
+    expect(reread.modelClasses).toEqual({
+      'claude-sonnet-5': 'high',
+      'claude-haiku-4-5': 'low'
+    })
+  })
+
+  it('modelClasses clears back to null when unset', () => {
+    const w = claudeWorker()
+    workers.updateWorker(w.id, {
+      modelClasses: { 'claude-opus-5': 'high' }
+    })
+    workers.updateWorker(w.id, { modelClasses: null })
+    expect(workers.requireWorker(w.id).modelClasses).toBeNull()
+  })
+
+  it('validates modelClasses keys against cost model and values against MODEL_CLASSES', () => {
+    expect(() =>
+      api.checkWorkerDefaults('claude-code', {
+        modelClasses: { 'unknown-model': 'high' }
+      })
+    ).toThrow(/not a model/)
+
+    expect(() =>
+      api.checkWorkerDefaults('claude-code', {
+        modelClasses: { 'claude-opus-5': 'invalid-class' as unknown as import('@shared/modelclass.js').ModelClass }
+      })
+    ).toThrow(/invalid model class/)
+
+    expect(() =>
+      api.checkWorkerDefaults('claude-code', {
+        modelClasses: { 'claude-opus-5': 'high', 'claude-sonnet-5': 'med' }
+      })
+    ).not.toThrow()
+  })
+
+  it('migration 79 replays cleanly after versionBefore rewinds it', () => {
+    const w = claudeWorker()
+    workers.updateWorker(w.id, {
+      modelClasses: { 'claude-opus-5': 'high' }
+    })
+
+    db.db().exec(`pragma user_version = ${db.versionBefore('model_classes_json')}`)
+    db.closeDb()
+    expect(() => db.openDb(dbPath)).not.toThrow()
+
+    expect(workers.requireWorker(w.id).modelClasses).toEqual({ 'claude-opus-5': 'high' })
+  })
 })

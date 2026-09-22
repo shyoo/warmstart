@@ -13,11 +13,24 @@ import {
   FINISH_SHORT,
   type FinishPolicy,
   resolveModelChoice,
+  type ModelClass,
   type PendingWork,
   type ResolvedFinishPolicy,
   type Task,
   type WorkspaceMode
 } from '@shared/tasks'
+
+function initialSelectedModel(
+  model?: string,
+  modelPolicy?: 'auto' | 'inherit',
+  modelClass?: ModelClass
+): string {
+  if (model) return model
+  if (modelPolicy === 'auto') {
+    return modelClass ? `__auto__:${modelClass}` : '__auto__'
+  }
+  return ''
+}
 import type { ModelOptions } from '@shared/protocol'
 import { rpc, useNow, type FleetEntry } from '../../lib/daemon'
 import { SettingButtonSelect } from '../SettingButtonSelect'
@@ -68,7 +81,7 @@ export function QuotaDecide({
 }): React.JSX.Element | null {
   const [selectedWorkerId, setSelectedWorkerId] = useState<string>(task.constraints.workerId ?? '')
   const [selectedModel, setSelectedModel] = useState<string>(
-    task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : '')
+    initialSelectedModel(task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass)
   )
   const [selectedEffort, setSelectedEffort] = useState<string>(task.constraints.effort ?? '')
   // ⭐ What the operator wants said alongside the move, if anything. A reassignment used to be the
@@ -80,9 +93,11 @@ export function QuotaDecide({
 
   useEffect(() => {
     setSelectedWorkerId(task.constraints.workerId ?? '')
-    setSelectedModel(task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : ''))
+    setSelectedModel(
+      initialSelectedModel(task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass)
+    )
     setSelectedEffort(task.constraints.effort ?? '')
-  }, [task.constraints.workerId, task.constraints.model, task.constraints.modelPolicy, task.constraints.effort])
+  }, [task.constraints.workerId, task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass, task.constraints.effort])
 
   const warning = task.status === 'running' ? task.quotaPreemptWarning : null
   const [preemptReassignWorkerId, setPreemptReassignWorkerId] = useState<string>(
@@ -171,15 +186,18 @@ export function QuotaDecide({
   const handleReassign = async () => {
     setBusy(true)
     try {
+      const isAuto = selectedModel.startsWith('__auto__')
       const modelPolicy =
-        selectedModel === '__auto__' ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
-      const model = selectedModel === '__auto__' || selectedModel === '__inherit__' ? null : selectedModel || null
+        isAuto ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
+      const modelClass =
+        isAuto && selectedModel.includes(':') ? (selectedModel.split(':')[1] as ModelClass) : null
+      const model = isAuto || selectedModel === '__inherit__' ? null : selectedModel || null
       // ⛔ One write. The scheduler can dispatch after the worker write, so a following model write
       // is too late — it was how an explicit Opus reassignment resumed on the account's Haiku default.
       await rpc('task.setWorker', {
         id: task.id,
         workerId: selectedWorkerId || null,
-        ...(selectedWorkerId ? { model, modelPolicy, effort: selectedEffort || null } : {})
+        ...(selectedWorkerId ? { model, modelPolicy, modelClass, effort: selectedEffort || null } : {})
       })
       const note = reassignNote.trim()
       if (note) {
@@ -434,7 +452,12 @@ export function QuotaDecide({
                       ariaLabel="Reassign model"
                       options={[
                         ...(offeredModels.length > 1
-                          ? [{ value: '__auto__', label: 'Auto Model (scheduler decides)' }]
+                          ? [
+                              { value: '__auto__', label: 'Auto Model (scheduler decides)' },
+                              { value: '__auto__:high', label: 'Auto Model (high)' },
+                              { value: '__auto__:med', label: 'Auto Model (med)' },
+                              { value: '__auto__:low', label: 'Auto Model (low)' }
+                            ]
                           : []),
                         {
                           value: '',
@@ -447,6 +470,12 @@ export function QuotaDecide({
                       displayLabel={
                         selectedModel === '__auto__'
                           ? 'Auto Model'
+                          : selectedModel === '__auto__:high'
+                            ? 'Auto Model (high)'
+                            : selectedModel === '__auto__:med'
+                              ? 'Auto Model (med)'
+                              : selectedModel === '__auto__:low'
+                                ? 'Auto Model (low)'
                           : !selectedModel || selectedModel === '__inherit__'
                             ? inheritedModel
                               ? (modelLabel(inheritedModel) ?? inheritedModel)
@@ -582,7 +611,7 @@ export function Decide({
 }): React.JSX.Element {
   const [selectedWorkerId, setSelectedWorkerId] = useState<string>(task.constraints.workerId ?? '')
   const [selectedModel, setSelectedModel] = useState<string>(
-    task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : '')
+    initialSelectedModel(task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass)
   )
   const [selectedEffort, setSelectedEffort] = useState<string>(task.constraints.effort ?? '')
   // ⭐ Same box as the quota card's: the message that goes with the move. See `ReassignNote`.
@@ -591,9 +620,11 @@ export function Decide({
 
   useEffect(() => {
     setSelectedWorkerId(task.constraints.workerId ?? '')
-    setSelectedModel(task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? '__auto__' : ''))
+    setSelectedModel(
+      initialSelectedModel(task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass)
+    )
     setSelectedEffort(task.constraints.effort ?? '')
-  }, [task.constraints.workerId, task.constraints.model, task.constraints.modelPolicy, task.constraints.effort])
+  }, [task.constraints.workerId, task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass, task.constraints.effort])
 
   const selectedWorker = fleet.find((e) => e.worker.id === selectedWorkerId)?.worker ?? null
   const selectedEntry = fleet.find((e) => e.worker.id === selectedWorkerId) ?? null
@@ -720,13 +751,16 @@ export function Decide({
   const handleResolveRetry = async () => {
     setBusy(true)
     try {
-      const modelPolicy = selectedModel === '__auto__' ? 'auto' : 'inherit'
-      const model = selectedModel === '__auto__' ? null : selectedModel || null
+      const isAuto = selectedModel.startsWith('__auto__')
+      const modelPolicy = isAuto ? 'auto' : 'inherit'
+      const modelClass = isAuto && selectedModel.includes(':') ? (selectedModel.split(':')[1] as ModelClass) : null
+      const model = isAuto ? null : selectedModel || null
       await rpc('task.resolveRetry', {
         id: task.id,
         workerId: selectedWorkerId || null,
         model,
         modelPolicy,
+        modelClass,
         effort: selectedEffort || null
       })
       await onRefresh()
@@ -791,14 +825,17 @@ export function Decide({
   const handleReassign = async () => {
     setBusy(true)
     try {
+      const isAuto = selectedModel.startsWith('__auto__')
       const modelPolicy =
-        selectedModel === '__auto__' ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
-      const model = selectedModel === '__auto__' || selectedModel === '__inherit__' ? null : selectedModel || null
+        isAuto ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
+      const modelClass =
+        isAuto && selectedModel.includes(':') ? (selectedModel.split(':')[1] as ModelClass) : null
+      const model = isAuto || selectedModel === '__inherit__' ? null : selectedModel || null
       // ⛔ Same atomic reassignment as the quota card above; this handler dispatches immediately.
       await rpc('task.setWorker', {
         id: task.id,
         workerId: selectedWorkerId || null,
-        ...(selectedWorkerId ? { model, modelPolicy, effort: selectedEffort || null } : {})
+        ...(selectedWorkerId ? { model, modelPolicy, modelClass, effort: selectedEffort || null } : {})
       })
       // ⛔ **Not a sentence in the person's voice.** This used to post *"Reassigned worker to X and
       // continued."* as a human message — words nobody typed, read back to them in their own bubble
@@ -1085,7 +1122,12 @@ export function Decide({
             ariaLabel="Reassign model"
             options={[
               ...(offeredModels.length > 1
-                ? [{ value: '__auto__', label: 'Auto Model (scheduler decides)' }]
+                ? [
+                    { value: '__auto__', label: 'Auto Model (scheduler decides)' },
+                    { value: '__auto__:high', label: 'Auto Model (high)' },
+                    { value: '__auto__:med', label: 'Auto Model (med)' },
+                    { value: '__auto__:low', label: 'Auto Model (low)' }
+                  ]
                 : []),
               {
                 value: '',
@@ -1100,6 +1142,12 @@ export function Decide({
             displayLabel={
               selectedModel === '__auto__'
                 ? 'Auto Model'
+                : selectedModel === '__auto__:high'
+                  ? 'Auto Model (high)'
+                  : selectedModel === '__auto__:med'
+                    ? 'Auto Model (med)'
+                    : selectedModel === '__auto__:low'
+                      ? 'Auto Model (low)'
                 : !selectedModel || selectedModel === '__inherit__'
                   ? inheritedModel
                     ? (modelLabel(inheritedModel) ?? inheritedModel)

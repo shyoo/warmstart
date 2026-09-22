@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   FinishPolicyChoice,
+  ModelClass,
   Project,
   SessionSharingChoice,
   Task,
@@ -180,6 +181,9 @@ const FANOUT_OPTIONS: PillOption[] = Array.from({ length: MAX_PIECES - MIN_PIECE
  * CLI verbatim, and `auto` is a plausible name for one.
  */
 const MODEL_AUTO = 'policy:auto'
+const MODEL_AUTO_HIGH = 'policy:auto:high'
+const MODEL_AUTO_MED = 'policy:auto:med'
+const MODEL_AUTO_LOW = 'policy:auto:low'
 const MODEL_INHERIT = 'policy:inherit'
 
 const ATTACH_OPTIONS: PillOption[] = [
@@ -602,6 +606,7 @@ export function NewTask({
    * beside a pinned model would be reporting a setting that changes nothing.
    */
   const modelPolicy: ModelPolicy = model ? 'auto' : remembered.policy
+  const modelClass: ModelClass | undefined = model ? undefined : remembered.modelClass
   const resolved = resolveModelChoice({ model: model || undefined }, pinned, canSetEffort)
   const effectiveModel = forAdapter?.models.find((m) => m.id === (resolved.model ?? '')) ?? null
   const efforts = canSetEffort ? (effectiveModel?.effortLevels ?? []) : []
@@ -625,12 +630,28 @@ export function NewTask({
    * have to offer the same options. They did not: the plan row offered `''` for inherit, which is
    * not a value this control has any more, and picking the account's default there was unreachable.
    */
-  const modelPillValue = model || (modelPolicy === 'inherit' ? MODEL_INHERIT : MODEL_AUTO)
+  const modelPillValue =
+    model ||
+    (modelPolicy === 'inherit'
+      ? MODEL_INHERIT
+      : modelClass === 'high'
+        ? MODEL_AUTO_HIGH
+        : modelClass === 'med'
+          ? MODEL_AUTO_MED
+          : modelClass === 'low'
+            ? MODEL_AUTO_LOW
+            : MODEL_AUTO)
   const modelPillLabel = model
     ? (modelLabel(model) ?? model)
     : modelPolicy === 'inherit'
       ? inheritedModelLabel
-      : 'Auto Model'
+      : modelClass === 'high'
+        ? 'Auto Model (high)'
+        : modelClass === 'med'
+          ? 'Auto Model (med)'
+          : modelClass === 'low'
+            ? 'Auto Model (low)'
+            : 'Auto Model'
   const modelPillOptions: PillOption[] = [
     {
       value: MODEL_AUTO,
@@ -638,6 +659,27 @@ export function NewTask({
       hint: pinned
         ? `Scheduler selects the optimal routable model for ${pinned.label}`
         : 'Scheduler selects the worker account and its optimal model'
+    },
+    {
+      value: MODEL_AUTO_HIGH,
+      label: 'Auto Model (high)',
+      hint: pinned
+        ? `High capability models for ${pinned.label} (e.g. Opus, Astra, Sol, Gemini Flash High)`
+        : 'Scheduler routes to high capability models (Opus, Astra, Sol, Gemini Flash High)'
+    },
+    {
+      value: MODEL_AUTO_MED,
+      label: 'Auto Model (med)',
+      hint: pinned
+        ? `Medium capability models for ${pinned.label} (e.g. Sonnet, Terra, Gemini Flash Med)`
+        : 'Scheduler routes to medium capability models (Sonnet, Terra, Gemini Flash Med)'
+    },
+    {
+      value: MODEL_AUTO_LOW,
+      label: 'Auto Model (low)',
+      hint: pinned
+        ? `Economy capability models for ${pinned.label} (e.g. Haiku, Mini, Gemini Flash Low)`
+        : 'Scheduler routes to economy models (Haiku, Mini, Gemini Flash Low)'
     },
     {
       value: MODEL_INHERIT,
@@ -790,11 +832,32 @@ export function NewTask({
   }
 
   const chooseModel = (next: string): void => {
-    // ⚠️ Two of the options on this pill are not models. Picking one clears the pin and records
-    // *which* of the two answers was meant, which is the whole point of them being separate.
-    if (next === MODEL_AUTO || next === MODEL_INHERIT) {
+    // ⚠️ Options on this pill that are not models. Picking one clears the pin and records
+    // *which* policy/class answer was meant.
+    if (
+      next === MODEL_AUTO ||
+      next === MODEL_AUTO_HIGH ||
+      next === MODEL_AUTO_MED ||
+      next === MODEL_AUTO_LOW ||
+      next === MODEL_INHERIT
+    ) {
       const policy: ModelPolicy = next === MODEL_INHERIT ? 'inherit' : 'auto'
-      setPrefs(rememberModelChoice(prefs, prefs.workerId, { model: '', effort, policy }))
+      const chosenClass: ModelClass | undefined =
+        next === MODEL_AUTO_HIGH
+          ? 'high'
+          : next === MODEL_AUTO_MED
+            ? 'med'
+            : next === MODEL_AUTO_LOW
+              ? 'low'
+              : undefined
+      setPrefs(
+        rememberModelChoice(prefs, prefs.workerId, {
+          model: '',
+          effort,
+          policy,
+          modelClass: chosenClass
+        })
+      )
       return
     }
     const levels = forAdapter?.models.find((m) => m.id === next)?.effortLevels ?? []
@@ -805,13 +868,14 @@ export function NewTask({
       rememberModelChoice(prefs, prefs.workerId, {
         model: next,
         effort: keptEffort,
-        policy: modelPolicy
+        policy: modelPolicy,
+        modelClass: undefined
       })
     )
   }
 
   const chooseEffort = (next: string): void => {
-    setPrefs(rememberModelChoice(prefs, prefs.workerId, { model, effort: next, policy: modelPolicy }))
+    setPrefs(rememberModelChoice(prefs, prefs.workerId, { model, effort: next, policy: modelPolicy, modelClass }))
   }
 
   const submit = async (targetStatus: 'draft' | 'ready'): Promise<void> => {
@@ -876,6 +940,7 @@ export function NewTask({
             ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
             ...(model ? { model } : {}),
             ...(modelPolicy === 'inherit' && !model ? { modelPolicy: 'inherit' as const } : {}),
+            ...(modelClass && !model ? { modelClass } : {}),
             ...(effort ? { effort } : {}),
             piecePriority,
             pieceLimit: filedLimit,
@@ -914,12 +979,13 @@ export function NewTask({
           exchange: debatePrefs.exchange,
           // ⚠️ The organizer's own pin: a debate task is its organizer, so this is the ordinary
           // Worker and Model answer rather than a second control saying the same thing.
-          ...(prefs.workerId || model || effort || modelPolicy === 'inherit'
+          ...(prefs.workerId || model || effort || modelPolicy === 'inherit' || modelClass
             ? {
                 constraints: {
                   ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
                   ...(model ? { model } : {}),
                   ...(modelPolicy === 'inherit' && !model ? { modelPolicy: 'inherit' as const } : {}),
+                  ...(modelClass && !model ? { modelClass } : {}),
                   ...(effort ? { effort } : {})
                 }
               }
@@ -962,12 +1028,13 @@ export function NewTask({
           // nothing rather than three questions left to the scheduler.
           // ⚠️ `modelPolicy: 'inherit'` counts as a constraint on its own — it is the one answer on
           // that pill the daemon cannot infer from silence, since silence is what `auto` means.
-          ...(prefs.workerId || model || effort || modelPolicy === 'inherit'
+          ...(prefs.workerId || model || effort || modelPolicy === 'inherit' || modelClass
             ? {
                 constraints: {
                   ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
                   ...(model ? { model } : {}),
                   ...(modelPolicy === 'inherit' && !model ? { modelPolicy: 'inherit' as const } : {}),
+                  ...(modelClass && !model ? { modelClass } : {}),
                   ...(effort ? { effort } : {})
                 }
               }

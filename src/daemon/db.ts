@@ -2053,6 +2053,16 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'tasks', 'land_after_turn')) {
       conn.exec('alter table tasks add column land_after_turn text;')
     }
+  },
+  // 79 - model capability classes per worker (t620).
+  //
+  // ⛔ Allows operators to classify models into 'high', 'med', and 'low' capability tiers
+  // per worker account. Overrides built-in benchmark/heuristic defaults.
+  // Guarded because migration replay is part of this database's test contract.
+  (conn) => {
+    if (!hasColumn(conn, 'workers', 'model_classes_json')) {
+      conn.exec('alter table workers add column model_classes_json text;')
+    }
   }
 ]
 

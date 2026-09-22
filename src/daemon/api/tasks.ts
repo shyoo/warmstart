@@ -1,6 +1,7 @@
 /** Tasks and everything hanging off one - approvals, questions, attachments, loose ends. */
 import { resolveAutoCompact, resolveWorkspaceMode, trunkPolicyConflict, windowHighWater } from '@shared/tasks.js'
 import type { Task, WorkspaceModeChoice } from '@shared/tasks.js'
+import type { ModelClass } from '@shared/modelclass.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { adapter } from '../adapters/index.js'
 import { manualReviewsForTask, reviewsForTask } from '../review.js'
@@ -55,12 +56,22 @@ type TaskMethod =
 /** Apply a next-run worker/model choice without sending a generic “Continue” turn first. */
 function reassignForResolveRetry(
   id: string,
-  choice: { workerId: string | null; model: string | null; modelPolicy: 'auto' | 'inherit' | null; effort: string | null }
+  choice: {
+    workerId: string | null
+    model: string | null
+    modelPolicy: 'auto' | 'inherit' | null
+    effort: string | null
+    modelClass?: ModelClass | null
+  }
 ): void {
   const task = requireTask(id)
   if (!choice.workerId) {
     const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...constraints } = task.constraints
     voidQuestionsForTask(task.id, 'task reassigned')
+    if (choice.modelClass !== undefined) {
+      if (choice.modelClass) constraints.modelClass = choice.modelClass
+      else delete constraints.modelClass
+    }
     updateTask(id, { constraints, assigneeHint: null })
     return
   }
@@ -69,17 +80,20 @@ function reassignForResolveRetry(
   if (task.constraints.workerId !== worker.id) voidQuestionsForTask(task.id, 'task reassigned')
   const adapterChanged = task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId
   const { workerIds: _workerIds, ...baseConstraints } = task.constraints
+  const modelClass = choice.modelClass !== undefined ? (choice.modelClass ?? undefined) : (choice.model ? undefined : task.constraints.modelClass)
   const constraints = checkConstraints({
     ...baseConstraints,
     workerId: worker.id,
     adapterId: worker.adapterId,
     model: adapterChanged ? undefined : (choice.model ?? undefined),
     effort: adapterChanged ? undefined : (choice.effort ?? undefined),
-    modelPolicy: adapterChanged ? 'inherit' : (choice.modelPolicy ?? 'inherit')
+    modelPolicy: adapterChanged ? 'inherit' : (choice.modelPolicy ?? 'inherit'),
+    modelClass
   })
   if (!constraints.model) delete constraints.model
   if (!constraints.effort) delete constraints.effort
   if (!constraints.modelPolicy) delete constraints.modelPolicy
+  if (!constraints.modelClass) delete constraints.modelClass
   delete constraints.workerIds
   updateTask(id, { constraints, assigneeHint: worker.id })
 }
@@ -294,28 +308,48 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       const task = requireTask(p.id)
       let model: string | undefined
       let modelPolicy: 'auto' | 'inherit' | undefined
+      let modelClass: ModelClass | undefined = task.constraints.modelClass
 
       if (p.modelPolicy !== undefined) {
         modelPolicy = p.modelPolicy ?? undefined
+      }
+      if (p.modelClass !== undefined) {
+        modelClass = p.modelClass ?? undefined
       }
 
       if (p.model !== undefined) {
         if (p.model === '__inherit__' || p.model === 'policy:inherit') {
           model = undefined
           modelPolicy = 'inherit'
+          modelClass = undefined
         } else if (p.model === '__auto__' || p.model === 'policy:auto') {
           model = undefined
           modelPolicy = 'auto'
+          if (p.modelClass === undefined) modelClass = undefined
+        } else if (p.model === '__auto__:high' || p.model === 'policy:auto:high') {
+          model = undefined
+          modelPolicy = 'auto'
+          modelClass = 'high'
+        } else if (p.model === '__auto__:med' || p.model === 'policy:auto:med') {
+          model = undefined
+          modelPolicy = 'auto'
+          modelClass = 'med'
+        } else if (p.model === '__auto__:low' || p.model === 'policy:auto:low') {
+          model = undefined
+          modelPolicy = 'auto'
+          modelClass = 'low'
         } else if (p.model) {
           model = p.model
           if (p.modelPolicy === undefined) {
             modelPolicy = undefined
           }
+          modelClass = undefined
         } else {
           model = undefined
           if (p.modelPolicy === undefined) {
             modelPolicy = 'inherit'
           }
+          modelClass = undefined
         }
       } else {
         model = task.constraints.model
@@ -330,10 +364,12 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         ...task.constraints,
         model,
         modelPolicy,
+        modelClass,
         ...(p.effort !== undefined ? (p.effort ? { effort: p.effort } : { effort: undefined }) : {})
       })
       if (!model) delete constraints.model
       if (!modelPolicy) delete constraints.modelPolicy
+      if (!modelClass) delete constraints.modelClass
       if (p.effort !== undefined && !p.effort) delete constraints.effort
       return updateTask(p.id, { constraints })
     },
@@ -342,6 +378,10 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       if (!p.workerId) {
         // Reassigned to auto / scheduler choice: clear workerId, adapterId, model, effort, modelPolicy, workerIds
         const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...rest } = task.constraints
+        if (p.modelClass !== undefined) {
+          if (p.modelClass) rest.modelClass = p.modelClass
+          else delete rest.modelClass
+        }
         const isResting = !['running', 'assigned'].includes(task.status)
         voidQuestionsForTask(task.id, 'task reassigned')
         if (isResting) setHoldReason(task.id, null)
@@ -359,12 +399,13 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       // land after either RPC, so setting the worker and then the model used to let the new account's
       // default model start a run before the explicit choice arrived.
       const adapterChanged = task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId
-      const hasModelChoice = p.model !== undefined || p.modelPolicy !== undefined || p.effort !== undefined
+      const hasModelChoice = p.model !== undefined || p.modelPolicy !== undefined || p.effort !== undefined || p.modelClass !== undefined
       const model = hasModelChoice ? (p.model ?? undefined) : (adapterChanged ? undefined : task.constraints.model)
       const effort = hasModelChoice ? (p.effort ?? undefined) : (adapterChanged ? undefined : task.constraints.effort)
       const modelPolicy = hasModelChoice
         ? (p.modelPolicy ?? (p.model ? undefined : 'inherit'))
         : (adapterChanged ? 'inherit' : (task.constraints.modelPolicy ?? (task.constraints.model ? undefined : 'inherit')))
+      const modelClass = p.modelClass !== undefined ? (p.modelClass ?? undefined) : (p.model ? undefined : task.constraints.modelClass)
       const { workerIds: _workerIds, ...baseConstraints } = task.constraints
       const constraints = checkConstraints({
         ...baseConstraints,
@@ -372,7 +413,8 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         adapterId: worker.adapterId,
         model,
         effort,
-        modelPolicy
+        modelPolicy,
+        modelClass
       })
       if (!model) {
         delete constraints.model
@@ -381,6 +423,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         delete constraints.effort
       }
       if (!constraints.modelPolicy) delete constraints.modelPolicy
+      if (!constraints.modelClass) delete constraints.modelClass
       delete constraints.workerIds
       const isResting = !['running', 'assigned'].includes(task.status)
       if (isResting) setHoldReason(task.id, null)
@@ -407,7 +450,8 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
           workerId: p.workerId,
           model: p.model ?? null,
           modelPolicy: p.modelPolicy ?? null,
-          effort: p.effort ?? null
+          effort: p.effort ?? null,
+          modelClass: p.modelClass ?? null
         })
         setHoldReason(p.id, holdReason)
       }

@@ -1926,6 +1926,75 @@ describe('model-aware routing', () => {
     expect(candidates?.[0]?.model).toBe('claude-sonnet-5')
   })
 
+  describe('model capability class routing (t620)', () => {
+    it('filters candidate models to only those matching the requested modelClass', () => {
+      const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClassWorker', enabled: true })
+      workers.updateWorker(w.id, {
+        routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5']
+      })
+
+      // Task requesting high class gets opus
+      const highTask = tasks.createTask({
+        title: 'High complexity task',
+        constraints: { workerId: w.id, modelClass: 'high' }
+      })
+      const highCandidates = scoring.chooseTarget(highTask).scored?.filter((s) => s.workerId === w.id)
+      expect(highCandidates).toHaveLength(1)
+      expect(highCandidates?.[0]?.model).toBe('claude-opus-5')
+
+      // Task requesting med class gets sonnet
+      const medTask = tasks.createTask({
+        title: 'Med task',
+        constraints: { workerId: w.id, modelClass: 'med' }
+      })
+      const medCandidates = scoring.chooseTarget(medTask).scored?.filter((s) => s.workerId === w.id)
+      expect(medCandidates).toHaveLength(1)
+      expect(medCandidates?.[0]?.model).toBe('claude-sonnet-5')
+
+      // Task requesting low class gets haiku
+      const lowTask = tasks.createTask({
+        title: 'Low task',
+        constraints: { workerId: w.id, modelClass: 'low' }
+      })
+      const lowCandidates = scoring.chooseTarget(lowTask).scored?.filter((s) => s.workerId === w.id)
+      expect(lowCandidates).toHaveLength(1)
+      expect(lowCandidates?.[0]?.model).toBe('claude-haiku-4-5-20251001')
+    })
+
+    it('strictly holds the task and does not silently downgrade when no routable models match the requested class', () => {
+      const w = workers.createWorker({ adapterId: 'claude-code', label: 'EconomyOnlyWorker', enabled: true })
+      // Worker only has haiku and sonnet (low and med)
+      workers.updateWorker(w.id, {
+        routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5']
+      })
+
+      const task = tasks.createTask({
+        title: 'Must have high capability',
+        constraints: { workerId: w.id, modelClass: 'high' }
+      })
+      const choice = scoring.chooseTarget(task)
+      expect(choice.worker).toBeNull()
+      expect(choice.reason).toContain("no routable models in 'high' class")
+    })
+
+    it('honors per-worker model class overrides over built-in defaults', () => {
+      const w = workers.createWorker({ adapterId: 'claude-code', label: 'CustomClassWorker', enabled: true })
+      workers.updateWorker(w.id, {
+        routableModels: ['claude-sonnet-5', 'claude-opus-5'],
+        modelClasses: { 'claude-sonnet-5': 'high' }
+      })
+
+      const task = tasks.createTask({
+        title: 'High capability task',
+        constraints: { workerId: w.id, modelClass: 'high' }
+      })
+      const candidates = scoring.chooseTarget(task).scored?.filter((s) => s.workerId === w.id)
+      // Both sonnet-5 (via override) and opus-5 (via default) are now in 'high' class
+      expect(candidates).toHaveLength(2)
+      expect(candidates?.map((c) => c.model).sort()).toEqual(['claude-opus-5', 'claude-sonnet-5'])
+    })
+  })
+
   describe('reassign routing scenarios and model constraints (t254 bug fix)', () => {
     it('reassigning to a worker with account default (modelPolicy inherit) chooses default model alone, ignoring cheaper routable models', () => {
       db.db().prepare('update workers set enabled = 0').run()

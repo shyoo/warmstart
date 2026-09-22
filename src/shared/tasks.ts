@@ -16,6 +16,9 @@
  */
 
 import type { QuotaSnapshot, QuotaWindow, Worker } from './protocol.js'
+import type { ModelClass } from './modelclass.js'
+
+export type { ModelClass } from './modelclass.js'
 
 // ---------------------------------------------------------------------------- project
 
@@ -1300,6 +1303,10 @@ export interface TaskConstraints {
    * is one instruction, not two.
    */
   modelPolicy?: 'auto' | 'inherit'
+  /**
+   * Preferred model capability tier when model is chosen automatically ('high' | 'med' | 'low').
+   */
+  modelClass?: ModelClass
   /**
    * How hard the model should think, where the CLI can be told.
    *

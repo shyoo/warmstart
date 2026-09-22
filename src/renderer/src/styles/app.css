@@ -7159,6 +7159,15 @@ select:focus-visible,
   color: var(--color-text);
 }
 
+.workers-menu-class-select {
+  font-size: var(--text-meta);
+  padding: 1px 4px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
 /* A one-line basis under the list, in the same voice as the composer's notices. */
 .workers-menu-note {
   padding: 4px 8px 0;

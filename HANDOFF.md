@@ -30,6 +30,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+
 - **A queued landing waited for ever on the operator's own dirty trunk (t621 ← t614, 2026-09-22).**
   t614 (autotrade) reported complete at 19:42:19Z with one real commit on its branch; the trunk
   `C:\Dev\autotrade` held 16 uncommitted files dated **2026-08-12** — five weeks before the project
@@ -46,6 +47,8 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   the *Retry landing* that was the one press that could work. One `isTrunkBlockedReason`
   (`shared/tasks.ts`) now answers both. 10 L1 across `trunkmode`, `taskview` and `question`; four
   mutations go red. ⚠️ Not flown on a real run. `docs/landing.md`.
+- **Model capability class classification and selection (t620, 2026-09-22).**
+  Supported model capability tiers (`high`, `med`, `low`) for Auto Model routing (`Auto Model`, `Auto Model (high)`, `Auto Model (med)`, `Auto Model (low)`). Implemented built-in heuristic defaults (`src/shared/modelclass.ts`) and per-worker custom overrides in Workers tab (`workers.model_classes_json`, migration 79). Tasks strictly hold without silent downgrade if no candidate model in the requested class has quota. Supported across `task.create`, `task.plan`, `task.debate`, `task.setModel`, `task.setWorker`, `task.resolveRetry`, and UI reassign cards. 16 new L1 tests in `modelclass.test.ts`, `routablemodels.test.ts`, `routing.test.ts`, `taskview.test.ts`, and `composerprefs.test.ts`. `docs/routing.md`, `data-model.md`.
 - **Codex CLI per-session MCP support and Debate fallback for non-MCP agents (t618, 2026-09-22).**
   (1) Measured and enabled per-invocation MCP for Codex CLI (`openai-compatible` adapter) using
   `-c mcp_servers.<name>...` and auto-approval mode `-c mcp_servers.<name>.default_tools_approval_mode="approve"`
@@ -127,29 +130,11 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   rebase over untracked files succeeds untouched, one tracked modification refuses outright.
   Commit also refuses a press that would re-ask for a commit that exists. 11 + 7 + 3 L1 checks; four
   mutations go red. **Not flown on a real run.** `docs/landing.md`, `ui.md`, `data-model.md`.
-- **A Muse worker set to "Full user authority" now runs `--yolo` (t580, 2026-09-20).** `muse-code` declares `bypassPermissionMode: 'yolo'` (vendor: *disable approval and sandbox and trust this workspace*), chosen by `permissionModeFor` exactly as Codex's bypass is; otherwise headless stays `never`. Unit-tested; **not flown on a real run**. `docs/adapters.md`.
-- **Phone Overview activity is one line per event, and Tasks are tappable cards (t584, 2026-09-20).** Activity rows read age, `t{seq}`, event in the desktop pill language (starts blue, completions green, a human wait violet); task cards carry a `t{seq}` header with jump mark, the fact grid, then age beside the status pill. Every row and card opens its task. `docs/remote.md`.
-- **Phone task page overhauled (t585, 2026-09-20).** Header is `t{seq} | title` at full ink with status pill and branch on their own row; the detail box holds Status, cur → next worker/model, Price, Tokens, Took, and Priority as a row; the thread is a bare chat log with no card or label. The Status card drops Stop (kept on desktop) and gains Commit (`task.commitConversation` allowlisted as project-scoped write); `parity.test.ts` pins phone decisions to desktop `settleControls`, level defaults, and the allowlist. `docs/remote.md`.
-- **L1 orphaned 24,322 fixture directories and ~161 GB of `%TEMP%` (t579, 2026-09-19).** `runfailure.test.ts`
-  settles 69 metered runs reaching `codex doctor --json` which bootstrapped plugins across processes that
-  outlived the suite. `vitest.config.ts` now gives each run one temp root and a blocked PATH for vendor CLIs;
-  `l1sandbox.test.ts` guards both. 140.26 GB reclaimed. `docs/testing.md` §3.
-- **"Quota probe when idle: every 20 minutes" refreshed nothing, so idle cards read 41m, then hours,
-  old (t577, 2026-09-20).** The idle interval only ever re-read a cache file the vendor writes when the
-  account is *used*, and screen-answered adapters (Muse Code, Antigravity) were skipped outright — the
-  refresh clock retired 2026-08-31 had taken the only path with it. `forcedRefresh` now refreshes any
-  enabled, signed-in account whose newest attempt nears the interval, one terminal at a time and after
-  every account with a run in flight; the poller wakes every 5m (`IDLE_SWEEP_TICK_MS`) instead of once
-  per interval, since an early sweep skipped a cycle and doubled the age. Bound on terminals: the
-  operator's own number (3/hour/account at 20m). ⚠️ `quotaprobing.test.ts` simulates 12h per cadence;
-  the mutation (rule off) turns 11 red. **Not run on a real fleet.** `docs/cost-model.md` §5.
-- **A fresh Muse window could not be read at all, and now one turn buys the reading (t570,
-  2026-09-19).** The vendor publishes a window only once something has been spent in it, so every
-  free probe on a just-reset account answers `Currently unavailable`. `usageRefresh.warmup` declares
-  a tiny turn; `worker.warmUsage` sends it in the probe session already open, then re-drives
-  `/usage `. ⛔ Operator press only (`RefreshOptions.warmUp` defaults false — the scheduler still
-  spends nothing), drawn on the `no usage data yet` gap alone, priced in the note shown at
-  commissioning. ⚠️ **Inferred, not yet watched working.** `docs/adapters.md`, `architecture.md`, `ui.md`.
+- **A Muse worker set to "Full user authority" now runs `--yolo` (t580, 2026-09-20).** `muse-code` declares `bypassPermissionMode: 'yolo'` (vendor: *disable approval and sandbox and trust this workspace*); otherwise headless stays `never`. Unit-tested; **not flown on a real run**. `docs/adapters.md`.
+- **Phone UI overhauled (t584/t585, 2026-09-20).** Overview activity is one line per event with tappable task cards; task page header has status pill/branch, fact grid row (status, cur → next worker/model, price, tokens, duration, priority), bare chat thread, and Commit button on Status card. `docs/remote.md`.
+- **L1 orphaned temp cleanup (t579, 2026-09-19).** Temp root isolation and blocked PATH for vendor CLIs; 140.26 GB reclaimed. `docs/testing.md` §3.
+- **Quota probe when idle refreshed (t577, 2026-09-20).** `forcedRefresh` refreshes idle accounts near interval; poller wakes every 5m (`IDLE_SWEEP_TICK_MS`). `docs/cost-model.md` §5.
+- **Fresh Muse window warmup turn (t570, 2026-09-19).** `usageRefresh.warmup` sends tiny turn on operator request when `Currently unavailable`. `docs/adapters.md`.
 - **Reassign's effort picker could only ever appear for one exact, named model (t619,
   2026-09-22).** `offeredEfforts` looked `effortLevels` up by the literal selection value, and
   neither Auto Model (`'__auto__'`) nor the blank account-default choice is a real model id — so

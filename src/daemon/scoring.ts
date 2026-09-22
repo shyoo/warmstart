@@ -3,6 +3,7 @@ import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import type { Objective, Project, Task } from '@shared/tasks.js'
 import { projectTrunkOnly, resolveWorkspaceMode, windowHighWater, WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { WEIGHT_SIGNS } from '@shared/routing.js'
+import { resolveModelClass } from '@shared/modelclass.js'
 import { adapter } from './adapters/index.js'
 import { paceFactors, paceFor, paceValue, type PaceFactors } from './pace.js'
 import {
@@ -382,6 +383,17 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       candidateModels = [held.model]
     } else {
       candidateModels = routableModelsFor(worker)
+    }
+
+    if (task.constraints.modelClass) {
+      candidateModels = candidateModels.filter((m) => {
+        if (!m) return false
+        return resolveModelClass(m, worker) === task.constraints.modelClass
+      })
+      if (candidateModels.length === 0) {
+        reasons.push(`${worker.label}: no routable models in '${task.constraints.modelClass}' class`)
+        continue
+      }
     }
 
     // Bound the fan-out: cap candidate models per worker to 8

@@ -11,6 +11,7 @@ import {
   type Priority,
   type SessionSharingChoice
 } from '@shared/tasks'
+import type { ModelClass } from '@shared/modelclass'
 import { appKey } from './storagekeys'
 
 /**
@@ -75,6 +76,8 @@ export interface ModelChoice {
    * ⚠️ Ignored while `model` is set: a pin is a mandate, and there is nothing left to police.
    */
   policy: ModelPolicy
+  /** Capability class requested when policy is 'auto' ('high' | 'med' | 'low') */
+  modelClass?: ModelClass
 }
 
 /** `auto` — the scheduler scores the routable models. `inherit` — the account's own default. */
@@ -225,13 +228,21 @@ function readByWorker(raw: unknown): Record<string, ModelChoice> {
   const out: Record<string, ModelChoice> = {}
   for (const [workerId, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!value || typeof value !== 'object') continue
-    const { model, effort, policy } = value as { model?: unknown; effort?: unknown; policy?: unknown }
+    const { model, effort, policy, modelClass } = value as {
+      model?: unknown
+      effort?: unknown
+      policy?: unknown
+      modelClass?: unknown
+    }
     out[workerId] = {
       model: typeof model === 'string' ? model : '',
       effort: typeof effort === 'string' ? effort : '',
       // ⚠️ Anything unreadable — including every choice stored before this field existed — is `auto`,
       // which is what those choices did.
-      policy: policy === 'inherit' ? 'inherit' : 'auto'
+      policy: policy === 'inherit' ? 'inherit' : 'auto',
+      ...(modelClass === 'high' || modelClass === 'med' || modelClass === 'low'
+        ? { modelClass }
+        : {})
     }
   }
   return out

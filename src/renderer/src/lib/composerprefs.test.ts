@@ -296,6 +296,20 @@ describe('what the new-task composer was left set to', () => {
     })
   })
 
+  it('remembers and restores modelClass in byWorker', () => {
+    const store: Record<string, string> = {}
+    stub(store)
+    writeComposerPrefs({
+      ...DEFAULT_COMPOSER_PREFS,
+      byWorker: {
+        'w-claude': { model: '', effort: '', policy: 'auto', modelClass: 'high' }
+      }
+    })
+    const back = readComposerPrefs()
+    expect(back.byWorker['w-claude']?.modelClass).toBe('high')
+    expect(back.byWorker['w-claude']?.policy).toBe('auto')
+  })
+
   it('ignores a stored shape that is not a record', () => {
     stub({ 'warmstart.composer': '["nope"]' })
     expect(readComposerPrefs()).toEqual(DEFAULT_COMPOSER_PREFS)

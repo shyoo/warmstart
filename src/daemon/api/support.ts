@@ -1,6 +1,7 @@
 /** The RPC types, the request context, and the validators every domain shares. */
 import type { RpcMethod, RpcParams, RpcResult, Worker } from '@shared/protocol.js'
 import { canWork } from '@shared/protocol.js'
+import { MODEL_CLASSES, type ModelClass } from '@shared/modelclass.js'
 import type { ChildDefaults, Task, TaskConstraints } from '@shared/tasks.js'
 import { windowsForPool } from '@shared/tasks.js'
 import { adapter } from '../adapters/index.js'
@@ -102,6 +103,7 @@ export function checkWorkerDefaults(
     defaultEffort?: string | null
     defaultModels?: Record<string, string | null> | null
     routableModels?: string[] | null
+    modelClasses?: Record<string, ModelClass> | null
   }
 ): void {
   const info = adapter(adapterId).info
@@ -142,6 +144,15 @@ export function checkWorkerDefaults(
       // refused on write, never stored — the ladder in `routableModelsFor` and part 2's scorer both
       // trust that everything in this column is legal.
       if (!cm.modelSpec(m)) throw refused(m)
+    }
+  }
+
+  if (patch.modelClasses) {
+    for (const [m, cls] of Object.entries(patch.modelClasses)) {
+      if (!cm.modelSpec(m)) throw refused(m)
+      if (!MODEL_CLASSES.includes(cls)) {
+        throw new Error(`invalid model class '${cls}' for model '${m}'`)
+      }
     }
   }
 
@@ -269,6 +280,10 @@ export function checkConstraints(c: TaskConstraints): TaskConstraints {
 
   if (c.pieceConstraints) {
     checked.pieceConstraints = checkConstraints(c.pieceConstraints)
+  }
+
+  if (c.modelClass && !MODEL_CLASSES.includes(c.modelClass)) {
+    throw new Error(`invalid modelClass '${c.modelClass}'`)
   }
 
   let worker: Worker | null = null

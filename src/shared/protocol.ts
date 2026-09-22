@@ -1,4 +1,7 @@
 import type { ManualReview, QualityReview } from './review.js'
+import type { ModelClass } from './modelclass.js'
+
+export type { ModelClass } from './modelclass.js'
 import type {
   GradeBatch,
   QualityReport,
@@ -435,6 +438,11 @@ export interface Worker {
    * rather than stored.
    */
   routableModels?: string[] | null
+  /**
+   * Custom capability tier overrides per model ID on this account ('high' | 'med' | 'low').
+   * Overrides built-in defaults for model routing candidate selection.
+   */
+  modelClasses?: Record<string, ModelClass> | null
   identity: WorkerIdentity | null
   /**
    * What the vendor last said about this account spending past its plan limit.
@@ -1725,6 +1733,7 @@ export interface RpcMap {
         | 'defaultEffort'
         | 'defaultModels'
         | 'routableModels'
+        | 'modelClasses'
         | 'unattendedAuthority'
       >
     >
@@ -2430,7 +2439,13 @@ export interface RpcMap {
    * refused here rather than at 3am when the task is finally dispatched.
    */
   'task.setModel': {
-    params: { id: string; model: string | null; effort: string | null; modelPolicy?: 'auto' | 'inherit' | null }
+    params: {
+      id: string
+      model: string | null
+      effort: string | null
+      modelPolicy?: 'auto' | 'inherit' | null
+      modelClass?: ModelClass | null
+    }
     result: Task
   }
   /**
@@ -2447,6 +2462,7 @@ export interface RpcMap {
       model?: string | null
       effort?: string | null
       modelPolicy?: 'auto' | 'inherit' | null
+      modelClass?: ModelClass | null
     }
     result: Task
   }
@@ -2520,6 +2536,7 @@ export interface RpcMap {
       workerId?: string | null
       model?: string | null
       modelPolicy?: 'auto' | 'inherit' | null
+      modelClass?: ModelClass | null
       effort?: string | null
     }
     result: { task: Task; started: boolean; reason?: string }

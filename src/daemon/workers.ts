@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { canWork } from '@shared/protocol.js'
+import type { ModelClass } from '@shared/modelclass.js'
 import type {
   CreditStatus,
   CreditsIntent,
@@ -39,6 +40,7 @@ interface WorkerRow {
   default_effort: string | null
   default_models_json: string | null
   routable_models_json: string | null
+  model_classes_json: string | null
   identity_json: string | null
   credits_json: string | null
   credits_intent_json: string | null
@@ -70,6 +72,7 @@ function toWorker(r: WorkerRow): Worker {
     defaultEffort: r.default_effort,
     defaultModels: r.default_models_json ? (JSON.parse(r.default_models_json) as Record<string, string | null>) : null,
     routableModels: r.routable_models_json ? (JSON.parse(r.routable_models_json) as string[]) : null,
+    modelClasses: r.model_classes_json ? (JSON.parse(r.model_classes_json) as Record<string, ModelClass>) : null,
     identity: (() => {
       const ident = r.identity_json ? (JSON.parse(r.identity_json) as WorkerIdentity) : null
       const hlth = r.health_json ? (JSON.parse(r.health_json) as WorkerHealth) : null
@@ -270,6 +273,7 @@ export function updateWorker(
       | 'defaultEffort'
       | 'defaultModels'
       | 'routableModels'
+      | 'modelClasses'
       | 'unattendedAuthority'
     >
   >
@@ -289,12 +293,18 @@ export function updateWorker(
       : patch.routableModels && patch.routableModels.length > 0
         ? JSON.stringify(patch.routableModels)
         : null
+  const modelClassesJson =
+    patch.modelClasses === undefined
+      ? current.modelClasses ? JSON.stringify(current.modelClasses) : null
+      : patch.modelClasses && Object.keys(patch.modelClasses).length > 0
+        ? JSON.stringify(patch.modelClasses)
+        : null
 
   db()
     .prepare(
       `update workers set label = ?, enabled = ?, human_occupied = ?, max_concurrent = ?, role = ?,
                           default_model = ?, default_effort = ?, default_models_json = ?,
-                          routable_models_json = ?, grading_model = ?, summarising_model = ?, grading_effort = ?, grading_enabled = ?,
+                          routable_models_json = ?, model_classes_json = ?, grading_model = ?, summarising_model = ?, grading_effort = ?, grading_enabled = ?,
                           unattended_authority = ?
        where id = ?`
     )
@@ -311,6 +321,7 @@ export function updateWorker(
       patch.defaultEffort === undefined ? current.defaultEffort : patch.defaultEffort,
       defaultModelsJson,
       routableModelsJson,
+      modelClassesJson,
       patch.gradingModel === undefined ? (current.gradingModel ?? null) : patch.gradingModel,
       patch.summarisingModel === undefined ? (current.summarisingModel ?? null) : patch.summarisingModel,
       patch.gradingEffort === undefined ? (current.gradingEffort ?? null) : patch.gradingEffort,

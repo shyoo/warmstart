@@ -21,7 +21,8 @@ import {
   type Task,
   type TaskCommit,
   type TaskDiffSummary,
-  type TaskMessage
+  type TaskMessage,
+  type ModelClass
 } from '@shared/tasks'
 import type { ModelOptions, Session } from '@shared/protocol'
 import type { ManualReview, QualityReview } from '@shared/review'
@@ -835,11 +836,20 @@ function TaskDetail({
                 <SettingButtonSelect
                   value={
                     task.constraints.model ??
-                    (task.constraints.modelPolicy === 'auto' ? '__auto__' : '')
+                    (task.constraints.modelPolicy === 'auto'
+                      ? task.constraints.modelClass
+                        ? `__auto__:${task.constraints.modelClass}`
+                        : '__auto__'
+                      : '')
                   }
                   options={[
                     ...(offered.length > 1
-                      ? [{ value: '__auto__', label: 'Auto Model (scheduler decides)' }]
+                      ? [
+                          { value: '__auto__', label: 'Auto Model (scheduler decides)' },
+                          { value: '__auto__:high', label: 'Auto Model (high)' },
+                          { value: '__auto__:med', label: 'Auto Model (med)' },
+                          { value: '__auto__:low', label: 'Auto Model (low)' }
+                        ]
                       : []),
                     {
                       value: '',
@@ -860,7 +870,9 @@ function TaskDetail({
                   }
                   displayLabel={
                     task.constraints.modelPolicy === 'auto'
-                      ? 'Auto Model'
+                      ? task.constraints.modelClass
+                        ? `Auto Model (${task.constraints.modelClass})`
+                        : 'Auto Model'
                       : !task.constraints.model
                         ? assigned?.defaultModels && Object.values(assigned.defaultModels).filter(Boolean).length > 1
                           ? 'Auto-balance across pools'
@@ -870,12 +882,15 @@ function TaskDetail({
                         : undefined
                   }
                   onChange={(val) => {
-                    const modelPolicy = val === '__auto__' ? 'auto' : !val ? 'inherit' : null
-                    const model = val === '__auto__' || !val ? null : val
+                    const isAuto = val.startsWith('__auto__')
+                    const modelPolicy = isAuto ? 'auto' : !val ? 'inherit' : null
+                    const modelClass = isAuto && val.includes(':') ? (val.split(':')[1] as ModelClass) : null
+                    const model = isAuto || !val ? null : val
                     void rpc('task.setModel', {
                       id: task.id,
                       model,
                       modelPolicy,
+                      modelClass,
                       // ⛔ Cleared with the model. A level legal for the old model need not be legal
                       // for the new one, and the daemon refuses the pair rather than storing it.
                       effort: null
