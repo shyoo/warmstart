@@ -30,6 +30,9 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **Tasks wait visibly for their first page (t612, 2026-09-22).** `Tasks` no longer renders its
+  actionable **No tasks yet** state from its initial empty array while `task.page` is in flight;
+  it draws two spinning marks and *Loading tasks…* until the first completed answer. `docs/ui.md`.
 - **Preemption reassign layout fixed and turn refusal honored (t604, 2026-09-22).** (1) `t592` compaction
   investigation: compaction shrank context 80% (528k → 107k tokens), but 5h rolling quota was already at 88%
   and `claude-opus-5` with `effort: xhigh` consumed the remaining 12% in seconds, triggering Anthropic's session

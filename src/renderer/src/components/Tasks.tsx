@@ -190,6 +190,10 @@ export function Tasks({
   const [tasks, setTasks] = useState<Task[]>([])
   const [total, setTotal] = useState(0)
   const [counts, setCounts] = useState<Record<TaskView, number> | null>(null)
+  // ⛔ An empty list is an answer, not a stand-in while `task.page` is still in flight.
+  // Rendering the ordinary empty state for that interval made an existing board briefly say
+  // "No tasks yet", which reads as lost work rather than a page still loading.
+  const [tasksLoaded, setTasksLoaded] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [deliveries, setDeliveries] = useState<PullRequestDelivery[]>(propsPendingDeliveries ?? [])
   const [checkingMerged, setCheckingMerged] = useState(false)
@@ -296,6 +300,7 @@ export function Tasks({
   }, [pendingDelete])
 
   const refresh = useCallback(async () => {
+    setTasksLoaded(false)
     const got = await rpc('task.page', {
       ...(projectId ? { projectId } : {}),
       views,
@@ -312,6 +317,7 @@ export function Tasks({
     setTasks(got.tasks)
     setTotal(got.total)
     setCounts(got.counts)
+    setTasksLoaded(true)
   }, [projectId, views, sort, asc, page, pageSize, deferredSearch])
 
   useEffect(() => {
@@ -629,7 +635,13 @@ export function Tasks({
         </details>
       </div>
 
-      {tasks.length === 0 ? (
+      {!tasksLoaded ? (
+        <div className="tasks-loading" role="status" aria-live="polite">
+          <span className="tasks-loading-spinner" aria-hidden="true" />
+          <span className="tasks-loading-spinner tasks-loading-spinner--delayed" aria-hidden="true" />
+          <span>Loading tasks…</span>
+        </div>
+      ) : tasks.length === 0 ? (
         <div className="empty-inline">
           {/* ⚠️ Three different nothings. A project with no tasks needs telling what to do; a search
               that matches none of them needs telling that the query returned nothing; a filter

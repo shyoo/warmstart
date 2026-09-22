@@ -1970,6 +1970,35 @@ body {
   margin: 0 0 var(--sp-2);
 }
 
+/* The task board's initial answer arrives asynchronously. A loader keeps that interval distinct
+   from a completed empty result, which has its own actionable `.empty-inline` state. */
+.tasks-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--color-text-dim);
+  min-height: 72px;
+}
+
+.tasks-loading-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: tasks-loading-spin 0.75s linear infinite;
+}
+
+.tasks-loading-spinner--delayed {
+  width: 10px;
+  height: 10px;
+  animation-delay: -0.25s;
+}
+
+@keyframes tasks-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ---- Tasks PR banner ---------------------------------------------------- */
 
 .tasks-pr-banner {
