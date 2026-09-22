@@ -2394,6 +2394,13 @@ const WRAP_UP_GRACE_MS = 120_000
  */
 const preempting = new Set<string>()
 
+interface ActivePreemption {
+  action: 'compact' | 'handoff'
+  reassignWorkerId?: string | null
+  cancelTimer: () => void
+}
+const activePreemptions = new Map<string, ActivePreemption>()
+
 /** Give a watching operator one durable minute to overrule an avoidable quota preemption. */
 async function warnBeforeQuotaPreempt(
   task: Task,
@@ -3081,13 +3088,43 @@ async function preempt(
     settled = true
     stopWaiting()
     clearTimeout(timer)
+    if (run) activePreemptions.delete(run.id)
+    // ⛔ A destination named when the operator chose "hand off & reassign" but gone by the time
+    // the wrap-up lands (deleted, disabled) is not silently dropped: `destination` stays
+    // undefined, `reassigning` reads false below, and the task falls back to pausing here exactly
+    // as an ordinary "hand off & pause" would.
+    const destination =
+      reassigning && reassignWorkerId ? getWorker(reassignWorkerId) : undefined
+    const reassigningNow = reassigning && (reassignWorkerId === null || !!destination)
     void (async () => {
       try {
         // ⚠️ Two minutes is a long time in a fleet. The run may have ended on its own - the agent
         // took the instruction, committed, and called `task_complete` - and parking a task that has
         // since moved on would close a session somebody else's run is now holding.
         const current = run ? runsFor(task.id).find((r) => r.id === run.id) : null
+        const fresh = getTask(task.id)
         if (run && (!current || current.endedAt)) {
+          // If the task completed or cancelled, it has moved on.
+          // But if the run ended prematurely (e.g. failed / refused) and we were supposed to reassign,
+          // make sure the reassignment is applied if the task is still pinned to this worker.
+          if (
+            reassigningNow &&
+            fresh &&
+            fresh.status !== 'completed' &&
+            fresh.status !== 'cancelled' &&
+            fresh.constraints.workerId === session.workerId
+          ) {
+            const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...rest } =
+              fresh.constraints
+            updateTask(task.id, {
+              constraints: destination
+                ? { ...rest, workerId: destination.id, adapterId: destination.adapterId, modelPolicy: 'inherit' }
+                : rest,
+              notBefore: null,
+              assigneeHint: destination?.id ?? null
+            })
+            setStatus(task.id, 'paused_quota', { assignee: null })
+          }
           // The pause is moot, but the compaction verdict is still owed when this ask is the one
           // still outstanding: t446's preemption ask sat unlanded with no message because the run
           // ended 26s after it was asked. A superseding ask owns the story instead, so stay silent.
@@ -3109,13 +3146,6 @@ async function preempt(
           setTaskHandoff(task.id, 'Preemption closed the session before the agent recorded a handoff. Inspect the branch and workspace before continuing.')
         }
         if (run) finishRun(run.id, 'preempted', because)
-        // ⛔ A destination named when the operator chose "hand off & reassign" but gone by the time
-        // the wrap-up lands (deleted, disabled) is not silently dropped: `destination` stays
-        // undefined, `reassigning` reads false below, and the task falls back to pausing here exactly
-        // as an ordinary "hand off & pause" would.
-        const destination =
-          reassigning && reassignWorkerId ? getWorker(reassignWorkerId) : undefined
-        const reassigningNow = reassigning && (reassignWorkerId === null || !!destination)
         if (reassigningNow) {
           const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...rest } =
             requireTask(task.id).constraints
@@ -3144,13 +3174,27 @@ async function preempt(
           await captureQuotaAfter(requireRun(run.id))
         }
       } finally {
-        if (run) preempting.delete(run.id)
+        if (run) {
+          preempting.delete(run.id)
+          activePreemptions.delete(run.id)
+        }
       }
     })()
   }
   const waitMs = action === 'compact' ? COMPACTION_GRACE_MS : WRAP_UP_GRACE_MS
   const timer = setTimeout(() => park(false), waitMs)
   if (action === 'compact') stopWaiting = onCompactionLanded(session.id, () => park(true))
+  if (run) {
+    activePreemptions.set(run.id, {
+      action,
+      reassignWorkerId,
+      cancelTimer: () => {
+        settled = true
+        stopWaiting()
+        clearTimeout(timer)
+      }
+    })
+  }
 }
 
 
@@ -4154,34 +4198,80 @@ export async function endUnfinishedRun(
 
   if (task && (task.status === 'running' || task.status === 'assigned')) {
     if (parkAt !== null) {
-      // ⛔ Ahead of the dead-on-arrival branch as well as the ordinary one. A run refused at the
-      // first turn produces no metered turn and looks exactly like a lapsed account from here, and
-      // benching a healthy worker over a window that will reopen on its own is the wrong answer to
-      // both halves: the account is not broken, and the task has a time it can run again.
-      addMessage(task.id, 'system', `Parked on quota until ${clockTime(parkAt)}`, null, [], {
-        event: 'quota.parked',
-        detail:
-          `${why} That is this account's quota window, not a fault in the work — parked until it ` +
-          `resets, expected ${new Date(parkAt).toISOString()}, and the fleet puts this back in the ` +
-          'queue by itself then (sooner, if a reading shows the window has already come back).'
-      })
-      // ⛔ `not_before` before the status, and both before anything else can see the row: a task at
-      // `paused_quota` with no reset time is one `resumeQuotaPaused` releases immediately, straight
-      // back into the account that just refused it.
-      db()
-        .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
-        .run(parkAt, Date.now(), task.id)
-      setStatus(task.id, 'paused_quota', {
-        assignee: null,
-        // This is the vendor's refusal, not the scheduler's percentage watermark. Keep it on
-        // the held row so a later renderer does not invent an overridable reason for the park.
-        holdReason: `Vendor refused this turn: ${why}`,
-        holdUntil: parkAt
-      })
-      // ⭐ The same nudge preemption sends. The poller schedules its next look from
-      // `quotaParkedTasks`, and a reading taken now is what lets this come back early if the vendor
-      // was quoting a limit that has since rolled over.
-      requestUrgentProbe(run.workerId, `a run here was refused for quota (t${task.seq})`)
+      const activePreempt = run ? activePreemptions.get(run.id) : undefined
+      const warning = task.quotaPreemptWarning
+      const reassignAction = activePreempt ? activePreempt.action : warning?.action
+      const reassignWorkerId = activePreempt
+        ? activePreempt.reassignWorkerId
+        : (warning?.action === 'handoff' ? warning.reassignWorkerId : undefined)
+      const reassigning = reassignAction === 'handoff' && reassignWorkerId !== undefined
+      const destination = reassigning && reassignWorkerId ? getWorker(reassignWorkerId) : undefined
+      const reassigningNow = reassigning && (reassignWorkerId === null || !!destination)
+
+      if (reassigningNow) {
+        if (activePreempt) {
+          activePreempt.cancelTimer()
+          activePreemptions.delete(run.id)
+        }
+        addMessage(
+          task.id,
+          'system',
+          `Turn refused on quota; reassigning${destination ? ` to ${destination.label}` : ''}`,
+          null,
+          [],
+          {
+            event: 'quota.preempted',
+            detail:
+              `${why} This account is out of quota, but hand-off and reassign was chosen — ` +
+              `reassigning immediately rather than waiting until ${new Date(parkAt).toISOString()}.`
+          }
+        )
+        const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...rest } =
+          task.constraints
+        updateTask(task.id, {
+          constraints: destination
+            ? { ...rest, workerId: destination.id, adapterId: destination.adapterId, modelPolicy: 'inherit' }
+            : rest,
+          notBefore: null,
+          assigneeHint: destination?.id ?? null
+        })
+        setStatus(task.id, 'paused_quota', {
+          assignee: null,
+          holdReason: null,
+          holdUntil: null
+        })
+        requestUrgentProbe(run.workerId, `a run here was refused for quota (t${task.seq})`)
+        closeSession(session.id)
+      } else {
+        // ⛔ Ahead of the dead-on-arrival branch as well as the ordinary one. A run refused at the
+        // first turn produces no metered turn and looks exactly like a lapsed account from here, and
+        // benching a healthy worker over a window that will reopen on its own is the wrong answer to
+        // both halves: the account is not broken, and the task has a time it can run again.
+        addMessage(task.id, 'system', `Parked on quota until ${clockTime(parkAt)}`, null, [], {
+          event: 'quota.parked',
+          detail:
+            `${why} That is this account's quota window, not a fault in the work — parked until it ` +
+            `resets, expected ${new Date(parkAt).toISOString()}, and the fleet puts this back in the ` +
+            'queue by itself then (sooner, if a reading shows the window has already come back).'
+        })
+        // ⛔ `not_before` before the status, and both before anything else can see the row: a task at
+        // `paused_quota` with no reset time is one `resumeQuotaPaused` releases immediately, straight
+        // back into the account that just refused it.
+        db()
+          .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
+          .run(parkAt, Date.now(), task.id)
+        setStatus(task.id, 'paused_quota', {
+          assignee: null,
+          // This is the vendor's refusal, not the scheduler's percentage watermark. Keep it on
+          // the held row so a later renderer does not invent an overridable reason for the park.
+          holdReason: `Vendor refused this turn: ${why}`,
+          holdUntil: parkAt
+        })
+        // ⭐ The same nudge preemption sends. The poller schedules its next look from
+        // `quotaParkedTasks`, and a reading taken now is what lets this come back early if the vendor
+        // was quoting a limit that has since rolled over.
+        requestUrgentProbe(run.workerId, `a run here was refused for quota (t${task.seq})`)
+      }
     } else if (overloadRetry !== null) {
       const delaySec = Math.round((overloadRetry.retryAt - Date.now()) / 1000)
       addMessage(

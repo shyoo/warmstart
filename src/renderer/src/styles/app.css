@@ -5147,6 +5147,14 @@ select:focus-visible,
   color: var(--color-text);
 }
 
+.decide-choice-desc {
+  margin-bottom: var(--sp-1);
+}
+
+.decide-choice-desc:last-child {
+  margin-bottom: 0;
+}
+
 /*
  * ⛔ Warning colour, inside the sentence rather than as a banner above the card. What it says is a
  * qualification of one button — *this one is about to release four uncommitted files* — and a banner
@@ -5257,6 +5265,17 @@ select:focus-visible,
   align-items: center;
   gap: var(--sp-1);
   margin-bottom: var(--sp-1);
+}
+
+.reassign-label {
+  font-size: var(--text-meta);
+  color: var(--color-text-dim);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.decide--quota .reassign-row {
+  margin-top: var(--sp-1);
 }
 
 .reassign-select {

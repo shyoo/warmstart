@@ -323,6 +323,64 @@ describe('the switches that gate all of this', () => {
     expect(after?.constraints.workerId).toBe(other)
   })
 
+  it('reassigns immediately instead of parking on exhausted account when turn fails with vendor refusal during wrap-up', async () => {
+    const { task, run, sessionId } = seedRunawayTask(0, 'claude-code')
+    seedClosingWindow(tasks.requireRun(run.id).workerId)
+    const other = seedWorker('claude-code')
+
+    await scheduler.tick()
+    const warning = tasks.requireTask(task.id).quotaPreemptWarning
+    tasks.setQuotaPreemptWarning(task.id, { ...warning!, action: 'handoff', reassignWorkerId: other })
+
+    // Countdown expires, preemption wrap-up starts:
+    await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS)
+    await scheduler.tick()
+
+    // During wrap-up, vendor refuses the turn with session limit:
+    const session = sessions.getSession(sessionId)!
+    await scheduler.endUnfinishedRun(
+      session,
+      tasks.requireRun(run.id),
+      "api_error: You've hit your session limit · resets 11pm",
+      'failed'
+    )
+
+    expect(tasks.requireRun(run.id).outcome).toBe('preempted')
+    const after = tasks.getTask(task.id)
+    expect(after?.status).toBe('paused_quota')
+    // Reassignment must happen immediately, not parked until 11pm on the exhausted account:
+    expect(after?.notBefore).toBeNull()
+    expect(after?.constraints.workerId).toBe(other)
+
+    const messages = tasks.messagesFor(task.id).map((m) => m.text)
+    expect(messages.some((m) => /Turn refused on quota; reassigning/.test(m))).toBe(true)
+  })
+
+  it('reassigns immediately if turn fails with vendor refusal while preemption warning is still active', async () => {
+    const { task, run, sessionId } = seedRunawayTask(0, 'claude-code')
+    seedClosingWindow(tasks.requireRun(run.id).workerId)
+    const other = seedWorker('claude-code')
+
+    await scheduler.tick()
+    const warning = tasks.requireTask(task.id).quotaPreemptWarning
+    tasks.setQuotaPreemptWarning(task.id, { ...warning!, action: 'handoff', reassignWorkerId: other })
+
+    // Turn fails with session limit before warning countdown finishes:
+    const session = sessions.getSession(sessionId)!
+    await scheduler.endUnfinishedRun(
+      session,
+      tasks.requireRun(run.id),
+      "api_error: You've hit your session limit · resets 11pm",
+      'failed'
+    )
+
+    expect(tasks.requireRun(run.id).outcome).toBe('preempted')
+    const after = tasks.getTask(task.id)
+    expect(after?.status).toBe('paused_quota')
+    expect(after?.notBefore).toBeNull()
+    expect(after?.constraints.workerId).toBe(other)
+  })
+
   it('falls back to pausing here when the chosen destination is gone by the time the wrap-up lands', async () => {
     const { task, run } = seedRunawayTask(0)
     const workerId = tasks.requireRun(run.id).workerId

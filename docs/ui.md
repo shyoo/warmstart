@@ -564,7 +564,11 @@ step rather than reassigning, waiting for the run to open and then typing into i
 keeps the older button-beside-paragraph rows and carries the same box on its *Reassign* option:
 with a note, `task.message` is the resume (it requeues a `paused_quota` task itself, and rides
 along undelivered into the next run of a task still `ready` behind the gate); without one,
-`task.resume` as before.
+`task.resume` as before. During a quota preemption warning, `QuotaDecide` itemizes each wrap-up
+choice distinctly (`Compact & pause`, `Hand off & pause`, `Hand off & reassign`), attaching a labeled
+destination dropdown to `Hand off & reassign` that excludes the preempted worker and defaults to Auto.
+If the vendor refuses the turn on quota during the warning or wrap-up, the reassignment applies
+immediately rather than stranding the task on the exhausted account.
 
 ⛔ **Neither Commit nor Land ends the conversation, and neither writes a level.** Both used to write
 the chosen level onto the task, which took it out of `isOpenConversation` for ever — so pressing either

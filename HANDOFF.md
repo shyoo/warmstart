@@ -30,6 +30,14 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **Preemption reassign layout fixed and turn refusal honored (t604, 2026-09-22).** (1) `t592` compaction
+  investigation: compaction shrank context 80% (528k → 107k tokens), but 5h rolling quota was already at 88%
+  and `claude-opus-5` with `effort: xhigh` consumed the remaining 12% in seconds, triggering Anthropic's session
+  limit. (2) `Decide.tsx` & `app.css`: itemized wrap-up choices (`Compact & pause`, `Hand off & pause`, `Hand off & reassign`),
+  attached a labeled destination dropdown (`Destination:`) specifically to `Hand off & reassign`, defaulted to
+  Auto (or non-current worker), and excluded the preempting worker. (3) `scheduler.ts`: when a turn fails with
+  vendor quota refusal during warning or wrap-up, `reassigningNow` immediately applies the reassignment rather
+  than stranding the task parked on the exhausted account until `parkAt`. Unit tests in `preemption.test.ts`. `docs/ui.md`.
 - **The new L2 cursor-position probe could never pass on POSIX (2026-09-21).** `whyNoSession` exempts
   `login` from the enabled gate and nothing else, so `purpose: 'probe'` on the suite's deliberately
   disabled `exit probe` worker was refused — *worker 'exit probe' is disabled* — and CI run
@@ -90,18 +98,10 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 - **A Muse worker set to "Full user authority" now runs `--yolo` (t580, 2026-09-20).** `muse-code` declares `bypassPermissionMode: 'yolo'` (vendor: *disable approval and sandbox and trust this workspace*), chosen by `permissionModeFor` exactly as Codex's bypass is; otherwise headless stays `never`. Unit-tested; **not flown on a real run**. `docs/adapters.md`.
 - **Phone Overview activity is one line per event, and Tasks are tappable cards (t584, 2026-09-20).** Activity rows read age, `t{seq}`, event in the desktop pill language (starts blue, completions green, a human wait violet); task cards carry a `t{seq}` header with jump mark, the fact grid, then age beside the status pill. Every row and card opens its task. `docs/remote.md`.
 - **Phone task page overhauled (t585, 2026-09-20).** Header is `t{seq} | title` at full ink with status pill and branch on their own row; the detail box holds Status, cur → next worker/model, Price, Tokens, Took, and Priority as a row; the thread is a bare chat log with no card or label. The Status card drops Stop (kept on desktop) and gains Commit (`task.commitConversation` allowlisted as project-scoped write); `parity.test.ts` pins phone decisions to desktop `settleControls`, level defaults, and the allowlist. `docs/remote.md`.
-- **L1 orphaned 24,322 fixture directories and ~161 GB of `%TEMP%`; 94% was one suite spawning a
-  vendor CLI (t579, 2026-09-19).** `runfailure.test.ts` settles 69 metered runs, each reaching `void
-  captureQuotaAfter` → `refreshNow` → `refreshIdentity`, which for `openai-compatible` runs **`codex
-  doctor --json` with `CODEX_HOME` in the fixture root**; a fresh Codex home bootstraps by `git
-  fetch`ing `openai/plugins` (23 MB, network, ×16 at once). Those processes outlived the suite, so
-  `afterAll` hit `EBUSY` and **discarded the error** — ~250 MB/run, ~151 GB. ⛔ Invisible on CI, which
-  has no vendor CLI to find. `vitest.config.ts` now gives each run **one temp root** (catching the
-  `${root}_workspaces` siblings and `prompt.test.ts`'s per-`it` dirs too) and a **`PATH` where
-  already-installed vendor CLIs resolve but cannot execute**, leaving every `isInstalled()` answer as
-  it was; `l1sandbox.test.ts` guards both. ⚠️ The 2026-09-09 note on this said *delete them by hand*;
-  advice is not a mechanism. `agy-usage.test.ts`'s `if (isInstalled())` guard (vacuous on CI) now
-  asserts `detect()`'s contract. 140.26 GB reclaimed. `docs/testing.md` §3.
+- **L1 orphaned 24,322 fixture directories and ~161 GB of `%TEMP%` (t579, 2026-09-19).** `runfailure.test.ts`
+  settles 69 metered runs reaching `codex doctor --json` which bootstrapped plugins across processes that
+  outlived the suite. `vitest.config.ts` now gives each run one temp root and a blocked PATH for vendor CLIs;
+  `l1sandbox.test.ts` guards both. 140.26 GB reclaimed. `docs/testing.md` §3.
 - **"Quota probe when idle: every 20 minutes" refreshed nothing, so idle cards read 41m, then hours,
   old (t577, 2026-09-20).** The idle interval only ever re-read a cache file the vendor writes when the
   account is *used*, and screen-answered adapters (Muse Code, Antigravity) were skipped outright — the
@@ -120,10 +120,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   commissioning. ⚠️ **Inferred, not yet watched working.** `docs/adapters.md`, `architecture.md`, `ui.md`.
 - **Three thread fixes (t564, 2026-09-19).** Real Meta mark for Muse's icon; ledger splits
   cur/next worker+model; Reassign gained optional `ReassignNote`. Six L3; `docs/ui.md`.
-- **Google Docs/Slides access researched, no Warmstart change (t591, 2026-09-20).** Zero-engineering
-  path exists via per-session/global MCP configs, but it inherits full bypass authority with no
-  approval gate; first-class needs isolated credentials + forced approval, enforceable only on
-  `claude-code` today. `transient_docs/google_docs_slides_access_2026-09-20.md`.
 - **Switching a task's worker mid-conversation sent the successor the opening prompt and nothing
   since (t562 ← t557, 2026-09-19).** `outstanding` carries the first message plus whatever is
   undelivered; everything between them had gone to a session that no longer exists, so it never
