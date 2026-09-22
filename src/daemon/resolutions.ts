@@ -31,7 +31,7 @@ import {
 import { db } from './db.js'
 import { log } from './log.js'
 import { messageBody, oneLine } from './threadline.js'
-import { continueTask, releaseFor, sessionOf } from './scheduler.js'
+import { STANDING_HOLD_GRACE_MS, continueTask, releaseFor, sessionOf } from './scheduler.js'
 import { landConversationWork } from './conversationland.js'
 import { adapter } from './adapters/index.js'
 import { getWorker } from './workers.js'
@@ -887,6 +887,88 @@ async function relandTrunkTask(
 const queuedInFlight = new Set<string>()
 
 /**
+ * The two kinds of trunk blocker, told apart — and this distinction is the whole of t621.
+ *
+ * ⛔ `trunkOccupiedBy` is a **lease**: another task is working in the trunk, it will settle, and the
+ * queued landing genuinely ends by itself. `trunkNotReady` is the **operator's own checkout**: files
+ * they have not committed, a branch they have switched to, a detached HEAD. Nothing the scheduler
+ * does will ever change one of those, so a landing waiting on it is a held status with no ender —
+ * the invariant `admit()` and `handOverStandingHold` both exist to keep.
+ *
+ * ⭐ Measured on t614 (autotrade, 2026-09-22): it reported complete at 19:42:19Z, `mergeLocal`'s
+ * preflight found 16 uncommitted files in `C:\Dev\autotrade` — dated 2026-08-12, five weeks older
+ * than the project's registration, so plainly the operator's own — and the task went to
+ * `landing_queued` with `assignee: null`. Two hours later the daemon log carried **no further line
+ * about it**: `retryQueuedLandings` had rewritten the identical hold reason on every tick,
+ * `handOverStandingHold` never sees a task that is not trying to dispatch, mobile `question.ts`
+ * returns no decisions for `landing_queued` by name, and Flow files it under *queued*. Nobody was
+ * ever asked to clear the trunk, which was the one act that could have landed it.
+ */
+function trunkHoldKind(reason: string): string {
+  if (/uncommitted file\(s\) in it/i.test(reason)) return 'dirty'
+  if (/detached HEAD/i.test(reason)) return 'detached'
+  if (/checked out rather than/i.test(reason)) return 'wrong-branch'
+  return reason
+}
+
+/**
+ * Operator-only trunk holds this process has seen, and since when.
+ *
+ * ⚠️ Process-local and keyed by `trunkHoldKind`, not by the sentence. The sentence carries a file
+ * count and five file names, so an operator editing in their own checkout would reset the clock on
+ * every keystroke and never be asked anything — the ledger has to key on *what kind* of thing is in
+ * the way, which does not change while they work. A restart re-starts the clock, which is the safe
+ * direction: it delays a hand-over, it never invents one.
+ */
+const trunkHolds = new Map<string, { kind: string; since: number }>()
+
+/** Test seam: the ledger is process state, and a test that seeds a fleet needs it empty. */
+export function forgetTrunkHolds(): void {
+  trunkHolds.clear()
+}
+
+/**
+ * A queued landing waiting on something only the operator can do, handed to the operator.
+ *
+ * ⚠️ `awaiting_human`, not `failed`, and for `handOverStandingHold`'s reasons: nothing failed. The
+ * branch is intact, every commit is on it, and the task is one act away from landing. ⛔ The hold
+ * reason is *rewritten* rather than kept, because the queued one ends with "it will land by itself
+ * once the trunk is free" and that sentence has just stopped being true.
+ *
+ * Returns whether the task was handed over on this pass.
+ */
+function handOverTrunkHold(task: Task, project: Project, reason: string, now: number): boolean {
+  const kind = trunkHoldKind(reason)
+  const prior = trunkHolds.get(task.id)
+  if (!prior || prior.kind !== kind) {
+    trunkHolds.set(task.id, { kind, since: now })
+    return false
+  }
+  if (now - prior.since < STANDING_HOLD_GRACE_MS) return false
+  trunkHolds.delete(task.id)
+  const waited = Math.round((now - prior.since) / 60000)
+  addMessage(task.id, 'system', `Waiting on the trunk checkout: ${oneLine(reason)}`, null, [], {
+    event: 'landing.failed',
+    detail:
+      `This task's work is committed on \`${task.branch}\` and it is ready to merge, but the trunk ` +
+      `checkout (${project.root}) cannot receive it: ${reason}. That is your checkout, not this ` +
+      'task\'s workspace — nothing here will ever change it, and it has been this way for ' +
+      `${waited}m, so waiting longer will not help. Sort the trunk out and press **Retry landing**; ` +
+      'nothing has been discarded and the branch is exactly as the agent left it.'
+  })
+  setStatus(task.id, 'awaiting_human', {
+    assignee: 'human',
+    holdReason:
+      `the trunk is not ready to receive this: ${reason}. Nothing in the fleet can clear this — ` +
+      'the branch is intact, so press Retry landing once the trunk checkout is sorted.'
+  })
+  log.warn(
+    `t${task.seq} handed to a person after ${waited}m of a queued landing nothing clears by itself: ${reason}`
+  )
+  return true
+}
+
+/**
  * Re-attempt every landing that queued for the trunk, once the trunk is free.
  *
  * ⛔ **The thing that ends the `landing_queued` hold.** Asked on the tick, zero tokens: two cheap
@@ -894,8 +976,11 @@ const queuedInFlight = new Set<string>()
  * and only then does the (slow) landing run, in the background, so the tick is never held up by a
  * project's checks. A landing that fails for any reason other than the trunk being busy rests at
  * `awaiting_human` exactly as a first landing would, with Resolve & retry for a conflict.
+ *
+ * ⛔ **Only a trunk *lease* is a wait; the operator's own checkout is a question.** See
+ * `handOverTrunkHold` for the measurement (t614) and why the two must not share a code path.
  */
-export async function retryQueuedLandings(): Promise<number> {
+export async function retryQueuedLandings(now = Date.now()): Promise<number> {
   let started = 0
   for (const task of listTasks().filter((t) => t.status === 'landing_queued')) {
     if (queuedInFlight.has(task.id)) continue
@@ -907,19 +992,28 @@ export async function retryQueuedLandings(): Promise<number> {
       })
       continue
     }
-    const busy =
-      trunkOccupiedBy(project, task.id) ?? (await trunkNotReady(project.root, landingTargetFor(task, project)))
+    const leased = trunkOccupiedBy(project, task.id)
+    const busy = leased ?? (await trunkNotReady(project.root, landingTargetFor(task, project)))
     if (busy) {
       if (busy.startsWith('the trunk could not be read:')) {
+        trunkHolds.delete(task.id)
         setStatus(task.id, 'awaiting_human', {
           assignee: 'human',
           holdReason: busy
         })
         continue
       }
+      // A lease ends when the task holding it settles, so this one really does wait it out.
+      if (leased) {
+        trunkHolds.delete(task.id)
+        setHoldReason(task.id, `the trunk is not ready to receive this: ${busy}. It will land by itself once the trunk is free.`)
+        continue
+      }
+      if (handOverTrunkHold(task, project, busy, now)) continue
       setHoldReason(task.id, `the trunk is not ready to receive this: ${busy}. It will land by itself once the trunk is free.`)
       continue
     }
+    trunkHolds.delete(task.id)
     queuedInFlight.add(task.id)
     started += 1
     log.info(`t${task.seq}: the trunk is free — landing the queued branch`)

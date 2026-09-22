@@ -82,6 +82,37 @@ describe('decisionsFor', () => {
     expect(decisionsFor(task({ status: 'landing_queued' }), NOW)).toEqual([])
   })
 
+  it('offers a queued landing nothing at all, whatever its hold reason says (t614)', () => {
+    // ⛔ This exact sentence used to classify as `uncommitted`, so a task queued behind the
+    // operator's own dirty trunk drew *Resolve & retry* on the phone — a billed agent run sent to
+    // commit changes on a branch that had none. A queued landing is the tick's to end or hand over.
+    const trunkBlocked = task({
+      status: 'landing_queued',
+      holdReason:
+        'the trunk is not ready to receive this: the trunk has 16 uncommitted file(s) in it ' +
+        '(6 modified/tracked, 10 untracked): AGENTS.md, DESIGN.md, HANDOFF.md, HISTORY.md, ' +
+        'research/trials.jsonl, +11 more. Commit, stash, or clear them in the trunk checkout ' +
+        '(C:\\Dev\\autotrade) so the merge can run. It will land by itself once the trunk is free.'
+    })
+    expect(decisionsFor(trunkBlocked, NOW)).toEqual([])
+  })
+
+  it('offers Retry landing once that same hold has been handed to a person (t614)', () => {
+    // ⭐ The hand-over `retryQueuedLandings` performs after the grace period. Its wording is the
+    // daemon's; what matters here is that the one press that can land the branch is now drawn.
+    const handed = task({
+      status: 'awaiting_human',
+      holdReason:
+        'the trunk is not ready to receive this: the trunk has 16 uncommitted file(s) in it ' +
+        '(6 modified/tracked, 10 untracked): AGENTS.md, +15 more. Commit, stash, or clear them in ' +
+        'the trunk checkout (C:\\Dev\\autotrade) so the merge can run. Nothing in the fleet can ' +
+        'clear this — the branch is intact, so press Retry landing once the trunk checkout is sorted.'
+    })
+    const out = decisionsFor(handed, NOW)
+    expect(out).toContain('reland')
+    expect(out).not.toContain('retry')
+  })
+
   it('offers Commit to a conversation holding uncommitted work, and nothing else', () => {
     const dirty = { supported: true, reason: '', branch: 'warmstart/t7-sweep', unclaimed: false, dirtyFiles: 1, untrackedFiles: 0, unlandedCommits: 0, hasDiff: true }
     expect(decisionsFor(task({ kind: 'conversation' }), NOW, dirty)).toContain('commit')

@@ -30,6 +30,22 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **A queued landing waited for ever on the operator's own dirty trunk (t621 ← t614, 2026-09-22).**
+  t614 (autotrade) reported complete at 19:42:19Z with one real commit on its branch; the trunk
+  `C:\Dev\autotrade` held 16 uncommitted files dated **2026-08-12** — five weeks before the project
+  was registered, so plainly the operator's own — and the task rested at `landing_queued`. Two hours
+  later the daemon log carried **no further line about it**. Two faults. (1) `retryQueuedLandings`
+  treats every trunk blocker as self-clearing, but only a trunk *lease* is: `trunkNotReady` names the
+  operator's checkout, which nothing in the fleet will ever change, and `handOverStandingHold` only
+  watches tasks trying to *dispatch*. It now keeps a ledger keyed by blockage *kind* (not the
+  sentence, whose file count changes as they work) and hands the task to a person after
+  `STANDING_HOLD_GRACE_MS`, the same constant. (2) `resolveRetryCauses` excluded the trunk by the
+  literal phrase `the trunk has uncommitted`, which `trunkNotReady` stopped writing when it began
+  naming files — and its own remedy word **stash** matched the positive branch. So t614 classified as
+  `uncommitted`: the card would have offered a billed *Resolve & retry* to commit nothing and **hid**
+  the *Retry landing* that was the one press that could work. One `isTrunkBlockedReason`
+  (`shared/tasks.ts`) now answers both. 10 L1 across `trunkmode`, `taskview` and `question`; four
+  mutations go red. ⚠️ Not flown on a real run. `docs/landing.md`.
 - **Codex CLI per-session MCP support and Debate fallback for non-MCP agents (t618, 2026-09-22).**
   (1) Measured and enabled per-invocation MCP for Codex CLI (`openai-compatible` adapter) using
   `-c mcp_servers.<name>...` and auto-approval mode `-c mcp_servers.<name>.default_tools_approval_mode="approve"`
@@ -65,21 +81,10 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   Auto (or non-current worker), and excluded the preempting worker. (3) `scheduler.ts`: when a turn fails with
   vendor quota refusal during warning or wrap-up, `reassigningNow` immediately applies the reassignment rather
   than stranding the task parked on the exhausted account until `parkAt`. Unit tests in `preemption.test.ts`. `docs/ui.md`.
-- **The new L2 cursor-position probe could never pass on POSIX (2026-09-21).** `whyNoSession` exempts
-  `login` from the enabled gate and nothing else, so `purpose: 'probe'` on the suite's deliberately
-  disabled `exit probe` worker was refused — *worker 'exit probe' is disabled* — and CI run
-  35609481443 went red on `daemon · ubuntu-latest` alone, the one job that does not skip the branch.
-  The seat is opened for that single spawn and closed again after. ⚠️ Windows skips the section, so
-  this is proven by Linux CI only.
 - **Fleet cards double-counted and phantom-held slots (t597, 2026-09-21).** ClaudeSecond read
   `1 / 1` empty; CodexFirst read `2 / 1` beside one task. An unlinked live session now covers one
   sessionless running task (`unclaimedLiveWorkSessions`); a parked task reassigned elsewhere frees
   its old worker. 15 L1 in `slotcount.test.ts` + 2 in `fleetcard.test.ts`. `docs/routing.md` §2.2.
-- **The cursor-position PTY test ran in L1 even though it deliberately starts `sh` (2026-09-21).**
-  The L1 `node-pty` alias correctly refused it on Linux CI, making `npm test` red. The two checks
-  now run in L2 through the daemon's real PTY: a probe receives `ESC[1;1R`; a human-facing login
-  does not receive the daemon's synthetic keystroke. Its diagnostic formatter uses `String.fromCharCode(27)`
-  rather than a control-character regex, which Lint forbids. Windows skips the POSIX `stty` fixture visibly.
 - **Codex upgraded to 0.155.1 with GPT-6 Astra access on ChatGPT Plus (t594, 2026-09-20).** Upgraded
   `@openai/codex` to 0.155.1 (0.151.0 refused `gpt-6-astra` on a vendor version error); verified live
   that `gpt-6-astra` executes and completes tasks on a ChatGPT Plus subscription with reasoning effort

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Project, Task } from '@shared/tasks.js'
-import { resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
+import { isTrunkBlockedReason, resolveRetryCauses, resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
 
 /**
  * Trunk mode: a task that works in the project's own checkout, on the landing target itself.
@@ -310,6 +310,132 @@ describe('a busy trunk queues a worktree landing', () => {
 
     const started = await resolutions.retryQueuedLandings()
     expect(started).toBe(1)
+  })
+
+  /**
+   * A queued landing blocked by the operator's own checkout, which nothing in the fleet can clear.
+   *
+   * ⭐ **t614 (autotrade, 2026-09-22) is the measurement.** It reported complete at 19:42:19Z with
+   * one real commit on its branch; `mergeLocal`'s preflight found 16 uncommitted files in
+   * `C:\Dev\autotrade`, dated 2026-08-12 — five weeks before the project was registered, so the
+   * operator's own — and it went to `landing_queued` with `assignee: null`. Two hours later the
+   * daemon log had no further line about it: the tick rewrote the identical hold reason for ever,
+   * and nothing anywhere asked the one person who could clear it. A held status with no ender.
+   */
+  describe('a queued landing waiting on the operator\'s own checkout (t614)', () => {
+    /** The sentence `trunkNotReady` really writes, so these tests cannot drift from it. */
+    async function dirtyTrunkReason(): Promise<string> {
+      return (await landing.trunkNotReady(root, 'main')) ?? ''
+    }
+
+    function queued(title: string): Task {
+      const task = tasks.createTask({ title, projectId: project.id })
+      tasks.setTaskBranch(task.id, `warmstart/t${task.seq}-queued`, 1)
+      tasks.setStatus(task.id, 'landing_queued')
+      return tasks.getTask(task.id)!
+    }
+
+    beforeEach(() => {
+      resolutions.forgetTrunkHolds()
+    })
+
+    it("does not read the operator's dirty trunk as the agent leaving work uncommitted", async () => {
+      // ⛔ The defect that made t614 worse than stuck: the shared classifier turned this exact
+      // sentence into `uncommitted`, which offers a billed agent run to commit nothing and hides
+      // the Retry landing button. Asserted against the live string, not a paraphrase of it.
+      writeFileSync(join(root, 'wip.txt'), 'operator\n')
+      try {
+        const reason = await dirtyTrunkReason()
+        expect(reason).toMatch(/uncommitted file\(s\) in it/)
+        expect(isTrunkBlockedReason(reason)).toBe(true)
+        expect(resolveRetryCauses({ holdReason: reason })).toEqual([])
+      } finally {
+        rmSync(join(root, 'wip.txt'))
+      }
+    })
+
+    it('waits out the grace period, then hands the landing to the person who can clear it', async () => {
+      writeFileSync(join(root, 'wip.txt'), 'operator\n')
+      const task = queued('blocked on a dirty trunk')
+      try {
+        const t0 = 1_000_000
+
+        // First sighting: still a queue, and the reason says so.
+        expect(await resolutions.retryQueuedLandings(t0)).toBe(0)
+        expect(tasks.getTask(task.id)?.status).toBe('landing_queued')
+        expect(tasks.getTask(task.id)?.holdReason).toMatch(/it will land by itself once the trunk is free/i)
+
+        // Still inside the grace period: nobody is bothered yet.
+        expect(await resolutions.retryQueuedLandings(t0 + scheduler.STANDING_HOLD_GRACE_MS - 1)).toBe(0)
+        expect(tasks.getTask(task.id)?.status).toBe('landing_queued')
+
+        // Past it: handed over, and the promise it can no longer keep is withdrawn.
+        expect(await resolutions.retryQueuedLandings(t0 + scheduler.STANDING_HOLD_GRACE_MS + 1)).toBe(0)
+        const handed = tasks.getTask(task.id)!
+        expect(handed.status).toBe('awaiting_human')
+        expect(handed.assignee).toBe('human')
+        expect(handed.holdReason).toMatch(/Nothing in the fleet can clear this/)
+        expect(handed.holdReason).not.toMatch(/land by itself/i)
+        // ⛔ And the reason it rests on must still not read as the agent's own loose ends.
+        expect(resolveRetryCauses(handed)).toEqual([])
+        expect(isTrunkBlockedReason(handed.holdReason)).toBe(true)
+
+        const said = tasks.messagesFor(task.id).map((m) => m.text).join('\n')
+        expect(said).toMatch(/Waiting on the trunk checkout/)
+        expect(tasks.messagesFor(task.id).some((m) => (m.detail ?? '').includes(root))).toBe(true)
+      } finally {
+        rmSync(join(root, 'wip.txt'))
+      }
+    })
+
+    it('never hands over while the block is a trunk lease, which ends by itself', async () => {
+      const holder = tasks.createTask({ title: 'in the trunk', projectId: project.id, workspaceMode: 'trunk' })
+      worktrees.claimTrunk(project, holder.id)
+      const task = queued('behind a trunk task')
+      try {
+        const t0 = 2_000_000
+        for (const at of [t0, t0 + scheduler.STANDING_HOLD_GRACE_MS * 2, t0 + scheduler.STANDING_HOLD_GRACE_MS * 10]) {
+          expect(await resolutions.retryQueuedLandings(at)).toBe(0)
+          expect(tasks.getTask(task.id)?.status).toBe('landing_queued')
+        }
+        expect(tasks.getTask(task.id)?.holdReason).toMatch(new RegExp(`t${holder.seq} is working in the trunk`))
+      } finally {
+        tasks.setStatus(holder.id, 'completed')
+        db.db().exec('delete from resource_claims')
+      }
+    })
+
+    it('restarts the clock when the kind of blockage changes, not when the file list does', async () => {
+      const task = queued('one file, then two')
+      writeFileSync(join(root, 'wip.txt'), 'operator\n')
+      try {
+        const t0 = 3_000_000
+        expect(await resolutions.retryQueuedLandings(t0)).toBe(0)
+        // ⛔ The ledger keys on *what kind* of thing is in the way. Keyed on the sentence, an
+        // operator typing in their own checkout would reset the clock on every save and never be
+        // asked anything — the file count and the five names it prints both change.
+        writeFileSync(join(root, 'wip2.txt'), 'more\n')
+        expect(await resolutions.retryQueuedLandings(t0 + scheduler.STANDING_HOLD_GRACE_MS + 1)).toBe(0)
+        expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+      } finally {
+        rmSync(join(root, 'wip.txt'), { force: true })
+        rmSync(join(root, 'wip2.txt'), { force: true })
+      }
+    })
+
+    it('forgets the hold and lands as usual the moment the trunk is clean', async () => {
+      writeFileSync(join(root, 'wip.txt'), 'operator\n')
+      const task = queued('cleaned up in time')
+      try {
+        const t0 = 4_000_000
+        expect(await resolutions.retryQueuedLandings(t0)).toBe(0)
+        rmSync(join(root, 'wip.txt'))
+        expect(await resolutions.retryQueuedLandings(t0 + scheduler.STANDING_HOLD_GRACE_MS + 1)).toBe(1)
+        expect(tasks.getTask(task.id)?.status).toBe('landing_queued')
+      } finally {
+        rmSync(join(root, 'wip.txt'), { force: true })
+      }
+    })
   })
 
   it('moves task to awaiting_human if trunk cannot be read', async () => {

@@ -59,9 +59,12 @@ export type TaskDecision = 'override' | 'retry' | 'reland' | 'resume' | 'reassig
  *
  * ⛔ Read off the task, never off what was clicked, and every entry names an RPC the remote
  * allowlist permits — a 403 here would be a bug in this list, and `parity.test.ts` holds it to
- * the map. `landing_queued` is a hold the tick ends by itself (`retryQueuedLandings`), so it is
- * not somebody's job and gets no Reassign; a `running` task cannot be marked done without
- * stopping it first.
+ * the map. `landing_queued` is a hold the tick ends by itself or hands over (`retryQueuedLandings`),
+ * so it is not somebody's job yet and offers **nothing** — not Reassign, and not the landing
+ * buttons either. ⛔ It offered *Resolve & retry* until t621: `trunkNotReady`'s sentence
+ * misclassified as `uncommitted`, so a task queued behind the operator's own dirty trunk drew a
+ * button that would have billed a fresh agent run to commit nothing. A `running` task cannot be
+ * marked done without stopping it first.
  *
  * ⛔ No Stop here, on purpose: the detail page keeps one-tap buttons for answers, and stopping a
  * live run from a phone is the easiest tap to make by accident. The desktop keeps it; the phone
@@ -76,8 +79,10 @@ export function decisionsFor(task: Task, now = Date.now(), pending?: PendingWork
   if (task.status === 'completed' || task.status === 'cancelled' || task.status === 'cancelling') return []
   const out: TaskDecision[] = []
   if (isQuotaGated(task, now)) out.push('override')
-  if (resolveRetryCauses(task).length > 0) out.push('retry')
-  if (canRelandTask(task)) out.push('reland')
+  if (task.status !== 'landing_queued') {
+    if (resolveRetryCauses(task).length > 0) out.push('retry')
+    if (canRelandTask(task)) out.push('reland')
+  }
   if (task.status === 'paused_quota' || task.status === 'paused_user') out.push('resume')
   if (task.status !== 'landing_queued') {
     out.push('reassign')

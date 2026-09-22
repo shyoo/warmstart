@@ -24,6 +24,7 @@ import {
   isChecksFailedTask,
   isConflictedTask,
   isQuotaGated,
+  isTrunkBlockedReason,
   isTrunkMovedTask,
   isUncommittedTask,
   isWorking,
@@ -1077,6 +1078,69 @@ describe('landing recovery actions and canRelandTask', () => {
     expect(canRelandTask({ branch: 'b', holdReason: 'another task is still landing after 60s of waiting for a turn' })).toBe(true)
     expect(canRelandTask({ branch: 'b', holdReason: 'committed and verified, waiting for a clean trunk' })).toBe(true)
     expect(canRelandTask({ branch: 'b', holdReason: 'committed and verified on `b`, but the trunk would not fast-forward: rejected' })).toBe(true)
+  })
+
+  /**
+   * t614's own hold reason, verbatim from the store (autotrade, 2026-09-22).
+   *
+   * ⛔ Do not paraphrase this. Every defect below is a phrase mismatch, so a fixture that reads
+   * *about* the sentence instead of being it proves nothing. `trunkNotReady` writes the middle of
+   * it; `retryQueuedLandings` writes the wrapper and the tail.
+   */
+  const T614_REASON =
+    'the trunk is not ready to receive this: the trunk has 16 uncommitted file(s) in it ' +
+    '(6 modified/tracked, 10 untracked): AGENTS.md, DESIGN.md, HANDOFF.md, HISTORY.md, ' +
+    'research/trials.jsonl, +11 more. Commit, stash, or clear them in the trunk checkout ' +
+    '(C:\\Dev\\autotrade) so the merge can run. It will land by itself once the trunk is free.'
+
+  it('does not read a dirty trunk as the agent leaving work uncommitted (t614)', () => {
+    // ⛔ The exclusion was `/the trunk has uncommitted/`, a phrase `trunkNotReady` stopped writing
+    // when it began naming the files — and its own remedy sentence says **stash**, which the
+    // positive branch matches. So t614 classified as `uncommitted`: the card would have offered a
+    // billed "Resolve & retry" sending an agent to commit changes on a branch that had none.
+    expect(resolveRetryCauses({ holdReason: T614_REASON })).toEqual([])
+    expect(isUncommittedTask({ holdReason: T614_REASON })).toBe(false)
+    expect(isTrunkBlockedReason(T614_REASON)).toBe(true)
+  })
+
+  it('offers Retry landing for the dirty trunk, which is the one press that can land it (t614)', () => {
+    // The `uncommitted` misclassification above also *hid* this button, so the card offered the
+    // one action guaranteed to be useless and withheld the one that works.
+    expect(canRelandTask({ branch: 'warmstart/t614-please', holdReason: T614_REASON })).toBe(true)
+  })
+
+  it('classifies every sentence a blocked trunk can write, and none that a workspace can', () => {
+    const trunk = [
+      T614_REASON,
+      'committed and verified on `b`, but not merged: the trunk has 2 uncommitted file(s) in it ' +
+        '(1 modified/tracked, 1 untracked): a.txt, b.txt. Commit, stash, or clear them in the trunk ' +
+        'checkout (/repo) so the merge can run. The branch is intact — merge it when the trunk is free.',
+      'the trunk is not ready to receive this: the trunk is on a detached HEAD rather than `main` — ' +
+        'switch the trunk checkout back to `main` to let the merge run. It will land by itself once the trunk is free.',
+      'the trunk is not ready to receive this: the trunk has `wip` checked out rather than `main` — ' +
+        'switch the trunk checkout back to `main` to let the merge run. It will land by itself once the trunk is free.',
+      'the trunk is not ready to receive this: t614 is working in the trunk. It will land by itself once the trunk is free.',
+      'the trunk is not ready to receive this: a trunk task is working in the trunk. It will land by itself once the trunk is free.',
+      'landing failed: committed and verified on `warmstart/t80`, but not merged: the trunk has ' +
+        'uncommitted changes. The branch is intact — merge it when the trunk is free.',
+      'the trunk could not be read: fatal: not a git repository'
+    ]
+    for (const reason of trunk) {
+      expect(isTrunkBlockedReason(reason), reason).toBe(true)
+      expect(resolveRetryCauses({ holdReason: reason }), reason).not.toContain('uncommitted')
+    }
+
+    // ⛔ And the agent's own loose ends still are the agent's: these must keep offering the agent.
+    const workspace = [
+      'landing failed: the workspace has uncommitted changes',
+      'the branch `warmstart/t9` has 3 file(s) are uncommitted',
+      'this task cannot be asked after its turn ends',
+      'the work was left on a rescue commit'
+    ]
+    for (const reason of workspace) {
+      expect(isTrunkBlockedReason(reason), reason).toBe(false)
+      expect(resolveRetryCauses({ holdReason: reason }), reason).toContain('uncommitted')
+    }
   })
 
   it('still offers canReland after one retry already failed, unless the cause is unfixable (t509)', () => {

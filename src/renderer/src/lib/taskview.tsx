@@ -1,5 +1,6 @@
 import {
   isPlanExecute,
+  isTrunkBlockedReason,
   resolveModelChoice,
   resolveRetryCauses,
   type Compaction,
@@ -907,6 +908,12 @@ export function canRelandTask(task: Pick<Task, 'branch' | 'holdReason'>): boolea
   if (isUncommittedTask(task)) return false
   if (isTrunkMovedTask(task)) return false
   if (/no commits|nothing to land|branch is empty/i.test(reason)) return false
+  // ⛔ **The trunk checkout being in the way is the case this button exists for.** Once the operator
+  // has committed, stashed or cleared their own files, one press merges the branch — and nothing
+  // else on the card does. t614 (2026-09-22) had none of it: `trunkNotReady`'s sentence names a file
+  // count rather than the literal phrase below, so only the `uncommitted` misclassification matched,
+  // and that *hid* this button. Ask the shared classifier, not a phrase.
+  if (isTrunkBlockedReason(reason)) return true
   return /landing failed|not merged|wait(ed|ing) for a turn|would not fast-forward|trunk was busy|clean trunk|the trunk is busy|the trunk has uncommitted/i.test(
     reason
   )
@@ -920,4 +927,4 @@ export function canRelandTask(task: Pick<Task, 'branch' | 'holdReason'>): boolea
  * returning every match and drawing one button per match asked the same question twice (t289).
  * The card draws one button and stacks every cause returned here beneath it.
  */
-export { resolveRetryCauses, type ResolveRetryCause }
+export { isTrunkBlockedReason, resolveRetryCauses, type ResolveRetryCause }
