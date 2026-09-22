@@ -291,7 +291,7 @@ function resolutionInstruction(
  * ⚠️ The one tool call is named with its two shapes, and the round budget is stated as a fact rather
  * than as a request: the organizer may converge early and may never extend.
  */
-function arbitrationInstruction(task: Task, projectRoot: string | null): string {
+function arbitrationInstruction(task: Task, projectRoot: string | null, hasMcp = true): string {
   const seats = seatsOf(task.id)
   const state = task.debate
   const round = state?.round ?? 1
@@ -314,7 +314,7 @@ function arbitrationInstruction(task: Task, projectRoot: string | null): string 
     })
     .join(NL + NL)
 
-  return [
+  const preamble = [
     `You are the ORGANIZER of a debate. Round ${round} of at most ${rounds} has just finished, and ` +
       `${seats.length} agents have each answered this question independently:`,
     '',
@@ -337,25 +337,55 @@ function arbitrationInstruction(task: Task, projectRoot: string | null): string 
       'positions agree because nobody examined the question, say so — agreement is not evidence. ' +
       '⛔ Where a seat changed its position, look for the evidence it names for the change; a seat ' +
       'conceding is not evidence that it was wrong, and the dissent you report has to say what ' +
-      'withdrew each dissent that was withdrawn.',
+      'withdrew each dissent that was withdrawn.'
+  ]
+
+  if (hasMcp) {
+    return [
+      ...preamble,
+      '',
+      'Then call the MCP tool `debate_round` ONCE, in one of its two shapes:',
+      round < rounds
+        ? '  • `{ continue: true, briefs: [...] }` — one brief per seat, each naming the SPECIFIC ' +
+          'disagreement that seat has to address next. Use this while there is a real disagreement ' +
+          'worth another round.'
+        : `  • continuing is not available: this debate was authorised for ${rounds} round(s) and ` +
+          'this was the last one. Converge.',
+      '  • `{ converged: true, agreement, dissent, confidence, unresolved }` — the four parts, and ' +
+        'a reply missing any of them is refused. ⛔ An empty dissent section is refused: if there ' +
+        'genuinely was none, say that in the dissent field and say what was never contested.',
+      '',
+      `You may converge early — that only ever saves money and needs no permission. You may not ask ` +
+        'for more rounds than the operator authorised; the tool will refuse and tell you why.',
+      '',
+      'Converging raises a card with five choices and BLOCKS until a person answers it. The answer ' +
+        'comes back in the tool result and tells you what to do next. Do not guess it, and do not ' +
+        'start any work before it arrives.'
+    ].join(NL)
+  }
+
+  return [
+    ...preamble,
     '',
-    'Then call the MCP tool `debate_round` ONCE, in one of its two shapes:',
+    'You do not have an MCP tool. Emit your decision as a terminal contract block at the END of your response in ONE of the two shapes:',
+    '',
     round < rounds
-      ? '  • `{ continue: true, briefs: [...] }` — one brief per seat, each naming the SPECIFIC ' +
-        'disagreement that seat has to address next. Use this while there is a real disagreement ' +
-        'worth another round.'
-      : `  • continuing is not available: this debate was authorised for ${rounds} round(s) and ` +
-        'this was the last one. Converge.',
-    '  • `{ converged: true, agreement, dissent, confidence, unresolved }` — the four parts, and ' +
-      'a reply missing any of them is refused. ⛔ An empty dissent section is refused: if there ' +
-      'genuinely was none, say that in the dissent field and say what was never contested.',
+      ? '1. To continue to the next round, end with:\n' +
+        'DEBATE ROUND CONTINUE:\n' +
+        seats.map((_, i) => `Seat ${i + 1}: <specific brief for seat ${i + 1}>`).join('\n') +
+        '\n\nName the SPECIFIC disagreement each seat has to address next. Use this while there is a real disagreement worth another round.'
+      : `1. Continuing is not available: this debate was authorised for ${rounds} round(s) and this was the last one. Converge.`,
     '',
-    `You may converge early — that only ever saves money and needs no permission. You may not ask ` +
-      'for more rounds than the operator authorised; the tool will refuse and tell you why.',
+    '2. To converge and report the agreement, end with:\n' +
+      'DEBATE ROUND CONVERGED:\n' +
+      'Agreed: <what was agreed, concretely enough to execute>\n' +
+      'Dissent: <who disagreed, with what, and on what grounds — minimum 40 characters>\n' +
+      'Confidence: <how confident you are in this agreement, and why>\n' +
+      'Unresolved: <what the debate did not settle and what would settle it>\n\n' +
+      '⛔ An empty dissent section is refused: if there genuinely was none, say what was never contested.',
     '',
-    'Converging raises a card with five choices and BLOCKS until a person answers it. The answer ' +
-      'comes back in the tool result and tells you what to do next. Do not guess it, and do not ' +
-      'start any work before it arrives.'
+    'You may converge early — that only ever saves money and needs no permission.',
+    'Converging records the agreement and pauses for the operator to choose what happens next. Do not start executing or committing.'
   ].join(NL)
 }
 
@@ -365,14 +395,16 @@ function arbitrationInstruction(task: Task, projectRoot: string | null): string 
  * ⛔ One paragraph per verdict, and only the one that was chosen — sent into the session that
  * already holds the whole debate, which is the saving this feature is built on.
  */
-export function verdictInstruction(verdict: DebateVerdict, checkLead: string, commitHygiene: string): string {
+export function verdictInstruction(verdict: DebateVerdict, checkLead: string, commitHygiene: string, hasMcp = true): string {
   switch (verdict) {
     case 'execute':
       return (
         'The operator chose EXECUTE AS AGREED. The agreement you just reported is the spec — build ' +
         'it, here, in this session. Work to the end without stopping between phases. ' +
         checkLead +
-        'When the work is finished, call `task_complete` with a one-line summary. ' +
+        (hasMcp
+          ? 'When the work is finished, call `task_complete` with a one-line summary. '
+          : 'When the work is finished, commit what you have and end with a line beginning `TASK COMPLETE: ` followed by a one-line summary. ') +
         commitHygiene
       )
     case 'split':
@@ -1005,6 +1037,10 @@ export function promptFor(
     // describes.
     if (followUp) {
       if (!isOpenConversation(task)) parts.push(resumedAnchor(true))
+    } else if (debatePhase === 'arbitrating') {
+      parts.push(arbitrationInstruction(task, project?.root ?? null, false))
+    } else if (debatePhase === 'executing' && task.debate?.verdict) {
+      parts.push(verdictInstruction(task.debate.verdict, checkLead, commitHygiene, false))
     } else {
       parts.push(
       isOpenConversation(task)
@@ -1024,13 +1060,10 @@ export function promptFor(
     }
   }
 
-  // ⛔ **A conversation stops here, and skipping the block below is the point rather than an
+  // ⛔ **A conversation or debate arbitration stops here, and skipping the block below is the point rather than an
   // omission.** What follows tells a `streamPrompts: 'once'` CLI that it gets one turn and must
-  // commit everything in it — the exact instruction a conversation exists to withhold. The reason
-  // that block exists still holds for such an adapter (its process really does end with the turn),
-  // but the consequence does not: a conversation's next turn arrives on a *revived* session, its
-  // workspace is retained across the wait, and the commit is the operator's to ask for.
-  if (isOpenConversation(task)) {
+  // commit everything in it — the exact instruction a conversation or debate round exists to withhold.
+  if (isOpenConversation(task) || debatePhase === 'arbitrating') {
     return { text: parts.join('\n\n'), attachments }
   }
 

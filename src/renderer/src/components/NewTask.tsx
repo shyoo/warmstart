@@ -23,7 +23,7 @@ import {
 } from '@shared/tasks'
 import type { DebateExchange, DebateSeat } from '@shared/tasks'
 import { resolveFinishPolicy, resolveSessionSharing } from '@shared/policy'
-import type { DebatePreview, ModelOptions, Settings } from '@shared/protocol'
+import type { AdapterInfo, DebatePreview, ModelOptions, Settings } from '@shared/protocol'
 import type { ModelReportRow } from '@shared/routing'
 import { canWork } from '@shared/protocol'
 import { debateNotices } from '../lib/debatenotice'
@@ -493,9 +493,11 @@ export function NewTask({
    * here would drift from the first the day a model was added to a file and not to this bundle.
    */
   const [options, setOptions] = useState<ModelOptions[]>([])
+  const [adapters, setAdapters] = useState<AdapterInfo[]>([])
   const [settings, setSettings] = useState<Settings | null>(null)
   const [modelFitness, setModelFitness] = useState<ModelReportRow[]>([])
   const { settings: uiSettings } = useUiSettings()
+  const adapterMap = useMemo(() => new Map(adapters.map((a) => [a.id, a])), [adapters])
   // ⚠️ Every task in the fleet, not the page behind this form. A prerequisite is often the task you
   // filed a minute ago, and whether it happens to match the bucket the table is filtered to says
   // nothing about whether this one should wait for it.
@@ -511,6 +513,9 @@ export function NewTask({
       // A fleet with no priceable model list is still a fleet that can run work. The form falls back
       // to whatever each CLI defaults to, which is what it did before there was a picker at all.
       .catch(() => setOptions([]))
+    void rpc('adapter.list')
+      .then(setAdapters)
+      .catch(() => setAdapters([]))
     void rpc('settings.get')
       .then(setSettings)
       .catch(() => setSettings(null))
@@ -763,13 +768,15 @@ export function NewTask({
       .sort((a, b) => (bestFitnessFor(b.id) ?? -1) - (bestFitnessFor(a.id) ?? -1))
       .map((w) => {
         const fitness = bestFitnessFor(w.id)
+        const hasMcp = adapterMap.get(w.adapterId)?.capabilities.mcp ?? false
+        const mcpTag = hasMcp ? 'native MCP' : 'terminal fallback'
         return {
           value: w.id,
           label: w.label,
           hint:
             fitness !== null
-              ? `fitness ${fitness.toFixed(2)} · ${w.adapterId}`
-              : `unmeasured · ${w.adapterId}`
+              ? `fitness ${fitness.toFixed(2)} · ${w.adapterId} (${mcpTag})`
+              : `unmeasured · ${w.adapterId} (${mcpTag})`
         }
       })
   ]
@@ -1346,6 +1353,7 @@ export function NewTask({
                 <td>
                   <DebateRoster
                     workers={pinnable}
+                    adapterMap={adapterMap}
                     modelOptions={options}
                     seats={debatePrefs.seats}
                     lensesOffered={lensesOffered}
@@ -1854,7 +1862,16 @@ export function NewTask({
         */
         <ul className="composer-notices" aria-label="Debate cost and configuration notices">
           {rosterComplete && preview ? (
-            debateNotices(preview, debatePrefs.rounds).map((notice) => (
+            debateNotices(
+              preview,
+              debatePrefs.rounds,
+              prefs.workerId
+                ? {
+                    label: pinnable.find((w) => w.id === prefs.workerId)?.label ?? prefs.workerId,
+                    hasMcp: adapterMap.get(pinnable.find((w) => w.id === prefs.workerId)?.adapterId ?? '')?.capabilities.mcp ?? false
+                  }
+                : { label: 'Auto', hasMcp: null }
+            ).map((notice) => (
               <li key={notice.id} className={`composer-notice composer-notice--${notice.tone}`}>
                 {notice.text}
               </li>
@@ -2126,6 +2143,7 @@ function WorkersPicker({
  */
 function DebateRoster({
   workers,
+  adapterMap,
   modelOptions,
   seats,
   lensesOffered,
@@ -2138,6 +2156,7 @@ function DebateRoster({
     defaultModel?: string | null
     defaultEffort?: string | null
   }>
+  adapterMap: Map<string, AdapterInfo>
   modelOptions: ModelOptions[]
   seats: DebateSeat[]
   /** ⚠️ True only on a one-family roster; see `lensesOffered` in the composer. */
@@ -2162,6 +2181,9 @@ function DebateRoster({
         <div className="workers-menu">
           <div className="workers-menu-head">
             <span className="workers-menu-title">Seats</span>
+          </div>
+          <div className="workers-menu-note" style={{ padding: '4px 8px', fontSize: '11px', color: 'var(--text-muted)' }}>
+            All agents can serve in seats (MCP or terminal completion).
           </div>
           <div className="workers-menu-list">
             {seats.map((seat, i) => {
@@ -2191,11 +2213,14 @@ function DebateRoster({
                       }
                     >
                       <option value="">Choose an account…</option>
-                      {workers.map((w) => (
-                        <option key={w.id} value={w.id}>
-                          {w.label}
-                        </option>
-                      ))}
+                      {workers.map((w) => {
+                        const hasMcp = adapterMap.get(w.adapterId)?.capabilities.mcp ?? false
+                        return (
+                          <option key={w.id} value={w.id}>
+                            {w.label} ({hasMcp ? 'MCP' : 'terminal'})
+                          </option>
+                        )
+                      })}
                     </select>
                     {worker && (
                       <select

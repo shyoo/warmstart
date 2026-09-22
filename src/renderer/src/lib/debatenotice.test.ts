@@ -129,4 +129,18 @@ describe('the notices the composer draws', () => {
       'returns'
     ])
   })
+
+  it('includes organizer capability notice when organizerMcp is provided', () => {
+    const withMcp = debateNotices(preview(), 3, { label: 'Claude', hasMcp: true })
+    expect(withMcp[0]?.id).toBe('organizer_mcp')
+    expect(withMcp[0]?.text).toContain('native MCP enabled')
+
+    const withoutMcp = debateNotices(preview(), 3, { label: 'Antigravity', hasMcp: false })
+    expect(withoutMcp[0]?.id).toBe('organizer_mcp')
+    expect(withoutMcp[0]?.text).toContain('terminal fallback')
+
+    const autoRouted = debateNotices(preview(), 3, { label: 'Auto', hasMcp: null })
+    expect(autoRouted[0]?.id).toBe('organizer_mcp')
+    expect(autoRouted[0]?.text).toContain('auto-routed')
+  })
 })

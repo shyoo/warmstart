@@ -20,7 +20,7 @@ import { money, tokens } from './format'
 export type NoticeTone = 'neutral' | 'caution'
 
 export interface Notice {
-  id: 'heterogeneity' | 'cost' | 'returns' | 'serial'
+  id: 'heterogeneity' | 'cost' | 'returns' | 'serial' | 'organizer_mcp'
   tone: NoticeTone
   text: string
 }
@@ -129,9 +129,42 @@ export function serialNotice(preview: DebatePreview): Notice | null {
   }
 }
 
-/** The three notices, in the order the composer draws them. ⚠️ The serial one only when it applies. */
-export function debateNotices(preview: DebatePreview, rounds: number): Notice[] {
+/**
+ * How the organizer arbitrates based on its MCP capability.
+ *
+ * ⛔ **Advisory, never a gate.** MCP agents arbitrate natively via `debate_round` tool;
+ * non-MCP agents arbitrate via terminal fallback (`DEBATE ROUND CONTINUE:` / `DEBATE ROUND CONVERGED:`).
+ */
+export function organizerCapabilityNotice(organizerLabel: string, hasMcp: boolean | null): Notice {
+  if (hasMcp === null) {
+    return {
+      id: 'organizer_mcp',
+      tone: 'neutral',
+      text: 'Organizer: auto-routed. Native MCP agents arbitrate via debate tools; non-MCP agents arbitrate via terminal fallback.'
+    }
+  }
+  if (hasMcp) {
+    return {
+      id: 'organizer_mcp',
+      tone: 'neutral',
+      text: `Organizer (${organizerLabel}): native MCP enabled. Arbitrates rounds and files verdict via MCP tools.`
+    }
+  }
+  return {
+    id: 'organizer_mcp',
+    tone: 'neutral',
+    text: `Organizer (${organizerLabel}): non-MCP agent. Arbitrates rounds via terminal fallback contract and parks verdict for operator.`
+  }
+}
+
+/** The notices, in the order the composer draws them. ⚠️ The serial one only when it applies. */
+export function debateNotices(
+  preview: DebatePreview,
+  rounds: number,
+  organizerMcp?: { label: string; hasMcp: boolean | null }
+): Notice[] {
   return [
+    ...(organizerMcp ? [organizerCapabilityNotice(organizerMcp.label, organizerMcp.hasMcp)] : []),
     heterogeneityNotice(preview),
     costNotice(preview),
     ...(serialNotice(preview) ? [serialNotice(preview)!] : []),

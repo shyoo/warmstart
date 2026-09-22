@@ -7,6 +7,12 @@ import type {
   QuestionOrigin,
   QuestionResolution
 } from '@shared/tasks.js'
+import {
+  DEBATE_VERDICTS,
+  DEBATE_VERDICT_DETAILS,
+  DEBATE_VERDICT_LABELS,
+  type DebateVerdict
+} from '@shared/tasks.js'
 import { normaliseAsk } from '@shared/policy.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
@@ -14,8 +20,21 @@ import { log } from './log.js'
 import { getSession } from './sessions.js'
 import { costModel } from './costmodel.js'
 import { adapter } from './adapters/index.js'
-import { addMessage, getTask, markDelivered, messagesFor, onRunStart, onTaskSettled, runForSession, setStatus } from './tasks.js'
+import {
+  addMessage,
+  admit,
+  getTask,
+  markDelivered,
+  messagesFor,
+  onRunStart,
+  onTaskSettled,
+  runForSession,
+  setStatus,
+  updateTask
+} from './tasks.js'
 import { getAttachment } from './attachments.js'
+import { becomeConversation, recordVerdict } from './debate.js'
+import { cancelTask } from './cancel.js'
 
 /**
  * Questions.
@@ -368,6 +387,35 @@ export function answerQuestion(id: string, answer: QuestionAnswer, by: 'human' =
       const task = getTask(answered.taskId)
       if (task?.status === 'awaiting_human') {
         setStatus(answered.taskId, 'running', { assignee: 'agent', holdReason: null })
+      }
+    } else if (answered.origin === 'debate') {
+      const chosen = answered.answer?.optionIds?.find((optId): optId is DebateVerdict =>
+        (DEBATE_VERDICTS as readonly string[]).includes(optId)
+      )
+      if (chosen) {
+        recordVerdict(answered.taskId, chosen)
+        const note = answered.answer?.text?.trim()
+        addMessage(answered.taskId, 'system', `Verdict: ${DEBATE_VERDICT_LABELS[chosen]}`, answered.runId, [], {
+          detail: note ? `The operator added: ${note}` : DEBATE_VERDICT_DETAILS[chosen]
+        })
+        if (chosen === 'discuss') {
+          becomeConversation(answered.taskId)
+        } else if (chosen === 'complete') {
+          updateTask(answered.taskId, { finishPolicy: 'report-only' })
+          setStatus(answered.taskId, 'completed', { holdReason: 'debate converged and completed as report-only' })
+        } else if (chosen === 'stop') {
+          void cancelTask(answered.taskId, {
+            restingState: 'paused_user',
+            reason: 'the operator stopped the work after reading the debate’s agreement',
+            requestedBy: 'human'
+          })
+        } else if (chosen === 'execute' || chosen === 'split') {
+          const task = getTask(answered.taskId)
+          if (task?.status === 'awaiting_human' || task?.status === 'blocked') {
+            setStatus(answered.taskId, 'ready', { assignee: null, holdReason: null })
+            admit(answered.taskId)
+          }
+        }
       }
     }
   }

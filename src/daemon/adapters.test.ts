@@ -672,12 +672,10 @@ describe('a stream transport has two halves, and only one of them was wired', ()
     expect(result?.kind === 'result' && result.text).toContain('not supported when using Codex')
   })
 
-  it('codex is not told to call a tool it was never given', () => {
-    // ⛔ Codex has MCP; this adapter cannot pass a *per-session* registration, which is what
-    // `task_complete` needs - `plan()` has said so since it was written while `capabilities.mcp`
-    // said the opposite. The prompt builder reads this field, so `true` appended "call the MCP tool
-    // `task_complete`" to every codex prompt for a tool that did not exist.
-    expect(adapter('openai-compatible').info.capabilities.mcp).toBe(false)
+  it('codex supports per-session MCP registration via CLI config overrides', () => {
+    // ⭐ Codex supports MCP via -c mcp_servers.<name>... per-session overrides,
+    // so capabilities.mcp is true.
+    expect(adapter('openai-compatible').info.capabilities.mcp).toBe(true)
   })
 
   it('a one-shot CLI resumes by respawning, and never by a second prompt', () => {
@@ -868,6 +866,46 @@ describe('the MCP server is called the same thing at both ends', () => {
       expect(i, 'claude-code no longer passes --permission-prompt-tool').toBeGreaterThan(-1)
       expect(plan?.args[i + 1]).toBe(APPROVE_TOOL)
     } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  it('openai-compatible translates mcpConfig into per-session -c overrides', () => {
+    const codex = ALL.find((a) => a.info.id === 'openai-compatible')
+    expect(codex).toBeDefined()
+    const dir = mkdtempSync(join(tmpdir(), 'codex-mcp-test-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'codex-mcp-cwd-'))
+    const mcpConfigFile = join(dir, 'mcp.json')
+    writeFileSync(
+      mcpConfigFile,
+      JSON.stringify({
+        mcpServers: {
+          [MCP_SERVER_NAME]: {
+            command: 'node',
+            args: ['out/main/agentyard-mcp.js'],
+            env: {
+              WARMSTART_SESSION_ID: 'test-codex-session',
+              WARMSTART_TIER: 'worker'
+            }
+          }
+        }
+      })
+    )
+    try {
+      const plan = codex?.plan({
+        sessionId: 'test-codex-session',
+        isolationRoot: dir,
+        cwd,
+        transport: 'stream',
+        mcpConfig: mcpConfigFile
+      })
+      expect(plan?.args).toContain('-c')
+      expect(plan?.args).toContain(`mcp_servers.${MCP_SERVER_NAME}.command="node"`)
+      expect(plan?.args).toContain(`mcp_servers.${MCP_SERVER_NAME}.args=["out/main/agentyard-mcp.js"]`)
+      expect(plan?.args).toContain(`mcp_servers.${MCP_SERVER_NAME}.env.WARMSTART_SESSION_ID="test-codex-session"`)
+      expect(plan?.args).toContain(`mcp_servers.${MCP_SERVER_NAME}.default_tools_approval_mode="approve"`)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
       rmSync(cwd, { recursive: true, force: true })
     }
   })

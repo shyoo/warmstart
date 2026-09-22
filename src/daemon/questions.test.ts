@@ -764,4 +764,47 @@ describe('a question filed with its asker already gone', () => {
     await handlers['question.answer']({ id: filed.id, optionIds: [], text: 'Postgres' })
     expect(tasks.requireTask(task.id).status).toBe('paused_user')
   })
+
+  it('applies a debate verdict when answering a parked debate question', async () => {
+    seq += 1
+    const worker = workers.createWorker({
+      adapterId: 'openai-compatible',
+      label: `w${seq}`,
+      enabled: false
+    })
+    const task = tasks.createTask({
+      title: `t${seq}`,
+      kind: 'debate',
+      debate: { seats: [{ workerId: worker.id }], rounds: 1, exchange: 'full', round: 1, verdict: null },
+      createdBy: { kind: 'human' }
+    })
+    const session = seedSession(`9e551011-0000-4000-8000-00000000000${seq}`, worker.id)
+    tasks.startRun({
+      taskId: task.id,
+      workerId: worker.id,
+      sessionId: session.id,
+      projectId: null,
+      quotaUnverified: true,
+      costModelId: null
+    })
+    const filed = questions.fileParkedQuestion({
+      sessionId: session.id,
+      origin: 'debate',
+      kind: 'choice',
+      header: `t${task.seq}: debate answer`,
+      question: 'What now?',
+      options: [
+        { id: 'execute', label: 'Execute' },
+        { id: 'complete', label: 'Complete' },
+        { id: 'discuss', label: 'Discuss' }
+      ]
+    })
+    tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: 'awaiting debate verdict' })
+
+    questions.answerQuestion(filed.id, { optionIds: ['complete'], text: 'Looks solid' })
+    const updated = tasks.requireTask(task.id)
+    expect(updated.debate?.verdict).toBe('complete')
+    expect(updated.status).toBe('completed')
+    expect(updated.finishPolicy).toBe('report-only')
+  })
 })

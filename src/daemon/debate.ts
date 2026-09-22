@@ -864,3 +864,103 @@ export function lastPositionOf(seat: Task): string | null {
   const text = found?.text?.trim()
   return text ? text : null
 }
+
+export interface ParsedDebateTerminalContinue {
+  kind: 'continue'
+  briefs: Array<{ seat: number; text: string }>
+}
+
+export interface ParsedDebateTerminalConverged {
+  kind: 'converged'
+  agreement: {
+    agreed: string
+    dissent: string
+    confidence: string
+    unresolved: string
+  }
+}
+
+export type ParsedDebateTerminal = ParsedDebateTerminalContinue | ParsedDebateTerminalConverged
+
+/**
+ * Parse a non-MCP organizer's terminal arbitration response.
+ *
+ * Supports:
+ * - `DEBATE ROUND CONTINUE:` with `Seat <n>: <brief>` per seat
+ * - `DEBATE ROUND CONVERGED:` with `Agreed:`, `Dissent:`, `Confidence:`, `Unresolved:`
+ */
+export function parseDebateRoundTerminal(text: string): ParsedDebateTerminal | null {
+  if (!text || !text.trim()) return null
+
+  // 1. Check for DEBATE ROUND CONVERGED:
+  const convergeMatch = /(?:^|\n)[ \t>#*-]*(?:\*\*)?DEBATE ROUND CONVERGED:?(?:\*\*)?[ \t]*(.*(?:\n[\s\S]*)?)$/i.exec(text)
+  const convergeBody = (convergeMatch ? convergeMatch[1] : text) ?? ''
+
+  const agreedRegex = /(?:^|\n)[ \t>#*-]*(?:\*\*)?Agreed(?:\*\*)?[:\s-]+/i
+  const dissentRegex = /(?:^|\n)[ \t>#*-]*(?:\*\*)?Dissent(?:\*\*)?[:\s-]+/i
+  const confidenceRegex = /(?:^|\n)[ \t>#*-]*(?:\*\*)?Confidence(?:\*\*)?[:\s-]+/i
+  const unresolvedRegex = /(?:^|\n)[ \t>#*-]*(?:\*\*)?Unresolved(?:\*\*)?[:\s-]+/i
+
+  const aM = agreedRegex.exec(convergeBody)
+  const dM = dissentRegex.exec(convergeBody)
+  const cM = confidenceRegex.exec(convergeBody)
+  const uM = unresolvedRegex.exec(convergeBody)
+
+  if (convergeMatch || (aM && dM && cM && uM)) {
+    if (aM && dM && cM && uM) {
+      const aStart = aM.index + aM[0].length
+      const dStart = dM.index + dM[0].length
+      const cStart = cM.index + cM[0].length
+      const uStart = uM.index + uM[0].length
+
+      if (aStart < dM.index && dStart < cM.index && cStart < uM.index) {
+        const agreed = convergeBody.slice(aStart, dM.index).trim()
+        const dissent = convergeBody.slice(dStart, cM.index).trim()
+        const confidence = convergeBody.slice(cStart, uM.index).trim()
+        let unresolved = convergeBody.slice(uStart).trim()
+        const cutMatch = /(?:^|\n)[ \t>#*-]*(?:TASK COMPLETE:|NEEDS DECISION:)/i.exec(unresolved)
+        if (cutMatch) {
+          unresolved = unresolved.slice(0, cutMatch.index).trim()
+        }
+        return {
+          kind: 'converged',
+          agreement: { agreed, dissent, confidence, unresolved }
+        }
+      }
+    }
+  }
+
+  // 2. Check for DEBATE ROUND CONTINUE:
+  const continueMatch = /(?:^|\n)[ \t>#*-]*(?:\*\*)?DEBATE ROUND CONTINUE:?(?:\*\*)?[ \t]*(.*(?:\n[\s\S]*)?)$/i.exec(text)
+  if (continueMatch) {
+    const body = continueMatch[1] ?? ''
+    const seatRegex = /(?:^|\n)[ \t>#*-]*(?:\*\*)?Seat\s*(\d+)(?:\*\*)?[:\s-]+/gi
+    const matches: Array<{ seat: number; index: number; len: number }> = []
+    let m: RegExpExecArray | null
+    while ((m = seatRegex.exec(body)) !== null) {
+      matches.push({ seat: Number(m[1]), index: m.index, len: m[0].length })
+    }
+    if (matches.length > 0) {
+      const briefs: Array<{ seat: number; text: string }> = []
+      for (let i = 0; i < matches.length; i++) {
+        const cur = matches[i]!
+        const next = matches[i + 1]
+        const raw = next ? body.slice(cur.index + cur.len, next.index) : body.slice(cur.index + cur.len)
+        let briefText = raw.trim()
+        const cutMatch = /(?:^|\n)[ \t>#*-]*(?:TASK COMPLETE:|NEEDS DECISION:)/i.exec(briefText)
+        if (cutMatch) {
+          briefText = briefText.slice(0, cutMatch.index).trim()
+        }
+        if (briefText) {
+          briefs.push({ seat: cur.seat, text: briefText })
+        }
+      }
+      if (briefs.length > 0) {
+        return { kind: 'continue', briefs }
+      }
+    }
+  }
+
+  return null
+}
+

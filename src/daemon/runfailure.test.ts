@@ -711,9 +711,8 @@ describe('a result that is not an error', () => {
   it('⛔ does not complete an MCP-less run that ended by asking', async () => {
     // An adapter with no `ask_human` was given a prompt contract instead: end with `NEEDS DECISION:`
     // and stop. Completing such a run would file an unanswered question as finished work.
-    // ⚠️ `openai-compatible`, not Antigravity: only one Antigravity account exists per machine and
-    // the test below needs it. Both declare `mcp: false`, which is the property under test.
-    const { run, task, session } = seedRunningTask({ metered: 500 })
+    // ⚠️ muse-code declares mcp: false and supports multiple accounts, which is the property under test.
+    const { run, task, session } = seedRunningTask({ adapterId: 'muse-code', metered: 500 })
     await turnend.onStreamResult(session, {
       isError: false,
       text: 'I looked at both options.\nNEEDS DECISION: OAuth or session cookies?',
@@ -729,7 +728,7 @@ describe('a result that is not an error', () => {
     //    was quoted into `hold_reason` and thrown away. The card, the options and the box the answer
     //    is typed into are all written against a `Question` row — and no row was ever written, so an
     //    adapter without MCP could ask a question that was structurally unanswerable.
-    const { task, session } = seedRunningTask({ metered: 500 })
+    const { task, session } = seedRunningTask({ adapterId: 'muse-code', metered: 500 })
     await turnend.onStreamResult(session, {
       isError: false,
       text:
@@ -758,7 +757,7 @@ describe('a result that is not an error', () => {
   })
 
   it('files a multi-select question when marked with [multi] or multi phrases', async () => {
-    const { task, session } = seedRunningTask({ metered: 500 })
+    const { task, session } = seedRunningTask({ adapterId: 'muse-code', metered: 500 })
     await turnend.onStreamResult(session, {
       isError: false,
       text:
@@ -843,7 +842,7 @@ describe('a result that is not an error', () => {
   it('honours an MCP-less completion contract even when Antigravity reports ERROR afterwards', async () => {
     // t163 emitted its finished answer and then an ERROR terminal record. The marker is a contract
     // from the prompt, unlike the surrounding prose, so it is sufficient evidence to finish.
-    const { run, task, session } = seedRunningTask({ metered: 500 })
+    const { run, task, session } = seedRunningTask({ adapterId: 'muse-code', metered: 500 })
     await turnend.onStreamResult(session, {
       isError: true,
       text: 'All checks passed.\nTASK COMPLETE: fixed the session context gauge',
@@ -872,8 +871,8 @@ describe('a result that is not an error', () => {
     expect(completionFirst?.asked?.options).toHaveLength(2)
   })
 
-  it('parks question when an MCP-less session streams NEEDS DECISION into backscroll with result.text null (Codex)', async () => {
-    const { run, task, session } = seedRunningTask({ adapterId: 'openai-compatible', metered: 500 })
+  it('parks question when an MCP-less session streams NEEDS DECISION into backscroll with result.text null', async () => {
+    const { run, task, session } = seedRunningTask({ adapterId: 'muse-code', metered: 500 })
     vi.spyOn(sessions, 'backscroll').mockReturnValue(
       'Commit: `822178f docs: add troubleshooting guidance`\n' +
         'Validation: `git diff --check` passed.\n' +
@@ -882,7 +881,7 @@ describe('a result that is not an error', () => {
         '- Deny access — land locally'
     )
 
-    // Codex turn.completed arrives with result.text: null
+    // Turn.completed arrives with result.text: null
     await turnend.onStreamResult(session, {
       isError: false,
       text: null,
@@ -900,7 +899,7 @@ describe('a result that is not an error', () => {
   })
 
   it('completes task when an MCP-less session streams TASK COMPLETE into backscroll with result.text null', async () => {
-    const { run, task, session } = seedRunningTask({ adapterId: 'openai-compatible', metered: 500 })
+    const { run, task, session } = seedRunningTask({ adapterId: 'muse-code', metered: 500 })
     vi.spyOn(sessions, 'backscroll').mockReturnValue(
       'Changes committed cleanly.\nTASK COMPLETE: docs: added troubleshooting section'
     )

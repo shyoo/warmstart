@@ -124,15 +124,11 @@ const info: AdapterInfo = {
      * fact, not a plumbing one, and one more reason the path travels alongside the bytes.
      */
     imageInput: 'spawn-flag',
-    // ⛔ `false`, and it is a claim about **this adapter**, not about codex. Codex has MCP; what it
-    // has no way to do is take a *per-session* registration - `codex mcp add` writes into the shared
-    // config, so a session cannot be given the identity `task_complete` needs. `plan()` has warned
-    // about that since it was written. Declaring `true` anyway put the sentence *"call the MCP tool
-    // `task_complete`"* at the end of every codex prompt, for a tool that was never registered: the
-    // agent finishes, hunts for a tool that is not there, and the run can only end in
-    // `awaiting_human` however well the work went. The `false` branch tells it to commit and
-    // summarise instead, and `onStreamResult` completes the task off the terminal record.
-    mcp: false,
+    // ⭐ Promoted 2026-09-22. Codex CLI supports MCP in `codex exec` and `codex` via per-invocation
+    // configuration overrides `-c mcp_servers.<name>...`. Because `-c` can be passed per-session,
+    // a per-session identity (WARMSTART_SESSION_ID, WARMSTART_TIER) is passed cleanly without
+    // touching global config, enabling native debate_round, task_complete, and controller tools.
+    mcp: true,
     /**
      * ⭐ Promoted 2026-09-15, on a real spawn rather than `--help`. `-c model_reasoning_effort=high`
      * against a signed-in ChatGPT account (codex-cli 0.151.0) ran clean and the rollout's
@@ -1372,21 +1368,48 @@ export const openaiCompatible: AgentAdapter = {
     // and `-c model_reasoning_effort=<level>` is the only measured route in (see `selectableEffort`
     // above). The value travels as a bare word rather than `key="value"` because that is what was
     // measured working — TOML parse fails on the bare word and the CLI falls back to the literal
-    // string, same as every other `-c` override in this adapter's own `--help` text promises.
     if (req.effort) args.push('-c', `model_reasoning_effort=${req.effort}`)
+    if (req.mcpConfig) {
+      // ⭐ Pass MCP server configuration via -c overrides per invocation.
+      // -c mcp_servers.<name>.command="node"
+      // -c mcp_servers.<name>.args=["..."]
+      // -c mcp_servers.<name>.env.<key>="..."
+      // -c mcp_servers.<name>.default_tools_approval_mode="approve"
+      try {
+        if (existsSync(req.mcpConfig)) {
+          const raw = readFileSync(req.mcpConfig, 'utf8')
+          const parsed = JSON.parse(raw) as {
+            mcpServers?: Record<
+              string,
+              { command?: string; args?: string[]; env?: Record<string, string> }
+            >
+          }
+          if (parsed.mcpServers) {
+            for (const [name, server] of Object.entries(parsed.mcpServers)) {
+              if (server.command) {
+                args.push('-c', `mcp_servers.${name}.command=${JSON.stringify(server.command)}`)
+              }
+              if (Array.isArray(server.args)) {
+                args.push('-c', `mcp_servers.${name}.args=${JSON.stringify(server.args)}`)
+              }
+              if (server.env) {
+                for (const [k, v] of Object.entries(server.env)) {
+                  args.push('-c', `mcp_servers.${name}.env.${k}=${JSON.stringify(v)}`)
+                }
+              }
+              args.push('-c', `mcp_servers.${name}.default_tools_approval_mode="approve"`)
+            }
+          }
+        }
+      } catch (err) {
+        log.warn('openai-compatible could not load mcpConfig:', err)
+      }
+    }
     // ⛔ Last, and in this order: `exec resume [OPTIONS] [SESSION_ID] [PROMPT]`. The `-` is the
     // PROMPT and it means *read the prompt from stdin* — the same one-shot channel a fresh `exec`
     // uses, so `sendPrompt` needs no branch for this. Without it, resume prints `No prompt provided
     // via stdin` and exits **0** having done nothing, which is the quietest possible failure.
     if (resumeId) args.push(resumeId, '-')
-    if (req.mcpConfig) {
-      // Codex registers MCP servers with `codex mcp add` into its own config rather than by path, so
-      // there is no way to give one a per-session identity. Recorded rather than faked.
-      log.warn(
-        'openai-compatible sessions run without controller tools: its MCP registration is global, ' +
-          'so a per-session identity cannot be passed'
-      )
-    }
     return { command, args: [...prefixArgs, ...args], env }
   },
 

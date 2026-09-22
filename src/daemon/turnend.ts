@@ -1,21 +1,37 @@
 import type { QuestionKind, QuestionOption, Run, Task } from '@shared/tasks.js'
-import { cleanQuestionText, isMultiSelectQuestion, isOpenConversation } from '@shared/tasks.js'
+import {
+  cleanQuestionText,
+  DEBATE_VERDICTS,
+  DEBATE_VERDICT_DETAILS,
+  DEBATE_VERDICT_LABELS,
+  isMultiSelectQuestion,
+  isOpenConversation
+} from '@shared/tasks.js'
 import type { Session } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
 import { voidApprovalsForSession } from './approvals.js'
 import { fileParkedQuestion, parkQuestionsForSession } from './questions.js'
 import { compactionsForTask } from './compaction.js'
-import { creditRunListUsd, getTask, isIntegrationParent, runForSession, runsFor, taskOfSession } from './tasks.js'
+import { addMessage, creditRunListUsd, getTask, isIntegrationParent, runForSession, runsFor, taskOfSession } from './tasks.js'
 import { backscroll, clearHousekeepingPrompt, closeSession, sessionDiagnostics } from './sessions.js'
 import { stripAnsi, stripFrames } from './stream.js'
 import { log } from './log.js'
 import {
   completeTask,
   completing,
+  continueTask,
   endConversationTurn,
   endUnfinishedRun,
   releaseWorkspaceOf
 } from './scheduler.js'
+import {
+  debatePhaseOf,
+  nextRound,
+  parseDebateRoundTerminal,
+  renderAgreement,
+  seatsOf,
+  validateAgreement
+} from './debate.js'
 
 /**
  * What happens when a turn ends: the two terminal signals a session can arrive at
@@ -335,6 +351,63 @@ export async function onStreamResult(
 
   if (!result.isError) {
     if (mcpLess) {
+      if (runTask?.kind === 'debate' && debatePhaseOf(runTask) === 'arbitrating') {
+        const parsedDebate =
+          parseDebateRoundTerminal(effectiveText ?? '') ??
+          (sessionText ? parseDebateRoundTerminal(sessionText) : null)
+        if (parsedDebate?.kind === 'continue') {
+          const res = nextRound(runTask.id, parsedDebate.briefs, (seatId) => {
+            continueTask(seatId)
+          })
+          if (res.ok) {
+            if (openRun) {
+              await endUnfinishedRun(
+                session,
+                openRun,
+                'The debate organizer sent briefs for the next round and stopped, as instructed. This task waits for them and comes back by itself.',
+                'blocked'
+              )
+            }
+            closeSession(session.id)
+            return
+          }
+          log.warn(`t${runTask.seq} non-MCP debate continue failed: ${res.reason}`)
+        } else if (parsedDebate?.kind === 'converged') {
+          const checked = validateAgreement(parsedDebate.agreement)
+          if (checked.ok) {
+            const agreement = renderAgreement(checked.agreement)
+            if (openRun) {
+              addMessage(runTask.id, 'agent', agreement, openRun.id)
+            }
+            fileParkedQuestion({
+              sessionId: session.id,
+              origin: 'debate',
+              kind: 'choice',
+              header: `t${runTask.seq}: the debate has an answer — what now?`,
+              question:
+                `${seatsOf(runTask.id).length} agents argued this out over ` +
+                `${runTask.debate?.round ?? 1} round(s). The organizer reports:\n\n${agreement}\n\n` +
+                'Choose what happens next. Nothing is built and nothing is landed until you do.',
+              options: DEBATE_VERDICTS.map((v) => ({
+                id: v,
+                label: DEBATE_VERDICT_LABELS[v],
+                detail: DEBATE_VERDICT_DETAILS[v]
+              }))
+            })
+            if (openRun) {
+              await endUnfinishedRun(
+                session,
+                openRun,
+                'The debate organizer converged and reported agreement. Awaiting operator verdict.',
+                'blocked'
+              )
+            }
+            closeSession(session.id)
+            return
+          }
+          log.warn(`t${runTask.seq} non-MCP debate converge validation failed: ${checked.reason}`)
+        }
+      }
       // ⛔ Ahead of the completion below, because on this adapter a conversation that has not been
       // asked to finish has no way to say "I am done" and must never be read as having said it. An
       // explicit `TASK COMPLETE:` line is still honoured — that is the operator's contract with the

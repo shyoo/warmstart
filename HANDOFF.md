@@ -30,6 +30,17 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
 
 ## Closed in this cleanup
+- **Codex CLI per-session MCP support and Debate fallback for non-MCP agents (t618, 2026-09-22).**
+  (1) Measured and enabled per-invocation MCP for Codex CLI (`openai-compatible` adapter) using
+  `-c mcp_servers.<name>...` and auto-approval mode `-c mcp_servers.<name>.default_tools_approval_mode="approve"`
+  without modifying global user config; `capabilities.mcp` is now `true`.
+  (2) Supported Debate mode for non-MCP agents via a structured terminal contract fallback
+  (`DEBATE ROUND CONTINUE:` and `DEBATE ROUND CONVERGED:`), removing the `needs: ['mcp']` constraint
+  and allowing any agent to serve as organizer or seat. Turn-end handles round continuation and parses
+  verdict agreements, pausing for operator confirmation on debate choices.
+  (3) UI clearly surfaces organizer and seat MCP capabilities (`native MCP` vs `terminal fallback`) in
+  task creation and debate notices. L1 tests updated across adapters, debate, prompt, questions,
+  and debatenotice. `docs/adapters.md`.
 - **Tasks wait visibly for their first page (t612, 2026-09-22).** `Tasks` no longer renders its
   actionable **No tasks yet** state from its initial empty array while `task.page` is in flight;
   it draws two spinning marks and *Loading tasks…* until the first completed answer. `docs/ui.md`.
@@ -134,8 +145,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   `/usage `. ⛔ Operator press only (`RefreshOptions.warmUp` defaults false — the scheduler still
   spends nothing), drawn on the `no usage data yet` gap alone, priced in the note shown at
   commissioning. ⚠️ **Inferred, not yet watched working.** `docs/adapters.md`, `architecture.md`, `ui.md`.
-- **Three thread fixes (t564, 2026-09-19).** Real Meta mark for Muse's icon; ledger splits
-  cur/next worker+model; Reassign gained optional `ReassignNote`. Six L3; `docs/ui.md`.
 - **Switching a task's worker mid-conversation sent the successor the opening prompt and nothing
   since (t562 ← t557, 2026-09-19).** `outstanding` carries the first message plus whatever is
   undelivered; everything between them had gone to a session that no longer exists, so it never
@@ -148,17 +157,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   summary. Bounded (~12,000 total, oldest dropped and counted, every trim marked *abridged* —
   nothing silent, t529); ends at `task_read` where there is MCP, *re-read the files* where not.
   17 L1 checks (11 go red with the recap off, 6 more on a resumed session). `docs/sessions.md`, `docs/architecture.md`.
-- **A from-scratch install shared no sessions and showed mock welcome-tour images (t559,
-  2026-09-19).** `DEFAULT_FLEET_SHARING` was `off`; a clean install now ships `on` (reuse) —
-  `sharing.ts`'s gates (same project/account/model/effort, clean, room to grow) keep it narrow, and
-  debate seats still force `off`. The tour's SVG mockups are now real crops of the UI, captured into
-  `src/renderer/src/assets/welcome/*.png` by `scripts/generate-tour-assets.mjs` (reuses
-  `scripts/showcase.mjs`); regenerate after a wizard/Workers/composer change. `docs/sessions.md`, `docs/ui.md`.
-- **`/release rc` bumps patch, not minor, when it opens a new series (2026-09-19).** With no rc above
-  the last final it used to jump `0.2.0 → 0.3.0-rc.1`; a minor is now something the operator asks for
-  (`--bump minor|major`), and the first release of all is still `0.1.0`. Same commit fixed t554's L3
-  check, which asserted an option label a closed popover never renders — `docs/testing.md` §3.
-- **Muse Code runs natively on Windows; the WSL bridge is gone (t547, 2026-09-19).** `docs/adapters.md`.
 
 ## Remaining work — ordered by payoff
 

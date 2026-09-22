@@ -728,3 +728,52 @@ describe('the stated confidence', () => {
     expect(debate.statedConfidence('I hold X, see src/daemon/tasks.ts.')).toBeNull()
   })
 })
+
+describe('parseDebateRoundTerminal', () => {
+  it('parses a DEBATE ROUND CONTINUE block with seat briefs', () => {
+    const text = [
+      'The seats disagreed on cache invalidation strategy.',
+      '',
+      'DEBATE ROUND CONTINUE:',
+      'Seat 1: Focus on TTL-based expiry and address Seat 2 concerns.',
+      'Seat 2: Propose event-driven invalidation and cite cache key format.',
+      'Other notes.'
+    ].join('\n')
+
+    const parsed = debate.parseDebateRoundTerminal(text)
+    expect(parsed).toEqual({
+      kind: 'continue',
+      briefs: [
+        { seat: 1, text: 'Focus on TTL-based expiry and address Seat 2 concerns.' },
+        { seat: 2, text: 'Propose event-driven invalidation and cite cache key format.\nOther notes.' }
+      ]
+    })
+  })
+
+  it('parses a DEBATE ROUND CONVERGED block with agreement sections', () => {
+    const text = [
+      'After 2 rounds, agreement has been reached.',
+      '',
+      'DEBATE ROUND CONVERGED:',
+      'Agreed: Use Redis TTL with pub/sub invalidation.',
+      'Dissent: Seat 1 initially preferred local memory caching without pub/sub, citing simplicity.',
+      'Confidence: high — verified benchmarks show minimal overhead.',
+      'Unresolved: Cluster failover topology to be determined in deployment phase.'
+    ].join('\n')
+
+    const parsed = debate.parseDebateRoundTerminal(text)
+    expect(parsed).toEqual({
+      kind: 'converged',
+      agreement: {
+        agreed: 'Use Redis TTL with pub/sub invalidation.',
+        dissent: 'Seat 1 initially preferred local memory caching without pub/sub, citing simplicity.',
+        confidence: 'high — verified benchmarks show minimal overhead.',
+        unresolved: 'Cluster failover topology to be determined in deployment phase.'
+      }
+    })
+  })
+
+  it('returns null when neither terminal marker is present', () => {
+    expect(debate.parseDebateRoundTerminal('Just regular discussion without markers')).toBeNull()
+  })
+})

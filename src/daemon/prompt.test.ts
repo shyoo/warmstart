@@ -1543,7 +1543,7 @@ describe('the pre-completion rebase check', () => {
     const task = tasks.createTask({ title: 'One turn only', status: 'ready', projectId: project.id })
     const text = promptText(task, 'openai-compatible', false, { markDelivered: false })
 
-    expect(text).toContain('Immediately before you write the `TASK COMPLETE: ` line')
+    expect(text).toContain('Immediately before you call `task_complete`')
     expect(text).toContain('re-run the validation relevant to what you changed')
     expect(text).not.toContain("re-run this project's checks")
     // ⚠️ And the sentence it would have contradicted is still there.
@@ -1740,7 +1740,7 @@ describe('a plan or debate task requires an MCP adapter', () => {
     expect(choice.reason).toContain('lacks mcp')
   })
 
-  it('refuses an MCP-less adapter pinned to a debate organizer', async () => {
+  it('allows an MCP-less adapter pinned to a debate organizer via terminal fallback', async () => {
     const scoring = await import('./scoring.js')
     const task = tasks.createTask({
       title: 'Debate this',
@@ -1750,10 +1750,9 @@ describe('a plan or debate task requires an MCP adapter', () => {
       mandate: { maxChildren: 2 },
       debate: { seats: [], rounds: 1, exchange: 'full', round: 1, verdict: null }
     })
-    expect(task.constraints.needs).toContain('mcp')
+    expect(task.constraints.needs ?? []).not.toContain('mcp')
     const choice = scoring.chooseTarget(task)
-    expect(choice.worker).toBeNull()
-    expect(choice.reason).toContain('lacks mcp')
+    expect(choice.worker?.id).toBe(agy.id)
   })
 
   it('leaves an ordinary work task unaffected', () => {
@@ -1830,12 +1829,12 @@ describe('a cold successor is given the conversation it is joining', () => {
   })
 
   /**
-   * ⛔ The half t557 had no answer for at all. `openai-compatible` has no MCP, so this block is the
+   * ⛔ The half t557 had no answer for at all. An MCP-less adapter has no MCP, so this block is the
    * whole record that agent will ever see, and it must not be sent after a tool it has not got.
    */
   it('gives an MCP-less adapter the recap and no tool it does not have', () => {
-    const task = switchedMidConversation('Codex picks it up')
-    const text = promptText(task, 'openai-compatible', false, { markDelivered: false })
+    const task = switchedMidConversation('Antigravity picks it up')
+    const text = promptText(task, 'antigravity-cli', false, { markDelivered: false })
     expect(text).toContain('Too many posts — lead with what the tool does instead.')
     expect(text).toContain('Revised to five posts, product first.')
     expect(text).toContain('re-read any file one of them refers to')
