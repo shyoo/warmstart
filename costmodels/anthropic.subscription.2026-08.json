@@ -26,6 +26,7 @@
     "scope": "workspace",
     "invalidated_by": ["tools", "system", "images", "tool_choice"],
     "min_cacheable_tokens": {
+      "claude-opus-5-5": 512,
       "claude-opus-5": 512,
       "claude-fable-5": 512,
       "claude-mythos-5": 512,
@@ -47,6 +48,15 @@
   },
 
   "models": [
+    {
+      "id": "claude-opus-5-5",
+      "context_window": 1000000,
+      "input_per_mtok": 4.0,
+      "output_per_mtok": 20.0,
+      "tokenizer": "v2",
+      "context_awareness": false,
+      "effort_levels": ["low", "medium", "high", "xhigh", "max"]
+    },
     {
       "id": "claude-opus-5",
       "context_window": 1000000,

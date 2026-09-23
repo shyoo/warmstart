@@ -248,6 +248,16 @@ describe('a cost model may say it does not know', () => {
       'ultra'
     ])
     expect(codex.modelSpec('gpt-6-astra')?.context_window).toBe(1050000)
+    expect(codex.modelIds()).toContain('gpt-6-sol')
+    expect(codex.modelSpec('gpt-6-sol')?.effort_levels).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultra'
+    ])
+    expect(codex.modelSpec('gpt-6-sol')?.context_window).toBe(1050000)
     expect(codex.modelIds()).toContain('gpt-5.6-sol')
     expect(codex.modelSpec('gpt-5.6-sol')?.effort_levels).toEqual([
       'low',
@@ -257,6 +267,17 @@ describe('a cost model may say it does not know', () => {
       'max',
       'ultra'
     ])
+
+    const claude = costModel('anthropic.subscription.2026-08')
+    expect(claude.modelIds()).toContain('claude-opus-5-5')
+    expect(claude.modelSpec('claude-opus-5-5')?.effort_levels).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max'
+    ])
+    expect(claude.modelSpec('claude-opus-5-5')?.context_window).toBe(1000000)
   })
 
   it('anthropic and openai price a steerable cache; google does not', () => {

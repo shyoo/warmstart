@@ -36,31 +36,18 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   `/compact` as queued behind the active stream turn; no `compact_boundary` exists before the five-minute
   deadline. Claude Code 2.1.280 now gets its measured `control_request` interrupt frame first, followed
   by `/compact`, so the slash command can run. L1 pins the wire frame. `docs/adapters.md`.
+- **Codex Sol 6, Claude Opus 5.5, and single loading spinner in Tasks (t627, 2026-09-22).**
+  (1) Upgraded `@openai/codex` to 0.156.0. Supported `gpt-6-sol` (1.05M context window, low..ultra effort levels) in `costmodels/openai.codex.2026-08.json` and benchmarks. Supported `claude-opus-5-5` (1M context window, $4/$20 MTok, low..max effort levels) in `costmodels/anthropic.subscription.2026-08.json` and benchmarks. Added `high` capability class defaults in `modelclass.ts`, power ordering in `statistics.ts`, and display names in `modelname.ts`.
+  (2) Replaced the dual-spinner loading indicator in `Tasks.tsx` with a single spinner mark, removing the delayed secondary spinner. `docs/adapters.md`, `docs/ui.md`.
 - **The Tasks board blipped blank every 10-20s (t624 ← t612, 2026-09-22).** t612's loading state
   (spinner + *Loading tasks…* until `task.page` first answers) reset on *every* `refresh`, not only
-  the first — and `refresh` also re-runs on `task.changed`/`run.changed`, which the scheduler tick
-  fires that often. A fully drawn table tore down to the spinner and redrew a moment later on a
-  timer. A `loadedOnce` ref in `Tasks.tsx` now gates the reset to the page's first-ever fetch;
-  later refreshes swap data in without a loading flash. `docs/ui.md`.
+  the first. A `loadedOnce` ref in `Tasks.tsx` gates the reset to the page's first-ever fetch; later
+  refreshes swap data in without a loading flash. `docs/ui.md`.
 - **Routable model effort picking and annotated UI display (t622, 2026-09-22).**
-  (1) Routable models editor in Settings > Workers now displays in a table format (Model, Effort, Class) supporting per-model reasoning effort selection (`workers.model_efforts_json`, migration 80) across all adapter-supported effort levels, with "Reset efforts" alongside routable and class resets. Dispatched routed runs inherit the worker's per-model effort when tasks pin no explicit effort.
-  (2) Routable models display in the Workers table cell and tooltip now annotates each selected model with its capability class and configured effort level (`${id} (${cls}, ${eff} effort)` or `${id} (${cls})`), replacing the unannotated model-only string. 12 new L1 tests across `routablelabel.test.ts`, `routablemodels.test.ts`, and `modelchoice.test.ts`. `docs/routing.md`, `data-model.md`.
+  (1) Routable models editor in Settings > Workers displays in table format (Model, Effort, Class) supporting per-model reasoning effort selection (`workers.model_efforts_json`, migration 80). Dispatched routed runs inherit the worker's per-model effort when tasks pin no explicit effort.
+  (2) Routable models display in Workers table cell/tooltip annotates each model with class and effort level (`${id} (${cls}, ${eff} effort)`). 12 new L1 tests. `docs/routing.md`, `data-model.md`.
 - **A queued landing waited for ever on the operator's own dirty trunk (t621 ← t614, 2026-09-22).**
-  t614 (autotrade) reported complete at 19:42:19Z with one real commit on its branch; the trunk
-  `C:\Dev\autotrade` held 16 uncommitted files dated **2026-08-12** — five weeks before the project
-  was registered, so plainly the operator's own — and the task rested at `landing_queued`. Two hours
-  later the daemon log carried **no further line about it**. Two faults. (1) `retryQueuedLandings`
-  treats every trunk blocker as self-clearing, but only a trunk *lease* is: `trunkNotReady` names the
-  operator's checkout, which nothing in the fleet will ever change, and `handOverStandingHold` only
-  watches tasks trying to *dispatch*. It now keeps a ledger keyed by blockage *kind* (not the
-  sentence, whose file count changes as they work) and hands the task to a person after
-  `STANDING_HOLD_GRACE_MS`, the same constant. (2) `resolveRetryCauses` excluded the trunk by the
-  literal phrase `the trunk has uncommitted`, which `trunkNotReady` stopped writing when it began
-  naming files — and its own remedy word **stash** matched the positive branch. So t614 classified as
-  `uncommitted`: the card would have offered a billed *Resolve & retry* to commit nothing and **hid**
-  the *Retry landing* that was the one press that could work. One `isTrunkBlockedReason`
-  (`shared/tasks.ts`) now answers both. 10 L1 across `trunkmode`, `taskview` and `question`; four
-  mutations go red. ⚠️ Not flown on a real run. `docs/landing.md`.
+  t614 rested at `landing_queued` over operator checkout files dated 2026-08-12 with no further lines. (1) `retryQueuedLandings` treated trunk blockers as self-clearing, but only leases are; it now keeps a ledger by blockage kind and hands over after `STANDING_HOLD_GRACE_MS`. (2) `resolveRetryCauses` excluded the trunk by literal wording that had changed, falsely offering a billed *Resolve & retry*; `isTrunkBlockedReason` now answers both. 10 L1 across `trunkmode`, `taskview`, `question`. `docs/landing.md`.
 - **Model capability class classification and selection (t620, 2026-09-22).**
   Supported model capability tiers (`high`, `med`, `low`) for Auto Model routing (`Auto Model`, `Auto Model (high)`, `Auto Model (med)`, `Auto Model (low)`). Implemented built-in heuristic defaults (`src/shared/modelclass.ts`) and per-worker custom overrides in Workers tab (`workers.model_classes_json`, migration 79). Tasks strictly hold without silent downgrade if no candidate model in the requested class has quota. Supported across `task.create`, `task.plan`, `task.debate`, `task.setModel`, `task.setWorker`, `task.resolveRetry`, and UI reassign cards. 16 new L1 tests in `modelclass.test.ts`, `routablemodels.test.ts`, `routing.test.ts`, `taskview.test.ts`, and `composerprefs.test.ts`. `docs/routing.md`, `data-model.md`.
 - **Codex CLI per-session MCP support and Debate fallback for non-MCP agents (t618, 2026-09-22).**

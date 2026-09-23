@@ -647,7 +647,6 @@ export function Tasks({
       {!tasksLoaded ? (
         <div className="tasks-loading" role="status" aria-live="polite">
           <span className="tasks-loading-spinner" aria-hidden="true" />
-          <span className="tasks-loading-spinner tasks-loading-spinner--delayed" aria-hidden="true" />
           <span>Loading tasks…</span>
         </div>
       ) : tasks.length === 0 ? (

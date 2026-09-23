@@ -10,11 +10,13 @@ describe('modelLabel', () => {
   it('writes the ids in costmodels/ the way a person says them', () => {
     // openai.codex.2026-08
     expect(modelLabel('gpt-6-astra')).toBe('GPT 6 Astra')
+    expect(modelLabel('gpt-6-sol')).toBe('GPT 6 Sol')
     expect(modelLabel('gpt-5.6-terra')).toBe('GPT 5.6 Terra')
     expect(modelLabel('gpt-5.6-luna')).toBe('GPT 5.6 Luna')
     expect(modelLabel('gpt-5.5')).toBe('GPT 5.5')
     expect(modelLabel('gpt-5.4-mini')).toBe('GPT 5.4 Mini')
     // anthropic.subscription.2026-08 — the vendor prefix is what the family name already says.
+    expect(modelLabel('claude-opus-5-5')).toBe('Opus 5.5')
     expect(modelLabel('claude-opus-5')).toBe('Opus 5')
     expect(modelLabel('claude-sonnet-5')).toBe('Sonnet 5')
     // A version split across segments is one number, not two words.
@@ -91,11 +93,13 @@ describe('compactModelLabel', () => {
     expect(compactModelLabel('gemini-3.1-pro-high')).toBe('3.1 Pro High')
     expect(compactModelLabel('gemini-3.7-flash-medium')).toBe('3.7 Flash Med')
     expect(compactModelLabel('gpt-6-astra')).toBe('6 Astra')
+    expect(compactModelLabel('gpt-6-sol')).toBe('6 Sol')
     expect(compactModelLabel('gpt-5.6-sol')).toBe('5.6 Sol')
     expect(compactModelLabel('muse-spark-1.3-contributor')).toBe('Spark 1.3 C')
   })
 
   it('keeps the word in front of a version that ends the name, or nothing would be left', () => {
+    expect(compactModelLabel('claude-opus-5-5')).toBe('Opus 5.5')
     expect(compactModelLabel('claude-opus-5')).toBe('Opus 5')
     expect(compactModelLabel('claude-haiku-4-5-20251001')).toBe('Haiku 4.5')
   })

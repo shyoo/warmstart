@@ -537,10 +537,15 @@ describe('ordering by power in statistics tree', () => {
   })
 
   it('puts Codex Astra above Sol and Sol above Terra', () => {
-    expect(['gpt-5.6-terra', 'gpt-6-astra', 'gpt-5.6-sol'].sort(stats.compareModelPower)).toEqual([
+    expect(['gpt-5.6-terra', 'gpt-6-astra', 'gpt-6-sol', 'gpt-5.6-sol'].sort(stats.compareModelPower)).toEqual([
       'gpt-6-astra',
+      'gpt-6-sol',
       'gpt-5.6-sol',
       'gpt-5.6-terra'
+    ])
+    expect(['claude-opus-5', 'claude-opus-5-5'].sort(stats.compareModelPower)).toEqual([
+      'claude-opus-5-5',
+      'claude-opus-5'
     ])
   })
 

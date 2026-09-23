@@ -3,11 +3,13 @@ import { defaultModelClass, resolveModelClass } from './modelclass.js'
 
 describe('modelclass', () => {
   it('identifies default model classes for known models', () => {
+    expect(defaultModelClass('claude-opus-5-5')).toBe('high')
     expect(defaultModelClass('claude-opus-5')).toBe('high')
     expect(defaultModelClass('claude-sonnet-5')).toBe('med')
     expect(defaultModelClass('claude-haiku-4-5')).toBe('low')
 
     expect(defaultModelClass('gpt-6-astra')).toBe('high')
+    expect(defaultModelClass('gpt-6-sol')).toBe('high')
     expect(defaultModelClass('gpt-5.6-sol')).toBe('high')
     expect(defaultModelClass('gpt-5.6-terra')).toBe('med')
     expect(defaultModelClass('gpt-5.6-mini')).toBe('low')

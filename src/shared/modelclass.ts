@@ -20,6 +20,7 @@ export const MODEL_CLASS_LABELS: Record<ModelClass, string> = {
 /** Built-in defaults for well-known models across providers. */
 export const DEFAULT_MODEL_CLASSES: Record<string, ModelClass> = {
   // Anthropic Claude
+  'claude-opus-5-5': 'high',
   'claude-opus-5': 'high',
   'claude-opus-4-8': 'high',
   'claude-opus-4-6': 'high',
@@ -29,6 +30,7 @@ export const DEFAULT_MODEL_CLASSES: Record<string, ModelClass> = {
 
   // OpenAI Codex
   'gpt-6-astra': 'high',
+  'gpt-6-sol': 'high',
   'gpt-5.6-sol': 'high',
   'gpt-5.6-terra': 'med',
   'gpt-5.6-mini': 'low',

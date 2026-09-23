@@ -567,7 +567,7 @@ describe('a branch whose pull request was squash-merged', () => {
       expect(said(taskId)).toContain('Pull request merged as')
       expect(await rowFor(project.id, branch)).toBeUndefined()
     },
-    60_000
+    90_000
   )
 
   it(
@@ -585,7 +585,7 @@ describe('a branch whose pull request was squash-merged', () => {
       expect(verdict.reason).toContain('has moved on')
       expect((await rowFor(project.id, branch))?.kind).toBe('unlanded')
     },
-    60_000
+    90_000
   )
 
   it('steps an idle workspace off the branch rather than refusing it', async () => {

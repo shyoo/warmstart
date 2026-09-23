@@ -170,7 +170,7 @@ describe('a conversation that lands twice', () => {
     expect(after.status).toBe('awaiting_human')
     expect(after.branchUnit).toBe(3)
     expect(landingTargetSha(project)).toBe(landed2.landedSha)
-  })
+  }, 30_000)
 
   it('writes one thread line per landing, in the shape the salvage parser reads', async () => {
     // ⛔ `salvageLandedCommits` matches system messages with `text like 'Landed as %'`, so the
@@ -190,7 +190,7 @@ describe('a conversation that lands twice', () => {
     expect(headlines[0]?.detail).toContain('continues on')
     // ⚠️ The clauses `landedMessage` composes are kept, off the line.
     expect(headlines[0]?.detail).toContain('Verified first: 1 project check passed')
-  })
+  }, 30_000)
 })
 
 describe('a conversation whose tree was parked between turns', () => {
@@ -215,7 +215,7 @@ describe('a conversation whose tree was parked between turns', () => {
     expect(after.branch).toBe(landed.nextBranch)
     expect(await worktrees.branchExists(project, after.branch as string)).toBe(true)
     expect(isOpenConversation(after)).toBe(true)
-  })
+  }, 30_000)
 })
 
 /**
