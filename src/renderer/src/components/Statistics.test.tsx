@@ -162,8 +162,8 @@ describe('measuredModelPoints', () => {
  * The trade-off scatters' drawing, not only their arithmetic.
  *
  * ⭐ Retired 2026-09-14: the earlier rotatable 3D plot was reported confusing to read and hard to
- * interact with, and is replaced by three flat x/y scatters — (quality, velocity), (quality, cost)
- * and (velocity, cost) — each readable without dragging anything.
+ * interact with, and is replaced by three flat y/x scatters — quality against cost, quality against
+ * active time and cost against active time — each readable without dragging anything.
  *
  * ⚠️ `renderToStaticMarkup`, because the suites run with `environment: 'node'` and there is no DOM to
  * mount into. It is enough for what is being claimed: that all three scatters render, one mark per
@@ -234,7 +234,13 @@ describe('the trade-off scatters draw one mark per model on every pair of axes',
       [...markup.matchAll(/class="scatter-plot-title">([^<]+)<span[^>]*>vs<\/span> ([^<]+)/g)].map((match) =>
         `${match[1]!.trim()} vs ${match[2]!.trim()}`
       )
-    ).toEqual(['Quality vs Cost', 'Quality vs Active time', 'Active time vs Cost'])
+    ).toEqual(['Quality vs Cost', 'Quality vs Active time', 'Cost vs Active time'])
+  })
+
+  /** ⭐ Quality is always the vertical axis and active time always the horizontal one (2026-09-23). */
+  it('puts quality on the y axis and active time on the x axis', () => {
+    const titles = [...markup.matchAll(/class="scatter-plot-axis-label"[^>]*>([^<(]+)\(/g)].map((m) => m[1]!.trim())
+    expect(titles).toEqual(['Cost', 'Quality', 'Active time', 'Quality', 'Active time', 'Cost'])
   })
 
   /** ⛔ Two models measured on all three axes is two marks per scatter, six in total. */

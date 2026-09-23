@@ -75,7 +75,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | `Project` `ProjectSettings` `Projects` | the project routes and the policy tier. ⭐ `Project.rootExists` is read fresh on every `project.list` (t514): a directory moved or renamed outside Warmstart (`c:\Dev\magic_writer` → `c:\Dev\inkland`) shows a banner on the project header naming the missing path and lets the operator point the same project id at its new location (`project.relocate`), keeping its tasks and history rather than losing them to a re-add. The path field is `NewProject`'s shared `PathField` (t517): an OS folder picker beside the text input, typing still works, and the button hides on a remote target the same way it does in the add-project wizard |
 | `NewProject` | the add-project wizard: three steps, one modal, `lib/newproject.ts` holds its rules |
 | `RoutingModel` `RoutingOverview` `QualityModel` `CostModel` `VelocityModel` `ModelsModel` `Math` | the routing model, written up as a paper: abstract, contents, five numbered sections, KaTeX for the arithmetic |
-| `Statistics` | what finished tasks actually cost, took and scored — three tabs, one RPC, a window control. ⭐ `TradeoffPlots` draws the three-way trade-off as three flat x/y scatters — (quality, velocity), (quality, cost), (velocity, cost) — replacing an earlier rotatable 3D plot reported confusing to read and hard to interact with (2026-09-14) |
+| `Statistics` | what finished tasks actually cost, took and scored — three tabs, one RPC, a window control. ⭐ `TradeoffPlots` draws the three-way trade-off as three flat scatters — quality vs cost, quality vs active time, cost vs active time (quality always *y*, active time always *x*, 2026-09-23) — replacing an earlier rotatable 3D plot reported confusing to read and hard to interact with (2026-09-14) |
 | `LooseEnds` | work that exists and is going nowhere → [`landing.md`](landing.md) |
 | `Doctor` | which required/conditional host tools and agent CLIs were found, who is signed in, how old each reading is, what is unverifiable, and which projects' directories are missing |
 | `WelcomeTour` | a per-display, first-launch three-step guide with real screenshots (`src/renderer/src/assets/welcome/*.png`, captured over a fictional fleet by `scripts/generate-tour-assets.mjs`; regenerate when the wizard, Workers card or composer changes) and prev/next onboarding navigation to introduce adding a project, adding a worker, and filing a task; completing or skipping it records `warmstart.welcomeComplete` in guarded `localStorage` |
@@ -211,8 +211,9 @@ clean has graded has an empty distribution and no bar — an ungraded model has 
 a short one.
 
 ⭐ **Statistics also has a trade-off section, `TradeoffPlots`** (`Statistics.tsx`), above its three
-tabs: three flat x/y scatters — quality against cost, quality against active time, and active time
-against cost — each plotting only an adapter/model pair with measured price, active time and clean
+tabs: three flat scatters — quality against cost, quality against active time, and cost against
+active time, with quality always the vertical axis and active time always the horizontal one
+(2026-09-23) — each plotting only an adapter/model pair with measured price, active time and clean
 quality evidence, so a missing value is never drawn as a deliberate coordinate. ⭐ This replaces an
 earlier single rotatable 3D scatter (retired 2026-09-14, reported confusing to read and hard to
 interact with); a flat scatter has a position a reader can recover without dragging anything. This is

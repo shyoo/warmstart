@@ -789,7 +789,8 @@ export function ScatterPlot({
   const [hovered, setHovered] = useState<string | null>(null)
   const width = 300
   const height = 220
-  // ⚠️ Wide enough for a duration tick (`27m 31s`, ~38px of 9px mono) to clear the rotated axis title.
+  // ⚠️ Wide enough for a y tick to clear the rotated axis title, and for half a duration tick
+  // (`50m 26s`, ~38px of 9px mono) centred on the origin — an inverted axis puts its worst value there.
   const marginLeft = 62
   const marginRight = 14
   const marginTop = 12
@@ -811,14 +812,14 @@ export function ScatterPlot({
     <div className="scatter-plot-box">
       <div className="scatter-plot-head">
         <span className="scatter-plot-title">
-          {AXIS_TITLE[xAxis]} <span className="dim">vs</span> {AXIS_TITLE[yAxis]}
+          {AXIS_TITLE[yAxis]} <span className="dim">vs</span> {AXIS_TITLE[xAxis]}
         </span>
       </div>
       <svg
         className="scatter-plot-svg"
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-label={`${AXIS_TITLE[xAxis]} against ${AXIS_TITLE[yAxis]}, one mark per model`}
+        aria-label={`${AXIS_TITLE[yAxis]} against ${AXIS_TITLE[xAxis]}, one mark per model`}
       >
         <g aria-hidden>
           {xTicks.map((t, i) => (
@@ -954,9 +955,11 @@ export function ScatterPlot({
   )
 }
 
+/** ⭐ Quality is the vertical axis wherever it appears and active time the horizontal one (2026-09-23),
+ *  so each title reads the conventional way round: *y* vs *x*. */
 const SCATTER_PAIRS: Array<{ x: Axis; y: Axis }> = [
-  { x: 'quality', y: 'cost' },
-  { x: 'quality', y: 'velocity' },
+  { x: 'cost', y: 'quality' },
+  { x: 'velocity', y: 'quality' },
   { x: 'velocity', y: 'cost' }
 ]
 
