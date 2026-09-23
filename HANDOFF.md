@@ -44,11 +44,11 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   two policy answers on the unpinned Model pill; t620 had added three class-scoped Autos, so the
   check asserted a count rather than its claim and would have gone red on CI. It now asserts what it
   means: no model ids before an account is pinned. `docs/development.md`.
-- **t623's preemption compaction was never received, not falsely unrecognized (t628,
-  2026-09-23).** Its ledger holds one open ask at 01:02:32Z and its transcript records the ordinary
-  `/compact` as queued behind the active stream turn; no `compact_boundary` exists before the five-minute
-  deadline. Claude Code 2.1.280 now gets its measured `control_request` interrupt frame first, followed
-  by `/compact`, so the slash command can run. L1 pins the wire frame. `docs/adapters.md`.
+- **Preemption compaction now survives Claude's interrupt acknowledgement (t640 ← t638 ← t628, 2026-09-23).**
+  t628's wire-shape check missed the reply: t638 ended **596ms** after preemption on `aborted_tools`, the
+  interrupted old turn, not a failed session. The generic error handler closed the pipe before queued `/compact`
+  could run; the adapter now declares the acknowledgement and the handler preserves the queued prompt. L1 covers
+  it and a real `api_error` non-match. `docs/adapters.md`.
 - **Codex Sol 6, Claude Opus 5.5, and single loading spinner in Tasks (t627, 2026-09-22).**
   (1) Upgraded `@openai/codex` to 0.156.0. Supported `gpt-6-sol` (1.05M context window, low..ultra effort levels) in `costmodels/openai.codex.2026-08.json` and benchmarks. Supported `claude-opus-5-5` (1M context window, $4/$20 MTok, low..max effort levels) in `costmodels/anthropic.subscription.2026-08.json` and benchmarks. Added `high` capability class defaults in `modelclass.ts`, power ordering in `statistics.ts`, and display names in `modelname.ts`.
   (2) Replaced the dual-spinner loading indicator in `Tasks.tsx` with a single spinner mark, removing the delayed secondary spinner. `docs/adapters.md`, `docs/ui.md`.

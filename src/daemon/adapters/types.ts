@@ -371,4 +371,13 @@ export interface AgentAdapter {
    * happens to keep stdin open.
    */
   encodeStreamInterrupt?: (requestId: string) => string
+
+  /**
+   * Does this terminal result acknowledge the control interrupt just sent to this stream?
+   *
+   * ⛔ An interrupt ends the *old turn*, not the conversation. The next queued prompt (currently
+   * `/compact`) still owns the live session, so its acknowledgement must not go through ordinary
+   * run-failure handling and close that session underneath the prompt.
+   */
+  isStreamInterruptResult?: (terminalReason: string | null) => boolean
 }

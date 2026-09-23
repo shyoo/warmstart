@@ -1392,6 +1392,14 @@ export function inlineImagesFor(adapterId: string, attachments: Attachment[]): A
 const housekeeping = new Set<string>()
 
 /**
+ * A control interrupt has been written and its terminal acknowledgement is still expected.
+ *
+ * ⛔ Kept separately from `housekeeping`: the following `/compact` is the housekeeping prompt;
+ * the interrupt result belongs to the prior work turn and must leave that prompt's mark intact.
+ */
+const pendingStreamInterrupts = new Map<string, string>()
+
+/**
  * ⚠️ Exported for the suite that pins the refusal, and used by `sendPrompt` itself. Production code
  * sets this through `sendPrompt`'s `housekeeping` option — a mark set anywhere else is a mark
  * nothing clears.
@@ -1406,6 +1414,20 @@ export function isHousekeepingTurn(sessionId: string): boolean {
 
 export function clearHousekeepingPrompt(sessionId: string): void {
   housekeeping.delete(sessionId)
+}
+
+/** Consume the one terminal record the adapter declares as an interrupt acknowledgement. */
+export function noteStreamInterrupt(sessionId: string, adapterId: string): void {
+  pendingStreamInterrupts.set(sessionId, adapterId)
+}
+
+/** Consume the one terminal record the adapter declares as an interrupt acknowledgement. */
+export function consumeStreamInterruptResult(sessionId: string, terminalReason: string | null): boolean {
+  const adapterId = pendingStreamInterrupts.get(sessionId)
+  if (!adapterId) return false
+  if (!adapter(adapterId).isStreamInterruptResult?.(terminalReason)) return false
+  pendingStreamInterrupts.delete(sessionId)
+  return true
 }
 
 /**
@@ -1531,6 +1553,7 @@ export function interruptSession(id: string): void {
     }
     try {
       entry.channel.write(`${encode(randomUUID())}\n`)
+      noteStreamInterrupt(id, entry.session.adapterId)
     } catch (err) {
       log.warn(`could not interrupt stream session ${id}:`, err)
     }
@@ -1563,6 +1586,8 @@ export function backscroll(id: string): string {
 }
 
 export function closeSession(id: string): void {
+  pendingStreamInterrupts.delete(id)
+  housekeeping.delete(id)
   const entry = live.get(id)
   if (!entry) {
     setState(id, 'closed')

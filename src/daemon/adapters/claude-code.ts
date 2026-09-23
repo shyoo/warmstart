@@ -1159,5 +1159,10 @@ export const claudeCode: AgentAdapter = {
       type: 'control_request',
       request_id: requestId,
       request: { subtype: 'interrupt' }
-    })
+    }),
+
+  // ⭐ Measured on t638, 2026-09-23: the response to the frame above is a result with this
+  // terminal reason. It ends the interrupted turn, while stdin remains available for the queued
+  // `/compact`; treating it as a vendor failure closes that session before the command can run.
+  isStreamInterruptResult: (terminalReason) => terminalReason === 'aborted_tools'
 }

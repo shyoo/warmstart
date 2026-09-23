@@ -13,7 +13,13 @@ import { voidApprovalsForSession } from './approvals.js'
 import { fileParkedQuestion, parkQuestionsForSession } from './questions.js'
 import { compactionsForTask } from './compaction.js'
 import { addMessage, creditRunListUsd, getTask, isIntegrationParent, runForSession, runsFor, taskOfSession } from './tasks.js'
-import { backscroll, clearHousekeepingPrompt, closeSession, sessionDiagnostics } from './sessions.js'
+import {
+  backscroll,
+  clearHousekeepingPrompt,
+  closeSession,
+  consumeStreamInterruptResult,
+  sessionDiagnostics
+} from './sessions.js'
 import { stripAnsi, stripFrames } from './stream.js'
 import { log } from './log.js'
 import {
@@ -287,6 +293,11 @@ export async function onStreamResult(
     costUsd?: number | null
   }
 ): Promise<void> {
+  // ⭐ t638: Claude acknowledges the preemption control frame with `aborted_tools`. That ended the
+  // interrupted work turn, not its still-live JSONL conversation; `/compact` was already queued
+  // behind it. Do not clear the queued prompt's housekeeping mark or close the session here.
+  if (result.isError && consumeStreamInterruptResult(session.id, result.terminalReason)) return
+
   // ⛔ **First, and before every early return below.** This record is the only place the number is
   // ever offered, and each of the branches that follow ends the run — so crediting it anywhere else
   // in this function means losing it on whichever path the turn actually took.

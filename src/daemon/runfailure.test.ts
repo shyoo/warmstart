@@ -266,6 +266,38 @@ describe('a cache-clock compaction that interrupts an open run', () => {
 })
 
 describe('an error the CLI reports without exiting', () => {
+  it('keeps Claude alive for the queued compaction after its control interrupt ends the old turn', async () => {
+    // ⭐ t638: the `control_request` interrupt produces `aborted_tools`; the immediately queued
+    // `/compact` is still a valid next turn on the same stream. Treating this result as a failure
+    // closed the pipe 596ms after preemption and made the recorded compaction impossible to land.
+    const { run, session, task } = seedRunningTask({ adapterId: 'claude-code', metered: 1000 })
+    sessions.noteStreamInterrupt(session.id, session.adapterId)
+    sessions.markHousekeepingPrompt(session.id)
+
+    await turnend.onStreamResult(session, {
+      isError: true,
+      text: 'interrupted',
+      terminalReason: 'aborted_tools'
+    })
+
+    expect(tasks.requireRun(run.id).endedAt).toBeNull()
+    expect(tasks.requireTask(task.id).status).toBe('running')
+    expect(sessions.isHousekeepingTurn(session.id)).toBe(true)
+  })
+
+  it('does not mistake an ordinary Claude api_error for an interrupt acknowledgement', async () => {
+    const { run, session } = seedRunningTask({ adapterId: 'claude-code', metered: 1000 })
+    sessions.noteStreamInterrupt(session.id, session.adapterId)
+
+    await turnend.onStreamResult(session, {
+      isError: true,
+      text: ORG_DISABLED,
+      terminalReason: 'api_error'
+    })
+
+    expect(tasks.requireRun(run.id).outcome).toBe('failed')
+  })
+
   it('ends the run instead of leaving it open forever', async () => {
     const { run, session } = seedRunningTask()
     await turnend.onStreamResult(session, {
