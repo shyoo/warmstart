@@ -83,6 +83,20 @@ export interface ModelChoice {
 /** `auto` — the scheduler scores the routable models. `inherit` — the account's own default. */
 export type ModelPolicy = 'auto' | 'inherit'
 
+/**
+ * Whether the composer's Effort pill has anything honest to say.
+ *
+ * ⛔ **Auto Model has no one model to pick an effort for.** Effort belongs to whichever model
+ * actually runs; a pin (`model` set) or `inherit` (the account's own configured default) both name
+ * that model before dispatch, so a level chosen now applies to it. `auto` — any of the four Auto
+ * Model variants — hands the choice to the router across every routable model on the account, and a
+ * level offered against one arbitrary fallback (the account's plain default) would read as though it
+ * applied no matter which model the router actually landed on, which it does not.
+ */
+export function showsEffortPicker(model: string, modelPolicy: ModelPolicy): boolean {
+  return Boolean(model) || modelPolicy === 'inherit'
+}
+
 export interface ComposerPrefs {
   priority: Priority
   kind: ComposerKind

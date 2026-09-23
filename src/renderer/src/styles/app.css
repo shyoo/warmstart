@@ -3141,9 +3141,21 @@ body {
 .tbl-workers .worker-model-select { width: auto; min-width: 150px; max-width: 200px; }
 .tbl-workers .worker-effort-select { width: auto; min-width: 100px; max-width: 130px; margin-top: 0; }
 .tbl-workers .worker-grading-select { width: auto; min-width: 150px; max-width: 200px; }
-.tbl-workers .routable-models-control { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
-.tbl-workers .routable-models-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tbl-workers .routable-models-control { display: flex; align-items: flex-start; gap: var(--sp-2); min-width: 0; }
+/* ⛔ Wraps onto multiple rows rather than truncating with an ellipsis. A worker routable to four or
+   five models joined one long string and read as an unreadable run of ids the pill's tooltip was
+   the only way to see in full — one chip per model, wrapping, keeps every name on screen at once. */
+.tbl-workers .routable-models-value { min-width: 0; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
 .tbl-workers .routable-models-value--muted { color: var(--color-text-dim); }
+.tbl-workers .routable-models-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  font-size: var(--text-dense);
+  white-space: nowrap;
+}
 .tbl-workers .routable-models-edit .pill { max-width: none; padding-inline: 7px; }
 .tbl-workers .num-input { text-align: left; justify-self: start; }
 .tbl-workers .tbl-path { max-width: 100%; font-size: var(--text-meta); color: var(--color-text-dim); }
@@ -3600,8 +3612,14 @@ select {
 
 .pool-default-row select,
 .pool-default-row .setting-btn-select-wrap {
-  flex: 1;
+  /* ⛔ Capped like `.worker-model-select` beside it, not `flex: 1`. This row lives in the card
+     layout's value column (`minmax(0, 1fr)`), which on a wide window is hundreds of pixels — a
+     model id twenty characters long stretched into a button that wide, with its ✒️ pushed off to
+     the far edge, reads as broken rather than as a picker. */
+  flex: 0 1 auto;
   min-width: 0;
+  max-width: 220px;
+  width: 100%;
 }
 
 input:focus-visible,

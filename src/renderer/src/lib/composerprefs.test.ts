@@ -4,6 +4,7 @@ import {
   modelChoiceFor,
   readComposerPrefs,
   rememberModelChoice,
+  showsEffortPicker,
   writeComposerPrefs
 } from './composerprefs.js'
 
@@ -317,5 +318,19 @@ describe('what the new-task composer was left set to', () => {
     expect(readComposerPrefs()).toEqual(DEFAULT_COMPOSER_PREFS)
     stub({ 'warmstart.composer': JSON.stringify({ byWorker: 'w-claude' }) })
     expect(readComposerPrefs().byWorker).toEqual({})
+  })
+})
+
+describe('showsEffortPicker', () => {
+  it('hides the effort pill for Auto Model, which has no one model to set a level on', () => {
+    expect(showsEffortPicker('', 'auto')).toBe(false)
+  })
+
+  it('shows it once a model is actually pinned, even under the "auto" policy field', () => {
+    expect(showsEffortPicker('claude-opus-5', 'auto')).toBe(true)
+  })
+
+  it('shows it for Inherit, which names one known model — the account default', () => {
+    expect(showsEffortPicker('', 'inherit')).toBe(true)
   })
 })

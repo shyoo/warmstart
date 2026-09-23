@@ -181,7 +181,7 @@ function RoutableModelsPill({
 
   return (
     <div className="routable-models-control">
-      <span
+      <div
         className={`routable-models-value${selected.length === 0 ? ' routable-models-value--muted' : ''}`}
         title={
           selected.length > 0
@@ -189,8 +189,18 @@ function RoutableModelsPill({
             : ROUTABLE_MODELS_HELP
         }
       >
-        {label}
-      </span>
+        {selected.length === 0
+          ? label
+          : selected.map((id) => {
+              const cls = resolveModelClass(id, worker)
+              const eff = worker.modelEfforts?.[id]
+              return (
+                <span key={id} className="routable-models-chip">
+                  {eff ? `${id} (${cls}, ${eff} effort)` : `${id} (${cls})`}
+                </span>
+              )
+            })}
+      </div>
       <Pill
         className="routable-models-edit"
         ariaLabel={`Edit routable models for ${worker.label}`}

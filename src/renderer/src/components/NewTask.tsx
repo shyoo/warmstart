@@ -43,6 +43,7 @@ import {
   modelChoiceFor,
   readComposerPrefs,
   rememberModelChoice,
+  showsEffortPicker,
   writeComposerPrefs,
   type ComposerKind,
   type ComposerPrefs,
@@ -611,6 +612,11 @@ export function NewTask({
   const effectiveModel = forAdapter?.models.find((m) => m.id === (resolved.model ?? '')) ?? null
   const efforts = canSetEffort ? (effectiveModel?.effortLevels ?? []) : []
   const effort = efforts.includes(remembered.effort) ? remembered.effort : ''
+  // ⛔ Auto Model (any of its four class variants) has no one model to pick an effort for — see
+  // `showsEffortPicker`. Without this, the pill offered a level against the account's plain default
+  // model while the model pill itself said the router would choose, which reads as a promise this
+  // control cannot honour.
+  const showEffort = efforts.length > 0 && showsEffortPicker(model, modelPolicy)
 
   const hasMultiPoolDefaults =
     pinned?.defaultModels && Object.values(pinned.defaultModels).filter(Boolean).length > 1
@@ -1363,7 +1369,7 @@ export function NewTask({
                       options={modelPillOptions}
                       onChange={chooseModel}
                     />
-                    {efforts.length > 0 && (
+                    {showEffort && (
                       <PillSelect
                         ariaLabel="Effort"
                         align="right"
@@ -1610,7 +1616,7 @@ export function NewTask({
 
             {/* Effort appears only where the CLI can be told one *and* the model in effect has
                 levels to offer. A control that cannot be honoured is worse than no control. */}
-            {efforts.length > 0 && (
+            {showEffort && (
               <PillSelect
                 ariaLabel="Effort"
                 align="right"
@@ -1752,7 +1758,7 @@ export function NewTask({
                         options={modelPillOptions}
                         onChange={chooseModel}
                       />
-                      {efforts.length > 0 && (
+                      {showEffort && (
                         <PillSelect
                           ariaLabel="Effort"
                           align="right"

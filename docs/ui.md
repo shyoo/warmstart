@@ -493,6 +493,17 @@ model ignores. The thread, the Tasks column and the dispatch itself all drop it 
 drop it only where the cost model actually describes the model: an unpriced id says nothing about its
 levels.
 
+⛔ **Nor is one drawn while Auto Model has not named a model yet.** The New Task composer's Effort
+pill used to resolve against the pinned worker's plain default model even while the Model pill read
+*Auto Model* (or one of its class-scoped variants) — a level chosen there applied to one arbitrary
+fallback, not to whichever model the router actually landed on. `showsEffortPicker`
+(`lib/composerprefs.ts`) hides the pill unless a model is actually pinned or the policy is `inherit`,
+both of which name one real model before dispatch. ⚠️ This is deliberately the opposite answer from
+`effortLookupModel` (`lib/taskview.tsx`), which resolves a *reassign* row's effort against the
+inherited model even under Auto Model: there the model that would run *right now* is already
+knowable, so showing it is the honest thing to do; here, before any worker or model is chosen, it is
+not.
+
 ⛔ **A model the router has not chosen yet is not named anywhere.** The Tasks list's Worker column
 stacks the model under the account, and for a task that has not run it shows what the next dispatch
 would ask for — but on an account with a `routableModels` allowlist there is no such answer:

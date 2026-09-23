@@ -26,6 +26,15 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **Four Settings > Workers / composer layout bugs (t636, 2026-09-22).** (1) A worker's per-pool
+  default-model buttons (Antigravity's Gemini / Claude·GPT) no longer stretch to the card's full
+  width — capped like the single-model picker (`app.css`). (2) Routable models render as wrapping
+  chips instead of one ellipsis-truncated line. (3) The sidebar's project row now stays highlighted
+  while a thread is open, including for tasks outside the open-conversations list (a finished
+  conversation, a single task) — it used to go dark there, leaving no way to tell which project a
+  thread belonged to (`App.tsx`). (4) The New Task composer's Effort pill hides itself for Auto
+  Model (`showsEffortPicker`, `composerprefs.ts`), which has no one model to set a level on before
+  dispatch. `docs/ui.md`.
 - **`/release rc` publishes the trunk itself rather than handing the refusal back (2026-09-22).**
   The base gate is unchanged and still refuses all three unsafe bases; what changed is the skill.
   New step 0.5 runs `check-release-base.mjs` *before* the notes are written, and when the only
