@@ -199,6 +199,7 @@ import { settings } from './settings.js'
 import { overrunFactor } from './estimator.js'
 import type { Objective } from '@shared/tasks.js'
 import { resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
+import { routeEffortFor } from '@shared/modelroutes.js'
 import {
   DEFAULT_OBJECTIVE,
   policy,
@@ -1043,6 +1044,11 @@ export interface WorkerChoice {
   /** The model this candidate would run, resolved before the spawn. Null where it is the CLI's own. */
   model?: string | null
   /**
+   * The effort of the auto-routed row this candidate came from (t638). Null where the candidate named
+   * a model only — a pin, a warm session, the worker's own default — and `resolveModelChoice` decides.
+   */
+  effort?: string | null
+  /**
    * Every candidate that was scored, in the order they were ranked.
    *
    * ⛔ Carried on the winner rather than recomputed, so the ledger `dispatch` writes holds the *same
@@ -1667,8 +1673,14 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   const picked = resolveModelChoice(task.constraints, worker, canSetEffort, lastQuota(worker.id))
   if (choice.model) {
     picked.model = choice.model
-    if (!task.constraints.effort && worker.modelEfforts?.[choice.model]) {
-      picked.effort = worker.modelEfforts[choice.model] ?? null
+    // ⛔ The routed row's effort, unless the task pinned its own. A row picked from the worker's table
+    // is a (model, effort) pair; running its model at some other effort is not what was routed.
+    if (canSetEffort && picked.effortSource !== 'task') {
+      const routed =
+        choice.effort ??
+        (choice.model === worker.defaultModel ? worker.defaultEffort : null) ??
+        routeEffortFor(worker, choice.model)
+      if (routed) picked.effort = routed
     }
   }
   // ⛔ An effort the *model* has no levels for is dropped here, the same way one the *adapter* cannot

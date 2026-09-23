@@ -3,7 +3,7 @@ import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import type { Objective, Project, Task } from '@shared/tasks.js'
 import { projectTrunkOnly, resolveWorkspaceMode, windowHighWater, WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { WEIGHT_SIGNS } from '@shared/routing.js'
-import { resolveModelClass } from '@shared/modelclass.js'
+import { classOnWorker } from '@shared/modelroutes.js'
 import { adapter } from './adapters/index.js'
 import { paceFactors, paceFor, paceValue, type PaceFactors } from './pace.js'
 import {
@@ -21,7 +21,7 @@ import {
   inheritedModelFor,
   listWorkers,
   modelRoutingActive,
-  routableModelsFor,
+  routableCandidatesFor,
   spendingCreditsOn
 } from './workers.js'
 import { fitnessFor } from './fitness.js'
@@ -240,6 +240,8 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     session: Session | null
     resumable: Session | null
     model: string | null
+    /** The effort the auto row behind this pair runs at; null leaves it to `resolveModelChoice`. */
+    effort: string | null
     quotaUnverified: boolean
     trustedWindows: QuotaWindow[]
     estimate: Estimate
@@ -362,34 +364,43 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     // ⛔ An explicit inherit policy takes the account's own default and routes nothing else.
     // ⛔ A live warm conversation pins the model (its process is already running it).
     // ⛔ A reopenable conversation preserves its model when no explicit policy is given.
-    let candidateModels: Array<string | null>
+    // ⭐ A candidate is a (model, effort) pair: an auto-routed row in the worker's table carries the
+    // effort it runs at (t638). Every other rung names a model only and leaves the effort to
+    // `resolveModelChoice`, as it always did.
+    let candidateModels: Array<{ model: string | null; effort: string | null }>
+    // ⛔ Auto rows are narrowed to the class *before* they are reduced to one per model, so the class
+    // filter below must not run on them a second time against a different row.
+    let classFiltered = false
     if (task.constraints.model) {
-      candidateModels = [task.constraints.model]
+      candidateModels = [{ model: task.constraints.model, effort: null }]
     } else if (task.constraints.modelsByWorker && task.constraints.modelsByWorker[worker.id]) {
-      candidateModels = [task.constraints.modelsByWorker[worker.id]!]
+      candidateModels = [{ model: task.constraints.modelsByWorker[worker.id]!, effort: null }]
     } else if (task.constraints.modelPolicy === 'inherit') {
       // ⛔ The account's own default, and nothing scored against it. A task filed this way asked for
       // the model the account uses, which is a different answer from *any of the models it may be
       // routed to* the moment somebody widens the worker's allowlist.
-      candidateModels = inheritedModelFor(worker)
+      candidateModels = inheritedModelFor(worker).map((model) => ({ model, effort: null }))
     } else if (reuse?.model) {
       // A live conversation is served by the process already running it: the model was fixed at spawn
       // and dispatchIntoWarmSession cannot change it.
-      candidateModels = [reuse.model]
+      candidateModels = [{ model: reuse.model, effort: null }]
     } else if (task.constraints.modelPolicy === 'auto') {
-      candidateModels = routableModelsFor(worker)
+      candidateModels = routableCandidatesFor(worker, task.constraints.modelClass)
+      classFiltered = true
     } else if (held?.model) {
       // For tasks with no explicit model or policy, preserve conversational continuity on resume.
-      candidateModels = [held.model]
+      candidateModels = [{ model: held.model, effort: null }]
     } else {
-      candidateModels = routableModelsFor(worker)
+      candidateModels = routableCandidatesFor(worker, task.constraints.modelClass)
+      classFiltered = true
     }
 
     if (task.constraints.modelClass) {
-      candidateModels = candidateModels.filter((m) => {
-        if (!m) return false
-        return resolveModelClass(m, worker) === task.constraints.modelClass
-      })
+      if (!classFiltered) {
+        candidateModels = candidateModels.filter(
+          (c) => c.model !== null && classOnWorker(worker, c.model) === task.constraints.modelClass
+        )
+      }
       if (candidateModels.length === 0) {
         reasons.push(`${worker.label}: no routable models in '${task.constraints.modelClass}' class`)
         continue
@@ -425,7 +436,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
      * word is about *this* account.
      */
     const onCredits = spendingCreditsOn(worker, switches.spendCreditsPastLimit)
-    for (const model of candidateModels) {
+    for (const { model, effort } of candidateModels) {
       let trustedWindows: QuotaWindow[] = []
       // ⛔ Hoisted out of the `quota` branch below: `prepaid` needs to know which pool this pair draws
       // on even when there is no trusted reading to score against it.
@@ -510,6 +521,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
         session,
         resumable,
         model,
+        effort,
         quotaUnverified,
         trustedWindows,
         estimate,
@@ -652,6 +664,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       reason: '',
       quotaUnverified: c.quotaUnverified,
       model: c.model,
+      effort: c.effort,
       score: breakdown.total,
       breakdown
     })

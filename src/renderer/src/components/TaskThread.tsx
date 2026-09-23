@@ -26,6 +26,7 @@ import {
 } from '@shared/tasks'
 import type { ModelOptions, Session } from '@shared/protocol'
 import type { ManualReview, QualityReview } from '@shared/review'
+import { autoModelCount } from '@shared/modelroutes'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { ImageChips, usePastedImages } from '../lib/pasteimages'
@@ -439,7 +440,7 @@ function TaskDetail({
     // its levels, and dropping there would hide one the CLI is really being sent.
     effort: resolvedSpec && resolvedSpec.effortLevels.length === 0 ? null : resolved.effort,
     source: routerPicks
-      ? `chosen at dispatch from ${assigned?.routableModels?.length} routable models${assigned ? ` on ${assigned.label}` : ''}`
+      ? `chosen at dispatch from ${autoModelCount(assigned)} auto-routed models${assigned ? ` on ${assigned.label}` : ''}`
       : resolved.modelSource === 'task'
         ? 'pinned on this task'
         : resolved.modelSource === 'worker'

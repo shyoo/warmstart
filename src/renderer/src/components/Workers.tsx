@@ -6,21 +6,18 @@ import type {
   ModelOptions,
   Session,
   Settings,
-  UnattendedAuthority,
-  Worker
+  UnattendedAuthority
 } from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isWorkerSubscriptionExpired, QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import { age, percent, quotaGap } from '../lib/format'
 import { creditsMismatchKind, creditsMismatchNote } from '@shared/credits'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
-import { Pill } from './Pill'
 import { TerminalPane } from './Terminal'
 import { useTarget } from '../lib/target'
 import { errorMessage } from '@shared/errors.js'
 import { isLocalModelId, localModelLabel } from '@shared/localmodel'
-import { resolveModelClass, type ModelClass } from '@shared/modelclass'
-import { effortLabel } from '../lib/modelname'
+import { ModelTable, MODEL_TABLE_HELP } from './ModelTable'
 
 /**
  * The (i) beside a column heading whose number needs a sentence.
@@ -120,220 +117,12 @@ const MAX_HELP =
   'them start cold, which costs tokens and tends to give a weaker answer. ' +
   'Lowering it never interrupts a running task; it only holds the next dispatch.'
 
-/**
- * The (i) beside `Routable models` — the sentence behind why an empty box is not "nothing routes
- * here" but "routing uses this account's current default model only".
- *
- * ⛔ **Opt-in, and inert until touched.** Leaving this empty is not a gap in the fleet's model-aware
- * routing — it is the honest default, because widening every worker to every model it can price
- * would hand a scorer dozens of candidates a tick that nobody chose. Checking a model here adds it
- * to what this account may be *routed to*; it does not change what the account reaches for by
- * default, which is still the `Model` column beside it.
- */
-const ROUTABLE_MODELS_HELP =
-  'Allowed models for automated task routing on this worker. If none are selected, tasks will route ' +
-  'only to the default model configured above. Only models supported and priced by this adapter are listed.'
-
 const UNATTENDED_AUTHORITY_HELP =
   'How much of this machine unattended work on this account may reach. "Sandboxed adapters only" ' +
   'holds a task rather than run it here if this account’s CLI has no real sandbox. "Full user ' +
   'authority" lets it run with permission checks bypassed, as your OS user — on Codex that means ' +
   '`--dangerously-bypass-approvals-and-sandbox`; on Claude Code and Antigravity it is what unattended ' +
   'work has always run as.'
-
-/**
- * What the **Routable models** pill reads. Pure so the L1 suite can pin it without a table.
- *
- * ⛔ **Names, not a count.** `2 models` says nothing an operator choosing where a task lands needs —
- * the pill names the allowlist (`sonnet, opus`, truncated by the pill's own ellipsis with the full
- * list on the tooltip), and the menu behind the pill is the editor: checkboxes add or drop models,
- * and Reset returns to the default. The empty state reads as what it is — a deliberate, inert
- * default, matching `ROUTABLE_MODELS_HELP` — because a blank beside `Model` would read as
- * "nothing chosen yet" rather than its opposite.
- */
-import { routableModelsLabel } from '../lib/routablelabel'
-export { routableModelsLabel }
-function RoutableModelsPill({
-  worker,
-  models,
-  selectableEffort,
-  disabled,
-  busy,
-  onChange,
-  onModelClassesChange,
-  onModelEffortsChange
-}: {
-  worker: Worker
-  models: Array<{ id: string; effortLevels?: string[] }>
-  selectableEffort?: boolean
-  disabled: boolean
-  busy: boolean
-  onChange: (next: string[]) => void
-  onModelClassesChange?: (next: Record<string, ModelClass> | null) => void
-  onModelEffortsChange?: (next: Record<string, string | null> | null) => void
-}): React.JSX.Element {
-  const selected = worker.routableModels ?? []
-  const label = routableModelsLabel(selected, worker)
-
-  const toggle = (id: string): void => {
-    onChange(selected.includes(id) ? selected.filter((m) => m !== id) : [...selected, id])
-  }
-
-  return (
-    <div className="routable-models-control">
-      <div
-        className={`routable-models-value${selected.length === 0 ? ' routable-models-value--muted' : ''}`}
-        title={
-          selected.length > 0
-            ? `Routable models: ${label}`
-            : ROUTABLE_MODELS_HELP
-        }
-      >
-        {selected.length === 0
-          ? label
-          : selected.map((id) => {
-              const cls = resolveModelClass(id, worker)
-              const eff = worker.modelEfforts?.[id]
-              return (
-                <span key={id} className="routable-models-chip">
-                  {eff ? `${id} (${cls}, ${eff} effort)` : `${id} (${cls})`}
-                </span>
-              )
-            })}
-      </div>
-      <Pill
-        className="routable-models-edit"
-        ariaLabel={`Edit routable models for ${worker.label}`}
-        title="Edit routable models"
-        disabled={disabled || models.length === 0}
-        label={<span aria-hidden="true">✎</span>}
-        menu={() => (
-          <div className="workers-menu">
-            <div className="workers-menu-head">
-              <span className="workers-menu-title">Routable models, efforts & classes</span>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {selected.length > 0 && (
-                  <button type="button" className="workers-menu-action" onClick={() => onChange([])} disabled={busy}>
-                    Reset routable
-                  </button>
-                )}
-                {worker.modelEfforts && Object.keys(worker.modelEfforts).length > 0 && onModelEffortsChange && (
-                  <button
-                    type="button"
-                    className="workers-menu-action"
-                    onClick={() => onModelEffortsChange(null)}
-                    disabled={busy}
-                  >
-                    Reset efforts
-                  </button>
-                )}
-                {worker.modelClasses && Object.keys(worker.modelClasses).length > 0 && onModelClassesChange && (
-                  <button
-                    type="button"
-                    className="workers-menu-action"
-                    onClick={() => onModelClassesChange(null)}
-                    disabled={busy}
-                  >
-                    Reset classes
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="workers-menu-list">
-              <table className="workers-routable-table">
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: 'left' }}>Model</th>
-                    <th style={{ textAlign: 'left', width: '95px' }}>Effort</th>
-                    <th style={{ textAlign: 'left', width: '80px' }}>Class</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {models.map((m) => {
-                    const currentClass = resolveModelClass(m.id, worker)
-                    const currentEffort = worker.modelEfforts?.[m.id] ?? ''
-                    const hasEfforts = Boolean(selectableEffort && m.effortLevels && m.effortLevels.length > 0)
-
-                    return (
-                      <tr key={m.id} className="workers-routable-row">
-                        <td className="workers-routable-model-cell">
-                          <label className="workers-menu-worker-info">
-                            <input
-                              type="checkbox"
-                              checked={selected.includes(m.id)}
-                              onChange={() => toggle(m.id)}
-                              disabled={busy}
-                            />
-                            <span className="workers-menu-worker-name">{m.id}</span>
-                          </label>
-                        </td>
-                        <td className="workers-routable-effort-cell">
-                          {hasEfforts && onModelEffortsChange ? (
-                            <select
-                              className="workers-menu-effort-select"
-                              value={currentEffort}
-                              disabled={busy}
-                              aria-label={`Effort level for ${m.id}`}
-                              onChange={(e) => {
-                                const val = e.target.value
-                                const nextMap: Record<string, string | null> = {
-                                  ...(worker.modelEfforts ?? {})
-                                }
-                                if (val) {
-                                  nextMap[m.id] = val
-                                } else {
-                                  delete nextMap[m.id]
-                                }
-                                onModelEffortsChange(Object.keys(nextMap).length > 0 ? nextMap : null)
-                              }}
-                            >
-                              <option value="">Default</option>
-                              {m.effortLevels!.map((lvl) => (
-                                <option key={lvl} value={lvl}>
-                                  {effortLabel(lvl) ?? lvl}
-                                </option>
-                              ))}
-                            </select>
-                          ) : (
-                            <span className="workers-menu-effort-none">—</span>
-                          )}
-                        </td>
-                        <td className="workers-routable-class-cell">
-                          {onModelClassesChange ? (
-                            <select
-                              className="workers-menu-class-select"
-                              value={currentClass}
-                              disabled={busy}
-                              aria-label={`Capability tier for ${m.id}`}
-                              onChange={(e) => {
-                                const cls = e.target.value as ModelClass
-                                const nextMap: Record<string, ModelClass> = {
-                                  ...(worker.modelClasses ?? {}),
-                                  [m.id]: cls
-                                }
-                                onModelClassesChange(nextMap)
-                              }}
-                            >
-                              <option value="high">High</option>
-                              <option value="med">Med</option>
-                              <option value="low">Low</option>
-                            </select>
-                          ) : (
-                            <span className="dim">{currentClass}</span>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-      />
-    </div>
-  )
-}
 
 /**
  * Settings → Workers, and the commissioning wizard.
@@ -418,19 +207,6 @@ export function Workers({
     (workerId ? modelOptions.find((o) => o.adapterId === adapterId && o.workerId === workerId) : null) ??
     modelOptions.find((o) => o.adapterId === adapterId && !o.workerId) ??
     null
-
-  /**
-   * The effort levels this account could actually be given.
-   *
-   * ⛔ Both halves required: the CLI must take an effort flag *and* the chosen model must have
-   * levels. `claude-haiku-4-5` lists none — the API rejects effort on it — so a control there would
-   * offer a choice that fails at dispatch.
-   */
-  const effortsFor = (worker: Worker): string[] => {
-    const options = modelsFor(worker.adapterId, worker.id)
-    if (!options?.selectableEffort || !worker.defaultModel) return []
-    return options.models.find((m) => m.id === worker.defaultModel)?.effortLevels ?? []
-  }
 
   const guard = async (key: string, fn: () => Promise<unknown>) => {
     setBusy(key)
@@ -645,9 +421,7 @@ export function Workers({
             <col style={{ width: '10%' }} />
             <col style={{ width: '10%' }} />
             <col style={{ width: '5%' }} />
-            <col style={{ width: '11%' }} />
-            <col style={{ width: '7%' }} />
-            <col style={{ width: '9%' }} />
+            <col style={{ width: '27%' }} />
             <col style={{ width: '8%' }} />
             <col style={{ width: '8%' }} />
             <col style={{ width: '8%' }} />
@@ -673,14 +447,12 @@ export function Workers({
                   <ColumnInfo text={MAX_HELP} />
                 </span>
               </th>
-              <th>Model</th>
               <th>
                 <span className="th-with-info">
-                  Routable models
-                  <ColumnInfo text={ROUTABLE_MODELS_HELP} />
+                  Models
+                  <ColumnInfo text={MODEL_TABLE_HELP} />
                 </span>
               </th>
-              <th>Grading model</th>
               <th>Summary model</th>
               <th>Role</th>
               <th>
@@ -998,182 +770,22 @@ export function Workers({
                         }}
                       />
                     </td>
-                    {/* ⭐ The account's default model and effort — what every task routed here runs
-                        on unless it pins something of its own (`resolveModelChoice`, task → worker →
-                        the CLI itself).
+                    {/* ⭐ The account's models as one table (t638): each (model, effort) line with its
+                        class and a tick for Default, Auto-route, Grading and Judgment. It replaced three
+                        pickers — default model, a routable-models menu behind a pen button, grading
+                        model — that were one question asked three times.
                         ⛔ On the worker and nowhere higher: a model id belongs to one CLI, so the same
                         control on a project or the fleet would hold a value that is invalid for every
-                        task routed to a different adapter.
-                        ⚠️ "CLI default" is a real option, not a blank. It means the vendor picks, which
-                        is what every install did before this control existed. */}
-                    <td>
-                      {modelsFor(worker.adapterId)?.pools && (modelsFor(worker.adapterId)?.pools?.length ?? 0) > 1 ? (
-                        <div
-                          className="pool-defaults-container"
-                          title={
-                            'Default models per quota pool. The scheduler automatically balance-picks ' +
-                            'between pools based on available quota/budget on the next run.'
-                          }
-                        >
-                          {modelsFor(worker.adapterId)!.pools!.map((p) => {
-                            const poolModels = (modelsFor(worker.adapterId, worker.id)?.models ?? []).filter((m) =>
-                              p.models.includes(m.id)
-                            )
-                            const currentVal = worker.defaultModels?.[p.id] ?? ''
-                            return (
-                              <div key={p.id} className="pool-default-row">
-                                <span className="pool-default-label">{p.label}:</span>
-                                <SettingButtonSelect
-                                  value={currentVal}
-                                  options={modelChoices(poolModels)}
-                                  ariaLabel={`${p.label} default model for ${worker.label}`}
-                                  disabled={busy === `model:${worker.id}:${p.id}`}
-                                  onChange={(value) =>
-                                    void guard(`model:${worker.id}:${p.id}`, () =>
-                                      rpc('worker.update', {
-                                        id: worker.id,
-                                        defaultModels: {
-                                          ...(worker.defaultModels ?? {}),
-                                          [p.id]: value || null
-                                        }
-                                      })
-                                    )
-                                  }
-                                />
-                              </div>
-                            )
-                          })}
-                        </div>
-                      ) : (
-                        <div className="worker-model-row">
-                          <SettingButtonSelect
-                            className="worker-model-select"
-                            value={worker.defaultModel ?? ''}
-                            options={modelChoices(modelsFor(worker.adapterId, worker.id)?.models ?? [], worker.adapterId)}
-                            ariaLabel={`Default model for ${worker.label}`}
-                            disabled={busy === `model:${worker.id}`}
-                            title={
-                              'The model tasks on this account run on unless they pin their own. ' +
-                              'Changing it affects the next run — a conversation already open keeps the ' +
-                              'model it started with, because switching mid-conversation throws away its ' +
-                              'prompt cache.'
-                            }
-                            onChange={(value) =>
-                              void guard(`model:${worker.id}`, () =>
-                                rpc('worker.update', {
-                                  id: worker.id,
-                                  // ⛔ `null`, not `''` — the daemon reads undefined as "not mentioned" and
-                                  // null as "clear it", and an empty string is neither.
-                                  defaultModel: value || null,
-                                  // ⚠️ Effort is cleared with the model it belonged to. A level that was
-                                  // legal for the old model is not necessarily legal for the new one, and
-                                  // the daemon would refuse the pair — so the operator re-picks it.
-                                  ...(value !== worker.defaultModel ? { defaultEffort: null } : {})
-                                })
-                              )
-                            }
-                          />
-                          {/* Effort appears only where the CLI takes a flag for it *and* the chosen model
-                              has levels. Antigravity has neither: it bakes effort into the model id and
-                              refuses `--effort` outright, measured 2026-08-29. */}
-                          {effortsFor(worker).length > 0 && (
-                            <SettingButtonSelect
-                              className="worker-effort-select"
-                              value={worker.defaultEffort ?? ''}
-                              options={[
-                                { value: '', label: 'CLI default' },
-                                ...effortsFor(worker).map((level) => ({ value: level, label: level }))
-                              ]}
-                              ariaLabel={`Default reasoning effort for ${worker.label}`}
-                              disabled={busy === `effort:${worker.id}`}
-                              title={
-                                'How hard the model thinks. Like the model, this is read at launch and ' +
-                                'applies to the next run.'
-                              }
-                              onChange={(value) =>
-                                void guard(`effort:${worker.id}`, () =>
-                                  rpc('worker.update', {
-                                    id: worker.id,
-                                    defaultEffort: value || null
-                                  })
-                                )
-                              }
-                            />
-                          )}
-                        </div>
-                      )}
-                    </td>
-                    <td>
-                      <RoutableModelsPill
+                        task routed to a different adapter. */}
+                    <td className="worker-models-cell">
+                      <ModelTable
                         worker={worker}
-                        models={modelsFor(worker.adapterId, worker.id)?.models ?? []}
-                        selectableEffort={Boolean(modelsFor(worker.adapterId, worker.id)?.selectableEffort)}
-                        disabled={false}
-                        busy={busy === `routable:${worker.id}`}
-                        onChange={(next) =>
-                          void guard(`routable:${worker.id}`, () =>
-                            rpc('worker.update', {
-                              id: worker.id,
-                              routableModels: next.length > 0 ? next : null
-                            })
-                          )
-                        }
-                        onModelClassesChange={(next) =>
-                          void guard(`routable:${worker.id}`, () =>
-                            rpc('worker.update', {
-                              id: worker.id,
-                              modelClasses: next
-                            })
-                          )
-                        }
-                        onModelEffortsChange={(next) =>
-                          void guard(`routable:${worker.id}`, () =>
-                            rpc('worker.update', {
-                              id: worker.id,
-                              modelEfforts: next
-                            })
-                          )
+                        options={modelsFor(worker.adapterId, worker.id)}
+                        busy={busy === `models:${worker.id}`}
+                        onPatch={(patch) =>
+                          void guard(`models:${worker.id}`, () => rpc('worker.update', { id: worker.id, ...patch }))
                         }
                       />
-                    </td>
-                    <td>
-                      <div className="worker-model-row">
-                        <SettingButtonSelect
-                          className="worker-grading-select"
-                          value={worker.gradingModel ?? ''}
-                          options={modelChoices(modelsFor(worker.adapterId, worker.id)?.models ?? [], worker.adapterId)}
-                          ariaLabel={`Grading model for ${worker.label}`}
-                          disabled={busy === `grading-model:${worker.id}`}
-                          title="The model this account uses for peer reviews. New workers start on the adapter's smallest configured model."
-                          onChange={(value) =>
-                            void guard(`grading-model:${worker.id}`, () =>
-                              rpc('worker.update', {
-                                id: worker.id,
-                                gradingModel: value || null,
-                                ...(value !== worker.gradingModel ? { gradingEffort: null } : {})
-                              })
-                            )
-                          }
-                        />
-                        {worker.gradingModel && effortsFor({ ...worker, defaultModel: worker.gradingModel }).length > 0 && (
-                          <SettingButtonSelect
-                            className="worker-effort-select"
-                            value={worker.gradingEffort ?? ''}
-                            options={[
-                              { value: '', label: 'CLI default' },
-                              ...effortsFor({ ...worker, defaultModel: worker.gradingModel }).map((level) => ({ value: level, label: level }))
-                            ]}
-                            ariaLabel={`Grading reasoning effort for ${worker.label}`}
-                            disabled={busy === `grading-effort:${worker.id}`}
-                            title="How hard this grading model thinks on the next peer review."
-                            onChange={(value) =>
-                              void guard(`grading-effort:${worker.id}`, () =>
-                                rpc('worker.update', { id: worker.id, gradingEffort: value || null })
-                              )
-                            }
-                          />
-                        )}
-                      </div>
                     </td>
                     <td>
                       <SettingButtonSelect

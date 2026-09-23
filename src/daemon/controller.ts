@@ -291,8 +291,12 @@ function settle(
 export interface ControllerChoice {
   worker: Worker | null
   reason: string
-  /** A title consult may use the worker's separately configured cheap model. */
+  /**
+   * A title consult runs on the worker's summary model; every other consult on its judgment model
+   * (t638). Null is the CLI's own default, which is what every consult ran on before either existed.
+   */
   model?: string | null
+  effort?: string | null
 }
 
 /**
@@ -374,11 +378,19 @@ function controllerHeadroom(workerId: string): number {
 
 export function chooseController(consult?: Pick<Consult, 'kind'>): ControllerChoice {
   const reasons: string[] = []
-  const candidates: Array<{ worker: Worker; score: number; model: string | null }> = []
+  const candidates: Array<{ worker: Worker; score: number; model: string | null; effort: string | null }> = []
 
   for (const worker of listWorkers()) {
     if (!canJudge(worker.role)) continue
-    const model = consult?.kind === 'title' ? worker.summarisingModel ?? null : null
+    const title = consult?.kind === 'title'
+    const model = title ? worker.summarisingModel ?? null : worker.judgmentModel ?? null
+    // ⚠️ No effort without a model to carry it, and none where the CLI takes no flag — the same two
+    // halves `checkWorkerDefaults` refused on the way in, re-read here because a worker's adapter
+    // is not the only thing that can change between the write and the consult.
+    const effort =
+      !title && model && adapter(worker.adapterId).info.capabilities.selectableEffort
+        ? worker.judgmentEffort ?? null
+        : null
     if (consult?.kind === 'title' && !model) {
       reasons.push(`${worker.label} has no title-summary model`)
       continue
@@ -393,7 +405,7 @@ export function chooseController(consult?: Pick<Consult, 'kind'>): ControllerCho
 
     // A dedicated controller is preferred over an account that also does work, because asking a busy
     // account for judgment competes with the work it is doing.
-    candidates.push({ worker, score: (worker.role === 'controller' ? 1 : 0) + headroom, model })
+    candidates.push({ worker, score: (worker.role === 'controller' ? 1 : 0) + headroom, model, effort })
   }
 
   if (candidates.length === 0) {
@@ -404,7 +416,7 @@ export function chooseController(consult?: Pick<Consult, 'kind'>): ControllerCho
   }
   candidates.sort((a, b) => b.score - a.score)
   const chosen = candidates[0]!
-  return { worker: chosen.worker, reason: '', model: chosen.model }
+  return { worker: chosen.worker, reason: '', model: chosen.model, effort: chosen.effort }
 }
 
 export function consultsStartedSince(since: number): number {
@@ -465,7 +477,7 @@ export async function drainConsults(): Promise<{ answered: number; note: string 
         break
       }
 
-      await run(consult, choice.worker, choice.model)
+      await run(consult, choice.worker, choice.model, choice.effort ?? null)
       answered++
       // One per pass. The next question can wait thirty seconds; a fleet-wide burst cannot be undone.
       break
@@ -480,14 +492,20 @@ export async function drainConsults(): Promise<{ answered: number; note: string 
   }
 }
 
-async function run(consult: Consult, worker: Worker, model: string | null = null): Promise<void> {
+async function run(
+  consult: Consult,
+  worker: Worker,
+  model: string | null = null,
+  effort: string | null = null
+): Promise<void> {
   let sessionId: string | null = null
   try {
     const session = spawnSession({
       workerId: worker.id,
       transport: 'stream',
       purpose: 'consult',
-      ...(model ? { model } : {})
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {})
     })
     sessionId = session.id
     db()

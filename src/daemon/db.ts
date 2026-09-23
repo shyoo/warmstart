@@ -6,6 +6,8 @@ import { log } from './log.js'
 import { costModel } from './costmodel.js'
 import { namesAnAuthor } from './blinding.js'
 import { TASK_QUALITY_RECOMPUTE_SQL } from './qualitysql.js'
+import { routesFromLegacy } from '@shared/modelroutes.js'
+import type { ModelClass } from '@shared/modelclass.js'
 
 /**
  * Storage.
@@ -2072,6 +2074,53 @@ const MIGRATIONS: Migration[] = [
   (conn) => {
     if (!hasColumn(conn, 'workers', 'model_efforts_json')) {
       conn.exec('alter table workers add column model_efforts_json text;')
+    }
+  },
+  // 81 - one model table per worker: (model, effort) rows with a class and an auto-route flag, and
+  // a judgment model beside the grading one (t638).
+  //
+  // ⛔ Migrations 47/79/80 kept three per-model maps, which could not say "opus at high *and* at
+  // medium". Each worker's three maps are folded into `model_routes_json` by `routesFromLegacy` —
+  // routable models become auto rows, a model that only had an effort or a class becomes a manual
+  // row — and then **cleared**, so a `versionBefore` replay cannot fold stale maps back over a table
+  // somebody has since edited. The old columns stay; nothing reads them.
+  // Guarded because migration replay is part of this database's test contract.
+  (conn) => {
+    for (const column of ['model_routes_json', 'judgment_model', 'judgment_effort']) {
+      if (!hasColumn(conn, 'workers', column)) conn.exec(`alter table workers add column ${column} text;`)
+    }
+    const legacy = conn
+      .prepare(
+        `select id, routable_models_json, model_efforts_json, model_classes_json from workers
+          where routable_models_json is not null or model_efforts_json is not null or model_classes_json is not null`
+      )
+      .all() as Array<{
+      id: string
+      routable_models_json: string | null
+      model_efforts_json: string | null
+      model_classes_json: string | null
+    }>
+    // ⚠️ A map that does not parse is dropped, not thrown on: a migration that fails here would stop
+    // the daemon opening its own database over one worker's settings.
+    const parse = <T>(text: string | null): T | null => {
+      try {
+        return text ? (JSON.parse(text) as T) : null
+      } catch {
+        return null
+      }
+    }
+    const write = conn.prepare(
+      `update workers set model_routes_json = ?, routable_models_json = null, model_efforts_json = null,
+                          model_classes_json = null
+        where id = ?`
+    )
+    for (const r of legacy) {
+      const routes = routesFromLegacy(
+        parse<string[]>(r.routable_models_json),
+        parse<Record<string, string | null>>(r.model_efforts_json),
+        parse<Record<string, ModelClass>>(r.model_classes_json)
+      )
+      write.run(routes.length > 0 ? JSON.stringify(routes) : null, r.id)
     }
   }
 ]

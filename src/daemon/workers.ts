@@ -3,6 +3,7 @@ import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { canWork } from '@shared/protocol.js'
 import type { ModelClass } from '@shared/modelclass.js'
+import { autoCandidates, autoRoutes, classOnWorker, type ModelRoute } from '@shared/modelroutes.js'
 import type {
   CreditStatus,
   CreditsIntent,
@@ -39,9 +40,9 @@ interface WorkerRow {
   grading_enabled: number
   default_effort: string | null
   default_models_json: string | null
-  routable_models_json: string | null
-  model_classes_json: string | null
-  model_efforts_json: string | null
+  model_routes_json: string | null
+  judgment_model: string | null
+  judgment_effort: string | null
   identity_json: string | null
   credits_json: string | null
   credits_intent_json: string | null
@@ -72,9 +73,9 @@ function toWorker(r: WorkerRow): Worker {
     gradingEnabled: r.grading_enabled !== 0,
     defaultEffort: r.default_effort,
     defaultModels: r.default_models_json ? (JSON.parse(r.default_models_json) as Record<string, string | null>) : null,
-    routableModels: r.routable_models_json ? (JSON.parse(r.routable_models_json) as string[]) : null,
-    modelClasses: r.model_classes_json ? (JSON.parse(r.model_classes_json) as Record<string, ModelClass>) : null,
-    modelEfforts: r.model_efforts_json ? (JSON.parse(r.model_efforts_json) as Record<string, string | null>) : null,
+    modelRoutes: r.model_routes_json ? (JSON.parse(r.model_routes_json) as ModelRoute[]) : null,
+    judgmentModel: r.judgment_model,
+    judgmentEffort: r.judgment_effort,
     identity: (() => {
       const ident = r.identity_json ? (JSON.parse(r.identity_json) as WorkerIdentity) : null
       const hlth = r.health_json ? (JSON.parse(r.health_json) as WorkerHealth) : null
@@ -274,9 +275,9 @@ export function updateWorker(
       | 'gradingEnabled'
       | 'defaultEffort'
       | 'defaultModels'
-      | 'routableModels'
-      | 'modelClasses'
-      | 'modelEfforts'
+      | 'modelRoutes'
+      | 'judgmentModel'
+      | 'judgmentEffort'
       | 'unattendedAuthority'
     >
   >
@@ -290,30 +291,18 @@ export function updateWorker(
     patch.defaultModels === undefined
       ? current.defaultModels ? JSON.stringify(current.defaultModels) : null
       : patch.defaultModels ? JSON.stringify(patch.defaultModels) : null
-  const routableModelsJson =
-    patch.routableModels === undefined
-      ? current.routableModels ? JSON.stringify(current.routableModels) : null
-      : patch.routableModels && patch.routableModels.length > 0
-        ? JSON.stringify(patch.routableModels)
-        : null
-  const modelClassesJson =
-    patch.modelClasses === undefined
-      ? current.modelClasses ? JSON.stringify(current.modelClasses) : null
-      : patch.modelClasses && Object.keys(patch.modelClasses).length > 0
-        ? JSON.stringify(patch.modelClasses)
-        : null
-  const modelEffortsJson =
-    patch.modelEfforts === undefined
-      ? current.modelEfforts ? JSON.stringify(current.modelEfforts) : null
-      : patch.modelEfforts && Object.keys(patch.modelEfforts).length > 0
-        ? JSON.stringify(patch.modelEfforts)
+  const modelRoutesJson =
+    patch.modelRoutes === undefined
+      ? current.modelRoutes && current.modelRoutes.length > 0 ? JSON.stringify(current.modelRoutes) : null
+      : patch.modelRoutes && patch.modelRoutes.length > 0
+        ? JSON.stringify(patch.modelRoutes)
         : null
 
   db()
     .prepare(
       `update workers set label = ?, enabled = ?, human_occupied = ?, max_concurrent = ?, role = ?,
                           default_model = ?, default_effort = ?, default_models_json = ?,
-                          routable_models_json = ?, model_classes_json = ?, model_efforts_json = ?,
+                          model_routes_json = ?, judgment_model = ?, judgment_effort = ?,
                           grading_model = ?, summarising_model = ?, grading_effort = ?, grading_enabled = ?,
                           unattended_authority = ?
        where id = ?`
@@ -330,9 +319,9 @@ export function updateWorker(
       patch.defaultModel === undefined ? current.defaultModel : patch.defaultModel,
       patch.defaultEffort === undefined ? current.defaultEffort : patch.defaultEffort,
       defaultModelsJson,
-      routableModelsJson,
-      modelClassesJson,
-      modelEffortsJson,
+      modelRoutesJson,
+      patch.judgmentModel === undefined ? (current.judgmentModel ?? null) : patch.judgmentModel,
+      patch.judgmentEffort === undefined ? (current.judgmentEffort ?? null) : patch.judgmentEffort,
       patch.gradingModel === undefined ? (current.gradingModel ?? null) : patch.gradingModel,
       patch.summarisingModel === undefined ? (current.summarisingModel ?? null) : patch.summarisingModel,
       patch.gradingEffort === undefined ? (current.gradingEffort ?? null) : patch.gradingEffort,
@@ -354,15 +343,31 @@ export function updateWorker(
 /**
  * Every model this worker may be *routed to*.
  *
- * ⛔ **Null or empty resolves to exactly the one model this worker uses today** — what
+ * ⛔ **No auto row resolves to exactly the one model this worker uses today** — what
  * `resolveModelChoice` would answer with no task-level pin, wrapped in a one-element array, or
  * `[null]` ("the CLI's own choice") when that itself is null. This is what keeps model-aware
- * routing inert on every worker until an operator opts it in: an empty allowlist is read as *this
- * worker's current single model*, never as *every model the adapter can price*.
+ * routing inert on every worker until an operator opts it in: a table with nothing ticked
+ * *Auto-route* is read as *this worker's current single model*, never as *every model the adapter
+ * can price*.
  */
 export function routableModelsFor(worker: Worker): Array<string | null> {
-  if (worker.routableModels && worker.routableModels.length > 0) return worker.routableModels
-  return inheritedModelFor(worker)
+  return routableCandidatesFor(worker).map((c) => c.model)
+}
+
+/**
+ * The (model, effort) pairs Auto Model may dispatch on this worker, narrowed to a class if asked.
+ *
+ * ⛔ One pair per model — see `autoCandidates`. ⚠️ The inherited fallback carries no effort of its
+ * own: `resolveModelChoice` already gives the default model the default row's effort.
+ */
+export function routableCandidatesFor(
+  worker: Worker,
+  modelClass?: ModelClass | null
+): Array<{ model: string | null; effort: string | null }> {
+  if (autoRoutes(worker).length > 0) return autoCandidates(worker, modelClass)
+  const inherited = inheritedModelFor(worker).map((model) => ({ model, effort: null }))
+  if (!modelClass) return inherited
+  return inherited.filter((c) => c.model && classOnWorker(worker, c.model, worker.defaultEffort) === modelClass)
 }
 
 /**
@@ -875,6 +880,6 @@ export async function refreshIdentity(id: string, lift = false): Promise<Worker>
  */
 export function modelRoutingActive(): boolean {
   return listWorkers().some(
-    (w) => w.enabled && canWork(w.role) && w.routableModels && w.routableModels.length > 0
+    (w) => w.enabled && canWork(w.role) && autoRoutes(w).length > 0
   )
 }

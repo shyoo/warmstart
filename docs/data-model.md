@@ -24,7 +24,7 @@ Everything else in the daemon goes through those two, so swapping the driver is 
 ## 2. The migration contract
 
 `MIGRATIONS` in `db.ts` is a numbered, **append-only** array. `MIGRATION_COUNT` is its length and is
-the `user_version` a current database sits at — **80** as of 2026-09-22 (79 `model_classes_json`, 80 `model_efforts_json`; measured off `MIGRATION_COUNT`, not counted by hand).
+the `user_version` a current database sits at — **81** as of 2026-09-22 (79 `model_classes_json`, 80 `model_efforts_json`, 81 `model_routes_json`; measured off `MIGRATION_COUNT`, not counted by hand).
 
 - ⛔ **Never edit a migration that has shipped.** Add the next one.
 - ⛔ **Every migration must survive being replayed.** `sessionstate.test.ts` rewinds `user_version`

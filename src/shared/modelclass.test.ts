@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultModelClass, resolveModelClass } from './modelclass.js'
+import { defaultModelClass } from './modelclass.js'
 
 describe('modelclass', () => {
   it('identifies default model classes for known models', () => {
@@ -24,18 +24,5 @@ describe('modelclass', () => {
     expect(defaultModelClass('custom-model-ultra')).toBe('high')
     expect(defaultModelClass('llama-3-small-mini')).toBe('low')
     expect(defaultModelClass('unknown-balanced-model')).toBe('med')
-  })
-
-  it('honors worker overrides over built-in defaults', () => {
-    const worker = {
-      modelClasses: {
-        'claude-sonnet-5': 'high' as const,
-        'claude-opus-5': 'med' as const
-      }
-    }
-    expect(resolveModelClass('claude-sonnet-5', worker)).toBe('high')
-    expect(resolveModelClass('claude-opus-5', worker)).toBe('med')
-    // Unoverridden model falls back to default
-    expect(resolveModelClass('claude-haiku-4-5', worker)).toBe('low')
   })
 })

@@ -93,11 +93,11 @@ export function ModelsModel(): React.JSX.Element {
           more capable model for an architectural rewrite.
         </p>
         <p className="panel-sub">
-          <strong>Opt-in, and inert until touched.</strong> Every worker&rsquo;s <em>routable
-          models</em> allowlist starts empty, which resolves to exactly the one model that worker
+          <strong>Opt-in, and inert until touched.</strong> Every worker&rsquo;s model table starts
+          with nothing ticked <em>Auto-route</em>, which resolves to exactly the one model that worker
           already defaults to — never &ldquo;every model this adapter can price&rdquo;. Widening it is
           a Settings &rsaquo; Workers control; nothing here changes what a worker runs until an
-          operator adds a second model to its list.
+          operator ticks a line.
         </p>
         {/* ⛔ The single most important fact on this page, and it is not derivable from the table.
             Every fitness and price number below is computed and displayed either way; whether
@@ -106,16 +106,16 @@ export function ModelsModel(): React.JSX.Element {
         <p className={report.active ? 'panel-sub' : 'alert'}>
           {report.active ? (
             <>
-              <strong>Live.</strong> At least one worker has a routable-models allowlist, so{' '}
+              <strong>Live.</strong> At least one worker has a line ticked Auto-route, so{' '}
               <code>fitness</code> and <code>price</code> are scoring every candidate in every routing
               decision fleet-wide.
             </>
           ) : (
             <>
-              <strong>Not scoring anything yet.</strong> No worker has a routable-models allowlist, so{' '}
+              <strong>Not scoring anything yet.</strong> No worker has a line ticked Auto-route, so{' '}
               <code>fitness</code> and <code>price</code> are held at exactly 0 for every candidate and
               routing is running the same arithmetic it ran before this tab existed. The numbers below
-              are real and nothing reads them. Add a second model to any worker in Settings &rsaquo;
+              are real and nothing reads them. Tick Auto-route on any worker&rsquo;s line in Settings &rsaquo;
               Workers to switch both terms on for the whole fleet.
             </>
           )}
@@ -292,7 +292,7 @@ export function ModelsModel(): React.JSX.Element {
                   {r.label} <span className="dim">{r.adapterId}</span>
                 </td>
                 <td>{r.model}</td>
-                <td>{r.routable ? 'yes' : 'not on allowlist'}</td>
+                <td>{r.routable ? 'yes' : 'not auto-routed'}</td>
                 <td className="tbl-num num">{r.prior === null ? 'unknown' : r.prior.toFixed(2)}</td>
                 <td className="dim">
                   <PriorSource

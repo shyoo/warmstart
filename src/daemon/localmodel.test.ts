@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { isLocalModelId, LOCAL_MODEL_PREFIX, localModelId, localModelLabel, servedModelOf } from '@shared/localmodel.js'
 import { benchmarkPrior } from './benchmarks.js'
+import { routesFromLegacy } from '@shared/modelroutes.js'
 
 /**
  * A local model is whatever the server serves, named `local-llm:<served id>` (t486, 2026-09-16).
@@ -132,7 +133,7 @@ describe('what the daemon does with a served model', () => {
 
   it('accepts any id under the namespace as a default, and refuses a bare name with the reason', () => {
     expect(() => support.checkWorkerDefaults('local-llm', { defaultModel: 'local-llm:Anything-At-All.gguf' })).not.toThrow()
-    expect(() => support.checkWorkerDefaults('local-llm', { routableModels: ['local-llm:A.gguf', 'local-llm:B.gguf'] })).not.toThrow()
+    expect(() => support.checkWorkerDefaults('local-llm', { modelRoutes: routesFromLegacy(['local-llm:A.gguf', 'local-llm:B.gguf']) })).not.toThrow()
     expect(() => support.checkWorkerDefaults('local-llm', { defaultModel: 'qwen3-coder-30b-a3b' })).toThrow(/local-llm:<id the server reports>/)
     expect(() => support.checkWorkerDefaults('local-llm', { gradingModel: 'gpt-oss-120b' })).toThrow(/is not how Local LLM names a model/)
     // The namespace is the adapter's: a cloud adapter does not take it.

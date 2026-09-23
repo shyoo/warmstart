@@ -17,6 +17,7 @@
 
 import type { QuotaSnapshot, QuotaWindow, Worker } from './protocol.js'
 import type { ModelClass } from './modelclass.js'
+import { routeEffortFor, type ModelRoute } from './modelroutes.js'
 
 export type { ModelClass } from './modelclass.js'
 
@@ -3285,7 +3286,7 @@ export function resolveModelChoice(
         defaultModel: string | null
         defaultEffort: string | null
         defaultModels?: Record<string, string | null> | null
-        modelEfforts?: Record<string, string | null> | null
+        modelRoutes?: ModelRoute[] | null
       }
     | null
     | undefined,
@@ -3349,8 +3350,11 @@ export function resolveModelChoice(
       ? constraints.effortsByWorker[worker.id]
       : undefined
   const effort = workerSpecificEffort || constraints?.effort || null
+  // ⛔ The default row's effort for the default model; otherwise the effort the model's own row in
+  // the worker's table carries; otherwise the account's default effort, as before there was a table.
   const workerEffort =
-    (resolvedModel && worker?.modelEfforts?.[resolvedModel]) ??
+    (resolvedModel && resolvedModel === worker?.defaultModel ? worker.defaultEffort : null) ??
+    routeEffortFor(worker, resolvedModel) ??
     worker?.defaultEffort ??
     null
   return {

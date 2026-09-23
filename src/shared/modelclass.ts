@@ -1,7 +1,8 @@
 /**
  * Model capability classes (tiers): high, med, low.
  *
- * ⛔ **Classification is data and heuristics, overridden per-worker.**
+ * ⛔ **Classification is data and heuristics, overridden per worker row** (`classOnWorker`,
+ * `modelroutes.ts`).
  * Tasks can specify a preferred capability class when using Auto Model routing,
  * giving operators control over assigning powerful models to hard tasks or
  * economy models to routine ones without having to pin an exact model ID.
@@ -100,19 +101,4 @@ export function defaultModelClass(modelId: string | null | undefined): ModelClas
 
   // Default middle tier
   return 'med'
-}
-
-/**
- * Resolve the effective model class for a model on a given worker.
- * Worker-level overrides take precedence over built-in defaults.
- */
-export function resolveModelClass(
-  modelId: string | null | undefined,
-  worker?: { modelClasses?: Record<string, ModelClass> | null } | null
-): ModelClass {
-  if (!modelId) return 'med'
-  if (worker?.modelClasses && worker.modelClasses[modelId]) {
-    return worker.modelClasses[modelId]
-  }
-  return defaultModelClass(modelId)
 }

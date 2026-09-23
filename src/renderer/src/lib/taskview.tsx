@@ -11,6 +11,7 @@ import {
 } from '@shared/tasks'
 import type { ModelOptions, Session } from '@shared/protocol'
 import type { QualityReview } from '@shared/review'
+import { autoModelCount, autoRoutes, type ModelRoute } from '@shared/modelroutes'
 import type { FleetEntry } from './daemon'
 import { duration } from './format'
 import { modelLabel } from './modelname'
@@ -357,14 +358,10 @@ export interface ModelLine {
  */
 export function routerPicksModel(
   constraints: Task['constraints'],
-  worker: { routableModels?: string[] | null } | null | undefined,
+  worker: { modelRoutes?: ModelRoute[] | null } | null | undefined,
   modelSource: ResolvedModelChoice['modelSource']
 ): boolean {
-  return (
-    modelSource !== 'task' &&
-    constraints.modelPolicy !== 'inherit' &&
-    (worker?.routableModels?.length ?? 0) > 0
-  )
+  return modelSource !== 'task' && constraints.modelPolicy !== 'inherit' && autoRoutes(worker).length > 0
 }
 
 export function modelLine(
@@ -390,7 +387,7 @@ export function modelLine(
       id: null,
       ran: false,
       undecided: true,
-      routable: entry?.worker.routableModels?.length ?? 0
+      routable: autoModelCount(entry?.worker)
     }
   }
   const id = task.ranModel ?? resolved.model

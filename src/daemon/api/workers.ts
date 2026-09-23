@@ -85,6 +85,9 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
         ...patch,
         ...(patch.gradingEffort !== undefined && patch.gradingModel === undefined
           ? { gradingModel: current.gradingModel }
+          : {}),
+        ...(patch.judgmentEffort !== undefined && patch.judgmentModel === undefined
+          ? { judgmentModel: current.judgmentModel }
           : {})
       })
       return updateWorker(id, patch)

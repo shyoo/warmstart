@@ -6,6 +6,7 @@ import type { Session, Worker } from '@shared/protocol.js'
 import type { Run } from '@shared/tasks.js'
 import type { WorkerChoice } from './scheduler.js'
 import { messageBody } from './threadline.js'
+import { routesFromLegacy } from '@shared/modelroutes.js'
 
 /**
  * The routing and reporting faults found in one afternoon of real use, turned into checks.
@@ -1789,7 +1790,7 @@ describe('model-aware routing', () => {
 
   it('switches both terms on for the whole field as soon as one worker opts in', () => {
     const a = workers.createWorker({ adapterId: 'claude-code', label: 'OptedIn', enabled: true })
-    workers.updateWorker(a.id, { routableModels: ['claude-opus-5', 'claude-haiku-4-5-20251001'] })
+    workers.updateWorker(a.id, { modelRoutes: routesFromLegacy(['claude-opus-5', 'claude-haiku-4-5-20251001']) })
     expect(workers.modelRoutingActive()).toBe(true)
 
     const task = tasks.createTask({
@@ -1839,26 +1840,26 @@ describe('model-aware routing', () => {
     const pair = ['claude-opus-5', 'claude-haiku-4-5-20251001']
 
     const judge = workers.createWorker({ adapterId: 'claude-code', label: 'JudgeOnly', enabled: true })
-    workers.updateWorker(judge.id, { role: 'controller', routableModels: pair })
+    workers.updateWorker(judge.id, { role: 'controller', modelRoutes: routesFromLegacy(pair) })
     expect(workers.modelRoutingActive(), 'controller-only').toBe(false)
 
     const held = workers.createWorker({ adapterId: 'claude-code', label: 'HeldOut', enabled: true })
-    workers.updateWorker(held.id, { role: 'none', routableModels: pair })
+    workers.updateWorker(held.id, { role: 'none', modelRoutes: routesFromLegacy(pair) })
     expect(workers.modelRoutingActive(), 'held out of both').toBe(false)
 
     const off = workers.createWorker({ adapterId: 'claude-code', label: 'SwitchedOff', enabled: false })
-    workers.updateWorker(off.id, { routableModels: pair })
+    workers.updateWorker(off.id, { modelRoutes: routesFromLegacy(pair) })
     expect(workers.modelRoutingActive(), 'switched off').toBe(false)
 
     // ⭐ And one account that could be handed a turn is enough, which is the other half of the claim.
     const doer = workers.createWorker({ adapterId: 'claude-code', label: 'Doer', enabled: true })
-    workers.updateWorker(doer.id, { routableModels: ['claude-opus-5'] })
+    workers.updateWorker(doer.id, { modelRoutes: routesFromLegacy(['claude-opus-5']) })
     expect(workers.modelRoutingActive(), 'one that can work').toBe(true)
   })
 
   it('warm session yields 1 pair at session model', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'WarmWorker', enabled: true })
-    workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5'] })
+    workers.updateWorker(w.id, { modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5']) })
     const task = tasks.createTask({ title: 'Warm session task', constraints: { workerId: w.id } })
 
     const sId = 'session-warm-1'
@@ -1880,7 +1881,7 @@ describe('model-aware routing', () => {
 
   it('pinned model yields 1 pair (via constraints.model and modelsByWorker)', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'PinnedWorker', enabled: true })
-    workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5'] })
+    workers.updateWorker(w.id, { modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5']) })
 
     const task1 = tasks.createTask({
       title: 'Pinned model task',
@@ -1911,7 +1912,7 @@ describe('model-aware routing', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'InheritWorker', enabled: true })
     workers.updateWorker(w.id, {
       defaultModel: 'claude-sonnet-5',
-      routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5']
+      modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5'])
     })
 
     const auto = tasks.createTask({ title: 'Auto model task', constraints: { workerId: w.id } })
@@ -1930,7 +1931,7 @@ describe('model-aware routing', () => {
     it('filters candidate models to only those matching the requested modelClass', () => {
       const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClassWorker', enabled: true })
       workers.updateWorker(w.id, {
-        routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5']
+        modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5'])
       })
 
       // Task requesting high class gets opus
@@ -1965,7 +1966,7 @@ describe('model-aware routing', () => {
       const w = workers.createWorker({ adapterId: 'claude-code', label: 'EconomyOnlyWorker', enabled: true })
       // Worker only has haiku and sonnet (low and med)
       workers.updateWorker(w.id, {
-        routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5']
+        modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-sonnet-5'])
       })
 
       const task = tasks.createTask({
@@ -1980,8 +1981,7 @@ describe('model-aware routing', () => {
     it('honors per-worker model class overrides over built-in defaults', () => {
       const w = workers.createWorker({ adapterId: 'claude-code', label: 'CustomClassWorker', enabled: true })
       workers.updateWorker(w.id, {
-        routableModels: ['claude-sonnet-5', 'claude-opus-5'],
-        modelClasses: { 'claude-sonnet-5': 'high' }
+        modelRoutes: routesFromLegacy(['claude-sonnet-5', 'claude-opus-5'], null, { 'claude-sonnet-5': 'high' })
       })
 
       const task = tasks.createTask({
@@ -1993,6 +1993,32 @@ describe('model-aware routing', () => {
       expect(candidates).toHaveLength(2)
       expect(candidates?.map((c) => c.model).sort()).toEqual(['claude-opus-5', 'claude-sonnet-5'])
     })
+
+    it('⭐ routes to a (model, effort) line and carries its effort to dispatch (t638)', () => {
+      const w = workers.createWorker({ adapterId: 'claude-code', label: 'TwoEffortsWorker', enabled: true })
+      workers.updateWorker(w.id, {
+        modelRoutes: [
+          { model: 'claude-opus-5', effort: 'xhigh', modelClass: 'high', auto: true },
+          { model: 'claude-opus-5', effort: 'low', modelClass: 'low', auto: true }
+        ]
+      })
+
+      const high = scoring.chooseTarget(
+        tasks.createTask({ title: 'Hard one', constraints: { workerId: w.id, modelClass: 'high' } })
+      )
+      expect(high.worker?.id).toBe(w.id)
+      expect([high.model, high.effort]).toEqual(['claude-opus-5', 'xhigh'])
+
+      const low = scoring.chooseTarget(
+        tasks.createTask({ title: 'Typo', constraints: { workerId: w.id, modelClass: 'low' } })
+      )
+      expect([low.model, low.effort]).toEqual(['claude-opus-5', 'low'])
+
+      // ⛔ Plain Auto scores one pair per model — the first listed — never both efforts as a tie.
+      const plain = scoring.chooseTarget(tasks.createTask({ title: 'Anything', constraints: { workerId: w.id } }))
+      expect(plain.scored?.filter((s) => s.workerId === w.id)).toHaveLength(1)
+      expect(plain.effort).toBe('xhigh')
+    })
   })
 
   describe('reassign routing scenarios and model constraints (t254 bug fix)', () => {
@@ -2001,7 +2027,7 @@ describe('model-aware routing', () => {
       const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst-OpusDefault', enabled: true })
       workers.updateWorker(w.id, {
         defaultModel: 'claude-opus-5',
-        routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5']
+        modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5'])
       })
 
       // Task reassigned with modelPolicy: 'inherit' (as done when selecting account default in UI)
@@ -2023,7 +2049,7 @@ describe('model-aware routing', () => {
       const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst-PriorSession', enabled: true })
       workers.updateWorker(w.id, {
         defaultModel: 'claude-opus-5',
-        routableModels: ['claude-haiku-4-5-20251001', 'claude-opus-5']
+        modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-opus-5'])
       })
 
       const task = tasks.createTask({
@@ -2079,7 +2105,7 @@ describe('model-aware routing', () => {
       const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst-InheritPrior', enabled: true })
       workers.updateWorker(w.id, {
         defaultModel: 'claude-opus-5',
-        routableModels: ['claude-haiku-4-5-20251001', 'claude-opus-5']
+        modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-opus-5'])
       })
 
       const task = tasks.createTask({
@@ -2133,7 +2159,7 @@ describe('model-aware routing', () => {
       const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst-LiveHaiku', enabled: true })
       workers.updateWorker(w.id, {
         defaultModel: 'claude-opus-5',
-        routableModels: ['claude-haiku-4-5-20251001', 'claude-opus-5']
+        modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-opus-5'])
       })
 
       const task = tasks.createTask({
@@ -2181,7 +2207,7 @@ describe('model-aware routing', () => {
       const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst-Auto', enabled: true })
       workers.updateWorker(w.id, {
         defaultModel: 'claude-opus-5',
-        routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5']
+        modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5'])
       })
 
       const task = tasks.createTask({
@@ -2197,7 +2223,7 @@ describe('model-aware routing', () => {
 
   it('multiple allowlisted models yield multiple candidate pairs', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'MultiModelWorker', enabled: true })
-    workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5'] })
+    workers.updateWorker(w.id, { modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-sonnet-5']) })
     const task = tasks.createTask({ title: 'Multi model task', constraints: { workerId: w.id } })
     const choice = scoring.chooseTarget(task)
     const candidates = choice.scored?.filter((s) => s.workerId === w.id)
@@ -2209,7 +2235,7 @@ describe('model-aware routing', () => {
 
   it('antigravity account with Claude pool at 95% and Gemini pool at 20% offers Gemini pair and not Claude', () => {
     const agy = workers.createWorker({ adapterId: 'antigravity-cli', label: 'AgyMultiPool', enabled: true })
-    workers.updateWorker(agy.id, { routableModels: ['claude-sonnet-4-6', 'gemini-3.7-flash-high'] })
+    workers.updateWorker(agy.id, { modelRoutes: routesFromLegacy(['claude-sonnet-4-6', 'gemini-3.7-flash-high']) })
 
     const now = Date.now()
     const sample = db.db().prepare(
@@ -2267,7 +2293,7 @@ describe('model-aware routing', () => {
   it('model cap bounds candidate pairs to 8 per worker', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'CappedWorker', enabled: true })
     const tenModels = ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8', 'm9', 'm10']
-    workers.updateWorker(w.id, { routableModels: tenModels })
+    workers.updateWorker(w.id, { modelRoutes: routesFromLegacy(tenModels) })
     const task = tasks.createTask({ title: 'Cap test task', constraints: { workerId: w.id } })
     const choice = scoring.chooseTarget(task)
     const candidateCount = choice.scored?.filter((s) => s.workerId === w.id).length
@@ -2276,7 +2302,7 @@ describe('model-aware routing', () => {
 
   it('low-complexity task picks cheap sufficient model over dear excellent one; high-complexity task flips it', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'ComplexityWorker', enabled: true })
-    workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-opus-5'] })
+    workers.updateWorker(w.id, { modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-opus-5']) })
 
     // Low complexity task: required = 0.35. Haiku prior 0.418 meets bar (fitness = 1.0) and is cheaper
     const lowTask = tasks.createTask({
@@ -2302,7 +2328,7 @@ describe('model-aware routing', () => {
 
   it('unmeasured fitness pair scores 0 for fitness with basis explaining absence and is still a candidate', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'UnmeasuredWorker', enabled: true })
-    workers.updateWorker(w.id, { routableModels: ['custom-unmeasured-model-xyz'] })
+    workers.updateWorker(w.id, { modelRoutes: routesFromLegacy(['custom-unmeasured-model-xyz']) })
     const task = tasks.createTask({ title: 'Unmeasured fitness task', constraints: { workerId: w.id } })
     const choice = scoring.chooseTarget(task)
     expect(choice.worker?.id).toBe(w.id)
@@ -2328,7 +2354,7 @@ describe('model-aware routing', () => {
 
   it('fallback to priced tokens when usd unavailable for any candidate', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'PriceTokensWorker', enabled: true })
-    workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5'] })
+    workers.updateWorker(w.id, { modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-sonnet-5']) })
     const task = tasks.createTask({ title: 'Tokens fallback task', constraints: { workerId: w.id } })
     const choice = scoring.chooseTarget(task)
     const candidates = choice.scored?.filter((s) => s.workerId === w.id)
@@ -2344,8 +2370,8 @@ describe('model-aware routing', () => {
     const spy = vi.spyOn(estimator, 'estimateTask')
     const w1 = workers.createWorker({ adapterId: 'claude-code', label: 'MemoW1', enabled: true })
     const w2 = workers.createWorker({ adapterId: 'claude-code', label: 'MemoW2', enabled: true })
-    workers.updateWorker(w1.id, { routableModels: ['claude-sonnet-5'] })
-    workers.updateWorker(w2.id, { routableModels: ['claude-sonnet-5'] })
+    workers.updateWorker(w1.id, { modelRoutes: routesFromLegacy(['claude-sonnet-5']) })
+    workers.updateWorker(w2.id, { modelRoutes: routesFromLegacy(['claude-sonnet-5']) })
 
     const task = tasks.createTask({ title: 'Memo test task' })
     spy.mockClear()
@@ -2360,7 +2386,7 @@ describe('model-aware routing', () => {
 
   it('explored decision records basis: explore, keeps full ranked field, and posts thread message', async () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'ExploreWorker', enabled: true })
-    workers.updateWorker(w.id, { routableModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-5'] })
+    workers.updateWorker(w.id, { modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-sonnet-5']) })
     const task = tasks.createTask({ title: 'Explore decision task', constraints: { workerId: w.id } })
 
     const { setSetting } = await import('./settings.js')

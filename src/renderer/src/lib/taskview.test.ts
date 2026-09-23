@@ -11,6 +11,7 @@ import {
 import { resolveFinishPolicy, resolveSessionSharing } from '@shared/policy'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { routesFromLegacy } from '@shared/modelroutes'
 import {
   activeTime,
   activeTimeTitle,
@@ -722,7 +723,7 @@ describe('the model under the account, in the Worker column', () => {
       id: 'w1',
       label: 'CodexFirst',
       defaultModel: 'gpt-5.6-sol',
-      routableModels: ['gpt-5.6-sol', 'gpt-5.6-terra']
+      modelRoutes: routesFromLegacy(['gpt-5.6-sol', 'gpt-5.6-terra'])
     })
 
     it('does not name the account default while the choice is still pending', () => {
@@ -753,7 +754,7 @@ describe('the model under the account, in the Worker column', () => {
     })
 
     it('leaves an account with no allowlist naming its default as before', () => {
-      expect(modelLine(routed(), fleet(worker({ routableModels: [] })), options)).toMatchObject({
+      expect(modelLine(routed(), fleet(worker({ modelRoutes: routesFromLegacy([]) })), options)).toMatchObject({
         id: 'claude-sonnet-5',
         undecided: false
       })

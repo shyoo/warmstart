@@ -276,6 +276,25 @@ describe('choosing between the accounts that are left', () => {
     workers.retireWorker(worker.id)
   })
 
+  it("runs every other consult on the worker's judgment model and effort, and the CLI default without one (t638)", () => {
+    const worker = workers.updateWorker(fit('judgment-worker').id, {
+      summarisingModel: 'claude-haiku-4-5',
+      judgmentModel: 'claude-sonnet-5',
+      judgmentEffort: 'low'
+    })
+    try {
+      // ⚠️ The fixture's declared adapter takes no effort flag, so the stored effort is dropped at
+      // the consult, not forwarded to a CLI that would refuse it.
+      expect(controller.chooseController()).toMatchObject({ model: 'claude-sonnet-5', effort: null })
+      // A title keeps its own summary model.
+      expect(controller.chooseController({ kind: 'title' })).toMatchObject({ model: 'claude-haiku-4-5', effort: null })
+      workers.updateWorker(worker.id, { judgmentModel: null, judgmentEffort: null })
+      expect(controller.chooseController()).toMatchObject({ model: null, effort: null })
+    } finally {
+      workers.retireWorker(worker.id)
+    }
+  })
+
   it('leaves a worker with no summary model out of title-only consults', () => {
     const worker = workers.updateWorker(fit('no-title-worker').id, { summarisingModel: null })
     const choice = controller.chooseController({ kind: 'title' })

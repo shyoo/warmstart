@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { routesFromLegacy } from '@shared/modelroutes.js'
 
 /**
  * `routing.models`: every (worker, model) pair the fleet could route to, and what fed its `fitness`
@@ -118,7 +119,7 @@ afterAll(() => {
 describe('modelReport', () => {
   it('marks the allowlisted model routable and every other priced model on the same worker not', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'ReportWorker' })
-    workers.updateWorker(w.id, { routableModels: ['claude-sonnet-5'] })
+    workers.updateWorker(w.id, { modelRoutes: routesFromLegacy(['claude-sonnet-5']) })
 
     const report = api.modelReport()
     const rows = report.rows.filter((r) => r.workerId === w.id)

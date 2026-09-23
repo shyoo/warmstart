@@ -1,9 +1,7 @@
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { resolveModelChoice } from '@shared/tasks.js'
 import type { TaskConstraints } from '@shared/tasks.js'
+import type { ModelRoute } from '@shared/modelroutes.js'
 
 /**
  * Which model and effort a dispatch actually reaches for.
@@ -103,276 +101,51 @@ describe('resolving effort, where the CLI can be told one', () => {
     expect(r.effort).toBeNull()
   })
 
-  it('inherits model-specific effort from worker.modelEfforts when model is resolved', () => {
+  const rows = (...pairs: Array<[string, string | null, boolean?]>): ModelRoute[] =>
+    pairs.map(([model, effort, auto]) => ({ model, effort, modelClass: null, auto: auto ?? true }))
+
+  it("⛔ the default model runs at the default row's effort, not at another row's", () => {
     const acc = {
       defaultModel: 'claude-opus-5',
       defaultEffort: 'low',
-      modelEfforts: { 'claude-opus-5': 'high', 'claude-sonnet-5': 'max' }
+      modelRoutes: rows(['claude-opus-5', 'high'], ['claude-sonnet-5', 'max'])
     }
     const r = resolveModelChoice(constraints(), acc, true)
     expect(r.model).toBe('claude-opus-5')
-    expect(r.effort).toBe('high')
+    expect(r.effort).toBe('low')
     expect(r.effortSource).toBe('worker')
   })
 
-  it('task constraints effort overrides worker.modelEfforts', () => {
+  it("a task pinning another model inherits that model's row effort, auto row first", () => {
     const acc = {
       defaultModel: 'claude-opus-5',
       defaultEffort: 'low',
-      modelEfforts: { 'claude-opus-5': 'high' }
+      modelRoutes: rows(['claude-sonnet-5', 'high', false], ['claude-sonnet-5', 'max'])
+    }
+    const r = resolveModelChoice(constraints({ model: 'claude-sonnet-5' }), acc, true)
+    expect(r.effort).toBe('max')
+    expect(r.effortSource).toBe('worker')
+  })
+
+  it("task constraints effort overrides the worker's rows", () => {
+    const acc = {
+      defaultModel: 'claude-opus-5',
+      defaultEffort: 'low',
+      modelRoutes: rows(['claude-opus-5', 'high'])
     }
     const r = resolveModelChoice(constraints({ effort: 'xhigh' }), acc, true)
     expect(r.effort).toBe('xhigh')
     expect(r.effortSource).toBe('task')
   })
 
-  it('falls back to worker.defaultEffort when model has no entry in modelEfforts', () => {
+  it('falls back to worker.defaultEffort when the model has no row with an effort', () => {
     const acc = {
-      defaultModel: 'claude-haiku-4-5',
+      defaultModel: 'claude-opus-5',
       defaultEffort: 'low',
-      modelEfforts: { 'claude-opus-5': 'high' }
+      modelRoutes: rows(['claude-opus-5', 'high'])
     }
-    const r = resolveModelChoice(constraints(), acc, true)
+    const r = resolveModelChoice(constraints({ model: 'claude-sonnet-5' }), acc, true)
     expect(r.effort).toBe('low')
     expect(r.effortSource).toBe('worker')
-  })
-})
-
-let dir: string
-let db: typeof import('./db.js')
-let workers: typeof import('./workers.js')
-let api: typeof import('./api.js')
-
-beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'agentyard-modelchoice-'))
-  process.env.WARMSTART_DATA_DIR = dir
-  db = await import('./db.js')
-  workers = await import('./workers.js')
-  api = await import('./api.js')
-  db.openDb(join(dir, 'modelchoice.db'))
-})
-
-afterAll(() => {
-  db.closeDb()
-  try {
-    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
-  } catch {
-    // A held handle on Windows is not a test failure.
-  }
-})
-
-describe('what an account is allowed to default to', () => {
-  it('starts new workers on each adapter\'s smallest grading and summary model', () => {
-    expect(workers.createWorker({ adapterId: 'claude-code', label: 'grader-claude' }).gradingModel).toBe('claude-haiku-4-5')
-    expect(workers.createWorker({ adapterId: 'openai-compatible', label: 'grader-codex' }).gradingModel).toBe('gpt-5.6-luna')
-    const agy = workers.createWorker({ adapterId: 'antigravity-cli', label: 'grader-agy' })
-    expect(agy.gradingModel).toBe('gemini-3.8-flash-low')
-    expect(agy.summarisingModel).toBe('gemini-3.8-flash-low')
-    workers.retireWorker(agy.id)
-  })
-
-  it('migration 60 replaces the retired ChatGPT Codex grading model but preserves API-key Codex', () => {
-    const chatgpt = workers.createWorker({ adapterId: 'openai-compatible', label: 'm60-chatgpt' })
-    const apiKey = workers.createWorker({ adapterId: 'openai-compatible', label: 'm60-api-key' })
-    const setLegacy = db.db().prepare('update workers set grading_model = ?, identity_json = ? where id = ?')
-    setLegacy.run('gpt-5.4-mini', JSON.stringify({ loggedIn: true, subscriptionType: 'ChatGPT Plus' }), chatgpt.id)
-    setLegacy.run('gpt-5.4-mini', JSON.stringify({ loggedIn: true, subscriptionType: 'API Key' }), apiKey.id)
-
-    const before = db.versionBefore("set grading_model = 'gpt-5.6-luna'")
-    db.db().exec(`pragma user_version = ${before}`)
-    db.closeDb()
-    db.openDb(join(dir, 'modelchoice.db'))
-
-    expect(workers.getWorker(chatgpt.id)?.gradingModel).toBe('gpt-5.6-luna')
-    expect(workers.getWorker(apiKey.id)?.gradingModel).toBe('gpt-5.4-mini')
-  })
-
-  it('validates and stores a worker grading model and role', () => {
-    const w = workers.createWorker({ adapterId: 'claude-code', label: 'grader-settings' })
-    api.checkWorkerDefaults('claude-code', { gradingModel: 'claude-sonnet-5' })
-    expect(() => api.checkWorkerDefaults('claude-code', { gradingModel: 'gpt-5.4-mini' })).toThrow(/not a model/)
-    const saved = workers.updateWorker(w.id, { gradingModel: 'claude-sonnet-5', gradingEnabled: false })
-    expect(saved.gradingModel).toBe('claude-sonnet-5')
-    expect(saved.gradingEnabled).toBe(false)
-  })
-
-  it('validates and stores a worker summary model independently', () => {
-    const w = workers.createWorker({ adapterId: 'claude-code', label: 'summary-settings' })
-    api.checkWorkerDefaults('claude-code', { summarisingModel: 'claude-sonnet-5' })
-    expect(() => api.checkWorkerDefaults('claude-code', { summarisingModel: 'gpt-5.6-luna' })).toThrow(/not a model/)
-    const saved = workers.updateWorker(w.id, { summarisingModel: 'claude-sonnet-5' })
-    expect(saved.summarisingModel).toBe('claude-sonnet-5')
-    expect(workers.getWorker(w.id)?.summarisingModel).toBe('claude-sonnet-5')
-  })
-
-  it('stores every Muse reasoning effort separately and rejects a retired level', () => {
-    const w = workers.createWorker({ adapterId: 'muse-code', label: 'grader-muse' })
-    for (const gradingEffort of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'ultra']) {
-      api.checkWorkerDefaults('muse-code', {
-        gradingModel: 'muse-spark-1.3',
-        gradingEffort
-      })
-    }
-    expect(() =>
-      api.checkWorkerDefaults('muse-code', {
-        gradingModel: 'muse-spark-1.3-contributor',
-        gradingEffort: 'max'
-      })
-    ).toThrow(/no effort level/)
-
-    const saved = workers.updateWorker(w.id, {
-      gradingModel: 'muse-spark-1.3',
-      gradingEffort: 'ultra'
-    })
-    expect(saved.gradingEffort).toBe('ultra')
-    expect(workers.getWorker(w.id)?.gradingEffort).toBe('ultra')
-  })
-  it('stores a model its own CLI can be priced for', () => {
-    const w = workers.createWorker({ adapterId: 'claude-code', label: 'defaults-1' })
-    const saved = workers.updateWorker(w.id, { defaultModel: 'claude-opus-5', defaultEffort: 'xhigh' })
-    expect(saved.defaultModel).toBe('claude-opus-5')
-    expect(saved.defaultEffort).toBe('xhigh')
-  })
-
-  it('refuses a model that CLI has never heard of', () => {
-    // ⛔ A wrong default is worse than a wrong pin: nobody chose it at dispatch time, so it fails
-    //    *every* task routed here with an error about something set days ago and forgotten.
-    const w = workers.createWorker({ adapterId: 'claude-code', label: 'defaults-2' })
-    expect(() => api.checkWorkerDefaults('claude-code', { defaultModel: 'gemini-3.1-pro-high' })).toThrow(
-      /not a model/
-    )
-    expect(workers.getWorker(w.id)?.defaultModel).toBeNull()
-  })
-
-  it('refuses an effort on a CLI that takes no effort flag', () => {
-    expect(() => api.checkWorkerDefaults('antigravity-cli', { defaultEffort: 'low' })).toThrow(
-      /no effort flag/
-    )
-  })
-
-  it('refuses an effort level the chosen model does not have', () => {
-    // `claude-haiku-4-5` lists no effort levels at all — the API rejects effort on it.
-    expect(() =>
-      api.checkWorkerDefaults('claude-code', {
-        defaultModel: 'claude-haiku-4-5',
-        defaultEffort: 'high'
-      })
-    ).toThrow(/no effort level/)
-  })
-
-  it('always allows clearing back to the CLI’s own choice', () => {
-    // ⚠️ `null` is never validated, because it is not a value — it is the absence of one.
-    const w = workers.createWorker({ adapterId: 'claude-code', label: 'defaults-3' })
-    workers.updateWorker(w.id, { defaultModel: 'claude-opus-5' })
-    const cleared = workers.updateWorker(w.id, { defaultModel: null, defaultEffort: null })
-    expect(cleared.defaultModel).toBeNull()
-    expect(cleared.defaultEffort).toBeNull()
-  })
-
-  it('leaves a default alone when the patch does not mention it', () => {
-    // ⛔ The guard that separates "not mentioned" from "clear it". Every worker mutation writes all
-    //    columns in one statement, so a rename must not blank the model.
-    const w = workers.createWorker({ adapterId: 'claude-code', label: 'defaults-4' })
-    workers.updateWorker(w.id, { defaultModel: 'claude-sonnet-5', defaultEffort: 'low' })
-    const renamed = workers.updateWorker(w.id, { label: 'renamed' })
-    expect(renamed.defaultModel).toBe('claude-sonnet-5')
-    expect(renamed.defaultEffort).toBe('low')
-  })
-
-  it('stores and validates default models per pool on multi-pool workers', () => {
-    const w = workers.createWorker({ adapterId: 'antigravity-cli', label: 'antigravity-pools' })
-    expect(w.defaultModels).toEqual({
-      gemini: 'gemini-3.7-flash-medium',
-      claude: 'claude-sonnet-4-6'
-    })
-    const saved = workers.updateWorker(w.id, {
-      defaultModels: {
-        gemini: 'gemini-3.7-flash-high',
-        claude: 'claude-sonnet-4-6'
-      }
-    })
-    expect(saved.defaultModels).toEqual({
-      gemini: 'gemini-3.7-flash-high',
-      claude: 'claude-sonnet-4-6'
-    })
-
-    // Refuses model that does not belong to the pool
-    expect(() =>
-      api.checkWorkerDefaults('antigravity-cli', {
-        defaultModels: {
-          gemini: 'claude-sonnet-4-6'
-        }
-      })
-    ).toThrow(/does not belong to pool 'gemini'/)
-
-    // Refuses unknown model
-    expect(() =>
-      api.checkWorkerDefaults('antigravity-cli', {
-        defaultModels: {
-          gemini: 'unknown-model-xyz'
-        }
-      })
-    ).toThrow(/not a model/)
-  })
-})
-
-describe('budget-aware automatic pool balancing across multiple pools', () => {
-  const multiPoolWorker = {
-    defaultModel: null,
-    defaultEffort: null,
-    defaultModels: {
-      gemini: 'gemini-3.7-flash-high',
-      claude: 'claude-sonnet-4-6'
-    }
-  }
-
-  const quota = (geminiPct: number, claudePct: number) => ({
-    workerId: 'w1',
-    sampledAt: Date.now(),
-    source: 'cli' as const,
-    windows: [
-      { id: '5h:gemini', label: 'Gemini 5h', percent: geminiPct, resetsAt: null, group: 'gemini' },
-      { id: '5h:claude-gpt', label: 'Claude/GPT 5h', percent: claudePct, resetsAt: null, group: 'claude-and-gpt' }
-    ]
-  })
-
-  it('picks Gemini when Gemini has lower utilization (more available budget)', () => {
-    // Gemini at 20% used (80% remaining), Claude at 65% used (35% remaining)
-    const r = resolveModelChoice(constraints(), multiPoolWorker, false, quota(20, 65))
-    expect(r.model).toBe('gemini-3.7-flash-high')
-    expect(r.modelSource).toBe('worker')
-  })
-
-  it('picks Claude when Claude has lower utilization (more available budget)', () => {
-    // Gemini at 75% used (25% remaining), Claude at 30% used (70% remaining)
-    const r = resolveModelChoice(constraints(), multiPoolWorker, false, quota(75, 30))
-    expect(r.model).toBe('claude-sonnet-4-6')
-    expect(r.modelSource).toBe('worker')
-  })
-
-  it('routes around a pool at high-water mark (>= 92%) even if other pool is moderately used', () => {
-    // Gemini is blocked at 95% (>= 92%), Claude is at 80% (< 92%)
-    const r = resolveModelChoice(constraints(), multiPoolWorker, false, quota(95, 80))
-    expect(r.model).toBe('claude-sonnet-4-6')
-    expect(r.modelSource).toBe('worker')
-  })
-
-  it('routes to Gemini when Claude is blocked at high-water mark', () => {
-    // Claude is blocked at 94%, Gemini is at 85%
-    const r = resolveModelChoice(constraints(), multiPoolWorker, false, quota(85, 94))
-    expect(r.model).toBe('gemini-3.7-flash-high')
-    expect(r.modelSource).toBe('worker')
-  })
-
-  it('honors explicit task model pin over auto-balanced pool defaults', () => {
-    // Even if Gemini is 99% blocked, explicit task pin to Gemini is honored
-    const r = resolveModelChoice(
-      constraints({ model: 'gemini-3.1-pro-high' }),
-      multiPoolWorker,
-      false,
-      quota(99, 10)
-    )
-    expect(r.model).toBe('gemini-3.1-pro-high')
-    expect(r.modelSource).toBe('task')
   })
 })

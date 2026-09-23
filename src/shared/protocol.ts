@@ -1,5 +1,7 @@
 import type { ManualReview, QualityReview } from './review.js'
 import type { ModelClass } from './modelclass.js'
+import type { ModelRoute } from './modelroutes.js'
+export type { ModelRoute } from './modelroutes.js'
 
 export type { ModelClass } from './modelclass.js'
 import type {
@@ -425,28 +427,26 @@ export interface Worker {
    */
   defaultModels?: Record<string, string | null> | null
   /**
-   * Every model this account may be *routed to*, beyond what it reaches for by default.
+   * This account's model table: every (model, effort) pairing it lists, each with its class and
+   * whether Auto Model may route to it. See `ModelRoute` (`shared/modelroutes.ts`).
    *
-   * ⛔ **`null` or `[]` both mean exactly what this worker uses today** —
-   * `resolveModelChoice(null, worker, false, lastQuota(worker.id)).model`, wrapped in a
-   * one-element array, or `[null]` when that itself is null ("the CLI's own choice"). That is what
-   * keeps model-aware routing inert until an operator opts a worker in: nothing reads this as
-   * "every model the adapter can price" just because it is empty.
+   * ⛔ **`null`, `[]` or no `auto` row all mean exactly what this worker uses today** — Auto Model
+   * falls back to `resolveModelChoice(null, worker, false, lastQuota(worker.id)).model`, or `[null]`
+   * ("the CLI's own choice"). That is what keeps model-aware routing inert until an operator ticks
+   * a row: nothing reads an empty table as "every model the adapter can price".
    *
    * ⚠️ Validated against the cost model on write — `'model.options'` names the only models an
    * adapter can be priced, gated and estimated for, and an id absent from that list is refused
-   * rather than stored.
+   * rather than stored. So is an effort the model does not declare, and a repeated pair.
    */
-  routableModels?: string[] | null
+  modelRoutes?: ModelRoute[] | null
   /**
-   * Custom capability tier overrides per model ID on this account ('high' | 'med' | 'low').
-   * Overrides built-in defaults for model routing candidate selection.
+   * Model and effort this account's judgment consults (routing, plans, questions) run on.
+   * `null` is the CLI's own default — what every consult ran on before this existed. Title
+   * summaries keep their own `summarisingModel`.
    */
-  modelClasses?: Record<string, ModelClass> | null
-  /**
-   * Custom preferred reasoning effort overrides per model ID on this account.
-   */
-  modelEfforts?: Record<string, string | null> | null
+  judgmentModel?: string | null
+  judgmentEffort?: string | null
   identity: WorkerIdentity | null
   /**
    * What the vendor last said about this account spending past its plan limit.
@@ -1736,9 +1736,9 @@ export interface RpcMap {
         | 'gradingEnabled'
         | 'defaultEffort'
         | 'defaultModels'
-        | 'routableModels'
-        | 'modelClasses'
-        | 'modelEfforts'
+        | 'modelRoutes'
+        | 'judgmentModel'
+        | 'judgmentEffort'
         | 'unattendedAuthority'
       >
     >

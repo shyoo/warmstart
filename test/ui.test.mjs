@@ -3455,29 +3455,29 @@ try {
   // left the actions with no label at all.
   const colCount = await evaluate(
     `JSON.stringify([
-       document.querySelectorAll('.tbl-workers colgroup col').length,
-       document.querySelectorAll('.tbl-workers thead th').length
+       document.querySelectorAll('.tbl-workers > colgroup > col').length,
+       document.querySelectorAll('.tbl-workers > thead > tr > th').length
      ])`
   )
-  check('the workers card fields describe every setting the header declares', colCount === '[15,15]', colCount)
+  check('the workers card fields describe every setting the header declares', colCount === '[13,13]', colCount)
 
   const cardLabels = await evaluate(
-    `JSON.stringify([...document.querySelector('.tbl-workers tbody tr:not(.tbl-row--note)').children]
+    `JSON.stringify([...document.querySelector('.tbl-workers > tbody > tr:not(.tbl-row--note)').children]
       .slice(2)
       .map(td => getComputedStyle(td, '::before').content.replaceAll('"', '')))`
   )
   check(
     'every worker card field keeps its own label after Summary model',
     cardLabels === JSON.stringify([
-      'Adapter', 'Config location', 'Account', 'Quota', 'Max parallel instances', 'Default model',
-      'Routable models', 'Grading model', 'Summary model', 'Role', 'Unattended', 'Usage credits', 'Actions'
+      'Adapter', 'Config location', 'Account', 'Quota', 'Max parallel instances', 'Models',
+      'Summary model', 'Role', 'Unattended', 'Usage credits', 'Actions'
     ]),
     cardLabels
   )
 
   // Cards have enough horizontal room to expose their three actions without a hidden menu.
   const actionRows = await evaluate(
-    `JSON.stringify([...document.querySelectorAll('.tbl-workers tbody tr:not(.tbl-row--note)')].map(row => [
+    `JSON.stringify([...document.querySelectorAll('.tbl-workers > tbody > tr:not(.tbl-row--note)')].map(row => [
        row.querySelectorAll('.tbl-action-cell .action-menu-btn').length,
        row.querySelectorAll('.tbl-action-cell .btn').length
      ]))`
@@ -3493,7 +3493,7 @@ try {
   check(
     'no account name is painted past its column into the quota beside it',
     JSON.parse(accountOverflow).length >= (await evaluate(
-      `document.querySelectorAll('.tbl-workers tbody tr:not(.tbl-row--note)').length`
+      `document.querySelectorAll('.tbl-workers > tbody > tr:not(.tbl-row--note)').length`
     )) && JSON.parse(accountOverflow).length > 0 && JSON.parse(accountOverflow).every(([scroll, client]) => scroll <= client + 1),
     `[scrollWidth, clientWidth]: ${accountOverflow}`
   )
@@ -3502,10 +3502,10 @@ try {
   // and made every other cell on that row five lines tall.
   const noteCell = await evaluate(
     `JSON.stringify({
-       rows: document.querySelectorAll('.tbl-workers .tbl-row--note').length,
-       note: document.querySelector('.tbl-workers .tbl-row--note')?.innerText ?? '',
-       span: document.querySelector('.tbl-workers .tbl-row--note td')?.colSpan ?? 0,
-       inAccountColumn: [...document.querySelectorAll('.tbl-workers tbody tr:not(.tbl-row--note) td:nth-child(5)')]
+       rows: document.querySelectorAll('.tbl-workers > tbody > tr.tbl-row--note').length,
+       note: document.querySelector('.tbl-workers > tbody > tr.tbl-row--note')?.innerText ?? '',
+       span: document.querySelector('.tbl-workers > tbody > tr.tbl-row--note td')?.colSpan ?? 0,
+       inAccountColumn: [...document.querySelectorAll('.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(5)')]
          .some(td => td.innerText.includes('subscription expired'))
      })`
   )
@@ -3529,12 +3529,12 @@ try {
   // cell and the buttons stacked in a column of no width, the tallest row on this seed measured
   // 174px — six lines, for one account. It is 72px now, and this holds that.
   const tallest = await evaluate(
-    `Math.max(...[...document.querySelectorAll('.tbl-workers tbody tr:not(.tbl-row--note)')]
+    `Math.max(...[...document.querySelectorAll('.tbl-workers > tbody > tr:not(.tbl-row--note)')]
        .map(r => Math.round(r.getBoundingClientRect().height)))`
   )
-  check('and every worker is a readable settings card', tallest >= 220 && tallest <= 650, `${tallest}px`)
+  check('and every worker is a readable settings card', tallest >= 220 && tallest <= 675, `${tallest}px`)
 
-  const rowSwitch = `document.querySelector('.tbl tbody tr .switch')`
+  const rowSwitch = `document.querySelector('.tbl-workers > tbody > tr:not(.tbl-row--note) .switch')`
   check(
     'a commissioned worker can be switched off from its own row',
     (await evaluate(`!!(${rowSwitch})`)) === true,
@@ -3552,7 +3552,7 @@ try {
   await evaluate(`${rowSwitch}.click()`)
   await wait(1200)
   const offRow = await evaluate(
-    `document.querySelector('.tbl tbody tr')?.innerText ?? ''`
+    `document.querySelector('.tbl-workers > tbody > tr:not(.tbl-row--note)')?.innerText ?? ''`
   )
   check(
     'turning it off says so on the row itself',
@@ -3562,7 +3562,7 @@ try {
   check(
     'the row is dimmed so a switched-off account reads as one at a glance',
     (await evaluate(
-      `!!document.querySelector('.tbl tbody tr.tbl-row--off')`
+      `!!document.querySelector('.tbl-workers > tbody > tr.tbl-row--off')`
     )) === true,
     'the same 0.55 the fleet strip uses, so `off` looks like one thing in both views'
   )
@@ -3657,7 +3657,7 @@ try {
   // `atCapacity` before dispatch, `spawnSession` at the door — and until 2026-08-29 the Workers
   // table printed it as text and nothing in the app could change it. So a single-account fleet ran
   // one task at a time, and the `queued` hold that said so read as a fact about the provider.
-  const maxInput = `document.querySelector('.tbl tbody tr .num-input')`
+  const maxInput = `document.querySelector('.tbl-workers > tbody > tr:not(.tbl-row--note) .num-input')`
   check(
     'the concurrency limit is something you can change, not a printed number',
     (await evaluate(`${maxInput}?.tagName`)) === 'INPUT',
@@ -3702,109 +3702,100 @@ try {
   )
   check('raising it reaches the daemon, which is the only opinion that gates dispatch', width === '3', width)
 
-  // ⭐ The account's default model — what every task routed here runs on unless it pins its own.
-  // The New Task form has had a model picker since M3, but only when a worker was pinned, and there
-  // was nowhere at all to say "this account normally uses X".
-  // ⚠️ Column 7, not 6: the reorder arrows took the first cell on 2026-08-29 and shifted every
-  // column after them. A positional selector is the one thing that breaks silently when a table
-  // grows a column, so it is called out rather than quietly renumbered.
-  // ⚠️ A `SettingButtonSelect`, not a `<select>`, since 2026-09-02 — the same control Settings >
-  // Global uses, so the fleet's pickers and the app's pickers are one thing to learn. It paints a
-  // button carrying the current label and opens its options on click, which is why the list has to
-  // be opened before it can be counted.
-  const modelBtn = `document.querySelector('.tbl tbody tr td:nth-child(8) .setting-btn-select')`
-  check(
-    'an account can be given a default model',
-    (await evaluate(`${modelBtn}?.tagName`)) === 'BUTTON',
-    'before this there was no per-account default anywhere in the app'
-  )
-  check(
-    'which starts at the CLI default, not at a model somebody has to undo',
-    (await evaluate(`${modelBtn}?.querySelector('.setting-btn-select-value')?.innerText.trim()`)) ===
-      'CLI default',
-    'null means the vendor picks — the state every install ran in before this control existed'
-  )
-  await evaluate(`${modelBtn}?.click()`)
-  await wait(200)
-  const modelMenu = `document.querySelector('.tbl tbody tr td:nth-child(8) .setting-btn-select-menu')`
-  check(
-    '"CLI default" is offered as a real choice, so the setting can be cleared',
-    (await evaluate(
-      `${modelMenu}?.querySelector('.setting-btn-select-option .setting-btn-select-option-label')?.innerText.trim()`
-    )) === 'CLI default',
-    'a picker with no empty option is one you can set and never unset'
-  )
+  // ⭐ The account's models, as one table (t638): a line per (model, effort) with a tick for
+  // Default, Auto-route, Grading and Judgment. It replaced a default-model picker, a routable-models
+  // menu behind a pen button and a grading-model picker — three menus over one question.
+  // ⚠️ Column 8: the reorder arrows took the first cell on 2026-08-29 and shifted every column after
+  // them. A positional selector is the one thing that breaks silently when a table grows a column,
+  // so it is called out rather than quietly renumbered.
+  const modelsCell = `document.querySelector('.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(8)')`
+  const firstWorkerRpc = `window.agentyard.rpc('fleet.list').then(f => f[0]?.worker)`
+  const firstAdapter = await evaluate(`${firstWorkerRpc}.then(w => w?.adapterId ?? '')`)
+  const modelRows = `${modelsCell}?.querySelectorAll('.worker-models-table tbody tr')`
   // ⛔ The list comes from the daemon's cost models, not from a table in the renderer. A second list
   // here would drift the day a model was added to a file and not to this bundle.
   const served = await evaluate(
-    `window.agentyard.rpc('model.options').then(o => String(o.find(x => x.adapterId === 'claude-code')?.models.length ?? 0))`
+    `window.agentyard.rpc('model.options').then(o => String(o.find(x => x.adapterId === ${JSON.stringify(firstAdapter)} && !x.workerId)?.models.length ?? 0))`
   )
-  const offered = await evaluate(
-    `String((${modelMenu}?.querySelectorAll('.setting-btn-select-option').length ?? 1) - 1)`
+  const modelsDrawn = await evaluate(`String(${modelRows}?.length ?? 0)`)
+  check(
+    'every model the cost model can price has a line, without opening anything',
+    served !== '0' && Number(modelsDrawn) >= Number(served),
+    `drawn ${modelsDrawn}, served ${served}`
   )
   check(
-    'and every model it offers came from the cost model that will price it',
-    offered === served && served !== '0',
-    `offered ${offered}, served ${served}`
+    'the default starts unticked — the CLI default, not a model somebody has to undo',
+    (await evaluate(`String(${modelsCell}?.querySelectorAll('input[aria-label^="Default:"]:checked').length)`)) === '0',
+    'null means the vendor picks — the state every install ran in before this control existed'
   )
-  // ⚠️ Closed again. An open menu is absolutely positioned over the rows underneath it, and the
-  // order-arrow checks below click by position.
-  await evaluate(`document.body.click()`)
-  await wait(150)
+  // ⛔ The operator's ask: an effort is a level, never "CLI default", wherever the model has levels.
+  const effortOptions = await evaluate(
+    `[...${modelsCell}?.querySelectorAll('select[aria-label^="Effort for"] option') ?? []].map(o => o.textContent.trim()).join('|')`
+  )
+  check(
+    'no effort control offers "CLI default"',
+    effortOptions.length > 0 && !effortOptions.includes('CLI default'),
+    effortOptions
+  )
 
-  // ⭐ Routable models: the opt-in allowlist beside the account's default model. Its whole point is
-  // that leaving it alone is inert, so the honest check is that the empty state reads as a sentence
-  // rather than a blank, and that checking one box actually reaches the daemon.
-  const routableValue = `document.querySelector('.tbl tbody tr td:nth-child(9) .routable-models-value')`
-  const routableBtn = `document.querySelector('.tbl tbody tr td:nth-child(9) .routable-models-edit .pill')`
-  const routableBtnTag = await evaluate(`${routableBtn}?.tagName`)
+  // ⚠️ React owns a checkbox's state; `.click()` is what a real click looks like from its side.
+  await evaluate(`${modelsCell}?.querySelector('input[aria-label^="Default:"]')?.click()`)
+  await wait(500)
+  const defaultAfter = await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify([w?.defaultModel, w?.defaultEffort]))`)
   check(
-    'a separate edit control sits beside the routable-models value',
-    routableBtnTag === 'BUTTON',
-    `tagName: ${routableBtnTag}`
+    'ticking Default sets the account default model and effort together, as one pair',
+    JSON.parse(defaultAfter)[0] !== null,
+    defaultAfter
   )
-  const routableEmptyLabel = await evaluate(`${routableValue}?.textContent.trim()`)
+  await evaluate(`${modelsCell}?.querySelector('input[aria-label^="Default:"]:checked')?.click()`)
+  await wait(500)
   check(
-    'and its empty state reads as a deliberate default, not a blank',
-    routableEmptyLabel === 'default model only',
-    routableEmptyLabel
+    'and unticking it goes back to the CLI default, so the setting can be cleared',
+    (await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify([w?.defaultModel, w?.defaultEffort]))`)) === '[null,null]'
   )
-  await evaluate(`${routableBtn}?.click()`)
+
+  // ⭐ Auto-route: the opt-in allowlist. Its whole point is that leaving it alone is inert — the
+  // table is stored as null until somebody ticks — and that one tick actually reaches the daemon.
+  check(
+    'a table nobody has ticked is stored as nothing',
+    (await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify(w?.modelRoutes ?? null))`)) === 'null'
+  )
+  await evaluate(`${modelsCell}?.querySelector('input[aria-label^="Auto-route:"]')?.click()`)
+  await wait(500)
+  const routesAfter = await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify(w?.modelRoutes ?? null))`)
+  check(
+    'ticking Auto-route on one line reaches the daemon, which is the only opinion that gates dispatch',
+    routesAfter !== 'null' && JSON.parse(routesAfter).filter((r) => r.auto).length === 1,
+    routesAfter
+  )
+
+  // ⭐ + Add model/effort: a second line for a model that already has one, at another effort.
+  await evaluate(`[...${modelsCell}?.querySelectorAll('button') ?? []].find(b => b.textContent.includes('Add model/effort'))?.click()`)
   await wait(200)
-  const firstCheckbox = `document.querySelector('.pill-menu .workers-menu-list input[type=checkbox]')`
-  const firstCheckboxType = await evaluate(`${firstCheckbox}?.type`)
+  const addEffort = `${modelsCell}?.querySelector('select[aria-label^="Effort to add"]')`
+  const addModel = await evaluate(`${modelsCell}?.querySelector('select[aria-label^="Model to add"]')?.value ?? ''`)
+  // The first level this model has no line at yet — the Add button refuses a pair already drawn.
+  const freeLevel = await evaluate(
+    `(() => { const taken = [...${modelsCell}.querySelectorAll('select[aria-label^="Effort for ${addModel} ·"]')].map(s => s.value);` +
+      ` return [...(${addEffort}?.options ?? [])].map(o => o.value).find(v => !taken.includes(v)) ?? '' })()`
+  )
+  if (freeLevel) {
+    await evaluate(
+      `(() => { const el = ${addEffort}; const set = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;` +
+        ` set.call(el, ${JSON.stringify(freeLevel)}); el.dispatchEvent(new Event('change', { bubbles: true })); })()`
+    )
+    await wait(150)
+  }
+  await evaluate(`[...${modelsCell}?.querySelectorAll('.worker-models-add button') ?? []].find(b => b.textContent.trim() === 'Add')?.click()`)
+  await wait(500)
+  const added = await evaluate(
+    `${firstWorkerRpc}.then(w => String((w?.modelRoutes ?? []).filter(r => r.model === ${JSON.stringify(addModel)}).length))`
+  )
   check(
-    'opening it offers this account\'s priceable models as checkboxes',
-    firstCheckboxType === 'checkbox',
-    `input type: ${firstCheckboxType}`
+    'adding a model/effort stores a second line for the same model — the pairing the old maps could not hold',
+    !freeLevel || added === '2',
+    `${addModel} at ${freeLevel || '(no levels)'}: ${added} line(s)`
   )
-  await evaluate(`${firstCheckbox}?.click()`)
-  await wait(400)
-  const routableAfter = await evaluate(
-    `window.agentyard.rpc('fleet.list').then(list => JSON.stringify(list.find(e => e.worker.adapterId === 'claude-code')?.worker.routableModels))`
-  )
-  check(
-    'checking one reaches the daemon, which is the only opinion that gates dispatch',
-    routableAfter !== 'null' && JSON.parse(routableAfter)?.length === 1,
-    routableAfter
-  )
-  // ⛔ Names, not a count: `2 models` says nothing to an operator choosing where a task lands,
-  // so the pill lists the allowlist (ellipsised, full list on the tooltip) while the menu stays
-  // the editor for adding or dropping models.
-  const secondCheckbox = `document.querySelectorAll('.pill-menu .workers-menu-list input[type=checkbox]')[1]`
-  await evaluate(`${secondCheckbox}?.click()`)
-  await wait(400)
-  const routableNames = await evaluate(
-    `[...document.querySelectorAll('.pill-menu .workers-menu-list label')].filter(l => l.querySelector('input:checked')).map(l => l.querySelector('.workers-menu-worker-name')?.textContent.trim()).join('|')`
-  )
-  const routableTwo = await evaluate(`${routableValue}?.textContent.trim()`)
-  check(
-    'checking a second reads as both model names',
-    routableNames.split('|').length === 2 && routableNames.split('|').every((name) => routableTwo.includes(name)),
-    `${routableTwo} vs ${routableNames}`
-  )
-  await evaluate(`document.body.click()`)
-  await wait(150)
 
   // ⭐ Ordering the fleet. The strip is a row of cards people learn the shape of, and until
   // 2026-08-29 that shape was the order the accounts were commissioned in, changeable only by
@@ -3819,7 +3810,7 @@ try {
     orderBefore.split('|').length > 1,
     orderBefore
   )
-  const upOnSecond = `document.querySelectorAll('.tbl tbody tr')[1]?.querySelector('.order-btn:not([disabled])')`
+  const upOnSecond = `document.querySelectorAll('.tbl-workers > tbody > tr:not(.tbl-row--note)')[1]?.querySelector('.order-btn:not([disabled])')`
   check(
     'each worker row carries a control for where it sits in the fleet',
     (await evaluate(`!!(${upOnSecond})`)) === true,
@@ -3855,7 +3846,7 @@ try {
   check(
     'and the first row cannot be moved up, rather than silently doing nothing',
     (await evaluate(
-      `String(document.querySelector('.tbl tbody tr .order-btn')?.disabled)`
+      `String(document.querySelector('.tbl-workers > tbody > tr:not(.tbl-row--note) .order-btn')?.disabled)`
     )) === 'true'
   )
   await evaluate(`${upOnSecond}.click()`)

@@ -1,7 +1,8 @@
 /** The RPC types, the request context, and the validators every domain shares. */
 import type { RpcMethod, RpcParams, RpcResult, Worker } from '@shared/protocol.js'
 import { canWork } from '@shared/protocol.js'
-import { MODEL_CLASSES, type ModelClass } from '@shared/modelclass.js'
+import { MODEL_CLASSES } from '@shared/modelclass.js'
+import { routeLabel, type ModelRoute } from '@shared/modelroutes.js'
 import type { ChildDefaults, Task, TaskConstraints } from '@shared/tasks.js'
 import { windowsForPool } from '@shared/tasks.js'
 import { adapter } from '../adapters/index.js'
@@ -102,9 +103,9 @@ export function checkWorkerDefaults(
     gradingEffort?: string | null
     defaultEffort?: string | null
     defaultModels?: Record<string, string | null> | null
-    routableModels?: string[] | null
-    modelClasses?: Record<string, ModelClass> | null
-    modelEfforts?: Record<string, string | null> | null
+    modelRoutes?: ModelRoute[] | null
+    judgmentModel?: string | null
+    judgmentEffort?: string | null
   }
 ): void {
   const info = adapter(adapterId).info
@@ -138,36 +139,42 @@ export function checkWorkerDefaults(
     }
   }
 
-  if (patch.routableModels) {
-    for (const m of patch.routableModels) {
+  if (patch.modelRoutes) {
+    const seen = new Set<string>()
+    for (const r of patch.modelRoutes) {
       // ⛔ The same rule `'model.options'` documents: a model that can be chosen is one that can be
-      // priced, gated and estimated for. An allowlist entry the cost model does not declare is
-      // refused on write, never stored — the ladder in `routableModelsFor` and part 2's scorer both
-      // trust that everything in this column is legal.
-      if (!cm.modelSpec(m)) throw refused(m)
+      // priced, gated and estimated for. A row the cost model does not declare is refused on write,
+      // never stored — `routableCandidatesFor` and the scorer both trust that every row is legal.
+      const spec = cm.modelSpec(r.model)
+      if (!spec) throw refused(r.model)
+      if (r.modelClass !== null && !MODEL_CLASSES.includes(r.modelClass)) {
+        throw new Error(`invalid model class '${r.modelClass}' for model '${r.model}'`)
+      }
+      if (r.effort) {
+        if (!info.capabilities.selectableEffort) {
+          throw new Error(`${info.label} takes no effort flag, so '${r.model}' has no effort to set`)
+        }
+        if (Array.isArray(spec.effort_levels) && !spec.effort_levels.includes(r.effort)) {
+          throw new Error(`'${r.model}' has no effort level '${r.effort}'`)
+        }
+      }
+      // ⚠️ A repeated pair is two rows that can never disagree about anything but their flags, and
+      // the table would have no way to tell which one an edit meant.
+      const key = `${r.model}:${r.effort ?? ''}`
+      if (seen.has(key)) throw new Error(`'${routeLabel(r)}' is listed twice`)
+      seen.add(key)
     }
   }
 
-  if (patch.modelClasses) {
-    for (const [m, cls] of Object.entries(patch.modelClasses)) {
-      if (!cm.modelSpec(m)) throw refused(m)
-      if (!MODEL_CLASSES.includes(cls)) {
-        throw new Error(`invalid model class '${cls}' for model '${m}'`)
-      }
+  if (patch.judgmentModel && !cm.modelSpec(patch.judgmentModel)) throw refused(patch.judgmentModel)
+  if (patch.judgmentEffort) {
+    if (!info.capabilities.selectableEffort) {
+      throw new Error(`${info.label} takes no effort flag, so it has no judgment effort to set`)
     }
-  }
-
-  if (patch.modelEfforts) {
-    for (const [m, eff] of Object.entries(patch.modelEfforts)) {
-      if (!eff) continue
-      const spec = cm.modelSpec(m)
-      if (!spec) throw refused(m)
-      if (!info.capabilities.selectableEffort) {
-        throw new Error(`${info.label} takes no effort flag, so it has no effort to set`)
-      }
-      if (Array.isArray(spec.effort_levels) && !spec.effort_levels.includes(eff)) {
-        throw new Error(`'${m}' has no effort level '${eff}'`)
-      }
+    const spec = patch.judgmentModel ? cm.modelSpec(patch.judgmentModel) : null
+    if (!spec) throw new Error('set a judgment model before choosing its effort')
+    if (!spec.effort_levels.includes(patch.judgmentEffort)) {
+      throw new Error(`'${patch.judgmentModel}' has no effort level '${patch.judgmentEffort}'`)
     }
   }
 

@@ -3083,18 +3083,18 @@ body {
   border: 0;
 }
 
-.tbl-workers colgroup, .tbl-workers thead { display: none; }
-.tbl-workers tbody { display: grid; gap: var(--sp-3); }
-.tbl-workers tbody > tr:not(.tbl-row--note) {
+.tbl-workers > colgroup, .tbl-workers > thead { display: none; }
+.tbl-workers > tbody { display: grid; gap: var(--sp-3); }
+.tbl-workers > tbody > tr:not(.tbl-row--note) {
   display: grid; grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
   align-items: start; border: 1px solid var(--color-border); border-radius: var(--radius-md);
   background: var(--color-surface); padding: var(--sp-3); overflow: visible;
 }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td {
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td {
   grid-column: 2; display: grid; grid-template-columns: 115px minmax(0, 1fr);
-  align-items: center; gap: var(--sp-2); min-width: 0; padding: 5px var(--sp-2); border: 0;
+  align-items: center; gap: var(--sp-2); min-width: 0; padding: 4px var(--sp-2); border: 0;
 }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td::before { color: var(--color-text-dim); font-size: var(--text-meta); }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td::before { color: var(--color-text-dim); font-size: var(--text-meta); }
 /* ⛔ `position: relative` and a z-index, and this is load-bearing rather than tidy. This cell and
    the worker cell below are deliberately given the **same grid area** — column 1, starting at row 1
    — so the two little arrows sit in the gutter the worker cell leaves with its `padding-left: 32px`.
@@ -3105,24 +3105,22 @@ body {
    reached the cell behind them instead of the button. Lifting this cell into a stacking position
    keeps it painted and clickable above its overlapping sibling. Reported 2026-09-13; pinned by
    *the reorder arrows stay on top of the cell they overlap* in `test/ui.test.mjs`. */
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(1) { grid-column: 1; grid-row: 1; display: block; width: 24px; padding: 0; position: relative; z-index: 1; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(2) { grid-column: 1; grid-row: 1 / span 10; display: block; padding: 0 0 0 32px; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(3)::before { content: 'Adapter'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(4)::before { content: 'Config location'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(5)::before { content: 'Account'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(6)::before { content: 'Quota'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(7)::before { content: 'Max parallel instances'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(8)::before { content: 'Default model'; }
-/* ⛔ One label per <td>, counted against the fifteen cells the row actually has — order,
-   worker, then the thirteen fields. A new field shifts every subsequent card label, so its label
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(1) { grid-column: 1; grid-row: 1; display: block; width: 24px; padding: 0; position: relative; z-index: 1; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(2) { grid-column: 1; grid-row: 1 / span 10; display: block; padding: 0 0 0 32px; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(3)::before { content: 'Adapter'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(4)::before { content: 'Config location'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(5)::before { content: 'Account'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(6)::before { content: 'Quota'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(7)::before { content: 'Max parallel instances'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(8)::before { content: 'Models'; }
+/* ⛔ One label per <td>, counted against the thirteen cells the row actually has — order,
+   worker, then the eleven fields. A new field shifts every subsequent card label, so its label
    belongs in this same edit; `ui.test.mjs` reads the computed sequence to keep that true. */
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(9)::before { content: 'Routable models'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(10)::before { content: 'Grading model'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(11)::before { content: 'Summary model'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(12)::before { content: 'Role'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(13)::before { content: 'Unattended'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(14)::before { content: 'Usage credits'; }
-.tbl-workers tbody > tr:not(.tbl-row--note) > td:nth-child(15)::before { content: 'Actions'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(9)::before { content: 'Summary model'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(10)::before { content: 'Role'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(11)::before { content: 'Unattended'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(12)::before { content: 'Usage credits'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(13)::before { content: 'Actions'; }
 .tbl-workers .worker-cell { overflow: visible; }
 .tbl-workers .worker-identity { display: flex; align-items: center; gap: var(--sp-2); }
 .tbl-workers .worker-identity-info { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-1); }
@@ -3137,26 +3135,39 @@ body {
 /* ⚠️ A spent allowance is a fact, not a fault: amber says *something is wrong here* and sends the
    operator looking for a switch that is already on. It reads as a reading, like every other number. */
 .tbl-workers .worker-credits-warning--spent { color: var(--color-text-dim); }
-.tbl-workers .worker-model-row { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: nowrap; }
-.tbl-workers .worker-model-select { width: auto; min-width: 150px; max-width: 200px; }
-.tbl-workers .worker-effort-select { width: auto; min-width: 100px; max-width: 130px; margin-top: 0; }
 .tbl-workers .worker-grading-select { width: auto; min-width: 150px; max-width: 200px; }
-.tbl-workers .routable-models-control { display: flex; align-items: flex-start; gap: var(--sp-2); min-width: 0; }
-/* ⛔ Wraps onto multiple rows rather than truncating with an ellipsis. A worker routable to four or
-   five models joined one long string and read as an unreadable run of ids the pill's tooltip was
-   the only way to see in full — one chip per model, wrapping, keeps every name on screen at once. */
-.tbl-workers .routable-models-value { min-width: 0; display: flex; flex-wrap: wrap; gap: 4px; align-content: flex-start; }
-.tbl-workers .routable-models-value--muted { color: var(--color-text-dim); }
-.tbl-workers .routable-models-chip {
-  display: inline-block;
-  padding: 1px 6px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  background: var(--color-surface-2);
-  font-size: var(--text-dense);
-  white-space: nowrap;
+/* ⭐ The model table (t638). The label sits on top rather than in the 115px gutter every other
+   field uses: eight columns need the card's whole width, and a table squeezed beside its label
+   scrolled sideways at the window size the operator actually uses. */
+.tbl-workers .worker-models-cell { grid-template-columns: minmax(0, 1fr); align-items: start; }
+.tbl-workers .worker-models-cell::before { padding-top: 2px; }
+.worker-models { display: flex; flex-direction: column; gap: var(--sp-2); min-width: 0; }
+.worker-models-scroll { overflow-x: auto; }
+.worker-models-table { border-collapse: collapse; font-size: var(--text-dense); width: auto; min-width: 100%; }
+.worker-models-table th {
+  padding: 2px 8px; text-align: left; font-size: var(--text-meta); font-weight: 600;
+  color: var(--color-text-dim); border-bottom: 1px solid var(--color-border); white-space: nowrap;
 }
-.tbl-workers .routable-models-edit .pill { max-width: none; padding-inline: 7px; }
+.worker-models-table td { padding: 2px 8px; vertical-align: middle; border-bottom: 1px solid var(--color-border); }
+.worker-models-table tbody tr:last-child td { border-bottom: 0; }
+.worker-models-table .worker-models-tick { text-align: center; width: 1%; }
+.worker-models-name { white-space: nowrap; }
+/* A line drawn only so the model is on screen: present, readable, and visibly not a setting yet. */
+.worker-models-row--idle .worker-models-name { color: var(--color-text-dim); }
+.worker-models-select {
+  font-size: var(--text-dense); padding: 1px 4px; border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text);
+}
+.worker-models-remove { width: 1%; text-align: right; }
+.worker-models-remove-btn {
+  background: none; border: 0; padding: 0 4px; font-size: var(--text-body); line-height: 1;
+  color: var(--color-text-dim); cursor: pointer;
+}
+.worker-models-remove-btn:hover:not(:disabled) { color: var(--state-danger); }
+.worker-models-remove-btn:disabled { opacity: 0.35; cursor: default; }
+.worker-models-foot { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); }
+.worker-models-add { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.worker-models-help { margin: 0; font-size: var(--text-meta); color: var(--color-text-dim); max-width: 72ch; }
 .tbl-workers .num-input { text-align: left; justify-self: start; }
 .tbl-workers .tbl-path { max-width: 100%; font-size: var(--text-meta); color: var(--color-text-dim); }
 .tbl-workers .worker-actions { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: var(--sp-2); width: auto; white-space: nowrap; }
@@ -3589,37 +3600,6 @@ select {
   width: 100%;
   font-size: var(--text-dense);
   color: var(--color-text-faint);
-}
-
-.pool-defaults-container {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
-}
-
-.pool-default-row {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-1);
-}
-
-.pool-default-label {
-  font-size: var(--text-dense);
-  color: var(--color-text-faint);
-  min-width: 68px;
-  white-space: nowrap;
-}
-
-.pool-default-row select,
-.pool-default-row .setting-btn-select-wrap {
-  /* ⛔ Capped like `.worker-model-select` beside it, not `flex: 1`. This row lives in the card
-     layout's value column (`minmax(0, 1fr)`), which on a wide window is hundreds of pixels — a
-     model id twenty characters long stretched into a button that wide, with its ✒️ pushed off to
-     the far edge, reads as broken rather than as a picker. */
-  flex: 0 1 auto;
-  min-width: 0;
-  max-width: 220px;
-  width: 100%;
 }
 
 input:focus-visible,

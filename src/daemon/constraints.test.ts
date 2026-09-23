@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Worker } from '@shared/protocol.js'
+import { routesFromLegacy } from '@shared/modelroutes.js'
 
 /**
  * What the New Task form is allowed to promise.
@@ -352,7 +353,7 @@ describe('task.setWorker RPC', () => {
     const target = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst', enabled: false })
     workers.updateWorker(target.id, {
       defaultModel: 'claude-haiku-4-5-20251001',
-      routableModels: ['claude-haiku-4-5-20251001', 'claude-opus-5']
+      modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-opus-5'])
     })
     const task = tasks.createTask({ title: 'explicit Opus reassignment' })
 
