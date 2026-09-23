@@ -364,4 +364,11 @@ export interface AgentAdapter {
    * turn** on an image block rather than dropping it, measured 2026-08-31.
    */
   encodeStreamPrompt?: (text: string, attachments?: Attachment[]) => string
+
+  /**
+   * Interrupt the active stream turn without pretending a terminal keystroke belongs on a JSONL
+   * pipe. Optional because this is a vendor control protocol, not a property of every CLI that
+   * happens to keep stdin open.
+   */
+  encodeStreamInterrupt?: (requestId: string) => string
 }

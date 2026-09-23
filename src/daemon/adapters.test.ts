@@ -624,6 +624,20 @@ describe('a stream transport has two halves, and only one of them was wired', ()
     expect(answers.size).toBeGreaterThan(1)
   })
 
+  it('uses Claude Code’s control frame to interrupt an active stream turn before a queued compaction', () => {
+    // ⛔ t623 proved that `/compact` as an ordinary user message waits behind the active turn. The
+    // interrupt must be a control frame, not an ESC (which corrupts JSONL stdin) or another prompt.
+    const encode = adapter('claude-code').encodeStreamInterrupt
+    expect(encode).toBeTypeOf('function')
+    expect(JSON.parse(encode?.('preempt-t623') ?? '{}')).toEqual({
+      type: 'control_request',
+      request_id: 'preempt-t623',
+      request: { subtype: 'interrupt' }
+    })
+    expect(adapter('antigravity-cli').encodeStreamInterrupt).toBeUndefined()
+    expect(adapter('openai-compatible').encodeStreamInterrupt).toBeUndefined()
+  })
+
   it('a successful codex turn produces a terminal record, not only a usage record', () => {
     // ⛔ `turn.completed` is both the only usage record and the last record `codex exec` writes.
     // Returning usage alone left a successful run with no terminal event: nothing completed the

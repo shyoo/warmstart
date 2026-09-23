@@ -1516,15 +1516,24 @@ export function writeSession(id: string, data: string): void {
  * ⛔ **A keystroke only reaches a keyboard.** On a `stream` session the interrupt key is not an
  * interrupt at all: the CLI's stdin is a newline-delimited JSON reader, so an ESC sits in its buffer
  * and then corrupts the next real message. Measured 2026-09-13 on claude 2.1.270 — a stray prefix
- * ahead of a valid line produced `Error parsing streaming input line … SyntaxError` and **exit 1**,
- * so what read as *interrupt politely, then ask it to wrap up* was in fact *destroy the next prompt*.
- * A pipe session is wound down by asking it, through `sendPrompt`, and closed if it will not.
+ * ahead of a valid line produced `Error parsing streaming input line … SyntaxError` and **exit 1**.
+ * A stream adapter that declares its own control frame may interrupt cleanly; otherwise its pipe is
+ * wound down by asking it through `sendPrompt`, and closed if it will not.
  */
 export function interruptSession(id: string): void {
   const entry = live.get(id)
   if (!entry) return
   if (entry.session.transport === 'stream') {
-    log.debug(`session ${id.slice(0, 8)} runs on a pipe; there is no interrupt key to press`)
+    const encode = adapter(entry.session.adapterId).encodeStreamInterrupt
+    if (!encode) {
+      log.debug(`session ${id.slice(0, 8)} runs on a pipe with no interrupt control frame`)
+      return
+    }
+    try {
+      entry.channel.write(`${encode(randomUUID())}\n`)
+    } catch (err) {
+      log.warn(`could not interrupt stream session ${id}:`, err)
+    }
     return
   }
   const sequence = adapter(entry.session.adapterId).info.policy.interruptSequence

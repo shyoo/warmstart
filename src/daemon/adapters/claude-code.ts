@@ -1146,5 +1146,18 @@ export const claudeCode: AgentAdapter = {
 
   transcriptPath(isolationRoot: string, cwd: string, sessionId: string): string {
     return join(isolationRoot, 'projects', encodeProjectDir(cwd), `${sessionId}.jsonl`)
-  }
+  },
+
+  /**
+   * ⭐ Measured 2026-09-23 on Claude Code 2.1.280. A user-message `/compact` written while a
+   * stream turn is active is queued behind that turn (t623), so it can miss a quota preemption
+   * deadline without ever reaching the slash-command handler. This control frame stops the active
+   * turn cleanly; the following `/compact` remains the actual compaction request.
+   */
+  encodeStreamInterrupt: (requestId: string): string =>
+    JSON.stringify({
+      type: 'control_request',
+      request_id: requestId,
+      request: { subtype: 'interrupt' }
+    })
 }

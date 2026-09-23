@@ -31,6 +31,11 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **t623's preemption compaction was never received, not falsely unrecognized (t628,
+  2026-09-23).** Its ledger holds one open ask at 01:02:32Z and its transcript records the ordinary
+  `/compact` as queued behind the active stream turn; no `compact_boundary` exists before the five-minute
+  deadline. Claude Code 2.1.280 now gets its measured `control_request` interrupt frame first, followed
+  by `/compact`, so the slash command can run. L1 pins the wire frame. `docs/adapters.md`.
 - **The Tasks board blipped blank every 10-20s (t624 ← t612, 2026-09-22).** t612's loading state
   (spinner + *Loading tasks…* until `task.page` first answers) reset on *every* `refresh`, not only
   the first — and `refresh` also re-runs on `task.changed`/`run.changed`, which the scheduler tick

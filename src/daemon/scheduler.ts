@@ -131,6 +131,7 @@ import {
   getSession,
   hasOpenRun,
   invalidateSessionContext,
+  interruptSession,
   isHousekeepingTurn,
   lastRequestEvidenceAt,
   markClockMove,
@@ -3010,6 +3011,10 @@ async function preempt(
   let askId: number | null = null
   if (action === 'compact') {
     try {
+      // A stream user message is queued behind an active turn. On an adapter with a declared
+      // control interrupt, stop that turn first so `/compact` reaches its slash-command handler
+      // before the quota grace window ends (t623). The two writes preserve their order on stdin.
+      interruptSession(session.id)
       sendPrompt(session.id, '/compact', [], { housekeeping: true })
       askId = noteCompactionAsked({
         sessionId: session.id,
