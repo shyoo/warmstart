@@ -3451,7 +3451,7 @@ try {
   await wait(1500)
 
   // ⛔ The headers, fixed-layout columns and card fields are one sequence. t334 added Summary
-  // model to the table but not the card's positional labels, which relabelled Role as Actions and
+  // model to the table but not the card's positional labels, which relabelled a later field and
   // left the actions with no label at all.
   const colCount = await evaluate(
     `JSON.stringify([
@@ -3459,7 +3459,7 @@ try {
        document.querySelectorAll('.tbl-workers > thead > tr > th').length
      ])`
   )
-  check('the workers card fields describe every setting the header declares', colCount === '[12,12]', colCount)
+  check('the workers card fields describe every setting the header declares', colCount === '[11,11]', colCount)
 
   const cardLabels = await evaluate(
     `JSON.stringify([...document.querySelector('.tbl-workers > tbody > tr:not(.tbl-row--note)').children]
@@ -3470,7 +3470,7 @@ try {
     'every worker card field keeps its own label without separate Summary model column',
     cardLabels === JSON.stringify([
       'Adapter', 'Config location', 'Account', 'Quota', 'Max parallel instances', 'Models',
-      'Role', 'Unattended', 'Usage credits', 'Actions'
+      'Unattended', 'Usage credits', 'Actions'
     ]),
     cardLabels
   )
@@ -3512,7 +3512,7 @@ try {
   {
     const seen = JSON.parse(noteCell)
     check('an account with something wrong gets a note row of its own', seen.rows >= 1, noteCell)
-    check('which spans the card rather than sitting in one field', seen.span === 14, String(seen.span))
+    check('which spans the card rather than sitting in one field', seen.span === 11, String(seen.span))
     check(
       'and carries the reason the run failed, plus what to do about it',
       /subscription expired/.test(seen.note) && /Recheck/.test(seen.note),
@@ -3702,7 +3702,7 @@ try {
   )
   check('raising it reaches the daemon, which is the only opinion that gates dispatch', width === '3', width)
 
-  // ⭐ The account's models, as one table (t638): a line per (model, effort) with a tick for
+  // ⭐ The account's configured models, as one table (t638): a line per (model, effort) with a tick for
   // Default, Auto-route, Grading and Judgment. It replaced a default-model picker, a routable-models
   // menu behind a pen button and a grading-model picker — three menus over one question.
   // ⚠️ Column 8: the reorder arrows took the first cell on 2026-08-29 and shifted every column after
@@ -3710,18 +3710,12 @@ try {
   // so it is called out rather than quietly renumbered.
   const modelsCell = `document.querySelector('.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(8)')`
   const firstWorkerRpc = `window.agentyard.rpc('fleet.list').then(f => f[0]?.worker)`
-  const firstAdapter = await evaluate(`${firstWorkerRpc}.then(w => w?.adapterId ?? '')`)
   const modelRows = `${modelsCell}?.querySelectorAll('.worker-models-table tbody tr')`
-  // ⛔ The list comes from the daemon's cost models, not from a table in the renderer. A second list
-  // here would drift the day a model was added to a file and not to this bundle.
-  const served = await evaluate(
-    `window.agentyard.rpc('model.options').then(o => String(o.find(x => x.adapterId === ${JSON.stringify(firstAdapter)} && !x.workerId)?.models.length ?? 0))`
-  )
   const modelsDrawn = await evaluate(`String(${modelRows}?.length ?? 0)`)
   check(
-    'every model the cost model can price has a line, without opening anything',
-    served !== '0' && Number(modelsDrawn) >= Number(served),
-    `drawn ${modelsDrawn}, served ${served}`
+    'only configured or purpose models have a row, so removal does not regenerate it',
+    Number(modelsDrawn) > 0,
+    `drawn ${modelsDrawn}`
   )
   check(
     'the default starts unticked — the CLI default, not a model somebody has to undo',
@@ -3738,7 +3732,11 @@ try {
     effortOptions
   )
 
-  // ⚠️ React owns a checkbox's state; `.click()` is what a real click looks like from its side.
+  check(
+    'Default uses a radio control to make its one-choice meaning clear',
+    (await evaluate(`${modelsCell}?.querySelector('input[aria-label^="Default:"]')?.type`)) === 'radio'
+  )
+  // ⚠️ React owns a radio's state; `.click()` is what a real click looks like from its side.
   await evaluate(`${modelsCell}?.querySelector('input[aria-label^="Default:"]')?.click()`)
   await wait(500)
   const defaultAfter = await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify([w?.defaultModel, w?.defaultEffort]))`)
@@ -3747,13 +3745,6 @@ try {
     JSON.parse(defaultAfter)[0] !== null,
     defaultAfter
   )
-  await evaluate(`${modelsCell}?.querySelector('input[aria-label^="Default:"]:checked')?.click()`)
-  await wait(500)
-  check(
-    'and unticking it goes back to the CLI default, so the setting can be cleared',
-    (await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify([w?.defaultModel, w?.defaultEffort]))`)) === '[null,null]'
-  )
-
   // ⭐ Auto-route: the opt-in allowlist. Its whole point is that leaving it alone is inert — the
   // table is stored as null until somebody ticks — and that one tick actually reaches the daemon.
   check(
@@ -3771,6 +3762,14 @@ try {
 
   const summaryBoxes = await evaluate(`String(${modelsCell}?.querySelectorAll('input[aria-label^="Summary:"]').length ?? 0)`)
   check('the ModelTable includes a Summary checkbox column', Number(summaryBoxes) > 0, summaryBoxes)
+  check(
+    'the retired role switches are not duplicated beside the model-purpose matrix',
+    (await evaluate(`String(document.querySelectorAll('.worker-role-checks').length)`)) === '0'
+  )
+  check(
+    'Label explains how it refines Auto Model',
+    (await evaluate(`${modelsCell}?.querySelector('th[title]')?.getAttribute('title') ?? ''`)).includes('Auto Model')
+  )
 
   // ⭐ + Add model/effort: a second line for a model that already has one, at another effort.
   await evaluate(`[...${modelsCell}?.querySelectorAll('button') ?? []].find(b => b.textContent.includes('Add model/effort'))?.click()`)
@@ -3798,6 +3797,18 @@ try {
     'adding a model/effort stores a second line for the same model — the pairing the old maps could not hold',
     !freeLevel || added === '2',
     `${addModel} at ${freeLevel || '(no levels)'}: ${added} line(s)`
+  )
+
+  const removable = `${modelsCell}?.querySelector('.worker-models-remove-btn:not(:disabled)')`
+  const removedLabel = await evaluate(`${removable}?.getAttribute('aria-label') ?? ''`)
+  const routesBeforeRemove = await evaluate(`${firstWorkerRpc}.then(w => (w?.modelRoutes ?? []).length)`)
+  await evaluate(`${removable}?.click()`)
+  await wait(500)
+  const routesAfterRemove = await evaluate(`${firstWorkerRpc}.then(w => (w?.modelRoutes ?? []).length)`)
+  check(
+    'removing a model row removes it from the worker and the table',
+    removedLabel !== '' && routesAfterRemove === routesBeforeRemove - 1,
+    `${removedLabel}: ${routesBeforeRemove} -> ${routesAfterRemove}`
   )
 
   // ⭐ Ordering the fleet. The strip is a row of cards people learn the shape of, and until

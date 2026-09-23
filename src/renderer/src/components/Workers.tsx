@@ -1,4 +1,4 @@
-import { canJudge, canWork, roleOf, sessionEnded, UNATTENDED_AUTHORITY_LABELS } from '@shared/protocol'
+import { sessionEnded, UNATTENDED_AUTHORITY_LABELS } from '@shared/protocol'
 import { Fragment, useEffect, useState } from 'react'
 import type {
   AdapterDetection,
@@ -394,13 +394,13 @@ export function Workers({
         </div>
       ) : (
         <table className="tbl tbl-workers">
-          {/* ⛔ Fifteen columns, fifteen <col>s. A missing column makes a fixed-layout table
+          {/* ⛔ Eleven columns, eleven <col>s. A missing column makes a fixed-layout table
               hand the final cell no width at all, and Sign in / Probe / Retire then wrap one per
               line inside a cell the width of a button. Keep this count in lockstep with the
               headers and cells; the card layout below also labels by this same position.
               ⭐ The three actions are one 6% menu now rather than a 19% row of buttons, and the
               fourteen points that freed went where the content was actually being squeezed: Quota
-              (which now sets one window per line), Account, Model and Role. */}
+              (which now sets one window per line), Account and Model. */}
           <colgroup>
             <col style={{ width: '3%' }} />
             <col style={{ width: '14%' }} />
@@ -410,7 +410,6 @@ export function Workers({
             <col style={{ width: '10%' }} />
             <col style={{ width: '5%' }} />
             <col style={{ width: '35%' }} />
-            <col style={{ width: '8%' }} />
             <col style={{ width: '8%' }} />
             <col style={{ width: '9%' }} />
             <col style={{ width: '9%' }} />
@@ -440,7 +439,6 @@ export function Workers({
                   <ColumnInfo text={MODEL_TABLE_HELP} />
                 </span>
               </th>
-              <th>Role</th>
               <th>
                 <span className="th-with-info">
                   Unattended
@@ -774,29 +772,6 @@ export function Workers({
                       />
                     </td>
                     <td>
-                      <div className="worker-role-checks" aria-label={`Roles for ${worker.label}`}>
-                        {/* ⛔ Both boxes are read off the pair (work, judgment) and written back as
-                            the role that pair spells - never as an edit to the role name. Each box
-                            used to compute its own `next` by comparing the old name, so unticking
-                            the *only* ticked box mapped the role onto itself: `controller` with
-                            Judgment unticked came out `controller` again. The write succeeded, the
-                            value never moved, and the box sprang back with nothing to explain it. */}
-                        <label><input type="checkbox" checked={canWork(worker.role)} onChange={(e) =>
-                          void guard(`role:${worker.id}`, () =>
-                            rpc('worker.update', { id: worker.id, role: roleOf(e.target.checked, canJudge(worker.role)) })
-                          )
-                        } /> Work</label>
-                        <label><input type="checkbox" checked={canJudge(worker.role)} onChange={(e) =>
-                          void guard(`role:${worker.id}`, () =>
-                            rpc('worker.update', { id: worker.id, role: roleOf(canWork(worker.role), e.target.checked) })
-                          )
-                        } /> Judgment</label>
-                        <label><input type="checkbox" checked={worker.gradingEnabled} onChange={() =>
-                          void guard(`grading-role:${worker.id}`, () => rpc('worker.update', { id: worker.id, gradingEnabled: !worker.gradingEnabled }))
-                        } /> Grading</label>
-                      </div>
-                    </td>
-                    <td>
                       <SettingButtonSelect
                         className="worker-grading-select"
                         value={worker.unattendedAuthority}
@@ -885,7 +860,7 @@ export function Workers({
                       the time — is one an operator learns to stop reading. */}
                   {notes.length > 0 && (
                     <tr className={`tbl-row--note${worker.enabled ? '' : ' tbl-row--off'}`}>
-                       <td colSpan={14}>
+                       <td colSpan={11}>
                         {notes.map((n) => (
                           <div key={n.key} className="tbl-note">
                             <span className={`tbl-note-label ${n.tone}`}>{n.label}</span>

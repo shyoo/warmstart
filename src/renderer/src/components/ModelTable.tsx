@@ -27,11 +27,10 @@ import {
  * the router takes the first (strongest) of them, and a class-scoped Auto picks within its class first.
  */
 export const MODEL_TABLE_HELP =
-  'Auto-route: the rows Auto Model may pick — one per model, the strongest ticked effort first; a ' +
-  'class-scoped Auto picks within its class. With nothing ticked, tasks run on the Default row. ' +
-  'Unticked rows can still be chosen by hand on a task. Grading runs peer reviews; Judgment answers ' +
-  "the controller's routing and planning questions (unticked: the CLI's own model); Summary generates " +
-  'asynchronous task titles (unticked: this worker is excluded from title summaries).'
+  'Sets Auto Model and purpose models (grading, judgment, summaries). You can still choose a model and effort on each task.'
+
+const LABEL_HELP =
+  'A user-defined capability label. When filing with Auto Model, choose a label to refine its model selection.'
 
 export type WorkerPatch = Omit<RpcParams<'worker.update'>, 'id'>
 
@@ -40,10 +39,9 @@ export type WorkerPatch = Omit<RpcParams<'worker.update'>, 'id'>
  * (t638). Replaces the default-model, routable-models and grading-model pickers, which were three
  * menus over one question — *what runs where on this account*.
  *
- * ⛔ **Default, Grading and Judgment are one line each; Auto-route is any number.** Ticking one of
- * the three moves it and unticking it clears it (the CLI's own default for Default and Judgment, the
- * adapter's smallest model for Grading). A line holding one of them cannot be removed, because the
- * setting would survive with no line to show it.
+ * ⛔ **Default, Grading and Judgment are one line each; Auto-route is any number.** Default is a
+ * radio choice (one per quota pool); a line holding a purpose cannot be removed because the setting
+ * would survive with no line to show it.
  *
  * ⚠️ Every edit to a line sends the whole table back (`routesToStore`), in the order it is drawn.
  * That order is the router's order — see `modelTableRows`.
@@ -74,14 +72,13 @@ export function ModelTable({
   // ⚠️ The three single-line ticks write only their own fields, never the table: the line they point
   // at is always drawn (`modelTableRows` ensures it), so ticking Default on a line nobody stored does
   // not turn an untouched table into a stored one — which would switch model-aware scoring on.
-  const toggleDefault = (index: number): void => {
+  const setDefault = (index: number): void => {
     const r = rows[index]!
-    const on = isDefaultRow(worker, options, r)
     const pool = poolOf(options, r.model)
     if (pool) {
-      onPatch({ defaultModels: { ...(worker.defaultModels ?? {}), [pool]: on ? null : r.model } })
+      onPatch({ defaultModels: { ...(worker.defaultModels ?? {}), [pool]: r.model } })
     } else {
-      onPatch(on ? { defaultModel: null, defaultEffort: null } : { defaultModel: r.model, defaultEffort: r.effort })
+      onPatch({ defaultModel: r.model, defaultEffort: r.effort })
     }
   }
   const toggleGrading = (index: number): void => {
@@ -126,7 +123,7 @@ export function ModelTable({
             <tr>
               <th>Model</th>
               <th>Effort</th>
-              <th>Class</th>
+              <th title={LABEL_HELP}>Label</th>
               <th className="worker-models-tick">Default</th>
               <th className="worker-models-tick">Auto-route</th>
               <th className="worker-models-tick">Grading</th>
@@ -189,7 +186,8 @@ export function ModelTable({
                       className="worker-models-select"
                       value={routeClass(r)}
                       disabled={busy}
-                      aria-label={`Class for ${label} on ${worker.label}`}
+                      aria-label={`Label for ${label} on ${worker.label}`}
+                      title={LABEL_HELP}
                       onChange={(e) => write(withRow(index, { modelClass: e.target.value as ModelClass }))}
                     >
                       {MODEL_CLASSES.map((cls) => (
@@ -201,16 +199,17 @@ export function ModelTable({
                   </td>
                   <td className="worker-models-tick">
                     <input
-                      type="checkbox"
+                      type="radio"
+                      name={`default:${worker.id}:${poolOf(options, r.model) ?? 'worker'}`}
                       checked={isDefault}
                       disabled={busy}
                       aria-label={`Default: ${label} on ${worker.label}`}
                       title={
                         poolOf(options, r.model)
-                          ? "The default for this model's quota pool"
-                          : "What tasks on this account run on unless they pin their own. Untick for the CLI's own default."
+                          ? "The one default for this model's quota pool"
+                          : 'What tasks on this account run on unless they choose their own model.'
                       }
-                      onChange={() => toggleDefault(index)}
+                      onChange={() => setDefault(index)}
                     />
                   </td>
                   <td className="worker-models-tick">
@@ -251,18 +250,20 @@ export function ModelTable({
                     />
                   </td>
                   <td className="worker-models-remove">
-                    {r.stored && (
-                      <button
-                        type="button"
-                        className="worker-models-remove-btn"
-                        disabled={busy || inUse}
-                        aria-label={`Remove ${label} from ${worker.label}`}
-                        title={inUse ? 'In use as the default, grading, judgment or summary model' : 'Remove this line'}
-                        onClick={() => write(rows.filter((_, i) => i !== index))}
-                      >
-                        ×
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="worker-models-remove-btn"
+                      disabled={busy || inUse}
+                      aria-label={`Remove ${label} from ${worker.label}`}
+                      title={
+                        inUse
+                          ? 'Cannot remove: in use as the default, grading, judgment or summary model'
+                          : 'Remove this line'
+                      }
+                      onClick={() => write(rows.filter((_, i) => i !== index))}
+                    >
+                      ×
+                    </button>
                   </td>
                 </tr>
               )

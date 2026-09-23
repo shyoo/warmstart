@@ -125,17 +125,6 @@ export function modelTableRows(worker: TableWorker, options: ModelOptions | null
   if (worker.summarisingModel && !rows.some((r) => r.model === worker.summarisingModel)) {
     ensure(worker.summarisingModel, seedEffort(effortLevelsFor(options, worker.summarisingModel), worker.defaultEffort))
   }
-  for (const m of options?.models ?? []) {
-    if (rows.some((r) => r.model === m.id)) continue
-    rows.push({
-      model: m.id,
-      effort: seedEffort(effortLevelsFor(options, m.id), worker.defaultEffort),
-      modelClass: null,
-      auto: false,
-      stored: false
-    })
-  }
-
   const order = (options?.models ?? []).map((m) => m.id)
   const modelRank = (model: string): number => {
     const i = order.indexOf(model)

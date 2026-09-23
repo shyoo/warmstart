@@ -43,15 +43,10 @@ const pairs = (rows: Array<{ model: string; effort: string | null }>): string[] 
   rows.map((r) => `${r.model}${r.effort ? `@${r.effort}` : ''}`)
 
 describe('the model table (t638)', () => {
-  it('⭐ draws a line for every model the adapter can price, with nothing stored', () => {
+  it('⭐ draws only purpose rows when nothing is configured, so a removed row stays gone', () => {
     const rows = modelTableRows(worker(), claude)
-    expect(pairs(rows)).toEqual([
-      'claude-opus-5-5@medium',
-      'claude-opus-5@medium',
-      'claude-sonnet-5@medium',
-      'claude-haiku-4-5'
-    ])
-    expect(rows.every((r) => !r.stored && !r.auto)).toBe(true)
+    expect(pairs(rows)).toEqual(['claude-haiku-4-5'])
+    expect(rows[0]?.stored).toBe(false)
     // ⛔ A table nobody touched writes nothing back — the inert state routing reads.
     expect(routesToStore(rows)).toEqual([])
   })
@@ -71,7 +66,6 @@ describe('the model table (t638)', () => {
     expect(pairs(rows)).toEqual([
       'claude-opus-5-5@xhigh',
       'claude-opus-5-5@medium',
-      'claude-opus-5@medium',
       'claude-sonnet-5@high',
       'claude-haiku-4-5'
     ])
