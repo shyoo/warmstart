@@ -14,8 +14,8 @@ checks** (4 skipped); L4 **19 checks** against `release/win-unpacked`. ⚠️ Th
 t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
 hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
 
-**`v0.3.1` is `latest`** (2026-09-21), promoted onto `v0.3.1-rc.1`'s commit `8658d91`. The next
-`/release rc` opens the patch series at `0.3.2-rc.1` unless `--bump minor|major` is asked for.
+**`v0.3.2` is `latest`** (2026-09-22), promoted onto `v0.3.2-rc.1`'s commit `6ddf8093`. The next
+`/release rc` opens the patch series at `0.3.3-rc.1` unless `--bump minor|major` is asked for.
 ⛔ All four tiers are run before a push, not after: rc.2 of the 0.2.0 series went red on CI because
 six commits were pushed together without `test:ui`.
 Phase 3/4 (write-up, landing page, channels) remains off-repo.
