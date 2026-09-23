@@ -12,11 +12,10 @@ import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isWorkerSubscriptionExpired, QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import { age, percent, quotaGap } from '../lib/format'
 import { creditsMismatchKind, creditsMismatchNote } from '@shared/credits'
-import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
+import { SettingButtonSelect } from './SettingButtonSelect'
 import { TerminalPane } from './Terminal'
 import { useTarget } from '../lib/target'
 import { errorMessage } from '@shared/errors.js'
-import { isLocalModelId, localModelLabel } from '@shared/localmodel'
 import { ModelTable, MODEL_TABLE_HELP } from './ModelTable'
 
 /**
@@ -84,17 +83,6 @@ function SignInLocationWarning(): React.JSX.Element {
   )
 }
 
-/**
- * ⚠️ "CLI default" is a real option, not a blank — it means the vendor picks, which is what every
- * install did before this control existed. It leads the list because it is the value a fresh worker
- * holds, and a picker whose first entry is not its own default reads as one that has been changed.
- */
-function modelChoices(models: Array<{ id: string }>, adapterId?: string): SettingOption[] {
-  // A local endpoint has no CLI: leaving the box empty means the model the server is serving, which
-  // the bridge reads at dispatch and the run records. The ids are the server's own file names.
-  const unset = adapterId === 'local-llm' ? "Server's model" : 'CLI default'
-  return [{ value: '', label: unset }, ...models.map((m) => ({ value: m.id, label: isLocalModelId(m.id) ? localModelLabel(m.id) : m.id }))]
-}
 
 /**
  * How many tasks one account may run at once — the sentence behind the `Max` column's (i).
@@ -421,8 +409,7 @@ export function Workers({
             <col style={{ width: '10%' }} />
             <col style={{ width: '10%' }} />
             <col style={{ width: '5%' }} />
-            <col style={{ width: '27%' }} />
-            <col style={{ width: '8%' }} />
+            <col style={{ width: '35%' }} />
             <col style={{ width: '8%' }} />
             <col style={{ width: '8%' }} />
             <col style={{ width: '9%' }} />
@@ -453,7 +440,6 @@ export function Workers({
                   <ColumnInfo text={MODEL_TABLE_HELP} />
                 </span>
               </th>
-              <th>Summary model</th>
               <th>Role</th>
               <th>
                 <span className="th-with-info">
@@ -784,21 +770,6 @@ export function Workers({
                         busy={busy === `models:${worker.id}`}
                         onPatch={(patch) =>
                           void guard(`models:${worker.id}`, () => rpc('worker.update', { id: worker.id, ...patch }))
-                        }
-                      />
-                    </td>
-                    <td>
-                      <SettingButtonSelect
-                        className="worker-grading-select"
-                        value={worker.summarisingModel ?? ''}
-                        options={modelChoices(modelsFor(worker.adapterId, worker.id)?.models ?? [], worker.adapterId)}
-                        ariaLabel={`Summary model for ${worker.label}`}
-                        disabled={busy === `summary-model:${worker.id}`}
-                        title="The small model this account uses for optional, asynchronous task-title summaries. Clear it to leave this worker out."
-                        onChange={(value) =>
-                          void guard(`summary-model:${worker.id}`, () =>
-                            rpc('worker.update', { id: worker.id, summarisingModel: value || null })
-                          )
                         }
                       />
                     </td>

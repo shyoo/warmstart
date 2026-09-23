@@ -3459,7 +3459,7 @@ try {
        document.querySelectorAll('.tbl-workers > thead > tr > th').length
      ])`
   )
-  check('the workers card fields describe every setting the header declares', colCount === '[13,13]', colCount)
+  check('the workers card fields describe every setting the header declares', colCount === '[12,12]', colCount)
 
   const cardLabels = await evaluate(
     `JSON.stringify([...document.querySelector('.tbl-workers > tbody > tr:not(.tbl-row--note)').children]
@@ -3467,10 +3467,10 @@ try {
       .map(td => getComputedStyle(td, '::before').content.replaceAll('"', '')))`
   )
   check(
-    'every worker card field keeps its own label after Summary model',
+    'every worker card field keeps its own label without separate Summary model column',
     cardLabels === JSON.stringify([
       'Adapter', 'Config location', 'Account', 'Quota', 'Max parallel instances', 'Models',
-      'Summary model', 'Role', 'Unattended', 'Usage credits', 'Actions'
+      'Role', 'Unattended', 'Usage credits', 'Actions'
     ]),
     cardLabels
   )
@@ -3768,6 +3768,9 @@ try {
     routesAfter !== 'null' && JSON.parse(routesAfter).filter((r) => r.auto).length === 1,
     routesAfter
   )
+
+  const summaryBoxes = await evaluate(`String(${modelsCell}?.querySelectorAll('input[aria-label^="Summary:"]').length ?? 0)`)
+  check('the ModelTable includes a Summary checkbox column', Number(summaryBoxes) > 0, summaryBoxes)
 
   // ⭐ + Add model/effort: a second line for a model that already has one, at another effort.
   await evaluate(`[...${modelsCell}?.querySelectorAll('button') ?? []].find(b => b.textContent.includes('Add model/effort'))?.click()`)

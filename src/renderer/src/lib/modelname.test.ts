@@ -22,12 +22,20 @@ describe('modelLabel', () => {
     // A version split across segments is one number, not two words.
     expect(modelLabel('claude-haiku-4-5')).toBe('Haiku 4.5')
     // google.antigravity.2026-08
+    expect(modelLabel('gemini-3.8-flash')).toBe('Gemini 3.8 Flash')
+    expect(modelLabel('gemini-3.8-flash', 'high')).toBe('Gemini 3.8 Flash High')
+    expect(modelLabel('gemini-3.1-pro')).toBe('Gemini 3.1 Pro')
+    expect(modelLabel('gemini-3.7-flash')).toBe('Gemini 3.7 Flash')
+    expect(modelLabel('gemini-3.5-flash')).toBe('Gemini 3.5 Flash')
+    expect(modelLabel('claude-sonnet-4-6')).toBe('Sonnet 4.6')
+    expect(modelLabel('claude-opus-4-6-thinking')).toBe('Opus 4.6 Thinking')
+    expect(modelLabel('gpt-oss-120b')).toBe('GPT OSS 120B')
+    expect(modelLabel('gpt-oss-120b', 'medium')).toBe('GPT OSS 120B Med')
+    // Legacy combined IDs still format correctly
     expect(modelLabel('gemini-3.8-flash-high')).toBe('Gemini 3.8 Flash High')
     expect(modelLabel('gemini-3.1-pro-high')).toBe('Gemini 3.1 Pro High')
     expect(modelLabel('gemini-3.7-flash-medium')).toBe('Gemini 3.7 Flash Med')
     expect(modelLabel('gemini-3.5-flash-low')).toBe('Gemini 3.5 Flash Low')
-    expect(modelLabel('claude-sonnet-4-6')).toBe('Sonnet 4.6')
-    expect(modelLabel('claude-opus-4-6-thinking')).toBe('Opus 4.6 Thinking')
     expect(modelLabel('gpt-oss-120b-medium')).toBe('GPT OSS 120B Med')
     // local.llm.2026-09
     expect(modelLabel('qwen3-coder-30b-a3b')).toBe('Qwen3 Coder 30B A3B')

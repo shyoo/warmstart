@@ -24,6 +24,7 @@ type TableWorker = Pick<
   | 'gradingEffort'
   | 'judgmentModel'
   | 'judgmentEffort'
+  | 'summarisingModel'
 >
 
 /**
@@ -94,6 +95,10 @@ export function isJudgmentRow(worker: TableWorker, options: ModelOptions | null,
   return pair !== null && samePair(row, pair)
 }
 
+export function isSummaryRow(worker: TableWorker, row: ModelRoute): boolean {
+  return worker.summarisingModel !== null && worker.summarisingModel === row.model
+}
+
 /**
  * Every line of one worker's table, in the order it is drawn and written back.
  *
@@ -102,7 +107,7 @@ export function isJudgmentRow(worker: TableWorker, options: ModelOptions | null,
  * it is the strongest effort ticked, and `Auto (class)` narrows to the class before that. Writing
  * back in the drawn order is what keeps the order on screen and the order the router reads the same.
  *
- * ⚠️ The default, grading and judgment choices always have a line. A choice with no line to tick
+ * ⚠️ The default, grading, judgment and summary choices always have a line. A choice with no line to tick
  * would be a setting the table could show no trace of, and unticking it would be impossible.
  */
 export function modelTableRows(worker: TableWorker, options: ModelOptions | null): ModelTableRow[] {
@@ -117,6 +122,9 @@ export function modelTableRows(worker: TableWorker, options: ModelOptions | null
   for (const model of Object.values(worker.defaultModels ?? {})) ensure(model, null)
   ensure(worker.gradingModel, worker.gradingEffort)
   ensure(worker.judgmentModel, worker.judgmentEffort)
+  if (worker.summarisingModel && !rows.some((r) => r.model === worker.summarisingModel)) {
+    ensure(worker.summarisingModel, seedEffort(effortLevelsFor(options, worker.summarisingModel), worker.defaultEffort))
+  }
   for (const m of options?.models ?? []) {
     if (rows.some((r) => r.model === m.id)) continue
     rows.push({

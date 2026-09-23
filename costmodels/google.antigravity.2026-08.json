@@ -19,11 +19,11 @@
     "This file becomes useful the moment somebody measures it. Until then its honesty is its value:",
     "an invented multiplier would be indistinguishable from a measured one at the point of use.",
     "",
-    "MODELS: read from `agy models` on 2026-08-25 (agy 1.1.20), not guessed. Note two things.",
-    "First, effort is baked into the model id (-high/-medium/-low) as well as being a --effort flag.",
-    "Second, Antigravity serves Claude and GPT-OSS models alongside Gemini - so 'this task needs",
-    "Claude' does NOT imply 'this task needs a claude-code worker', and capability routing has to be",
-    "asked about the model, not the vendor."
+    "MODELS: read from `agy models` on 2026-08-25 (agy 1.1.20) and updated 2026-09-23.",
+    "Effort is separated into `effort_levels` and passed via `--effort` (low|medium|high) rather than",
+    "being blended into model identifiers. Antigravity serves Claude and GPT-OSS models alongside Gemini",
+    "— so 'this task needs Claude' does NOT imply 'this task needs a claude-code worker', and",
+    "capability routing has to be asked about the model, not the vendor."
   ],
   "id": "google.antigravity.2026-08",
   "provider": "google",
@@ -55,177 +55,74 @@
   },
   "models": [
     {
-      "id": "gemini-3.8-flash-high",
+      "id": "gemini-3.8-flash",
       "context_window": 1000000,
       "input_per_mtok": null,
       "output_per_mtok": null,
       "tokenizer": "gemini-v3",
       "context_awareness": false,
       "effort_levels": [
+        "low",
+        "medium",
         "high"
       ],
       "pool": "gemini"
     },
     {
-      "id": "gemini-3.8-flash-medium",
+      "id": "gemini-3.7-flash",
       "context_window": 1000000,
       "input_per_mtok": null,
       "output_per_mtok": null,
       "tokenizer": "gemini-v3",
       "context_awareness": false,
       "effort_levels": [
-        "medium"
-      ],
-      "pool": "gemini"
-    },
-    {
-      "id": "gemini-3.8-flash-low",
-      "context_window": 1000000,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "gemini-v3",
-      "context_awareness": false,
-      "effort_levels": [
-        "low"
-      ],
-      "pool": "gemini"
-    },
-    {
-      "id": "gemini-3.1-pro-high",
-      "context_window": 1000000,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "gemini-v3",
-      "context_awareness": false,
-      "effort_levels": [
+        "low",
+        "medium",
         "high"
       ],
       "pool": "gemini"
     },
     {
-      "id": "gemini-3.1-pro-low",
-      "context_window": 1000000,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "gemini-v3",
-      "context_awareness": false,
-      "effort_levels": [
-        "low"
-      ],
-      "pool": "gemini"
-    },
-    {
-      "id": "gemini-3.7-flash-high",
-      "context_window": 1000000,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "gemini-v3",
-      "context_awareness": false,
-      "effort_levels": [
-        "high"
-      ],
-      "pool": "gemini"
-    },
-    {
-      "id": "gemini-3.7-flash-medium",
-      "context_window": 1000000,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "gemini-v3",
-      "context_awareness": false,
-      "effort_levels": [
-        "medium"
-      ],
-      "pool": "gemini"
-    },
-    {
-      "id": "gemini-3.7-flash-low",
-      "context_window": 1000000,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "gemini-v3",
-      "context_awareness": false,
-      "effort_levels": [
-        "low"
-      ],
-      "pool": "gemini"
-    },
-    {
-      "id": "gemini-3.6-flash-high",
+      "id": "gemini-3.6-flash",
       "context_window": null,
       "input_per_mtok": null,
       "output_per_mtok": null,
       "tokenizer": "gemini-v3",
       "context_awareness": false,
       "effort_levels": [
+        "low",
+        "medium",
         "high"
       ],
       "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes.",
       "pool": "gemini"
     },
     {
-      "id": "gemini-3.6-flash-medium",
+      "id": "gemini-3.5-flash",
       "context_window": null,
       "input_per_mtok": null,
       "output_per_mtok": null,
       "tokenizer": "gemini-v3",
       "context_awareness": false,
       "effort_levels": [
-        "medium"
-      ],
-      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes.",
-      "pool": "gemini"
-    },
-    {
-      "id": "gemini-3.6-flash-low",
-      "context_window": null,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "gemini-v3",
-      "context_awareness": false,
-      "effort_levels": [
-        "low"
-      ],
-      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes.",
-      "pool": "gemini"
-    },
-    {
-      "id": "gemini-3.5-flash-high",
-      "context_window": null,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "gemini-v3",
-      "context_awareness": false,
-      "effort_levels": [
+        "low",
+        "medium",
         "high"
       ],
       "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes.",
       "pool": "gemini"
     },
     {
-      "id": "gemini-3.5-flash-medium",
-      "context_window": null,
+      "id": "gemini-3.1-pro",
+      "context_window": 1000000,
       "input_per_mtok": null,
       "output_per_mtok": null,
       "tokenizer": "gemini-v3",
       "context_awareness": false,
       "effort_levels": [
-        "medium"
+        "low",
+        "high"
       ],
-      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes.",
-      "pool": "gemini"
-    },
-    {
-      "id": "gemini-3.5-flash-low",
-      "context_window": null,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "gemini-v3",
-      "context_awareness": false,
-      "effort_levels": [
-        "low"
-      ],
-      "$comment": "Listed by `agy models` on 2026-08-29 (agy 1.1.22) and absent from this file until then, so it could be neither picked nor priced. context_window is null because the figure has not been read from anywhere - null reports unknown, and a copied 1000000 would be a guess wearing a measurement's clothes.",
       "pool": "gemini"
     },
     {
@@ -249,14 +146,16 @@
       "pool": "claude"
     },
     {
-      "id": "gpt-oss-120b-medium",
+      "id": "gpt-oss-120b",
       "context_window": 131072,
       "input_per_mtok": null,
       "output_per_mtok": null,
       "tokenizer": "unknown",
       "context_awareness": false,
       "effort_levels": [
-        "medium"
+        "low",
+        "medium",
+        "high"
       ],
       "pool": "gpt"
     }

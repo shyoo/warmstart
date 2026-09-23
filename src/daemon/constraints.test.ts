@@ -208,17 +208,16 @@ describe('the effort capability itself', () => {
     // ⭐ `claude-code` **true**: claude 2.1.250 takes `--effort low|medium|high|xhigh|max`, and a
     //    headless run with `--effort low` came back with `effort: "low"` on its transcript's
     //    assistant record — set *and* observable, which is what promoting a capability requires.
-    // ⛔ `antigravity-cli` **false, and now for a measured reason rather than an argued one**. agy
-    //    1.1.22 has the flag and refuses every combination this fleet would send:
-    //    `gemini-3.1-pro-high` "conflicts with --effort=low", `claude-sonnet-4-6` "not supported for
-    //    model", `gpt-oss-120b-medium` conflicts. Only a bare family — `gemini-3.1-pro` — accepts
-    //    it, and `agy models` does not list the bare families. Two spellings, one choice.
+    // ⭐ `antigravity-cli` **true, promoted 2026-09-23 (t645)**: Antigravity CLI supports
+    //    `--effort low|medium|high` on base models (`gemini-3.8-flash`, `gemini-3.7-flash`,
+    //    `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`, `gpt-oss-120b`). The cost model
+    //    lists clean base model identifiers and declares `effort_levels` explicitly.
     // ⭐ `openai-compatible` **true, promoted 2026-09-15**. `-c model_reasoning_effort=high` against
     //    a signed-in ChatGPT account came back with `"effort":"high"` on the rollout's turn_context,
     //    on a fresh exec and on resume — set *and* observable, the same bar `claude-code` cleared.
     const expected: Record<string, boolean> = {
       'claude-code': true,
-      'antigravity-cli': false,
+      'antigravity-cli': true,
       'openai-compatible': true
     }
     for (const [id, can] of Object.entries(expected)) {

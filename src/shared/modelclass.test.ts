@@ -14,6 +14,10 @@ describe('modelclass', () => {
     expect(defaultModelClass('gpt-5.6-terra')).toBe('med')
     expect(defaultModelClass('gpt-5.6-mini')).toBe('low')
 
+    expect(defaultModelClass('gemini-3.1-pro')).toBe('high')
+    expect(defaultModelClass('gemini-3.8-flash')).toBe('med')
+    expect(defaultModelClass('gemini-3.7-flash')).toBe('med')
+    expect(defaultModelClass('gpt-oss-120b')).toBe('med')
     expect(defaultModelClass('gemini-3.8-flash-high')).toBe('high')
     expect(defaultModelClass('gemini-3.8-flash-medium')).toBe('med')
     expect(defaultModelClass('gemini-3.8-flash-low')).toBe('low')

@@ -60,6 +60,13 @@
       "note": "Anthropic's own Terminal-Bench figure for Haiku 4.5: 41.75% averaged over 5 runs with a 32K thinking budget (Terminus 2 harness); the non-thinking variant scored 40.21% over 6 runs. The thinking figure is used because it is the higher-effort configuration."
     },
     {
+      "id": "gemini-3.8-flash",
+      "agentic": 0.813,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 81.27%, as 'Gemini 3.8 Flash'."
+    },
+    {
       "id": "gemini-3.8-flash-high",
       "agentic": 0.813,
       "basis": "published",
@@ -81,6 +88,13 @@
       "note": "Same as gemini-3.8-flash-medium: no low-effort figure is published, so the high-tier's 81.27% is carried across effort levels of the same model."
     },
     {
+      "id": "gemini-3.1-pro",
+      "agentic": 0.708,
+      "basis": "inferred",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 lists 'Gemini 3.1 Pro Preview' at 70.79%."
+    },
+    {
       "id": "gemini-3.1-pro-high",
       "agentic": 0.708,
       "basis": "inferred",
@@ -93,6 +107,13 @@
       "basis": "inferred",
       "source": "vals-terminal-bench-2.1",
       "note": "No low-effort figure is published for Gemini 3.1 Pro; carrying the (already inferred) high-tier figure across effort levels of the same model, as with the Flash tiers above."
+    },
+    {
+      "id": "gemini-3.7-flash",
+      "agentic": 0.775,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 77.53%, as 'Gemini 3.7 Flash'."
     },
     {
       "id": "gemini-3.7-flash-high",
@@ -116,6 +137,13 @@
       "note": "No low-effort figure published separately; carrying the high-tier's 77.53% across effort levels of the same model."
     },
     {
+      "id": "gemini-3.6-flash",
+      "agentic": 0.738,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 73.78%, as 'Gemini 3.6 Flash'."
+    },
+    {
       "id": "gemini-3.6-flash-high",
       "agentic": 0.738,
       "basis": "published",
@@ -135,6 +163,13 @@
       "basis": "inferred",
       "source": "vals-terminal-bench-2.1",
       "note": "No low-effort figure published separately; carrying the high-tier's 73.78% across effort levels of the same model."
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "agentic": 0.742,
+      "basis": "published",
+      "source": "vals-terminal-bench-2.1",
+      "note": "Terminal-Bench 2.1 accuracy, 74.16%, as 'Gemini 3.5 Flash'."
     },
     {
       "id": "gemini-3.5-flash-high",
@@ -170,6 +205,13 @@
       "basis": "inferred",
       "source": "vals-terminal-bench-2.1",
       "note": "No Opus 4.6 checkpoint appears on Terminal-Bench 2.1 or the Artificial Analysis Coding Agents index — only 4.7, 4.8 and 5 are listed. Using Claude Opus 4.7's published 68.54% as the nearest measured predecessor, since 4.6 sits immediately before it in Anthropic's numbering."
+    },
+    {
+      "id": "gpt-oss-120b",
+      "agentic": 0.624,
+      "basis": "inferred",
+      "source": "openai-gpt-oss-120b-model-card",
+      "note": "62.4% SWE-bench Verified as 'GPT-OSS 120B'."
     },
     {
       "id": "gpt-oss-120b-medium",

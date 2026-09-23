@@ -392,7 +392,7 @@ export function inheritedModelFor(worker: Worker): Array<string | null> {
 export function defaultGradingModel(adapterId: string): string | null {
   return {
     'claude-code': 'claude-haiku-4-5',
-    'antigravity-cli': 'gemini-3.8-flash-low',
+    'antigravity-cli': 'gemini-3.8-flash',
     'openai-compatible': 'gpt-5.6-luna'
   }[adapterId] ?? null
 }
@@ -401,7 +401,7 @@ export function defaultGradingModel(adapterId: string): string | null {
 export function defaultSummarisingModel(adapterId: string): string | null {
   return {
     'claude-code': 'claude-haiku-4-5',
-    'antigravity-cli': 'gemini-3.8-flash-low',
+    'antigravity-cli': 'gemini-3.8-flash',
     'openai-compatible': 'gpt-5.6-luna'
   }[adapterId] ?? null
 }

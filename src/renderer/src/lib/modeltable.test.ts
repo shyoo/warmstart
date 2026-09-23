@@ -6,6 +6,7 @@ import {
   isDefaultRow,
   isGradingRow,
   isJudgmentRow,
+  isSummaryRow,
   modelTableRows,
   routesToStore,
   seedEffort
@@ -34,6 +35,7 @@ const worker = (over: Partial<Worker> = {}): TableWorker => ({
   gradingEffort: null,
   judgmentModel: null,
   judgmentEffort: null,
+  summarisingModel: null,
   ...over
 })
 const row = (model: string, effort: string | null, auto = true): ModelRoute => ({ model, effort, modelClass: null, auto })
@@ -77,20 +79,23 @@ describe('the model table (t638)', () => {
     expect(pairs(routesToStore(rows))).toEqual(['claude-opus-5-5@xhigh', 'claude-opus-5-5@medium', 'claude-sonnet-5@high'])
   })
 
-  it('always has a line for the default, grading and judgment choices', () => {
+  it('always has a line for the default, grading, judgment and summary choices', () => {
     const w = worker({
       modelRoutes: [row('claude-opus-5', 'high')],
       defaultModel: 'claude-opus-5',
       defaultEffort: 'low',
       judgmentModel: 'claude-sonnet-5',
-      judgmentEffort: 'max'
+      judgmentEffort: 'max',
+      summarisingModel: 'claude-opus-5-5'
     })
     const rows = modelTableRows(w, claude)
     expect(pairs(rows)).toContain('claude-opus-5@low')
     expect(pairs(rows)).toContain('claude-sonnet-5@max')
+    expect(pairs(rows)).toContain('claude-opus-5-5@low')
     expect(rows.filter((r) => isDefaultRow(w, claude, r)).map((r) => r.effort)).toEqual(['low'])
     expect(rows.filter((r) => isJudgmentRow(w, claude, r)).map((r) => r.model)).toEqual(['claude-sonnet-5'])
     expect(rows.filter((r) => isGradingRow(w, claude, r)).map((r) => r.model)).toEqual(['claude-haiku-4-5'])
+    expect(rows.filter((r) => isSummaryRow(w, r)).map((r) => r.model)).toEqual(['claude-opus-5-5'])
   })
 
   it('⚠️ a default effort on a model with no levels is the plain line, not a second one', () => {

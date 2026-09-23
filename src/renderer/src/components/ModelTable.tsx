@@ -9,6 +9,7 @@ import {
   isDefaultRow,
   isGradingRow,
   isJudgmentRow,
+  isSummaryRow,
   modelTableRows,
   poolOf,
   routesToStore,
@@ -29,7 +30,8 @@ export const MODEL_TABLE_HELP =
   'Auto-route: the rows Auto Model may pick — one per model, the strongest ticked effort first; a ' +
   'class-scoped Auto picks within its class. With nothing ticked, tasks run on the Default row. ' +
   'Unticked rows can still be chosen by hand on a task. Grading runs peer reviews; Judgment answers ' +
-  "the controller's routing and planning questions (unticked: the CLI's own model)."
+  "the controller's routing and planning questions (unticked: the CLI's own model); Summary generates " +
+  'asynchronous task titles (unticked: this worker is excluded from title summaries).'
 
 export type WorkerPatch = Omit<RpcParams<'worker.update'>, 'id'>
 
@@ -92,6 +94,11 @@ export function ModelTable({
     const on = isJudgmentRow(worker, options, r)
     onPatch(on ? { judgmentModel: null, judgmentEffort: null } : { judgmentModel: r.model, judgmentEffort: r.effort })
   }
+  const toggleSummary = (index: number): void => {
+    const r = rows[index]!
+    const on = isSummaryRow(worker, r)
+    onPatch(on ? { summarisingModel: null } : { summarisingModel: r.model })
+  }
   // ⛔ A line's effort is the effort of whatever it is ticked for, so the choice moves with it — the
   // Default tick does not stay behind on a (model, effort) pair that no longer has a line.
   const setEffort = (index: number, effort: string): void => {
@@ -124,6 +131,7 @@ export function ModelTable({
               <th className="worker-models-tick">Auto-route</th>
               <th className="worker-models-tick">Grading</th>
               <th className="worker-models-tick">Judgment</th>
+              <th className="worker-models-tick">Summary</th>
               <th aria-label="Remove" />
             </tr>
           </thead>
@@ -133,7 +141,8 @@ export function ModelTable({
               const isDefault = isDefaultRow(worker, options, r)
               const isGrading = isGradingRow(worker, options, r)
               const isJudgment = isJudgmentRow(worker, options, r)
-              const inUse = isDefault || isGrading || isJudgment
+              const isSummary = isSummaryRow(worker, r)
+              const inUse = isDefault || isGrading || isJudgment || isSummary
               const label = routeLabel(r)
               return (
                 <tr
@@ -231,6 +240,16 @@ export function ModelTable({
                       onChange={() => toggleJudgment(index)}
                     />
                   </td>
+                  <td className="worker-models-tick">
+                    <input
+                      type="checkbox"
+                      checked={isSummary}
+                      disabled={busy}
+                      aria-label={`Summary: ${label} on ${worker.label}`}
+                      title="The model this account uses for optional, asynchronous task-title summaries. Untick to leave this worker out."
+                      onChange={() => toggleSummary(index)}
+                    />
+                  </td>
                   <td className="worker-models-remove">
                     {r.stored && (
                       <button
@@ -238,7 +257,7 @@ export function ModelTable({
                         className="worker-models-remove-btn"
                         disabled={busy || inUse}
                         aria-label={`Remove ${label} from ${worker.label}`}
-                        title={inUse ? 'In use as the default, grading or judgment model' : 'Remove this line'}
+                        title={inUse ? 'In use as the default, grading, judgment or summary model' : 'Remove this line'}
                         onClick={() => write(rows.filter((_, i) => i !== index))}
                       >
                         ×

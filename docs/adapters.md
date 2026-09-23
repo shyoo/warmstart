@@ -470,15 +470,12 @@ behaviour falls out of it:
     `claude-haiku-4-5`, which takes no effort at all. ⭐ Promoted on a run, not on `--help`: a
     headless call with `--effort low` came back with `effort: "low"` on its transcript's assistant
     record, the field `transcript.ts` already parses. Set *and* observable.
-  - **`antigravity-cli`: false — and now because the CLI refuses, not because we argued it should.**
-    agy 1.1.22 has the flag and rejects every combination this fleet dispatches:
-    `--model gemini-3.1-pro-high --effort low` → *"conflicts with --effort=low"*;
-    `--model claude-sonnet-4-6 --effort low` → *"--effort is not supported for model"*;
-    `--model gpt-oss-120b-medium --effort low` → conflicts. Only a **bare family** takes it:
-    `--model gemini-3.1-pro --effort low` runs. So the vendor has two spellings for one choice, and
-    `agy models` reports the pre-combined one, which is what this cost model prices. ⛔ Declaring
-    true would offer a second control for a choice already made, and anyone touching both would get
-    a hard dispatch failure rather than a politely ignored flag.
+  - **`antigravity-cli`: true (promoted 2026-09-23, t645).** Antigravity CLI supports
+    `--effort low|medium|high` on base models (`gemini-3.8-flash`, `gemini-3.7-flash`,
+    `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`, `gpt-oss-120b`). The cost model
+    now lists unblended base model identifiers and declares `effort_levels` explicitly. Models
+    without selectable effort (e.g. `claude-sonnet-4-6`) declare empty `effort_levels`. Effort is
+    selected per line in the Routable Models table and passed via `--effort` at spawn.
   - **`openai-compatible`: true, promoted 2026-09-15.** `codex exec --help` lists no
     `--reasoning-effort` flag; `-c model_reasoning_effort=<level>` is the only route in. Run against a
     signed-in ChatGPT account (codex-cli 0.151.0), on a fresh `exec` and on `exec resume`: both turns'

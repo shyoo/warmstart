@@ -2122,6 +2122,134 @@ const MIGRATIONS: Migration[] = [
       )
       write.run(routes.length > 0 ? JSON.stringify(routes) : null, r.id)
     }
+  },
+  // 82 - unblend Antigravity model effort into explicit effort levels (t645).
+  //
+  // ⛔ Antigravity previously encoded effort into model IDs (e.g. `gemini-3.8-flash-high`).
+  // Now effort is selectable via `--effort`, and models are clean base names.
+  // Migrates existing Antigravity workers' model_routes_json, default_models_json,
+  // default_model / default_effort, grading_model / grading_effort, summarising_model,
+  // and judgment_model / judgment_effort.
+  // Guarded for replay-safety: if run again on already migrated models, nothing changes.
+  (conn) => {
+    const parse = <T>(text: string | null): T | null => {
+      try {
+        return text ? (JSON.parse(text) as T) : null
+      } catch {
+        return null
+      }
+    }
+    const splitEffort = (model: string | null): { base: string; effort: string } | null => {
+      if (!model) return null
+      const m = /^(.*)-(high|medium|med|low)$/.exec(model)
+      if (!m || !m[1] || !m[2]) return null
+      return { base: m[1], effort: m[2] === 'med' ? 'medium' : m[2] }
+    }
+
+    const rows = conn
+      .prepare(
+        `select id, default_model, default_effort, default_models_json, model_routes_json,
+                grading_model, grading_effort, summarising_model, judgment_model, judgment_effort
+         from workers where adapter_id = 'antigravity-cli'`
+      )
+      .all() as Array<{
+      id: string
+      default_model: string | null
+      default_effort: string | null
+      default_models_json: string | null
+      model_routes_json: string | null
+      grading_model: string | null
+      grading_effort: string | null
+      summarising_model: string | null
+      judgment_model: string | null
+      judgment_effort: string | null
+    }>
+
+    const update = conn.prepare(
+      `update workers
+       set default_model = ?, default_effort = ?, default_models_json = ?, model_routes_json = ?,
+           grading_model = ?, grading_effort = ?, summarising_model = ?, judgment_model = ?, judgment_effort = ?
+       where id = ?`
+    )
+
+    for (const r of rows) {
+      let defaultModel = r.default_model
+      let defaultEffort = r.default_effort
+      const defSplit = splitEffort(defaultModel)
+      if (defSplit) {
+        defaultModel = defSplit.base
+        if (!defaultEffort) defaultEffort = defSplit.effort
+      }
+
+      let defaultModelsJson = r.default_models_json
+      const defModels = parse<Record<string, string>>(defaultModelsJson)
+      if (defModels) {
+        let changed = false
+        for (const [pool, m] of Object.entries(defModels)) {
+          const s = splitEffort(m)
+          if (s) {
+            defModels[pool] = s.base
+            changed = true
+          }
+        }
+        if (changed) defaultModelsJson = JSON.stringify(defModels)
+      }
+
+      let modelRoutesJson = r.model_routes_json
+      const routes = parse<Array<{ model: string; effort: string | null; modelClass?: ModelClass | null; auto?: boolean }>>(
+        modelRoutesJson
+      )
+      if (routes && Array.isArray(routes)) {
+        const seen = new Set<string>()
+        const deduped: typeof routes = []
+        for (const route of routes) {
+          const s = splitEffort(route.model)
+          const model = s ? s.base : route.model
+          const effort = route.effort ?? (s ? s.effort : null)
+          const key = `${model}:${effort ?? ''}`
+          if (!seen.has(key)) {
+            seen.add(key)
+            deduped.push({ ...route, model, effort })
+          }
+        }
+        modelRoutesJson = JSON.stringify(deduped)
+      }
+
+      let gradingModel = r.grading_model
+      let gradingEffort = r.grading_effort
+      const gradSplit = splitEffort(gradingModel)
+      if (gradSplit) {
+        gradingModel = gradSplit.base
+        if (!gradingEffort) gradingEffort = gradSplit.effort
+      }
+
+      let summarisingModel = r.summarising_model
+      const sumSplit = splitEffort(summarisingModel)
+      if (sumSplit) {
+        summarisingModel = sumSplit.base
+      }
+
+      let judgmentModel = r.judgment_model
+      let judgmentEffort = r.judgment_effort
+      const judgSplit = splitEffort(judgmentModel)
+      if (judgSplit) {
+        judgmentModel = judgSplit.base
+        if (!judgmentEffort) judgmentEffort = judgSplit.effort
+      }
+
+      update.run(
+        defaultModel,
+        defaultEffort,
+        defaultModelsJson,
+        modelRoutesJson,
+        gradingModel,
+        gradingEffort,
+        summarisingModel,
+        judgmentModel,
+        judgmentEffort,
+        r.id
+      )
+    }
   }
 ]
 

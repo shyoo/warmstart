@@ -373,6 +373,15 @@ export class CostModel {
       const { id_prefix: _prefix, ...template } = dynamic
       return { id, ...template }
     }
+    // Backward compatibility: if an id carried a legacy effort suffix (e.g. -high, -medium, -med, -low)
+    // from before effort was separated into selectable levels, resolve against the base model id.
+    const suffixMatch = /^(.*)-(high|medium|med|low)$/.exec(id)
+    if (suffixMatch) {
+      const base = this.data.models?.find((m) => m.id === suffixMatch[1])
+      if (base) {
+        return { ...base, id }
+      }
+    }
     return null
   }
 

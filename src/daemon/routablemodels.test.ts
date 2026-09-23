@@ -157,8 +157,14 @@ describe('the model table column', () => {
       /has no effort level/
     )
     expect(() =>
-      api.checkWorkerDefaults('antigravity-cli', { modelRoutes: [row('gemini-3.7-flash-high', 'high')] })
+      api.checkWorkerDefaults('local-llm', { modelRoutes: [row('local-llm:model', 'high')] })
     ).toThrow(/takes no effort flag/)
+    expect(() =>
+      api.checkWorkerDefaults('antigravity-cli', { modelRoutes: [row('claude-sonnet-4-6', 'high')] })
+    ).toThrow(/has no effort level/)
+    expect(() =>
+      api.checkWorkerDefaults('antigravity-cli', { modelRoutes: [row('gemini-3.8-flash', 'high')] })
+    ).not.toThrow()
   })
 
   it('refuses an invalid class and a repeated (model, effort) pair', () => {
@@ -232,5 +238,63 @@ describe('the model table column', () => {
     db.closeDb()
     expect(() => db.openDb(dbPath)).not.toThrow()
     expect(workers.requireWorker(w.id).modelRoutes).toEqual([row('claude-sonnet-5', 'high')])
+  })
+
+  it('migration 82 unblends Antigravity model effort into explicit effort levels', () => {
+    seq += 1
+    const w = workers.createWorker({ adapterId: 'antigravity-cli', label: `agy-${seq}` })
+    db.db().exec(`pragma user_version = ${db.versionBefore('splitEffort')}`)
+    db.db()
+      .prepare(
+        `update workers
+         set default_model = 'gemini-3.7-flash-medium', default_effort = null,
+             default_models_json = ?, model_routes_json = ?,
+             grading_model = 'gemini-3.8-flash-low', grading_effort = null,
+             summarising_model = 'gemini-3.8-flash-low',
+             judgment_model = 'gemini-3.1-pro-high', judgment_effort = null
+         where id = ?`
+      )
+      .run(
+        JSON.stringify({ gemini: 'gemini-3.7-flash-medium', claude: 'claude-sonnet-4-6' }),
+        JSON.stringify([row('gemini-3.8-flash-high', null, true), row('claude-sonnet-4-6', null, true)]),
+        w.id
+      )
+    db.closeDb()
+    db.openDb(dbPath)
+
+    const reread = workers.requireWorker(w.id)
+    expect(reread.defaultModel).toBe('gemini-3.7-flash')
+    expect(reread.defaultEffort).toBe('medium')
+    expect(reread.defaultModels).toEqual({ gemini: 'gemini-3.7-flash', claude: 'claude-sonnet-4-6' })
+    expect(reread.modelRoutes).toEqual([
+      row('gemini-3.8-flash', 'high', true),
+      row('claude-sonnet-4-6', null, true)
+    ])
+    expect(reread.gradingModel).toBe('gemini-3.8-flash')
+    expect(reread.gradingEffort).toBe('low')
+    expect(reread.summarisingModel).toBe('gemini-3.8-flash')
+    expect(reread.judgmentModel).toBe('gemini-3.1-pro')
+    expect(reread.judgmentEffort).toBe('high')
+
+    // Retire so next test can commission an antigravity worker within maxAccounts: 1 limit
+    workers.retireWorker(w.id)
+  })
+
+  it('migration 82 replays cleanly and is idempotent', () => {
+    seq += 1
+    const w = workers.createWorker({ adapterId: 'antigravity-cli', label: `agy-${seq}` })
+    workers.updateWorker(w.id, {
+      defaultModel: 'gemini-3.8-flash',
+      defaultEffort: 'high',
+      modelRoutes: [row('gemini-3.8-flash', 'high', true)]
+    })
+    db.db().exec(`pragma user_version = ${db.versionBefore('splitEffort')}`)
+    db.closeDb()
+    expect(() => db.openDb(dbPath)).not.toThrow()
+
+    const reread = workers.requireWorker(w.id)
+    expect(reread.defaultModel).toBe('gemini-3.8-flash')
+    expect(reread.defaultEffort).toBe('high')
+    expect(reread.modelRoutes).toEqual([row('gemini-3.8-flash', 'high', true)])
   })
 })

@@ -235,21 +235,11 @@ const info: AdapterInfo = {
     // agentyard does not use it: one shared registration cannot carry a per-session identity, and
     // WARMSTART_SESSION_ID is how the MCP server knows who it is speaking for.
     mcp: false,
-    // ⛔ Nothing to select: this vendor encodes effort in the model id itself, which is why its cost
-    // model lists `gemini-3.1-pro-high` and `gemini-3.1-pro-low` as two models with one level each.
-    // Choosing the model *is* choosing the effort here, and a second control would double-count it.
-    //
-    // ⭐ **`--effort` exists on agy 1.1.22 and this stays false anyway** — measured 2026-08-29, and
-    // the CLI is the one refusing, which is stronger evidence than the argument above:
-    //   `--model gemini-3.1-pro-high --effort low` → "conflicts with --effort=low"
-    //   `--model claude-sonnet-4-6   --effort low` → "--effort is not supported for model"
-    //   `--model gpt-oss-120b-medium --effort low` → "conflicts with --effort=low"
-    //   `--model gemini-3.1-pro      --effort low` → runs
-    // So the vendor has two spellings for one choice: a *family* plus `--effort`, or a pre-combined
-    // id. `agy models` reports the combined form and this cost model prices it, so that is the one
-    // spelling agentyard uses. ⛔ Declaring `selectableEffort` true would offer a second control for
-    // a choice already made, and every operator who touched both would get a hard dispatch failure.
-    selectableEffort: false,
+    // ⚠️ Selectable reasoning effort: Antigravity supports `--effort low|medium|high` on base models
+    // (gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.1-pro, gpt-oss-120b).
+    // Models without effort options (e.g. claude-sonnet-4-6) declare empty effort_levels in the cost model.
+    // Base models are used without baked-in effort suffix so effort is chosen via `--effort`.
+    selectableEffort: true,
     // ⭐ It has one after all, as of 2026-08-27. `/usage` typed into the TUI is a client-side
     // slash command - free, no turn - and the panel it draws is the only place the number exists.
     // See parseUsageScreen for why reading a screen is defensible here and nowhere else.
@@ -288,7 +278,7 @@ const info: AdapterInfo = {
     wrapUpProtocol: 'handoff',
     needsExplicitBudget: true,
     defaultModels: {
-      gemini: 'gemini-3.7-flash-medium',
+      gemini: 'gemini-3.8-flash',
       claude: 'claude-sonnet-4-6'
     }
   },

@@ -26,15 +26,15 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **Antigravity model effort unblended and Summary model moved into routable matrix (t645, 2026-09-23).**
+  (1) Unblended reasoning effort from Antigravity model identifiers (`gemini-3.8-flash-high` → `gemini-3.8-flash`) in `costmodels/google.antigravity.2026-08.json` and benchmarks, enabling `selectableEffort: true` in `antigravity-cli.ts` with `--effort low|medium|high` instead of blending effort into model IDs.
+  (2) Moved `Summary model` into a checkbox column of the inline `ModelTable` routable model matrix, removing the outer table column and setting selector from `Workers.tsx` (12-column layout).
+  (3) Added database migration 82 in `db.ts` to unblend existing Antigravity worker rows in `workers` table (`model_routes_json`, `default_models_json`, `default_model`/`effort`, `grading_model`/`effort`, `summarising_model`, and `judgment_model`/`effort`). `docs/data-model.md`, `docs/adapters.md`, `docs/ui.md`.
 - **Four Settings > Workers / composer layout bugs (t636, 2026-09-22).** (1) A worker's per-pool
   default-model buttons (Antigravity's Gemini / Claude·GPT) no longer stretch to the card's full
   width — capped like the single-model picker (`app.css`). (2) Routable models render as wrapping
   chips instead of one ellipsis-truncated line. (3) The sidebar's project row now stays highlighted
-  while a thread is open, including for tasks outside the open-conversations list (a finished
-  conversation, a single task) — it used to go dark there, leaving no way to tell which project a
-  thread belonged to (`App.tsx`). (4) The New Task composer's Effort pill hides itself for Auto
-  Model (`showsEffortPicker`, `composerprefs.ts`), which has no one model to set a level on before
-  dispatch. `docs/ui.md`.
+  while a thread is open. (4) The New Task composer's Effort pill hides itself for Auto Model. `docs/ui.md`.
 - **`/release rc` publishes the trunk itself rather than handing the refusal back (2026-09-22).**
   The base gate is unchanged and still refuses all three unsafe bases; what changed is the skill.
   New step 0.5 runs `check-release-base.mjs` *before* the notes are written, and when the only
