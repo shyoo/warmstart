@@ -466,13 +466,26 @@ export function verdictInstruction(verdict: DebateVerdict, checkLead: string, co
  * route to a landing is a person pressing **Land** after it says the commit is ready. Naming the
  * wrong one would be naming a channel the agent has not got.
  */
-function conversationInstruction(mcpLess: boolean): string {
+function conversationInstruction(mcpLess: boolean, trunk: string | null = null): string {
+  // ⛔ **A trunk conversation has no branch of its own** (t649). It commits straight onto the target
+  // in the operator's checkout, so "your own branch" names something that does not exist, and a
+  // landing there verifies and pushes rather than rebasing and handing out a next branch.
+  const commits = trunk
+    ? `You work directly on \`${trunk}\` in the trunk, with no branch of your own: you may commit your own ` +
+      'changes there whenever it helps — never files that were already uncommitted when you arrived — ' +
+      'but never create or switch branches, rewrite existing commits, or push. '
+    : 'You may commit on your own branch whenever it helps — a commit is how work survives between ' +
+      'turns — but never merge or push to the landing target yourself. '
+  const landing = trunk
+    ? 'it runs this project’s checks in the trunk and pushes if the policy pushes, and you carry on ' +
+      'in the trunk afterwards. '
+    : 'it rebases, runs this project’s checks and merges or pushes per policy, and ' +
+      'tells you the new branch to carry on in. '
   return (
     'This is an ongoing conversation, not a one-shot task. Answer what has just been asked and ' +
     'stop there — you will get another turn, so there is no need to finish everything now and no ' +
     'need to leave the work in a shippable state at the end of every turn. ' +
-    'You may commit on your own branch whenever it helps — a commit is how work survives between ' +
-    'turns — but never merge or push to the landing target yourself. ' +
+    commits +
     (mcpLess
       ? 'Commit when you are asked to, and say in your reply that the work is ready; the person ' +
         'lands it from this thread. ' +
@@ -483,8 +496,9 @@ function conversationInstruction(mcpLess: boolean): string {
         'specific options, put each one on its own line directly under it as ' +
         '`- <the option> — <what choosing it means>`, so they can be offered as buttons.'
       : 'When the person asks you to land the work, commit it and then call the MCP tool ' +
-        '`land_work`: it rebases, runs this project’s checks and merges or pushes per policy, and ' +
-        'tells you the new branch to carry on in. Landing does not end this task. ' +
+        '`land_work`: ' +
+        landing +
+        'Landing does not end this task. ' +
         'Do not call `task_complete` on your own judgement — call it only if you are told the work ' +
         'is done. ' +
         ASK_HUMAN_CLAUSE)
@@ -916,6 +930,7 @@ export function promptFor(
   // "commits ahead of this task branch's landing target" and rebasing onto it would, in the trunk, be
   // rewriting the target itself. `trunkArrivalNotice` says where it is; this says how to finish there.
   const inTrunk = project !== null && resolveWorkspaceMode(task, project).mode === 'trunk'
+  const trunkTarget = inTrunk ? landingTargetFor(task, project) : null
   const commitHygiene = inTrunk
     ? reportsOnly
       ? 'This task reports on its thread and changes nothing: do not commit, and leave the trunk exactly as you found it.'
@@ -989,7 +1004,7 @@ export function promptFor(
         : ''
     if (isOpenConversation(task)) {
       // ⚠️ Withheld only on a follow-up into the session that was already told it — see `followUp`.
-      if (!followUp) parts.push(conversationInstruction(false))
+      if (!followUp) parts.push(conversationInstruction(false, trunkTarget))
     } else if (planPhase === 'planning') {
       // ⛔ Two shapes of plan, and `planModeOf` is the one place that tells them apart — derived from
       //    the child cap, so the instruction cannot promise a review turn the mandate will not allow.
@@ -1044,7 +1059,7 @@ export function promptFor(
     } else {
       parts.push(
       isOpenConversation(task)
-        ? conversationInstruction(true)
+        ? conversationInstruction(true, trunkTarget)
         : checkLead +
         (reportsOnly ? 'When the work is finished, end' : 'When the work is finished, commit what you have and end') +
         ' with a line beginning `TASK COMPLETE: ` ' +

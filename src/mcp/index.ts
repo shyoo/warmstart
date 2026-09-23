@@ -609,7 +609,11 @@ server.registerTool(
             type: 'text' as const,
             text:
               `Landed ${result.landedSha?.slice(0, 8)} onto ${result.target}. ` +
-              `This conversation continues on ${result.nextBranch} — commit any further work there. ` +
+              // ⚠️ A trunk conversation gets no `nextBranch` — its commits were already on the
+              // target — and this used to read "continues on undefined" (t649).
+              (result.nextBranch
+                ? `This conversation continues on ${result.nextBranch} — commit any further work there. `
+                : `This conversation continues in the trunk on ${result.target} — no branch to switch to. `) +
               'The task is not finished; carry on.'
           }
         ]

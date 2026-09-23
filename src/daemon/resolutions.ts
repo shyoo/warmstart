@@ -1,5 +1,5 @@
 import type { FinishPolicy, PendingWork, ResolveRetryCause } from '@shared/tasks.js'
-import { FINISH_LABELS, isOpenConversation, policyLands, policyVerifies, resolveRetryCauses, resolveWorkspaceMode } from '@shared/tasks.js'
+import { FINISH_LABELS, isOpenConversation, policyLands, policyVerifies, resolveRetryCauses, resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
 import type { Project, Task } from '@shared/tasks.js'
 import { getProject, landingTargetFor, policyFor, reloadProjectIfPresent } from './projects.js'
 import { decideFinish, landingLevel, resolveFinishPolicy } from './finish.js'
@@ -369,12 +369,23 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
   // there is not a measurement, it is a look in the wrong place, and the card hid the Commit button
   // the hold reason was telling the operator to press.
   const branch = task.branch ?? null
+  // ⚠️ **A trunk conversation's tree is the project root, whether or not it holds the lease.** One
+  // resting between turns has no claim and no branch, so both looks above came back empty and every
+  // trunk conversation read *"not holding a workspace and has no branch"* — a failed look reported
+  // about a checkout that was right there. Read only while the trunk is on the target: on any other
+  // branch it is the operator's own work, not this conversation's.
+  const trunk = held === null && resolveWorkspaceMode(task, project).mode === 'trunk'
+  const trunkState = trunk ? await workspaceState(project.root, target).catch(() => null) : null
   const state =
     held !== null
       ? await workspaceState(held.path, target)
-      : branch
-        ? await workspaceOnBranch(project, branch, target)
-        : null
+      : trunk
+        ? trunkState?.branch === target
+          ? trunkState
+          : null
+        : branch
+          ? await workspaceOnBranch(project, branch, target)
+          : null
   if (!state) {
     // ⛔ **A branch that does not exist is a reading, not a failed one** (t369, reported
     // 2026-09-11). A conversation that has just landed had its branch retired and its workspace
@@ -384,6 +395,12 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
     // Nothing is on a branch that is not there: no uncommitted files, no unlanded commits, and no
     // measurement outstanding. Answered as `supported`, which draws no warning and no Commit or
     // Land button, because there is nothing for either of them to do.
+    if (trunk) {
+      return {
+        ...none,
+        reason: `this conversation works in the trunk, and the trunk is not on \`${target}\``
+      }
+    }
     if (branch && !(await branchExists(project, branch))) {
       return { ...none, supported: true, branch, unclaimed: true }
     }
@@ -447,7 +464,15 @@ export async function commitConversation(
   if (task.status === 'running' || task.status === 'assigned') {
     return { ok: false, reason: 'this task is already running; wait for the turn to end' }
   }
-  const branch = task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)
+  // ⛔ **A trunk conversation has no branch, and must not be told one** (t649 ← t648). This fell
+  // back to `branchNameFor` for every task, so t648 — working in the trunk on `main` — was asked to
+  // commit on `warmstart/t648-…`, a branch that never existed, and to squash commits "ahead of this
+  // branch's landing target". The first is an instruction to create a branch in the operator's
+  // checkout; the second, followed literally in the trunk, is a rewrite of the target itself.
+  const trunk = resolveWorkspaceMode(task, project).mode === 'trunk' ? landingTargetFor(task, project) : null
+  const conflict = trunk && policyLands(policy) ? trunkPolicyConflict(policy) : null
+  if (conflict) return { ok: false, reason: `this conversation works in the trunk: ${conflict}` }
+  const branch = trunk ?? task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
   // ⛔ **A press that would re-ask for a commit already made is the loop this button had** (t581).
   // t578's agent committed, replied *"the commit is ready to land"*, and the card went on offering
@@ -466,7 +491,7 @@ export async function commitConversation(
         `nothing is uncommitted on \`${pending.branch ?? branch}\` — the agent has already committed ` +
         `${pending.unlandedCommits === 1 ? 'it' : 'them'}. ` +
         (policyLands(policy)
-          ? `Press **Land** to move ${pending.unlandedCommits === 1 ? 'that commit' : `those ${pending.unlandedCommits} commits`}; ` +
+          ? `Press **Land** to ${trunk ? 'verify' : 'move'} ${pending.unlandedCommits === 1 ? 'that commit' : `those ${pending.unlandedCommits} commits`}; ` +
             'a turn spent asking for a commit that exists would change nothing.'
           : 'There is nothing left for this level to ask for.')
     }
@@ -477,7 +502,8 @@ export async function commitConversation(
     policy,
     branch,
     checks: policyVerifies(policy) ? (project.config.check ?? []) : [],
-    canLand
+    canLand,
+    inTrunk: trunk !== null
   })
 
   // ⛔ **Recorded before the turn is asked for, so a daemon restart between the two does not drop
@@ -584,39 +610,64 @@ export function commitConversationInstruction({
   policy,
   branch,
   checks,
-  canLand
+  canLand,
+  inTrunk = false
 }: {
   policy: FinishPolicy
+  /** The task's branch — or, for a trunk conversation, the landing target it commits straight onto. */
   branch: string
   checks: string[]
   canLand: boolean
+  inTrunk?: boolean
 }): string {
   const checkStep =
     checks.length > 0
       ? `Run this project's checks (${checks.map((check) => `\`${check}\``).join(', ')}) and fix any failure first. `
       : ''
+  // ⛔ **The trunk has no branch, so it gets none of the branch sentences** (t649 ← t648). The same
+  // wording `commitHygiene` in `promptFor` gives a trunk task, so the two contracts never disagree:
+  // commit on the target in place, only your own changes — the operator's checkout may hold files
+  // that were never this agent's — and nothing that rewrites, moves or hides the target.
+  const commitStep = inTrunk
+    ? `Commit your changes directly on \`${branch}\` in the trunk — this conversation has no branch of ` +
+      'its own, so do not create or switch to one. Commit only your own changes, never files that were ' +
+      'already uncommitted when you arrived. Do not rewrite or squash existing commits, force-push, ' +
+      'stash or reset. '
+    : `Commit everything you have changed on \`${branch}\`. ` +
+      'If two or more commits ahead of this branch’s landing target all belong to this task, squash ' +
+      'them into one coherent commit where safe. Do not rewrite commits already on the landing ' +
+      'target, force-push, or use a destructive reset. '
+  // ⚠️ In the trunk a landing is verify-then-push-if-the-level-pushes (`landConversationWork`'s
+  // trunk branch): nothing to rebase, nothing to merge, and no next branch — the conversation stays
+  // where it is. Saying otherwise sends the agent looking for a branch the reply never names.
+  const landing = inTrunk
+    ? 'It runs the checks in the trunk and pushes if the level pushes; there is no branch to rebase ' +
+      'and none to move to, so carry on in the trunk afterwards. Do not push yourself. '
+    : 'It rebases, runs the checks and merges or pushes per policy, and names the branch to ' +
+      'carry on in. Do not merge or push to the landing target yourself. '
   const after = !policyLands(policy)
-    ? 'Stop there — nothing is to be merged or pushed. '
+    ? inTrunk
+      ? 'Stop there — nothing is to be pushed. '
+      : 'Stop there — nothing is to be merged or pushed. '
     : canLand
-      ? `Then land it by calling the MCP tool \`land_work\` with \`finishPolicy: "${policy}"\`. ` +
-        'It rebases, runs the checks and merges or pushes per policy, and names the branch to ' +
-        'carry on in. Do not merge or push to the landing target yourself. '
+      ? `Then land it by calling the MCP tool \`land_work\` with \`finishPolicy: "${policy}"\`. ` + landing
       : // ⛔ **What actually happens next, which is not what this used to say** (t581). It said the
         // person would press **Land**, and on an MCP-less adapter nothing else was going to land it
         // — so the sentence was both the agent's only instruction and the tool's whole plan. The
         // tool lands it itself now (`landAfterCommitTurn`), and the agent is told that rather than
         // sent to describe a button.
-        'Then say in your reply that the commit is ready to land, and stop. Warmstart lands it from ' +
-        'there — it rebases, runs the checks and merges or pushes per policy, and puts this ' +
-        'conversation on the next numbered branch. Do not merge or push to the landing target ' +
-        'yourself. '
+        inTrunk
+        ? 'Then say in your reply that the commit is ready to land, and stop. Warmstart lands it from ' +
+          'there — it runs the checks in the trunk and pushes if the level pushes, and this ' +
+          'conversation carries on in the trunk. Do not push yourself. '
+        : 'Then say in your reply that the commit is ready to land, and stop. Warmstart lands it from ' +
+          'there — it rebases, runs the checks and merges or pushes per policy, and puts this ' +
+          'conversation on the next numbered branch. Do not merge or push to the landing target ' +
+          'yourself. '
 
   return (
     `Please commit this conversation's work now: ${FINISH_LABELS[policy]}.\n\n` +
-    `Commit everything you have changed on \`${branch}\`. ` +
-    'If two or more commits ahead of this branch’s landing target all belong to this task, squash ' +
-    'them into one coherent commit where safe. Do not rewrite commits already on the landing ' +
-    'target, force-push, or use a destructive reset. ' +
+    commitStep +
     checkStep +
     after +
     '⛔ This does not end the task: do not call `task_complete`, and carry on afterwards as before.'

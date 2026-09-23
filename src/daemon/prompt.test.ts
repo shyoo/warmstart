@@ -1656,6 +1656,21 @@ describe('the pre-completion rebase check', () => {
     expect(text).not.toContain('has fallen behind or diverged')
   })
 
+  // ⛔ t649: a trunk conversation has no branch of its own, and the contract must not promise one.
+  it('tells a trunk conversation it works on the target, with no branch to land or carry on in', async () => {
+    const project = await gitProject('trunk-conversation', {
+      landing: { finish: 'commit-and-merge' },
+      workspaces: { mode: 'trunk' }
+    })
+    const task = tasks.createTask({ title: 'Talk it through in trunk', kind: 'conversation', status: 'ready', projectId: project.id })
+    for (const mcp of [true, false]) {
+      const text = promptText(task, mcp ? 'claude-code' : 'openai-compatible', false, { markDelivered: false })
+      expect(text).toContain('directly on `main` in the trunk, with no branch of your own')
+      expect(text).not.toContain('your own branch')
+      expect(text).not.toContain('new branch to carry on in')
+    }
+  })
+
   /**
    * ⚠️ A follow-up into the session that already read the clause is **pointed** at it rather than
    * given it again — the same subtraction `resumedAnchor` makes for the checks and the hygiene. What

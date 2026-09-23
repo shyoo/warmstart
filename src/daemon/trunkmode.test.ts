@@ -515,3 +515,37 @@ describe('the trunk finish ladder', () => {
     expect(finish.decideTrunkFinish(base({ policy: 'report-only', commitsThisRun: 2 })).kind).toBe('await-human')
   })
 })
+
+describe('what the Commit button asks of a trunk conversation (t649)', () => {
+  it('names the target and no task branch, and reads the trunk while the conversation rests', async () => {
+    const repo = freshRepo()
+    const home = projects.addProject({ root: repo, name: 'trunk-chat' })
+    const task = tasks.createTask({ title: 'Chat in the trunk', kind: 'conversation', status: 'ready', projectId: home.id, workspaceMode: 'trunk' })
+    tasks.setStatus(task.id, 'awaiting_human')
+    writeFileSync(join(repo, 'a.txt'), 'changed\n')
+
+    // ⚠️ No lease held and no branch: the trunk itself is the reading, not "has no branch".
+    const pending = await resolutions.pendingWorkFor(task.id)
+    expect(pending.supported).toBe(true)
+    expect(pending.branch).toBe('main')
+    expect(pending.hasDiff).toBe(true)
+
+    await expect(resolutions.commitConversation(task.id, 'commit-and-verify')).resolves.toEqual({ ok: true })
+    const asked = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)?.text ?? ''
+    expect(asked).toContain('directly on `main` in the trunk')
+    expect(asked).not.toContain('warmstart/')
+    expect(asked).not.toContain('squash them')
+    expect(tasks.requireTask(task.id).branch).toBeNull()
+  })
+
+  it('refuses a pull request up front, which a trunk conversation cannot open', async () => {
+    const repo = freshRepo()
+    const home = projects.addProject({ root: repo, name: 'trunk-chat-pr' })
+    const task = tasks.createTask({ title: 'PR from trunk', kind: 'conversation', status: 'ready', projectId: home.id, workspaceMode: 'trunk' })
+    tasks.setStatus(task.id, 'awaiting_human')
+    writeFileSync(join(repo, 'a.txt'), 'changed\n')
+    const answer = await resolutions.commitConversation(task.id, 'pull-request')
+    expect(answer.ok).toBe(false)
+    expect(answer.reason).toMatch(/works in the trunk: a pull request needs a branch/)
+  })
+})

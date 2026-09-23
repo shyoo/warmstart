@@ -26,6 +26,10 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **Trunk conversations were told to commit on a task branch that never existed (t649 ← t648,
+  2026-09-23).** Commit instruction, conversation contract and `land_work` reply now have trunk
+  variants (no branch, no squash); pull-request refused up front; `pendingWorkFor` reads the root.
+  `docs/landing.md` §Working in the trunk.
 - **Settings > Workers model matrix is concise and removable (t647, 2026-09-23).** Removed legacy Work/Judgment/Grading role switches in favour of the purpose columns; Default is now a one-choice radio control per quota pool; `Class` is now the user-defined `Label`, with guidance for refining Auto Model. Rows are rendered only when configured or needed by a purpose, so removing a stored model actually removes it; every remove control remains visible and explains when a purpose prevents removal. The help text now says these choices configure Auto Model and purpose models, while task authors can still select model and effort themselves. `docs/ui.md`, `docs/routing.md`.
 - **Antigravity model effort unblended and Summary model moved into routable matrix (t645, 2026-09-23).**
   (1) Unblended reasoning effort from Antigravity model identifiers (`gemini-3.8-flash-high` → `gemini-3.8-flash`) in `costmodels/google.antigravity.2026-08.json` and benchmarks, enabling `selectableEffort: true` in `antigravity-cli.ts` with `--effort low|medium|high` instead of blending effort into model IDs.

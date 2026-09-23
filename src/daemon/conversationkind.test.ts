@@ -574,6 +574,27 @@ describe('what the Commit button does', () => {
     for (const said of [verify, only, merge, noTool]) expect(said).toContain('do not call `task_complete`')
   })
 
+  // ⛔ t649 ← t648: a trunk conversation was told to commit on a `warmstart/t648-…` branch that never
+  // existed, and to squash commits ahead of a landing target it was standing on.
+  it('asks a trunk conversation to commit on the target, and names no branch or squash', () => {
+    const base = { branch: 'main', checks: ['npm test'], inTrunk: true }
+    const verify = resolutions.commitConversationInstruction({ ...base, policy: 'commit-and-verify', canLand: true })
+    const merge = resolutions.commitConversationInstruction({ ...base, policy: 'commit-and-merge', canLand: true })
+    const noTool = resolutions.commitConversationInstruction({ ...base, policy: 'commit-and-push', canLand: false })
+    for (const said of [verify, merge, noTool]) {
+      expect(said).toContain('directly on `main` in the trunk')
+      expect(said).toContain('never files that were already uncommitted when you arrived')
+      expect(said).not.toMatch(/squash them|warmstart\/|next numbered branch|names the branch/)
+      expect(said).toContain('do not call `task_complete`')
+    }
+    expect(verify).toContain('`npm test`')
+    expect(verify).toContain('nothing is to be pushed')
+    expect(merge).toContain('`land_work` with `finishPolicy: "commit-and-merge"`')
+    expect(merge).toContain('carry on in the trunk')
+    expect(noTool).not.toContain('land_work')
+    expect(noTool).toContain('carries on in the trunk')
+  })
+
   it('reports no workspace rather than an empty diff when it has nowhere to look', async () => {
     // ⚠️ The distinction the card is built on: *I could not look* is not *there is nothing there*.
     const task = tasks.createTask({ title: 'No workspace', kind: 'conversation', status: 'ready' })

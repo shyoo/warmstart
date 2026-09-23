@@ -925,6 +925,16 @@ picker offer pull-request, which needs a branch and is refused downstream. The L
 is push rather than the merging fleet default, so its ✓ is always on a level the menu lists. The
 project-level default keeps the full ladder: it governs trunk and worktree tasks alike.
 
+⛔ **A trunk conversation is never told about a branch** (t649 ← t648, 2026-09-23). The Commit
+instruction fell back to `branchNameFor` for every task, so t648 — a trunk conversation on `main` —
+was asked to commit on `warmstart/t648-…`, a branch that never existed, and to squash the commits
+"ahead of this branch's landing target", which in the trunk is the target itself. Every prompt a trunk
+conversation gets now says the same thing `commitHygiene` says to a trunk task: commit on the target in
+place, only your own changes, no branch, squash, stash or reset. `conversationInstruction` drops *your
+own branch* and *the new branch to carry on in*; `land_work`'s reply names the trunk rather than an
+absent `nextBranch`; Commit refuses pull-request up front; and `pendingWorkFor` reads the project root
+for a trunk conversation that holds no lease between turns, rather than reporting it has no branch.
+
 ⚠️ **Known limit.** A *worktree* task whose branch stays empty while a trunk task commits can still trip
 the trunk tripwire, because a trunk task's commits are recorded only at its finish. The tripwire hands
 it to a person with the commits listed, which is the right outcome for evidence it cannot attribute.
