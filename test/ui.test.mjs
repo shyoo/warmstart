@@ -1906,9 +1906,12 @@ try {
   await openPill('Model')
   const unpinnedModelValues = (await menuValues('Model')).filter(Boolean)
   check(
-    // ⚠️ Two, and no model ids: an id belongs to one CLI, so there is genuinely nothing to name yet.
-    'and offers exactly the two answers that are not a model',
-    unpinnedModelValues.length === 2 &&
+    // ⚠️ Policy answers only, and no model ids: an id belongs to one CLI, so there is genuinely
+    // nothing to name yet. t620 added the three class-scoped Autos (high/med/low) beside the plain
+    // one; the claim is the *absence of model ids*, so assert that rather than a count that a new
+    // routing policy quietly invalidates.
+    'and offers exactly the answers that are not a model',
+    unpinnedModelValues.every((v) => v.startsWith('policy:')) &&
       unpinnedModelValues.includes('policy:auto') &&
       unpinnedModelValues.includes('policy:inherit'),
     JSON.stringify(unpinnedModelValues)

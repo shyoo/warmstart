@@ -290,6 +290,13 @@ tag, or when CI on that commit is not green (`--wait` watches an in-progress run
 comes next is decided from the tags that exist, never from a file —
 [`src/daemon/releaseplan.test.ts`](../src/daemon/releaseplan.test.ts).
 
+The gate still refuses all three, but the skill no longer hands two of them back to the person
+unchanged: when the *only* problem is the trunk being ahead, `/release` step 0.5 invokes `/push`
+itself and re-plans against the commit that lands, because asking for a release is asking for the
+commits you already made to be in it. A dirty trunk or a behind branch still stops and asks — those
+edits may not be the agent's, and a stale base is a checkout problem. ⛔ The delegation is a Claude
+Code slash command, so a codex or `agy` worker gets the old refusal instead.
+
 `.github/workflows/release.yml` fires on the tag, re-checks the same facts before `npm ci` (a
 version-shaped, annotated tag with a non-empty body, on `main`, CI green — so a mistake costs
 seconds, not a macOS build), builds Windows and macOS installers with `WARMSTART_VERSION` set from

@@ -16,7 +16,9 @@ release notes are the annotated tag's message. If you find yourself editing `pac
 `version.json` or anything under `releases/`, stop — that was the 2026-09-15 flow, and it cost two
 "Prepare vX" commits, two CI runs and four turns per release for nothing a test could catch.
 
-It never tags what CI has not passed. Uncommitted or unpushed work is `/push`'s job; run that first.
+It never tags what CI has not passed, and it makes no commit of its own. Publishing is still
+`/push`'s job — but step 0.5 *calls* `/push` for you when the only thing in the way is a trunk that
+is ahead of origin, so the person does not have to run two skills to get one rc.
 
 ## 0. Plan
 
@@ -34,10 +36,35 @@ It prints the version, the commit it would tag, the last final to write notes si
 the result is a **pre-release** (invisible to installed apps — `/releases/latest` never serves one)
 or **latest** (every installed app is offered it). ⛔ A refusal ends this skill: say what it said.
 
-- `rc` tags **`origin/main`'s tip**. If the trunk is ahead of origin, the gate in step 2 refuses;
-  `/push` the trunk first.
+- `rc` tags **`origin/main`'s tip**. If the trunk is ahead of origin, step 0.5 publishes it first.
 - `promote` tags **the rc's own commit**, not HEAD — what the person verified is what ships. `main`
   may have moved on; that is fine and expected.
+
+## 0.5. Clear the base — publish the trunk yourself if that is all that is wrong
+
+Run the gate now rather than discovering it at step 2, because the commit you write notes for
+changes when the trunk lands:
+
+```bash
+node scripts/check-release-base.mjs
+```
+
+Silence-plus-`release base ok` → go to step 1. Otherwise read *which* problems it printed; they are
+not equivalent:
+
+| What it said | What you do |
+|---|---|
+| **only** `the trunk's main is N commit(s) ahead` | ⭐ Invoke the **`/push`** skill, then re-run the gate and `plan` — do not ask first. Publishing commits the person already made is what they asked for by asking for a release. |
+| `uncommitted change(s)` | ⛔ Stop and ask. Those edits may belong to another agent or to work in progress; `/release` has no standing to commit them. |
+| `this branch is N commit(s) behind` | ⛔ Stop and say so. You are cutting from a stale base; that is a checkout problem, not a release one. |
+
+⛔ **`/push` is a Claude Code slash command** (`AGENTS.md` § Git). A codex or `agy` worker cannot
+invoke it and must not improvise one — there, the trunk-ahead refusal ends the skill as before.
+
+⚠️ `/push` runs the suites, builds, commits its own docs refresh and pushes, so the tip moves. Re-run
+`plan` afterwards: the sha you tag is the one it just published, not the one step 0 printed. `/push`
+watches CI to green, which is also the proof step 2 needs — if you left it running, `cut --wait`
+picks the wait back up.
 
 ## 1. Write the notes
 
@@ -81,8 +108,9 @@ promotion silently tags whatever has landed since the rc instead of the bytes th
 The dry run prints the full tag message and every gate's verdict; the real run tags and pushes
 only when all of them pass:
 
-- **the base** — `check-release-base.mjs`: the trunk has nothing origin lacks, this branch is not
-  behind, the trunk is clean (the 25-commits-ahead trap of 2026-09-15 still applies);
+- **the base** — `check-release-base.mjs` again, unchanged by step 0.5: the trunk has nothing origin
+  lacks, this branch is not behind, the trunk is clean (the 25-commits-ahead trap of 2026-09-15
+  still applies). ⛔ The gate is never relaxed; 0.5 only removes the cause;
 - **the commit is on `origin/main`**, and the tag does not exist here or there;
 - **the version goes forward** — above every tag that exists;
 - **CI passed on that commit.** The Release workflow runs no tests, so this is the only proof.

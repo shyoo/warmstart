@@ -91,6 +91,16 @@ count or a quota delta will report **PASS against an empty list**.
 
 Assert the collection is non-empty as half the claim, or test the logic as a pure function instead.
 
+### A count stands in for the claim, so the next feature makes a true check go red
+
+⛔ **An exact `length ===` is a claim about the *world*, not about the behaviour under test.** L3's
+*offers exactly the two answers that are not a model* meant *no model ids are offered before an
+account is pinned* and asserted `length === 2`. t620 added three class-scoped Autos to the same pill
+— correct product behaviour — and the check failed on 2026-09-22 with five perfectly valid policy
+answers in its evidence string. ⚠️ Assert the property (*every value starts with `policy:`*, plus
+the specific members that must be there, which also carries the non-empty half above). The failure
+is cheap to fix and expensive to read: nothing in the message says the feature was fine.
+
 ### A textarea has no text, so reading it as text passes against a blank
 
 ⛔ **`element.innerText` never includes a textarea's value.** The add-project wizard's L3 section

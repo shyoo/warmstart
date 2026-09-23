@@ -7,22 +7,17 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-22, **Windows 11**, on `0.3.1+1`): typecheck, lint and build pass;
-L1 **3,866 passed, 3 skipped** (228 files), in **113s**; L2 **204 checks** (7 skipped — the two POSIX-only
-cursor-position checks skip here). ⚠️ The `%TEMP%` figure is t579's, not re-measured
-here. L3 **486 checks** (4 skipped), last measured on t577 and not re-run since. L4 **19 checks** against `release/win-unpacked` was measured on `7b5f6e1`, the commit
-`v0.3.0` ships, and has not been re-run since. ⚠️ L3 flaked twice under back-to-back suite load
-(*timed out waiting for All filter to restore 3 rows*, a tier it does not touch) and was green on a
-clean run. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
+Baseline (2026-09-22, **Windows 11**, on `0.3.1+11`): typecheck, lint and build pass; all four
+tiers re-measured in one back-to-back run — L1 **3,912 passed, 3 skipped** (230 files) in **73s**;
+L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L3 **486
+checks** (4 skipped); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
+t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
 hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
 
-**`v0.3.0` is `latest`** (2026-09-19, tag build 35482566845), promoted onto `v0.3.0-rc.1`'s own
-commit `7b5f6e1` — verified installed on **both Windows 11 and macOS**, the first release with no
-unverified platform. It carries t559–t565 (trunk-only projects, the mid-conversation worker recap,
-session reuse on by default) over `v0.2.0`, with no migration. The next `/release rc` opens the
-patch series at `0.3.1-rc.1` unless `--bump minor|major` is asked for. ⛔ All four tiers are run
-before a push, not after: rc.2 of the last series went red on CI because six commits were pushed
-together without `test:ui`.
+**`v0.3.1` is `latest`** (2026-09-21), promoted onto `v0.3.1-rc.1`'s commit `8658d91`. The next
+`/release rc` opens the patch series at `0.3.2-rc.1` unless `--bump minor|major` is asked for.
+⛔ All four tiers are run before a push, not after: rc.2 of the 0.2.0 series went red on CI because
+six commits were pushed together without `test:ui`.
 Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 **Routing Model v1.2 preserves expiry urgency (t552, 2026-09-19).** `prepaid` is field-normalized
@@ -31,6 +26,15 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **`/release rc` publishes the trunk itself rather than handing the refusal back (2026-09-22).**
+  The base gate is unchanged and still refuses all three unsafe bases; what changed is the skill.
+  New step 0.5 runs `check-release-base.mjs` *before* the notes are written, and when the only
+  problem is a trunk ahead of origin it invokes `/push` and re-plans against the commit that lands
+  — a dirty trunk or a behind branch still stops and asks, because those edits may not be the
+  agent's. Alongside it, L3's *offers exactly the two answers that are not a model* still expected
+  two policy answers on the unpinned Model pill; t620 had added three class-scoped Autos, so the
+  check asserted a count rather than its claim and would have gone red on CI. It now asserts what it
+  means: no model ids before an account is pinned. `docs/development.md`.
 - **t623's preemption compaction was never received, not falsely unrecognized (t628,
   2026-09-23).** Its ledger holds one open ask at 01:02:32Z and its transcript records the ordinary
   `/compact` as queued behind the active stream turn; no `compact_boundary` exists before the five-minute
