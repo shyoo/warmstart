@@ -46,7 +46,14 @@ import { RemoteMachines } from './components/RemoteMachines'
 import { RoutingModel, type RoutingTab } from './components/RoutingModel'
 import { Statistics, type StatisticsTab } from './components/Statistics'
 import { QualityReview } from './components/QualityReview'
-import { isWorking, ProjectDot, projectWorkState, taskLabelShort, Working } from './lib/taskview'
+import {
+  isWorking,
+  ProjectDot,
+  projectTaskCounts,
+  projectWorkState,
+  taskLabelShort,
+  Working
+} from './lib/taskview'
 import {
   openConversations,
   readCollapsedConversations,
@@ -486,6 +493,7 @@ export function App({
               const projectPendingPrs = pendingDeliveries.filter((d) => d.projectId === project.id)
               const hasPendingPr = projectPendingPrs.length > 0
               const state = projectWorkState(projectTasks, hasPendingPr)
+              const { running: runningCount, active: activeCount } = projectTaskCounts(projectTasks)
               // ⛔ The conversations this project is in the middle of, listed under it so switching
               // between two of them is one click here rather than a trip through the Tasks board
               // (t479). Which ones qualify is `openConversations`' rule, not this file's.
@@ -554,6 +562,18 @@ export function App({
                       }
                     />
                     <span className="nav-project-name">{project.name}</span>
+                    {activeCount > 0 && (
+                      <span
+                        className="nav-count num"
+                        title={`${runningCount} running · ${activeCount} active task${activeCount === 1 ? '' : 's'}`}
+                      >
+                        <span className={runningCount > 0 ? 'nav-count-running' : undefined}>
+                          {runningCount}
+                        </span>
+                        /
+                        <span className="nav-count-active">{activeCount}</span>
+                      </span>
+                    )}
                     {/* ⚠️ Only where there is something to fold. A toggle on a project with no open
                         conversation would be a control that does nothing. A `span` with a role, not
                         a nested button: the row itself is already a button. */}

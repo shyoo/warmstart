@@ -3,6 +3,7 @@ import {
   isTrunkBlockedReason,
   resolveModelChoice,
   resolveRetryCauses,
+  TERMINAL_STATUSES,
   type Compaction,
   type ResolveRetryCause,
   type ResolvedModelChoice,
@@ -207,35 +208,57 @@ export type ProjectWorkState = 'working' | 'needs_attention' | 'paused' | 'pendi
 
 /**
  * Computes the work state for a project based on its tasks:
+ * - 'working': At least one task is active/in-flight (overrides awaiting human and quota holds).
  * - 'needs_attention': At least one task is awaiting human input or paused by user.
  * - 'pending_pr': At least one pending pull request has been opened and not landed yet.
- * - 'working': At least one task is active/in-flight and no tasks need human action.
  * - 'paused': Nothing is moving, but at least one task is held on quota and will resume itself.
  * - 'idle': Nothing is running, held or waiting on anyone.
  *
- * ⛔ `paused_quota` is not idle. The dot is the only thing the sidebar says about a project you are
- * not looking at, and a task parked on an exhausted account rendered as a blank ring read as *this
- * project has nothing going on* — while the work was stopped and the account was the reason. It is
- * not `needs_attention` either: nobody is being waited on, the quota window reopens on its own and
- * the scheduler picks the task back up. So it is its own state, warned in colour and calm in motion.
+ * Precedence rule: running > await_human > quota (working > needs_attention > paused).
  */
 export function projectWorkState(
-  tasks: Array<Pick<Task, 'status'>>,
+  tasks: Array<Pick<Task, 'status'> & Partial<Pick<Task, 'gradingWorkerId' | 'landing' | 'deletedAt'>>>,
   hasPendingPr = false
 ): ProjectWorkState {
-  if (tasks.some((t) => t.status === 'awaiting_human' || t.status === 'paused_user')) {
+  const liveTasks = tasks.filter((t) => !t.deletedAt)
+  if (liveTasks.some((t) => IN_FLIGHT.has(t.status) || isWorking(t))) {
+    return 'working'
+  }
+  if (liveTasks.some((t) => t.status === 'awaiting_human' || t.status === 'paused_user')) {
     return 'needs_attention'
   }
   if (hasPendingPr) {
     return 'pending_pr'
   }
-  if (tasks.some((t) => IN_FLIGHT.has(t.status))) {
-    return 'working'
-  }
-  if (tasks.some((t) => t.status === 'paused_quota')) {
+  if (liveTasks.some((t) => t.status === 'paused_quota')) {
     return 'paused'
   }
   return 'idle'
+}
+
+/**
+ * Counts running and active tasks for a project in the navigation pane.
+ * - 'running': Actively executing work (running status, or in active grading/landing).
+ * - 'active': All non-complete, non-terminal tasks (includes awaiting_human, paused_quota, ready, etc.).
+ */
+export function projectTaskCounts(
+  tasks: ReadonlyArray<Pick<Task, 'status'> & Partial<Pick<Task, 'gradingWorkerId' | 'landing' | 'deletedAt'>>>
+): {
+  running: number
+  active: number
+} {
+  let running = 0
+  let active = 0
+  for (const t of tasks) {
+    if (t.deletedAt) continue
+    if (!TERMINAL_STATUSES.has(t.status)) {
+      active++
+      if (isWorking(t)) {
+        running++
+      }
+    }
+  }
+  return { running, active }
 }
 
 /** Small indicator dot displayed before the project name in the navigation pane. */

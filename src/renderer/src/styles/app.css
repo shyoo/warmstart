@@ -1216,24 +1216,18 @@ body {
   animation: project-dot-blink 1.2s ease-in-out infinite;
 }
 
+/* Awaiting human input: solid purple. */
 .project-dot--needs_attention {
-  background: var(--state-warn);
-  border: 1px solid var(--state-warn);
-  box-shadow: 0 0 5px var(--state-warn);
-  animation: project-dot-attention 2s ease-in-out infinite;
+  background: var(--state-human);
+  border: 1px solid var(--state-human);
+  box-shadow: 0 0 5px var(--state-human);
 }
 
-/* Held on quota: the same yellow, standing still - nobody is being waited on. */
+/* Held on quota: solid yellow, standing still - nobody is being waited on. */
 .project-dot--paused {
   background: var(--state-warn);
   border: 1px solid var(--state-warn);
   box-shadow: 0 0 5px var(--state-warn);
-  opacity: 0.8;
-}
-
-.nav-item:hover .project-dot--paused,
-.nav-item--active .project-dot--paused {
-  opacity: 1;
 }
 
 @keyframes project-dot-blink {
@@ -1247,18 +1241,8 @@ body {
   }
 }
 
-@keyframes project-dot-attention {
-  0%, 100% {
-    opacity: 0.75;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .project-dot--working,
-  .project-dot--needs_attention {
+  .project-dot--working {
     animation: none;
     opacity: 1;
   }
@@ -1429,6 +1413,17 @@ body {
   margin-left: auto;
   font-size: var(--text-meta);
   color: var(--color-text-faint);
+  flex-shrink: 0;
+}
+
+.nav-count-running {
+  color: var(--state-running);
+  font-weight: 600;
+}
+
+.nav-count-active {
+  color: var(--state-warn);
+  font-weight: 600;
 }
 
 /* ---- open conversations under a project (t479) ------------------------- */
@@ -1452,6 +1447,11 @@ body {
   color: var(--color-text-faint);
   font-size: var(--text-meta);
   line-height: 1;
+  flex-shrink: 0;
+}
+
+.nav-count + .nav-fold {
+  margin-left: 0;
 }
 
 .nav-fold:hover,

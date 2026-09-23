@@ -38,6 +38,7 @@ import {
   statusToneFor,
   reassignmentModel,
   resolveRetryCauses,
+  projectTaskCounts,
   projectWorkState,
   STATUS_TONE,
   statusLabel,
@@ -460,24 +461,83 @@ describe('project work state for left pane indicators', () => {
     expect(projectWorkState(tasks)).toBe('needs_attention')
   })
 
-  it('prioritizes needs_attention over working when tasks in both states exist', () => {
-    const tasks: Array<{ status: TaskStatus }> = [
-      { status: 'running' },
-      { status: 'awaiting_human' }
-    ]
-    expect(projectWorkState(tasks)).toBe('needs_attention')
+  it('prioritizes working over needs_attention and paused when tasks in multiple states exist', () => {
+    // running > await_human
+    expect(
+      projectWorkState([
+        { status: 'running' },
+        { status: 'awaiting_human' }
+      ])
+    ).toBe('working')
+
+    // running > paused_quota
+    expect(
+      projectWorkState([
+        { status: 'running' },
+        { status: 'paused_quota' }
+      ])
+    ).toBe('working')
+
+    // running > await_human > paused_quota
+    expect(
+      projectWorkState([
+        { status: 'running' },
+        { status: 'awaiting_human' },
+        { status: 'paused_quota' }
+      ])
+    ).toBe('working')
   })
 
-  it('returns pending_pr when a project has a pending pull request', () => {
+  it('returns pending_pr when a project has a pending pull request and no running tasks', () => {
     expect(projectWorkState([], true)).toBe('pending_pr')
     expect(projectWorkState([{ status: 'completed' }], true)).toBe('pending_pr')
     expect(projectWorkState([{ status: 'paused_quota' }], true)).toBe('pending_pr')
-    expect(projectWorkState([{ status: 'running' }], true)).toBe('pending_pr')
+  })
+
+  it('prioritizes working over pending_pr when a task is running', () => {
+    expect(projectWorkState([{ status: 'running' }], true)).toBe('working')
   })
 
   it('prioritizes needs_attention over pending_pr when a person is being waited on', () => {
     const tasks: Array<{ status: TaskStatus }> = [{ status: 'awaiting_human' }]
     expect(projectWorkState(tasks, true)).toBe('needs_attention')
+  })
+})
+
+describe('projectTaskCounts for sidebar project numbers', () => {
+  it('returns zeros when there are no tasks', () => {
+    expect(projectTaskCounts([])).toEqual({ running: 0, active: 0 })
+  })
+
+  it('ignores completed, failed, cancelled, and deleted tasks', () => {
+    const tasks: Array<Pick<Task, 'status' | 'deletedAt'>> = [
+      { status: 'completed', deletedAt: null },
+      { status: 'failed', deletedAt: null },
+      { status: 'cancelled', deletedAt: null },
+      { status: 'running', deletedAt: Date.now() },
+      { status: 'awaiting_human', deletedAt: Date.now() }
+    ]
+    expect(projectTaskCounts(tasks)).toEqual({ running: 0, active: 0 })
+  })
+
+  it('counts running tasks and non-complete active tasks', () => {
+    const tasks: Array<Pick<Task, 'status' | 'deletedAt'>> = [
+      { status: 'running', deletedAt: null },
+      { status: 'awaiting_human', deletedAt: null },
+      { status: 'paused_quota', deletedAt: null },
+      { status: 'ready', deletedAt: null },
+      { status: 'completed', deletedAt: null }
+    ]
+    expect(projectTaskCounts(tasks)).toEqual({ running: 1, active: 4 })
+  })
+
+  it('counts grading and landing tasks as running', () => {
+    const tasks: Array<Pick<Task, 'status' | 'gradingWorkerId' | 'landing' | 'deletedAt'>> = [
+      { status: 'ready', landing: true, deletedAt: null },
+      { status: 'ready', gradingWorkerId: 'worker-1', deletedAt: null },
+      { status: 'awaiting_human', deletedAt: null }
+    ]
+    expect(projectTaskCounts(tasks)).toEqual({ running: 2, active: 3 })
   })
 })
 

@@ -7,8 +7,7 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-22, **Windows 11**, on `0.3.1+11`): typecheck, lint and build pass; all four
-tiers re-measured in one back-to-back run — L1 **3,912 passed, 3 skipped** (230 files) in **73s**;
+Baseline (2026-09-23, **Windows 11**): typecheck, lint and build pass; L1 **3,918 passed, 3 skipped** (230 files) in **108s**;
 L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L3 **486
 checks** (4 skipped); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
 t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
@@ -26,6 +25,9 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **Project task count numbers and indicator dot precedence (t655, 2026-09-23).**
+  (1) Added right-aligned `running/active` task counts (e.g. `1/2`) beside project names in the left pane when tasks are active; non-zero running is blue (`--state-running`), active is yellow (`--state-warn`), completed/terminal tasks excluded.
+  (2) Indicator dots: solid purple (`--state-human`) for `await_human` (`needs_attention`), solid yellow (`--state-warn`) for waiting quota (`paused`). Mixture precedence: `running > await_human > quota`. 5 new L1 checks in `taskview.test.ts`. `docs/ui.md`.
 - **Statistics trade-off scatters put quality on *y* and active time on *x* (t651, 2026-09-23).**
   `SCATTER_PAIRS` now draws Quality vs Cost, Quality vs Active time and Cost vs Active time, titled
   *y* vs *x*; `docs/images/tradeoffs.png` regenerated. `docs/ui.md`.
@@ -142,11 +144,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   rebase over untracked files succeeds untouched, one tracked modification refuses outright.
   Commit also refuses a press that would re-ask for a commit that exists. 11 + 7 + 3 L1 checks; four
   mutations go red. **Not flown on a real run.** `docs/landing.md`, `ui.md`, `data-model.md`.
-- **A Muse worker set to "Full user authority" now runs `--yolo` (t580, 2026-09-20).** `muse-code` declares `bypassPermissionMode: 'yolo'` (vendor: *disable approval and sandbox and trust this workspace*); otherwise headless stays `never`. Unit-tested; **not flown on a real run**. `docs/adapters.md`.
-- **Phone UI overhauled (t584/t585, 2026-09-20).** Overview activity is one line per event with tappable task cards; task page header has status pill/branch, fact grid row (status, cur → next worker/model, price, tokens, duration, priority), bare chat thread, and Commit button on Status card. `docs/remote.md`.
-- **L1 orphaned temp cleanup (t579, 2026-09-19).** Temp root isolation and blocked PATH for vendor CLIs; 140.26 GB reclaimed. `docs/testing.md` §3.
-- **Quota probe when idle refreshed (t577, 2026-09-20).** `forcedRefresh` refreshes idle accounts near interval; poller wakes every 5m (`IDLE_SWEEP_TICK_MS`). `docs/cost-model.md` §5.
-- **Fresh Muse window warmup turn (t570, 2026-09-19).** `usageRefresh.warmup` sends tiny turn on operator request when `Currently unavailable`. `docs/adapters.md`.
 - **Reassign's effort picker could only ever appear for one exact, named model (t619,
   2026-09-22).** `offeredEfforts` looked `effortLevels` up by the literal selection value, and
   neither Auto Model (`'__auto__'`) nor the blank account-default choice is a real model id — so
