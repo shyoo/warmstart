@@ -808,3 +808,63 @@ describe('a question filed with its asker already gone', () => {
     expect(updated.finishPolicy).toBe('report-only')
   })
 })
+
+/**
+ * t680: the second of two native questions was asked after the run had ended, stored with no task,
+ * and sat on the banner — parked, unanswerable, out of reach of every sweep keyed on a task.
+ */
+describe('a question asked after its run ended', () => {
+  it('is filed parked onto the session’s task instead of waiting on nobody', async () => {
+    const { task, run, session } = seedAsker()
+    tasks.finishRun(run.id, 'completed')
+
+    const resolution = await questions.askQuestion({
+      sessionId: session.id,
+      origin: 'native_tool',
+      kind: 'choice',
+      question: 'Which of the proposed refactor items should I implement?',
+      options: [{ id: 'light', label: 'Light touch' }, { id: 'all', label: 'All of them' }]
+    })
+
+    expect(resolution.status).toBe('parked')
+    const [filed] = questions.questionsForTask(task.id)
+    expect(filed?.question).toContain('refactor items')
+    expect(filed?.parkedAt).not.toBeNull()
+    expect(filed?.answeredAt).toBeNull()
+    expect(questions.openQuestions().map((q) => q.id)).toContain(filed?.id)
+  })
+
+  it('a parked question with no task at all leaves the open list', () => {
+    const { session } = seedAsker()
+    db.db().prepare('delete from runs where session_id = ?').run(session.id)
+
+    const filed = questions.fileParkedQuestion({
+      sessionId: session.id,
+      origin: 'native_tool',
+      kind: 'text',
+      question: 'Orphaned?'
+    })
+
+    expect(filed.taskId).toBeNull()
+    expect(filed.answeredAt).not.toBeNull()
+    expect(questions.openQuestions().map((q) => q.id)).not.toContain(filed.id)
+  })
+
+  it('the startup sweep voids an orphan already in the table', () => {
+    const { session } = seedAsker()
+    const id = '4c88a352-0000-4000-8000-000000000000'
+    db.db()
+      .prepare(
+        `insert into questions (id, session_id, run_id, task_id, project_id, origin, kind, question,
+                                asked_at, deadline_at, parked_at)
+         values (?,?,null,null,null,'native_tool','text','Refactor scope?',?,?,?)`
+      )
+      .run(id, session.id, Date.now() - 1000, Date.now() - 500, Date.now() - 500)
+    expect(questions.openQuestions().map((q) => q.id)).toContain(id)
+
+    expect(questions.sweepSettledTaskQuestions()).toBeGreaterThanOrEqual(1)
+
+    expect(questions.openQuestions().map((q) => q.id)).not.toContain(id)
+    expect(questions.requireQuestion(id).answeredBy).toBe('system')
+  })
+})

@@ -308,7 +308,9 @@ expired, so holding the process stopped paying for itself: the task rests at `aw
 question **stays open**. ⛔ Not an answer and not a refusal — timing out has never been either.
 Answering a parked question writes it into the thread and **re-queues the task**, so the answer has a
 run to arrive in: the same task, the same thread, a new run, with the answer left undelivered so the
-next prompt carries it.
+next prompt carries it. ⛔ A question asked when its session has no open run (the second of a
+multi-question native `AskUserQuestion`, t680) is filed parked onto the session's last task, and a
+parked question with no task at all is voided — it has no thread to carry an answer.
 
 **`blocked`** — *a run that stopped to ask, not one that broke.* A `RunOutcome` beside `completed`
 and `failed`. ⛔ It did the work up to the question and metered its turns, so it does not count

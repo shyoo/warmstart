@@ -30,6 +30,7 @@ import {
   onTaskSettled,
   runForSession,
   setStatus,
+  taskOfSession,
   updateTask
 } from './tasks.js'
 import { getAttachment } from './attachments.js'
@@ -171,6 +172,17 @@ export async function askQuestion(request: QuestionRequest): Promise<QuestionRes
   const run = runForSession(request.sessionId)
   const task = run?.taskId ? getTask(run.taskId) : null
 
+  // ⛔ **No open run, no turn to answer into.** Claude's native `AskUserQuestion` can carry several
+  // questions, and `answerNativeQuestions` asks them one at a time — so the second is asked only
+  // once the first resolves, which on t667 (2026-09-24) was a park 27 minutes after the run had
+  // ended. Waiting another cache window for an answer nothing can receive is the wrong half; the
+  // question itself is still the right one, so it is filed parked onto the session's task, where
+  // the answer travels the way every parked answer does.
+  if (!run) {
+    fileParkedQuestion(request)
+    return parkedResolution()
+  }
+
   const deadlineAt = session
     ? costModel(adapter(session.adapterId).info.policy.costModelId).cacheExpiryFor(session)
     : null
@@ -218,8 +230,11 @@ function insertQuestion(
   request: QuestionRequest,
   timing: { deadlineAt: number | null; parkedAt: number | null }
 ): Question {
+  // ⛔ The open run's task, else the session's last. A question with no task has no thread to carry
+  // its answer and is out of reach of every sweep keyed on a task — t680 found one such row sitting
+  // on the banner, parked and unanswerable, hours after the work moved on.
   const run = runForSession(request.sessionId)
-  const task = run?.taskId ? getTask(run.taskId) : null
+  const task = run?.taskId ? getTask(run.taskId) : taskOfSession(request.sessionId)
   const id = randomUUID()
   // ⛔ **Here, and not in each asker.** `kind` and `options` decide whether the operator gets buttons
   // or a text box, and an asker whose tool call was mangled on the way out cannot be trusted to
@@ -291,7 +306,9 @@ export function fileParkedQuestion(request: QuestionRequest): Question {
     `question ${question.id.slice(0, 8)} filed already parked (the asker has no way to be answered): ` +
       question.question.slice(0, 120)
   )
-  return question
+  if (question.taskId) return question
+  voidTasklessQuestion(question.id)
+  return requireQuestion(question.id)
 }
 
 /**
@@ -503,6 +520,13 @@ function park(id: string, why: string): QuestionResolution {
     })
   }
   log.warn(`question ${id.slice(0, 8)} parked: ${why}`)
+  // ⛔ A parked question travels on its task's thread; one with no task has nowhere to go, and
+  // answering it would reach nobody. Void it rather than leave it on the banner forever.
+  if (!parked.taskId) voidTasklessQuestion(id)
+  return parkedResolution()
+}
+
+function parkedResolution(): QuestionResolution {
   return {
     status: 'parked',
     reply:
@@ -510,6 +534,15 @@ function park(id: string, why: string): QuestionResolution {
       'attached. Do not guess: stop here, and say what you were about to do next.',
     answer: null
   }
+}
+
+const NO_TASK = 'no task to carry the answer'
+
+function voidTasklessQuestion(id: string): void {
+  db().prepare("update questions set answered_at = ?, answer_json = ?, answered_by = 'system' where id = ?")
+    .run(Date.now(), JSON.stringify({ optionIds: [], text: NO_TASK }), id)
+  emit({ type: 'question.answered', question: requireQuestion(id) })
+  log.warn(`question ${id.slice(0, 8)} voided: ${NO_TASK}`)
 }
 
 /**
@@ -552,20 +585,24 @@ export function voidQuestionsForTask(taskId: string, reason = 'task deleted'): v
   }
 }
 
-/** Sweep any dangling questions on already settled tasks. */
+/**
+ * Sweep any dangling questions on already settled tasks, and any parked question with no task at
+ * all — nothing can consume the answer to either.
+ */
 export function sweepSettledTaskQuestions(): number {
   try {
     const dangling = rows<QuestionRow>(
       db().prepare(`
         select q.* from questions q
-        join tasks t on q.task_id = t.id
-        where q.answered_at is null and t.status in ('completed', 'cancelled')
+        left join tasks t on q.task_id = t.id
+        where q.answered_at is null
+          and (t.status in ('completed', 'cancelled') or (q.task_id is null and q.parked_at is not null))
       `).all()
     )
     for (const q of dangling) {
       db().prepare(
         "update questions set answered_at = ?, answer_json = ?, answered_by = 'system' where id = ?"
-      ).run(Date.now(), JSON.stringify({ optionIds: [], text: 'task settled' }), q.id)
+      ).run(Date.now(), JSON.stringify({ optionIds: [], text: q.task_id ? 'task settled' : NO_TASK }), q.id)
     }
     return dangling.length
   } catch {
