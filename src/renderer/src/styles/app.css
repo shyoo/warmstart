@@ -1470,16 +1470,12 @@ body {
 }
 
 /* One row per conversation, indented under its project and a step smaller, so the list reads as
-   the project's contents rather than as more projects. */
+   the project's contents rather than as more projects. No icon (t671): the indent alone says it, and
+   a glyph competed with the project's status dot. The title starts one step past the project name,
+   which itself starts after padding + the 6px dot + the row gap. */
 .nav-item--conversation {
-  padding-left: calc(var(--sp-2) + 14px);
+  padding-left: calc(var(--sp-2) + 6px + var(--sp-2) + var(--sp-3));
   font-size: var(--text-dense);
-}
-
-.nav-conversation-icon {
-  flex: none;
-  font-size: var(--text-meta);
-  line-height: 1;
 }
 
 .nav-conversation-title {

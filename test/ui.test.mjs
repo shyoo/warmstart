@@ -4748,10 +4748,24 @@ try {
     !sideRows.some((r) => r.title.includes(`t${sideConvo.doneSeq} `)),
     JSON.stringify(sideRows)
   )
+  // t671: a conversation reads as the project's contents by its indent, not by a 💬 glyph.
+  const sideIndent = JSON.parse(
+    await evaluate(`
+      (() => {
+        const row = document.querySelector('.nav-item--conversation .nav-conversation-title')
+        const name = document.querySelector('.nav-project-name')
+        return JSON.stringify({ row: row?.getBoundingClientRect().left ?? null, project: name?.getBoundingClientRect().left ?? null })
+      })()
+    `)
+  )
   check(
-    'each row carries the conversation mark',
-    sideRows.every((r) => r.text.startsWith('💬')),
-    JSON.stringify(sideRows)
+    'each row is indented past its project name, with no conversation glyph',
+    sideRows.length > 0 &&
+      sideRows.every((r) => !r.text.startsWith('💬')) &&
+      sideIndent.row !== null &&
+      sideIndent.project !== null &&
+      sideIndent.row > sideIndent.project,
+    JSON.stringify({ sideRows, sideIndent })
   )
   // ⚠️ Half the claim: the row has to be there for the click to prove anything.
   await evaluate(

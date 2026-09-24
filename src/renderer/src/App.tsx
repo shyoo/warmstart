@@ -614,9 +614,6 @@ export function App({
                           setRoute({ kind: 'project', id: project.id, tab: 'thread', taskId: conversation.id })
                         }
                       >
-                        <span className="nav-conversation-icon" aria-hidden>
-                          💬
-                        </span>
                         <span className="nav-conversation-title">{taskLabelShort(conversation, 48)}</span>
                         {isWorking(conversation) && <Working />}
                       </button>
