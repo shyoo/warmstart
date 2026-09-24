@@ -49,6 +49,7 @@ import { QualityReview } from './components/QualityReview'
 import {
   isWorking,
   ProjectDot,
+  ProjectTaskCount,
   projectTaskCounts,
   projectWorkState,
   taskLabelShort,
@@ -494,8 +495,7 @@ export function App({
               const projectPendingPrs = pendingDeliveries.filter((d) => d.projectId === project.id)
               const hasPendingPr = projectPendingPrs.length > 0
               const state = projectWorkState(projectTasks, hasPendingPr)
-              const { running: runningCount, awaiting: awaitingCount, waiting: waitingCount } =
-                projectTaskCounts(projectTasks)
+              const counts = projectTaskCounts(projectTasks)
               // ⛔ The conversations this project is in the middle of, listed under it so switching
               // between two of them is one click here rather than a trip through the Tasks board
               // (t479). Which ones qualify is `openConversations`' rule, not this file's.
@@ -561,20 +561,7 @@ export function App({
                       }
                     />
                     <span className="nav-project-name">{project.name}</span>
-                    {runningCount + awaitingCount + waitingCount > 0 && (
-                      // Three numbers, one per colour: agent working / waiting on you / parked. Only
-                      // the middle one asks anything of the person reading it.
-                      <span
-                        className="nav-count num"
-                        title={`${runningCount} running · ${awaitingCount} awaiting you (human action needed) · ${waitingCount} paused, blocked, quota-held or scheduled (no action needed)`}
-                      >
-                        <span className={runningCount > 0 ? 'nav-count-running' : undefined}>{runningCount}</span>
-                        /
-                        <span className={awaitingCount > 0 ? 'nav-count-awaiting' : undefined}>{awaitingCount}</span>
-                        /
-                        <span className={waitingCount > 0 ? 'nav-count-waiting' : undefined}>{waitingCount}</span>
-                      </span>
-                    )}
+                    <ProjectTaskCount counts={counts} />
                     {/* ⚠️ Only where there is something to fold. A toggle on a project with no open
                         conversation would be a control that does nothing. A `span` with a role, not
                         a nested button: the row itself is already a button. */}

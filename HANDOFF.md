@@ -7,8 +7,8 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-23, **Windows 11**): typecheck, lint and build pass; L1 **3,918 passed, 3 skipped** (230 files) in **108s**;
-L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L3 **486
+Baseline (2026-09-24, **Windows 11**): typecheck, lint and build pass; L1 **3,961 passed, 3 skipped** (233 files) in **135.55s**;
+L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here; last run 2026-09-23); L3 **486
 checks** (4 skipped); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
 t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
 hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
@@ -25,6 +25,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **Sidebar project counts omit empty buckets (t678, 2026-09-24).** `ProjectTaskCount` renders only positive running/awaiting/parked counts, slash separated; colours and hover remain. Six combinations plus empty pinned at L1. `docs/ui.md`.
 - **The `land_work` receipt states previous → next, each named once (t677 ← t667, 2026-09-24).**
   It named only the new branch, which reads as a restatement of the one just landed.
   `landConversationWork` now returns the landed `branch`; `conversationLandingResultText`
@@ -37,7 +38,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   exonerated. 3 L1. `docs/routing.md` §2.4.
 - **The reassign pills name what the task is on, not *Auto model* (t674, 2026-09-23).** Where the pin leaves worker, model or effort to the scheduler, the pills under the composer show the latest run's account, model and session effort (`pillLabels`, `thread/Reassign.tsx`; 6 L1 checks). A reassignment to another account that has not run yet still reads Auto. `docs/ui.md`.
 - **The send-outcome hint no longer sticks, and the reassign pills line up with the box (t673, 2026-09-23).** `outcomeHintStale` clears the hint once `task.status` moves past the send; `.compose-assign` starts where the box does. L3 asserts both. `docs/ui.md`.
-- **The settle strip lines up with the message box (t672, 2026-09-23).** `[+]` is a fixed 30px square and `.decide--strip` indents by it plus the gap; strip buttons a step smaller. L3. `docs/ui.md`.
 - **Sidebar conversations drop the 💬 glyph (t671, 2026-09-23).** A conversation row is marked by its indent alone — the title starts one `--sp-3` past the project name — because the glyph was loud in dark mode and competed with the project's status dot. L3 now asserts the indent. `docs/ui.md`.
 - **No *your call* card on every conversation turn (t669, 2026-09-23).** Stop now sits beside Send at `awaiting_human`; once stopped (`paused_user`) Complete sits there instead, arming once over uncommitted files, and an empty box reads Resume (the Paused-by-operator banner is gone). Worker · model · effort are pills under the box (`thread/Reassign.tsx`); a changed pick turns Send into Reassign and sends the typed text (or `Continue.`). What remains above the composer is a frameless strip drawn only when Commit/Land/Resolve & retry/Retry landing or a work-protecting note applies. `QuotaDecide` unchanged. L3: 8 pre-existing fleet/worker-settings failures reproduce on the base commit. `docs/ui.md`, `docs/landing.md`.
 - **Status colours say who a task waits on (t668, 2026-09-23).** Blue = agent working, yellow = human action needed (`awaiting_human` only; was purple), grey = parked and needs nobody (`paused_user`, `paused_quota` were yellow). Status pills carry a hover saying so; the sidebar count is now `running/awaiting/parked` in those colours and the project dot follows the same buckets (supersedes t655/t661's two-number count and purple/yellow dots). Flow lanes unchanged. `docs/ui.md`.

@@ -16,6 +16,7 @@ import { autoModelCount, autoRoutes, type ModelRoute } from '@shared/modelroutes
 import type { FleetEntry } from './daemon'
 import { duration } from './format'
 import { modelLabel } from './modelname'
+import { Fragment } from 'react'
 
 /**
  * How a task is drawn, shared by the list and the thread.
@@ -295,6 +296,30 @@ export function projectTaskCounts(
     else if (attention === 'waiting') waiting++
   }
   return { running, awaiting, waiting }
+}
+
+/** Only unfinished buckets with work appear in the project's sidebar count. */
+export function ProjectTaskCount({ counts }: { counts: ReturnType<typeof projectTaskCounts> }): React.JSX.Element | null {
+  const visible = ([
+    ['running', counts.running],
+    ['awaiting', counts.awaiting],
+    ['waiting', counts.waiting]
+  ] as const).filter(([, count]) => count > 0)
+  if (visible.length === 0) return null
+
+  return (
+    <span
+      className="nav-count num"
+      title={`${counts.running} running · ${counts.awaiting} awaiting you (human action needed) · ${counts.waiting} paused, blocked, quota-held or scheduled (no action needed)`}
+    >
+      {visible.map(([bucket, count], index) => (
+        <Fragment key={bucket}>
+          {index > 0 && '/'}
+          <span className={`nav-count-${bucket}`}>{count}</span>
+        </Fragment>
+      ))}
+    </span>
+  )
 }
 
 /** Small indicator dot displayed before the project name in the navigation pane. */

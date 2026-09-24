@@ -1,4 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import type { Compaction, Project, Run, Task, TaskStatus } from '@shared/tasks'
 import { ROOT_MANDATE } from '@shared/tasks'
 import type { ModelOptions, Worker } from '@shared/protocol'
@@ -39,6 +41,7 @@ import {
   reassignmentModel,
   resolveRetryCauses,
   projectTaskCounts,
+  ProjectTaskCount,
   projectWorkState,
   STATUS_TONE,
   statusHintFor,
@@ -561,6 +564,28 @@ describe('projectTaskCounts for sidebar project numbers', () => {
       { status: 'awaiting_human', deletedAt: null }
     ]
     expect(projectTaskCounts(tasks)).toEqual({ running: 2, awaiting: 1, waiting: 0 })
+  })
+})
+
+describe('ProjectTaskCount', () => {
+  const render = (running: number, awaiting: number, waiting: number) =>
+    renderToStaticMarkup(createElement(ProjectTaskCount, { counts: { running, awaiting, waiting } }))
+
+  it('shows no count when every bucket is empty', () => {
+    expect(render(0, 0, 0)).toBe('')
+  })
+
+  it.each([
+    [1, 0, 0, '<span class="nav-count-running">1</span>'],
+    [0, 2, 0, '<span class="nav-count-awaiting">2</span>'],
+    [0, 0, 1, '<span class="nav-count-waiting">1</span>'],
+    [1, 2, 0, '<span class="nav-count-running">1</span>/<span class="nav-count-awaiting">2</span>'],
+    [1, 0, 1, '<span class="nav-count-running">1</span>/<span class="nav-count-waiting">1</span>'],
+    [1, 2, 3, '<span class="nav-count-running">1</span>/<span class="nav-count-awaiting">2</span>/<span class="nav-count-waiting">3</span>']
+  ])('renders only positive buckets for %i/%i/%i', (running, awaiting, waiting, expected) => {
+    const markup = render(running, awaiting, waiting)
+    expect(markup).toContain(expected)
+    expect(markup).not.toContain('>0</span>')
   })
 })
 
