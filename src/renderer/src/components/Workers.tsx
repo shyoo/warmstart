@@ -6,7 +6,8 @@ import type {
   ModelOptions,
   Session,
   Settings,
-  UnattendedAuthority
+  UnattendedAuthority,
+  Worker
 } from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isWorkerSubscriptionExpired, QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
@@ -124,10 +125,12 @@ const UNATTENDED_AUTHORITY_HELP =
  */
 export function Workers({
   fleet,
-  refresh
+  refresh,
+  applyWorker
 }: {
   fleet: FleetEntry[]
   refresh: () => Promise<void>
+  applyWorker: (worker: Worker) => void
 }): React.JSX.Element {
   // ⚠️ Half a minute, not a second. The only thing on this page that moves with the clock is the
   // age beside a quota reading, and that is a figure like "read 20m ago" — a per-second re-render
@@ -196,13 +199,13 @@ export function Workers({
     modelOptions.find((o) => o.adapterId === adapterId && !o.workerId) ??
     null
 
-  const guard = async (key: string, fn: () => Promise<unknown>) => {
+  const guard = async (key: string, fn: () => Promise<unknown>, refreshAfter = true) => {
     setBusy(key)
     setError(null)
     setNotice(null)
     try {
       await fn()
-      await refresh()
+      if (refreshAfter) await refresh()
     } catch (err) {
       setError(errorMessage(err))
     } finally {
@@ -767,7 +770,9 @@ export function Workers({
                         options={modelsFor(worker.adapterId, worker.id)}
                         busy={busy === `models:${worker.id}`}
                         onPatch={(patch) =>
-                          void guard(`models:${worker.id}`, () => rpc('worker.update', { id: worker.id, ...patch }))
+                          void guard(`models:${worker.id}`, async () => {
+                            applyWorker(await rpc('worker.update', { id: worker.id, ...patch }))
+                          }, false)
                         }
                       />
                     </td>

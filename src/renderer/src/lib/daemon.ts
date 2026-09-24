@@ -45,6 +45,19 @@ export interface FleetEntry {
   reservedSlots?: number
 }
 
+/** A worker event already carries its new row. Only these changes invalidate fleet.list's
+ * daemon-computed availability, capacity, or ordering; model settings do none of those. */
+export function workerChangeNeedsFleetRefresh(before: Worker, after: Worker): boolean {
+  return before.sortOrder !== after.sortOrder ||
+    before.retiredAt !== after.retiredAt ||
+    before.label !== after.label ||
+    before.enabled !== after.enabled ||
+    before.humanOccupied !== after.humanOccupied ||
+    before.maxConcurrent !== after.maxConcurrent ||
+    JSON.stringify(before.identity) !== JSON.stringify(after.identity) ||
+    JSON.stringify(before.health) !== JSON.stringify(after.health)
+}
+
 /**
  * How the fleet is doing, in the three numbers the sidebar and status bar show:
  * running / active / total workers.
@@ -116,6 +129,7 @@ export function useFleet(connected: boolean): {
   fleet: FleetEntry[]
   error: string | null
   refresh: () => Promise<void>
+  applyWorker: (worker: Worker) => void
 } {
   const [fleet, setFleet] = useState<FleetEntry[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -136,6 +150,12 @@ export function useFleet(connected: boolean): {
       setError(errorMessage(err))
     }
   }, [connected])
+
+  const applyWorker = useCallback((worker: Worker) => {
+    setFleet((prev) => prev.map((e) =>
+      e.worker.id === worker.id ? { ...e, worker } : e
+    ))
+  }, [])
 
   useEffect(() => {
     void refresh()
@@ -163,11 +183,13 @@ export function useFleet(connected: boolean): {
     } else if (event.type === 'session.exit') {
       void refresh()
     } else if (event.type === 'worker.changed') {
-      void refresh()
+      const previous = fleetRef.current.find((e) => e.worker.id === event.worker.id)
+      if (!previous || workerChangeNeedsFleetRefresh(previous.worker, event.worker)) void refresh()
+      else applyWorker(event.worker)
     }
   })
 
-  return { fleet, error, refresh }
+  return { fleet, error, refresh, applyWorker }
 }
 
 /**

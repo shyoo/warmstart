@@ -139,7 +139,7 @@ export function App({
   const update = useUpdateStatus()
   const status = useDaemonStatus()
   const connected = status.state === 'connected'
-  const { fleet, refresh } = useFleet(connected)
+  const { fleet, refresh, applyWorker } = useFleet(connected)
   const counts = fleetCounts(fleet)
   const now = useNow()
   const qualityBatchRunning = useQualityBatchRunning(connected)
@@ -849,7 +849,7 @@ export function App({
           ) : route.kind === 'history' && route.page === 'logs' ? (
             <Logs now={now} />
           ) : route.kind === 'settings' && route.page === 'workers' ? (
-            <Workers fleet={fleet} refresh={refresh} />
+            <Workers fleet={fleet} refresh={refresh} applyWorker={applyWorker} />
           ) : route.kind === 'settings' && route.page === 'global' ? (
             <GlobalSettings
               now={now}

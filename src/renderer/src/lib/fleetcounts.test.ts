@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { Session } from '@shared/protocol'
-import { fleetCounts, type FleetEntry } from './daemon.js'
+import type { Session, Worker } from '@shared/protocol'
+import { fleetCounts, workerChangeNeedsFleetRefresh, type FleetEntry } from './daemon.js'
 
 /**
  * The three numbers in the sidebar and status bar: running / active / total workers.
@@ -20,6 +20,29 @@ const entry = (over: Partial<FleetEntry> = {}): FleetEntry => ({
   unavailable: null,
   atCapacity: false,
   ...over
+})
+
+describe('worker event fleet refresh', () => {
+  const worker = {
+    id: 'w1', label: 'One', enabled: true, humanOccupied: false,
+    maxConcurrent: 1, sortOrder: 0, retiredAt: null,
+    identity: null, health: null, modelRoutes: null
+  } as Worker
+
+  it('keeps model edits on the event path', () => {
+    expect(workerChangeNeedsFleetRefresh(worker, {
+      ...worker, modelRoutes: [{ model: 'model-a', effort: 'medium', modelClass: null, auto: true }]
+    })).toBe(false)
+  })
+
+  it('reloads daemon-computed gates and fleet ordering when their inputs change', () => {
+    for (const change of [
+      { enabled: false }, { humanOccupied: true }, { maxConcurrent: 2 },
+      { label: 'Two' }, { sortOrder: 1 }, { identity: { loggedIn: false } }
+    ]) {
+      expect(workerChangeNeedsFleetRefresh(worker, { ...worker, ...change })).toBe(true)
+    }
+  })
 })
 
 describe('what the sidebar and status bar say about the fleet', () => {
