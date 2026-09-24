@@ -237,28 +237,29 @@ export function projectWorkState(
 }
 
 /**
- * Counts running and active tasks for a project in the navigation pane.
+ * Counts running and unfinished-but-not-running tasks for a project in the navigation pane.
  * - 'running': Actively executing work (running status, or in active grading/landing).
- * - 'active': All non-complete, non-terminal tasks (includes awaiting_human, paused_quota, ready, etc.).
+ * - 'notRunning': Awaiting, quota-held, queued, and other unfinished tasks without active work.
  */
 export function projectTaskCounts(
   tasks: ReadonlyArray<Pick<Task, 'status'> & Partial<Pick<Task, 'gradingWorkerId' | 'landing' | 'deletedAt'>>>
 ): {
   running: number
-  active: number
+  notRunning: number
 } {
   let running = 0
-  let active = 0
+  let notRunning = 0
   for (const t of tasks) {
     if (t.deletedAt) continue
     if (!TERMINAL_STATUSES.has(t.status)) {
-      active++
       if (isWorking(t)) {
         running++
+      } else {
+        notRunning++
       }
     }
   }
-  return { running, active }
+  return { running, notRunning }
 }
 
 /** Small indicator dot displayed before the project name in the navigation pane. */

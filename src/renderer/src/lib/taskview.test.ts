@@ -506,7 +506,7 @@ describe('project work state for left pane indicators', () => {
 
 describe('projectTaskCounts for sidebar project numbers', () => {
   it('returns zeros when there are no tasks', () => {
-    expect(projectTaskCounts([])).toEqual({ running: 0, active: 0 })
+    expect(projectTaskCounts([])).toEqual({ running: 0, notRunning: 0 })
   })
 
   it('ignores completed, failed, cancelled, and deleted tasks', () => {
@@ -517,10 +517,10 @@ describe('projectTaskCounts for sidebar project numbers', () => {
       { status: 'running', deletedAt: Date.now() },
       { status: 'awaiting_human', deletedAt: Date.now() }
     ]
-    expect(projectTaskCounts(tasks)).toEqual({ running: 0, active: 0 })
+    expect(projectTaskCounts(tasks)).toEqual({ running: 0, notRunning: 0 })
   })
 
-  it('counts running tasks and non-complete active tasks', () => {
+  it('counts running tasks separately from unfinished but non-running tasks', () => {
     const tasks: Array<Pick<Task, 'status' | 'deletedAt'>> = [
       { status: 'running', deletedAt: null },
       { status: 'awaiting_human', deletedAt: null },
@@ -528,7 +528,7 @@ describe('projectTaskCounts for sidebar project numbers', () => {
       { status: 'ready', deletedAt: null },
       { status: 'completed', deletedAt: null }
     ]
-    expect(projectTaskCounts(tasks)).toEqual({ running: 1, active: 4 })
+    expect(projectTaskCounts(tasks)).toEqual({ running: 1, notRunning: 3 })
   })
 
   it('counts grading and landing tasks as running', () => {
@@ -537,7 +537,7 @@ describe('projectTaskCounts for sidebar project numbers', () => {
       { status: 'ready', gradingWorkerId: 'worker-1', deletedAt: null },
       { status: 'awaiting_human', deletedAt: null }
     ]
-    expect(projectTaskCounts(tasks)).toEqual({ running: 2, active: 3 })
+    expect(projectTaskCounts(tasks)).toEqual({ running: 2, notRunning: 1 })
   })
 })
 

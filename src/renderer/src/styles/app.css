@@ -1421,7 +1421,7 @@ body {
   font-weight: 600;
 }
 
-.nav-count-active {
+.nav-count-not-running {
   color: var(--state-warn);
   font-weight: 600;
 }

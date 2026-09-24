@@ -494,7 +494,7 @@ export function App({
               const projectPendingPrs = pendingDeliveries.filter((d) => d.projectId === project.id)
               const hasPendingPr = projectPendingPrs.length > 0
               const state = projectWorkState(projectTasks, hasPendingPr)
-              const { running: runningCount, active: activeCount } = projectTaskCounts(projectTasks)
+              const { running: runningCount, notRunning: notRunningCount } = projectTaskCounts(projectTasks)
               // ⛔ The conversations this project is in the middle of, listed under it so switching
               // between two of them is one click here rather than a trip through the Tasks board
               // (t479). Which ones qualify is `openConversations`' rule, not this file's.
@@ -560,16 +560,16 @@ export function App({
                       }
                     />
                     <span className="nav-project-name">{project.name}</span>
-                    {activeCount > 0 && (
+                    {runningCount + notRunningCount > 0 && (
                       <span
                         className="nav-count num"
-                        title={`${runningCount} running · ${activeCount} active task${activeCount === 1 ? '' : 's'}`}
+                        title={`${runningCount} running · ${notRunningCount} awaiting, queued, or quota-held task${notRunningCount === 1 ? '' : 's'}`}
                       >
                         <span className={runningCount > 0 ? 'nav-count-running' : undefined}>
                           {runningCount}
                         </span>
                         /
-                        <span className="nav-count-active">{activeCount}</span>
+                        <span className="nav-count-not-running">{notRunningCount}</span>
                       </span>
                     )}
                     {/* ⚠️ Only where there is something to fold. A toggle on a project with no open
