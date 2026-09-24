@@ -415,6 +415,8 @@ export interface Worker {
   gradingModel?: string | null
   /** Model used for this account's optional, title-only consults. */
   summarisingModel?: string | null
+  /** Reasoning effort used with this account's title-summary model, where its CLI accepts one. */
+  summarisingEffort?: string | null
   /** Reasoning effort used with this account's grading model, where its CLI accepts one. */
   gradingEffort?: string | null
   /** Whether this account may be selected as a peer reviewer. */
@@ -1732,6 +1734,7 @@ export interface RpcMap {
         | 'defaultModel'
         | 'gradingModel'
         | 'summarisingModel'
+        | 'summarisingEffort'
         | 'gradingEffort'
         | 'gradingEnabled'
         | 'defaultEffort'

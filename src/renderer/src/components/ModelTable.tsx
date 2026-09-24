@@ -89,8 +89,8 @@ export function ModelTable({
   }
   const toggleSummary = (index: number): void => {
     const r = rows[index]!
-    const on = isSummaryRow(worker, r)
-    onPatch(on ? { summarisingModel: null } : { summarisingModel: r.model })
+    const on = isSummaryRow(worker, options, r)
+    onPatch(on ? { summarisingModel: null, summarisingEffort: null } : { summarisingModel: r.model, summarisingEffort: r.effort })
   }
   // ⛔ A line's effort is the effort of whatever it is ticked for, so the choice moves with it — the
   // Default tick does not stay behind on a (model, effort) pair that no longer has a line.
@@ -102,6 +102,7 @@ export function ModelTable({
     }
     if (isGradingRow(worker, options, r)) Object.assign(extra, { gradingModel: r.model, gradingEffort: effort })
     if (isJudgmentRow(worker, options, r)) Object.assign(extra, { judgmentModel: r.model, judgmentEffort: effort })
+    if (isSummaryRow(worker, options, r)) Object.assign(extra, { summarisingModel: r.model, summarisingEffort: effort })
     write(withRow(index, { effort }), extra)
   }
 
@@ -134,8 +135,13 @@ export function ModelTable({
               const isDefault = isDefaultRow(worker, options, r)
               const isGrading = isGradingRow(worker, options, r)
               const isJudgment = isJudgmentRow(worker, options, r)
-              const isSummary = isSummaryRow(worker, r)
+              const isSummary = isSummaryRow(worker, options, r)
               const inUse = isDefault || isGrading || isJudgment || isSummary
+              const removePatch: WorkerPatch = {
+                ...(isGrading ? { gradingModel: null, gradingEffort: null } : {}),
+                ...(isJudgment ? { judgmentModel: null, judgmentEffort: null } : {}),
+                ...(isSummary ? { summarisingModel: null, summarisingEffort: null } : {})
+              }
               const label = routeLabel(r)
               return (
                 <tr
@@ -249,14 +255,16 @@ export function ModelTable({
                     <button
                       type="button"
                       className="worker-models-remove-btn"
-                      disabled={busy || inUse}
+                      disabled={busy || isDefault}
                       aria-label={`Remove ${label} from ${worker.label}`}
                       title={
-                        inUse
-                          ? 'Cannot remove: in use as the default, grading, judgment or summary model'
+                        isDefault
+                          ? 'Cannot remove the default model/effort pair'
+                          : inUse
+                            ? 'Remove this line and clear its grading, judgment or summary purpose'
                           : 'Remove this line'
                       }
-                      onClick={() => write(rows.filter((_, i) => i !== index))}
+                      onClick={() => write(rows.filter((_, i) => i !== index), removePatch)}
                     >
                       ×
                     </button>

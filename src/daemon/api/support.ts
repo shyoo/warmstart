@@ -100,6 +100,7 @@ export function checkWorkerDefaults(
     defaultModel?: string | null
     gradingModel?: string | null
     summarisingModel?: string | null
+    summarisingEffort?: string | null
     gradingEffort?: string | null
     defaultEffort?: string | null
     defaultModels?: Record<string, string | null> | null
@@ -188,6 +189,17 @@ export function checkWorkerDefaults(
     }
     if (!gradingSpec.effort_levels.includes(patch.gradingEffort)) {
       throw new Error(`'${patch.gradingModel}' has no effort level '${patch.gradingEffort}'`)
+    }
+  }
+
+  if (patch.summarisingEffort) {
+    if (!info.capabilities.selectableEffort) {
+      throw new Error(`${info.label} takes no effort flag, so it has no title-summary effort to set`)
+    }
+    const summarisingSpec = patch.summarisingModel ? cm.modelSpec(patch.summarisingModel) : null
+    if (!summarisingSpec) throw new Error('set a title-summary model before choosing its effort')
+    if (!summarisingSpec.effort_levels.includes(patch.summarisingEffort)) {
+      throw new Error(`'${patch.summarisingModel}' has no effort level '${patch.summarisingEffort}'`)
     }
   }
 

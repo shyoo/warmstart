@@ -2250,6 +2250,59 @@ const MIGRATIONS: Migration[] = [
         r.id
       )
     }
+  },
+  // 83 - title summaries are a model/effort pair, like every other purpose (t663).
+  //
+  // Old selectable model-table rows predate per-row effort and stored null. A null can no longer
+  // name a row on a model that offers levels: preserve the operator's model but make the neutral,
+  // explicit `medium` choice (or the middle declared level where medium is absent).
+  (conn) => {
+    if (!hasColumn(conn, 'workers', 'summarising_effort')) {
+      conn.exec('alter table workers add column summarising_effort text;')
+    }
+    const modelForAdapter: Record<string, string> = {
+      'claude-code': 'anthropic.subscription.2026-08',
+      'antigravity-cli': 'google.antigravity.2026-08',
+      'openai-compatible': 'openai.codex.2026-08',
+      'muse-code': 'meta.muse.2026-09'
+    }
+    const effortFor = (adapterId: string, model: string | null): string | null => {
+      if (!model) return null
+      const id = modelForAdapter[adapterId]
+      if (!id) return null
+      const levels = costModel(id).modelSpec(model)?.effort_levels ?? []
+      if (levels.length === 0) return null
+      return levels.includes('medium') ? 'medium' : (levels[Math.floor(levels.length / 2)] ?? null)
+    }
+    const rows = conn.prepare('select id, adapter_id, summarising_model, summarising_effort, model_routes_json from workers').all() as Array<{
+      id: string; adapter_id: string; summarising_model: string | null; summarising_effort: string | null; model_routes_json: string | null
+    }>
+    const update = conn.prepare('update workers set summarising_effort = ?, model_routes_json = ? where id = ?')
+    for (const row of rows) {
+      let routesJson = row.model_routes_json
+      try {
+        const routes = routesJson ? JSON.parse(routesJson) as Array<{ model: string; effort: string | null }> : null
+        if (routes) {
+          let changed = false
+          const seen = new Set<string>()
+          const deduped: typeof routes = []
+          for (const route of routes) {
+            if (route.effort === null) {
+              const effort = effortFor(row.adapter_id, route.model)
+              if (effort) { route.effort = effort; changed = true }
+            }
+            const key = `${route.model}:${route.effort ?? ''}`
+            if (seen.has(key)) { changed = true; continue }
+            seen.add(key)
+            deduped.push(route)
+          }
+          if (changed) routesJson = JSON.stringify(deduped)
+        }
+      } catch {
+        // A malformed legacy table is left to the normal reader rather than blocking startup.
+      }
+      update.run(row.summarising_effort ?? effortFor(row.adapter_id, row.summarising_model), routesJson, row.id)
+    }
   }
 ]
 

@@ -36,6 +36,7 @@ interface WorkerRow {
   default_model: string | null
   grading_model: string | null
   summarising_model: string | null
+  summarising_effort: string | null
   grading_effort: string | null
   grading_enabled: number
   default_effort: string | null
@@ -69,6 +70,7 @@ function toWorker(r: WorkerRow): Worker {
     defaultModel: r.default_model,
     gradingModel: r.grading_model,
     summarisingModel: r.summarising_model,
+    summarisingEffort: r.summarising_effort,
     gradingEffort: r.grading_effort,
     gradingEnabled: r.grading_enabled !== 0,
     defaultEffort: r.default_effort,
@@ -193,6 +195,7 @@ export function createWorker(input: {
   const defaultModelsJson = defaultModels ? JSON.stringify(defaultModels) : null
   const gradingModel = defaultGradingModel(input.adapterId)
   const summarisingModel = defaultSummarisingModel(input.adapterId)
+  const summarisingEffort = normaliseEffort(input.adapterId, summarisingModel, null)
   // ⛔ The mode this adapter has always run unattended work in, absent an explicit opt-in — the same
   // rule migration 77 backfills existing rows with. Codex is the only adapter this can name anything
   // other than `full-user` for; every other adapter's `headlessAuthority` is already `full-user`, so
@@ -204,9 +207,9 @@ export function createWorker(input: {
     .prepare(
       `insert into workers (id, adapter_id, label, isolation_root, enabled, human_occupied,
                             max_concurrent, default_model, default_effort, default_models_json,
-                            grading_model, summarising_model, grading_enabled, unattended_authority,
+                            grading_model, summarising_model, summarising_effort, grading_enabled, unattended_authority,
                             sort_order, created_at)
-       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`
     )
     .run(
       id,
@@ -223,6 +226,7 @@ export function createWorker(input: {
       defaultModelsJson,
       gradingModel,
       summarisingModel,
+      summarisingEffort,
       unattendedAuthority,
       tail,
       now
@@ -258,6 +262,19 @@ function boundedConcurrency(value: number | undefined, fallback: number): number
   return Number.isFinite(value) ? Math.max(1, Math.floor(value)) : fallback
 }
 
+/** Persist an explicit neutral effort for selectable models; `null` remains only for models with no levels. */
+function normaliseEffort(adapterId: string, model: string | null, effort: string | null): string | null {
+  if (effort !== null || !model || !adapter(adapterId).info.capabilities.selectableEffort) return effort
+  const cm = costModel(adapter(adapterId).info.policy.costModelId)
+  const levels = cm.modelSpec(model)?.effort_levels ?? []
+  return levels.length === 0 ? null : (levels.includes('medium') ? 'medium' : (levels[Math.floor(levels.length / 2)] ?? null))
+}
+
+/** Persist an explicit neutral effort for selectable models; `null` remains only for models with no levels. */
+function normaliseRoutes(adapterId: string, routes: ModelRoute[] | null | undefined): ModelRoute[] | null | undefined {
+  return routes?.map((route) => ({ ...route, effort: normaliseEffort(adapterId, route.model, route.effort) })) ?? routes
+}
+
 export function updateWorker(
   id: string,
   patch: Partial<
@@ -271,6 +288,7 @@ export function updateWorker(
       | 'defaultModel'
       | 'gradingModel'
       | 'summarisingModel'
+      | 'summarisingEffort'
       | 'gradingEffort'
       | 'gradingEnabled'
       | 'defaultEffort'
@@ -291,11 +309,18 @@ export function updateWorker(
     patch.defaultModels === undefined
       ? current.defaultModels ? JSON.stringify(current.defaultModels) : null
       : patch.defaultModels ? JSON.stringify(patch.defaultModels) : null
+  const requestedRoutes = normaliseRoutes(current.adapterId, patch.modelRoutes)
+  const requestedSummaryModel = patch.summarisingModel === undefined ? (current.summarisingModel ?? null) : patch.summarisingModel
+  const requestedSummaryEffort = normaliseEffort(
+    current.adapterId,
+    requestedSummaryModel,
+    patch.summarisingEffort === undefined ? (current.summarisingEffort ?? null) : patch.summarisingEffort
+  )
   const modelRoutesJson =
     patch.modelRoutes === undefined
       ? current.modelRoutes && current.modelRoutes.length > 0 ? JSON.stringify(current.modelRoutes) : null
-      : patch.modelRoutes && patch.modelRoutes.length > 0
-        ? JSON.stringify(patch.modelRoutes)
+      : requestedRoutes && requestedRoutes.length > 0
+        ? JSON.stringify(requestedRoutes)
         : null
 
   db()
@@ -303,7 +328,7 @@ export function updateWorker(
       `update workers set label = ?, enabled = ?, human_occupied = ?, max_concurrent = ?, role = ?,
                           default_model = ?, default_effort = ?, default_models_json = ?,
                           model_routes_json = ?, judgment_model = ?, judgment_effort = ?,
-                          grading_model = ?, summarising_model = ?, grading_effort = ?, grading_enabled = ?,
+                          grading_model = ?, summarising_model = ?, summarising_effort = ?, grading_effort = ?, grading_enabled = ?,
                           unattended_authority = ?
        where id = ?`
     )
@@ -323,7 +348,8 @@ export function updateWorker(
       patch.judgmentModel === undefined ? (current.judgmentModel ?? null) : patch.judgmentModel,
       patch.judgmentEffort === undefined ? (current.judgmentEffort ?? null) : patch.judgmentEffort,
       patch.gradingModel === undefined ? (current.gradingModel ?? null) : patch.gradingModel,
-      patch.summarisingModel === undefined ? (current.summarisingModel ?? null) : patch.summarisingModel,
+      requestedSummaryModel,
+      requestedSummaryEffort,
       patch.gradingEffort === undefined ? (current.gradingEffort ?? null) : patch.gradingEffort,
       (patch.gradingEnabled ?? current.gradingEnabled) ? 1 : 0,
       patch.unattendedAuthority ?? current.unattendedAuthority,

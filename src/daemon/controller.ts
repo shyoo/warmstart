@@ -388,8 +388,10 @@ export function chooseController(consult?: Pick<Consult, 'kind'>): ControllerCho
     // halves `checkWorkerDefaults` refused on the way in, re-read here because a worker's adapter
     // is not the only thing that can change between the write and the consult.
     const effort =
-      !title && model && adapter(worker.adapterId).info.capabilities.selectableEffort
-        ? worker.judgmentEffort ?? null
+      model && adapter(worker.adapterId).info.capabilities.selectableEffort
+        ? title
+          ? worker.summarisingEffort ?? null
+          : worker.judgmentEffort ?? null
         : null
     if (consult?.kind === 'title' && !model) {
       reasons.push(`${worker.label} has no title-summary model`)

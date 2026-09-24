@@ -199,6 +199,14 @@ describe('the model table column', () => {
     expect(() => api.checkWorkerDefaults('claude-code', { judgmentEffort: 'high' })).toThrow(/set a judgment model/)
   })
 
+  it('round-trips a title-summary model/effort pair and validates its model and level', () => {
+    const w = claudeWorker()
+    workers.updateWorker(w.id, { summarisingModel: 'claude-opus-5', summarisingEffort: 'medium' })
+    expect(workers.requireWorker(w.id)).toMatchObject({ summarisingModel: 'claude-opus-5', summarisingEffort: 'medium' })
+    expect(() => api.checkWorkerDefaults('claude-code', { summarisingModel: 'claude-haiku-4-5', summarisingEffort: 'high' })).toThrow(/has no effort level/)
+    expect(() => api.checkWorkerDefaults('claude-code', { summarisingEffort: 'medium' })).toThrow(/set a title-summary model/)
+  })
+
   it('⛔ migration 81 folds the three legacy maps into rows, then clears them', () => {
     const w = claudeWorker()
     db.db().exec(`pragma user_version = ${db.versionBefore('model_routes_json')}`)
@@ -217,7 +225,7 @@ describe('the model table column', () => {
     db.openDb(dbPath)
 
     expect(workers.requireWorker(w.id).modelRoutes).toEqual([
-      row('claude-sonnet-5', null, true, 'high'),
+      row('claude-sonnet-5', 'medium', true, 'high'),
       row('claude-opus-5', 'high', true),
       // Never routable, but an operator set an effort or a class on them — kept as manual rows.
       row('claude-opus-5-5', 'max', false),
@@ -250,7 +258,7 @@ describe('the model table column', () => {
          set default_model = 'gemini-3.7-flash-medium', default_effort = null,
              default_models_json = ?, model_routes_json = ?,
              grading_model = 'gemini-3.8-flash-low', grading_effort = null,
-             summarising_model = 'gemini-3.8-flash-low',
+             summarising_model = 'gemini-3.8-flash-low', summarising_effort = null,
              judgment_model = 'gemini-3.1-pro-high', judgment_effort = null
          where id = ?`
       )
@@ -273,6 +281,7 @@ describe('the model table column', () => {
     expect(reread.gradingModel).toBe('gemini-3.8-flash')
     expect(reread.gradingEffort).toBe('low')
     expect(reread.summarisingModel).toBe('gemini-3.8-flash')
+    expect(reread.summarisingEffort).toBe('medium')
     expect(reread.judgmentModel).toBe('gemini-3.1-pro')
     expect(reread.judgmentEffort).toBe('high')
 
@@ -296,5 +305,21 @@ describe('the model table column', () => {
     expect(reread.defaultModel).toBe('gemini-3.8-flash')
     expect(reread.defaultEffort).toBe('high')
     expect(reread.modelRoutes).toEqual([row('gemini-3.8-flash', 'high', true)])
+  })
+
+  it('migration 83 makes legacy selectable rows and summaries explicitly medium', () => {
+    const w = claudeWorker()
+    db.db().exec(`pragma user_version = ${db.versionBefore('summarising_effort')}`)
+    db.db().prepare(
+      `update workers set summarising_model = 'claude-opus-5', summarising_effort = null,
+       model_routes_json = ? where id = ?`
+    ).run(JSON.stringify([row('claude-opus-5', null), row('claude-opus-5', 'medium', false), row('claude-haiku-4-5', null)]), w.id)
+    db.closeDb()
+    db.openDb(dbPath)
+    expect(workers.requireWorker(w.id)).toMatchObject({
+      summarisingModel: 'claude-opus-5', summarisingEffort: 'medium',
+      // Normalisation exposed a duplicate pair; only the first remains, so the table is editable.
+      modelRoutes: [row('claude-opus-5', 'medium'), row('claude-haiku-4-5', null)]
+    })
   })
 })

@@ -37,6 +37,7 @@ const worker = (over: Partial<Worker> = {}): TableWorker => ({
   judgmentModel: null,
   judgmentEffort: null,
   summarisingModel: null,
+  summarisingEffort: null,
   ...over
 })
 const row = (model: string, effort: string | null, auto = true): ModelRoute => ({ model, effort, modelClass: null, auto })
@@ -86,11 +87,11 @@ describe('the model table (t638)', () => {
     const rows = modelTableRows(w, claude)
     expect(pairs(rows)).toContain('claude-opus-5@low')
     expect(pairs(rows)).toContain('claude-sonnet-5@max')
-    expect(pairs(rows)).toContain('claude-opus-5-5@low')
+    expect(pairs(rows)).toContain('claude-opus-5-5@medium')
     expect(rows.filter((r) => isDefaultRow(w, claude, r)).map((r) => r.effort)).toEqual(['low'])
     expect(rows.filter((r) => isJudgmentRow(w, claude, r)).map((r) => r.model)).toEqual(['claude-sonnet-5'])
     expect(rows.filter((r) => isGradingRow(w, claude, r)).map((r) => r.model)).toEqual(['claude-haiku-4-5'])
-    expect(rows.filter((r) => isSummaryRow(w, r)).map((r) => r.model)).toEqual(['claude-opus-5-5'])
+    expect(rows.filter((r) => isSummaryRow(w, claude, r)).map((r) => r.model)).toEqual(['claude-opus-5-5'])
   })
 
   it('⚠️ a default effort on a model with no levels is the plain line, not a second one', () => {
@@ -142,9 +143,9 @@ describe('the model table (t638)', () => {
       modelRoutes: [row('gemini-3.8-flash', 'low'), row('gemini-3.8-flash', 'medium'), row('gemini-3.8-flash', 'high')]
     })
     const rows = modelTableRows(w, agy)
-    expect(rows.filter((r) => isDefaultRow(w, agy, r)).map((r) => r.effort)).toEqual([null])
+    expect(rows.filter((r) => isDefaultRow(w, agy, r)).map((r) => r.effort)).toEqual(['medium'])
     expect(rows.filter((r) => r.model === 'gemini-3.8-flash' && !isDefaultRow(w, agy, r)).map((r) => r.effort)).toEqual([
-      'high', 'medium', 'low'
+      'high', 'low'
     ])
   })
 
@@ -168,5 +169,21 @@ describe('the model table (t638)', () => {
   it('keeps a stored line for a model the adapter no longer lists, at the end', () => {
     const rows = modelTableRows(worker({ modelRoutes: [row('claude-opus-4-8', 'high')] }), claude)
     expect(pairs(rows).at(-1)).toBe('claude-opus-4-8@high')
+  })
+
+  it('⭐ gives Summary to exactly one same-model effort row and keeps the others removable', () => {
+    const w = worker({
+      summarisingModel: 'claude-opus-5',
+      summarisingEffort: 'medium',
+      modelRoutes: [row('claude-opus-5', 'low'), row('claude-opus-5', 'medium'), row('claude-opus-5', 'high')]
+    })
+    const rows = modelTableRows(w, claude)
+    expect(rows.filter((r) => isSummaryRow(w, claude, r)).map((r) => r.effort)).toEqual(['medium'])
+    expect(routesToStore(rows.filter((r) => !isSummaryRow(w, claude, r))).map((r) => r.effort)).toEqual(['high', 'low'])
+  })
+
+  it('turns a legacy selectable blank effort into medium, while a model with no levels remains n/a', () => {
+    const rows = modelTableRows(worker({ modelRoutes: [row('claude-opus-5', null), row('claude-haiku-4-5', null)] }), claude)
+    expect(pairs(rows)).toEqual(['claude-opus-5@medium', 'claude-haiku-4-5'])
   })
 })

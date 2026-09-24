@@ -25,6 +25,7 @@ type TableWorker = Pick<
   | 'judgmentModel'
   | 'judgmentEffort'
   | 'summarisingModel'
+  | 'summarisingEffort'
 >
 
 /**
@@ -61,11 +62,12 @@ export function seedEffort(levels: string[], accountDefault: string | null): str
  * second haiku line at `medium` that no dispatch could ever run.
  */
 export function effectiveEffort(options: ModelOptions | null, model: string, effort: string | null | undefined): string | null {
-  if (!effort) return null
   const known = options?.models.find((m) => m.id === model)
-  if (!options?.selectableEffort) return options ? null : effort
-  if (known && known.effortLevels.length === 0) return null
-  return effort
+  if (!options?.selectableEffort) return options ? null : effort ?? null
+  if (known?.effortLevels.length === 0) return null
+  // Old rows predate per-row effort. They are displayed and subsequently written as the explicit
+  // medium choice, never as a selectable "not set" state.
+  return effort ?? (known ? seedEffort(known.effortLevels, null) : null)
 }
 
 const pairOf = (options: ModelOptions | null, model: string | null | undefined, effort: string | null | undefined) =>
@@ -124,8 +126,9 @@ export function isJudgmentRow(worker: TableWorker, options: ModelOptions | null,
   return pair !== null && samePair(row, pair)
 }
 
-export function isSummaryRow(worker: TableWorker, row: ModelRoute): boolean {
-  return worker.summarisingModel !== null && worker.summarisingModel === row.model
+export function isSummaryRow(worker: TableWorker, options: ModelOptions | null, row: ModelRoute): boolean {
+  const pair = pairOf(options, worker.summarisingModel, worker.summarisingEffort)
+  return pair !== null && samePair(row, pair)
 }
 
 /**
@@ -140,7 +143,11 @@ export function isSummaryRow(worker: TableWorker, row: ModelRoute): boolean {
  * would be a setting the table could show no trace of, and unticking it would be impossible.
  */
 export function modelTableRows(worker: TableWorker, options: ModelOptions | null): ModelTableRow[] {
-  const rows: ModelTableRow[] = (worker.modelRoutes ?? []).map((r) => ({ ...r, stored: true }))
+  const rows: ModelTableRow[] = (worker.modelRoutes ?? []).map((r) => ({
+    ...r,
+    effort: effectiveEffort(options, r.model, r.effort),
+    stored: true
+  }))
   const ensure = (model: string | null | undefined, effort: string | null | undefined): void => {
     const pair = pairOf(options, model, effort)
     if (!pair) return
@@ -151,9 +158,7 @@ export function modelTableRows(worker: TableWorker, options: ModelOptions | null
   for (const model of Object.values(worker.defaultModels ?? {})) ensure(model, null)
   ensure(worker.gradingModel, worker.gradingEffort)
   ensure(worker.judgmentModel, worker.judgmentEffort)
-  if (worker.summarisingModel && !rows.some((r) => r.model === worker.summarisingModel)) {
-    ensure(worker.summarisingModel, seedEffort(effortLevelsFor(options, worker.summarisingModel), worker.defaultEffort))
-  }
+  ensure(worker.summarisingModel, worker.summarisingEffort)
   const order = (options?.models ?? []).map((m) => m.id)
   const modelRank = (model: string): number => {
     const i = order.indexOf(model)

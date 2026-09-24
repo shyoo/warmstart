@@ -25,6 +25,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **Worker model rows now have independent summary selection and explicit effort (t663, 2026-09-23).** Summary persists a model/effort pair, so toggling Gemini 3.8 Flash selects only that row and leaves other efforts removable. Migration 83 converts legacy selectable blank efforts to `medium` and de-duplicates any pairs that conversion exposes. `docs/ui.md`.
 - **Conversation selection and Antigravity default rows repaired (t660, 2026-09-23).** A listed conversation now owns the sidebar highlight while its thread is open; other project tabs and unlisted threads still highlight the project. Antigravity's per-pool default now identifies one model/effort pair rather than every effort row of its model, so non-default Gemini rows can be removed, and selecting a default also updates its no-quota fallback pair. `docs/ui.md`.
 - **Project task count numbers and indicator dot precedence (t655, t661, 2026-09-23).**
   (1) Added right-aligned `running/not-running` task counts (e.g. `1/2`) beside project names in the left pane when unfinished tasks exist; the second count covers awaiting, queued, quota-held and other unfinished non-running tasks, so running is not counted twice. Non-zero running is blue (`--state-running`), not-running is yellow (`--state-warn`), completed/terminal tasks excluded.
