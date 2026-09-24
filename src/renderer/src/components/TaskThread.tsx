@@ -74,7 +74,8 @@ import { stripAnsi } from '@shared/ansi'
 import { useAction } from '../lib/useAction'
 import { TaskSettingPicker } from './TaskSettingPicker'
 import { CacheCost, Fact, ModelFact, SessionFact } from './thread/Facts'
-import { Decide, QuotaDecide, QuotaOverride } from './thread/Decide'
+import { completeTitle, Decide, QuotaDecide, QuotaOverride, usePendingWork, type PendingWorkState } from './thread/Decide'
+import { AssignPills, useReassignChoice, type ReassignChoice } from './thread/Reassign'
 import { counts, DiffPanel } from './thread/DiffPanel'
 import { sameSource, useDiffPane } from '../lib/diffpane'
 import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
@@ -374,6 +375,11 @@ function TaskDetail({
     await rpc('task.cancel', { id: task.id })
     await refresh()
   }
+  // ⭐ One read of the workspace and one worker/model/effort pick, shared by the settle strip above
+  // the composer and the composer's own buttons (t669).
+  const resting = task.status === 'awaiting_human' || task.status === 'paused_user'
+  const work = usePendingWork(task, resting)
+  const choice = useReassignChoice(task, fleet, modelOptions)
   const liveSession = sessions.find(
     (s) => s.id === runs[0]?.sessionId && !sessionEnded(s.state)
   )
@@ -540,53 +546,6 @@ function TaskDetail({
             </div>
           )}
 
-          {/* ⛔ **Two ways out, because stopping a task is not a verdict on it.** The banner
-              offered only Resume, so an operator who stopped a task and then decided the work was
-              already good enough could either restart an agent they did not want or delete the
-              record — and everything blocked behind it stayed blocked either way, since `admit()`
-              releases a dependent only on `completed`. `resolveTask` completes from any status;
-              what was missing was somewhere to press. */}
-          {task.status === 'paused_user' && (
-            <div className="paused-banner">
-              <div className="paused-banner-header">
-                <span className="paused-banner-title">Paused by operator</span>
-                <span className="dim">
-                  Work and context are preserved. Resume puts this task back in the queue; Mark done
-                  rests it as finished and releases anything waiting on it.
-                </span>
-              </div>
-              <div className="paused-banner-actions">
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  onClick={() => {
-                    void (async () => {
-                      await rpc('task.resume', { id: task.id })
-                      await refresh()
-                    })()
-                  }}
-                >
-                  Resume
-                </button>
-                {/* ⚠️ The same judgement the Decide card records, said the same way: this is your
-                    call, not a check. `task_complete` remains the only signal that an agent
-                    finished. */}
-                <button
-                  type="button"
-                  className="btn btn--ok"
-                  title={
-                    blocking > 0
-                      ? `Records your judgement that this is finished. Releases the ${blocking} task(s) waiting on it. ⚠️ Nothing here verified the work.`
-                      : 'Records your judgement that this is finished. ⚠️ Nothing here verified the work.'
-                  }
-                  onClick={() => void resolve()}
-                >
-                  Mark done
-                </button>
-              </div>
-            </div>
-          )}
-
           {/* ⛔ Shown around the composer, matching `Decide`: quota override decisions are an
               action on the work and belong where the operator gives instructions, not only in the
               read-only ledger on the right. */}
@@ -621,20 +580,28 @@ function TaskDetail({
               atGate={task.status === 'awaiting_human'}
             />
           )}
-          {task.status === 'awaiting_human' && (
+          {resting && (
             <Decide
               task={task}
               blocking={blocking}
-              fleet={fleet}
-              modelOptions={modelOptions}
+              work={work}
+              choice={choice}
               inheritedFinish={detail.inheritedFinish}
               inheritedWorkspaceMode={detail.inheritedWorkspaceMode}
-              onResolve={resolve}
-              onStop={cancel}
               onRefresh={refresh}
             />
           )}
-          {task.status !== 'draft' && <Compose task={task} refresh={refresh} onStop={cancel} />}
+          {task.status !== 'draft' && (
+            <Compose
+              task={task}
+              refresh={refresh}
+              onStop={cancel}
+              onComplete={resolve}
+              blocking={blocking}
+              work={work}
+              choice={choice}
+            />
+          )}
           {/* The mark the open-task jump scrolls to: the bottom of the thread, above nothing. */}
           <div ref={threadBottom} aria-hidden="true" />
         </div>
@@ -2136,15 +2103,24 @@ const COMPOSE_ATTACH_OPTIONS: PillOption[] = [
 function Compose({
   task,
   refresh,
-  onStop
+  onStop,
+  onComplete,
+  blocking,
+  work,
+  choice
 }: {
   task: Task
   refresh: () => Promise<void>
   onStop: () => Promise<void>
+  onComplete: () => Promise<void>
+  blocking: number
+  work: PendingWorkState
+  choice: ReassignChoice
 }): React.JSX.Element {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [stopping, setStopping] = useState(false)
+  const [completing, setCompleting] = useState(false)
   const [outcome, setOutcome] = useState<string | null>(null)
   const { settings } = useUiSettings()
   const paste = usePastedImages()
@@ -2152,18 +2128,37 @@ function Compose({
   const remoteFleet = useIsRemote()
   const running = task.status === 'running' || task.status === 'assigned'
   const stoppable = STOPPABLE.has(task.status)
+  // ⭐ Stopped by you: the one state where Complete sits beside Send (t669). Stop and Complete are
+  // the two ways to rest a task, and offering both on every turn was half of what made the old
+  // *your call* card read as a form in the middle of a chat.
+  const stoppedByYou = task.status === 'paused_user'
+  // ⚠️ Only between runs: the pin decides the *next* dispatch, not the run in front of you.
+  const reassigning = choice.changed && !running
+  const hasBody = text.trim().length > 0 || paste.ids.length > 0
+  // ⚠️ With nothing typed on a stopped task the button resumes it — the banner that used to hold
+  // Resume is gone, and a primary button that could not be pressed there would be a dead end.
+  const resuming = stoppedByYou && !hasBody && !reassigning
 
-  const canSend = (text.trim().length > 0 || paste.ids.length > 0) && !sending && !paste.busy
+  const canSend = (hasBody || reassigning || resuming) && !sending && !paste.busy
 
   const send = async () => {
     const body = text.trim()
-    if (!body && paste.ids.length === 0) return
+    if (!body && paste.ids.length === 0 && !reassigning && !resuming) return
     if (sending || paste.busy) return
     setSending(true)
     try {
+      if (resuming) {
+        await rpc('task.resume', { id: task.id })
+        await refresh()
+        return
+      }
+      // ⛔ The pin first, in one write, then the message that starts the run on it. `task.message`
+      // is the one RPC that continues a resting task, and it takes a text: with nothing typed the
+      // reassignment says the smallest thing a person could plausibly have meant — *Continue.*
+      if (reassigning) await choice.apply()
       const result = await rpc('task.message', {
         id: task.id,
-        text: body,
+        text: body || (reassigning ? 'Continue.' : ''),
         ...(paste.ids.length > 0 ? { attachmentIds: paste.ids } : {})
       })
       setText('')
@@ -2181,6 +2176,22 @@ function Compose({
       await onStop()
     } finally {
       setStopping(false)
+    }
+  }
+
+  const complete = async () => {
+    // ⛔ **The warning is a first press, not a dialog**, and it is armed only when something would
+    // actually be lost: Complete releases the workspace back to the pool, so over uncommitted files
+    // it is the one irreversible button here. A confirmation on every press would be trained away.
+    if (work.controls.uncommitted && !work.confirmFinish) {
+      work.setConfirmFinish(true)
+      return
+    }
+    setCompleting(true)
+    try {
+      await onComplete()
+    } finally {
+      setCompleting(false)
     }
   }
 
@@ -2232,7 +2243,7 @@ function Compose({
           onDrop={paste.onDrop}
           onDragOver={paste.onDragOver}
           onKeyDown={(e) => {
-            if (isSubmitKey(e, settings.enterBehavior) && canSend) {
+            if (isSubmitKey(e, settings.enterBehavior) && canSend && (hasBody || reassigning)) {
               e.preventDefault()
               void send()
             }
@@ -2250,6 +2261,16 @@ function Compose({
             side (`.compose-row` wraps), Stop and Send drop under the box *together* rather than
             Send alone leaving Stop stranded beside the box. */}
         <span className="compose-actions">
+          {stoppedByYou && (
+            <button
+              className="btn btn--ok"
+              disabled={completing}
+              title={completeTitle(task, blocking, work)}
+              onClick={() => void complete()}
+            >
+              {completing ? 'Completing…' : work.confirmFinish && work.controls.uncommitted ? 'Complete anyway' : 'Complete'}
+            </button>
+          )}
           {stoppable && (
             <button
               className="btn btn--danger"
@@ -2260,12 +2281,36 @@ function Compose({
               {stopping ? 'Stopping…' : 'Stop'}
             </button>
           )}
-          <button className="btn btn--primary" disabled={!canSend} onClick={() => void send()}>
-            {sending ? 'Sending…' : running ? 'Send' : 'Send and continue'}
+          <button
+            className="btn btn--primary"
+            disabled={!canSend}
+            title={
+              reassigning
+                ? 'Moves this task to the worker, model and effort chosen below and starts its next run on this same thread, with your message if you typed one.'
+                : resuming
+                  ? 'Puts this task back in the queue. Type a message first to send it with the resume.'
+                  : undefined
+            }
+            onClick={() => void send()}
+          >
+            {sending
+              ? reassigning
+                ? 'Reassigning…'
+                : 'Sending…'
+              : reassigning
+                ? 'Reassign'
+                : resuming
+                  ? 'Resume'
+                  : 'Send'}
           </button>
         </span>
       </div>
       <ImageChips paste={paste} />
+      <AssignPills
+        choice={choice}
+        disabled={running || sending}
+        disabledReason="Reassign once this turn ends, or Stop it first — the choice decides the next run, not this one."
+      />
       {/*
         ⛔ This used to say "Nothing is running, so this waits… prepended to the prompt the next run
         starts with" — which was true of the code and false of the world, because a finished task has

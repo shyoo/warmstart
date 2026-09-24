@@ -540,52 +540,51 @@ draws neither pill — a control offering a choice that is not on the table is w
 — and files the task with both fields on `inherit`, which is the value that keeps the kind answering.
 The thread shows the same two as read-only facts.
 
-⛔ **A conversation's thread offers Finish · Stop · Commit · Land, and which of the last two is drawn
-is decided by git rather than by the task.** `task.pendingWork` reads the workspace at the moment the
-card renders; `hasDiff` counts **uncommitted** files only, because an unlanded commit is already safe
-on the branch and warning about it would cry wolf on every conversation that did commit. ⛔ The two
-are **independent**, and both buttons can be drawn at once — see `settleControls`. Finish
-releases the workspace, so over a dirty tree it arms once and says what it would lose before it will
-do it.
+⛔ **No *your call* card (t669).** A conversation rests at `awaiting_human` after every reply, and
+the card that used to sit above the composer on each of those turns — Finish, Stop, Reassign, three
+selectors and a message box — made a chat read as a form. Its controls moved to where the reply is
+typed:
 
-⭐ **The card is one row of buttons, and the explanation of each is its tooltip** (2026-09-10). It
-used to draw one row per action with a paragraph beside every button — what it does, what it does
-to the DAG, which level and where the level came from — and six of those under a resting conversation
-was a wall nobody read. `Decide` now renders `.decide-actions`: `Finish · Stop · Commit ▼ · Land ▼`
-(plus *Resolve & retry* and *Retry landing* when a landing has failed), Commit and Land by the same
-`pendingWork` rules as before, and every paragraph moved verbatim into that button's `title`. ⛔ **The
-▼ level menus answer to where the task's work sits**: on the trunk the merge level (a merge that cannot
-happen) and the pull-request level (no branch to open one from) are not offered, and the Land fallback
-is push rather than the merging fleet default (t583). The
-ordinary `awaiting_human` card takes the same shape with *Mark done · Stop here* (plus *Land ▼*
-when unlanded commits are present on the branch, and *Resolve & retry* / *Retry landing* when a landing
-has failed). ⛔ **What stays
-inline is only what protects work**, one short `.decide-note` each: the uncommitted-file count
-Finish would release (*⚠️ 3 uncommitted files — press again to finish anyway* once armed), a
-workspace the card could not read, a refused commit or landing (`commitError`), and — on an
-ordinary task — how many tasks wait on this one, because that is the difference between *Mark
-done* and *Stop here* and it must not live only behind a hover. The head drops the hold reason
-when it is just `your turn`, which is what every resting conversation reads. *Reassign* sits at the
-head of the worker · model · effort row, and pressing it no longer posts *"Reassigned worker to X
-and continued."* in the person's voice: the daemon already writes the *Worker switched to …* system
-line, and the button continues the task with the one-word note `Continue.` — `task.message` is the
-only RPC that continues a resting task and it takes a text. ⭐ Under the row sits `ReassignNote`
-(t564), an optional box whose text is sent *as* that message instead of `Continue.` on the same
-press, so a person can move the work to another account and say what to do differently in one
-step rather than reassigning, waiting for the run to open and then typing into it. `QuotaDecide`
-keeps the older button-beside-paragraph rows and carries the same box on its *Reassign* option:
-with a note, `task.message` is the resume (it requeues a `paused_quota` task itself, and rides
+- **Stop beside Send** at `awaiting_human` as well as mid-run (`STOPPABLE`). Stop parks the task as
+  `paused_user`; nothing is destroyed.
+- **Complete beside Send** once the task is `paused_user` (Stop first, then Complete). It is
+  `task.resolve`, which releases dependents where Stop does not; the tooltip (`completeTitle`) says
+  so. Over uncommitted files it arms once (*Complete anyway*) before it will release the workspace.
+  With nothing typed, the primary button on a stopped task reads **Resume** (`task.resume`); the
+  *Paused by operator* banner that held Resume and Mark done is gone.
+- **Worker · model · effort pills under the box** (`thread/Reassign.tsx`, `useReassignChoice`). A
+  pick that differs from the task's pin draws the row in the accent, shows *undo*, and turns Send into
+  **Reassign**: one `task.setWorker` write, then `task.message` with what was typed, or `Continue.`
+  when nothing was — `task.message` is the only RPC that continues a resting task and it takes a text.
+  The pills are read-only while a run is live, because the pin decides the next dispatch.
+
+⛔ **What is left above the composer is the settle strip, drawn only when it has something to say**
+(`Decide`, `.decide--strip`, no frame, no head): **Commit ▼** and **Land ▼**, decided by git rather
+than by the task — `task.pendingWork` reads the workspace; `hasDiff` counts **uncommitted** files only,
+because an unlanded commit is already safe on the branch. The two are **independent**, and both can be
+drawn at once — see `settleControls`. Then *Resolve & retry* and *Retry landing* after a failed landing
+(Resolve & retry hands the repair to the worker the pills name), and one short `.decide-note` each for
+what protects work: the uncommitted-file count Complete would release (*⚠️ 3 uncommitted files — press
+Complete again to complete anyway* once armed), a workspace that could not be read, a refused commit or
+landing, and how many tasks wait on this one. Each button's full explanation is its `title`. ⛔ **The
+▼ level menus answer to where the task's work sits**: on the trunk the merge level and the
+pull-request level are not offered, and the Land fallback is push rather than the merging fleet
+default (t583).
+
+`QuotaDecide` is unchanged by t669: preemption and quota holds are still a framed card above the
+composer, with the older button-beside-paragraph rows and its own *Reassign* option and `ReassignNote`
+box. With a note, `task.message` is the resume (it requeues a `paused_quota` task itself, and rides
 along undelivered into the next run of a task still `ready` behind the gate); without one,
-`task.resume` as before. During a quota preemption warning, `QuotaDecide` itemizes each wrap-up
-choice distinctly (`Compact & pause`, `Hand off & pause`, `Hand off & reassign`), attaching a labeled
-destination dropdown to `Hand off & reassign` that excludes the preempted worker and defaults to Auto.
+`task.resume`. During a quota preemption warning it itemizes each wrap-up choice distinctly
+(`Compact & pause`, `Hand off & pause`, `Hand off & reassign`), attaching a labeled destination
+dropdown to `Hand off & reassign` that excludes the preempted worker and defaults to Auto.
 If the vendor refuses the turn on quota during the warning or wrap-up, the reassignment applies
 immediately rather than stranding the task on the exhausted account.
 
 ⛔ **Neither Commit nor Land ends the conversation, and neither writes a level.** Both used to write
 the chosen level onto the task, which took it out of `isOpenConversation` for ever — so pressing either
 one, once, turned a chat into an ordinary work task that the next `task_complete` would complete. Only
-**Finish** and **Stop** end a conversation. Press Land as often as there is something to land; each
+**Complete** and **Stop** end a conversation. Press Land as often as there is something to land; each
 press leaves the thread open on the next numbered branch ([`landing.md`](landing.md)).
 
 - **Commit ▼** — uncommitted files. The ▼ offers the finish ladder minus `await-human` (which is

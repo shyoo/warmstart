@@ -1053,7 +1053,7 @@ try {
   // ⚠️ Keyed off the status the pane itself is showing, not off a fixture we assume is running. The
   // set of statuses that draw the button is asserted exhaustively in `taskview.test.ts`; what this
   // has to prove is that the two agree once React, the daemon and the stylesheet are all involved.
-  const working = /^(running|dispatching|queued|ready|blocked|scheduled)$/i.test(sb.status)
+  const working = /^(running|dispatching|queued|ready|blocked|scheduled|awaiting_human)$/i.test(sb.status)
   check(
     working
       ? 'a task that is being worked on offers Stop beside the composer'
@@ -4031,74 +4031,64 @@ try {
     `[...document.querySelectorAll('.tbl tbody tr')].find(r => r.innerText.includes('awaiting_human'))?.click()`
   )
   await wait(1500)
+  // ⭐ t669: no card. The choice is three pills under the composer, and a pick that differs from the
+  // task's pin turns Send into Reassign — the message box *is* the reassignment's message.
   check(
-    'the decide panel offers a reassignment',
-    (await evaluate(`!!document.querySelector('.reassign-row')`)) === true,
-    'the panel only renders while the task is waiting on a person'
+    'the composer offers the worker as a pill under the box',
+    (await evaluate(`!!document.querySelector('.compose .compose-assign .pill')`)) === true,
+    'the pills render under every composer that is not mid-run'
   )
-  // Pick a real worker, which is what brings the model selector - and on a selectable-effort
-  // adapter the effort selector - onto the row beside it. Three is the crowded case.
-  await evaluate(`document.querySelector('.reassign-row .setting-btn-select')?.click()`)
+  check(
+    '⛔ and no "your call" card sits between the thread and the composer',
+    (await evaluate(`[...document.querySelectorAll('.decide:not(.decide--quota)')].filter(d => /your call/i.test(d.innerText)).length`)) === 0,
+    'the card drew on every awaiting_human turn and made a chat read as a form'
+  )
+  const composeButtons = async () =>
+    JSON.parse(
+      await evaluate(`JSON.stringify([...document.querySelectorAll('.compose-actions .btn')].map(b => b.innerText.trim()))`)
+    )
+  const beforePick = await composeButtons()
+  check(
+    'waiting on you, the composer offers Stop beside Send',
+    beforePick.includes('Stop') && beforePick.includes('Send'),
+    JSON.stringify(beforePick)
+  )
+  await evaluate(`document.querySelector('.compose-assign .pill')?.click()`)
   await wait(600)
   await evaluate(
-    `[...document.querySelectorAll('.reassign-row .setting-btn-select-option')].find(o => !o.innerText.includes('Auto'))?.click()`
+    `[...document.querySelectorAll('.pill-menu [role=option]')].find(o => !o.innerText.includes('Auto'))?.click()`
   )
-  await wait(1500)
+  await wait(1200)
   const row = JSON.parse(
     await evaluate(`
       (() => {
-        const wrap = document.querySelector('.reassign-row');
-        const kids = [...document.querySelectorAll('.reassign-select')];
+        const wrap = document.querySelector('.compose-assign');
+        const kids = [...(wrap?.querySelectorAll('.pill') ?? [])];
         return JSON.stringify({
           count: kids.length,
           tops: kids.map(k => Math.round(k.getBoundingClientRect().top)),
-          widest: Math.max(0, ...kids.map(k => Math.round(k.getBoundingClientRect().width))),
-          row: Math.round(wrap.getBoundingClientRect().width),
-          height: Math.round(wrap.getBoundingClientRect().height),
-          overflows: kids.some(k => k.getBoundingClientRect().right > wrap.getBoundingClientRect().right + 1)
+          changed: !!wrap?.classList.contains('compose-assign--changed'),
+          height: wrap ? Math.round(wrap.getBoundingClientRect().height) : -1
         });
       })()
     `)
   )
+  check('choosing a worker brings its model pill beside it', row.count >= 2, JSON.stringify(row))
+  check('and every pill sits on the same row', new Set(row.tops).size === 1, JSON.stringify(row))
+  check('so the whole choice is one line high', row.height > 0 && row.height < 40, JSON.stringify(row))
+  check('and the row says a reassignment is pending', row.changed, JSON.stringify(row))
+  const afterPick = await composeButtons()
   check(
-    'choosing a worker brings its model out beside it, not under it',
-    row.count >= 2,
-    JSON.stringify(row)
+    'the primary button now reads Reassign, carrying whatever is typed in the box',
+    afterPick.includes('Reassign') && !afterPick.includes('Send'),
+    JSON.stringify(afterPick)
   )
-  check(
-    'and every selector sits on the same row',
-    new Set(row.tops).size === 1,
-    `tops ${row.tops.join(', ')} - an auto flex-basis sized each one to its own longest label`
-  )
-  check(
-    'none of them is wider than the row it shares',
-    !row.overflows && row.widest <= row.row,
-    JSON.stringify(row)
-  )
-  check(
-    'so the whole choice is one line high',
-    row.height < 40,
-    `${row.height}px - three stacked selectors ran to about 80`
-  )
-  // ⭐ t564: a reassignment can carry a message. The box is its own line under the selectors — in
-  // the row it would have broken the one-line contract above — and empty by default, so pressing
-  // Reassign with nothing typed still sends the bare *Continue.* it always did.
-  const note = JSON.parse(
-    await evaluate(`
-      (() => {
-        const box = document.querySelector('.decide .reassign-note');
-        return JSON.stringify({
-          present: !!box,
-          inRow: !!box?.closest('.reassign-row'),
-          empty: (box?.value ?? 'x') === '',
-          below: box ? Math.round(box.getBoundingClientRect().top) >= Math.round(document.querySelector('.reassign-row').getBoundingClientRect().bottom) : false
-        });
-      })()
-    `)
-  )
-  check('the reassignment offers a message to send with it', note.present, JSON.stringify(note))
-  check('on its own line under the selectors, not in their row', !note.inRow && note.below, JSON.stringify(note))
-  check('and empty until somebody types', note.empty, JSON.stringify(note))
+  // ⚠️ Undone rather than pressed: this section asserts the shape, and a real reassignment would
+  // dispatch the held task the quota section below still needs parked.
+  await evaluate(`document.querySelector('.compose-assign-reset')?.click()`)
+  await wait(400)
+  const afterUndo = await composeButtons()
+  check('undo puts Send back', afterUndo.includes('Send') && !afterUndo.includes('Reassign'), JSON.stringify(afterUndo))
 
   section('a quota preemption warning')
   // ⛔ t458: `.decide-option` is a two-column grid, and "Compact & pause" / "Hand off & pause" were
@@ -5667,59 +5657,75 @@ try {
     commitTitle.slice(0, 400)
   )
 
-  // ⭐ The card stopped being a wall of text: one row of actions, the prose on their tooltips, and
-  // only the lines that protect work left inline. ⚠️ Both halves asserted non-empty: an empty card
-  // has no paragraph either.
-  const cardShape = JSON.parse(
+  // ⭐ t669: the strip above the composer holds only what protects work. Stop and Complete moved
+  // beside Send; the "your call" head is gone. ⚠️ Both halves asserted non-empty: an empty strip
+  // has no Finish either.
+  const stripShape = JSON.parse(
     await evaluate(`
       (() => {
-        const card = document.querySelector('.decide:not(.decide--quota)');
-        const lines = (card?.innerText ?? '').split('\\n').map(l => l.trim()).filter(Boolean);
+        const strip = document.querySelector('.decide--strip');
         return JSON.stringify({
-          buttons: [...(card?.querySelectorAll('.decide-actions .btn') ?? [])].map(b => b.innerText.trim()),
-          paragraphs: card ? card.querySelectorAll('.decide-what').length : -1,
-          longest: lines.reduce((a, l) => (l.length > a.length ? l : a), ''),
-          multi: lines.filter(l => (l.match(/[.!?]\\s+[A-Z⚠]/g) ?? []).length >= 1)
+          present: !!strip,
+          head: strip ? strip.querySelectorAll('.decide-head').length : -1,
+          buttons: [...(strip?.querySelectorAll('.decide-actions .btn') ?? [])].map(b => b.innerText.trim()),
+          compose: [...document.querySelectorAll('.compose-actions .btn')].map(b => b.innerText.trim()),
+          yourCall: /your call/i.test(document.querySelector('.thread')?.innerText ?? '')
         });
       })()
     `)
   )
   check(
-    '⛔ the conversation card is one row of actions with no explanatory paragraph',
-    cardShape.buttons.length >= 3 &&
-      cardShape.buttons.includes('Finish') &&
-      cardShape.buttons.includes('Stop') &&
-      cardShape.paragraphs === 0 &&
-      cardShape.multi.length === 0,
-    JSON.stringify(cardShape)
+    '⛔ the conversation strip carries Commit and no Finish, Stop or head',
+    stripShape.present &&
+      stripShape.head === 0 &&
+      stripShape.buttons.some((b) => /Commit/.test(b)) &&
+      !stripShape.buttons.some((b) => /^(Finish|Stop|Complete)/.test(b)) &&
+      !stripShape.yourCall,
+    JSON.stringify(stripShape)
   )
-  const headCopy = await evaluate(`document.querySelector('.decide:not(.decide--quota) .decide-head')?.innerText ?? ''`)
   check(
-    'and the head says "your call" without repeating "your turn" beside it',
-    /your call/i.test(headCopy) && !/your turn/i.test(headCopy),
-    JSON.stringify(headCopy)
+    'and the composer carries Stop beside Send',
+    stripShape.compose.includes('Stop') && stripShape.compose.includes('Send'),
+    JSON.stringify(stripShape)
   )
-  // ⛔ Finish over a dirty tree still arms first, and the arming is the one warning kept inline.
-  await evaluate(
-    `[...document.querySelectorAll('.decide .decide-actions .btn')].find(b => b.innerText.trim() === 'Finish')?.click()`
+  // ⛔ Stop parks it; only then is Complete offered, and over a dirty tree Complete still arms first.
+  await evaluate(`[...document.querySelectorAll('.compose-actions .btn')].find(b => b.innerText.trim() === 'Stop')?.click()`)
+  let stopped = []
+  await waitFor(async () => {
+    stopped = JSON.parse(
+      await evaluate(`JSON.stringify([...document.querySelectorAll('.compose-actions .btn')].map(b => b.innerText.trim()))`)
+    )
+    return stopped.includes('Complete')
+  }, 'Complete beside Send once the conversation is stopped')
+  check(
+    'once stopped, the composer offers Complete, and Resume while nothing is typed',
+    stopped.includes('Complete') && stopped.includes('Resume') && !stopped.includes('Stop'),
+    JSON.stringify(stopped)
   )
+  await evaluate(`[...document.querySelectorAll('.compose-actions .btn')].find(b => b.innerText.trim() === 'Complete')?.click()`)
   await wait(400)
   const armed = JSON.parse(
     await evaluate(`
       JSON.stringify({
-        label: [...document.querySelectorAll('.decide .decide-actions .btn')].map(b => b.innerText.trim()).find(t => /^Finish/.test(t)) ?? '',
+        label: [...document.querySelectorAll('.compose-actions .btn')].map(b => b.innerText.trim()).find(t => /^Complete/.test(t)) ?? '',
         warn: [...document.querySelectorAll('.decide .decide-note.decide-warn')].map(n => n.innerText.trim()).join(' | '),
         status: document.querySelector('.detail-side .status')?.innerText.trim() ?? ''
       })
     `)
   )
   check(
-    '⛔ Finish over uncommitted files arms with a one-line warning rather than finishing',
-    armed.label === 'Finish anyway' &&
-      /1 uncommitted file — press again to finish anyway/.test(armed.warn) &&
-      /awaiting_human/.test(armed.status),
+    '⛔ Complete over uncommitted files arms with a one-line warning rather than completing',
+    armed.label === 'Complete anyway' &&
+      /1 uncommitted file — press Complete again to complete anyway/.test(armed.warn) &&
+      /paused_user/.test(armed.status),
     JSON.stringify(armed)
   )
+  // ⚠️ Back to the gate, so the landing and diff checks below see the state they were written for.
+  {
+    const store = new DatabaseSync(join(dataDir, 'warmstart.db'))
+    store.prepare('update tasks set status = ? where id = ?').run('awaiting_human', settleTask.id)
+    store.close()
+  }
 
   // The other half: commit the work in that same worktree, and the card must offer to land it.
   gitIn(convoWorkspace, 'add', '-A')
@@ -5899,15 +5905,15 @@ try {
     /commit, verify and merge into main/i.test(landTitle) && /fleet default|project/i.test(landTitle),
     landTitle.slice(0, 600)
   )
-  // ⚠️ The arming from the Finish press above must not outlive the files it warned about: the tree
-  // is clean now, so the button is an ordinary Finish again.
-  const finishAfterCommit = await evaluate(
-    `[...document.querySelectorAll('.decide .decide-actions .btn')].map(b => b.innerText.trim()).find(t => /^Finish/.test(t)) ?? ''`
+  // ⚠️ The arming from the Complete press above must not outlive the files it warned about: the
+  // tree is clean now, so the uncommitted warning is gone with it.
+  const warnAfterCommit = await evaluate(
+    `[...document.querySelectorAll('.decide .decide-note.decide-warn')].map(n => n.innerText.trim()).join(' | ')`
   )
   check(
-    'and once the tree is clean the Finish arming is gone again',
-    finishAfterCommit === 'Finish',
-    finishAfterCommit
+    'and once the tree is clean the uncommitted warning is gone again',
+    !/uncommitted/.test(warnAfterCommit),
+    warnAfterCommit
   )
   // ⚠️ Opened, then read on a later turn: the menu is React state, so a query in the same
   // evaluate as the click reads the DOM one render too early and finds nothing.

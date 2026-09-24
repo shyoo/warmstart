@@ -152,19 +152,17 @@ describe('where the composer offers to stop the work', () => {
   })
 
   it('offers it on every status where something is being done to the task', () => {
-    // The list the button was asked for: running, dispatching, queued, ready, blocked.
-    for (const status of ['running', 'assigned', 'ready', 'blocked', 'scheduled']) {
+    // The list the button was asked for: running, dispatching, queued, ready, blocked — and since
+    // t669 a task waiting on you, where Stop sits beside Send instead of on a card above it.
+    for (const status of ['running', 'assigned', 'ready', 'blocked', 'scheduled', 'awaiting_human']) {
       expect(STOPPABLE.has(status), status).toBe(true)
     }
   })
 
   it('withholds it where nothing is happening to stop', () => {
-    // ⛔ `awaiting_human` is waiting on the operator and already draws `Decide` with its own "Stop
-    // here" directly above the composer; a second one an inch below reads as a more final action
-    // than the first. `paused_quota` is already stopped. `cancelling` is stopping. The rest are
-    // over, and a draft has never started.
+    // ⛔ `paused_quota` and `paused_user` are already stopped (the latter offers Complete there
+    // instead). `cancelling` is stopping. The rest are over, and a draft has never started.
     const at_rest = [
-      'awaiting_human',
       'paused_quota',
       'paused_user',
       'cancelling',

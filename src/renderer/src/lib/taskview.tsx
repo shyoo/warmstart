@@ -194,18 +194,16 @@ export const CANCELLABLE = new Set([
  * operator would press it again. The subset test in `taskview.test.ts` is what keeps the two
  * honest if either list moves.
  *
- * ⚠️ The two statuses left out are the two where nothing is being done to the task. `awaiting_human`
- * is waiting on *you*, and it already renders `Decide` directly above the composer with a "Stop
- * here" in it — a second Stop an inch below the first, wired to the same call, reads as a different
- * and more final action than the one above it. `paused_quota` is already stopped; the work is not
- * happening and there is nothing there to interrupt. Both remain cancellable from the row menu on
- * the list, which is where "park this differently" belongs.
+ * ⭐ `awaiting_human` is in since t669. Stop and Complete used to live on the *your call* card above
+ * the composer, which a conversation drew after every reply; Stop now sits here beside Send, parks
+ * the task as `paused_user`, and Complete takes its place there. `paused_quota` is left out: it is
+ * already stopped, and the quota card above the composer carries its own choices.
  *
  * ⭐ `blocked` is in, and it is the least obvious one. A blocked task is not idle — it is admitted
  * the moment its prerequisites land, with no further say from anybody — so the only moment to take
  * it off that track is before the prerequisites finish, which is exactly while it reads `blocked`.
  */
-export const STOPPABLE = new Set(['ready', 'blocked', 'scheduled', 'assigned', 'running'])
+export const STOPPABLE = new Set(['ready', 'blocked', 'scheduled', 'assigned', 'running', 'awaiting_human'])
 
 /**
  * Whether a task is held by quota or warning of quota preemption, needing operator attention / override.

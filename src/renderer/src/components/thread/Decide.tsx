@@ -19,18 +19,6 @@ import {
   type Task,
   type WorkspaceMode
 } from '@shared/tasks'
-
-function initialSelectedModel(
-  model?: string,
-  modelPolicy?: 'auto' | 'inherit',
-  modelClass?: ModelClass
-): string {
-  if (model) return model
-  if (modelPolicy === 'auto') {
-    return modelClass ? `__auto__:${modelClass}` : '__auto__'
-  }
-  return ''
-}
 import type { ModelOptions } from '@shared/protocol'
 import { rpc, useNow, type FleetEntry } from '../../lib/daemon'
 import { SettingButtonSelect } from '../SettingButtonSelect'
@@ -57,6 +45,7 @@ import {
   reassignmentModel
 } from '../../lib/taskview'
 import { Fact } from './Facts'
+import { initialSelectedModel, type ReassignChoice } from './Reassign'
 
 /**
  * Quota decision card with Override, Resume, and Reassign controls.
@@ -564,33 +553,106 @@ function ReassignNote({
 }
 
 /**
- * The two ways to settle a task that is waiting on a person, each next to what it actually does.
+ * What is sitting uncommitted or unlanded in a resting task's workspace, read once and shared by the
+ * settle strip (Commit, Land) and the composer (Complete, which arms over uncommitted files).
  *
- * ⛔ They were indistinguishable, and the tooltips were the reason: *"records that you are
- * satisfied"* and *"stops here and rests the task"* are two ways of saying **it stops**. The
- * difference is not in how it feels, it is in the DAG. `admit()` unblocks a dependent only when its
- * dependency reaches `completed`, so **Mark done releases everything waiting on this task and Stop
- * here does not** — and with nothing on screen saying so, the choice looked like a matter of taste
- * while it was quietly the difference between the rest of a plan running and not.
+ * ⛔ Fetched rather than derived, and only while the task rests on a person. Complete releases the
+ * workspace, so on a conversation it can walk away from files nothing else on this page mentions —
+ * see `PendingWork`. ⚠️ `null` while it is being read, which is *not* the same as "nothing there":
+ * the Commit button appears when the answer arrives and the Complete warning with it, rather than
+ * either being drawn on a guess.
+ */
+export interface PendingWorkState {
+  pending: PendingWork | null
+  reread: () => Promise<void>
+  controls: ReturnType<typeof settleControls>
+  /** Complete was pressed once over uncommitted files; the next press completes anyway. */
+  confirmFinish: boolean
+  setConfirmFinish: (armed: boolean) => void
+}
+
+export function usePendingWork(task: Task, enabled: boolean): PendingWorkState {
+  const [pending, setPending] = useState<PendingWork | null>(null)
+  const [confirmFinish, setConfirmFinish] = useState(false)
+  const reread = useCallback(async (): Promise<void> => {
+    if (!task.projectId || !enabled) return
+    try {
+      const answer = await rpc('task.pendingWork', { id: task.id })
+      setPending(answer)
+      // ⚠️ An arming that outlives the thing it warned about is a trap. Once the tree is clean the
+      // next press of Complete must be an ordinary press again.
+      if (!answer.supported || !answer.hasDiff) setConfirmFinish(false)
+    } catch {
+      // ⚠️ A tree that cannot be read is not a tree with nothing in it. Leaving `pending` alone keeps
+      // whatever the last successful read said rather than replacing it with a reassuring absence.
+    }
+  }, [task.id, task.projectId, enabled])
+  // ⚠️ Re-read when the task moves, because every settle action changes the tree: a commit empties
+  // it, a reply can fill it again. `updatedAt` is the cheapest honest trigger.
+  useEffect(() => {
+    void reread()
+  }, [reread, task.updatedAt])
+  // ⛔ **Which controls are drawn is a decision, so it lives where a test can reach it** —
+  // `settleControls`, which carries why Land no longer waits for a pristine tree (t581).
+  const controls = settleControls(task.kind === 'conversation', pending)
+  return { pending, reread, controls, confirmFinish, setConfirmFinish }
+}
+
+function uncommittedPhrase(pending: PendingWork | null): { count: number; short: string } {
+  const count = pending ? pending.dirtyFiles + pending.untrackedFiles : 0
+  return { count, short: `${count} uncommitted file${count === 1 ? '' : 's'}` }
+}
+
+/**
+ * What Complete does, said on its tooltip.
  *
- * ⚠️ The count is drawn, not implied. "2 tasks start" is a fact somebody can check; "unblocks
- * dependents" is a sentence they have to take on trust and cannot see the scope of.
+ * ⛔ The difference between Complete and Stop is in the DAG, not in how it feels: `admit()` unblocks
+ * a dependent only when its dependency reaches `completed`, so **Complete releases everything waiting
+ * on this task and Stop does not**.
+ */
+export function completeTitle(task: Task, blocking: number, work: PendingWorkState): string {
+  const releases =
+    blocking === 0
+      ? 'No tasks depend on this one. It marks as completed.'
+      : blocking === 1
+        ? 'Releases the 1 dependent task to become ready for dispatch.'
+        : `Releases the ${blocking} dependent tasks to become ready for dispatch.`
+  const { count, short } = uncommittedPhrase(work.pending)
+  const warn = work.controls.uncommitted
+    ? `⚠️ ${short} in this workspace. Completing releases the workspace, and ${count === 1 ? 'it goes' : 'they go'} back to the pool with it — Commit first, or press Complete twice to complete anyway. `
+    : ''
+  return (
+    warn +
+    `Records your judgement that this ${task.kind === 'conversation' ? 'conversation' : 'task'} is finished. ${releases} ` +
+    'The branch is kept. ⚠️ Nothing verified the work — task_complete remains the only signal that an agent finished.'
+  )
+}
+
+/**
+ * The actions a resting task may still owe its work, as one slim strip above the composer.
+ *
+ * ⛔ **Drawn only when one applies** (t669). This used to be the *your call* card on every
+ * `awaiting_human` turn — Finish, Stop, Reassign, three selectors and a message box — and a
+ * conversation rests at `awaiting_human` after every reply, so the card sat between the operator
+ * and the agent on every single turn and made a chat read as a form. Stop and Complete now live
+ * beside Send, reassignment in the pills under the box; what is left here is what protects work:
+ * Commit and Land (drawn on what the workspace actually holds — `pendingWork` runs git), the
+ * landing repairs, and the one-line notes that qualify them.
  */
 export function Decide({
   task,
   blocking,
-  fleet,
-  modelOptions,
+  work,
+  choice,
   inheritedFinish,
   inheritedWorkspaceMode,
-  onResolve,
-  onStop,
   onRefresh
 }: {
   task: Task
   blocking: number
-  fleet: FleetEntry[]
-  modelOptions: ModelOptions[]
+  work: PendingWorkState
+  /** The composer's worker / model / effort pick, which Resolve & retry hands the repair to. */
+  choice: ReassignChoice
   /**
    * What this task's *project* (else the fleet) says a finish does — the tier below the task itself.
    *
@@ -605,106 +667,24 @@ export function Decide({
    * pull-request levels are not offered (t583).
    */
   inheritedWorkspaceMode?: WorkspaceMode
-  onResolve: () => Promise<void>
-  onStop: () => Promise<void>
   onRefresh: () => Promise<void>
-}): React.JSX.Element {
-  const [selectedWorkerId, setSelectedWorkerId] = useState<string>(task.constraints.workerId ?? '')
-  const [selectedModel, setSelectedModel] = useState<string>(
-    initialSelectedModel(task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass)
-  )
-  const [selectedEffort, setSelectedEffort] = useState<string>(task.constraints.effort ?? '')
-  // ⭐ Same box as the quota card's: the message that goes with the move. See `ReassignNote`.
-  const [reassignNote, setReassignNote] = useState('')
+}): React.JSX.Element | null {
   const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    setSelectedWorkerId(task.constraints.workerId ?? '')
-    setSelectedModel(
-      initialSelectedModel(task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass)
-    )
-    setSelectedEffort(task.constraints.effort ?? '')
-  }, [task.constraints.workerId, task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass, task.constraints.effort])
-
-  const selectedWorker = fleet.find((e) => e.worker.id === selectedWorkerId)?.worker ?? null
-  const selectedEntry = fleet.find((e) => e.worker.id === selectedWorkerId) ?? null
-  const adapterOptions = modelOptions.find((o) => o.adapterId === selectedWorker?.adapterId)
-  const offeredModels = adapterOptions?.models ?? []
-  const canSetEffort = adapterOptions?.selectableEffort ?? false
-  const inheritedModel = resolveModelChoice(null, selectedWorker, canSetEffort, selectedEntry?.quota).model
-  const offeredEfforts = canSetEffort
-    ? (offeredModels.find((m) => m.id === effortLookupModel(selectedModel, inheritedModel))?.effortLevels ?? [])
-    : []
-
-  // ⚠️ Both numbers agree with their verb. "The 2 tasks waiting on it stays blocked" is the kind of
-  // sentence somebody stops reading, and this one is load-bearing.
-  const releases =
-    blocking === 0
-      ? 'No tasks depend on this one. It marks as completed.'
-      : blocking === 1
-        ? 'Releases the 1 dependent task to become ready for dispatch.'
-        : `Releases the ${blocking} dependent tasks to become ready for dispatch.`
-  const holds =
-    blocking === 0
-      ? 'No dependent tasks are waiting on this.'
-      : blocking === 1
-        ? 'The 1 dependent task stays blocked until completed.'
-        : `The ${blocking} dependent tasks stay blocked until completed.`
-
-  /**
-   * What is sitting uncommitted in this task's workspace, for a conversation.
-   *
-   * ⛔ Fetched rather than derived, and only for the kind that needs it. Finish releases the
-   * workspace, so on a conversation it can walk away from files nothing else on this page mentions —
-   * see `PendingWork`. ⚠️ `null` while it is being read, which is *not* the same as "nothing there":
-   * the Commit button appears when the answer arrives and the Finish warning with it, rather than
-   * either being drawn on a guess.
-   */
-  const [pending, setPending] = useState<PendingWork | null>(null)
-  const [confirmFinish, setConfirmFinish] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
   const conversation = task.kind === 'conversation'
-
-  const readPending = useCallback(async (): Promise<void> => {
-    if (!task.projectId) return
-    try {
-      const answer = await rpc('task.pendingWork', { id: task.id })
-      setPending(answer)
-      // ⚠️ An arming that outlives the thing it warned about is a trap. Once the tree is clean the
-      // next press of Finish must be an ordinary press again.
-      if (!answer.supported || !answer.hasDiff) setConfirmFinish(false)
-    } catch {
-      // ⚠️ A tree that cannot be read is not a tree with nothing in it. Leaving `pending` alone keeps
-      // whatever the last successful read said rather than replacing it with a reassuring absence.
-    }
-  }, [task.id, task.projectId])
-
-  // ⚠️ Re-read when the task moves, because every action on this card changes the tree: a commit
-  // empties it, a reply can fill it again. `updatedAt` is the cheapest honest trigger.
-  useEffect(() => {
-    void readPending()
-  }, [readPending, task.updatedAt])
-
-  // ⛔ **Which of these controls the card draws is a decision, so it lives where a test can reach
-  // it** — `settleControls`, which carries the whole of why Land no longer waits for a pristine
-  // tree (t581). ⚠️ `pending === null` means *not yet read*, and draws nothing: asserting anything
-  // about a tree before the answer arrives is how a card tells somebody there is nothing to lose a
-  // moment before there is.
-  const controls = settleControls(conversation, pending)
+  const { pending, controls, confirmFinish } = work
   const uncommittedNow = controls.uncommitted
   const unlandedNow = controls.land
+  // ⛔ "I could not look" is not "there is nothing there", and it must not render as one (t280).
+  const cannotLook = controls.cannotLook
 
   /**
    * The level each settle-it button starts on, and where that answer came from.
    *
-   * ⭐ **t283.** Both controls used to open on `commit-only` — not as a decision, but because a
-   * picker with no value shows the first item in its list, and `commit-only` is the bottom level of
-   * the ladder. On a project configured for commit·verify·merge the offered answer was therefore the
-   * one that leaves the work sitting on the branch, every single time.
+   * ⭐ **t283.** Both controls used to open on `commit-only` — the bottom of the ladder — because a
+   * picker with no value shows its first item. ⛔ The menus answer to where this task's work sits:
+   * on the trunk the merge and pull-request levels mean nothing, so they are not offered (t583).
    */
-  // ⛔ The menus answer to where this task's work sits, not to the fleet default. On the trunk the
-  // merge level would promise a merge that cannot happen and the pull-request level a branch the task
-  // does not have — both are refused or meaningless downstream, so they are not offered (t583).
   const mode = effectiveWorkspaceMode(task.workspaceMode, inheritedWorkspaceMode)
   const commitOffered = commitLevelsForMode(mode)
   const landOffered = landLevelsForMode(mode)
@@ -714,21 +694,11 @@ export function Decide({
   const landLevel = defaultLevel(task.finishPolicy, inheritedFinish?.policy, landOffered, landFallback)
   const landLevelWhere = levelOrigin(task.finishPolicy, inheritedFinish, landLevel)
 
-  /**
-   * ⛔ **"I could not look" is not "there is nothing there", and it must not render as one.** The
-   * measurement can fail — no workspace has the branch, git could not be read — and hiding every
-   * settle-it control on that answer is what left t280's thread telling an operator to press a Commit
-   * button it had decided not to draw. The control is shown with the reason instead: committing
-   * dispatches a run, which checks the branch out again wherever it has to.
-   */
-  const cannotLook = controls.cannotLook
-
   const canReland = canRelandTask(task)
 
   /**
    * Every cause whose explanation the operator gets, under one button (t289). The copy lives
-   * here because it is presentation; which causes match lives in `resolveRetryCauses`, because
-   * that is the rule a test can pin. ⚠️ Plain strings, because they go into the button's tooltip.
+   * here because it is presentation; which causes match lives in `resolveRetryCauses`.
    */
   const resolveCauseCopy: Record<ResolveRetryCause, string> = {
     conflicted:
@@ -748,138 +718,73 @@ export function Decide({
   }
   const resolveCauses = resolveRetryCauses(task).map((key) => resolveCauseCopy[key])
 
-  const handleResolveRetry = async () => {
+  const act = async (fn: () => Promise<void>): Promise<void> => {
     setBusy(true)
     try {
-      const isAuto = selectedModel.startsWith('__auto__')
-      const modelPolicy = isAuto ? 'auto' : 'inherit'
-      const modelClass = isAuto && selectedModel.includes(':') ? (selectedModel.split(':')[1] as ModelClass) : null
-      const model = isAuto ? null : selectedModel || null
+      await fn()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleResolveRetry = () =>
+    act(async () => {
+      const selected = choice.model
+      const isAuto = selected.startsWith('__auto__')
       await rpc('task.resolveRetry', {
         id: task.id,
-        workerId: selectedWorkerId || null,
-        model,
-        modelPolicy,
-        modelClass,
-        effort: selectedEffort || null
+        workerId: choice.workerId || null,
+        model: isAuto ? null : selected || null,
+        modelPolicy: isAuto ? 'auto' : 'inherit',
+        modelClass: isAuto && selected.includes(':') ? (selected.split(':')[1] as ModelClass) : null,
+        effort: choice.effort || null
       })
       await onRefresh()
-    } finally {
-      setBusy(false)
-    }
-  }
+    })
 
-  const handleReland = async () => {
-    setBusy(true)
-    try {
+  const handleReland = () =>
+    act(async () => {
       await rpc('task.land', { id: task.id })
       await onRefresh()
-    } finally {
-      setBusy(false)
-    }
-  }
+    })
 
-  const handleCommit = async (finishPolicy: FinishPolicy): Promise<void> => {
-    setBusy(true)
-    try {
+  const handleCommit = (finishPolicy: FinishPolicy) =>
+    act(async () => {
       const result = await rpc('task.commitConversation', { id: task.id, finishPolicy })
       setCommitError(result.ok ? null : (result.reason ?? 'the commit could not be started'))
       await onRefresh()
-      await readPending()
-    } finally {
-      setBusy(false)
-    }
-  }
+      await work.reread()
+    })
 
   // ⚠️ The same shape as `handleCommit` and a different call, because it is a different action: this
-  // one spends no turn. Its failure lands in the same place, so one line on the card carries either.
-  const handleLand = async (finishPolicy: FinishPolicy): Promise<void> => {
-    setBusy(true)
-    try {
+  // one spends no turn. Its failure lands in the same place, so one line carries either.
+  const handleLand = (finishPolicy: FinishPolicy) =>
+    act(async () => {
       if (conversation) {
         const result = await rpc('task.landConversation', { id: task.id, finishPolicy })
         setCommitError(result.ok ? null : (result.reason ?? 'the branch could not be landed'))
-      } else {
-        if (finishPolicy !== task.finishPolicy) {
-          const update = await rpc('task.setFinishPolicy', { id: task.id, finishPolicy })
-          if (update.landed) {
-            setCommitError(null)
-          } else if (update.reason) {
-            setCommitError(update.reason)
-          } else if (finishPolicy !== 'commit-only') {
-            const result = await rpc('task.land', { id: task.id })
-            setCommitError(result.landed ? null : (result.reason ?? 'the branch could not be landed'))
-          }
-        } else {
+      } else if (finishPolicy !== task.finishPolicy) {
+        const update = await rpc('task.setFinishPolicy', { id: task.id, finishPolicy })
+        if (update.landed) {
+          setCommitError(null)
+        } else if (update.reason) {
+          setCommitError(update.reason)
+        } else if (finishPolicy !== 'commit-only') {
           const result = await rpc('task.land', { id: task.id })
           setCommitError(result.landed ? null : (result.reason ?? 'the branch could not be landed'))
         }
+      } else {
+        const result = await rpc('task.land', { id: task.id })
+        setCommitError(result.landed ? null : (result.reason ?? 'the branch could not be landed'))
       }
       await onRefresh()
-      await readPending()
-    } finally {
-      setBusy(false)
-    }
-  }
+      await work.reread()
+    })
 
-  const handleReassign = async () => {
-    setBusy(true)
-    try {
-      const isAuto = selectedModel.startsWith('__auto__')
-      const modelPolicy =
-        isAuto ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
-      const modelClass =
-        isAuto && selectedModel.includes(':') ? (selectedModel.split(':')[1] as ModelClass) : null
-      const model = isAuto || selectedModel === '__inherit__' ? null : selectedModel || null
-      // ⛔ Same atomic reassignment as the quota card above; this handler dispatches immediately.
-      await rpc('task.setWorker', {
-        id: task.id,
-        workerId: selectedWorkerId || null,
-        ...(selectedWorkerId ? { model, modelPolicy, modelClass, effort: selectedEffort || null } : {})
-      })
-      // ⛔ **Not a sentence in the person's voice.** This used to post *"Reassigned worker to X and
-      // continued."* as a human message — words nobody typed, read back to them in their own bubble
-      // and sent to the agent as though they had said it. The daemon already writes the *Worker
-      // switched to …* system line when the worker changes, so the thread needs no second account
-      // of it. What it still needs is a run: `task.message` is the one RPC that continues a resting
-      // task (`task.resume` only leaves `paused_*`), and it takes a text, so the note is the
-      // smallest thing a person could plausibly have meant by pressing the button — unless they
-      // typed what they meant into the box beside it, in which case that is the message.
-      const note = reassignNote.trim()
-      await rpc('task.message', { id: task.id, text: note || 'Continue.' })
-      setReassignNote('')
-      await onRefresh()
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  /**
-   * The labels, once. A conversation *finishes* and *stops*; an ordinary task is *marked done* and
-   * *stopped here*. Both pairs are the same two actions, and the tooltips below say what each does
-   * to the DAG — the thing the buttons used to spell out beside themselves.
-   */
-  const finishLabel = conversation ? (confirmFinish && uncommittedNow ? 'Finish anyway' : 'Finish') : 'Mark done'
-  const stopLabel = conversation ? 'Stop' : 'Stop here'
-  const uncommittedCount = pending ? pending.dirtyFiles + pending.untrackedFiles : 0
-  const uncommittedShort = `${uncommittedCount} uncommitted file${uncommittedCount === 1 ? '' : 's'}`
+  const { count: uncommittedCount, short: uncommittedShort } = uncommittedPhrase(pending)
   const branchName = pending?.branch ?? task.branch
 
-  // ⛔ **The prose moved into the tooltips, and none of it was dropped.** The card used to carry a
-  // paragraph beside every button — what it does, what it does to the DAG, which level, where the
-  // level came from — and six of them stacked under a resting conversation was a wall nobody read.
-  // Each button's `title` now says the whole of it; what stays on the card is what protects work.
-  const finishTitle = conversation
-    ? (uncommittedNow
-        ? `⚠️ ${uncommittedShort} in this workspace. Finish releases the workspace, and ${uncommittedCount === 1 ? 'it goes' : 'they go'} back to the pool with it — Commit first, or press Finish twice to finish anyway. `
-        : '') +
-      `Ends this conversation and records your judgement that it is finished. ${releases} ` +
-      'The branch is kept. ⚠️ Nothing verified the work — task_complete remains the only signal that an agent finished.'
-    : `Records your judgement that this is finished. ${releases} ` +
-      '⚠️ Nothing verified the work — task_complete remains the only signal that an agent finished.'
-  const stopTitle =
-    (conversation ? 'Ends this conversation and parks the task as paused_user' : 'Parks the task as paused_user') +
-    `, which Resume picks back up. ${holds} The branch and the workspace are kept; nothing is destroyed.`
+  // ⛔ The prose lives in the tooltips. What stays on the strip is what protects work.
   const commitTitle =
     'Asks this conversation’s agent — in the same session, so it still has the context — to commit ' +
     (uncommittedNow ? `the ${uncommittedShort} on ${branchName}` : `whatever is uncommitted on ${branchName}`) +
@@ -895,161 +800,106 @@ export function Decide({
     (cannotLook
       ? ` ⚠️ Could not read this task’s workspace (${pending?.reason}), so there is no telling what is uncommitted; the run checks the branch out again.`
       : '')
+  const landCommon =
+    `Lands ${pending?.unlandedCommits === 1 ? '1 commit' : `${pending?.unlandedCommits ?? 0} commits`} ` +
+    `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landLevel]} (${landLevelWhere}). ` +
+    'The tool rebases onto the landing target, runs the project’s checks where the level asks for ' +
+    'them, and merges or pushes as the level says; a refusal leaves the branch exactly where it is. '
   const landTitle = conversation
-    ? `Lands ${pending?.unlandedCommits === 1 ? '1 commit' : `${pending?.unlandedCommits ?? 0} commits`} ` +
-      `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landLevel]} (${landLevelWhere}). ` +
-      'The tool rebases onto the landing target, runs the project’s checks where the level asks for ' +
-      'them, and merges or pushes as the level says; a refusal leaves the branch exactly where it is. ' +
-      'Landing does not finish this conversation — only Finish and Stop do — so the thread comes back ' +
+    ? landCommon +
+      'Landing does not finish this conversation — only Complete and Stop do — so the thread comes back ' +
       'open on the next numbered branch, ready to land again. ▼ picks another level for this press.' +
-      // ⛔ The two halves of a dirty tree do different things to a landing, and saying "uncommitted
-      // files" about both would be the fudge that hid t578. Untracked files are not touched by a
-      // rebase — measured — and stay in the workspace the conversation keeps; a tracked change
-      // stops the rebase outright and has to be committed or reverted first.
+      // ⛔ Untracked files are not touched by a rebase — measured — and stay in the workspace; a
+      // tracked change stops the rebase outright and has to be committed or reverted first (t578).
       (pending && pending.untrackedFiles > 0
         ? ` The ${pending.untrackedFiles} untracked file(s) here stay exactly where they are: landing moves only what is committed.`
         : '') +
       (pending && pending.dirtyFiles > 0
         ? ` ⚠️ ${pending.dirtyFiles} tracked file(s) are modified — a rebase will not run over those, so Commit or revert them first.`
         : '')
-    : `Lands ${pending?.unlandedCommits === 1 ? '1 commit' : `${pending?.unlandedCommits ?? 0} commits`} ` +
-      `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landLevel]} (${landLevelWhere}). ` +
-      'The tool rebases onto the landing target, runs the project’s checks where the level asks for ' +
-      'them, and merges or pushes as the level says; a refusal leaves the branch exactly where it is. ' +
-      '▼ picks another level for this press.'
+    : landCommon + '▼ picks another level for this press.'
   const resolveTitle =
-    'Dispatches a landing-repair run on this thread with the worker and model selected below. It carries ' +
-    'the landing failure, check output, branch and required landing procedure into that run, so the new ' +
-    'agent knows it is repairing and landing existing work rather than starting the task over. ' +
-    'resolve what stopped it and report complete again. ' +
+    'Dispatches a landing-repair run on this thread with the worker and model chosen under the message ' +
+    'box. It carries the landing failure, check output, branch and required landing procedure into that ' +
+    'run, so the new agent knows it is repairing and landing existing work rather than starting the ' +
+    'task over. ' +
     resolveCauses.join(' ')
   const relandTitle =
     `Rebases and lands ${task.branch} again now, without dispatching an agent. Use it once the ` +
     'trunk is clean or another task has finished landing.'
-  const reassignTitle =
-    'Sets the worker, model and effort for this task’s next run and dispatches it now, on this same ' +
-    'thread, carrying the message typed below it if there is one. Auto lets the scheduler pick by ' +
-    'quota and capacity.'
 
-  // ⚠️ One inline line for the DAG, and only when there is a DAG. "2 tasks wait on this one" is a
-  // fact somebody can check, and it is the difference between the rest of a plan running and not —
-  // which is why it does not live only behind a hover. With nothing waiting, nothing is said.
-  const finishVerb = conversation ? 'Finish' : 'Mark done'
+  // ⚠️ One inline line for the DAG, and only when there is a DAG — the difference between the rest
+  // of a plan running and not, which is why it does not live only behind a hover.
   const waitingLine =
     blocking === 0
       ? null
-      : `${blocking === 1 ? '1 task waits' : `${blocking} tasks wait`} on this one — ${finishVerb} releases ${blocking === 1 ? 'it' : 'them'}; ${stopLabel} keeps ${blocking === 1 ? 'it' : 'them'} blocked.`
+      : `${blocking === 1 ? '1 task waits' : `${blocking} tasks wait`} on this one — Complete releases ${blocking === 1 ? 'it' : 'them'}; Stop keeps ${blocking === 1 ? 'it' : 'them'} blocked.`
 
-  // ⚠️ The head repeats the hold reason only when it says something. 'your turn' is what every
-  // resting conversation reads, and the card's own label already says it.
-  const holdReason = task.holdReason?.trim() ?? ''
-  const showHold = holdReason !== '' && holdReason.toLowerCase() !== 'your turn'
+  const anyAction = controls.commit || unlandedNow || resolveCauses.length > 0 || (canReland && !unlandedNow)
+  if (!anyAction && !uncommittedNow && !cannotLook && !commitError && !waitingLine) return null
 
   return (
-    <div className="decide">
-      <div className="decide-head">
-        <span>your call</span>
-        {/* The reason it stopped, where the answer is given rather than only in the ledger. */}
-        {showHold && <span className="decide-why">{holdReason}</span>}
-      </div>
+    <div className="decide decide--strip">
+      {anyAction && (
+        <div className="decide-actions">
+          {controls.commit && (
+            <SplitButton
+              className="commit-select"
+              label="Commit"
+              tone="warn"
+              value={commitLevel}
+              disabled={busy}
+              title={commitTitle}
+              ariaLabel="Commit this conversation"
+              menuAriaLabel="Landing strategy for this commit"
+              options={commitOffered.map((level) => ({
+                value: level,
+                label: `${FINISH_SHORT[level]} — ${FINISH_LABELS[level]}`
+              }))}
+              onAct={(level) => void handleCommit(level as FinishPolicy)}
+            />
+          )}
 
-      {/* ⛔ One row, every action on it, and what each one does on its tooltip. Commit and Land are
-          drawn on what the workspace actually holds — `pendingWork` runs git rather than reading the
-          task — and as **two** controls, because committing costs a turn and landing does not. */}
-      <div className="decide-actions">
-        <button
-          className="btn btn--ok"
-          title={finishTitle}
-          disabled={busy}
-          onClick={() => {
-            // ⛔ **The warning is a first press, not a dialog**, and it is armed only when something
-            // would actually be lost. Finish releases the workspace back to the pool, so on a
-            // conversation carrying uncommitted files it is the one irreversible button on this
-            // card — and nothing else on the page says those files exist. A confirmation that fired
-            // on every finish would be trained away within a day; this one only ever appears when it
-            // is telling the truth.
-            if (uncommittedNow && !confirmFinish) {
-              setConfirmFinish(true)
-              return
-            }
-            void onResolve()
-          }}
-        >
-          {finishLabel}
-        </button>
+          {/* ⛔ The clean-tree half: committed work with nowhere to go. No agent, no turn. ⚠️ On a
+              conversation it ends nothing: the thread stays open on the next numbered branch. */}
+          {unlandedNow && (
+            <SplitButton
+              className="commit-select"
+              label="Land"
+              tone="primary"
+              value={landLevel}
+              disabled={busy}
+              title={landTitle}
+              ariaLabel={conversation ? 'Land this conversation' : 'Land this task'}
+              menuAriaLabel="Landing strategy for this branch"
+              options={landOffered.map((level) => ({
+                value: level,
+                label: `${FINISH_SHORT[level]} — ${FINISH_LABELS[level]}`
+              }))}
+              onAct={(level) => void handleLand(level as FinishPolicy)}
+            />
+          )}
 
-        <button className="btn btn--danger" title={stopTitle} disabled={busy} onClick={() => void onStop()}>
-          {stopLabel}
-        </button>
+          {resolveCauses.length > 0 && (
+            <button className="btn btn--primary" title={resolveTitle} disabled={busy} onClick={() => void handleResolveRetry()}>
+              Resolve &amp; retry
+            </button>
+          )}
 
-        {controls.commit && (
-          <SplitButton
-            className="commit-select"
-            label="Commit"
-            tone="warn"
-            value={commitLevel}
-            disabled={busy}
-            title={commitTitle}
-            ariaLabel="Commit this conversation"
-            menuAriaLabel="Landing strategy for this commit"
-            options={commitOffered.map((level) => ({
-              value: level,
-              label: `${FINISH_SHORT[level]} — ${FINISH_LABELS[level]}`
-            }))}
-            onAct={(level) => void handleCommit(level as FinishPolicy)}
-          />
-        )}
+          {canReland && !unlandedNow && (
+            <button className="btn btn--primary" title={relandTitle} disabled={busy} onClick={() => void handleReland()}>
+              Retry landing
+            </button>
+          )}
+        </div>
+      )}
 
-        {/* ⛔ The clean-tree half: committed work with nowhere to go. No agent, no turn — the tool
-            rebases, runs the project's checks and merges, exactly as it would have at the end of an
-            ordinary task. ⚠️ And unlike an ordinary task, it ends nothing: the thread stays open on
-            the next numbered branch and can be landed again. See docs/landing.md. */}
-        {unlandedNow && (
-          <SplitButton
-            className="commit-select"
-            label="Land"
-            tone="primary"
-            value={landLevel}
-            disabled={busy}
-            title={landTitle}
-            ariaLabel={conversation ? 'Land this conversation' : 'Land this task'}
-            menuAriaLabel="Landing strategy for this branch"
-            options={landOffered.map((level) => ({
-              value: level,
-              label: `${FINISH_SHORT[level]} — ${FINISH_LABELS[level]}`
-            }))}
-            onAct={(level) => void handleLand(level as FinishPolicy)}
-          />
-        )}
-
-        {resolveCauses.length > 0 && (
-          <button
-            className="btn btn--primary"
-            title={resolveTitle}
-            disabled={busy}
-            onClick={() => void handleResolveRetry()}
-          >
-            Resolve &amp; retry
-          </button>
-        )}
-
-        {canReland && !unlandedNow && (
-          <button className="btn btn--primary" title={relandTitle} disabled={busy} onClick={() => void handleReland()}>
-            Retry landing
-          </button>
-        )}
-      </div>
-
-      {/* ⛔ What stays inline is what protects work: the files Finish would walk away from, a tree
-          the card could not read, and a commit or landing that was refused. Everything else about
-          each button is on its tooltip. ⚠️ Warning colour inside the card rather than a banner above
-          it: each line qualifies one button, not the whole card. */}
       {uncommittedNow && (
         <div className="decide-note decide-warn">
           ⚠️ {uncommittedShort} —{' '}
           {confirmFinish
-            ? 'press again to finish anyway'
-            : `Finish releases ${uncommittedCount === 1 ? 'it' : 'them'}; Commit first, or press Finish twice`}
+            ? 'press Complete again to complete anyway'
+            : `Commit first; Complete releases ${uncommittedCount === 1 ? 'it' : 'them'} with the workspace`}
         </div>
       )}
       {cannotLook && (
@@ -1061,143 +911,9 @@ export function Decide({
       {waitingLine && <div className="decide-note">{waitingLine}</div>}
       {resolveCauses.length > 0 && (
         <div className="decide-note">
-          Choose a worker or model below to hand this landing repair to another agent; Resolve &amp; retry sends it the failure details and landing procedure.
+          Pick a worker or model under the message box to hand this repair to another agent.
         </div>
       )}
-
-      {/* ⚠️ One row, and it stays one row. Each selector used to size itself to its own longest
-          label — "Auto (scheduler decides)", "account default (claude-opus-5)" — so the three of
-          them asked for more width than the column has and wrapped onto a line each, turning one
-          decision into a stack. They share the row equally now and ellipsize instead; the full
-          label is still on the button that opens the menu, and in the menu itself. */}
-      <div className="reassign-row">
-        <button className="btn btn--primary" title={reassignTitle} disabled={busy} onClick={() => void handleReassign()}>
-          Reassign
-        </button>
-        <SettingButtonSelect
-          className="reassign-select"
-          value={selectedWorkerId}
-          disabled={busy}
-          ariaLabel="Reassign worker"
-          options={[
-            { value: '', label: 'Auto (scheduler decides)' },
-            /* ⛔ Deactivated accounts are not offered. Reassigning to a disabled worker
-               parks the task on an account the scheduler will never hand a turn, so the menu
-               lists only what can actually pick the work up. The one exception is the account
-               this task is already pinned to — if it was deactivated after assignment it stays
-               in the list, so the button reads its label instead of a bare id. */
-            ...fleet
-              .filter((e) => (e.worker.enabled && canWork(e.worker.role)) || e.worker.id === selectedWorkerId)
-              .map((e) => ({
-                value: e.worker.id,
-                label: `${e.worker.label} (${e.worker.adapterId})`
-              }))
-          ]}
-          onChange={(nextWorkerId) => {
-            setSelectedWorkerId(nextWorkerId)
-            if (!nextWorkerId) {
-              setSelectedModel('')
-              setSelectedEffort('')
-            } else {
-              const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
-              const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
-              if (
-                selectedModel &&
-                selectedModel !== '__auto__' &&
-                selectedModel !== '__inherit__' &&
-                !offered.some((m) => m.id === selectedModel)
-              ) {
-                setSelectedModel(reassignmentModel(selectedModel, offered))
-                setSelectedEffort('')
-              }
-            }
-          }}
-        />
-
-        {offeredModels.length > 0 && (
-          <SettingButtonSelect
-            className="reassign-select"
-            value={selectedModel}
-            disabled={busy}
-            ariaLabel="Reassign model"
-            options={[
-              ...(offeredModels.length > 1
-                ? [
-                    { value: '__auto__', label: 'Auto Model (scheduler decides)' },
-                    { value: '__auto__:high', label: 'Auto Model (high)' },
-                    { value: '__auto__:med', label: 'Auto Model (med)' },
-                    { value: '__auto__:low', label: 'Auto Model (low)' }
-                  ]
-                : []),
-              {
-                value: '',
-                label: inheritedModel
-                  ? `account default (${modelLabel(inheritedModel) ?? inheritedModel})`
-                  : 'CLI default model'
-              },
-              // ⚠️ The label is written for a person; the value stays the id, which is what is
-              // sent to the CLI and what the cost model is keyed by.
-              ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
-            ]}
-            displayLabel={
-              selectedModel === '__auto__'
-                ? 'Auto Model'
-                : selectedModel === '__auto__:high'
-                  ? 'Auto Model (high)'
-                  : selectedModel === '__auto__:med'
-                    ? 'Auto Model (med)'
-                    : selectedModel === '__auto__:low'
-                      ? 'Auto Model (low)'
-                : !selectedModel || selectedModel === '__inherit__'
-                  ? inheritedModel
-                    ? (modelLabel(inheritedModel) ?? inheritedModel)
-                    : 'CLI default model'
-                  : undefined
-            }
-            onChange={(val) => {
-              setSelectedModel(val)
-              setSelectedEffort('')
-            }}
-          />
-        )}
-
-        {offeredEfforts.length > 0 && (
-          <SettingButtonSelect
-            className="reassign-select"
-            value={selectedEffort}
-            disabled={busy}
-            ariaLabel="Reassign effort"
-            options={[
-              {
-                value: '',
-                label: selectedWorker?.defaultEffort
-                  ? `Auto effort (${effortLabel(selectedWorker.defaultEffort)})`
-                  : 'Auto effort (CLI default)'
-              },
-              ...offeredEfforts.map((level) => ({
-                value: level,
-                label: effortLabel(level) ?? level
-              }))
-            ]}
-            displayLabel={
-              !selectedEffort
-                ? selectedWorker?.defaultEffort
-                  ? `Auto effort (${effortLabel(selectedWorker.defaultEffort) ?? selectedWorker.defaultEffort})`
-                  : 'Auto effort (CLI default)'
-                : undefined
-            }
-            onChange={(val) => setSelectedEffort(val)}
-          />
-        )}
-      </div>
-      <ReassignNote
-        value={reassignNote}
-        disabled={busy}
-        onChange={setReassignNote}
-        onSubmit={() => void handleReassign()}
-      />
-
-      <p className="decide-hint">Or reply below to carry on in this same thread.</p>
     </div>
   )
 }
