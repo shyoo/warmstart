@@ -16,7 +16,7 @@ import type { Run, Task } from '@shared/tasks'
 import type { Session } from '@shared/protocol'
 import type { FleetEntry } from '../../lib/daemon'
 import { timeRange } from '../../lib/format'
-import { holdLine, isWorking, statusLabel, statusToneFor, Working } from '../../lib/taskview'
+import { holdLine, isWorking, statusHintFor, statusLabel, statusToneFor, Working } from '../../lib/taskview'
 import { outcomeClass } from '../../lib/threadview'
 import { QuotaDelta } from './RunRow'
 
@@ -58,7 +58,7 @@ export function LedgerPeek({
         <span className="ledger-peek-row">
           <span className="ledger-peek-key">status</span>
           <span className="ledger-peek-val">
-            <span className={`status ${statusToneFor(task)}`}>
+            <span className={`status ${statusToneFor(task)}`} title={statusHintFor(task)}>
               {statusLabel(task)}
               {isWorking(task) && <Working />}
             </span>

@@ -41,6 +41,7 @@ import {
   projectTaskCounts,
   projectWorkState,
   STATUS_TONE,
+  statusHintFor,
   statusLabel,
   STOPPABLE,
   CANCELLABLE,
@@ -240,6 +241,34 @@ describe('task status tone mapping', () => {
     expect(STATUS_TONE.queued).toBe('state-running')
   })
 
+  /** t668: the colour answers "who is this waiting on?" — only a person is yellow. */
+  it('maps only awaiting_human to yellow (state-warn)', () => {
+    const warn = Object.entries(STATUS_TONE)
+      .filter(([, tone]) => tone === 'state-warn')
+      .map(([status]) => status)
+    expect(warn).toEqual(['awaiting_human'])
+  })
+
+  it('maps parked statuses that need no human action to grey (state-idle)', () => {
+    for (const status of ['paused_user', 'paused_quota', 'blocked', 'scheduled', 'landing_queued', 'draft']) {
+      expect(STATUS_TONE[status]).toBe('state-idle')
+    }
+  })
+
+  it('maps running, dispatching, grading, landing and cancelling to blue', () => {
+    for (const status of ['running', 'assigned', 'grading', 'landing', 'cancelling']) {
+      expect(STATUS_TONE[status]).toBe('state-running')
+    }
+    expect(STATUS_TONE.failed).toBe('state-danger')
+  })
+
+  it('says outright on hover which statuses need no human action', () => {
+    expect(statusHintFor({ status: 'paused_quota' })).toMatch(/no action needed/)
+    expect(statusHintFor({ status: 'paused_user' })).toMatch(/no action needed/)
+    expect(statusHintFor({ status: 'awaiting_human' })).toMatch(/human action needed/)
+    expect(statusHintFor({ status: 'completed', landing: true })).toMatch(/Agent working/)
+  })
+
   it('maps only completed to green (state-ok)', () => {
     expect(STATUS_TONE.completed).toBe('state-ok')
     const okStatuses = Object.entries(STATUS_TONE)
@@ -396,15 +425,15 @@ describe('project work state for left pane indicators', () => {
     expect(projectWorkState([])).toBe('idle')
   })
 
-  it('returns idle when all tasks are completed, failed, cancelled, draft, or blocked', () => {
-    const tasks: Array<{ status: TaskStatus }> = [
-      { status: 'completed' },
-      { status: 'failed' },
-      { status: 'cancelled' },
-      { status: 'draft' },
-      { status: 'blocked' }
-    ]
+  it('returns idle when all tasks are completed, failed or cancelled', () => {
+    const tasks: Array<{ status: TaskStatus }> = [{ status: 'completed' }, { status: 'failed' }, { status: 'cancelled' }]
     expect(projectWorkState(tasks)).toBe('idle')
+  })
+
+  it('returns paused (grey) for parked work that needs nobody: blocked, scheduled, draft, paused_user', () => {
+    for (const status of ['blocked', 'scheduled', 'draft', 'paused_user', 'landing_queued'] as TaskStatus[]) {
+      expect(projectWorkState([{ status }])).toBe('paused')
+    }
   })
 
   it('returns working when a task is running', () => {
@@ -412,20 +441,14 @@ describe('project work state for left pane indicators', () => {
     expect(projectWorkState(tasks)).toBe('working')
   })
 
-  it('returns working when a task is in flight (ready, scheduled, assigned, cancelling)', () => {
+  it('returns working when a task is in flight (ready, assigned, cancelling)', () => {
     expect(projectWorkState([{ status: 'ready' }])).toBe('working')
-    expect(projectWorkState([{ status: 'scheduled' }])).toBe('working')
     expect(projectWorkState([{ status: 'assigned' }])).toBe('working')
     expect(projectWorkState([{ status: 'cancelling' }])).toBe('working')
   })
 
   it('returns needs_attention when a task is awaiting_human', () => {
     const tasks: Array<{ status: TaskStatus }> = [{ status: 'awaiting_human' }]
-    expect(projectWorkState(tasks)).toBe('needs_attention')
-  })
-
-  it('returns needs_attention when a task is paused_user', () => {
-    const tasks: Array<{ status: TaskStatus }> = [{ status: 'paused_user' }]
     expect(projectWorkState(tasks)).toBe('needs_attention')
   })
 
@@ -506,7 +529,7 @@ describe('project work state for left pane indicators', () => {
 
 describe('projectTaskCounts for sidebar project numbers', () => {
   it('returns zeros when there are no tasks', () => {
-    expect(projectTaskCounts([])).toEqual({ running: 0, notRunning: 0 })
+    expect(projectTaskCounts([])).toEqual({ running: 0, awaiting: 0, waiting: 0 })
   })
 
   it('ignores completed, failed, cancelled, and deleted tasks', () => {
@@ -517,18 +540,20 @@ describe('projectTaskCounts for sidebar project numbers', () => {
       { status: 'running', deletedAt: Date.now() },
       { status: 'awaiting_human', deletedAt: Date.now() }
     ]
-    expect(projectTaskCounts(tasks)).toEqual({ running: 0, notRunning: 0 })
+    expect(projectTaskCounts(tasks)).toEqual({ running: 0, awaiting: 0, waiting: 0 })
   })
 
-  it('counts running tasks separately from unfinished but non-running tasks', () => {
+  it('splits unfinished tasks into agent / human / parked buckets by status colour', () => {
     const tasks: Array<Pick<Task, 'status' | 'deletedAt'>> = [
       { status: 'running', deletedAt: null },
+      { status: 'assigned', deletedAt: null },
       { status: 'awaiting_human', deletedAt: null },
       { status: 'paused_quota', deletedAt: null },
-      { status: 'ready', deletedAt: null },
+      { status: 'paused_user', deletedAt: null },
+      { status: 'blocked', deletedAt: null },
       { status: 'completed', deletedAt: null }
     ]
-    expect(projectTaskCounts(tasks)).toEqual({ running: 1, notRunning: 3 })
+    expect(projectTaskCounts(tasks)).toEqual({ running: 2, awaiting: 1, waiting: 3 })
   })
 
   it('counts grading and landing tasks as running', () => {
@@ -537,7 +562,7 @@ describe('projectTaskCounts for sidebar project numbers', () => {
       { status: 'ready', gradingWorkerId: 'worker-1', deletedAt: null },
       { status: 'awaiting_human', deletedAt: null }
     ]
-    expect(projectTaskCounts(tasks)).toEqual({ running: 2, notRunning: 1 })
+    expect(projectTaskCounts(tasks)).toEqual({ running: 2, awaiting: 1, waiting: 0 })
   })
 })
 

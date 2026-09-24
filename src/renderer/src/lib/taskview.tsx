@@ -26,25 +26,60 @@ import { modelLabel } from './modelname'
  * page it opened would be the kind of discrepancy an operator spends ten minutes not trusting.
  */
 
-export const STATUS_TONE: Record<string, string> = {
-  landing: 'state-running',
-  grading: 'state-running',
-  running: 'state-running',
-  assigned: 'state-running',
-  ready: 'state-running',
-  queued: 'state-running',
-  completed: 'state-ok',
-  failed: 'state-danger',
-  awaiting_human: 'state-human',
-  blocked: 'state-idle',
-  scheduled: 'state-idle',
-  draft: 'state-idle',
-  paused_user: 'state-warn',
-  paused_quota: 'state-warn',
-  landing_queued: 'state-idle',
-  cancelling: 'state-warn',
-  cancelled: 'state-idle'
+/**
+ * Who, if anyone, a status is waiting on — the one question the colour answers.
+ *
+ * - `agent` (blue): an agent or the tool is actively doing the work — running, dispatching, grading,
+ *   landing, winding down.
+ * - `human` (yellow): nothing moves until a person answers. Only `awaiting_human`.
+ * - `waiting` (grey): neither — the task is parked and a trigger (a quota window, a prerequisite, a
+ *   clock, a landing slot, a resume) moves it later. ⛔ Not yellow: `paused_user` and `paused_quota`
+ *   used to share the warning colour with nothing to do about either, and a colour that means "act"
+ *   on a row that needs no act trains a person to ignore the one that does (t668).
+ * - `done` (green) and `error` (red).
+ */
+export type StatusAttention = 'agent' | 'human' | 'waiting' | 'done' | 'error'
+
+export const STATUS_ATTENTION: Record<string, StatusAttention> = {
+  landing: 'agent',
+  grading: 'agent',
+  running: 'agent',
+  assigned: 'agent',
+  ready: 'agent',
+  queued: 'agent',
+  cancelling: 'agent',
+  completed: 'done',
+  failed: 'error',
+  awaiting_human: 'human',
+  blocked: 'waiting',
+  scheduled: 'waiting',
+  draft: 'waiting',
+  paused_user: 'waiting',
+  paused_quota: 'waiting',
+  landing_queued: 'waiting',
+  cancelled: 'waiting'
 }
+
+const ATTENTION_TONE: Record<StatusAttention, string> = {
+  agent: 'state-running',
+  human: 'state-warn',
+  waiting: 'state-idle',
+  done: 'state-ok',
+  error: 'state-danger'
+}
+
+/** Hover text on a status pill: says outright whether the person is the one being waited on. */
+export const ATTENTION_HINT: Record<StatusAttention, string> = {
+  agent: 'Agent working — no action needed',
+  human: 'Waiting on you — human action needed',
+  waiting: 'Parked — no action needed; resumes on its own trigger',
+  done: 'Finished',
+  error: 'Failed'
+}
+
+export const STATUS_TONE: Record<string, string> = Object.fromEntries(
+  Object.entries(STATUS_ATTENTION).map(([status, attention]) => [status, ATTENTION_TONE[attention]])
+)
 
 /**
  * What a status is called where a person can see it.
@@ -85,9 +120,23 @@ export function statusLabel(
   return STATUS_LABEL[task.status] ?? task.status
 }
 
-/** The colour beside `statusLabel`, chosen by the same precedence so the word and its tone agree. */
+/** Who a task is waiting on, by the same precedence as `statusLabel` so the word and its tone agree. */
+export function statusAttention(
+  task: Pick<Task, 'status' | 'gradingWorkerId' | 'landing'>
+): StatusAttention | null {
+  return STATUS_ATTENTION[task.landing ? 'landing' : task.gradingWorkerId ? 'grading' : task.status] ?? null
+}
+
+/** The colour beside `statusLabel`. */
 export function statusToneFor(task: Pick<Task, 'status' | 'gradingWorkerId' | 'landing'>): string {
-  return STATUS_TONE[task.landing ? 'landing' : task.gradingWorkerId ? 'grading' : task.status] ?? ''
+  const attention = statusAttention(task)
+  return attention ? ATTENTION_TONE[attention] : ''
+}
+
+/** The hover text beside `statusLabel`. */
+export function statusHintFor(task: Pick<Task, 'status' | 'gradingWorkerId' | 'landing'>): string | undefined {
+  const attention = statusAttention(task)
+  return attention ? ATTENTION_HINT[attention] : undefined
 }
 
 /**
@@ -124,12 +173,6 @@ export const WORKING_STATUSES = new Set(['running'])
 export function isWorking(task: Pick<Task, 'status' | 'gradingWorkerId' | 'landing'>): boolean {
   return task.status === 'running' || Boolean(task.gradingWorkerId) || Boolean(task.landing)
 }
-
-/**
- * Statuses where something is happening and the next change arrives on its own.
- * Used for project work state tracking.
- */
-export const IN_FLIGHT = new Set(['ready', 'scheduled', 'assigned', 'running', 'landing_queued', 'cancelling'])
 
 export const CANCELLABLE = new Set([
   'ready',
@@ -207,59 +250,53 @@ export function hasQuotaGate(
 export type ProjectWorkState = 'working' | 'needs_attention' | 'paused' | 'pending_pr' | 'idle'
 
 /**
- * Computes the work state for a project based on its tasks:
- * - 'working': At least one task is active/in-flight (overrides awaiting human and quota holds).
- * - 'needs_attention': At least one task is awaiting human input or paused by user.
- * - 'pending_pr': At least one pending pull request has been opened and not landed yet.
- * - 'paused': Nothing is moving, but at least one task is held on quota and will resume itself.
- * - 'idle': Nothing is running, held or waiting on anyone.
+ * Computes the work state for a project from the same buckets as `projectTaskCounts`, so the dot
+ * and the numbers beside it never disagree:
+ * - 'working': at least one task is in the agent bucket (blue).
+ * - 'needs_attention': at least one task is awaiting a human (yellow).
+ * - 'pending_pr': at least one pending pull request has been opened and not landed yet.
+ * - 'paused': nothing is moving and nobody is waited on, but unfinished work is parked (grey).
+ * - 'idle': no unfinished work.
  *
- * Precedence rule: running > await_human > quota (working > needs_attention > paused).
+ * Precedence rule: working > needs_attention > pending_pr > paused.
  */
 export function projectWorkState(
-  tasks: Array<Pick<Task, 'status'> & Partial<Pick<Task, 'gradingWorkerId' | 'landing' | 'deletedAt'>>>,
+  tasks: ReadonlyArray<Pick<Task, 'status'> & Partial<Pick<Task, 'gradingWorkerId' | 'landing' | 'deletedAt'>>>,
   hasPendingPr = false
 ): ProjectWorkState {
-  const liveTasks = tasks.filter((t) => !t.deletedAt)
-  if (liveTasks.some((t) => IN_FLIGHT.has(t.status) || isWorking(t))) {
-    return 'working'
-  }
-  if (liveTasks.some((t) => t.status === 'awaiting_human' || t.status === 'paused_user')) {
-    return 'needs_attention'
-  }
-  if (hasPendingPr) {
-    return 'pending_pr'
-  }
-  if (liveTasks.some((t) => t.status === 'paused_quota')) {
-    return 'paused'
-  }
+  const counts = projectTaskCounts(tasks)
+  if (counts.running > 0) return 'working'
+  if (counts.awaiting > 0) return 'needs_attention'
+  if (hasPendingPr) return 'pending_pr'
+  if (counts.waiting > 0) return 'paused'
   return 'idle'
 }
 
 /**
- * Counts running and unfinished-but-not-running tasks for a project in the navigation pane.
- * - 'running': Actively executing work (running status, or in active grading/landing).
- * - 'notRunning': Awaiting, quota-held, queued, and other unfinished tasks without active work.
+ * Counts a project's unfinished tasks for the navigation pane, one number per `StatusAttention`:
+ * - 'running': the agent bucket (blue) — running, dispatching, queued, grading, landing, cancelling.
+ * - 'awaiting': the human bucket (yellow) — the only number that asks something of the person.
+ * - 'waiting': the parked bucket (grey) — paused, blocked, quota-held, scheduled, draft.
+ * Completed, failed, cancelled and deleted tasks are not counted.
  */
 export function projectTaskCounts(
   tasks: ReadonlyArray<Pick<Task, 'status'> & Partial<Pick<Task, 'gradingWorkerId' | 'landing' | 'deletedAt'>>>
 ): {
   running: number
-  notRunning: number
+  awaiting: number
+  waiting: number
 } {
   let running = 0
-  let notRunning = 0
+  let awaiting = 0
+  let waiting = 0
   for (const t of tasks) {
-    if (t.deletedAt) continue
-    if (!TERMINAL_STATUSES.has(t.status)) {
-      if (isWorking(t)) {
-        running++
-      } else {
-        notRunning++
-      }
-    }
+    if (t.deletedAt || TERMINAL_STATUSES.has(t.status)) continue
+    const attention = statusAttention(t)
+    if (attention === 'agent') running++
+    else if (attention === 'human') awaiting++
+    else if (attention === 'waiting') waiting++
   }
-  return { running, notRunning }
+  return { running, awaiting, waiting }
 }
 
 /** Small indicator dot displayed before the project name in the navigation pane. */
@@ -278,7 +315,7 @@ export function ProjectDot({
       : state === 'needs_attention'
         ? 'Human action needed'
         : state === 'paused'
-          ? 'Paused on quota — resumes when the account’s window reopens'
+          ? 'Parked — paused, blocked or quota-held; no action needed'
           : state === 'pending_pr'
             ? 'Pending pull request — click to view'
             : 'Idle'

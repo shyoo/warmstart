@@ -55,6 +55,7 @@ import {
   latestRunEntry,
   pieceSettings,
   plannedAssignment,
+  statusHintFor,
   statusToneFor,
   elapsed,
   hasQuotaGate,
@@ -641,7 +642,7 @@ function TaskDetail({
         <aside className="detail-side">
           <div className="detail-side-box" ref={setLedgerBox}>
             <Fact label="status" className="fact--status">
-              <span className={`status ${statusToneFor(task)}`}>
+              <span className={`status ${statusToneFor(task)}`} title={statusHintFor(task)}>
                 {statusLabel(task)}
                 {isWorking(task) && <Working />}
               </span>
@@ -710,7 +711,7 @@ function TaskDetail({
                 >
                   <span className="dep-seq">t{parent.seq}</span>
                   <span className="dep-title">{taskLabel(parent)}</span>
-                  <span className={`status ${statusToneFor(parent)}`}>
+                  <span className={`status ${statusToneFor(parent)}`} title={statusHintFor(parent)}>
                     {statusLabel(parent)}
                     {isWorking(parent) && <Working />}
                   </span>

@@ -33,6 +33,7 @@ import {
   isWorking,
   modelLine,
   statusLabel,
+  statusHintFor,
   statusToneFor,
   taskLabelShort,
   Working
@@ -960,7 +961,7 @@ export function Tasks({
                       <Stamp ts={task.updatedAt} />
                     </td>}
                     {shown.has('status') && <td>
-                      <span className={`status ${statusToneFor(task)}`}>
+                      <span className={`status ${statusToneFor(task)}`} title={statusHintFor(task)}>
                         {statusLabel(task)}
                         {isWorking(task) && <Working />}
                       </span>

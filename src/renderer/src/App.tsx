@@ -494,7 +494,8 @@ export function App({
               const projectPendingPrs = pendingDeliveries.filter((d) => d.projectId === project.id)
               const hasPendingPr = projectPendingPrs.length > 0
               const state = projectWorkState(projectTasks, hasPendingPr)
-              const { running: runningCount, notRunning: notRunningCount } = projectTaskCounts(projectTasks)
+              const { running: runningCount, awaiting: awaitingCount, waiting: waitingCount } =
+                projectTaskCounts(projectTasks)
               // ⛔ The conversations this project is in the middle of, listed under it so switching
               // between two of them is one click here rather than a trip through the Tasks board
               // (t479). Which ones qualify is `openConversations`' rule, not this file's.
@@ -560,16 +561,18 @@ export function App({
                       }
                     />
                     <span className="nav-project-name">{project.name}</span>
-                    {runningCount + notRunningCount > 0 && (
+                    {runningCount + awaitingCount + waitingCount > 0 && (
+                      // Three numbers, one per colour: agent working / waiting on you / parked. Only
+                      // the middle one asks anything of the person reading it.
                       <span
                         className="nav-count num"
-                        title={`${runningCount} running · ${notRunningCount} awaiting, queued, or quota-held task${notRunningCount === 1 ? '' : 's'}`}
+                        title={`${runningCount} running · ${awaitingCount} awaiting you (human action needed) · ${waitingCount} paused, blocked, quota-held or scheduled (no action needed)`}
                       >
-                        <span className={runningCount > 0 ? 'nav-count-running' : undefined}>
-                          {runningCount}
-                        </span>
+                        <span className={runningCount > 0 ? 'nav-count-running' : undefined}>{runningCount}</span>
                         /
-                        <span className="nav-count-not-running">{notRunningCount}</span>
+                        <span className={awaitingCount > 0 ? 'nav-count-awaiting' : undefined}>{awaitingCount}</span>
+                        /
+                        <span className={waitingCount > 0 ? 'nav-count-waiting' : undefined}>{waitingCount}</span>
                       </span>
                     )}
                     {/* ⚠️ Only where there is something to fold. A toggle on a project with no open

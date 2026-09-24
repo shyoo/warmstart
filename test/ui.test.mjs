@@ -3994,18 +3994,18 @@ try {
     !/project-dot--idle\b/.test(heldDot),
     'idle is the state of a project with nothing in it, which this is not'
   )
-  // ⛔ Yellow, and actually painted. The class name is half the assertion - a rule that never
+  // ⛔ Grey (t668: parked needs nobody), and actually painted. The class name is half the assertion - a rule that never
   // landed in the stylesheet leaves a correctly-named element drawn as nothing at all.
   const heldColour = await evaluate(
     `getComputedStyle(document.querySelector('.project-dot--paused')).backgroundColor`
   )
-  const warn = await evaluate(
-    `getComputedStyle(document.documentElement).getPropertyValue('--state-warn').trim()`
+  const idle = await evaluate(
+    `getComputedStyle(document.documentElement).getPropertyValue('--state-idle').trim()`
   )
   check(
-    'the dot is drawn in the warning colour rather than left transparent',
+    'the dot is drawn in the parked grey rather than left transparent',
     heldColour !== 'rgba(0, 0, 0, 0)' && heldColour !== 'transparent',
-    `${heldColour} against --state-warn ${warn}`
+    `${heldColour} against --state-idle ${idle}`
   )
 
   section('reassigning a task that is waiting on you')

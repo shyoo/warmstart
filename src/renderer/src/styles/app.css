@@ -1216,18 +1216,17 @@ body {
   animation: project-dot-blink 1.2s ease-in-out infinite;
 }
 
-/* Awaiting human input: solid purple. */
+/* Awaiting human input: solid yellow - the one state that asks something of the person. */
 .project-dot--needs_attention {
-  background: var(--state-human);
-  border: 1px solid var(--state-human);
-  box-shadow: 0 0 5px var(--state-human);
-}
-
-/* Held on quota: solid yellow, standing still - nobody is being waited on. */
-.project-dot--paused {
   background: var(--state-warn);
   border: 1px solid var(--state-warn);
   box-shadow: 0 0 5px var(--state-warn);
+}
+
+/* Parked (paused, blocked, quota-held): solid grey, no glow - nobody is being waited on. */
+.project-dot--paused {
+  background: var(--state-idle);
+  border: 1px solid var(--state-idle);
 }
 
 @keyframes project-dot-blink {
@@ -1421,8 +1420,13 @@ body {
   font-weight: 600;
 }
 
-.nav-count-not-running {
+.nav-count-awaiting {
   color: var(--state-warn);
+  font-weight: 600;
+}
+
+.nav-count-waiting {
+  color: var(--state-idle);
   font-weight: 600;
 }
 
