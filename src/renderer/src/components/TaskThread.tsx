@@ -41,6 +41,7 @@ import { supersededAskIds } from '../lib/compactionstatus'
 import { useScrolledPast } from '../lib/scrolledpast'
 import { isNearPageBottom, shouldJumpToThreadBottom } from '../lib/threadscroll'
 import { effectiveWorkspaceMode } from '../lib/finishlevel'
+import { outcomeHintStale } from '../lib/composeoutcome'
 import { codeSpans } from '../lib/codespans'
 import { bubbleSide, buildThreadItems, promptAnchors } from '../lib/threadbubble'
 import { duration, tokens, when } from '../lib/format'
@@ -2122,6 +2123,11 @@ function Compose({
   const [stopping, setStopping] = useState(false)
   const [completing, setCompleting] = useState(false)
   const [outcome, setOutcome] = useState<string | null>(null)
+  // ⛔ The status the task was at when `outcome` was recorded, so the hint can tell *its own*
+  // send apart from a later one. Without this, "Queued — same thread…" stayed on screen forever:
+  // the requeue is resolved by a scheduler tick minutes later, off in daemon state this component
+  // never watches, so nothing ever cleared the message that answered a question already settled.
+  const outcomeStatus = useRef<Task['status'] | null>(null)
   const { settings } = useUiSettings()
   const paste = usePastedImages()
   const attachmentPickerRef = useRef<HTMLInputElement>(null)
@@ -2164,11 +2170,23 @@ function Compose({
       setText('')
       paste.clear()
       setOutcome(result.outcome)
+      outcomeStatus.current = task.status
       await refresh()
     } finally {
       setSending(false)
     }
   }
+
+  // ⛔ Clears the hint once the task's status has moved on from the send that produced it — a
+  // requeue resolves into `running`/`assigned` on a later scheduler tick, and a delivery resolves
+  // when that running turn ends. Either way, the status itself has already said what happened;
+  // the hint saying it too is now stale, not informative.
+  useEffect(() => {
+    if (outcome && outcomeHintStale(task.status, outcomeStatus.current)) {
+      setOutcome(null)
+      outcomeStatus.current = null
+    }
+  }, [task.status, outcome])
 
   const stop = async () => {
     setStopping(true)

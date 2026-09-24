@@ -5613,13 +5613,17 @@ select:focus-visible,
 /* Who takes the next turn: worker, model, effort as pills under the box, right-aligned under Send.
    A pick that differs from the task's pin draws the row in the accent, so a pending reassignment is
    visible before the button that carries it is pressed. */
+/* Starts where the message box does, past the composer's [+] and the row gap (t673) — the same
+   anchor `.decide--strip` above it uses, so the two rows that sit against the box read as one
+   column rather than one hugging the right edge and the other drifting wherever its own width put it. */
 .compose-assign {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  justify-content: flex-start;
   align-items: center;
   gap: var(--sp-1);
   margin-top: var(--sp-1);
+  padding-left: calc(var(--compose-attach-w) + var(--sp-2));
 }
 
 .compose-assign-pill--changed .pill,

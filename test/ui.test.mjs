@@ -4089,6 +4089,24 @@ try {
   await wait(400)
   const afterUndo = await composeButtons()
   check('undo puts Send back', afterUndo.includes('Send') && !afterUndo.includes('Reassign'), JSON.stringify(afterUndo))
+  // t673: the pills start where the message box does, not bunched under Stop/Send at the right.
+  const assignAlign = JSON.parse(
+    await evaluate(`
+      (() => {
+        const firstPill = document.querySelector('.compose-assign .pill');
+        const box = document.querySelector('.compose-input');
+        return JSON.stringify({
+          wrap: firstPill ? Math.round(firstPill.getBoundingClientRect().left) : null,
+          box: box ? Math.round(box.getBoundingClientRect().left) : null
+        });
+      })()
+    `)
+  )
+  check(
+    'the worker/model pills line up with the message box',
+    assignAlign.wrap !== null && assignAlign.box !== null && Math.abs(assignAlign.wrap - assignAlign.box) <= 1,
+    JSON.stringify(assignAlign)
+  )
 
   section('a quota preemption warning')
   // ⛔ t458: `.decide-option` is a two-column grid, and "Compact & pause" / "Hand off & pause" were

@@ -556,7 +556,15 @@ typed:
   pick that differs from the task's pin draws the row in the accent, shows *undo*, and turns Send into
   **Reassign**: one `task.setWorker` write, then `task.message` with what was typed, or `Continue.`
   when nothing was — `task.message` is the only RPC that continues a resting task and it takes a text.
-  The pills are read-only while a run is live, because the pin decides the next dispatch.
+  The pills are read-only while a run is live, because the pin decides the next dispatch. They start
+  where the box does (`.compose-assign`, `padding-left: --compose-attach-w + --sp-2`, t673), not
+  right-aligned under Send.
+- **The send-outcome hint clears itself once it stops being true** (`outcomeHintStale`,
+  `lib/composeoutcome.ts`, t673). *Queued — same thread, same session where it can.* and *Delivered
+  into the running turn.* used to sit under the composer forever: the requeue they describe resolves
+  on a scheduler tick the composer does not watch, so nothing ever cleared a hint the task's own
+  status had already moved past. `Compose` now records the task's status at the moment it sets
+  `outcome` and drops the hint the first time `task.status` differs from that recording.
 
 ⛔ **What is left above the composer is the settle strip, drawn only when it has something to say**
 (`Decide`, `.decide--strip`, no frame, no head; indented by the composer's square `[+]`,
