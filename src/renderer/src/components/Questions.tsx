@@ -4,6 +4,7 @@ import { rpc, useDaemonEvents } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { ImageChips, usePastedImages } from '../lib/pasteimages'
 import { useIsRemote } from '../lib/target'
+import { LatestResponse } from '../lib/latestresponse'
 import { Pill, PillOptions, type PillOption } from './Pill'
 
 /** The same answer-time attachments the task composer offers — a question is where a person most
@@ -287,11 +288,14 @@ export function TaskQuestions({
   taskStatus?: string
 }): React.JSX.Element | null {
   const [open, setOpen] = useState<Question[]>([])
+  const responses = useRef(new LatestResponse())
 
   const refresh = useCallback(() => {
-    void rpc('question.forTask', { taskId })
-      .then((all) => setOpen(all.filter((q) => q.answeredAt === null)))
-      .catch(() => setOpen([]))
+    void responses.current.apply(
+      rpc('question.forTask', { taskId }),
+      (all) => setOpen(all.filter((q) => q.answeredAt === null)),
+      () => setOpen([])
+    )
   }, [taskId])
 
   useEffect(refresh, [refresh])

@@ -7,7 +7,7 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-24, **Windows 11**): typecheck, lint and build pass; L1 **3,961 passed, 3 skipped** (233 files) in **135.55s**;
+Baseline (2026-09-24, **Windows 11**): typecheck, lint and build pass; L1 **3,963 passed, 3 skipped** (234 files) in **126.83s**;
 L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here; last run 2026-09-23); L3 **486
 checks** (4 skipped); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
 t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
@@ -15,8 +15,6 @@ hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
 
 **`v0.3.2` is `latest`** (2026-09-22), promoted onto `v0.3.2-rc.1`'s commit `6ddf8093`. The next
 `/release rc` opens the patch series at `0.3.3-rc.1` unless `--bump minor|major` is asked for.
-⛔ All four tiers are run before a push, not after: rc.2 of the 0.2.0 series went red on CI because
-six commits were pushed together without `test:ui`.
 Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 **Routing Model v1.2 preserves expiry urgency (t552, 2026-09-19).** `prepaid` is field-normalized
@@ -25,6 +23,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **Answered questions leave the banner and task card (t679, 2026-09-24).** Both question lists now accept only the latest RPC response, so a delayed pre-answer snapshot cannot restore a question after its answer. L1 tests force stale success and failure response order; the daemon's parked-answer tests remain green. `docs/ui.md`.
 - **Sidebar project counts omit empty buckets (t678, 2026-09-24).** `ProjectTaskCount` renders only positive running/awaiting/parked counts, slash separated; colours and hover remain. Six combinations plus empty pinned at L1. `docs/ui.md`.
 - **The `land_work` receipt states previous → next, each named once (t677 ← t667, 2026-09-24).**
   It named only the new branch, which reads as a restatement of the one just landed.

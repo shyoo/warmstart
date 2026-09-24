@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Approval, Question, Task } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { cacheUrgency, countdown, duration } from '../lib/format'
 import { isQuotaGated } from '../lib/taskview'
+import { LatestResponse } from '../lib/latestresponse'
 import {
   isQuotaAlertDismissed,
   prunedQuotaAlerts,
@@ -61,6 +62,7 @@ export function Attention({
 }): React.JSX.Element | null {
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [questions, setQuestions] = useState<Question[]>([])
+  const questionResponses = useRef(new LatestResponse())
   const [gatedTasks, setGatedTasks] = useState<Task[]>([])
   const [busy, setBusy] = useState<string | null>(null)
   // ⚠️ Read once, from `localStorage`: a quota park lasts hours and the operator who dismissed it
@@ -69,7 +71,7 @@ export function Attention({
 
   const refresh = useCallback(() => {
     void rpc('approval.list').then(setApprovals)
-    void rpc('question.list').then(setQuestions)
+    void questionResponses.current.apply(rpc('question.list'), setQuestions)
     void rpc('task.list')
       .then((all) => {
         const gated = all.filter((t) => isQuotaGated(t, Date.now()))
