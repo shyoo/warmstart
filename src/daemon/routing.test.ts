@@ -1879,6 +1879,44 @@ describe('model-aware routing', () => {
     expect(candidates?.[0]?.model).toBe('claude-sonnet-5')
   })
 
+  it('t675: a warm session reporting an unroutable model does not pin the dispatch to it', () => {
+    // ⛔ Measured 2026-09-24 on t667: a session spawned for `claude-opus-5-5` reported
+    // `claude-opus-4-8` on every turn, and the next dispatch trusted the recording into an
+    // explicit `--model` nobody configured — on a worker that never listed it. The warmth is
+    // kept (the session still exempts the capacity count and is chosen), but the model falls
+    // back to what the operator configured.
+    db.db().prepare('update workers set enabled = 0').run()
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'GhostModelWorker', enabled: true })
+    workers.updateWorker(w.id, {
+      defaultModel: 'claude-opus-5-5',
+      modelRoutes: [
+        { model: 'claude-opus-5-5', effort: 'high', modelClass: null, auto: true },
+        { model: 'claude-sonnet-5', effort: 'medium', modelClass: null, auto: true }
+      ]
+    })
+    // t667's pin shape: high class, no model, no policy.
+    const task = tasks.createTask({
+      title: 'Ghost model task',
+      constraints: { workerId: w.id, modelClass: 'high' }
+    })
+
+    const sId = 'session-ghost-model'
+    db.db().prepare(
+      `insert into sessions (id, worker_id, adapter_id, transport, cwd, model, state, purpose, started_at)
+       values (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(sId, w.id, 'claude-code', 'stream', w.isolationRoot, 'claude-opus-4-8', 'live', 'work', Date.now())
+    db.db().prepare(
+      `insert into runs (id, task_id, session_id, worker_id, kind, started_at, ended_at, outcome)
+       values (?, ?, ?, ?, 'work', ?, ?, 'complete')`
+    ).run('run-ghost-model', task.id, sId, w.id, Date.now() - 1000, Date.now())
+
+    const choice = scoring.chooseTarget(task)
+    expect(choice.session?.id).toBe(sId)
+    expect(choice.model).toBe('claude-opus-5-5')
+    const candidates = choice.scored?.filter((s) => s.workerId === w.id)
+    expect(candidates?.map((c) => c.model)).not.toContain('claude-opus-4-8')
+  })
+
   it('pinned model yields 1 pair (via constraints.model and modelsByWorker)', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'PinnedWorker', enabled: true })
     workers.updateWorker(w.id, { modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-sonnet-5', 'claude-opus-5']) })

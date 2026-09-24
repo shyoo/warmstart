@@ -55,6 +55,32 @@ export function autoRoutes(worker: RoutesHolder): ModelRoute[] {
   return (worker?.modelRoutes ?? []).filter((r) => r.auto)
 }
 
+type RoutableHolder = {
+  modelRoutes?: ModelRoute[] | null
+  defaultModel?: string | null
+  defaultModels?: Record<string, string | null> | null
+} | null | undefined
+
+/**
+ * Whether this worker names `model` anywhere it would willingly run it: its model table (auto
+ * and manual rows alike), its single default, or one of its per-pool defaults (t675).
+ *
+ * ⛔ A model a transcript reported is not automatically one of these. A vendor may serve — or a
+ * CLI may report — a model the operator never listed: measured 2026-09-24, when sessions spawned
+ * for `claude-opus-5-5` reported `claude-opus-4-8` mid-conversation and scoring trusted the
+ * recording into the next dispatch. Continuity follows recordings only this far; anything else
+ * falls back to what the operator configured.
+ */
+export function isRoutableModel(
+  worker: RoutableHolder,
+  model: string | null | undefined
+): boolean {
+  if (!model) return false
+  if ((worker?.modelRoutes ?? []).some((r) => r.model === model)) return true
+  if (worker?.defaultModel === model) return true
+  return Object.values(worker?.defaultModels ?? {}).includes(model)
+}
+
 /**
  * What Auto Model may pick on this worker, one pair per model, optionally narrowed to a class.
  *

@@ -25,6 +25,14 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **A transcript-reported model can no longer hijack the next dispatch (t675 ← t667, 2026-09-24).**
+  t667 ran on, then displayed, `claude-opus-4-8` — a model no worker lists. Evidence: sessions
+  spawned for `claude-opus-5-5` reported `4-8` on every turn (t659 shows the flip mid-run, same
+  process), `recordTurn` overwrote the session row, and scoring trusted it into an explicit
+  `--model`. Now the session row is first-writer-wins (`transcript.ts`) and reuse/resume
+  candidates must be routable on the worker (`isRoutableModel`, `scoring.ts`), falling back to the
+  configured model with a log line. The composer reassign is exonerated: the pin path cannot mint
+  a model id. 1 shared + 1 metering + 1 routing L1. `docs/routing.md` §2.4.
 - **The reassign pills name what the task is on, not *Auto model* (t674, 2026-09-23).** Where the pin leaves worker, model or effort to the scheduler, the pills under the composer show the latest run's account, model and session effort (`pillLabels`, `thread/Reassign.tsx`; 6 L1 checks). A reassignment to another account that has not run yet still reads Auto. `docs/ui.md`.
 - **The send-outcome hint no longer sticks, and the reassign pills line up with the box (t673, 2026-09-23).** "Queued — same thread…" stayed under the composer forever because nothing watched for the task's status moving past the send that produced it; `outcomeHintStale` (`lib/composeoutcome.ts`, unit-tested) now clears it the first time `task.status` differs from what it was when the hint was recorded. `.compose-assign` (worker/model/effort pills) now starts where the message box does, like the settle strip above it, instead of right-aligned under Send. L3 asserts both. `docs/ui.md`.
 - **The settle strip lines up with the message box (t672, 2026-09-23).** The composer's `[+]` is now a fixed 30px square (`--compose-attach-w`) and `.decide--strip` indents by it plus the row gap, so Commit/Land start where the box does; strip buttons are a step smaller (22px vs Send's 27px, L3). L3's *changes nothing but the name* is flaky (read `assigned` once, passed on rerun). `docs/ui.md`.

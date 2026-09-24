@@ -1244,9 +1244,11 @@ export function spawnSession(opts: SpawnOptions): Session {
       purpose,
       transcriptPath,
       now,
-      // ⚠️ What was *asked for*, recorded so the detail pane can say so before a turn has run. The
-      // transcript overwrites it with what actually happened — `coalesce` in transcript.ts keeps
-      // this value only until the first turn reports one, which is the right precedence.
+      // ⚠️ What was *asked for*, recorded so the detail pane can say so before a turn has run.
+      // The transcript fills it in only while it is still null (first learning, same as
+      // `noteModelChosen`): a mid-conversation report never rewrites it, because a vendor may
+      // serve — or a CLI may report — a model nobody configured (t675), and that recording must
+      // not become the next dispatch. Per-turn truth still lands on every `turns` row.
       opts.effort ?? null,
       opts.projectId ?? null
     )

@@ -3,7 +3,7 @@ import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import type { Objective, Project, Task } from '@shared/tasks.js'
 import { projectTrunkOnly, resolveWorkspaceMode, windowHighWater, WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { WEIGHT_SIGNS } from '@shared/routing.js'
-import { classOnWorker } from '@shared/modelroutes.js'
+import { classOnWorker, isRoutableModel } from '@shared/modelroutes.js'
 import { adapter } from './adapters/index.js'
 import { paceFactors, paceFor, paceValue, type PaceFactors } from './pace.js'
 import {
@@ -359,6 +359,25 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     const resumable = reuse ? null : reopenableFor(task, worker.id)
     const held = reuse ?? resumable
 
+    // ⛔ A recording is not a route (t675). The session's model is whatever its transcript last
+    // reported, and a vendor may serve — or a CLI may report — a model this worker never listed.
+    // Continuing on such a recording would dispatch an unroutable `--model` nobody configured, so
+    // it falls back to the normal chain below, which re-asks for what the operator configured.
+    // The warmth itself is unaffected: `reuse` still exempts the session from the capacity count.
+    const reuseModel = reuse?.model && isRoutableModel(worker, reuse.model) ? reuse.model : null
+    if (reuse?.model && !reuseModel) {
+      log.info(
+        `t${task.seq}: session ${reuse.id} reports model ${reuse.model}, which ${worker.label} cannot route; continuing without pinning it`
+      )
+    }
+    const heldModel =
+      !reuse && held?.model && isRoutableModel(worker, held.model) ? held.model : null
+    if (!reuse && held?.model && !heldModel) {
+      log.info(
+        `t${task.seq}: resumable session ${held.id} reports model ${held.model}, which ${worker.label} cannot route; resuming without pinning it`
+      )
+    }
+
     // Determine candidate models for this worker:
     // ⛔ A task that pinned a model gets exactly one pair.
     // ⛔ An explicit inherit policy takes the account's own default and routes nothing else.
@@ -380,16 +399,16 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       // the model the account uses, which is a different answer from *any of the models it may be
       // routed to* the moment somebody widens the worker's allowlist.
       candidateModels = inheritedModelFor(worker).map((model) => ({ model, effort: null }))
-    } else if (reuse?.model) {
+    } else if (reuseModel) {
       // A live conversation is served by the process already running it: the model was fixed at spawn
       // and dispatchIntoWarmSession cannot change it.
-      candidateModels = [{ model: reuse.model, effort: null }]
+      candidateModels = [{ model: reuseModel, effort: null }]
     } else if (task.constraints.modelPolicy === 'auto') {
       candidateModels = routableCandidatesFor(worker, task.constraints.modelClass)
       classFiltered = true
-    } else if (held?.model) {
+    } else if (heldModel) {
       // For tasks with no explicit model or policy, preserve conversational continuity on resume.
-      candidateModels = [{ model: held.model, effort: null }]
+      candidateModels = [{ model: heldModel, effort: null }]
     } else {
       candidateModels = routableCandidatesFor(worker, task.constraints.modelClass)
       classFiltered = true

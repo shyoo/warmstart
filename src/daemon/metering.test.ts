@@ -212,6 +212,23 @@ describe('recordTurn', () => {
     }
     expect(session).toEqual({ model: 'claude-sonnet-5', effort: 'high' })
   })
+
+  it('t675: a later turn never rewrites the session model the spawn asked for', () => {
+    // ⛔ Measured 2026-09-24: a session spawned for `claude-opus-5-5` reported `claude-opus-4-8`
+    // on later turns, and the overwrite became the next dispatch. The turn rows keep per-turn
+    // truth (metering); the session row keeps first-writer-wins (identity for continuity).
+    expect(transcript.recordTurn({ ...turn('req_other_model'), model: 'claude-opus-4-8', effort: 'low' })).toBe(true)
+    const session = db.db().prepare('select model, effort from sessions where id = ?').get(SESSION) as {
+      model: string | null
+      effort: string | null
+    }
+    expect(session).toEqual({ model: 'claude-sonnet-5', effort: 'high' })
+    const recorded = db.db().prepare('select model, effort from turns where request_id = ?').get('req_other_model') as {
+      model: string | null
+      effort: string | null
+    }
+    expect(recorded).toEqual({ model: 'claude-opus-4-8', effort: 'low' })
+  })
 })
 
 /**

@@ -3,6 +3,7 @@ import {
   autoCandidates,
   autoModelCount,
   classOnWorker,
+  isRoutableModel,
   routeEffortFor,
   routesFromLegacy,
   type ModelRoute
@@ -67,5 +68,28 @@ describe('model routes (t638)', () => {
       row('claude-haiku-4-5', null, false, 'low')
     ])
     expect(routesFromLegacy(null, null, null)).toEqual([])
+  })
+
+  /**
+   * ⛔ A recording is not a route (t675). The transcript may report a model the worker never
+   * listed — measured 2026-09-24, when sessions spawned for `claude-opus-5-5` reported
+   * `claude-opus-4-8` — and continuity must not follow it into the next dispatch.
+   */
+  it('calls a model routable where the worker names it, and nowhere else', () => {
+    // Auto and manual rows alike, plus both kinds of default.
+    expect(isRoutableModel(worker, 'claude-opus-5-5')).toBe(true)
+    expect(isRoutableModel(worker, 'claude-opus-5')).toBe(true)
+    expect(
+      isRoutableModel(
+        { modelRoutes: [], defaultModel: 'claude-sonnet-5', defaultModels: { claude: 'claude-opus-5' } },
+        'claude-opus-5'
+      )
+    ).toBe(true)
+    // Never listed: not a route, not a default, not routable — even with a built-in class.
+    expect(isRoutableModel(worker, 'claude-opus-4-8')).toBe(false)
+    expect(isRoutableModel(worker, null)).toBe(false)
+    expect(isRoutableModel(worker, undefined)).toBe(false)
+    expect(isRoutableModel(null, 'claude-opus-5-5')).toBe(false)
+    expect(isRoutableModel({ modelRoutes: null }, 'claude-opus-5-5')).toBe(false)
   })
 })

@@ -3937,3 +3937,21 @@ checks in `slotcount.test.ts` pin the card number end to end, plus 2 in `fleetca
 held-only and over-max shapes; the t117 warm-hold, the landing hold and the genuine `2 / 1` are
 pinned unchanged. Not flown beyond the suites: the live rows that produced the screenshot are not
 available to a test, so the two defects are reproduced from equivalent seeded rows.
+
+## t675 — a transcript-reported model hijacked the next dispatch (2026-09-24, from t667)
+
+During t667 the model switched to `claude-opus-4-8`, which no worker lists. Evidence from the live
+database: t667's session was spawned asking for `claude-opus-5-5` (routing decision, quota switch
+from CodexFirst), but every turn from the first reported `claude-opus-4-8` — and t659 on another
+worker shows the same flip mid-run in a single process, so this is the vendor serving (or the CLI
+reporting) an unlisted model, not a dispatch flag. Two compounding defects made it stick:
+`recordTurn` let any turn overwrite the session row (`coalesce(turn, row)`), and scoring trusted the
+recording into an explicit `--model` on the next dispatch (routing decision 04:55, warm, `4-8`).
+The composer reassign was exonerated: its pin path cannot mint a model id, and no reassign message
+exists in the window. Fixes: the session row is first-writer-wins (spawn asked, init/first-turn
+learning; per-turn truth stays on `turns` for metering), and reuse/resume candidates must be
+routable on the worker (`isRoutableModel`: table rows, single and per-pool defaults), falling back
+to the configured model with a log line. Warmth is kept in both cases. Already-poisoned rows heal
+on the next respawn via the spawn upsert. 1 shared + 1 metering + 1 routing L1; the ghost e2e fails
+on the old code with exactly the incident signature (`4-8` chosen over `5-5`). `docs/routing.md`
+§2.4.

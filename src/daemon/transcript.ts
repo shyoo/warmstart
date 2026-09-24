@@ -418,8 +418,8 @@ export function recordTurn(turn: Turn): boolean {
     .prepare(
       `update sessions
           set context_tokens = ?, last_request_started_at = ?, cache_expires_at = ?,
-              tokens_since_compact = tokens_since_compact + ?, effort = coalesce(?, effort),
-              model = coalesce(?, model)
+              tokens_since_compact = tokens_since_compact + ?, effort = coalesce(effort, ?),
+              model = coalesce(model, ?)
         where id = ?`
     )
     .run(
