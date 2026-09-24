@@ -49,6 +49,7 @@
   --sp-6: 32px;
 
   --row-h: 30px;        /* task table row — a control surface, not a landing page */
+  --compose-attach-w: 30px; /* the thread composer's square [+]; the settle strip indents by it */
   /* 232px until 2026-08-27; the twenty extra pixels are what keep the longest project and route
      names on one line. The sidebar is navigation only — the controls moved to the title bar. */
   --sidebar-w: 252px;

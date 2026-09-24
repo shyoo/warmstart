@@ -5697,6 +5697,33 @@ try {
       !stripShape.yourCall,
     JSON.stringify(stripShape)
   )
+  // t672: the strip's first control starts where the message box does, and is smaller than Send.
+  const stripAlign = JSON.parse(
+    await evaluate(`
+      (() => {
+        const first = document.querySelector('.decide--strip .decide-actions')?.firstElementChild;
+        const box = document.querySelector('.compose-input');
+        const send = [...document.querySelectorAll('.compose-actions .btn')].find(b => b.innerText.trim() === 'Send');
+        const main = first?.querySelector('.split-btn-main') ?? first;
+        return JSON.stringify({
+          strip: first ? Math.round(first.getBoundingClientRect().left) : null,
+          box: box ? Math.round(box.getBoundingClientRect().left) : null,
+          stripH: main ? Math.round(main.getBoundingClientRect().height) : null,
+          sendH: send ? Math.round(send.getBoundingClientRect().height) : null
+        });
+      })()
+    `)
+  )
+  check(
+    'the strip lines up with the message box, not the [+] beside it, and its buttons are smaller than Send',
+    stripAlign.strip !== null &&
+      stripAlign.box !== null &&
+      Math.abs(stripAlign.strip - stripAlign.box) <= 1 &&
+      stripAlign.stripH !== null &&
+      stripAlign.sendH !== null &&
+      stripAlign.stripH < stripAlign.sendH,
+    JSON.stringify(stripAlign)
+  )
   check(
     'and the composer carries Stop beside Send',
     stripShape.compose.includes('Stop') && stripShape.compose.includes('Send'),

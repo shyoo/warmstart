@@ -5030,12 +5030,25 @@ select:focus-visible,
    that used to sit between the operator and the agent on every reply. */
 .decide--strip {
   border: none;
-  padding: 0;
+  /* Starts where the message box does, past the composer's [+] and the row gap (t672): the strip
+     acts on this thread, so it reads with the box rather than as a row of its own. */
+  padding: 0 0 0 calc(var(--compose-attach-w) + var(--sp-2));
   margin: var(--sp-2) 0;
 }
 
 .decide--strip .decide-actions {
   margin-bottom: var(--sp-1);
+}
+
+/* A step smaller than the composer's Send: these settle what is already done, they do not speak. */
+.decide--strip .btn,
+.decide--strip .split-btn .pill {
+  font-size: var(--text-meta);
+  padding: 2px var(--sp-2);
+}
+
+.decide--strip .split-btn .pill {
+  padding: 2px 5px;
 }
 
 .decide--quota .decide-head {
@@ -5588,8 +5601,11 @@ select:focus-visible,
   flex: 0 0 auto;
 }
 
+/* A fixed square, so the settle strip above can indent by exactly its width (`.decide--strip`). */
 .compose-row .composer-attachment .pill {
-  height: 30px;
+  width: var(--compose-attach-w);
+  height: var(--compose-attach-w);
+  padding: 0;
   box-sizing: border-box;
   justify-content: center;
 }

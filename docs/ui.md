@@ -559,7 +559,9 @@ typed:
   The pills are read-only while a run is live, because the pin decides the next dispatch.
 
 ⛔ **What is left above the composer is the settle strip, drawn only when it has something to say**
-(`Decide`, `.decide--strip`, no frame, no head): **Commit ▼** and **Land ▼**, decided by git rather
+(`Decide`, `.decide--strip`, no frame, no head; indented by the composer's square `[+]`,
+`--compose-attach-w`, so it starts where the message box does, with buttons a step smaller than Send — t672):
+**Commit ▼** and **Land ▼**, decided by git rather
 than by the task — `task.pendingWork` reads the workspace; `hasDiff` counts **uncommitted** files only,
 because an unlanded commit is already safe on the branch. The two are **independent**, and both can be
 drawn at once — see `settleControls`. Then *Resolve & retry* and *Retry landing* after a failed landing
