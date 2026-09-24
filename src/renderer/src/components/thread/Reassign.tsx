@@ -34,6 +34,66 @@ const AUTO_MODEL_LABELS: Record<string, string> = {
   '__auto__:low': 'Auto Model (low)'
 }
 
+/**
+ * What the task is on *now*: the latest run's account, the model it answered with, and the effort
+ * its session observed. Null until something has run.
+ */
+export interface CurrentAssignment {
+  workerId: string
+  model: string | null
+  effort: string | null
+}
+
+/**
+ * The words on the three pills.
+ *
+ * ⛔ **A pin of "Auto" is not what the task is on.** Once a run has happened the scheduler has made
+ * its choice, and a pill reading *Auto model* under a thread whose run said Opus hides the one fact
+ * the row is there for (t674). Where the selection is untouched and the pin leaves a field to the
+ * scheduler, the pill names what the latest run actually used — but only while the selected account
+ * *is* that run's account: a reassignment to another account that has not started yet has no
+ * current model, and borrowing the previous account's would be a claim about the wrong CLI.
+ */
+export function pillLabels(input: {
+  workerId: string
+  model: string
+  effort: string
+  changed: boolean
+  worker: { label: string; defaultEffort?: string | null } | null
+  inheritedLabel: string
+  current: CurrentAssignment | null
+  currentWorkerLabel: string | null
+}): { workerLabel: string; modelLabel: string; effortLabel: string; currentEffort: boolean } {
+  const { workerId, model, effort, worker, current } = input
+  const onCurrent =
+    !input.changed && !!current && (!workerId || workerId === current.workerId)
+  const autoModel = !model || model === '__inherit__' || model.startsWith('__auto__')
+  const defaultEffort = worker?.defaultEffort
+    ? `Auto effort (${effortLabel(worker.defaultEffort) ?? worker.defaultEffort})`
+    : 'Auto effort'
+  const currentEffort = onCurrent && !effort && !!current?.effort
+  return {
+    workerLabel: worker
+      ? worker.label
+      : onCurrent && input.currentWorkerLabel
+        ? input.currentWorkerLabel
+        : 'Auto worker',
+    modelLabel:
+      onCurrent && autoModel && current?.model
+        ? (modelLabel(current.model) ?? current.model)
+        : !workerId
+          ? 'Auto model'
+          : (AUTO_MODEL_LABELS[model] ??
+            (!model || model === '__inherit__' ? input.inheritedLabel : (modelLabel(model) ?? model))),
+    effortLabel: effort
+      ? (effortLabel(effort) ?? effort)
+      : currentEffort && current?.effort
+        ? (effortLabel(current.effort) ?? current.effort)
+        : defaultEffort,
+    currentEffort
+  }
+}
+
 export interface ReassignChoice {
   workerId: string
   model: string
@@ -52,9 +112,16 @@ export interface ReassignChoice {
   workerLabel: string
   modelLabel: string
   effortLabel: string
+  /** The effort pill names the latest run's effort, which is worth showing even with no list to pick from. */
+  currentEffort: boolean
 }
 
-export function useReassignChoice(task: Task, fleet: FleetEntry[], options: ModelOptions[]): ReassignChoice {
+export function useReassignChoice(
+  task: Task,
+  fleet: FleetEntry[],
+  options: ModelOptions[],
+  current: CurrentAssignment | null = null
+): ReassignChoice {
   const c = task.constraints
   const pinnedModel = initialSelectedModel(c.model, c.modelPolicy, c.modelClass)
   const [workerId, setWorkerId] = useState<string>(c.workerId ?? '')
@@ -118,6 +185,18 @@ export function useReassignChoice(task: Task, fleet: FleetEntry[], options: Mode
   const defaultEffort = worker?.defaultEffort
     ? `Auto effort (${effortLabel(worker.defaultEffort) ?? worker.defaultEffort})`
     : 'Auto effort'
+  const labels = pillLabels({
+    workerId,
+    model,
+    effort,
+    changed,
+    worker,
+    inheritedLabel,
+    current,
+    currentWorkerLabel: current
+      ? (fleet.find((e) => e.worker.id === current.workerId)?.worker.label ?? current.workerId.slice(0, 8))
+      : null
+  })
 
   return {
     workerId,
@@ -159,12 +238,7 @@ export function useReassignChoice(task: Task, fleet: FleetEntry[], options: Mode
           ...offeredEfforts.map((level) => ({ value: level, label: effortLabel(level) ?? level }))
         ]
       : [],
-    workerLabel: worker ? worker.label : 'Auto worker',
-    modelLabel: !workerId
-      ? 'Auto model'
-      : (AUTO_MODEL_LABELS[model] ??
-        (!model || model === '__inherit__' ? inheritedLabel : (modelLabel(model) ?? model))),
-    effortLabel: effort ? (effortLabel(effort) ?? effort) : defaultEffort
+    ...labels
   }
 }
 
@@ -212,7 +286,7 @@ export function AssignPills({
         muted={!choice.model || choice.model.startsWith('__auto__')}
         disabled={disabled || !choice.workerId || choice.modelOptions.length <= 1}
       />
-      {choice.effortOptions.length > 0 && (
+      {(choice.effortOptions.length > 0 || choice.currentEffort) && (
         <PillSelect
           className={cls}
           label={choice.effortLabel}
@@ -220,9 +294,9 @@ export function AssignPills({
           options={choice.effortOptions}
           onChange={choice.setEffort}
           ariaLabel="Reassign effort"
-          title={hint}
+          title={choice.effortOptions.length > 0 ? hint : 'Pick a worker first — the effort list is that account’s'}
           muted={!choice.effort}
-          disabled={disabled}
+          disabled={disabled || choice.effortOptions.length === 0}
         />
       )}
       {choice.changed && !disabled && (

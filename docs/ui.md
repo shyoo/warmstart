@@ -558,7 +558,12 @@ typed:
   when nothing was — `task.message` is the only RPC that continues a resting task and it takes a text.
   The pills are read-only while a run is live, because the pin decides the next dispatch. They start
   where the box does (`.compose-assign`, `padding-left: --compose-attach-w + --sp-2`, t673), not
-  right-aligned under Send.
+  right-aligned under Send. ⛔ A pill whose pin is left to the scheduler (Auto worker, an Auto /
+  account-default model, no effort) names what the latest run **actually** used — `ranOn`, the
+  session's or run's model, the session's effort — rather than reading *Auto model* under a thread
+  that ran on Opus (`pillLabels`, t674). Only while the selection is untouched and the selected
+  account is that run's: a reassignment that has not run yet keeps saying Auto, because the previous
+  account's model says nothing about the new one's.
 - **The send-outcome hint clears itself once it stops being true** (`outcomeHintStale`,
   `lib/composeoutcome.ts`, t673). *Queued — same thread, same session where it can.* and *Delivered
   into the running turn.* used to sit under the composer forever: the requeue they describe resolves

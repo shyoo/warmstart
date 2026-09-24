@@ -380,13 +380,26 @@ function TaskDetail({
   // the composer and the composer's own buttons (t669).
   const resting = task.status === 'awaiting_human' || task.status === 'paused_user'
   const work = usePendingWork(task, resting)
-  const choice = useReassignChoice(task, fleet, modelOptions)
   const liveSession = sessions.find(
     (s) => s.id === runs[0]?.sessionId && !sessionEnded(s.state)
   )
   // What the task is on *now*: the live session's account where there is one, else the account the
   // latest run was dispatched to. Null until something has run, which is what hides the row.
   const currentWorkerId = liveSession?.workerId ?? task.ranOn ?? null
+  // ⚠️ Effort is not stamped on a run; the latest run's session observed it, live or closed.
+  const lastSession = liveSession ?? sessions.find((s) => s.id === runs[0]?.sessionId) ?? null
+  const choice = useReassignChoice(
+    task,
+    fleet,
+    modelOptions,
+    currentWorkerId
+      ? {
+          workerId: currentWorkerId,
+          model: liveSession?.model || task.ranModel || runs[0]?.model || null,
+          effort: lastSession?.effort ?? null
+        }
+      : null
+  )
   const currentWorker = currentWorkerId
     ? { id: currentWorkerId, label: ranOnLabel({ ...task, ranOn: currentWorkerId }, fleet) ?? currentWorkerId }
     : null
