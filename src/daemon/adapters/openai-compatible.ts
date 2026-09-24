@@ -13,7 +13,7 @@ import type {
   WrittenPermissions
 } from './types.js'
 import { externalGitRoots, gitMetadataRoots, grantedWritableRoots, linkedWritableRoots } from './grants.js'
-import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
+import { asRecord, num, toolLine, type DecodeContext, type StreamEvent, type StreamUsage } from '../stream.js'
 import { log } from '../log.js'
 import { formatCmdInvocation, launchArgs, launchable, spawnEnv, which } from '../which.js'
 import { errorMessage } from '@shared/errors.js'
@@ -294,50 +294,232 @@ export function addGitConfig(env: Record<string, string>, key: string, value: st
  * does not make the cache *steerable* - there is no client-controlled TTL to extend, which is why the
  * cost model stays `unpriced` (D24). Observing a cost and having a lever on it are different things.
  */
-function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEvent[] | null {
-  const type = typeof record.type === 'string' ? record.type : ''
+interface CodexStreamState {
+  seenToolIds: Set<string>
+  toolCount: number
+  preToolMessages: string[]
+  postToolMessages: string[]
+  finalAnswers: string[]
+  commentaries: string[]
+  lastAgentMessage: string | null
+}
+
+function getCodexState(ctx?: DecodeContext): CodexStreamState {
+  if (!ctx) {
+    return {
+      seenToolIds: new Set(),
+      toolCount: 0,
+      preToolMessages: [],
+      postToolMessages: [],
+      finalAnswers: [],
+      commentaries: [],
+      lastAgentMessage: null
+    }
+  }
+  if (!ctx.state) ctx.state = {}
+  if (!ctx.state.codex) {
+    ctx.state.codex = {
+      seenToolIds: new Set<string>(),
+      toolCount: 0,
+      preToolMessages: [],
+      postToolMessages: [],
+      finalAnswers: [],
+      commentaries: [],
+      lastAgentMessage: null
+    } satisfies CodexStreamState
+  }
+  return ctx.state.codex as CodexStreamState
+}
+
+function resetCodexState(state: CodexStreamState): void {
+  state.seenToolIds.clear()
+  state.toolCount = 0
+  state.preToolMessages = []
+  state.postToolMessages = []
+  state.finalAnswers = []
+  state.commentaries = []
+  state.lastAgentMessage = null
+}
+
+function cleanCommand(cmd: string): string {
+  let s = cmd.trim()
+  const pwshMatch = s.match(/^(?:"[^"]*[/\\]pwsh(?:\.exe)?"|pwsh(?:\.exe)?|powershell(?:\.exe)?)\s+-Command\s+(.*)$/is)
+  if (pwshMatch?.[1]) s = pwshMatch[1].trim()
+  const cmdMatch = s.match(/^(?:"[^"]*[/\\]cmd(?:\.exe)?"|cmd(?:\.exe)?)\s+(?:\/[a-z]\s+)*(.*)$/is)
+  if (cmdMatch?.[1]) s = cmdMatch[1].trim()
+  return s
+}
+
+function decodeStream(
+  record: Record<string, unknown>,
+  ctx?: DecodeContext
+): StreamEvent | StreamEvent[] | null {
+  const unwrapped = asRecord(record.payload) ?? record
+  const type = typeof unwrapped.type === 'string' ? unwrapped.type : ''
+  const state = getCodexState(ctx)
 
   if (type === 'thread.started') {
+    resetCodexState(state)
     return {
       kind: 'init',
-      sessionId: typeof record.thread_id === 'string' ? record.thread_id : null,
+      sessionId: typeof unwrapped.thread_id === 'string' ? unwrapped.thread_id : null,
       model: null,
       permissionMode: null
     }
   }
 
-  if (type === 'item.completed') {
-    const item = asRecord(record.item)
-    if (item?.type === 'agent_message' && typeof item.text === 'string' && item.text) {
-      return { kind: 'assistant_text', text: item.text }
+  if (type === 'turn.started') {
+    resetCodexState(state)
+    return null
+  }
+
+  if (type === 'item.started' || type === 'item.completed' || type === 'item_completed') {
+    const item = asRecord(unwrapped.item)
+    const itemType = typeof item?.type === 'string' ? item.type : ''
+    const normalizedType = itemType.toLowerCase()
+    const itemId = typeof item?.id === 'string' ? item.id : ''
+
+    if (normalizedType === 'command_execution') {
+      if (itemId && state.seenToolIds.has(itemId)) return null
+      if (itemId) state.seenToolIds.add(itemId)
+      state.toolCount++
+      const cmdRaw = Array.isArray(item?.command)
+        ? (item.command as unknown[]).map(String).join(' ')
+        : typeof item?.command === 'string'
+          ? item.command
+          : ''
+      const clean = cleanCommand(cmdRaw)
+      return {
+        kind: 'tool_use',
+        name: 'exec',
+        summary: toolLine('run', clean || 'command'),
+        detail: cmdRaw || null
+      }
     }
-    if (item?.type === 'error' && typeof item.message === 'string' && item.message) {
+
+    if (
+      normalizedType === 'mcp_tool_call' ||
+      normalizedType === 'custom_tool_call' ||
+      normalizedType === 'function_call'
+    ) {
+      if (itemId && state.seenToolIds.has(itemId)) return null
+      if (itemId) state.seenToolIds.add(itemId)
+      state.toolCount++
+      const name =
+        typeof item?.name === 'string'
+          ? item.name
+          : typeof item?.tool === 'string'
+            ? item.tool
+            : 'tool'
+      let argsDetail: string | null = null
+      let argsSummary = ''
+      if (typeof item?.input === 'string') {
+        argsDetail = item.input
+        argsSummary = item.input.slice(0, 80)
+      } else if (item?.input && typeof item.input === 'object') {
+        argsDetail = JSON.stringify(item.input)
+        argsSummary = argsDetail.slice(0, 80)
+      } else if (typeof item?.args === 'string') {
+        argsDetail = item.args
+        argsSummary = item.args.slice(0, 80)
+      } else if (item?.args && typeof item.args === 'object') {
+        argsDetail = JSON.stringify(item.args)
+        argsSummary = argsDetail.slice(0, 80)
+      }
+      return {
+        kind: 'tool_use',
+        name,
+        summary: toolLine('Tool', `${name}${argsSummary ? ` ${argsSummary}` : ''}`),
+        detail: argsDetail
+      }
+    }
+
+    if (normalizedType === 'file_change') {
+      if (itemId && state.seenToolIds.has(itemId)) return null
+      if (itemId) state.seenToolIds.add(itemId)
+      state.toolCount++
+      const changes = asRecord(item?.changes)
+      const files = changes ? Object.keys(changes) : []
+      const names = files.map((f) => f.split(/[/\\]/).pop() || f)
+      return {
+        kind: 'tool_use',
+        name: 'file_change',
+        summary: toolLine('edit', names.join(', ') || 'files'),
+        detail: files.join('\n') || null
+      }
+    }
+
+    if (normalizedType === 'reasoning') {
+      if (itemId && state.seenToolIds.has(itemId)) return null
+      if (itemId) state.seenToolIds.add(itemId)
+      return { kind: 'thinking', tokens: 0, start: true }
+    }
+
+    if (normalizedType === 'agent_message' && (type === 'item.completed' || type === 'item_completed')) {
+      let text = typeof item?.text === 'string' ? item.text : ''
+      if (!text && Array.isArray(item?.content)) {
+        text = (item.content as unknown[])
+          .map((c) => (asRecord(c)?.text as string) || '')
+          .filter(Boolean)
+          .join('')
+      }
+      if (text) {
+        state.lastAgentMessage = text
+        const phase = typeof item?.phase === 'string' ? item.phase.toLowerCase() : ''
+        if (phase === 'final_answer') {
+          state.finalAnswers.push(text)
+        } else if (phase === 'commentary') {
+          state.commentaries.push(text)
+        } else if (state.toolCount > 0) {
+          state.postToolMessages.push(text)
+        } else {
+          state.preToolMessages.push(text)
+        }
+        return { kind: 'assistant_text', text }
+      }
+      return { kind: 'other', type }
+    }
+
+    if (normalizedType === 'error' && typeof item?.message === 'string' && item.message) {
       return { kind: 'assistant_text', text: item.message }
     }
+
     return { kind: 'other', type }
   }
 
   if (type === 'turn.completed' || type === 'turn.failed') {
-    const usage = asRecord(record.usage)
+    const usage = asRecord(unwrapped.usage)
     const failed = type === 'turn.failed'
-    const errorRecord = asRecord(record.error)
+    const errorRecord = asRecord(unwrapped.error)
     const errorInfo =
-      typeof record.codex_error_info === 'string'
-        ? record.codex_error_info
+      typeof unwrapped.codex_error_info === 'string'
+        ? unwrapped.codex_error_info
         : typeof errorRecord?.codex_error_info === 'string'
           ? errorRecord.codex_error_info
           : null
     const errorText =
-      typeof record.message === 'string'
-        ? record.message
-        : typeof record.error === 'string'
-          ? record.error
+      typeof unwrapped.message === 'string'
+        ? unwrapped.message
+        : typeof unwrapped.error === 'string'
+          ? unwrapped.error
           : typeof errorRecord?.message === 'string'
             ? errorRecord.message
             : errorInfo
+
+    let answer: string | null = null
+    if (!failed) {
+      if (state.finalAnswers.length > 0) {
+        answer = state.finalAnswers.join('\n\n')
+      } else if (state.postToolMessages.length > 0) {
+        answer = state.postToolMessages.join('\n\n')
+      } else if (state.lastAgentMessage) {
+        answer = state.lastAgentMessage
+      }
+    }
+
     const result: StreamEvent = {
       kind: 'result',
-      text: errorText,
+      text: errorText ?? answer,
       costUsd: null,
       isError: failed,
       terminalReason: type
@@ -354,18 +536,18 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
   }
 
   if (type === 'error') {
-    const errorRecord = asRecord(record.error)
+    const errorRecord = asRecord(unwrapped.error)
     const errorInfo =
-      typeof record.codex_error_info === 'string'
-        ? record.codex_error_info
+      typeof unwrapped.codex_error_info === 'string'
+        ? unwrapped.codex_error_info
         : typeof errorRecord?.codex_error_info === 'string'
           ? errorRecord.codex_error_info
           : null
     const errorText =
-      typeof record.message === 'string'
-        ? record.message
-        : typeof record.error === 'string'
-          ? record.error
+      typeof unwrapped.message === 'string'
+        ? unwrapped.message
+        : typeof unwrapped.error === 'string'
+          ? unwrapped.error
           : typeof errorRecord?.message === 'string'
             ? errorRecord.message
             : errorInfo

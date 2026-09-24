@@ -419,6 +419,99 @@ describe('openai-compatible', () => {
     ).toMatchObject({ kind: 'assistant_text', text: 'rate limited' })
   })
 
+  it('decodes command_execution into tool_use and deduplicates item.started and item.completed', () => {
+    const startedExec =
+      '{"type":"item.started","item":{"id":"cmd_1","type":"command_execution","command":"\\"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe\\" -Command whoami"}}'
+    const completedExec =
+      '{"type":"item.completed","item":{"id":"cmd_1","type":"command_execution","command":"\\"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe\\" -Command whoami","aggregated_output":"user\\r\\n","exit_code":0,"status":"completed"}}'
+
+    const events = parse('openai-compatible', [startedExec, completedExec])
+    const tools = events.filter((e) => e.kind === 'tool_use')
+    expect(tools).toHaveLength(1)
+    expect(tools[0]).toMatchObject({
+      kind: 'tool_use',
+      name: 'exec',
+      summary: '[run: whoami]',
+      detail: '"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command whoami'
+    })
+  })
+
+  it('decodes mcp_tool_call and custom_tool_call into tool_use', () => {
+    const mcpCall =
+      '{"type":"item.completed","item":{"id":"mcp_1","type":"mcp_tool_call","name":"read_file","input":{"path":"src/index.ts"}}}'
+    const [event] = parse('openai-compatible', [mcpCall])
+    expect(event).toMatchObject({
+      kind: 'tool_use',
+      name: 'read_file',
+      summary: '[Tool: read_file {"path":"src/index.ts"}]'
+    })
+  })
+
+  it('decodes file_change into tool_use', () => {
+    const fileChange =
+      '{"type":"item.completed","item":{"id":"fc_1","type":"file_change","changes":{"C:\\\\Dev\\\\app\\\\main.ts":{"type":"update"}}}}'
+    const [event] = parse('openai-compatible', [fileChange])
+    expect(event).toMatchObject({
+      kind: 'tool_use',
+      name: 'file_change',
+      summary: '[edit: main.ts]'
+    })
+  })
+
+  it('decodes reasoning into thinking', () => {
+    const reasoning = '{"type":"item.completed","item":{"id":"rs_1","type":"reasoning"}}'
+    const [event] = parse('openai-compatible', [reasoning])
+    expect(event).toMatchObject({
+      kind: 'thinking',
+      tokens: 0,
+      start: true
+    })
+  })
+
+  it('populates result.text with the final answer on turn.completed, excluding pre-tool commentary', () => {
+    const commentary =
+      '{"type":"item.completed","item":{"id":"msg_0","type":"agent_message","text":"I will check the files first."}}'
+    const cmd =
+      '{"type":"item.completed","item":{"id":"cmd_0","type":"command_execution","command":"dir"}}'
+    const finalMsg =
+      '{"type":"item.completed","item":{"id":"msg_1","type":"agent_message","text":"Found 3 files. Everything looks good."}}'
+
+    const events = parse('openai-compatible', [started, commentary, cmd, finalMsg, completed])
+    const result = events.find((e) => e.kind === 'result')
+    expect(result).toMatchObject({
+      kind: 'result',
+      isError: false,
+      text: 'Found 3 files. Everything looks good.'
+    })
+  })
+
+  it('honors explicit phase annotations when present', () => {
+    const commentary =
+      '{"type":"item.completed","item":{"id":"msg_0","type":"agent_message","text":"Checking system.","phase":"commentary"}}'
+    const finalAnswer =
+      '{"type":"item.completed","item":{"id":"msg_1","type":"agent_message","text":"System is healthy.","phase":"final_answer"}}'
+
+    const events = parse('openai-compatible', [started, commentary, finalAnswer, completed])
+    const result = events.find((e) => e.kind === 'result')
+    expect(result).toMatchObject({
+      kind: 'result',
+      isError: false,
+      text: 'System is healthy.'
+    })
+  })
+
+  it('resets turn state on turn.started so multiple turns in one parser remain independent', () => {
+    const turn1Msg = '{"type":"item.completed","item":{"id":"msg_t1","type":"agent_message","text":"Turn 1 answer"}}'
+    const turn2Start = '{"type":"turn.started"}'
+    const turn2Msg = '{"type":"item.completed","item":{"id":"msg_t2","type":"agent_message","text":"Turn 2 answer"}}'
+
+    const events = parse('openai-compatible', [started, turn1Msg, completed, turn2Start, turn2Msg, completed])
+    const results = events.filter((e) => e.kind === 'result')
+    expect(results).toHaveLength(2)
+    expect(results[0]).toMatchObject({ text: 'Turn 1 answer' })
+    expect(results[1]).toMatchObject({ text: 'Turn 2 answer' })
+  })
+
   it('skips the diagnostic codex prints before its first record', () => {
     const parser = new StreamParser(decoderFor('openai-compatible'))
     expect(parser.push('Reading additional input from stdin...\n')).toHaveLength(0)

@@ -25,6 +25,8 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **Codex stream decoder emits tool calls and separates commentary from final answers (t666 ← t665, 2026-09-23).**
+  In `openai-compatible.ts`, `codex exec --json` dropped tool calls (`command_execution`, MCP tools, file changes, reasoning) and emitted `turn.completed` with `result.text: null`, causing `turnend.ts` to scrape `backscroll`. That raced with `renderStream`'s scrollback append, truncating final answers and leaving initial planning commentary in thread messages before switching to `awaiting_human`. The decoder now decodes tool calls, tracks pre/post-tool agent messages, extracts the final answer into `result.text`, and `sessions.ts` appends to scrollback before event dispatch. 7 L1 checks in `stream.test.ts`. `docs/adapters.md`.
 - **Worker model edits now apply their returned row immediately (t664, 2026-09-23).** The model table no longer waits for or causes a fleet-wide `fleet.list` reload after each click; `worker.changed` keeps other windows current. Events still re-read the fleet when eligibility, capacity, or ordering changes; `docs/ui.md`.
 - **Worker model rows now have independent summary selection and explicit effort (t663, 2026-09-23).** Summary persists a model/effort pair, so toggling Gemini 3.8 Flash selects only that row and leaves other efforts removable. Migration 83 converts legacy selectable blank efforts to `medium` and de-duplicates any pairs that conversion exposes. `docs/ui.md`.
 - **Conversation selection and Antigravity default rows repaired (t660, 2026-09-23).** A listed conversation now owns the sidebar highlight while its thread is open; other project tabs and unlisted threads still highlight the project. Antigravity's per-pool default now identifies one model/effort pair rather than every effort row of its model, so non-default Gemini rows can be removed, and selecting a default also updates its no-quota fallback pair. `docs/ui.md`.
@@ -130,23 +132,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   measured gap to both recovery prompts — *"⛔ … and **not** onto `origin/main`: … 9 commits ahead"* —
   because naming the right ref never stopped an agent reaching for the habitual one. 11 L1
   checks across four files; four separate mutations go red. **Not flown on a real run.** `docs/landing.md`.
-- **The Commit button asked for a commit and then nothing landed it (t581 ← t578, 2026-09-20).**
-  Three faults, each enough on its own. (1) Commit tells the agent *not* to merge or push; on an
-  adapter with `mcp: false` — muse-code, codex — there is no `land_work` to close the loop and
-  **nothing in the tool acted on the level the operator chose**. t578 rested with one squashed commit
-  and an agent that had said *"the commit is ready to land"*. The level is now recorded on
-  `tasks.land_after_turn` (migration 78) *before* the turn and taken up by `landAfterCommitTurn` from
-  `endConversationTurn`, which **re-reads the workspace** rather than trusting it — silent where the
-  agent landed it itself, one thread line where it is refused, and the promise spent either way
-  (`endUnfinishedRun` forgets it). (2) **Land was gated on a pristine tree** (`!hasDiff`), so the two
-  untracked backup directories the operator had *asked* for meant it was never drawn — Commit was the
-  card's only control and re-sent its instruction on every press. `settleControls`
-  (`lib/finishlevel.ts`) draws both when both are true. (3) `decideFinish` and every strategy's
-  `canLand` refused the landing over the same untracked files; a conversation landing keeps its
-  workspace, so `keepsWorkspace` now counts only the **tracked** half — ⭐ measured 2026-09-20: a
-  rebase over untracked files succeeds untouched, one tracked modification refuses outright.
-  Commit also refuses a press that would re-ask for a commit that exists. 11 + 7 + 3 L1 checks; four
-  mutations go red. **Not flown on a real run.** `docs/landing.md`, `ui.md`, `data-model.md`.
 - **Reassign's effort picker could only ever appear for one exact, named model (t619,
   2026-09-22).** `offeredEfforts` looked `effortLevels` up by the literal selection value, and
   neither Auto Model (`'__auto__'`) nor the blank account-default choice is a real model id — so

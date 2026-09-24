@@ -1100,10 +1100,12 @@ export function spawnSession(opts: SpawnOptions): Session {
     const shown = entry.parser ? renderStream(entry, id, data) : data
     if (!shown) return
 
-    entry.scrollback.push(shown)
-    entry.scrollbackBytes += shown.length
-    while (entry.scrollbackBytes > SCROLLBACK_BYTES && entry.scrollback.length > 1) {
-      entry.scrollbackBytes -= entry.scrollback.shift()?.length ?? 0
+    if (!entry.parser) {
+      entry.scrollback.push(shown)
+      entry.scrollbackBytes += shown.length
+      while (entry.scrollbackBytes > SCROLLBACK_BYTES && entry.scrollback.length > 1) {
+        entry.scrollbackBytes -= entry.scrollback.shift()?.length ?? 0
+      }
     }
     events.onData(id, shown)
   }
@@ -1117,9 +1119,17 @@ export function spawnSession(opts: SpawnOptions): Session {
       // `usage` callback below — reads the last *mid-turn* record rather than the terminal one it is
       // itself processing. See `lastActivityAt` for why the terminal pair is excluded.
       if (isRequestEvidence(event.kind)) entry.lastActivityAt = Date.now()
+      const rendered = renderForHuman(event, entry.asked)
+      if (rendered) {
+        text += rendered
+        entry.scrollback.push(rendered)
+        entry.scrollbackBytes += rendered.length
+        while (entry.scrollbackBytes > SCROLLBACK_BYTES && entry.scrollback.length > 1) {
+          entry.scrollbackBytes -= entry.scrollback.shift()?.length ?? 0
+        }
+      }
       events.onStream(entry.session, event)
       for (const listener of listeners ?? []) listener(event)
-      text += renderForHuman(event, entry.asked)
       // ⛔ The second tier, beside the first rather than instead of it. The rendered bytes above
       // still feed `scrollback`, which `turnend.ts` reads to find a completion an MCP-less adapter
       // could not report; this is the same events shaped for a view that can lay one out.

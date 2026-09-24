@@ -350,6 +350,8 @@ export function toolLine(label: string, detail?: string | null): string {
 export interface DecodeContext {
   /** The session was spawned asking for partial output, and the adapter declared it could. */
   partialMessages: boolean
+  /** Optional per-session or per-stream parser state maintained across records. */
+  state?: Record<string, unknown>
 }
 
 export type StreamDecoder = (
@@ -376,13 +378,16 @@ export type StreamDecoder = (
  */
 export class StreamParser {
   private buffer = ''
+  private readonly ctx: DecodeContext
 
   constructor(
     private readonly decode: StreamDecoder,
-    private readonly ctx: DecodeContext = { partialMessages: false },
+    ctx: DecodeContext = { partialMessages: false },
     /** Every non-record line, in order. ⚠️ Called for normal chatter too — the caller bounds it. */
     private readonly onNoise?: (line: string) => void
-  ) {}
+  ) {
+    this.ctx = { ...ctx, state: ctx.state ?? {} }
+  }
 
   push(chunk: string): StreamEvent[] {
     this.buffer += chunk
