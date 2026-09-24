@@ -3938,6 +3938,22 @@ held-only and over-max shapes; the t117 warm-hold, the landing hold and the genu
 pinned unchanged. Not flown beyond the suites: the live rows that produced the screenshot are not
 available to a test, so the two defects are reproduced from equivalent seeded rows.
 
+## t677 — the `land_work` receipt named only the new branch (2026-09-24, from t667)
+
+After landing mid-conversation the agent was told `This conversation continues on <new>` — never
+which branch it had landed from. With the old branch deleted and a compaction behind it, the new
+name reads as a restatement of the one already committed on (reported as a "duplicate branch
+name"). The thread detail already stated previous → next; the tool result did not.
+`landConversationWork` now returns the landed `branch` beside `nextBranch`, and the reply is
+rendered by one writer, `conversationLandingResultText` in `shared/tasks.ts` (the MCP server cannot
+import the daemon's scheduler chain): `Landed <sha> from <old> onto <target>. This conversation
+continues on <new> — …`. The `agent.land` protocol result documents `branch` beside `nextBranch`.
+Pinned: the formatter's exact sentence and each-branch-once in `tasks.test.ts`; the return's
+previous/next pair across two landings, and the thread detail's old-before-`continues on` order, in
+`conversationland.test.ts`. Verified no live row contradicts the invariant (branch/unit counters
+agree fleet-wide; the naming scheme cannot mint the same name twice). `docs/mcp.md` needed no
+change — it already says the reply names the branch to keep working on.
+
 ## t675 — a transcript-reported model hijacked the next dispatch (2026-09-24, from t667)
 
 During t667 the model switched to `claude-opus-4-8`, which no worker lists. Evidence from the live

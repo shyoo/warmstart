@@ -133,7 +133,12 @@ describe('a conversation that lands twice', () => {
     expect(landed1.reason ?? '').toBe('')
     expect(landed1.ok).toBe(true)
     expect(landed1.target).toBe('main')
+    // ⛔ t677: the receipt carries previous **then** next. The agent committed on the first and
+    // must commit next on the second — naming only the new branch reads as a restatement of the
+    // one it is already on, and naming one branch twice sends it committing where it just landed.
+    expect(landed1.branch).toBe(first.branch)
     expect(landed1.nextBranch).toBe(`warmstart/t${first.seq}.2-land-me-twice`)
+    expect(landed1.branch).not.toBe(landed1.nextBranch)
 
     // ⛔ The branch actually moved under the agent: the workspace it is still sitting in is on the
     // new name. Recording it on the task without switching the tree would make every later `git`
@@ -153,6 +158,8 @@ describe('a conversation that lands twice', () => {
     const landed2 = await conversationland.landConversationWork(taskId)
     expect(landed2.reason ?? '').toBe('')
     expect(landed2.ok).toBe(true)
+    // The previous branch is the one the first landing cut — the chain, not a repeat.
+    expect(landed2.branch).toBe(landed1.nextBranch)
     expect(landed2.nextBranch).toBe(`warmstart/t${first.seq}.3-land-me-twice`)
     expect(landed2.landedSha).not.toBe(landed1.landedSha)
 
@@ -177,6 +184,7 @@ describe('a conversation that lands twice', () => {
     // headline shape is load-bearing and everything else goes in `detail`. A landing that
     // announced itself twice would be recovered twice.
     const { taskId, workspace } = await seedConversation('say it once')
+    const before = tasks.requireTask(taskId)
     commitInWorkspace(workspace, 'said.txt')
     const landed = await conversationland.landConversationWork(taskId)
     expect(landed.ok).toBe(true)
@@ -188,6 +196,12 @@ describe('a conversation that lands twice', () => {
     expect(headlines[0]?.text).toContain(`onto \`main\``)
     expect(headlines[0]?.text).not.toContain('continues on')
     expect(headlines[0]?.detail).toContain('continues on')
+    // ⛔ t677: previous **then** next in the thread detail too — the retired branch first, the
+    // branch to carry on in last, each exactly once.
+    const detail = headlines[0]?.detail ?? ''
+    expect(detail.indexOf(before.branch as string)).toBeGreaterThanOrEqual(0)
+    expect(detail.indexOf(before.branch as string)).toBeLessThan(detail.indexOf('continues on'))
+    expect(detail.indexOf(landed.nextBranch as string)).toBeGreaterThan(detail.indexOf('continues on'))
     // ⚠️ The clauses `landedMessage` composes are kept, off the line.
     expect(headlines[0]?.detail).toContain('Verified first: 1 project check passed')
   }, 30_000)

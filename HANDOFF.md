@@ -25,17 +25,19 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **The `land_work` receipt states previous → next, each named once (t677 ← t667, 2026-09-24).**
+  It named only the new branch, which reads as a restatement of the one just landed.
+  `landConversationWork` now returns the landed `branch`; `conversationLandingResultText`
+  (`shared/tasks.ts`, one writer) renders `Landed <sha> from <old> onto <target>… continues on
+  <new>`. Formatter + return + thread-detail order pinned at L1. Protocol gains `branch`.
 - **A transcript-reported model can no longer hijack the next dispatch (t675 ← t667, 2026-09-24).**
-  t667 ran on, then displayed, `claude-opus-4-8` — a model no worker lists. Evidence: sessions
-  spawned for `claude-opus-5-5` reported `4-8` on every turn (t659 shows the flip mid-run, same
-  process), `recordTurn` overwrote the session row, and scoring trusted it into an explicit
-  `--model`. Now the session row is first-writer-wins (`transcript.ts`) and reuse/resume
-  candidates must be routable on the worker (`isRoutableModel`, `scoring.ts`), falling back to the
-  configured model with a log line. The composer reassign is exonerated: the pin path cannot mint
-  a model id. 1 shared + 1 metering + 1 routing L1. `docs/routing.md` §2.4.
+  t667 displayed `claude-opus-4-8`, which no worker lists; sessions spawned for `5-5` reported
+  `4-8` mid-run (t659 too, same process). Session rows are first-writer-wins and reuse/resume
+  candidates must be routable (`isRoutableModel`), falling back with a log line. Composer
+  exonerated. 3 L1. `docs/routing.md` §2.4.
 - **The reassign pills name what the task is on, not *Auto model* (t674, 2026-09-23).** Where the pin leaves worker, model or effort to the scheduler, the pills under the composer show the latest run's account, model and session effort (`pillLabels`, `thread/Reassign.tsx`; 6 L1 checks). A reassignment to another account that has not run yet still reads Auto. `docs/ui.md`.
-- **The send-outcome hint no longer sticks, and the reassign pills line up with the box (t673, 2026-09-23).** "Queued — same thread…" stayed under the composer forever because nothing watched for the task's status moving past the send that produced it; `outcomeHintStale` (`lib/composeoutcome.ts`, unit-tested) now clears it the first time `task.status` differs from what it was when the hint was recorded. `.compose-assign` (worker/model/effort pills) now starts where the message box does, like the settle strip above it, instead of right-aligned under Send. L3 asserts both. `docs/ui.md`.
-- **The settle strip lines up with the message box (t672, 2026-09-23).** The composer's `[+]` is now a fixed 30px square (`--compose-attach-w`) and `.decide--strip` indents by it plus the row gap, so Commit/Land start where the box does; strip buttons are a step smaller (22px vs Send's 27px, L3). L3's *changes nothing but the name* is flaky (read `assigned` once, passed on rerun). `docs/ui.md`.
+- **The send-outcome hint no longer sticks, and the reassign pills line up with the box (t673, 2026-09-23).** `outcomeHintStale` clears the hint once `task.status` moves past the send; `.compose-assign` starts where the box does. L3 asserts both. `docs/ui.md`.
+- **The settle strip lines up with the message box (t672, 2026-09-23).** `[+]` is a fixed 30px square and `.decide--strip` indents by it plus the gap; strip buttons a step smaller. L3. `docs/ui.md`.
 - **Sidebar conversations drop the 💬 glyph (t671, 2026-09-23).** A conversation row is marked by its indent alone — the title starts one `--sp-3` past the project name — because the glyph was loud in dark mode and competed with the project's status dot. L3 now asserts the indent. `docs/ui.md`.
 - **No *your call* card on every conversation turn (t669, 2026-09-23).** Stop now sits beside Send at `awaiting_human`; once stopped (`paused_user`) Complete sits there instead, arming once over uncommitted files, and an empty box reads Resume (the Paused-by-operator banner is gone). Worker · model · effort are pills under the box (`thread/Reassign.tsx`); a changed pick turns Send into Reassign and sends the typed text (or `Continue.`). What remains above the composer is a frameless strip drawn only when Commit/Land/Resolve & retry/Retry landing or a work-protecting note applies. `QuotaDecide` unchanged. L3: 8 pre-existing fleet/worker-settings failures reproduce on the base commit. `docs/ui.md`, `docs/landing.md`.
 - **Status colours say who a task waits on (t668, 2026-09-23).** Blue = agent working, yellow = human action needed (`awaiting_human` only; was purple), grey = parked and needs nobody (`paused_user`, `paused_quota` were yellow). Status pills carry a hover saying so; the sidebar count is now `running/awaiting/parked` in those colours and the project dot follows the same buckets (supersedes t655/t661's two-number count and purple/yellow dots). Flow lanes unchanged. `docs/ui.md`.

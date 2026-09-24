@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { readFileSync } from 'node:fs'
 import http from 'node:http'
 import type { DaemonEndpoint, RpcMethod, RpcParams, RpcResponse, RpcResult } from '@shared/protocol.js'
-import { parseOptionList } from '@shared/tasks.js'
+import { conversationLandingResultText, parseOptionList } from '@shared/tasks.js'
 import { normaliseAsk } from '@shared/policy.js'
 import { paths } from '../daemon/paths.js'
 import { errorMessage } from '@shared/errors.js'
@@ -608,13 +608,17 @@ server.registerTool(
           {
             type: 'text' as const,
             text:
-              `Landed ${result.landedSha?.slice(0, 8)} onto ${result.target}. ` +
               // ⚠️ A trunk conversation gets no `nextBranch` — its commits were already on the
               // target — and this used to read "continues on undefined" (t649).
-              (result.nextBranch
-                ? `This conversation continues on ${result.nextBranch} — commit any further work there. `
-                : `This conversation continues in the trunk on ${result.target} — no branch to switch to. `) +
-              'The task is not finished; carry on.'
+              result.nextBranch && result.branch
+                ? conversationLandingResultText(
+                  result.landedSha?.slice(0, 8) ?? 'unknown',
+                  result.branch,
+                  result.target ?? 'unknown',
+                  result.nextBranch
+                )
+                : `This conversation continues in the trunk on ${result.target} — no branch to switch to. ` +
+                  'The task is not finished; carry on.'
           }
         ]
       }

@@ -7,6 +7,7 @@ import {
   FINISH_LABELS,
   FINISH_ORDER,
   FINISH_SHORT,
+  conversationLandingResultText,
   MAX_DEBATE_SEATS,
   MIN_DEBATE_SEATS,
   ROOT_MANDATE,
@@ -54,6 +55,35 @@ describe('the pill-sized names for the two policies a task carries', () => {
     expect(Object.keys(SHARING_SHORT).sort()).toEqual(Object.keys(SHARING_LABELS).sort())
     expect(SHARING_SHORT.on).toBe('Reuse')
     expect(SHARING_SHORT.off).toBe('Fresh')
+  })
+})
+
+/**
+ * What an agent is told after landing mid-conversation (t677).
+ *
+ * ⛔ Previous **then** next, each exactly once. A receipt naming only the new branch reads as a
+ * restatement of the one the agent committed on — which is the report that started this — and one
+ * naming the same branch twice sends it committing where it just landed.
+ */
+describe('the conversation-landing receipt', () => {
+  const text = conversationLandingResultText(
+    '08827248',
+    'warmstart/t667.2-ebook-undrm',
+    'main',
+    'warmstart/t667.3-ebook-undrm'
+  )
+
+  it('states previous then next, in that order', () => {
+    expect(text).toBe(
+      'Landed 08827248 from `warmstart/t667.2-ebook-undrm` onto main. ' +
+        'This conversation continues on warmstart/t667.3-ebook-undrm — commit any further work there. ' +
+        'The task is not finished; carry on.'
+    )
+  })
+
+  it('names each branch exactly once, and never the same one twice', () => {
+    const names = [...text.matchAll(/warmstart\/t[\w.%-]+/g)].map((m) => m[0])
+    expect(names).toEqual(['warmstart/t667.2-ebook-undrm', 'warmstart/t667.3-ebook-undrm'])
   })
 })
 

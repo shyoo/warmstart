@@ -2464,6 +2464,28 @@ export function policyVerifies(policy: FinishPolicy): boolean {
 }
 
 /**
+ * What an agent is told after landing mid-conversation (t677).
+ *
+ * ⛔ Previous **then** next, in that order, naming each once: the agent committed on the first and
+ * must commit next on the second, and after a compaction it may remember neither — a receipt that
+ * names only the new branch reads as a restatement of the one it is already on. Kept beside
+ * `FINISH_LABELS` rather than at the call site so the sentence has exactly one writer, and the
+ * tests pin the order.
+ */
+export function conversationLandingResultText(
+  landedSha: string,
+  branch: string,
+  target: string,
+  nextBranch: string
+): string {
+  return (
+    `Landed ${landedSha} from \`${branch}\` onto ${target}. ` +
+    `This conversation continues on ${nextBranch} — commit any further work there. ` +
+    'The task is not finished; carry on.'
+  )
+}
+
+/**
  * Does the **tool** do something with the branch once the commit is in place?
  *
  * ⛔ The other half of `policyVerifies`, and the question the thread's Land button asks: `commit-only`

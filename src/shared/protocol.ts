@@ -2896,6 +2896,8 @@ export interface RpcMap {
       reason?: string
       landedSha?: string
       target?: string
+      /** The branch that was landed — what `nextBranch` continues from. Absent for trunk. */
+      branch?: string
       /** The branch the conversation is now on, which is where the next commit goes. */
       nextBranch?: string
     }

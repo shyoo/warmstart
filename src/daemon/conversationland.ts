@@ -51,6 +51,12 @@ export interface ConversationLanding {
   reason?: string
   landedSha?: string
   target?: string
+  /**
+   * The branch that was landed — what `nextBranch` continues from. Present exactly when
+   * `nextBranch` is: a receipt that names only the new branch reads as a duplicate of the one
+   * the agent committed on, so the reply always states previous → next (t677).
+   */
+  branch?: string
   /** The branch the conversation is now on, and the one to keep working in. */
   nextBranch?: string
 }
@@ -270,5 +276,5 @@ async function landIn(
     `t${task.seq}: landed ${result.commit.slice(0, 8)} onto ${target} as ${level}; ` +
       `the conversation continues on ${nextBranch}`
   )
-  return { ok: true, landedSha: result.commit, target, nextBranch }
+  return { ok: true, landedSha: result.commit, target, branch, nextBranch }
 }
