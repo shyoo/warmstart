@@ -178,7 +178,11 @@ export async function askQuestion(request: QuestionRequest): Promise<QuestionRes
   // ended. Waiting another cache window for an answer nothing can receive is the wrong half; the
   // question itself is still the right one, so it is filed parked onto the session's task, where
   // the answer travels the way every parked answer does.
-  if (!run) {
+  //
+  // ⚠️ Only when the session *had* a task. A session that never ran one has no thread to file onto,
+  // and its asker is still there holding the tool call — parking it voided an `ask_human` the
+  // operator could have answered live (L2, 2026-09-24).
+  if (!run && taskOfSession(request.sessionId)) {
     fileParkedQuestion(request)
     return parkedResolution()
   }

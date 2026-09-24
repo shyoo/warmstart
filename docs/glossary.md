@@ -309,7 +309,8 @@ question **stays open**. ⛔ Not an answer and not a refusal — timing out has 
 Answering a parked question writes it into the thread and **re-queues the task**, so the answer has a
 run to arrive in: the same task, the same thread, a new run, with the answer left undelivered so the
 next prompt carries it. ⛔ A question asked when its session has no open run (the second of a
-multi-question native `AskUserQuestion`, t680) is filed parked onto the session's last task, and a
+multi-question native `AskUserQuestion`, t680) is filed parked onto the session's last task; a
+session that never had a task still asks live, since its asker is holding the tool call. A
 parked question with no task at all is voided — it has no thread to carry an answer.
 
 **`blocked`** — *a run that stopped to ask, not one that broke.* A `RunOutcome` beside `completed`

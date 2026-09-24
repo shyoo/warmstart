@@ -2946,10 +2946,15 @@ try {
     }
     store.close()
   }
-  // A worker event is what makes the strip re-read the fleet; the edit itself is a no-op.
-  await evaluate(
-    `window.agentyard.rpc('worker.update', { id: ${JSON.stringify(staleWorker)}, maxConcurrent: 1 })`
-  )
+  // A worker event is what makes the strip re-read the fleet, and there and back leaves it as it was.
+  // ⚠️ A same-value edit no longer does it: the renderer patches a worker event in place unless a
+  // field `fleet.list` computes from has changed (`workerChangeNeedsFleetRefresh`).
+  for (const maxConcurrent of [2, 1]) {
+    await evaluate(
+      `window.agentyard.rpc('worker.update', { id: ${JSON.stringify(staleWorker)}, maxConcurrent: ${maxConcurrent} })`
+    )
+    await wait(300)
+  }
   await wait(1500)
   const strip = await evaluate(`document.querySelector('.fleet')?.innerText ?? ''`)
   check('a stale reading still shows its numbers', /11%/.test(strip), JSON.stringify(strip.slice(0, 90)))
@@ -3722,6 +3727,14 @@ try {
     (await evaluate(`String(${modelsCell}?.querySelectorAll('input[aria-label^="Default:"]:checked').length)`)) === '0',
     'null means the vendor picks — the state every install ran in before this control existed'
   )
+  // ⚠️ Since 11d285e only configured and purpose models are drawn, and this worker's are all
+  // `claude-haiku-4-5`, which has no effort levels — so every effort check below was checking an
+  // empty table. A judgment pick is a purpose line and stores no route, so the checks that the
+  // table starts inert still hold.
+  await evaluate(
+    `${firstWorkerRpc}.then(w => window.agentyard.rpc('worker.update', { id: w.id, judgmentModel: 'claude-opus-5-5' }))`
+  )
+  await wait(800)
   // ⛔ The operator's ask: an effort is a level, never "CLI default", wherever the model has levels.
   const effortOptions = await evaluate(
     `[...${modelsCell}?.querySelectorAll('select[aria-label^="Effort for"] option') ?? []].map(o => o.textContent.trim()).join('|')`

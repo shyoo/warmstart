@@ -834,6 +834,25 @@ describe('a question asked after its run ended', () => {
     expect(questions.openQuestions().map((q) => q.id)).toContain(filed?.id)
   })
 
+  it('⛔ a session that never had a task still asks live, and is answered', async () => {
+    // The guard above is for a run that *ended*. A session with no task is still holding the tool
+    // call, and parking it voided an `ask_human` a person could have answered (L2, 2026-09-24).
+    const worker = workers.createWorker({ adapterId: 'openai-compatible', label: 'taskless', enabled: false })
+    const session = seedSession('9e551011-0000-4000-8000-0000000000aa', worker.id)
+    const pending = questions.askQuestion({
+      sessionId: session.id,
+      origin: 'ask_human',
+      kind: 'choice',
+      question: 'Which authentication approach, with no task?',
+      options: THREE_WAYS
+    })
+
+    const open = questions.openQuestions().find((q) => q.question.includes('with no task'))
+    expect(open?.parkedAt).toBeNull()
+    questions.answerQuestion(open!.id, { optionIds: ['magic'], text: null })
+    await expect(pending).resolves.toMatchObject({ status: 'answered' })
+  })
+
   it('a parked question with no task at all leaves the open list', () => {
     const { session } = seedAsker()
     db.db().prepare('delete from runs where session_id = ?').run(session.id)
