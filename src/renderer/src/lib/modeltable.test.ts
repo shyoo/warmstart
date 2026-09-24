@@ -3,6 +3,7 @@ import type { ModelOptions, Worker } from '@shared/protocol'
 import type { ModelRoute } from '@shared/modelroutes'
 import {
   effectiveEffort,
+  defaultSelectionPatch,
   isDefaultRow,
   isGradingRow,
   isJudgmentRow,
@@ -121,6 +122,47 @@ describe('the model table (t638)', () => {
       'claude-sonnet-4-6'
     ])
     expect(rows.every((r) => r.effort === null)).toBe(true)
+  })
+
+  it('⛔ marks one effort pair as the multi-pool default, so other Gemini rows can be removed', () => {
+    const agy: ModelOptions = {
+      adapterId: 'antigravity-cli', costModelId: 'google', selectableEffort: true,
+      models: [
+        { id: 'gemini-3.8-flash', contextWindow: null, effortLevels: ['low', 'medium', 'high'], pool: 'gemini' },
+        { id: 'claude-sonnet-4-6', contextWindow: null, effortLevels: [], pool: 'claude' }
+      ],
+      pools: [
+        { id: 'gemini', label: 'Gemini', models: ['gemini-3.8-flash'] },
+        { id: 'claude', label: 'Claude', models: ['claude-sonnet-4-6'] }
+      ]
+    }
+    const w = worker({
+      defaultModel: 'gemini-3.8-flash', defaultEffort: null,
+      defaultModels: { gemini: 'gemini-3.8-flash' },
+      modelRoutes: [row('gemini-3.8-flash', 'low'), row('gemini-3.8-flash', 'medium'), row('gemini-3.8-flash', 'high')]
+    })
+    const rows = modelTableRows(w, agy)
+    expect(rows.filter((r) => isDefaultRow(w, agy, r)).map((r) => r.effort)).toEqual([null])
+    expect(rows.filter((r) => r.model === 'gemini-3.8-flash' && !isDefaultRow(w, agy, r)).map((r) => r.effort)).toEqual([
+      'high', 'medium', 'low'
+    ])
+  })
+
+  it('moves a multi-pool default and its fallback pair together', () => {
+    const agy: ModelOptions = {
+      adapterId: 'antigravity-cli', costModelId: 'google', selectableEffort: true,
+      models: [
+        { id: 'gemini-3.8-flash', contextWindow: null, effortLevels: ['low', 'medium', 'high'], pool: 'gemini' },
+        { id: 'claude-sonnet-4-6', contextWindow: null, effortLevels: [], pool: 'claude' }
+      ],
+      pools: [
+        { id: 'gemini', label: 'Gemini', models: ['gemini-3.8-flash'] },
+        { id: 'claude', label: 'Claude', models: ['claude-sonnet-4-6'] }
+      ]
+    }
+    expect(defaultSelectionPatch(worker({ defaultModels: { gemini: 'gemini-3.8-flash' } }), agy, row('gemini-3.8-flash', 'high'))).toEqual({
+      defaultModel: 'gemini-3.8-flash', defaultEffort: 'high', defaultModels: { gemini: 'gemini-3.8-flash' }
+    })
   })
 
   it('keeps a stored line for a model the adapter no longer lists, at the end', () => {

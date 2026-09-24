@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { Task, TaskStatus } from '@shared/tasks'
 import {
   openConversations,
+  projectSidebarActive,
   readCollapsedConversations,
   writeCollapsedConversations
 } from './sidebarconversations'
@@ -98,5 +99,18 @@ describe('which projects have folded their conversations away', () => {
     stub({}, true)
     expect(readCollapsedConversations().size).toBe(0)
     expect(() => writeCollapsedConversations(new Set(['p1']))).not.toThrow()
+  })
+})
+
+describe('sidebar selection for an open conversation', () => {
+  const listed = [{ id: 'conversation-1' }]
+
+  it('⛔ lets the conversation, not its project, own the active highlight', () => {
+    expect(projectSidebarActive({ kind: 'project', id: 'p1', tab: 'thread', taskId: 'conversation-1' }, 'p1', listed)).toBe(false)
+  })
+
+  it('keeps the project active for its other tabs and threads', () => {
+    expect(projectSidebarActive({ kind: 'project', id: 'p1', tab: 'tasks' }, 'p1', listed)).toBe(true)
+    expect(projectSidebarActive({ kind: 'project', id: 'p1', tab: 'thread', taskId: 'not-listed' }, 'p1', listed)).toBe(true)
   })
 })

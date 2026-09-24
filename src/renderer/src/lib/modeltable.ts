@@ -80,9 +80,38 @@ export function poolOf(options: ModelOptions | null, model: string): string | nu
 /** Is this line the account's default? Per pool on a multi-pool adapter. */
 export function isDefaultRow(worker: TableWorker, options: ModelOptions | null, row: ModelRoute): boolean {
   const pool = poolOf(options, row.model)
-  if (pool) return worker.defaultModels?.[pool] === row.model
+  if (pool) {
+    if (worker.defaultModels?.[pool] !== row.model) return false
+    // A pool default names a model, while the scalar fallback retains its effort.  Do not mark
+    // every effort row for that model as Default: radios must describe one pair, and the other
+    // pairs must remain removable. Older rows that have no scalar pair deliberately select the
+    // visible "not set" line until the operator chooses an effort.
+    const effort = worker.defaultModel === row.model ? worker.defaultEffort : null
+    return samePair(row, { model: row.model, effort: effectiveEffort(options, row.model, effort) })
+  }
   const pair = pairOf(options, worker.defaultModel, worker.defaultEffort)
   return pair !== null && samePair(row, pair)
+}
+
+/**
+ * Persist a Default click as a complete model/effort pair.
+ *
+ * Multi-pool adapters still retain one model per quota pool, but `defaultModel` is their
+ * no-quota fallback and `defaultEffort` is the only persisted effort. Keeping it in step with
+ * the clicked pair makes the radio move immediately and prevents a stale fallback from choosing
+ * the prior Gemini model.
+ */
+export function defaultSelectionPatch(
+  worker: TableWorker,
+  options: ModelOptions | null,
+  row: ModelRoute
+): Pick<Worker, 'defaultModel' | 'defaultEffort' | 'defaultModels'> {
+  const pool = poolOf(options, row.model)
+  return {
+    defaultModel: row.model,
+    defaultEffort: row.effort,
+    ...(pool ? { defaultModels: { ...(worker.defaultModels ?? {}), [pool]: row.model } } : {})
+  }
 }
 
 export function isGradingRow(worker: TableWorker, options: ModelOptions | null, row: ModelRoute): boolean {

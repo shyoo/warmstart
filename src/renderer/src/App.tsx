@@ -56,6 +56,7 @@ import {
 } from './lib/taskview'
 import {
   openConversations,
+  projectSidebarActive,
   readCollapsedConversations,
   writeCollapsedConversations
 } from './lib/sidebarconversations'
@@ -531,13 +532,10 @@ export function App({
                     void rpc('project.reorder', { ids: next }).then(setProjects).catch(() => void refreshProjects())
                   }}
                 >
-                  {/* ⛔ Active for every tab of this project, not just `tasks`. Excluding
-                      `openThreadId` here used to drop the highlight the moment a thread opened —
-                      and a thread not in the open-conversations list below (a finished
-                      conversation, a single task) then had nothing at all lit up, so the sidebar
-                      answered "which project is this" with silence. */}
+                  {/* A visible conversation owns the selection when its thread is open. Other
+                      project tabs and threads retain the project scope cue. */}
                   <NavItem
-                    active={route.kind === 'project' && route.id === project.id}
+                    active={projectSidebarActive(route, project.id, conversations)}
                     onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'tasks' })}
                     draggable
                     onDragStart={(event) => {

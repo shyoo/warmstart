@@ -25,6 +25,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **Conversation selection and Antigravity default rows repaired (t660, 2026-09-23).** A listed conversation now owns the sidebar highlight while its thread is open; other project tabs and unlisted threads still highlight the project. Antigravity's per-pool default now identifies one model/effort pair rather than every effort row of its model, so non-default Gemini rows can be removed, and selecting a default also updates its no-quota fallback pair. `docs/ui.md`.
 - **Project task count numbers and indicator dot precedence (t655, 2026-09-23).**
   (1) Added right-aligned `running/active` task counts (e.g. `1/2`) beside project names in the left pane when tasks are active; non-zero running is blue (`--state-running`), active is yellow (`--state-warn`), completed/terminal tasks excluded.
   (2) Indicator dots: solid purple (`--state-human`) for `await_human` (`needs_attention`), solid yellow (`--state-warn`) for waiting quota (`paused`). Mixture precedence: `running > await_human > quota`. 5 new L1 checks in `taskview.test.ts`. `docs/ui.md`.

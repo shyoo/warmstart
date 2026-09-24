@@ -18,6 +18,21 @@ const FINISHED: ReadonlySet<TaskStatus> = new Set<TaskStatus>(['completed', 'can
 
 type ConversationRow = Pick<Task, 'kind' | 'status' | 'projectId' | 'deletedAt' | 'updatedAt'>
 
+type ProjectRoute = { kind: string; id?: string; tab?: string; taskId?: string }
+
+/**
+ * A listed conversation owns the sidebar selection while its thread is open. Other project tabs,
+ * and threads not listed beneath this project, leave the project row selected as the scope cue.
+ */
+export function projectSidebarActive(
+  route: ProjectRoute,
+  projectId: string,
+  conversations: ReadonlyArray<Pick<Task, 'id'>>
+): boolean {
+  if (route.kind !== 'project' || route.id !== projectId) return false
+  return route.tab !== 'thread' || !route.taskId || !conversations.some((conversation) => conversation.id === route.taskId)
+}
+
 export function openConversations<T extends ConversationRow>(
   tasks: ReadonlyArray<T>,
   projectId: string

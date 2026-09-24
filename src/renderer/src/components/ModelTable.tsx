@@ -6,6 +6,7 @@ import { isLocalModelId, localModelLabel } from '@shared/localmodel'
 import { effortLabel, modelLabel } from '../lib/modelname'
 import {
   effortLevelsFor,
+  defaultSelectionPatch,
   isDefaultRow,
   isGradingRow,
   isJudgmentRow,
@@ -74,12 +75,7 @@ export function ModelTable({
   // not turn an untouched table into a stored one — which would switch model-aware scoring on.
   const setDefault = (index: number): void => {
     const r = rows[index]!
-    const pool = poolOf(options, r.model)
-    if (pool) {
-      onPatch({ defaultModels: { ...(worker.defaultModels ?? {}), [pool]: r.model } })
-    } else {
-      onPatch({ defaultModel: r.model, defaultEffort: r.effort })
-    }
+    onPatch(defaultSelectionPatch(worker, options, r))
   }
   const toggleGrading = (index: number): void => {
     const r = rows[index]!
@@ -101,7 +97,7 @@ export function ModelTable({
   const setEffort = (index: number, effort: string): void => {
     const r = rows[index]!
     const extra: WorkerPatch = {}
-    if (isDefaultRow(worker, options, r) && !poolOf(options, r.model)) {
+    if (isDefaultRow(worker, options, r)) {
       Object.assign(extra, { defaultModel: r.model, defaultEffort: effort })
     }
     if (isGradingRow(worker, options, r)) Object.assign(extra, { gradingModel: r.model, gradingEffort: effort })
