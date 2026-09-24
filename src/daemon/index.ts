@@ -30,6 +30,7 @@ import {
 import { noteTurnStatus, onSessionExit, onStreamResult } from './turnend.js'
 import { reconcileConsults, startController, stopController } from './controller.js'
 import { reconcileReviews } from './reviewer.js'
+import { sweepSettledTaskQuestions } from './questions.js'
 import { salvageLandedCommits } from './taskcommits.js'
 import { reconcilePushedLandings } from './pushreconcile.js'
 import { creditTurn, runForSession } from './tasks.js'
@@ -96,6 +97,9 @@ async function main(): Promise<void> {
   // its open run and its `pending` row are invisible to a sweep that walks running work. Left alone
   // they read as *grading…* forever, with no process behind the word (t217, 2026-09-04).
   reconcileReviews()
+  // ⛔ And the questions nothing can answer any more: on a settled task, or parked with no task.
+  const voided = sweepSettledTaskQuestions()
+  if (voided) log.info(`voided ${voided} question(s) nothing can answer any more`)
   // ⛔ An image pasted into a form that was never submitted is a file nobody will ever delete, and
   // these are megabytes each. Once at startup and once a day thereafter; only ever unbound rows.
   prunePending()

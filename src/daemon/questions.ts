@@ -588,30 +588,27 @@ export function voidQuestionsForTask(taskId: string, reason = 'task deleted'): v
 /**
  * Sweep any dangling questions on already settled tasks, and any parked question with no task at
  * all — nothing can consume the answer to either.
+ *
+ * ⛔ Called from daemon startup, after `openDb`. It used to run at module load inside a bare
+ * `try/catch`, where `db()` throws *database not open* — so it swept nothing in the shipped daemon,
+ * and the tests, which open the database first, never saw it (t680, 2026-09-24).
  */
 export function sweepSettledTaskQuestions(): number {
-  try {
-    const dangling = rows<QuestionRow>(
-      db().prepare(`
-        select q.* from questions q
-        left join tasks t on q.task_id = t.id
-        where q.answered_at is null
-          and (t.status in ('completed', 'cancelled') or (q.task_id is null and q.parked_at is not null))
-      `).all()
-    )
-    for (const q of dangling) {
-      db().prepare(
-        "update questions set answered_at = ?, answer_json = ?, answered_by = 'system' where id = ?"
-      ).run(Date.now(), JSON.stringify({ optionIds: [], text: q.task_id ? 'task settled' : NO_TASK }), q.id)
-    }
-    return dangling.length
-  } catch {
-    return 0
+  const dangling = rows<QuestionRow>(
+    db().prepare(`
+      select q.* from questions q
+      left join tasks t on q.task_id = t.id
+      where q.answered_at is null
+        and (t.status in ('completed', 'cancelled') or (q.task_id is null and q.parked_at is not null))
+    `).all()
+  )
+  for (const q of dangling) {
+    db().prepare(
+      "update questions set answered_at = ?, answer_json = ?, answered_by = 'system' where id = ?"
+    ).run(Date.now(), JSON.stringify({ optionIds: [], text: q.task_id ? 'task settled' : NO_TASK }), q.id)
   }
+  return dangling.length
 }
-
-// ⛔ Sweep any dangling questions on already settled tasks on startup
-sweepSettledTaskQuestions()
 
 onTaskSettled((taskId, status) => {
   if (status === 'completed' || status === 'cancelled') {

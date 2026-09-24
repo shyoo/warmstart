@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
@@ -866,5 +866,20 @@ describe('a question asked after its run ended', () => {
 
     expect(questions.openQuestions().map((q) => q.id)).not.toContain(id)
     expect(questions.requireQuestion(id).answeredBy).toBe('system')
+  })
+})
+
+describe('the startup sweep', () => {
+  it('⛔ runs from daemon startup after the database opens, never at module load', () => {
+    // ⚠️ At module load `db()` throws *database not open*, and the sweep's old `try/catch` turned that
+    //    into "swept 0" — every time, in the shipped daemon, while this file (which opens the
+    //    database first) stayed green. t680's orphan survived a restart on exactly that.
+    const read = (f: string): string => readFileSync(join(__dirname, f), 'utf8')
+    expect(read('questions.ts')).not.toMatch(/^sweepSettledTaskQuestions\(\)/m)
+    const index = read('index.ts')
+    const opened = index.indexOf('openDb()')
+    const swept = index.indexOf('sweepSettledTaskQuestions()')
+    expect(opened).toBeGreaterThan(-1)
+    expect(swept).toBeGreaterThan(opened)
   })
 })

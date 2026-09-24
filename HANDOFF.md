@@ -7,7 +7,7 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-24, **Windows 11**): typecheck, lint and build pass; L1 **3,966 passed, 3 skipped** (234 files) in **126.83s**;
+Baseline (2026-09-24, **Windows 11**): typecheck, lint and build pass; L1 **3,967 passed, 3 skipped** (234 files) in **126.83s**;
 L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here; last run 2026-09-23); L3 **486
 checks** (4 skipped); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
 t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
@@ -23,7 +23,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
-- **An expired question no longer sticks on the banner (t680 ← t679, 2026-09-24).** t679 guarded the renderer against stale `question.list` responses, but the banner's row was a daemon orphan: t667's native `AskUserQuestion` carried two questions, the second was asked 110ms after the first parked and 27 min after the run ended, so `insertQuestion` stored `task_id = null` — out of reach of every task-keyed sweep. Now a question binds to `taskOfSession`, one asked with no open run is filed parked at once, a task-less park is voided, and the startup sweep voids existing orphans. 3 L1, red on the old code. `docs/glossary.md` *Parked*.
+- **An expired question no longer sticks on the banner (t680 ← t679, 2026-09-24).** t679 guarded the renderer against stale `question.list` responses, but the banner's row was a daemon orphan: t667's native `AskUserQuestion` carried two questions, the second was asked 110ms after the first parked and 27 min after the run ended, so `insertQuestion` stored `task_id = null` — out of reach of every task-keyed sweep. Now a question binds to `taskOfSession`, one asked with no open run is filed parked at once, a task-less park is voided, and the startup sweep voids existing orphans — ⛔ now called from `index.ts` after `openDb`: it ran at module load, where `db()` throws and its `try/catch` reported *swept 0*, so it had never swept anything in the shipped daemon (verified on a copy of the live DB: the orphan cleared). 4 L1. `docs/glossary.md` *Parked*.
 - **Sidebar project counts omit empty buckets (t678, 2026-09-24).** `ProjectTaskCount` renders only positive running/awaiting/parked counts, slash separated; colours and hover remain. Six combinations plus empty pinned at L1. `docs/ui.md`.
 - **The `land_work` receipt states previous → next, each named once (t677 ← t667, 2026-09-24).**
   It named only the new branch, which reads as a restatement of the one just landed.
