@@ -91,8 +91,17 @@ const info: AdapterInfo = {
     imageInput: 'spawn-flag',
     // ⛔ Muse reads `mcpServers` out of `settings.json`, which belongs to the **isolation root** and
     // not to one session — so a per-session identity token, which is what `task_complete` needs,
-    // has nowhere to live. Same answer as codex, for the same reason, and the prompt builder reads
-    // this so a muse run is never told to call a tool it does not have.
+    // has nowhere race-free to live. Measured 2026-09-23 against 1.3.0 (1.3.0-R3401.1), native
+    // Windows, free of charge: a scratch `XDG_CONFIG_HOME` whose `settings.json` holds one stdio
+    // server **is** honoured — the entry needs `schema_version`, the child spawned twice on one
+    // `exec --provider echo`, and its configured `env` arrived intact. But the file is per-account
+    // while `WARMSTART_SESSION_ID` is per-session, so two pooled sessions on one account would
+    // share whichever identity was written last, and `ask_human`/`task_complete` would answer for
+    // the wrong run. `muse exec --help` (same binary) carries no per-run MCP flag — the codex
+    // t618 escape (`-c mcp_servers.…` overrides) has no muse equivalent — so this stays `false`,
+    // and the prompt builder reads this so a muse run is never told to call a tool it does not
+    // have. What a muse run *can* do is end its reply `NEEDS DECISION:`, which `turnend` parses
+    // back into a Question.
     mcp: false,
     // ⭐ `--reasoning-effort` is a real flag on `exec`, and the catalogue lists which tiers each
     // model accepts.

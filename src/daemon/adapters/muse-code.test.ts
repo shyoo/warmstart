@@ -734,6 +734,13 @@ describe('the capability block', () => {
     // Reusing `--session-id` appends to the conversation and logs `session.resumed`.
     expect(c.resumeSession).toBe(true)
     expect(c.mintsSessionId).toBe(true)
+    // No MCP tools, `ask_human` included: `mcpServers` lives in the per-account settings.json
+    // while MCP identity is per-session, so two pooled sessions would share one identity and
+    // answer for the wrong run — and `muse exec` has no per-run MCP flag to escape through
+    // (t676, measured 2026-09-23 on 1.3.0: stdio+env entries ARE honoured, which is what makes
+    // this a granularity mismatch rather than a missing feature). A muse run asks its question
+    // as `NEEDS DECISION:` text, which `turnend` parses back into a Question.
+    expect(c.mcp).toBe(false)
     // The panel is the only place the percentages exist.
     expect(museCode.info.usageRefresh?.answer).toBe('screen')
   })

@@ -90,6 +90,11 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   (3) UI clearly surfaces organizer and seat MCP capabilities (`native MCP` vs `terminal fallback`) in
   task creation and debate notices. L1 tests updated across adapters, debate, prompt, questions,
   and debatenotice. `docs/adapters.md`.
+- **No MCP Questions API on Muse (t676, 2026-09-23).** t665 ran on Codex, not Muse — but the answer
+  stands: `mcp: false`, so no `ask_human`. Measured on 1.3.0 that `settings.json` stdio+env entries
+  ARE honoured, yet the file is per-account against per-session identity (concurrent pool sessions
+  would share one), and `exec` has no per-run MCP flag — the t618 codex escape has no muse
+  equivalent. Muse asks via `NEEDS DECISION:` text, parsed back by `turnend`. `docs/adapters.md`.
 - **Tasks wait visibly for their first page (t612, 2026-09-22).** `Tasks` no longer renders its
   actionable **No tasks yet** state from its initial empty array while `task.page` is in flight;
   it draws two spinning marks and *Loading tasks…* until the first completed answer. `docs/ui.md`.
