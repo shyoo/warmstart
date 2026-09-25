@@ -37,6 +37,7 @@ import {
   modelLine,
   pieceSettings,
   plannedAssignment,
+  routeForTask,
   statusToneFor,
   reassignmentModel,
   resolveRetryCauses,
@@ -564,6 +565,33 @@ describe('projectTaskCounts for sidebar project numbers', () => {
       { status: 'awaiting_human', deletedAt: null }
     ]
     expect(projectTaskCounts(tasks)).toEqual({ running: 2, awaiting: 1, waiting: 0 })
+  })
+})
+
+/**
+ * Where "open this task" goes from outside its project.
+ *
+ * ⛔ Reported 2026-09-25: the Attention bar's Answer… button opened a project
+ * task under `← Unassigned`, and Back from there led to a project-less list the
+ * task was not on — with no way back to its project view. A task with a home
+ * opens on its project thread; Unassigned is only for the genuinely
+ * project-less remainder.
+ */
+describe('routeForTask', () => {
+  it('opens a task with a project on that project thread', () => {
+    expect(routeForTask({ id: 'task-1', projectId: 'project-1' })).toEqual({
+      kind: 'project',
+      id: 'project-1',
+      tab: 'thread',
+      taskId: 'task-1'
+    })
+  })
+
+  it('opens a project-less task under Unassigned', () => {
+    expect(routeForTask({ id: 'task-2', projectId: null })).toEqual({
+      kind: 'unassigned',
+      taskId: 'task-2'
+    })
   })
 })
 

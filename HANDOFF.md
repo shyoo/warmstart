@@ -24,6 +24,7 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 ## Closed in this cleanup
 
+- **The Attention bar's Answer… opens the task on its own project thread (t699, 2026-09-25).** It always routed to `{ kind: 'unassigned' }`, stranding project tasks under `← Unassigned`; `routeForTask` (`renderer/lib/taskview.tsx`, 2 L1) picks the project thread, `openTaskById` (`App.tsx`) asks the daemon when the cached list has not caught up. `docs/ui.md`.
 - **The Plan & Execute approval shows the whole executor instruction (t693 ← t690, 2026-09-25).**
   The handoff card approved a one-line label while the piece's title ran as the executor's prompt verbatim. `splitApprovalFor` (`src/daemon/split.ts`) now builds the card text with the full instruction; `ApprovalBody` (`Questions.tsx`) renders `task_split` bodies in the thread's markdown subset, collapsed past twelve lines behind *Show full instruction*. Split-mode cards stay one-line labels. L1 in `split.test.ts` + `ApprovalBody.test.tsx`. `docs/ui.md`.
 - **A resumed session no longer holds as *no routable models in 'med' class*, and a busy machine no longer fails a landing (t697 ← t691, 2026-09-25).**
@@ -139,23 +140,7 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
   low through ultra. Added `gpt-6-astra` to `costmodels/openai.codex.2026-08.json` (1.05M context
   window, priority 1 in `models_cache.json`), `benchmarks/coding-agents.2026-09.json` (0.885 agentic),
   and `statistics.ts` model power sorting. `docs/adapters.md` updated.
-- **A conversation's landing conflicted for ever, because two halves of the tool disagreed about
-  which `main` (t586 ← t578, 2026-09-20).** An open conversation resolves its finish policy to
-  `await-human` *from its kind* — that is what stops it landing by itself — but **no landing ever
-  runs that level**: `landConversationWork` hands `decideFinish` the project's own. `await-human` maps
-  to `leave-branch`, whose base is `origin/<target>`, so every reader that asked `resolveFinishPolicy`
-  got the remote while the Land press rebased onto the local target. ⭐ Measured off the daemon log
-  and store for t578 (inkland): the project finishes `commit-and-merge`, local `main` stood **9
-  commits ahead of `origin/main`**, Land ran `git rebase main` and conflicted at 20:01:54, the
-  *Resolve & retry* instruction said *"does not rebase cleanly onto `origin/main`"*, the agent rebased
-  there and reported it clean at 20:10:52, and the next press failed at 20:11:12 on the identical
-  commit — **a loop with no converging state**. `baseRef` had the same reading, so the branch had also
-  been *cut* nine commits behind where it had to land. One authority now: `landingLevelFor`
-  (`shared/policy.ts`), read by `baseRef`, `resolveConflictOnTask`, `resolveTrunkMovedOnTask`, the
-  pre-flight `readMergeability` and `landConversationWork`'s own `levelFor`. `localBaseNote` adds the
-  measured gap to both recovery prompts — *"⛔ … and **not** onto `origin/main`: … 9 commits ahead"* —
-  because naming the right ref never stopped an agent reaching for the habitual one. 11 L1
-  checks across four files; four separate mutations go red. **Not flown on a real run.** `docs/landing.md`.
+- **A conversation's landing conflicted for ever, because two halves of the tool disagreed about which `main` (t586 ← t578, 2026-09-20).** Policy readers saw `origin/<target>` (a conversation kind resolves `await-human` → `leave-branch`) while Land rebased onto the local target — measured 9 commits apart on t578, a loop with no converging state. One authority now: `landingLevelFor` (`shared/policy.ts`), read by `baseRef`, both recovery prompts, the pre-flight and `landConversationWork`; `localBaseNote` names the measured gap. 11 L1, four mutations go red. **Not flown on a real run.** `docs/landing.md`.
 - **Statistics asks whether conversations count (t695, 2026-09-25).** *Include conversations*
   beside the Window control folds conversation-kind tasks out of all three tabs when off (t667 billed
   a whole evening of chat to its model); on is the old answer, remembered per display. `docs/ui.md`.

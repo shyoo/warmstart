@@ -52,6 +52,7 @@ import {
   ProjectTaskCount,
   projectTaskCounts,
   projectWorkState,
+  routeForTask,
   taskLabelShort,
   Working
 } from './lib/taskview'
@@ -278,6 +279,27 @@ export function App({
     setAddingTask(true)
   }, [])
 
+  /**
+   * Opening a task from outside its project — the Attention bar's Answer…/View…,
+   * a cross-link, a notification — lands on the task's own project thread.
+   *
+   * ⛔ Never the Unassigned list for a task that has a home (t699): Back from
+   * there returns to a list of project-less tasks this task is not on, with no
+   * way back to its project view. The cached list answers first; when it has
+   * not loaded or caught up yet, the daemon is asked rather than stranding the
+   * task under Unassigned.
+   */
+  const openTaskById = useCallback((taskId: string) => {
+    const cached = tasks.find((t) => t.id === taskId)
+    if (cached) {
+      setRoute(routeForTask(cached))
+      return
+    }
+    void rpc('task.get', { id: taskId })
+      .then((got) => setRoute(got ? routeForTask(got.task) : { kind: 'unassigned', taskId }))
+      .catch(() => setRoute({ kind: 'unassigned', taskId }))
+  }, [tasks, setRoute])
+
   useEffect(() => {
     const openFromTasks = (event: Event) =>
       openNewTask((event as CustomEvent<{ projectId?: string }>).detail?.projectId)
@@ -314,11 +336,7 @@ export function App({
     const task = tasks.find((t) => t.id === openTask.taskId)
     if (!task) return
     onOpenTaskHandled()
-    setRoute(
-      task.projectId
-        ? { kind: 'project', id: task.projectId, tab: 'thread', taskId: task.id }
-        : { kind: 'unassigned', taskId: task.id }
-    )
+    setRoute(routeForTask(task))
   }, [openTask, tasks, setRoute, onOpenTaskHandled])
 
   /**
@@ -751,7 +769,7 @@ export function App({
             comes back as a `quota.changed` event the fleet subscription already handles, which is
             why nothing here is done with the result. */}
         <FleetStrip fleet={fleet} now={now} onProbe={(id) => rpc('worker.probe', { id })} />
-        {connected && <Attention now={now} onOpenTask={(taskId) => setRoute({ kind: 'unassigned', taskId })} />}
+        {connected && <Attention now={now} onOpenTask={openTaskById} />}
 
         <div className="content">
           {!connected ? (
@@ -802,7 +820,7 @@ export function App({
                 fleet={fleet}
                 onBack={() => setRoute({ kind: 'unassigned' })}
                 backLabel="Unassigned"
-                onOpenTask={(taskId) => setRoute({ kind: 'unassigned', taskId })}
+                onOpenTask={openTaskById}
               />
             ) : (
               <div className="stack">
@@ -813,7 +831,7 @@ export function App({
                 <Tasks
                   projects={projects}
                   fleet={fleet}
-                  onOpenTask={(taskId) => setRoute({ kind: 'unassigned', taskId })}
+                  onOpenTask={openTaskById}
                 />
               </div>
             )

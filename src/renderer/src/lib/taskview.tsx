@@ -803,6 +803,26 @@ export function taskLabelShort(task: Pick<Task, 'title' | 'titleSummary'>, max =
 }
 
 /**
+ * Where "open this task" goes from anywhere outside its project.
+ *
+ * ⛔ **The project thread, never the Unassigned list for a task that has a home.**
+ * Every task belongs to one project, so a question's Answer… button or a quota
+ * alert's View… that lands on `← Unassigned` strands the operator: Back returns
+ * to a list of project-less tasks this task is not on, with no way back to the
+ * project view it came from (t699). The Unassigned route is only for the
+ * genuinely project-less remainder.
+ */
+export type OpenTaskRoute =
+  | { kind: 'project'; id: string; tab: 'thread'; taskId: string }
+  | { kind: 'unassigned'; taskId: string }
+
+export function routeForTask(task: Pick<Task, 'id' | 'projectId'>): OpenTaskRoute {
+  return task.projectId
+    ? { kind: 'project', id: task.projectId, tab: 'thread', taskId: task.id }
+    : { kind: 'unassigned', taskId: task.id }
+}
+
+/**
  * **The one ordering rule for everything in the thread: when it finished, then when it started.**
  *
  * ⛔ **Sorting by start time reads the timeline wrong whenever two things overlap**, and in this
