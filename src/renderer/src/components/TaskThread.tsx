@@ -1,5 +1,5 @@
 import { sessionEnded } from '@shared/protocol'
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   resolveModelChoice,
   SHARING_LABELS,
@@ -141,6 +141,9 @@ export interface TaskDetailData {
   previewPrompt?: string
 }
 
+// A fresh [] here would defeat Thread's memo on every one-second ledger tick for an idle task.
+const EMPTY_ACTIVITY: Array<{ text: string; ts: number }> = []
+
 /**
  * One task, as a place you can be.
  *
@@ -225,7 +228,7 @@ export function TaskThread({
   return (
     <TaskDetail
       detail={detail}
-      activity={activity[detail.task.id] ?? []}
+      activity={activity[detail.task.id] ?? EMPTY_ACTIVITY}
       fleet={fleet}
       onDeleted={onBack}
       blocking={detail.blocking}
@@ -1387,7 +1390,9 @@ function MessageText({ text, markdown = false }: { text: string; markdown?: bool
   )
 }
 
-function Thread({
+// The ledger clock belongs to TaskThread; its ticks must not reparse every old markdown message.
+// Messages, runs and activity change by reference when the thread really does need a new render.
+const Thread = memo(function Thread({
   messages,
   runs,
   activity,
@@ -1530,7 +1535,7 @@ function Thread({
       })}
     </div>
   )
-}
+})
 
 /** Statuses where a prerequisite would change nothing, so the control that adds one is not drawn. */
 const FINISHED_FOR_GOOD = new Set<Task['status']>(['completed', 'cancelled', 'failed'])

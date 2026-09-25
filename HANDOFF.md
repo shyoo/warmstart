@@ -1,9 +1,8 @@
 # Warmstart — Session Handoff
 
-## Current state — 2026-09-22
+## Current state — 2026-09-24
 
-Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling, pooled worktrees,
-model-aware routing, quality review, remote access, packaging, and atomic worker/model reassignment.
+Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling, pooled worktrees, model-aware routing, quality review, remote access, packaging, and atomic worker/model reassignment.
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
@@ -23,6 +22,7 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **Long task threads skip the one-second ledger rerender (t684, 2026-09-24).** `Thread` is memoized and its empty activity tail is stable, so old markdown is parsed only when thread data changes. t667's recorded thread was inaccessible through this task's cross-project `task_read`; this is a renderer-path diagnosis, not a direct profile. `docs/ui.md`.
 - **Muse can use the host's `gh` login (t683 ← t682, 2026-09-24).** Its private XDG root hid
   `gh`'s config even with Full user authority. A Windows reproduction showed auth fail with that XDG
   root and succeed when `GH_CONFIG_DIR` named the host config. The adapter now pins that path while
