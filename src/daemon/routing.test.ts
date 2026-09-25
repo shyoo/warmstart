@@ -1001,6 +1001,58 @@ describe('quota as a slope rather than a switch', () => {
     })
   })
 
+  /**
+   * t691: the winner's `reason` was hardcoded `''`, so every "Worker assigned" bubble detail read
+   * `Routing:  (score …)` with a blank rationale — and a worker-pinned auto-route recorded `pinned`
+   * ("one candidate, no comparison") over a field that compared models. Both are read off the
+   * decision here.
+   */
+  describe('routing basis and winner reason', () => {
+    it('records score, not pinned, when a pinned worker auto-routes among several models', () => {
+      db.db().prepare('update workers set enabled = 0').run()
+      const w = workers.createWorker({ adapterId: 'claude-code', label: 'PinnedAuto', enabled: true })
+      workers.updateWorker(w.id, {
+        modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-opus-5'])
+      })
+      const task = tasks.createTask({ title: 'Pinned worker, auto models' })
+      tasks.updateTask(task.id, { constraints: { workerId: w.id } })
+      const choice = scoring.chooseTarget(tasks.requireTask(task.id))
+      expect(choice.worker?.id).toBe(w.id)
+      // ⛔ A pinned *worker* is not a pinned *decision*: the models were scored against each other.
+      expect(choice.routedBy).toBe('score')
+      expect(choice.reason).toMatch(/highest score of \d+ candidates/)
+    })
+
+    it('records pinned with the pin named when the model was pinned too', () => {
+      db.db().prepare('update workers set enabled = 0').run()
+      const w = workers.createWorker({ adapterId: 'claude-code', label: 'PinnedModel', enabled: true })
+      workers.updateWorker(w.id, {
+        modelRoutes: routesFromLegacy(['claude-haiku-4-5-20251001', 'claude-opus-5'])
+      })
+      const task = tasks.createTask({ title: 'Pinned worker and model' })
+      tasks.updateTask(task.id, { constraints: { workerId: w.id, model: 'claude-opus-5' } })
+      const choice = scoring.chooseTarget(tasks.requireTask(task.id))
+      expect(choice.worker?.id).toBe(w.id)
+      expect(choice.model).toBe('claude-opus-5')
+      expect(choice.routedBy).toBe('pinned')
+      expect(choice.reason).toBe('pinned to PinnedModel / claude-opus-5')
+    })
+
+    it('records pinned with the class narrowing named for a one-candidate auto field (t690 shape)', () => {
+      db.db().prepare('update workers set enabled = 0').run()
+      const w = workers.createWorker({ adapterId: 'claude-code', label: 'PinnedClass', enabled: true })
+      workers.updateWorker(w.id, { modelRoutes: routesFromLegacy(['claude-opus-5-5']) })
+      const task = tasks.createTask({ title: 'Pinned worker, one high-class model' })
+      tasks.updateTask(task.id, { constraints: { workerId: w.id, modelClass: 'high' } })
+      const choice = scoring.chooseTarget(tasks.requireTask(task.id))
+      expect(choice.worker?.id).toBe(w.id)
+      expect(choice.model).toBe('claude-opus-5-5')
+      expect(choice.routedBy).toBe('pinned')
+      expect(choice.reason).toContain('pinned to PinnedClass / claude-opus-5-5')
+      expect(choice.reason).toContain('Auto(high) narrowed the field to this model')
+    })
+  })
+
   it('favors a worker with sooner reset and expiring credits over a worker with distant reset (t83 scenario)', () => {
     db.db().prepare('update workers set enabled = 0').run()
     const now = Date.now()

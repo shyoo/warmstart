@@ -705,10 +705,44 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
    * score; a second implementation of the arithmetic is the one thing that would make this ledger
    * worse than useless, because it would look authoritative and disagree.
    */
+  /**
+   * Why this winner, in one line for the thread bubble's detail (`Routing: <reason> (score …)`).
+   *
+   * ⛔ Read off the decision, never re-derived: the basis, the pins and the field that produced it
+   * are all in hand here. t691 filed this because every dispatch left it blank — the winner's
+   * `reason` was hardcoded `''`, so a run that auto-routed to an unexpected model arrived with no
+   * explanation and no way to tell exploration from arithmetic.
+   */
+  const reasonFor = (winner: WorkerChoice, basis: RoutingBasis): string => {
+    const label = winner.worker?.label ?? winner.worker?.id?.slice(0, 8) ?? '?'
+    const model = winner.model ? ` / ${winner.model}` : ''
+    switch (basis) {
+      case 'pinned': {
+        const narrowed =
+          !modelPinned && task.constraints.modelClass && candidates.length <= 1
+            ? `; Auto(${task.constraints.modelClass}) narrowed the field to this model`
+            : ''
+        return `pinned to ${label}${model}${narrowed}`
+      }
+      case 'sticky':
+        return `kept the live conversation on ${label}`
+      case 'reuse':
+        return 'score tie within ε; this candidate already held the conversation'
+      case 'controller':
+        return 'controller judgment'
+      case 'explore':
+        return 'exploration overrode the top score to gather data'
+      case 'score':
+      default:
+        return `highest score of ${candidates.length} candidate${candidates.length === 1 ? '' : 's'}`
+    }
+  }
+
   const decided = (winner: WorkerChoice, basis: RoutingBasis): WorkerChoice => ({
     ...winner,
     objective,
     routedBy: basis,
+    reason: reasonFor(winner, basis),
     refusals,
     // ⚠️ Eight, not four. The consult shortlist is four because a controller reading more than that
     // is paying for prose it will not use; a person auditing a decision months later wants the field.
@@ -740,7 +774,14 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       addMessage(task.id, 'system', `Exploring ${res.choice.model ?? 'default'} on ${res.choice.worker?.label}`, null, [], {
         detail: `Model exploration: trying ${res.choice.model ?? 'default'} on ${res.choice.worker?.label} instead of ${res.originalWinner?.model ?? 'default'}, which arithmetic scored highest.`
       })
-      return res.choice
+      // ⛔ The bubble above names it; the ledger row must too, or the Controller report's
+      // `Routing:` detail reads blank exactly where the operator asks why (t691).
+      return {
+        ...res.choice,
+        reason:
+          `exploration: trying ${res.choice.model ?? 'default'} instead of ` +
+          `top-scoring ${res.originalWinner?.model ?? 'default'} to gather data`
+      }
     }
     return choice
   }
@@ -760,16 +801,19 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     if (stayed) return finalizeChoice(decided(stayed, 'sticky'))
   }
 
-  const isPinned = Boolean(
-    task.constraints.workerId ||
-      task.constraints.model ||
+  // ⛔ A pinned *model* means no comparison; a pinned *worker* does not. With Auto models the
+  // worker's routable pairs are still scored against each other, and recording that comparison as
+  // `pinned` writes "one candidate, no comparison" over a field that compared (t691: a pinned
+  // worker's high-class auto row won on score, and the ledger denied any comparison happened).
+  const modelPinned = Boolean(
+    task.constraints.model ||
       (task.constraints.modelsByWorker && best.worker && task.constraints.modelsByWorker[best.worker.id])
   )
   const eligibleWorkerCount = new Set(candidates.map((c) => c.worker?.id).filter(Boolean)).size
   // ⚠️ A debate is as pinned as a plan: its organizer is a named account and model, so there is
   // nothing for a routing consult to decide and it would spend a controller turn saying so.
   if (eligibleWorkerCount <= 1 || task.kind === 'plan' || task.kind === 'debate') {
-    return finalizeChoice(decided(best, isPinned ? 'pinned' : 'score'))
+    return finalizeChoice(decided(best, modelPinned || candidates.length <= 1 ? 'pinned' : 'score'))
   }
   // ⚠️ For the *best* candidate, not the fleet. The floor asks "is this task big enough to be worth
   // a controller turn", and on an agent whose runs cost 12x the fleet median the same work clears a

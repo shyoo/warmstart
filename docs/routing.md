@@ -712,6 +712,12 @@ its published formula, and **every candidate's term-by-term derivation** — val
 contribution and the basis in words — plus how the winner was picked (`score`, `controller`,
 `pinned`, `sticky`, `reuse` or `explore`).
 
+⛔ **A pinned *worker* is not a pinned *decision*.** `pinned` is recorded only when the model was
+pinned too, or the scored field held a single candidate; a pinned worker whose Auto models were
+scored against each other records `score` (t691 — a pinned worker's high-class row won on score
+while the ledger claimed "one candidate, no comparison"). The winner's one-line `reason` names the
+pin, the comparison, or the override, so the thread bubble's `Routing:` detail never reads blank.
+
 - ⛔ **`sticky` is a conversation returning to the account it is already talking to**, and it wins
   outright rather than adding a term. Warmth is one weight among nine, which is right for unattended
   work and wrong for a thread a person is in: routing it elsewhere silently swaps the model, drops

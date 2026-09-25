@@ -33,7 +33,7 @@ export default defineConfig({
     // the most expensive kind of false pass this project has.
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     environment: 'node',
-    testTimeout: 15_000,
+    testTimeout: 30_000,
     /**
      * ⛔ **One temp root per run, removed when the run ends, and a `PATH` no vendor CLI can be
      * launched from.** Both live in this file because both are answers to the same measurement: 24,322

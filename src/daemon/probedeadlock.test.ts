@@ -108,7 +108,8 @@ describe('a worker whose quota probe came back empty is still dispatchable', () 
 
     const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.worker?.id).toBe(worker.id)
-    expect(choice.reason).toBe('')
+    // ⛔ t691: the winner names its pin now — a blank `reason` was the whole complaint.
+    expect(choice.reason).toBe('pinned to BlankProbe')
   })
 
   it('is marked unverified rather than withheld — the flag is a note, not a gate', () => {
@@ -123,7 +124,7 @@ describe('a worker whose quota probe came back empty is still dispatchable', () 
 
     const choice = scoring.chooseTarget(pinnedTask(worker.id, ADAPTER))
     expect(choice.worker?.id).toBe(worker.id)
-    expect(choice.reason).toBe('')
+    expect(choice.reason).toBe('pinned to NeverProbed')
   })
 
   it('is refused by no account gate, because none of them reads a quota row', () => {

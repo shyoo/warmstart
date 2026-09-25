@@ -39,6 +39,13 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 
 const ROOT_PREFIX = 'agentyard-l1-'
+const STALE_PREFIXES = [
+  ROOT_PREFIX,
+  'agentyard-ui-',
+  'playwright-artifacts-',
+  'muse-workspace-probe-',
+  'muse-trust'
+]
 
 /**
  * Every command an adapter declares as its CLI (`info.command`), which L1 must be able to *find* and
@@ -169,7 +176,7 @@ function sweepStaleRoots(system: string): void {
   }
   const cutoff = Date.now() - STALE_MS
   for (const name of entries) {
-    if (!name.startsWith(ROOT_PREFIX)) continue
+    if (!STALE_PREFIXES.some((prefix) => name.startsWith(prefix))) continue
     const path = join(system, name)
     try {
       if (statSync(path).mtimeMs > cutoff) continue

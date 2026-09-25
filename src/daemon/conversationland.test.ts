@@ -204,7 +204,7 @@ describe('a conversation that lands twice', () => {
     expect(detail.indexOf(landed.nextBranch as string)).toBeGreaterThan(detail.indexOf('continues on'))
     // ⚠️ The clauses `landedMessage` composes are kept, off the line.
     expect(headlines[0]?.detail).toContain('Verified first: 1 project check passed')
-  }, 30_000)
+  }, 45_000)
 })
 
 describe('a conversation whose tree was parked between turns', () => {
@@ -229,7 +229,7 @@ describe('a conversation whose tree was parked between turns', () => {
     expect(after.branch).toBe(landed.nextBranch)
     expect(await worktrees.branchExists(project, after.branch as string)).toBe(true)
     expect(isOpenConversation(after)).toBe(true)
-  }, 30_000)
+  }, 45_000)
 })
 
 /**

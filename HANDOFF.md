@@ -6,7 +6,7 @@ Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling,
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-24, **Windows 11**): typecheck, lint and build pass; L1 **3,971 passed, 3 skipped** (234 files) in **112.94s**;
+Baseline (2026-09-24, **Windows 11**): typecheck, lint and build pass; L1 **3,976 passed, 3 skipped** (234 files) in **133.42s**;
 L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L3 **493
 checks** (4 skipped); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
 t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
@@ -16,9 +16,9 @@ hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
 The next `/release rc` opens the patch series at `0.3.4-rc.1` unless `--bump minor|major` is asked for.
 Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
-**Routing Model v1.2 preserves expiry urgency (t552, 2026-09-19).** `prepaid` is field-normalized
-remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allowance scores 1/24 at a
-24h reset and 1 at 1h — exactly 24×. `docs/routing.md` §3.3a.
+**Routing Model v1.2 preserves expiry urgency (t552); dispatches explain the pick (t691).**
+`prepaid` is field-normalized $/h to reset (same $3.68 scores 1/24 at 24h, 1 at 1h); the winner's
+`reason` names pin, comparison, or override, and a compared Auto field records `score`. `docs/routing.md` §§3.3a, 4.9.
 
 ## Closed in this cleanup
 
