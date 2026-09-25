@@ -2,7 +2,8 @@
 import { addMessage, createTask, getTask, getTaskBySeq, messagesFor, requireTask, runForSession, runsFor, setTaskHandoff } from '../tasks.js'
 import { landConversationWork } from '../conversationland.js'
 import { askQuestion } from '../questions.js'
-import { addSplitDependency, applySplit, splitApprovalFor, validateSplit } from '../split.js'
+import { addSplitDependency, applySplit, isDelegation, splitApprovalFor, validateSplit } from '../split.js'
+import { pendingDelegateRequest } from '../delegation.js'
 import {
   becomeConversation,
   nextRound,
@@ -219,17 +220,25 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
       // in particular the Plan & Execute card carries the whole executor instruction.
       const approval = splitApprovalFor(parent, pieces)
       const handoff = isPlanExecute(parent)
-      const resolution = await askQuestion({
-        sessionId: p.sessionId,
-        origin: 'task_split',
-        kind: 'choice',
-        header: approval.header,
-        question: approval.question,
-        options: approval.options
-      })
+      const delegating = isDelegation(parent)
+      // ⛔ **A person's `/delegate` is the approval, for the delegation it asked for and no other**
+      //    (t704, decision D1). An agent's own idea to delegate raises the card like any split.
+      const requested = delegating && pendingDelegateRequest(parent.id)
+      const resolution = requested
+        ? null
+        : await askQuestion({
+          sessionId: p.sessionId,
+          origin: 'task_split',
+          kind: 'choice',
+          header: approval.header,
+          question: approval.question,
+          options: approval.options
+        })
 
-      const approved = resolution.status === 'answered' && resolution.answer?.optionIds?.includes('approve')
-      if (!approved) {
+      const approved =
+        resolution === null ||
+        (resolution.status === 'answered' && resolution.answer?.optionIds?.includes('approve'))
+      if (!approved && resolution) {
         // ⚠️ The operator's own words go back verbatim. A planner told only "refused" has nothing to
         // revise towards and will re-file something very close to what was just turned down.
         const note = resolution.answer?.text?.trim()
@@ -247,12 +256,40 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
         parent.id,
         pieces,
         { kind: 'agent', workerId: run.workerId, sessionId: p.sessionId, runId: run.id },
-        parent.childDefaults
+        parent.childDefaults,
+        { requested }
       )
       if (!result.ok) return { ok: false, reply: `That split was not filed: ${result.reason}` }
 
       const seqs = result.children.map((c) => c.seq)
       const named = seqs.map((s) => `t${s}`).join(', ')
+
+      if (delegating && parent.kind === 'conversation') {
+        // ⚠️ The conversation carries on: nothing blocks and the run stays open. The reply says what
+        //    will come back and that the work is no longer this session's to do.
+        return {
+          ok: true,
+          seqs,
+          reply:
+            `Delegated as ${named}. Do not start that work yourself. Tell the person in a sentence ` +
+            'what you delegated, then end your turn. When every piece has settled you are told how ' +
+            'each turned out, and then you review them and merge what you want into your branch.'
+        }
+      }
+      if (delegating) {
+        // ⛔ Same stop as a planner's, for the same reason: the task is `blocked` on its pieces and
+        //    the run must end at that durable transition, not whenever the agent takes the hint.
+        await endPlannerForSplit(p.sessionId)
+        return {
+          ok: true,
+          seqs,
+          reply:
+            `Delegated as ${named}. This task now waits for ${seqs.length === 1 ? 'it' : 'them'} to settle. ` +
+            'STOP NOW — do not start that work yourself. You will be started again automatically ' +
+            'with how each piece turned out; then review them, merge what you want into your ' +
+            'branch, and finish the task.'
+        }
+      }
 
       if (handoff) {
         // ⛔ **Completed here, not asked for.** A planner told in its reply to call `task_complete`
@@ -447,7 +484,10 @@ ${agreement}
       if (!run?.taskId) return { ok: false, reason: 'this session is not working on a task' }
       const result = await landConversationWork(run.taskId, {
         sessionId: p.sessionId,
-        ...(p.finishPolicy ? { finishPolicy: p.finishPolicy } : {})
+        ...(p.finishPolicy ? { finishPolicy: p.finishPolicy } : {}),
+        // ⛔ The agent's own landing also checks that delegated work it was handed back is in the
+        //    branch — or was set aside by name. See `delegationLandingBlocker`.
+        delegation: { checkMerged: true, setAside: p.setAside ?? [] }
       })
       // ⚠️ The summary is recorded on the thread rather than used to decide anything. It is what
       // the agent says the landing contains, and the operator reads it beside the landing line.

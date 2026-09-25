@@ -837,6 +837,18 @@ export type MessageEvent =
   | 'landing.failed'
   /** A finish verdict that stopped short of landing; the resolve buttons read the last of these. */
   | 'finish.held'
+  /**
+   * A person's message sent with the composer's `/delegate` chip (t704). The row's `text` is exactly
+   * what they typed after the command; the chip is drawn from this field, never parsed back out of
+   * the text, and the prompt wraps the text in the delegation instruction.
+   */
+  | 'command.delegate'
+  /** Pieces this task delegated with `task_split`, filed. */
+  | 'delegation.filed'
+  /** Every piece of one delegation has settled; the caller is asked to review and merge them. */
+  | 'delegation.settled'
+  /** A person switched this thread's Delegate setting; the agent is told on its next turn. */
+  | 'delegation.toggled'
   | 'quota.parked'
   | 'quota.preempted'
   | 'provider.overloaded'

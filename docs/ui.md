@@ -569,6 +569,17 @@ typed:
   that ran on Opus (`pillLabels`, t674). Only while the selection is untouched and the selected
   account is that run's: a reassignment that has not run yet keeps saying Auto, because the previous
   account's model says nothing about the new one's.
+- **A Delegate pill at the end of that row** (`thread/DelegatePill.tsx`, t704), on work tasks and
+  conversations. ⛔ Unlike the pills beside it, it is **authority applied at once**, not a next-run
+  choice: `task.update { delegation }` writes the task's `spawn_tasks`, and turning it on past a
+  parent that cannot delegate comes back as a refusal under the row. See `docs/mcp.md` §3.1.
+- **Slash commands become a chip as they are typed** (`shared/commands.ts`, t704). A `/` at the
+  start of the box opens the command menu (Enter or Tab picks the first); `/delegate ` turns into a
+  **[Delegate]** chip in front of the box, and Backspace at the start of the box takes the chip off
+  and keeps the words. ⛔ The command is sent as `task.message { command }` and stored as the
+  message's `event` — the bubble draws its chip from that (`.msg-command-chip`), never from the text,
+  because a person's own typed message is never reinterpreted. A chip alone is a message: the
+  daemon reads it as *what you have just been discussing*.
 - **The send-outcome hint clears itself once it stops being true** (`outcomeHintStale`,
   `lib/composeoutcome.ts`, t673). *Queued — same thread, same session where it can.* and *Delivered
   into the running turn.* used to sit under the composer forever: the requeue they describe resolves

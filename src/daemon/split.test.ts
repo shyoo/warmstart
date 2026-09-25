@@ -119,11 +119,15 @@ describe('validateSplit', () => {
     expect(result.ok === false && result.reason).toMatch(/exactly 1 piece/)
   })
 
-  it('refuses a task that is neither a plan nor a debate', () => {
+  // ⭐ t704: an ordinary task may split — that is delegation — but only while it holds
+  //    `spawn_tasks`, and the refusal says how to get it back. `delegation.test.ts` has the rest.
+  it('refuses a task that is neither a plan nor a debate once its delegation is off', () => {
     const work = tasks.createTask({ title: 'ordinary work' })
-    const result = split.validateSplit(work, [piece('a'), piece('b')])
+    expect(split.validateSplit(work, [piece('a'), piece('b')]).ok).toBe(true)
+    const off = tasks.createTask({ title: 'other work', mandate: { allowed: ['read', 'write', 'commit'] } })
+    const result = split.validateSplit(off, [piece('a'), piece('b')])
     expect(result.ok).toBe(false)
-    expect(result.ok === false && result.reason).toMatch(/not a Plan & Split or Debate task/)
+    expect(result.ok === false && result.reason).toMatch(/delegation is off/)
   })
 
   // ⛔ The verdict *Split the work* is the organizer calling `task_split`, so a debate parent has

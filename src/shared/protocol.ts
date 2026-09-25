@@ -1,5 +1,6 @@
 import type { ManualReview, QualityReview } from './review.js'
 import type { ModelClass } from './modelclass.js'
+import type { ThreadCommandId } from './commands.js'
 import type { ModelRoute } from './modelroutes.js'
 export type { ModelRoute } from './modelroutes.js'
 
@@ -2124,7 +2125,11 @@ export interface RpcMap {
   'attachment.read': { params: { id: string }; result: { attachment: Attachment; dataBase64: string } }
   'task.update': { params: TaskUpdateParams; result: Task }
   'task.message': {
-    params: { id: string; text: string; attachmentIds?: string[] }
+    /**
+     * `command` is a composer slash command the person picked (t704) — sent as its own field and
+     * stored as the message's `event`, never parsed out of `text`. See `shared/commands.ts`.
+     */
+    params: { id: string; text: string; attachmentIds?: string[]; command?: ThreadCommandId }
     /**
      * `outcome` says what the message *did*, so the UI can stop guessing.
      *
@@ -2863,7 +2868,11 @@ export interface RpcMap {
   'agent.split': {
     params: {
       sessionId: string
-      pieces: Array<{ title: string; summary?: string; dependsOn: number[] }>
+      /**
+       * `modelClass` is the agent's capability-class hint for the piece (t704). The scheduler routes
+       * within it; it never names an account. Ignored where the operator's piece settings pin one.
+       */
+      pieces: Array<{ title: string; summary?: string; dependsOn: number[]; modelClass?: ModelClass }>
     }
     result: { ok: boolean; reply: string; seqs?: number[] }
   }
@@ -2913,7 +2922,11 @@ export interface RpcMap {
    * onto the task — it says what this landing does, not what this task's finish policy is.
    */
   'agent.land': {
-    params: { sessionId: string; summary?: string; finishPolicy?: FinishPolicy }
+    /**
+     * `setAside` names delegated pieces (by seq) the agent reviewed and deliberately did not merge —
+     * the one way past the guard that refuses a landing without a completed piece's work (t704).
+     */
+    params: { sessionId: string; summary?: string; finishPolicy?: FinishPolicy; setAside?: number[] }
     result: {
       ok: boolean
       /** The refusal, verbatim. The agent is shown exactly this and nothing is moved. */
@@ -3056,6 +3069,11 @@ export interface TaskUpdateParams {
   estTokens?: number | null
   constraints?: TaskConstraints
   prompt?: string
+  /**
+   * The thread's Delegate switch (t704): whether this task holds `spawn_tasks`. ⛔ Turning it on
+   * never widens past the parent's own mandate — see `setDelegation`.
+   */
+  delegation?: boolean
 }
 
 export type RpcMethod = keyof RpcMap

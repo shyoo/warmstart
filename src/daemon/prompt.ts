@@ -1,11 +1,13 @@
 import type { Attachment, DebateVerdict, MessageEvent, Task, TaskMessage } from '@shared/tasks.js'
+import type { ThreadCommandId } from '@shared/commands.js'
 import { isOpenConversation, isPlanExecute, policyVerifies, resolveWorkspaceMode } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { describeAttachment, grantedDirsFor } from './attachments.js'
 import { adapter } from './adapters/index.js'
 import { getProject, landingTargetFor } from './projects.js'
 import { coldStartBlock } from './orientation.js'
-import { markDelivered, messagesFor, runsFor } from './tasks.js'
+import { isIntegrationParent, markDelivered, messagesFor, runsFor } from './tasks.js'
+import { delegateCommandPrompt, delegationClause, delegationRefusal } from './delegation.js'
 import { childrenOf as splitChildrenOf } from './split.js'
 import {
   agentPositionsFor,
@@ -775,12 +777,18 @@ export function promptFor(
   // ⚠️ Delivery-tracked like everything else — `outstanding` still gates these on `deliveredAt`, so
   // one already carried into a run does not repeat on the next.
   const OUTCOME_EVENTS: readonly MessageEvent[] = ['landing.failed', 'finish.held']
+  // ⭐ Delegation's two notes to the agent (t704): how its pieces came back, and the person
+  //    switching delegation on or off. Delivery-tracked the same way, and sent as themselves —
+  //    they are addressed to this agent, not reports "from an earlier run".
+  const DELEGATION_EVENTS: readonly MessageEvent[] = ['delegation.settled', 'delegation.toggled']
+  const hasMcp = adapter(adapterId).info.capabilities.mcp
   const thread = messagesFor(task.id).filter(
     (m, i) =>
       m.role === 'human' ||
       m.role === 'controller' ||
       (m.role === 'agent' && i === 0) ||
-      (m.role === 'system' && m.event !== null && OUTCOME_EVENTS.includes(m.event))
+      (m.role === 'system' && m.event !== null && OUTCOME_EVENTS.includes(m.event)) ||
+      (m.role === 'system' && m.event !== null && DELEGATION_EVENTS.includes(m.event))
   )
   const outstanding = thread.filter((m, i) => (i === 0 && !holdsPrompt) || m.deliveredAt === null)
   // ⛔ **A follow-up typed into a conversation that is still live is sent as it was typed, and
@@ -823,10 +831,18 @@ export function promptFor(
       // ⚠️ A system outcome's `detail` carries the reason a person would otherwise have to expand
       // it to read — the failing check's output, where the work still is. `text` alone is the
       // one-line headline the thread shows collapsed; the next agent needs the rest of it.
+      // ⭐ Delegation notes go as themselves, and a `/delegate` message goes inside its instruction
+      //    (t704) — the person's words unchanged, the command's meaning around them.
       text:
-        message.role === 'system' && message.detail
-          ? `From an earlier run: ${message.text}\n${message.detail}`
-          : message.text
+        message.role === 'system' && message.event === 'delegation.toggled'
+          ? (message.detail ?? message.text)
+          : message.role === 'system' && message.event === 'delegation.settled'
+            ? `${message.text}\n${message.detail ?? ''}`.trim()
+            : message.role === 'system' && message.detail
+              ? `From an earlier run: ${message.text}\n${message.detail}`
+              : message.role === 'human' && message.event === 'command.delegate'
+                ? delegateCommandPrompt(message.text, hasMcp)
+                : message.text
     })),
     ...recap.map((turn) => ({ id: turn.message.id, text: `${recapLabel(turn)}\n${turn.text}` }))
   ].sort((a, b) => a.id - b.id)
@@ -973,6 +989,10 @@ export function promptFor(
   // branching on a name is about adapters and objectives, which are *data*; what kind of thing a task
   // is is not.) Phase 1 delegates and stops; phase 2 reviews what came back and finishes.
   const planPhase = task.kind === 'plan' ? planPhaseOf(task) : null
+  // ⭐ Named only where it applies (t704): `task_split` is registered for every session, and this is
+  //    what tells a work task or a conversation it may use it. ⚠️ A git project only — a delegated
+  //    piece comes back as a branch to merge, and there is nothing to merge without one.
+  const mayDelegate = project?.vcs === 'git' && !isIntegrationParent(task) && delegationRefusal(task) === null
   // ⛔ Same rule, same reason: what kind of thing a task is is a domain fact, not a mode name. The
   // organizer arbitrates on `arbitrating` and does the work the operator chose on `executing`.
   const debatePhase = debatePhaseOf(task)
@@ -1004,7 +1024,10 @@ export function promptFor(
         : ''
     if (isOpenConversation(task)) {
       // ⚠️ Withheld only on a follow-up into the session that was already told it — see `followUp`.
-      if (!followUp) parts.push(conversationInstruction(false, trunkTarget))
+      if (!followUp) {
+        parts.push(conversationInstruction(false, trunkTarget))
+        if (mayDelegate) parts.push(delegationClause(true))
+      }
     } else if (planPhase === 'planning') {
       // ⛔ Two shapes of plan, and `planModeOf` is the one place that tells them apart — derived from
       //    the child cap, so the instruction cannot promise a review turn the mandate will not allow.
@@ -1030,7 +1053,8 @@ export function promptFor(
           checkLead +
           'When the work is finished, call the MCP tool `task_complete` with a one-line summary. ') +
         commitHygiene + (integration ? ' ' + integration : '') + ' ' + ASK_HUMAN_CLAUSE +
-        HAND_BACK_CLAUSE
+        HAND_BACK_CLAUSE +
+        (mayDelegate ? ' ' + delegationClause(false) : '')
     )
   } else {
     // ⛔ The options are asked for in the same breath as the question, because the operator's side
@@ -1141,4 +1165,24 @@ export function promptFor(
     }
   }
   return { text: parts.join('\n\n'), attachments }
+}
+
+/**
+ * A slash-command message as it is delivered into a **live** session (t704).
+ *
+ * ⚠️ The same wrapper `promptFor` applies to an undelivered one, asked of the adapter the task last
+ * ran on — which is the session a live delivery reaches. `capabilities.mcp`, never an adapter name.
+ */
+export function commandPromptFor(taskId: string, command: ThreadCommandId, text: string): string {
+  const adapterId = runsFor(taskId)[0]?.adapterId ?? null
+  let mcp = true
+  try {
+    if (adapterId) mcp = adapter(adapterId).info.capabilities.mcp
+  } catch {
+    // An adapter this build no longer has: the tool wording is the conservative guess.
+  }
+  switch (command) {
+    case 'delegate':
+      return delegateCommandPrompt(text, mcp)
+  }
 }

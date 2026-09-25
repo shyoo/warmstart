@@ -252,11 +252,14 @@ export function useReassignChoice(
 export function AssignPills({
   choice,
   disabled,
-  disabledReason
+  disabledReason,
+  extra
 }: {
   choice: ReassignChoice
   disabled: boolean
   disabledReason?: string
+  /** Controls that sit in the same row but are not part of the next-run choice (the Delegate pill). */
+  extra?: React.ReactNode
 }): React.JSX.Element {
   const hint = disabled
     ? disabledReason
@@ -304,6 +307,7 @@ export function AssignPills({
           undo
         </button>
       )}
+      {extra}
     </div>
   )
 }

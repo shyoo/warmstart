@@ -2303,7 +2303,21 @@ const MIGRATIONS: Migration[] = [
       }
       update.run(row.summarising_effort ?? effortFor(row.adapter_id, row.summarising_model), routesJson, row.id)
     }
-  }
+  },
+  // 84 - delegation from any task (t704). One row per `task_split` a work task or conversation
+  // filed: the caller, the pieces, whether a person's `/delegate` asked for it, and when the caller
+  // was told they had all settled. ⛔ `reported_at` is the ask recorded with its evidence — the
+  // settle listener writes it *before* waking the caller, so a second settle cannot wake it twice.
+  // ⚠️ `if not exists`, like migrations 39/45/46: `versionBefore` rewinds and replays.
+  `create table if not exists delegations (
+    id text primary key,
+    task_id text not null references tasks(id),
+    child_ids_json text not null,
+    requested integer not null default 0,
+    created_at integer not null,
+    reported_at integer
+  );
+  create index if not exists delegations_task on delegations(task_id);`
 ]
 
 /**

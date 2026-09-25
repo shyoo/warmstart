@@ -19,6 +19,7 @@ import {
   workspaceState
 } from './worktrees.js'
 import { log } from './log.js'
+import { delegationLandingBlocker } from './delegation.js'
 import { errorMessage } from '@shared/errors.js'
 
 /**
@@ -96,7 +97,12 @@ function levelFor(
  */
 export async function landConversationWork(
   taskId: string,
-  opts: { sessionId?: string; finishPolicy?: FinishPolicy } = {}
+  opts: {
+    sessionId?: string
+    finishPolicy?: FinishPolicy
+    /** How strictly delegated pieces are checked (t704). A person's Land checks only running ones. */
+    delegation?: { checkMerged: boolean; setAside?: number[] }
+  } = {}
 ): Promise<ConversationLanding> {
   const task = getTask(taskId)
   if (!task) return { ok: false, reason: 'no such task' }
@@ -117,6 +123,18 @@ export async function landConversationWork(
   // `reloadProjectIfPresent` and condition 4 in docs/landing.md.
   const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
   if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+
+  // ⛔ **Delegated pieces were cut from this branch, and landing retires it** (t704). Refused before
+  // anything moves, whoever asked; the agent's own `land_work` also has its merges checked.
+  {
+    const holder = (opts.sessionId ? workspaceHeldBy(project, opts.sessionId) : null) ?? workspaceHeldBy(project, task.id)
+    const trunk = resolveWorkspaceMode(task, project).mode === 'trunk'
+    const blocker = await delegationLandingBlocker(task.id, trunk ? project.root : (holder?.path ?? null), {
+      checkMerged: opts.delegation?.checkMerged ?? false,
+      ...(opts.delegation?.setAside ? { setAside: opts.delegation.setAside } : {})
+    })
+    if (blocker) return { ok: false, reason: blocker }
+  }
 
   // ⛔ **A conversation in the trunk has no branch to land and none to cut next.** Everything below
   // retires a branch and then `switch -c`s the next numbered one in the tree the conversation sits in

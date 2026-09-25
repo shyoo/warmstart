@@ -1,4 +1,5 @@
 import { sessionEnded } from '@shared/protocol.js'
+import { delegationsFor, reportDelegationIfSettled } from './delegation.js'
 import { grantedDirsFor } from './attachments.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -4438,10 +4439,14 @@ export async function endPlannerForSplit(sessionId: string): Promise<void> {
   const task = getTask(run.taskId)
   // ⛔ Narrow to the state `applySplit` or `nextRound` has just written. A task can be blocked for ordinary
   // dependencies too, and that is not authority to stop its agent.
-  if (!isIntegrationParent(task) || task?.status !== 'blocked') return
+  // ⚠️ Or a work task that has just delegated (t704), which waits on its pieces exactly as a planner does.
+  if (!task || task.status !== 'blocked') return
+  const delegated = !isIntegrationParent(task) && delegationsFor(task.id).length > 0
+  if (!isIntegrationParent(task) && !delegated) return
 
-  const why =
-    task.kind === 'debate'
+  const why = delegated
+    ? 'The agent delegated part of this task and stopped. This task waits for the pieces and comes back by itself.'
+    : task.kind === 'debate'
       ? (task.debate?.verdict
           ? 'The debate organizer filed its plan as subtasks and stopped. This task waits for them and comes back by itself.'
           : 'The debate organizer sent briefs for the next round and stopped. This task waits for them and comes back by itself.')
@@ -5121,6 +5126,12 @@ export async function sweepStaleSessions(): Promise<void> {
     }
   }
 }
+
+// ⛔ A delegated piece settling may complete its delegation, and a conversation that delegated is
+// woken to review it (t704). The wake functions are passed in so `delegation.ts` reads no binding here.
+onTaskSettled((taskId) => {
+  reportDelegationIfSettled(taskId, { deliver: deliverToLiveSession, requeue: continueTask })
+})
 
 onTaskSettled((taskId, _status) => {
   for (const s of liveSessionsOfTask(taskId)) {

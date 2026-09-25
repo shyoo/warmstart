@@ -1,4 +1,6 @@
 /** Tasks and everything hanging off one - approvals, questions, attachments, loose ends. */
+import { commandById } from '@shared/commands.js'
+import { delegationOn, setDelegation } from '../delegation.js'
 import { resolveAutoCompact, resolveWorkspaceMode, trunkPolicyConflict, windowHighWater } from '@shared/tasks.js'
 import type { Task, WorkspaceModeChoice } from '@shared/tasks.js'
 import type { ModelClass } from '@shared/modelclass.js'
@@ -22,7 +24,7 @@ import { childrenOf as splitChildrenOf } from '../split.js'
 import { allAvailability } from '../resources.js'
 import { activityFor } from '../activity.js'
 import { continueTask, deliverToLiveSession, QUOTA_HIGH_WATER, QUOTA_OVERRIDE_FALLBACK_MS, resolveTask } from '../scheduler.js'
-import { promptFor } from '../prompt.js'
+import { commandPromptFor, promptFor } from '../prompt.js'
 import { commitConversation, landConversation, pendingWorkFor, relandTask, resolveChecksOnTask, resolveCommitOnTask, resolveConflictOnTask, resolveRetryOnTask } from '../resolutions.js'
 import { windowResetsAt } from '../quota.js'
 import { resolveObjective } from '../objective.js'
@@ -236,11 +238,13 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       return { attachment, dataBase64: bytes.toString('base64') }
     },
     'task.update': (p) => {
-      const { id, workspaceMode, ...patch } = p
+      const { id, workspaceMode, delegation, ...patch } = p
       if (patch.constraints) {
         patch.constraints = checkConstraints(patch.constraints)
       }
       if (workspaceMode !== undefined) setWorkspaceModeChecked(id, workspaceMode)
+      // ⚠️ Authority, not a preference column: it writes the task's `spawn_tasks`. See `setDelegation`.
+      if (delegation !== undefined) setDelegation(id, delegation)
       return updateTask(id, patch)
     },
     /** ⛔ Refused once the task has run, and refused into the trunk beside a pull-request level. */
@@ -467,7 +471,17 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       return { task: requireTask(p.id), started: result.ok, ...(result.reason ? { reason: result.reason } : {}) }
     },
     'task.message': (p) => {
-      const id = addMessage(p.id, 'human', p.text, null, p.attachmentIds ?? [])
+      // ⛔ **A slash command is stored as the message's event, never folded into its text** (t704).
+      //    The thread draws the chip from the event; the prompt wraps the text in the command's
+      //    instruction. The text stays exactly what the person typed after the command.
+      const command = commandById(p.command)
+      if (command?.id === 'delegate') {
+        // ⚠️ `/delegate` on a thread whose switch is off is the person switching it on: the same
+        //    authority path as the pill, refused the same way if the parent could not delegate.
+        const before = requireTask(p.id)
+        if (!delegationOn(before)) setDelegation(p.id, true)
+      }
+      const id = addMessage(p.id, 'human', p.text, null, p.attachmentIds ?? [], command ? { event: command.event } : {})
       // ⛔ Delivered into the live session if there is one. That is `0.1·C` and it refreshes the TTL;
       // the same note delivered by restarting the task is `2.0·C` plus everything the successor has
       // to rediscover about the branch. Plan §18.4.
@@ -475,7 +489,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       // ⚠️ The id comes back from `addMessage` rather than from `lastMessageId`. This row now
       // binds attachments, and a second insert landing between the two calls would hand this
       // note's delivery — and its images — to somebody else's message.
-      deliverToLiveSession(p.id, id, p.text)
+      deliverToLiveSession(p.id, id, command ? commandPromptFor(p.id, command.id, p.text) : p.text)
       // ⛔ And a task that had stopped is started again — same task, same thread, a new run. Without
       // this the note reached a live process and produced nothing anybody could see: no run, no
       // metering, no status, no landing. See `continueTask`.

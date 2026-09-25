@@ -5580,6 +5580,7 @@ select:focus-visible,
 /* ⛔ No top margin. It is the foot of the thread above it, not a separate control that happens to
    be nearby - which is what the gap used to say when a live pane sat between the two. */
 .compose {
+  position: relative;
   margin-bottom: var(--sp-3);
 }
 
@@ -5626,6 +5627,81 @@ select:focus-visible,
 
 .compose-input::placeholder {
   color: var(--color-text-faint);
+}
+
+/* A slash command, recognised (t704): the chip replaces the typed `/delegate`, and the command menu
+   opens above the composer while a `/…` is being typed. ⚠️ Anchored to `.compose`, outside the
+   row: wrapping the box to anchor it made the wrapper a row child as wide as the box, and L3's
+   *the message box gets the room* went red on exactly that. */
+.compose-command-chip,
+.msg-command-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-sm);
+  color: var(--color-accent);
+  font-size: var(--text-meta);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.compose-command-chip {
+  align-self: center;
+  min-height: 24px;
+}
+
+.msg-command-chip {
+  margin-right: var(--sp-1);
+  vertical-align: baseline;
+}
+
+.compose-command-chip-x {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.compose-command-menu {
+  position: absolute;
+  left: calc(var(--compose-attach-w) + var(--sp-2));
+  right: 0;
+  bottom: calc(100% + var(--sp-1));
+  display: flex;
+  flex-direction: column;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-panel);
+  z-index: 5;
+}
+
+.compose-command-option {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: baseline;
+  padding: var(--sp-1) var(--sp-2);
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: var(--text-meta);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.compose-command-option:hover,
+.compose-command-option:focus-visible {
+  background: var(--color-surface);
+}
+
+.compose-command-slash {
+  font-weight: 600;
+  color: var(--color-accent);
 }
 
 .compose-input:disabled {

@@ -89,10 +89,10 @@ any of them — it runs the identical bar and hands the same reason back, verbat
 | `checkpoint` | report a finished phase and wait for the go-ahead. `checkpointed` completion mode |
 | `task_create` | file a follow-up, inheriting a **narrowed** mandate and a share of the budget. With `aggregate` the piece lands into your own branch for you to review and land — the way a split piece lands into its plan branch — instead of onto the trunk (t519: prose saying "do not land to main" cannot do this, because landing is the daemon's job) |
 | `handoff` | leave a note for whoever continues; prepended to the next run's prompt |
-| `task_split` | file a whole plan at once — 2 to N pieces for a Plan & Split, with dependency edges encoding every required execution or landing order (edge-free pieces may run in parallel); **exactly one** for a Plan & Execute. ⛔ How many is decided by the task's own child cap (`planModeOf`), not by the agent, and the refusal names the shape. ⛔ Raises **one** approval and blocks on it; atomic |
+| `task_split` | file a whole plan at once — 2 to N pieces for a Plan & Split, with dependency edges encoding every required execution or landing order (edge-free pieces may run in parallel); **exactly one** for a Plan & Execute; **one or more** as a *delegation* from any work task or conversation that holds `spawn_tasks` (t704, §3.1). An optional per-piece `class` (low/med/high) is a routing hint, never an account. ⛔ How many is decided by the task's own child cap (`planModeOf`), not by the agent, and the refusal names the shape. ⛔ Raises **one** approval and blocks on it — unless a person's `/delegate` asked for this delegation; atomic |
 | `task_depend` | add one edge between two pieces of **this task's own** split. ⛔ never an arbitrary task in the fleet |
 | `debate_round` | ⛔ **a debate organizer's only move, called once per round.** Either `continue` with one brief per seat — the seats are re-queued and the organizer is stopped until they answer — or `converged` with the agreement, the dissent, the confidence and what is unresolved, which raises the five-verdict card and **blocks until a person answers**. ⛔ An empty dissent is refused |
-| `land_work` | ⛔ **conversations only.** Rebase, check and land what this conversation has committed, because the person asked. Refuses anything else. Ends nothing — the reply names the branch to keep working on |
+| `land_work` | ⛔ **conversations only.** Rebase, check and land what this conversation has committed, because the person asked. Refuses anything else, and refuses while a delegated piece is unsettled or a completed one's branch is not in HEAD — `set_aside` names the pieces reviewed and deliberately not merged. Ends nothing — the reply names the branch to keep working on |
 
 ⚠️ `task_read` changes every worker session's tool-definition prefix. Existing sessions retain their
 frozen MCP config until they end; fresh ones pay the new prefix so a worker can recover its own
@@ -224,6 +224,12 @@ everyone, named in the prompt only where it applies, which is `conversationInstr
 ⚠️ The approval window holds the planner's worker slot — `awaitingHumanReservations` counts an
 `awaiting_human` task against `maxConcurrent` so the answer can resume a warm session. Same price
 `ask_human` already pays, and worth knowing before a split is raised at midnight.
+
+### 3.1 Delegation from any task (t704)
+
+`task_split` is how a work task or a conversation hands part of its work to other agents. The authority is the task's own `spawn_tasks` — the thread's **Delegate** pill writes it and `delegationRefusal` (`delegation.ts`) names why it is missing — and the prompt names the tool in one clause (`delegationClause`) only while it is on, on a git project. ⚠️ Off never changes the MCP config, so switching costs no prompt-cache prefix; the agent is told by a `delegation.toggled` note on its next turn. A person's `/delegate` is the approval for the one delegation it asked for (`pendingDelegateRequest`); any other raises the card with every piece's whole instruction.
+
+⛔ **Pieces never merge into the caller for it.** `merge-branch` frees a pooled slot holding the target by rescue-committing and detaching it — safe for a parked planner, but a conversation keeps talking in that slot. So a piece is filed `commit-and-verify`, cut from the caller's branch (`landingTarget`) in a worktree of its own, and the caller merges what it wants with `git` when `reportDelegationIfSettled` tells it every piece has settled. A work task waits `blocked` on `settled` edges, like a planner; a conversation carries on and is woken — delivered into a live turn, requeued from `awaiting_human`, left alone when stopped.
 
 ## 4. Controller tier
 

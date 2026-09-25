@@ -583,6 +583,13 @@ server.registerTool(
         .optional()
         .describe(
           'How far to take it, when the person named one. Omit to use the project\'s own policy.'
+        ),
+      set_aside: z
+        .array(z.number().int())
+        .optional()
+        .describe(
+          'Delegated pieces (t-numbers, digits only) you reviewed and deliberately did not merge. ' +
+            'Without this, a landing is refused while a completed piece’s branch is not in yours.'
         )
     }
   },
@@ -592,7 +599,8 @@ server.registerTool(
       const result = await rpc('agent.land', {
         sessionId,
         ...(args.summary ? { summary: args.summary } : {}),
-        ...(args.finishPolicy ? { finishPolicy: args.finishPolicy } : {})
+        ...(args.finishPolicy ? { finishPolicy: args.finishPolicy } : {}),
+        ...(args.set_aside?.length ? { setAside: args.set_aside } : {})
       })
       if (!result.ok) {
         // ⚠️ The daemon's reason, verbatim and alone. Every one of them names a condition that
@@ -706,18 +714,23 @@ server.registerTool(
 server.registerTool(
   'task_split',
   {
-    title: 'Break this plan into subtasks and delegate them',
+    title: 'Delegate work to other agents, or break a plan into subtasks',
     description:
-      'File the whole plan in one call, as concrete pieces each with its own full instruction. The ' +
-      'operator approves the entire plan before anything is filed, so make each piece legible on a ' +
-      'card. Each piece must be completable by an agent that has NOT read this conversation, so its ' +
+      'File work for other agents in one call, as concrete pieces each with its own full ' +
+      'instruction. A Plan & Split or Plan & Execute uses it to file its plan; any other task or ' +
+      'conversation uses it to delegate, when delegation is on for it (you are refused with the ' +
+      'reason when it is not). The operator approves the pieces before anything is filed — unless ' +
+      'they asked for this delegation with /delegate — so make each piece legible on a card. Each ' +
+      'piece must be completable by an agent that has NOT read this conversation, so its ' +
       'instruction has to carry its own context: what to change, where, and what done looks like. ' +
       'Pieces without dependency edges may run in parallel. If the plan calls for sequential ' +
       'execution or landing, encode that order with depends_on; otherwise add an edge only where it ' +
       'is genuinely needed, because it costs a subtask’s wait. HOW MANY PIECES is decided by the ' +
       'task, not by you, and your own instructions say which: a Plan & Split files two or more and ' +
       'you are woken again when every piece has settled; a Plan & Execute files exactly one and is ' +
-      'complete at the handoff. After this returns, STOP either way — the work is delegated.',
+      'complete at the handoff; a delegation files one or more, each committed on its own branch ' +
+      'for you to review and merge when you are told they have settled. After this returns, do ' +
+      'what its reply says — the delegated work is no longer yours to do.',
     inputSchema: {
       pieces: z
         .array(
@@ -729,6 +742,13 @@ server.registerTool(
               .string()
               .optional()
               .describe('A short label for the board, e.g. "Add the migration"'),
+            class: z
+              .enum(['low', 'med', 'high'])
+              .optional()
+              .describe(
+                'Optional capability class for the agent that runs this piece: low for mechanical ' +
+                  'work a cheaper model can do, high for hard reasoning. The scheduler picks the account.'
+              ),
             depends_on: z
               .array(z.number().int())
               .optional()
@@ -740,7 +760,7 @@ server.registerTool(
         )
         .describe(
           'As many pieces as this task allows: two or more for a Plan & Split, exactly one for a ' +
-            'Plan & Execute. Anything else is refused with the reason.'
+            'Plan & Execute, one or more for a delegation. Anything else is refused with the reason.'
         )
     }
   },
@@ -752,6 +772,7 @@ server.registerTool(
         pieces: (args.pieces ?? []).map((p) => ({
           title: p.instruction,
           ...(p.summary ? { summary: p.summary } : {}),
+          ...(p.class ? { modelClass: p.class } : {}),
           dependsOn: p.depends_on ?? []
         }))
       })

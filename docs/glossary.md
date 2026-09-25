@@ -420,6 +420,12 @@ unsettled children; completed, failed and cancelled children leave a slot for th
 resolution turn. A task that has lost `spawn_tasks` cannot create children — not because a heuristic
 caught it, but because it has no such authority.
 
+**Delegation** — *a work task or conversation handing pieces of its work to other agents* with
+`task_split` (t704). Not a plan: the caller keeps working (a conversation) or waits (a work task),
+each piece is committed on its own branch, and the **caller** merges what it wants. Its authority is
+the task's `spawn_tasks`, which the thread's **Delegate** pill switches — a person narrowing or
+restoring it, never widening it past the parent. See [`mcp.md`](mcp.md) §3.1.
+
 **Budget** — a token grant, inherited as a *share* of the creator's remaining budget, so an
 agent-generated subtree cannot outspend its root however many nodes it grows.
 

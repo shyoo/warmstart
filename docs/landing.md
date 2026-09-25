@@ -564,6 +564,14 @@ is ordinary work landing onto the trunk — which is how t519 (2026-09-17) reach
 prompts each saying "do NOT land to main": prose in the child's prompt is read by an actor that never
 lands, so only the daemon-side target holds a branch off the trunk.
 
+⛔ **A delegated piece (t704) is cut from its caller's branch and lands nowhere.** It is filed
+`commit-and-verify`, so it ends committed and checked on its own branch, and the caller merges it with
+`git` on the review turn it is woken for. The daemon cannot do that merge: step 0 below parks any pooled
+slot holding the target, and a delegating conversation is *still talking* in that slot. ⚠️ `aggregate`
+on `task_create` has the same exposure and predates this; it is safe only while the filer is not live.
+`land_work` — and a person's Land — refuse while a delegated piece is unsettled, because landing retires
+the branch it was cut from (`delegationLandingBlocker`, `delegation.ts`).
+
 ⚠️ **This means `main` stops moving on the days you are mid-edit in it**, and finished tasks queue as
 branches saying *"committed and verified, waiting for a clean trunk"*. That is the cost of the safe
 default. ⛔ The alternative — stashing your work to make room — is not on offer: the tool does not

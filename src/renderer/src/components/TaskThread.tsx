@@ -72,11 +72,13 @@ import {
 } from '../lib/taskview'
 import { errorMessage } from '@shared/errors.js'
 import { stripAnsi } from '@shared/ansi'
+import { commandForEvent, commandMatches, leadingCommand, type ThreadCommand } from '@shared/commands'
 import { useAction } from '../lib/useAction'
 import { TaskSettingPicker } from './TaskSettingPicker'
 import { CacheCost, Fact, ModelFact, SessionFact } from './thread/Facts'
 import { completeTitle, Decide, QuotaDecide, QuotaOverride, usePendingWork, type PendingWorkState } from './thread/Decide'
 import { AssignPills, useReassignChoice, type ReassignChoice } from './thread/Reassign'
+import { DelegatePill } from './thread/DelegatePill'
 import { counts, DiffPanel } from './thread/DiffPanel'
 import { sameSource, useDiffPane } from '../lib/diffpane'
 import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
@@ -1462,6 +1464,13 @@ const Thread = memo(function Thread({
                         `98f200ab` onto `main`"* — and an agent's reply is written in markdown throughout.
                         ⚠️ Agent, controller and system text is read as markdown; a person's own is not.
                         See `MessageText`. */}
+                    {/* ⛔ The chip comes from the message's `event`, never from its text (t704): the
+                        text is exactly what the person typed after the command. */}
+                    {m.role === 'human' && commandForEvent(m.event) && (
+                      <span className="msg-command-chip" title={commandForEvent(m.event)!.detail}>
+                        {commandForEvent(m.event)!.label}
+                      </span>
+                    )}
                     <MessageText text={m.text} markdown={m.role !== 'human'} />
                     {m.attachments.length > 0 && (
                       <span className="msg-images">
@@ -2137,6 +2146,10 @@ function Compose({
   choice: ReassignChoice
 }): React.JSX.Element {
   const [text, setText] = useState('')
+  // ⭐ A slash command the person picked (t704), held as a chip at the head of the box and sent as
+  //    its own field — never left in the text for anything to parse back out later.
+  const [command, setCommand] = useState<ThreadCommand | null>(null)
+  const commandMenu = command ? [] : commandMatches(text)
   const [sending, setSending] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [completing, setCompleting] = useState(false)
@@ -2158,7 +2171,9 @@ function Compose({
   const stoppedByYou = task.status === 'paused_user'
   // ⚠️ Only between runs: the pin decides the *next* dispatch, not the run in front of you.
   const reassigning = choice.changed && !running
-  const hasBody = text.trim().length > 0 || paste.ids.length > 0
+  // ⚠️ A command chip alone is a message: `/delegate` with nothing after it means *what we have just
+  //    been discussing*, and the daemon's wrapper says so.
+  const hasBody = text.trim().length > 0 || paste.ids.length > 0 || command !== null
   // ⚠️ With nothing typed on a stopped task the button resumes it — the banner that used to hold
   // Resume is gone, and a primary button that could not be pressed there would be a dead end.
   const resuming = stoppedByYou && !hasBody && !reassigning
@@ -2167,7 +2182,7 @@ function Compose({
 
   const send = async () => {
     const body = text.trim()
-    if (!body && paste.ids.length === 0 && !reassigning && !resuming) return
+    if (!body && paste.ids.length === 0 && !command && !reassigning && !resuming) return
     if (sending || paste.busy) return
     setSending(true)
     try {
@@ -2182,10 +2197,12 @@ function Compose({
       if (reassigning) await choice.apply()
       const result = await rpc('task.message', {
         id: task.id,
-        text: body || (reassigning ? 'Continue.' : ''),
-        ...(paste.ids.length > 0 ? { attachmentIds: paste.ids } : {})
+        text: body || (reassigning && !command ? 'Continue.' : ''),
+        ...(paste.ids.length > 0 ? { attachmentIds: paste.ids } : {}),
+        ...(command ? { command: command.id } : {})
       })
       setText('')
+      setCommand(null)
       paste.clear()
       setOutcome(result.outcome)
       outcomeStatus.current = task.status
@@ -2233,6 +2250,28 @@ function Compose({
 
   return (
     <div className="compose">
+      {/* ⚠️ Outside the row, anchored to `.compose`: a row child is measured as a control beside the
+          box, and the box has to stay the widest thing there (L3). */}
+      {commandMenu.length > 0 && (
+        <div className="compose-command-menu" role="listbox" aria-label="Commands">
+          {commandMenu.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              role="option"
+              aria-selected={false}
+              className="compose-command-option"
+              onClick={() => {
+                setCommand(c)
+                setText('')
+              }}
+            >
+              <span className="compose-command-slash">{c.slash}</span>
+              <span className="dim">{c.detail}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="compose-row">
         <input
           ref={attachmentPickerRef}
@@ -2265,20 +2304,63 @@ function Compose({
             />
           )}
         />
+        {command && (
+          <span className="compose-command-chip" title={command.detail}>
+            {command.label}
+            <button
+              type="button"
+              className="compose-command-chip-x"
+              aria-label={`Remove ${command.label}`}
+              onClick={() => setCommand(null)}
+            >
+              ×
+            </button>
+          </span>
+        )}
         <textarea
           className="compose-input"
           rows={1}
           value={text}
           placeholder={
-            running
-              ? 'Reply to the agent working on this — it goes into the running session'
-              : 'Ask for the next thing — this continues the task, it does not file a new one'
+            command
+              ? 'What should be delegated? Empty means what you have just been discussing'
+              : running
+                ? 'Reply to the agent working on this — it goes into the running session'
+                : 'Ask for the next thing — this continues the task, it does not file a new one. Type / for commands'
           }
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            // ⛔ Recognised the moment the command word is finished, and turned into a chip then —
+            //    so what is sent is the chip and the words after it, never the slash text.
+            const hit = command ? null : leadingCommand(e.target.value)
+            if (hit) {
+              setCommand(hit.command)
+              setText(hit.rest)
+            } else {
+              setText(e.target.value)
+            }
+          }}
           onPaste={paste.onPaste}
           onDrop={paste.onDrop}
           onDragOver={paste.onDragOver}
           onKeyDown={(e) => {
+            // A partly typed `/…`: Enter or Tab picks the first command rather than sending it.
+            if ((e.key === 'Enter' || e.key === 'Tab') && !e.shiftKey && commandMenu.length > 0) {
+              e.preventDefault()
+              setCommand(commandMenu[0]!)
+              setText('')
+              return
+            }
+            // Backspace at the very start of the box takes the chip off, and keeps the words.
+            if (
+              e.key === 'Backspace' &&
+              command &&
+              e.currentTarget.selectionStart === 0 &&
+              e.currentTarget.selectionEnd === 0
+            ) {
+              e.preventDefault()
+              setCommand(null)
+              return
+            }
             if (isSubmitKey(e, settings.enterBehavior) && canSend && (hasBody || reassigning)) {
               e.preventDefault()
               void send()
@@ -2346,6 +2428,7 @@ function Compose({
         choice={choice}
         disabled={running || sending}
         disabledReason="Reassign once this turn ends, or Stop it first — the choice decides the next run, not this one."
+        extra={<DelegatePill task={task} refresh={refresh} />}
       />
       {/*
         ⛔ This used to say "Nothing is running, so this waits… prepended to the prompt the next run

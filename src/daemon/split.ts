@@ -9,16 +9,20 @@ import {
   setStatus
 } from './tasks.js'
 import { log } from './log.js'
+import { delegationRefusal, recordDelegation } from './delegation.js'
+import { getProject } from './projects.js'
 import {
   PLAN_EXECUTE_CHILDREN,
   isPlanExecute,
   planModeOf,
+  projectTrunkOnly,
   type ChildDefaults,
   type Principal,
   type QuestionOption,
   type Task,
   type TaskConstraints
 } from '@shared/tasks.js'
+import type { ModelClass } from '@shared/modelclass.js'
 import { errorMessage } from '@shared/errors.js'
 
 /**
@@ -56,7 +60,24 @@ export interface SplitPiece {
   summary?: string
   /** Indices into this same list, and they must point **backwards**. */
   dependsOn: number[]
+  /**
+   * The agent's capability-class hint (t704). ⚠️ A hint the scheduler routes within, never an
+   * account — and ignored where the operator's piece settings already pin an account or a model.
+   */
+  modelClass?: ModelClass
 }
+
+/**
+ * Is this split a **delegation** — filed by a work task or a conversation rather than a plan or a
+ * debate (t704)? ⛔ Asked of the task's kind, a domain fact, in this one place; `validateSplit`,
+ * `applySplit` and the approval text all branch on it. See `delegation.ts`.
+ */
+export function isDelegation(parent: Task): boolean {
+  return !isIntegrationParent(parent)
+}
+
+/** A delegation files one piece or more: one job handed to a cheaper model is the common case. */
+export const MIN_DELEGATION_PIECES = 1
 
 export type SplitResult =
   | { ok: true; children: Task[] }
@@ -80,11 +101,13 @@ export function validateSplit(
   // is identical — pieces are cut from the parent's branch and merge back into it — which is why
   // this asks `isIntegrationParent` rather than naming two kinds here and two more in
   // `plannerBranchFor` and `createTask`. See that function.
-  if (!isIntegrationParent(parent)) {
-    return {
-      ok: false,
-      reason: `t${parent.seq} is not a Plan & Split or Debate task, so it cannot file a split`
-    }
+  // ⭐ **Any work task or conversation may split too, and that is delegation (t704).** Its authority
+  //    is its own `spawn_tasks` — the thread's Delegate switch — and `delegationRefusal` names why
+  //    when it is missing.
+  const delegating = isDelegation(parent)
+  if (delegating) {
+    const refusal = delegationRefusal(parent)
+    if (refusal) return { ok: false, reason: refusal }
   }
   // ⛔ **The floor is the plan's mode, not a constant.** A Plan & Execute wants exactly one piece and
   //    a Plan & Split wants at least two, and both refusals have to name the shape the operator
@@ -92,7 +115,10 @@ export function validateSplit(
   //    is a contradiction it has no way to resolve.
   const mode = planModeOf(parent)
   const count = Array.isArray(pieces) ? pieces.length : 0
-  if (mode === 'execute' && count !== PLAN_EXECUTE_CHILDREN) {
+  if (delegating && count < MIN_DELEGATION_PIECES) {
+    return { ok: false, reason: 'a delegation needs at least one piece' }
+  }
+  if (!delegating && mode === 'execute' && count !== PLAN_EXECUTE_CHILDREN) {
     return {
       ok: false,
       reason:
@@ -102,7 +128,7 @@ export function validateSplit(
         'cannot carry — nothing here will come back to integrate the pieces.'
     }
   }
-  if (mode === 'split' && count < MIN_SPLIT_PIECES) {
+  if (!delegating && mode === 'split' && count < MIN_SPLIT_PIECES) {
     return {
       ok: false,
       reason:
@@ -151,7 +177,9 @@ export function validateSplit(
   // any of them is dispatched. It does — phase 1 created it when the planner's workspace was
   // prepared — but a split filed by a planner with no branch would silently give every child the
   // project's trunk as its base and quietly stop being a split at all.
-  if (!parent.branch) {
+  // ⚠️ Not for a delegation: a trunk-mode caller has no branch, and its pieces are cut from the
+  // project's target instead — the caller merges them in the trunk it is working in.
+  if (!parent.branch && !delegating) {
     return {
       ok: false,
       reason: `t${parent.seq} has no branch yet, so its pieces would have nothing to be cut from`
@@ -250,6 +278,31 @@ export function splitApprovalFor(parent: Task, pieces: SplitPiece[]): SplitAppro
   //    Execute approval is the one and only time a person sees the instruction before the
   //    executor runs against it — there is no review turn behind it — and telling them it will be
   //    reviewed would be describing a turn this shape does not have.
+  //
+  // ⛔ **A delegation's card carries every piece's whole instruction too** (t704): those bytes run
+  //    on other accounts, and this card is the person's one look at them before they do. The
+  //    caller reviews what comes back, not what is sent.
+  if (isDelegation(parent)) {
+    const one = pieces.length === 1
+    const instructions = pieces
+      .map((piece, i) => `**${i + 1}.** ${piece.title.trim()}` + (piece.modelClass ? ` _(class: ${piece.modelClass})_` : ''))
+      .join('\n\n')
+    return {
+      header: `Delegate from t${parent.seq}?`,
+      question:
+        `t${parent.seq} wants to hand ${one ? 'this' : `${pieces.length} pieces`} to other agents:\n\n${listed}\n\n` +
+        `Approving files ${one ? 'it' : 'them'} and starts ${one ? 'it' : 'them'} as soon as an account is free. ` +
+        'Each is committed and checked on its own branch, cut from this task’s branch; nothing is ' +
+        'merged until this task reviews it. Refusing sends your note back so it can revise or do ' +
+        `the work itself.\n\nThe full instruction${one ? '' : 's'}:\n\n` +
+        instructions,
+      options: [
+        { id: 'approve', label: one ? 'Delegate it' : `Delegate all ${pieces.length}`, detail: 'Starts as soon as an account is free' },
+        { id: 'refuse', label: 'Not like this', detail: 'Add a note and the agent revises or does it itself' }
+      ]
+    }
+  }
+
   const handoff = isPlanExecute(parent)
   if (handoff) {
     const instruction = pieces.map((piece) => piece.title.trim()).join('\n')
@@ -306,7 +359,8 @@ export function applySplit(
   parentTaskId: string,
   pieces: SplitPiece[],
   createdBy: Principal,
-  defaults?: ChildDefaults | null
+  defaults?: ChildDefaults | null,
+  opts: { requested?: boolean } = {}
 ): SplitResult {
   const parent = requireTask(parentTaskId)
   const check = validateSplit(parent, pieces)
@@ -316,6 +370,10 @@ export function applySplit(
   // ⛔ Resolved once, before the loop, so every piece of one plan is filed with the identical set of
   // accounts. Recomputing per child would be a second place for the answer to differ.
   const constraints = pieceConstraints(parent, inherit)
+  // ⚠️ The agent's class hint only where the operator pinned nothing: a model or an account chosen
+  // in the composer is not something an agent may talk its way out of.
+  const pinned = !!(constraints.model || constraints.workerId || constraints.workerIds?.length)
+  const delegating = isDelegation(parent)
   const handoff = isPlanExecute(parent)
   const created: Task[] = []
 
@@ -332,7 +390,9 @@ export function applySplit(
         // ⚠️ The hint is only meaningful for one account. With a list it is left unset and the
         // `workerIds` gate below is what does the narrowing.
         assigneeHint: constraints.workerId ?? null,
-        finishPolicy: inherit.finishPolicy ?? 'inherit',
+        // ⛔ **A delegated piece never merges anywhere.** Committed and checked on its own branch,
+        //    and the caller merges it — see `delegation.ts` for why the daemon cannot.
+        finishPolicy: delegating ? 'commit-and-verify' : (inherit.finishPolicy ?? 'inherit'),
         sessionSharing: inherit.sessionSharing ?? 'inherit',
         // ⛔ **The plan branch, so a later piece can see an earlier one's work.** This is what makes
         // `dependsOn` between two pieces mean anything: without it child 2 is cut from `main` and a
@@ -340,6 +400,8 @@ export function applySplit(
         // ⛔ **Except in Plan & Execute, where it is the project's own target.** `null` here is not
         // "unset" — it is the answer `landingTargetFor` resolves to the project's, and it is the one
         // thing that keeps this executor from merging into a plan branch nothing will ever land.
+        // ⚠️ A delegated piece carries the caller's branch too, which is what cuts it from there;
+        //    `commit-and-verify` means nothing is ever landed onto it.
         landingTarget: handoff ? null : parent.branch,
         // ⛔ Equal shares, never `shareBudget`'s halving — see `CreateTaskInput.budgetShare`.
         budgetShare: 1 / pieces.length,
@@ -347,7 +409,13 @@ export function applySplit(
         // ⚠️ These are **pins**, not the `assigneeHint` above, and the composer's Pieces row says so:
         // an operator who names accounts for the pieces has chosen them, and the scheduler skipping
         // every other worker is precisely the behaviour they asked for.
-        constraints
+        constraints: piece.modelClass && !pinned ? { ...constraints, modelClass: piece.modelClass } : constraints,
+        // ⚠️ A delegated piece gets a worktree of its own even in a trunk-mode project: the trunk has
+        //    one holder, and a conversation that delegated from it may still be holding it. Only a
+        //    trunk-only project (no pool at all) leaves it to inherit.
+        ...(delegating && !projectTrunkOnly(parent.projectId ? getProject(parent.projectId) : null)
+          ? { workspaceMode: 'worktree' as const }
+          : {})
       })
       created.push(child)
     }
@@ -372,7 +440,11 @@ export function applySplit(
     // The parent waits on every piece, however each one ends.
     // ⛔ Not in Plan & Execute. An edge there would park the planner at `blocked` waiting for a turn
     //    that is never dispatched, which is the one state `admit` has no way out of.
-    if (!handoff) for (const child of created) addDependency(parent.id, child.id, 'settled')
+    // ⛔ Nor for a delegating conversation, which keeps talking while its pieces run and is woken by
+    //    `reportDelegationIfSettled` instead. A delegating work task waits exactly as a planner does.
+    const waits = !handoff && !(delegating && parent.kind === 'conversation')
+    if (waits) for (const child of created) addDependency(parent.id, child.id, 'settled')
+    if (delegating) recordDelegation(parent.id, created.map((c) => c.id), opts.requested === true)
   } catch (err) {
     // ⛔ Unwind rather than leave a partial split. A planner blocked on half a plan is worse than a
     // planner told its plan was refused, because only one of those two states has a way out.
@@ -389,6 +461,27 @@ export function applySplit(
   }
 
   const listed = created.map((c) => `t${c.seq}`).join(', ')
+  if (delegating) {
+    const conversation = parent.kind === 'conversation'
+    const one = created.length === 1
+    addMessage(parent.id, 'system', `Delegated to ${listed}`, null, [], {
+      event: 'delegation.filed',
+      detail:
+        `${listed} ${one ? 'is' : 'are'} committed and checked on ${one ? 'its' : 'their'} own branch, cut ` +
+        'from this one, and nothing is merged automatically. ' +
+        (conversation
+          ? 'This conversation carries on; when every piece has settled, the agent is told how each turned out and reviews them.'
+          : 'This task waits for every piece to settle, then reviews and merges what came back.')
+    })
+    if (!conversation) {
+      setStatus(parent.id, 'blocked', {
+        holdReason: `waiting on ${created.length} delegated piece${one ? '' : 's'} (${listed})`
+      })
+      admit(parent.id)
+    }
+    log.info(`t${parent.seq} delegated ${listed}`)
+    return { ok: true, children: created }
+  }
   if (handoff) {
     // ⚠️ The status is deliberately left alone. The caller completes the planner through the ordinary
     // completion path — the finish policy, the run's end and the workspace release all belong to it —
