@@ -1,14 +1,13 @@
 # Warmstart — Session Handoff
 
-## Current state — 2026-09-24
+## Current state — 2026-09-25
 
 Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling, pooled worktrees, model-aware routing, quality review, remote access, packaging, and atomic worker/model reassignment.
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-25, **Windows 11**, t701): typecheck, lint and build pass; L1 **3,992 passed, 3 skipped** (235 files) in **136.83s**.
-Earlier Windows baseline: L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L3 **493
-checks** (4 skipped); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
+Baseline (2026-09-25, **Windows 11**, t703): typecheck, lint and build pass; L1 **3,997 passed, 3 skipped** (235 files) in **83.03s**; L3 **496 checks** (4 skipped).
+Earlier Windows baseline: L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
 t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
 hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
 
@@ -24,6 +23,7 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 ## Closed in this cleanup
 
+- **The quota preemption choices are aligned and timed choices are explicit (t703, 2026-09-25).** The three wrap-up choices now sit in one countdown group with each explanation beside its button; immediate actions sit below. Handoff & reassign captures destination worker, model and effort in the persisted warning and applies them together after wrap-up, including on vendor refusal. `docs/ui.md`.
 - **No phantom worker capacity holds from idle, paused or settled sessions (t702, 2026-09-25).**
   ClaudeThird was held 2/2 when no runs were active: (1) t667 switched from Claude to Codex; when resolved, only the latest session closed, leaving Claude's session live; (2) t626 sat at `paused_user` with a lapsed cache while `slotsInUse` counted every open session. Now `slotsInUse` ignores sessions with no open run whose task is settled, `paused_user`, or whose cache lapsed; `resolveTask` closes all live sessions of a task across workers; `onTaskSettled` closes live sessions on settlement; `sweepStaleSessions` reaps dead/idle sessions on the tick; and `cacheclock` returns `handoff_close` on lapsed prefixes to free slots and workspaces immediately. L1 in `residency.test.ts`, `cacheclock.test.ts`, `conversationcapacity.test.ts`. `docs/routing.md`.
 - **The Tasks table shows a sortable Type column (t701, 2026-09-25).** It uses the same five labels as the composer and task thread, including the two plan shapes. Existing saved column layouts gain Type once; a later choice to hide it remains saved. The derived sort orders the whole filtered set before paging. `docs/ui.md`.

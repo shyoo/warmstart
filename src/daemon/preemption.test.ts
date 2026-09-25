@@ -308,7 +308,10 @@ describe('the switches that gate all of this', () => {
     // ⛔ What the operator's click writes: the same warning, with a destination attached. The RPC
     // path is `task.overrideQuota`'s own test in quotaoverride.test.ts; this exercises what the
     // scheduler does with it once the countdown actually expires.
-    tasks.setQuotaPreemptWarning(task.id, { ...warning!, reassignWorkerId: other })
+    tasks.setQuotaPreemptWarning(task.id, {
+      ...warning!, reassignWorkerId: other,
+      reassignModel: 'destination-model', reassignModelPolicy: 'inherit', reassignEffort: 'high'
+    })
 
     await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS)
     await scheduler.tick()
@@ -321,6 +324,8 @@ describe('the switches that gate all of this', () => {
     // task is no longer pinned to would strand it exactly as long as if reassignment had done nothing.
     expect(after?.notBefore).toBeNull()
     expect(after?.constraints.workerId).toBe(other)
+    expect(after?.constraints.model).toBe('destination-model')
+    expect(after?.constraints.effort).toBe('high')
   })
 
   it('reassigns immediately instead of parking on exhausted account when turn fails with vendor refusal during wrap-up', async () => {
@@ -330,7 +335,10 @@ describe('the switches that gate all of this', () => {
 
     await scheduler.tick()
     const warning = tasks.requireTask(task.id).quotaPreemptWarning
-    tasks.setQuotaPreemptWarning(task.id, { ...warning!, action: 'handoff', reassignWorkerId: other })
+    tasks.setQuotaPreemptWarning(task.id, {
+      ...warning!, action: 'handoff', reassignWorkerId: other,
+      reassignModelPolicy: 'auto', reassignModelClass: 'high'
+    })
 
     // Countdown expires, preemption wrap-up starts:
     await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS)
@@ -351,6 +359,8 @@ describe('the switches that gate all of this', () => {
     // Reassignment must happen immediately, not parked until 11pm on the exhausted account:
     expect(after?.notBefore).toBeNull()
     expect(after?.constraints.workerId).toBe(other)
+    expect(after?.constraints.modelPolicy).toBe('auto')
+    expect(after?.constraints.modelClass).toBe('high')
 
     const messages = tasks.messagesFor(task.id).map((m) => m.text)
     expect(messages.some((m) => /Turn refused on quota; reassigning/.test(m))).toBe(true)

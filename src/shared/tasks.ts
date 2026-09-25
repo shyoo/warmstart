@@ -1065,6 +1065,11 @@ export interface Task {
      * because a compacted context belongs to the session that built it, not to another account.
      */
     reassignWorkerId?: string | null
+    /** Next run's model choice, carried with the redirect until the wrap-up lands. */
+    reassignModel?: string | null
+    reassignModelPolicy?: 'auto' | 'inherit' | null
+    reassignModelClass?: ModelClass | null
+    reassignEffort?: string | null
   } | null
   branch: string | null
   /**

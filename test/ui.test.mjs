@@ -4148,7 +4148,7 @@ try {
     })()
   `)
   const redirectWorkerId = await evaluate(
-    `window.agentyard.rpc('worker.create', { adapterId: 'claude-code', label: 'redirect target', enabled: true }).then(w => w.id)`
+    `window.agentyard.rpc('worker.create', { adapterId: 'openai-compatible', label: 'redirect target', enabled: true }).then(w => w.id)`
   )
   const runningWorkerId = await evaluate(
     `window.agentyard.rpc('fleet.list').then(fs => (fs.find(f => f.worker.label === 'ui worker') ?? fs[0])?.worker.id ?? '')`
@@ -4182,15 +4182,20 @@ try {
   const layout = JSON.parse(
     await evaluate(`
       JSON.stringify((() => {
-        const wrap = document.querySelector('.decide--quota .decide-buttons');
-        const desc = wrap?.closest('.decide-option')?.querySelector('.decide-what');
-        const buttons = [...(wrap?.querySelectorAll('button') ?? [])];
+        const rows = [...document.querySelectorAll('.decide--quota .quota-scheduled .decide-option')];
+        const buttons = rows.map(r => r.querySelector('button'));
         return {
           labels: buttons.map(b => b.innerText.trim()),
           lefts: buttons.map(b => Math.round(b.getBoundingClientRect().left)),
           tops: buttons.map(b => Math.round(b.getBoundingClientRect().top)),
-          wrapRight: wrap ? Math.round(wrap.getBoundingClientRect().right) : null,
-          descLeft: desc ? Math.round(desc.getBoundingClientRect().left) : null
+          pairs: rows.map(r => ({
+            buttonRight: Math.round(r.querySelector('button').getBoundingClientRect().right),
+            descriptionLeft: Math.round(r.querySelector('.decide-what').getBoundingClientRect().left),
+            buttonTop: Math.round(r.querySelector('button').getBoundingClientRect().top),
+            descriptionTop: Math.round(r.querySelector('.decide-what').getBoundingClientRect().top)
+          })),
+          scheduled: !!document.querySelector('.quota-scheduled-head'),
+          immediate: !!document.querySelector('.quota-immediate-head')
         };
       })())
     `)
@@ -4201,7 +4206,7 @@ try {
     JSON.stringify(layout)
   )
   check(
-    'both wrap-up buttons render in the same column',
+    'both scheduled choices render in the same column',
     layout.lefts.length === 2 && new Set(layout.lefts).size === 1,
     JSON.stringify(layout)
   )
@@ -4211,19 +4216,31 @@ try {
     JSON.stringify(layout)
   )
   check(
-    'the description sits beside the button column, not under half of it',
-    layout.wrapRight !== null && layout.descLeft !== null && layout.wrapRight <= layout.descLeft,
+    'each description sits beside its own button',
+    layout.pairs.every(p => p.buttonRight <= p.descriptionLeft && Math.abs(p.buttonTop - p.descriptionTop) < 20),
     JSON.stringify(layout)
   )
+  check('scheduled and immediate choices have separate headings', layout.scheduled && layout.immediate, JSON.stringify(layout))
   // Choose a destination, then ask to hand off and reassign rather than pause here.
-  await evaluate(`document.querySelector('.decide--quota .reassign-row .setting-btn-select')?.click()`)
+  await evaluate(`document.querySelector('.decide--quota .quota-destination .setting-btn-select')?.click()`)
   await wait(400)
   await evaluate(
     `[...document.querySelectorAll('.decide--quota .setting-btn-select-option')].find(o => o.innerText.includes('redirect target'))?.click()`
   )
   await wait(400)
+  await evaluate(`document.querySelector('.quota-destination [aria-label="Handoff destination model"]')?.click()`)
+  await wait(250)
+  await evaluate(`[...document.querySelectorAll('.quota-destination .setting-btn-select-option')].find(o => /GPT|gpt/.test(o.innerText))?.click()`)
+  await wait(250)
+  const destinationControls = await evaluate(
+    `JSON.stringify([...document.querySelectorAll('.decide--quota .quota-destination .setting-btn-select')].map(b => b.getAttribute('aria-label')))`
+  )
+  check('handoff destination offers worker, model and effort controls',
+    destinationControls.includes('Handoff destination worker') &&
+    destinationControls.includes('Handoff destination model') &&
+    destinationControls.includes('Handoff destination effort'), destinationControls)
   await evaluate(
-    `[...document.querySelectorAll('.decide--quota .decide-buttons button')].find(b => b.innerText.trim() === 'Hand off & reassign')?.click()`
+    `[...document.querySelectorAll('.decide--quota .quota-scheduled button')].find(b => b.innerText.trim() === 'Hand off & reassign')?.click()`
   )
   await wait(1000)
   const warningAfter = JSON.parse(
@@ -4237,7 +4254,7 @@ try {
     JSON.stringify(warningAfter)
   )
   const primaryLabel = await evaluate(
-    `document.querySelector('.decide--quota .decide-buttons .btn--primary')?.innerText.trim() ?? ''`
+    `document.querySelector('.decide--quota .quota-scheduled .btn--primary')?.innerText.trim() ?? ''`
   )
   check('the chosen wrap-up highlights', primaryLabel === 'Hand off & reassign', primaryLabel)
 

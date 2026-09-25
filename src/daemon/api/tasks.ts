@@ -532,9 +532,33 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
           throw new Error('only a hand-off can be redirected to another worker')
         }
         if (p.reassignWorkerId) requireWorker(p.reassignWorkerId)
+        if (p.reassignWorkerId === undefined &&
+            (p.reassignModel !== undefined || p.reassignModelPolicy !== undefined ||
+             p.reassignModelClass !== undefined || p.reassignEffort !== undefined)) {
+          throw new Error('model and effort require a hand-off redirect')
+        }
+        if (p.reassignWorkerId === null && (p.reassignModel || p.reassignEffort)) {
+          throw new Error('choose a worker before choosing a model or effort')
+        }
+        if (p.reassignWorkerId) {
+          checkConstraints({
+            workerId: p.reassignWorkerId,
+            adapterId: requireWorker(p.reassignWorkerId).adapterId,
+            model: p.reassignModel ?? undefined,
+            modelPolicy: p.reassignModelPolicy ?? 'inherit',
+            modelClass: p.reassignModelClass ?? undefined,
+            effort: p.reassignEffort ?? undefined
+          })
+        }
         const reassignWorkerId =
           p.preemptionAction === 'handoff' && 'reassignWorkerId' in p ? p.reassignWorkerId : undefined
-        const task = setQuotaPreemptWarning(p.id, { ...warning, action: p.preemptionAction, reassignWorkerId })
+        const task = setQuotaPreemptWarning(p.id, {
+          ...warning, action: p.preemptionAction, reassignWorkerId,
+          reassignModel: reassignWorkerId ? p.reassignModel : undefined,
+          reassignModelPolicy: reassignWorkerId ? p.reassignModelPolicy : undefined,
+          reassignModelClass: reassignWorkerId ? p.reassignModelClass : undefined,
+          reassignEffort: reassignWorkerId ? p.reassignEffort : undefined
+        })
         log.info(
           `t${task.seq}: preemption action changed by hand to ${p.preemptionAction}` +
             (reassignWorkerId !== undefined

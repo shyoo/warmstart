@@ -329,10 +329,14 @@ describe('task.overrideQuota', () => {
     const result = await handlers()['task.overrideQuota']({
       id: task.id,
       preemptionAction: 'handoff',
-      reassignWorkerId: other.id
+      reassignWorkerId: other.id,
+      reassignModelPolicy: 'auto',
+      reassignModelClass: 'high'
     })
     expect(result.task.quotaPreemptWarning?.action).toBe('handoff')
     expect(result.task.quotaPreemptWarning?.reassignWorkerId).toBe(other.id)
+    expect(result.task.quotaPreemptWarning?.reassignModelPolicy).toBe('auto')
+    expect(result.task.quotaPreemptWarning?.reassignModelClass).toBe('high')
   })
 
   it('clears an earlier redirect when handoff & pause is chosen again', async () => {

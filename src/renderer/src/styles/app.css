@@ -2512,16 +2512,13 @@ body {
    no check saw because the sorted column was Status when the narrow layout was measured. */
 @container task-table (max-width: 850px) {
   .tbl--tasks .tbl-col-from,
-  .tbl--tasks .tbl-col-quality { visibility: collapse; width: 0; }
+  .tbl--tasks .tbl-col-quality,
+  .tbl--tasks .tbl-col-kind { visibility: collapse; width: 0; }
 }
 
-/* ⚠️ The levels are arithmetic, not taste: seq, Status and Action are 202px and never yield, so with
-   the dates gone the fixed columns are 672px and with From and Quality gone 504 — which at a 562px
-   panel (a 1024px screen with the sidebar at 400) left the title 58px, and 102 before the columns
-   were sized for Linux. Dep and Took go together at 660px: 370px fixed leaves the title 160px at a
-   530px panel, the bar the suite holds it to. Took is the one duration among what remains. */
+/* Below 850px, Type also yields so a long title stays readable. Dep and Took go together at
+   660px; Took is the one duration among what remains. */
 @container task-table (max-width: 660px) {
-  .tbl--tasks .tbl-col-kind,
   .tbl--tasks .tbl-col-dep,
   .tbl--tasks .tbl-col-took { visibility: collapse; width: 0; }
 }
@@ -5141,6 +5138,36 @@ select:focus-visible,
   align-items: start;
   gap: var(--sp-3);
   margin-bottom: var(--sp-2);
+}
+
+.quota-scheduled {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--sp-2) var(--sp-3) 0;
+  margin-bottom: var(--sp-3);
+}
+
+.quota-scheduled-head,
+.quota-immediate-head {
+  color: var(--color-text);
+  font-size: var(--text-meta);
+  font-weight: 600;
+  margin-bottom: var(--sp-2);
+}
+
+.quota-scheduled-head span {
+  color: var(--color-text-dim);
+  font-weight: 400;
+  margin-left: var(--sp-2);
+}
+
+.quota-scheduled .decide-option {
+  grid-template-columns: 110px minmax(0, 1fr);
+  align-items: start;
+}
+
+.quota-destination {
+  margin-top: var(--sp-2);
 }
 
 /*

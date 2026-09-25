@@ -2243,6 +2243,10 @@ export interface RpcMap {
        * redirect and goes back to "hand off and pause here".
        */
       reassignWorkerId?: string | null
+      reassignModel?: string | null
+      reassignModelPolicy?: 'auto' | 'inherit' | null
+      reassignModelClass?: ModelClass | null
+      reassignEffort?: string | null
     }
     result: { task: Task; until: number | null; applies: boolean; reason: string }
   }

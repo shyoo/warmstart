@@ -92,9 +92,27 @@ export function QuotaDecide({
   const [preemptReassignWorkerId, setPreemptReassignWorkerId] = useState<string>(
     warning?.reassignWorkerId ?? ''
   )
+  const [preemptModel, setPreemptModel] = useState(warning?.reassignModelPolicy === 'auto'
+    ? `__auto__${warning.reassignModelClass ? `:${warning.reassignModelClass}` : ''}`
+    : warning?.reassignModel ?? '')
+  const [preemptEffort, setPreemptEffort] = useState(warning?.reassignEffort ?? '')
   useEffect(() => {
     setPreemptReassignWorkerId(warning?.reassignWorkerId ?? '')
-  }, [warning?.reassignWorkerId])
+    setPreemptModel(warning?.reassignModelPolicy === 'auto'
+      ? `__auto__${warning.reassignModelClass ? `:${warning.reassignModelClass}` : ''}`
+      : warning?.reassignModel ?? '')
+    setPreemptEffort(warning?.reassignEffort ?? '')
+  }, [warning?.reassignWorkerId, warning?.reassignModel, warning?.reassignModelPolicy, warning?.reassignModelClass, warning?.reassignEffort])
+  const preemptWorker = fleet.find((e) => e.worker.id === preemptReassignWorkerId)?.worker
+  const preemptEntry = fleet.find((e) => e.worker.id === preemptReassignWorkerId)
+  const preemptOptions = modelOptions.find((o) => o.adapterId === preemptWorker?.adapterId)
+  const preemptModels = preemptOptions?.models ?? []
+  const preemptDefault = preemptWorker
+    ? resolveModelChoice(null, preemptWorker, preemptOptions?.selectableEffort ?? false, preemptEntry?.quota).model
+    : null
+  const preemptEfforts = preemptOptions?.selectableEffort
+    ? preemptModels.find((m) => m.id === effortLookupModel(preemptModel, preemptDefault))?.effortLevels ?? []
+    : []
 
   const selectedWorker = fleet.find((e) => e.worker.id === selectedWorkerId)?.worker ?? null
   const selectedEntry = fleet.find((e) => e.worker.id === selectedWorkerId) ?? null
@@ -135,8 +153,12 @@ export function QuotaDecide({
   // `quotaPreemptWarning` (shared/tasks.ts).
   const handoffPauseActive = warning?.action === 'handoff' && warning.reassignWorkerId === undefined
   const handoffReassignActive = warning?.action === 'handoff' && warning.reassignWorkerId !== undefined
-  const reassignMatchesSelection =
-    handoffReassignActive && (warning?.reassignWorkerId ?? '') === preemptReassignWorkerId
+  const reassignMatchesSelection = handoffReassignActive &&
+    (warning?.reassignWorkerId ?? '') === preemptReassignWorkerId &&
+    (warning?.reassignModelPolicy === 'auto'
+      ? `__auto__${warning.reassignModelClass ? `:${warning.reassignModelClass}` : ''}`
+      : warning?.reassignModel ?? '') === preemptModel &&
+    (warning?.reassignEffort ?? '') === preemptEffort
 
   const handleOverride = async (withdraw = false) => {
     setBusy(true)
@@ -164,7 +186,16 @@ export function QuotaDecide({
       await rpc('task.overrideQuota', {
         id: task.id,
         preemptionAction: action,
-        ...(reassignWorkerId !== undefined ? { reassignWorkerId } : {})
+        ...(reassignWorkerId !== undefined ? {
+          reassignWorkerId,
+          ...(reassignWorkerId ? {
+            reassignModel: preemptModel.startsWith('__auto__') ? null : preemptModel || null,
+            reassignModelPolicy: preemptModel.startsWith('__auto__') ? 'auto' : 'inherit',
+            reassignModelClass: preemptModel.startsWith('__auto__:')
+              ? preemptModel.split(':')[1] as ModelClass : null,
+            reassignEffort: preemptEffort || null
+          } : {})
+        } : {})
       })
       await onRefresh()
     } finally {
@@ -247,71 +278,66 @@ export function QuotaDecide({
       ) : (
         <>
           {warning && (
-            <div className="decide-option">
-              <div className="decide-buttons">
-                {warning.canCompact && (
-                  <button
-                    type="button"
-                    className={warning.action === 'compact' ? 'btn btn--primary' : 'btn'}
-                    disabled={busy || warning.action === 'compact'}
-                    onClick={() => void handlePreemptionAction('compact')}
-                  >
+            <section className="quota-scheduled" aria-label="When the countdown expires">
+              <div className="quota-scheduled-head">When the countdown expires <span>Choose one until the timer ends</span></div>
+              {warning.canCompact && (
+                <div className="decide-option">
+                  <button type="button" className={warning.action === 'compact' ? 'btn btn--primary' : 'btn'}
+                    disabled={busy || warning.action === 'compact'} onClick={() => void handlePreemptionAction('compact')}>
                     Compact & pause
                   </button>
-                )}
-                <button
-                  type="button"
-                  className={handoffPauseActive ? 'btn btn--primary' : 'btn'}
-                  disabled={busy || handoffPauseActive}
-                  onClick={() => void handlePreemptionAction('handoff')}
-                >
+                  <span className="decide-what">Preserves context for its next run after quota resets.</span>
+                </div>
+              )}
+              <div className="decide-option">
+                <button type="button" className={handoffPauseActive ? 'btn btn--primary' : 'btn'}
+                  disabled={busy || handoffPauseActive} onClick={() => void handlePreemptionAction('handoff')}>
                   Hand off & pause
                 </button>
-                <button
-                  type="button"
-                  className={handoffReassignActive ? 'btn btn--primary' : 'btn'}
-                  disabled={busy || (handoffReassignActive && reassignMatchesSelection)}
-                  title="Writes the same handoff, then moves this task to the account below (or lets the scheduler pick) instead of waiting for this account's own window."
-                  onClick={() => void handlePreemptionAction('handoff', preemptReassignWorkerId || null)}
-                >
+                <span className="decide-what">Commits safe work, writes a handoff brief, and waits for this account's quota to reset.</span>
+              </div>
+              <div className="decide-option">
+                <button type="button" className={handoffReassignActive ? 'btn btn--primary' : 'btn'}
+                  disabled={busy || reassignMatchesSelection}
+                  onClick={() => void handlePreemptionAction('handoff', preemptReassignWorkerId || null)}>
                   Hand off & reassign
                 </button>
-              </div>
-              <div className="decide-what">
-                <div className="decide-choice-desc">
-                  <strong>Choose the wrap-up.</strong> The highlighted choice runs when the countdown expires.
-                </div>
-                {warning.canCompact && (
-                  <div className="decide-choice-desc">
-                    <strong>Compact & pause:</strong> Preserves context for its next run after quota resets.
-                  </div>
-                )}
-                <div className="decide-choice-desc">
-                  <strong>Hand off & pause:</strong> Commits safe work, leaves a hand-off brief, and waits for this account's window to reset.
-                </div>
-                <div className="decide-choice-desc">
-                  <strong>Hand off & reassign:</strong> Commits safe work, leaves a hand-off brief, and moves the task immediately to another account.
-                  <div className="reassign-row">
-                    <span className="reassign-label">Destination:</span>
-                    <SettingButtonSelect
-                      className="reassign-select"
-                      value={preemptReassignWorkerId}
-                      disabled={busy}
-                      ariaLabel="Redirect the hand-off to"
-                      options={redirectOptions}
+                <div className="decide-what">
+                  Commits safe work and writes a handoff brief. After the timer expires and the handoff finishes, the task moves to the destination below.
+                  <div className="reassign-row quota-destination">
+                    <SettingButtonSelect className="reassign-select" value={preemptReassignWorkerId} disabled={busy}
+                      ariaLabel="Handoff destination worker" options={redirectOptions}
                       onChange={(nextId) => {
                         setPreemptReassignWorkerId(nextId)
-                        if (handoffReassignActive) {
-                          void handlePreemptionAction('handoff', nextId || null)
-                        }
-                      }}
-                    />
+                        setPreemptModel('')
+                        setPreemptEffort('')
+                      }} />
+                    {preemptReassignWorkerId && preemptModels.length > 0 && (
+                      <SettingButtonSelect className="reassign-select" value={preemptModel} disabled={busy}
+                        ariaLabel="Handoff destination model"
+                        options={[
+                          { value: '', label: preemptDefault ? `Account default (${modelLabel(preemptDefault) ?? preemptDefault})` : 'CLI default model' },
+                          { value: '__auto__', label: 'Auto Model' },
+                          { value: '__auto__:high', label: 'Auto Model (high)' },
+                          { value: '__auto__:med', label: 'Auto Model (med)' },
+                          { value: '__auto__:low', label: 'Auto Model (low)' },
+                          ...preemptModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
+                        ]}
+                        onChange={(value) => { setPreemptModel(value); setPreemptEffort('') }} />
+                    )}
+                    {preemptReassignWorkerId && preemptEfforts.length > 0 && (
+                      <SettingButtonSelect className="reassign-select" value={preemptEffort} disabled={busy}
+                        ariaLabel="Handoff destination effort"
+                        options={[{ value: '', label: 'Auto effort' }, ...preemptEfforts.map((level) => ({ value: level, label: effortLabel(level) ?? level }))]}
+                        onChange={setPreemptEffort} />
+                    )}
                   </div>
+                  {handoffReassignActive && !reassignMatchesSelection && <span>Press Hand off & reassign to save this destination.</span>}
                 </div>
               </div>
-            </div>
+            </section>
           )}
-          {!vendorRefused && <div className="decide-option">
+          {warning && <div className="quota-immediate-head">Take action now</div>}          {!vendorRefused && <div className="decide-option">
             <button
               type="button"
               className="btn btn--warn"

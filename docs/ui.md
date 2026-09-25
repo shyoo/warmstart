@@ -591,13 +591,18 @@ landing, and how many tasks wait on this one. Each button's full explanation is 
 pull-request level are not offered, and the Land fallback is push rather than the merging fleet
 default (t583).
 
-`QuotaDecide` is unchanged by t669: preemption and quota holds are still a framed card above the
+The Tasks table hides Type along with From and Quality below an 850px table container, giving
+the title the width those fixed columns would otherwise consume.
+
+`QuotaDecide` keeps preemption and quota holds in a framed card above the
 composer, with the older button-beside-paragraph rows and its own *Reassign* option and `ReassignNote`
 box. With a note, `task.message` is the resume (it requeues a `paused_quota` task itself, and rides
 along undelivered into the next run of a task still `ready` behind the gate); without one,
-`task.resume`. During a quota preemption warning it itemizes each wrap-up choice distinctly
-(`Compact & pause`, `Hand off & pause`, `Hand off & reassign`), attaching a labeled destination
-dropdown to `Hand off & reassign` that excludes the preempted worker and defaults to Auto.
+`task.resume`. During a quota preemption warning, a titled group shows the three choices that
+take effect when the countdown expires, each button beside its own explanation. Immediate actions
+sit below a separate heading. `Hand off & reassign` offers destination worker, model and effort;
+the worker list excludes the preempted account and defaults to Auto. The model and effort are
+saved with the timed choice and applied atomically when the handoff finishes.
 If the vendor refuses the turn on quota during the warning or wrap-up, the reassignment applies
 immediately rather than stranding the task on the exhausted account.
 

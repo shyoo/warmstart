@@ -2430,6 +2430,7 @@ const preempting = new Set<string>()
 interface ActivePreemption {
   action: 'compact' | 'handoff'
   reassignWorkerId?: string | null
+  choice?: Task['quotaPreemptWarning']
   cancelTimer: () => void
 }
 const activePreemptions = new Map<string, ActivePreemption>()
@@ -2490,7 +2491,7 @@ async function warnBeforeQuotaPreempt(
 
   setQuotaPreemptWarning(task.id, null)
   log.warn(`t${task.seq} preempted after its quota override window elapsed (${reason})`)
-  await preempt(task, session, resumeAt, reason, warning.action, warning.reassignWorkerId)
+  await preempt(task, session, resumeAt, reason, warning.action, warning.reassignWorkerId, warning)
   return true
 }
 
@@ -3005,7 +3006,8 @@ async function preempt(
   because: string,
   requestedAction?: 'compact' | 'handoff',
   /** Set only beside a `handoff` the operator chose to redirect rather than to wait out. */
-  reassignWorkerId?: string | null
+  reassignWorkerId?: string | null,
+  choice?: Task['quotaPreemptWarning']
 ): Promise<void> {
   const run = runsFor(task.id).find((r) => !r.endedAt)
   // ⛔ Claimed before anything is sent, and never re-entered. A second wrap-up prompt is not a
@@ -3151,11 +3153,14 @@ async function preempt(
             fresh.status !== 'cancelled' &&
             fresh.constraints.workerId === session.workerId
           ) {
-            const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...rest } =
+            const { workerId, adapterId, model, effort, modelPolicy, modelClass, workerIds, ...rest } =
               fresh.constraints
             updateTask(task.id, {
               constraints: destination
-                ? { ...rest, workerId: destination.id, adapterId: destination.adapterId, modelPolicy: 'inherit' }
+                ? { ...rest, workerId: destination.id, adapterId: destination.adapterId,
+                    model: choice?.reassignModel ?? undefined, effort: choice?.reassignEffort ?? undefined,
+                    modelPolicy: choice?.reassignModelPolicy ?? 'inherit',
+                    modelClass: choice?.reassignModelClass ?? undefined }
                 : rest,
               notBefore: null,
               assigneeHint: destination?.id ?? null
@@ -3184,11 +3189,14 @@ async function preempt(
         }
         if (run) finishRun(run.id, 'preempted', because)
         if (reassigningNow) {
-          const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...rest } =
+          const { workerId, adapterId, model, effort, modelPolicy, modelClass, workerIds, ...rest } =
             requireTask(task.id).constraints
           updateTask(task.id, {
             constraints: destination
-              ? { ...rest, workerId: destination.id, adapterId: destination.adapterId, modelPolicy: 'inherit' }
+              ? { ...rest, workerId: destination.id, adapterId: destination.adapterId,
+                  model: choice?.reassignModel ?? undefined, effort: choice?.reassignEffort ?? undefined,
+                  modelPolicy: choice?.reassignModelPolicy ?? 'inherit',
+                  modelClass: choice?.reassignModelClass ?? undefined }
               : rest,
             notBefore: null,
             assigneeHint: destination?.id ?? null
@@ -3225,6 +3233,7 @@ async function preempt(
     activePreemptions.set(run.id, {
       action,
       reassignWorkerId,
+      choice,
       cancelTimer: () => {
         settled = true
         stopWaiting()
@@ -4239,6 +4248,7 @@ export async function endUnfinishedRun(
       const reassignWorkerId = activePreempt
         ? activePreempt.reassignWorkerId
         : (warning?.action === 'handoff' ? warning.reassignWorkerId : undefined)
+      const choice = activePreempt ? activePreempt.choice : warning
       const reassigning = reassignAction === 'handoff' && reassignWorkerId !== undefined
       const destination = reassigning && reassignWorkerId ? getWorker(reassignWorkerId) : undefined
       const reassigningNow = reassigning && (reassignWorkerId === null || !!destination)
@@ -4261,11 +4271,14 @@ export async function endUnfinishedRun(
               `reassigning immediately rather than waiting until ${new Date(parkAt).toISOString()}.`
           }
         )
-        const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...rest } =
+        const { workerId, adapterId, model, effort, modelPolicy, modelClass, workerIds, ...rest } =
           task.constraints
         updateTask(task.id, {
           constraints: destination
-            ? { ...rest, workerId: destination.id, adapterId: destination.adapterId, modelPolicy: 'inherit' }
+            ? { ...rest, workerId: destination.id, adapterId: destination.adapterId,
+                model: choice?.reassignModel ?? undefined, effort: choice?.reassignEffort ?? undefined,
+                modelPolicy: choice?.reassignModelPolicy ?? 'inherit',
+                modelClass: choice?.reassignModelClass ?? undefined }
             : rest,
           notBefore: null,
           assigneeHint: destination?.id ?? null
