@@ -182,6 +182,8 @@ export interface StatisticsReport {
   sampleLimit: number | null
   /** The window that was asked for, echoed so the page can say which one it is showing. */
   window: StatisticsWindow
+  /** Whether conversation-kind tasks were folded in, echoed so the page can say so. */
+  includeConversations: boolean
   price: PriceStats
   velocity: VelocityStats
   quality: QualityStats

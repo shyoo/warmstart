@@ -3,6 +3,8 @@ import type { TaskView } from '@shared/tasks'
 import {
   readStatisticsExcludeApiMixed,
   writeStatisticsExcludeApiMixed,
+  readStatisticsIncludeConversations,
+  writeStatisticsIncludeConversations,
   readStatisticsWindow,
   writeStatisticsWindow,
   readFleetDensity,
@@ -360,5 +362,43 @@ describe('the statistics exclude-API-mixed filter', () => {
     stub({}, true)
     expect(readStatisticsExcludeApiMixed()).toBe(false)
     expect(() => writeStatisticsExcludeApiMixed(true)).not.toThrow()
+  })
+})
+
+/** t695: whether Analytics › Statistics folds conversation-kind tasks in has to survive a restart. */
+describe('the statistics include-conversations filter', () => {
+  const stub = (store: Record<string, string> | null, throws = false): void => {
+    const storage = {
+      getItem: (k: string) => {
+        if (throws) throw new Error('site data disabled')
+        return store?.[k] ?? null
+      },
+      setItem: (k: string, v: string) => {
+        if (throws) throw new Error('site data disabled')
+        if (store) store[k] = v
+      }
+    }
+    ;(globalThis as { window?: unknown }).window = { localStorage: store === null ? null : storage }
+  }
+
+  afterEach(() => {
+    delete (globalThis as { window?: unknown }).window
+  })
+
+  it('defaults to in — anything but an explicit false reads true', () => {
+    stub({})
+    expect(readStatisticsIncludeConversations()).toBe(true)
+    const store: Record<string, string> = {}
+    stub(store)
+    writeStatisticsIncludeConversations(false)
+    expect(readStatisticsIncludeConversations()).toBe(false)
+    store[Object.keys(store)[0] as string] = 'perhaps'
+    expect(readStatisticsIncludeConversations()).toBe(true)
+  })
+
+  it('is never worth a blank screen', () => {
+    stub({}, true)
+    expect(readStatisticsIncludeConversations()).toBe(true)
+    expect(() => writeStatisticsIncludeConversations(false)).not.toThrow()
   })
 })

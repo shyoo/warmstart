@@ -13,8 +13,10 @@ import { duration, money, when } from '../lib/format'
 import { compactModelLabel, effortLabel, modelLabel } from '../lib/modelname'
 import {
   readStatisticsExcludeApiMixed,
+  readStatisticsIncludeConversations,
   readStatisticsWindow,
   writeStatisticsExcludeApiMixed,
+  writeStatisticsIncludeConversations,
   writeStatisticsWindow
 } from '../lib/prefs'
 import { errorMessage } from '@shared/errors.js'
@@ -1090,15 +1092,26 @@ export function Statistics({
   const [error, setError] = useState<string | null>(null)
   // ⭐ Which window to read: the last 200 finished tasks, or all of them. Remembered per display.
   const [scope, setScope] = useState<StatisticsWindow>(() => readStatisticsWindow())
+  // ⛔ Conversations stay in unless the operator takes them out (t695): one long conversation
+  //    billed a whole evening of chat to its model, but dropping a kind silently would narrow the
+  //    page for every reader who never asked. Remembered per display, like the window.
+  const [includeConversations, setIncludeConversations] = useState<boolean>(() =>
+    readStatisticsIncludeConversations()
+  )
 
   const refresh = useCallback(async () => {
     try {
-      setReport(await rpc('statistics.report', { window: scope }))
+      setReport(await rpc('statistics.report', { window: scope, includeConversations }))
       setError(null)
     } catch (err) {
       setError(errorMessage(err))
     }
-  }, [scope])
+  }, [scope, includeConversations])
+
+  const chooseConversations = (next: boolean): void => {
+    writeStatisticsIncludeConversations(next)
+    setIncludeConversations(next)
+  }
 
   const chooseWindow = (next: StatisticsWindow): void => {
     writeStatisticsWindow(next)
@@ -1145,6 +1158,20 @@ export function Statistics({
               <option value="recent">last 200 finished tasks</option>
               <option value="all">all finished tasks</option>
             </select>
+          </label>
+          {/* ⛔ Conversations are chat, not work: one long evening of it bills a whole task's cost
+              to its model (t695, t667). Off drops conversation-kind tasks from all three tabs
+              together — on is the old answer, so nobody's numbers move who never asked. */}
+          <label
+            className="pager-size"
+            title="When off, conversation-kind tasks are folded out of price, velocity and quality together — chat is not work, and averaging it in flatters no model fairly"
+          >
+            <input
+              type="checkbox"
+              checked={includeConversations}
+              onChange={(e) => chooseConversations(e.target.checked)}
+            />
+            <span className="dim">Include conversations</span>
           </label>
         </div>
       </header>

@@ -2618,6 +2618,19 @@ try {
     /completed tasks only/i.test(pricePanel) || /Agent \/ Model \/ Effort/i.test(pricePanel),
     'this install finishes no tasks, so the empty state is the state under test'
   )
+  // ⛔ t695: the kind filter is the point — a long conversation billed a whole evening of chat to
+  //    its model, so the page has to ask whether chat counts, on by default, before anyone reads
+  //    a model row as unfair.
+  const conversationsToggle = await evaluate(`(() => {
+    const labels = [...document.querySelectorAll('.statistics-paper .panel-actions label')];
+    const hit = labels.find(l => /Include conversations/.test(l.innerText));
+    return JSON.stringify({ offered: !!hit, checked: !!hit?.querySelector('input[type=checkbox]')?.checked });
+  })()`)
+  check(
+    'the statistics page asks whether conversations count, on by default',
+    JSON.parse(conversationsToggle).offered && JSON.parse(conversationsToggle).checked,
+    conversationsToggle
+  )
 
   await evaluate(
     `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Velocity per Task').click()`

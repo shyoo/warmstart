@@ -197,7 +197,12 @@ reads is the reader's choice** (t361): the *Window* control in the head reads th
 tasks (the same ceiling `paceFactors` uses, so the two surfaces agree about which tasks exist) or
 *all* of them, remembered per display in `localStorage` (`readStatisticsWindow`, `prefs.ts`) and
 sent as `{ window }`; the report echoes `window` and a `sampleLimit` of `null` for the unbounded
-read, and the daemon reads the default for anything but the literal `all`. The two pages will
+read, and the daemon reads the default for anything but the literal `all`. ⭐ **Whether
+conversations count is the reader's choice too** (t695): the *Include conversations* checkbox beside
+it folds conversation-kind tasks out of all three tabs together when off — chat is not work, and one
+long evening of it once billed a whole task's cost to its model (t667). On is the old answer
+(`readStatisticsIncludeConversations`, default `true`, sent as `{ includeConversations }` and echoed
+by the report), so nobody's numbers move who never asked. The two pages will
 disagree — a shrunk pace factor is not a measured p50 — and the page says so rather than reconciling
 them quietly. Price additionally names its basis per row: `subs`, `API rate` or `mixed`, since
 averaging an amortised share of a flat fee together with money billed on top means nothing — and the

@@ -362,6 +362,33 @@ export function writeStatisticsExcludeApiMixed(value: boolean): void {
   }
 }
 
+const STATISTICS_INCLUDE_CONVERSATIONS_KEY = appKey('statisticsIncludeConversations')
+
+/**
+ * Whether Analytics › Statistics folds conversation-kind tasks into every tab.
+ *
+ * ⛔ Opt-out, never opt-in: anything but an explicit `'false'` reads `true`, so a stale or
+ * mistyped preference cannot silently narrow the page — the same rule the daemon applies to the
+ * RPC param. Per-display, in `localStorage`, on the precedent every other preference here sets.
+ */
+export function readStatisticsIncludeConversations(): boolean {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return true
+    return window.localStorage.getItem(STATISTICS_INCLUDE_CONVERSATIONS_KEY) !== 'false'
+  } catch {
+    return true
+  }
+}
+
+export function writeStatisticsIncludeConversations(value: boolean): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(STATISTICS_INCLUDE_CONVERSATIONS_KEY, String(value))
+  } catch {
+    // A preference that cannot be saved is not an error worth showing anybody.
+  }
+}
+
 const TASK_PAGE_KEY = appKey('taskPage')
 
 /** What the task list was showing, precise enough that restoring an offset onto it is honest. */

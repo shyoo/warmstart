@@ -182,15 +182,23 @@ function effortsForSessions(credits: Map<string, Credit>): Map<string, string | 
  * Building a fleet's worth of runs, sessions, quota samples and reviews in a fixture to exercise one
  * percentile is a test about SQLite; the arithmetic is what can be wrong in an interesting way.
  */
-export function samples(now = Date.now(), window: StatisticsWindow = 'recent'): Sample[] {
+export function samples(
+  now = Date.now(),
+  window: StatisticsWindow = 'recent',
+  includeConversations = true
+): Sample[] {
   const finished = rows<{ id: string }>(
     db()
       .prepare(
         // ⛔ `stats_excluded = 0`. A task an operator has taken out of the numbers is out of all
         //    three tabs at once — the price, the duration and the grade are folded from one sample
-        //    set precisely so that they cannot disagree about which tasks exist.
+        //    set precisely so that they cannot disagree about which tasks exist. Conversations are
+        //    the same one-set rule applied to a kind: excluding them drops one long conversation
+        //    (t667 billed a whole evening of chat to its model) from price, pace and grade together,
+        //    rather than letting each tab disagree about whether chat is work.
         `select id from tasks
           where status = 'completed' and deleted_at is null and coalesce(stats_excluded, 0) = 0
+          ${includeConversations ? '' : `and kind != 'conversation'`}
           order by updated_at desc
           limit ?`
       )
@@ -555,14 +563,19 @@ function cleanReviews(): ReviewRow[] {
   }))
 }
 
-export function statisticsReport(now = Date.now(), window: StatisticsWindow = 'recent'): StatisticsReport {
-  const all = samples(now, window)
+export function statisticsReport(
+  now = Date.now(),
+  window: StatisticsWindow = 'recent',
+  includeConversations = true
+): StatisticsReport {
+  const all = samples(now, window, includeConversations)
   const labels = adapterLabels()
   const label = (id: string): string => labels[id] ?? id
   return {
     generatedAt: now,
     sampleLimit: limitFor(window),
     window,
+    includeConversations,
     price: priceStats(all, label),
     velocity: velocityStats(all, label),
     quality: qualityStats(all, label)

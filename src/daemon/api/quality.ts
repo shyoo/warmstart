@@ -120,7 +120,14 @@ export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
     'quality.report': () => qualityReport(),
     // ⚠️ Anything but the literal `all` reads the default window: a stale or mistyped preference
     //    must not turn into an unbounded read.
-    'statistics.report': (p) => statisticsReport(Date.now(), p?.window === 'all' ? 'all' : 'recent'),
+    'statistics.report': (p) =>
+      statisticsReport(
+        Date.now(),
+        p?.window === 'all' ? 'all' : 'recent',
+        // ⛔ Opt-out, never opt-in: anything but an explicit `false` reads conversations in, so a
+        //    stale or mistyped preference cannot silently narrow the page.
+        p?.includeConversations !== false
+      ),
     'quality.ungraded': (p) => ungradedTasks(p?.limit ?? 25),
     'quality.queue': (p) =>
       reviewQueue(p?.filter ?? 'none', p?.limit ?? 25, p?.offset ?? 0, p?.gradableOnly ?? false),

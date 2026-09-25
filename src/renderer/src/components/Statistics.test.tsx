@@ -108,6 +108,7 @@ describe('measuredModelPoints', () => {
       generatedAt: 0,
       sampleLimit: null,
       window: 'all',
+      includeConversations: true,
       price: { rows: priceRows, tasks: 1, unpriced: 0, estimated: false },
       velocity: { rows: [agentRow, velocityRow], tasks: 1, untimed: 0 },
       quality: { rows: [qualityRow], totalReviews: 0, ungraded: 1, rubricVersion: 'v1' }
@@ -207,6 +208,7 @@ describe('the trade-off scatters draw one mark per model on every pair of axes',
       generatedAt: 0,
       sampleLimit: null,
       window: 'all',
+      includeConversations: true,
       price: { rows: [price('claude-opus-5', 3), price('claude-sonnet-5', 1)], tasks: 2, unpriced: 0, estimated: false },
       velocity: {
         rows: [

@@ -258,6 +258,27 @@ describe('the sample set', () => {
     expect(stats.samples()[0]?.effort).toBe('high')
   })
 
+  it('folds conversation-kind tasks in unless asked to leave them out', () => {
+    // ⛔ t695: one long conversation billed a whole evening of chat to its model (t667), so the
+    //    page offers the kind out — but on is the old answer, and the default must keep it, on
+    //    every tab at once: price, pace and grade fold from this one set precisely so they cannot
+    //    disagree about whether chat is work.
+    const work = finishedTask({ adapter: 'claude-code', model: 'opus', activeMs: 5 * MIN })
+    const chat = finishedTask({ adapter: 'claude-code', model: 'opus', activeMs: 900 * MIN })
+    db.db().prepare(`update tasks set kind = 'conversation' where id = ?`).run(chat)
+    expect(stats.samples().map((s: { taskId: string }) => s.taskId).sort()).toEqual(
+      [work, chat].sort()
+    )
+    expect(
+      stats.samples(Date.now(), 'recent', false).map((s: { taskId: string }) => s.taskId)
+    ).toEqual([work])
+    const report = stats.statisticsReport(Date.now(), 'recent', false)
+    expect(report.includeConversations).toBe(false)
+    expect(report.price.tasks).toBe(1)
+    expect(report.velocity.rows.length).toBeGreaterThan(0)
+    expect(stats.statisticsReport().includeConversations).toBe(true)
+  })
+
   it('stops at the last 200 finished tasks by default, and at nothing when asked for all', () => {
     // t361: a fleet past its two-hundredth task was reading a window that quietly dropped its oldest
     // work, with nothing on the page but a number saying so.

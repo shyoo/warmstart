@@ -156,6 +156,9 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
   measured gap to both recovery prompts — *"⛔ … and **not** onto `origin/main`: … 9 commits ahead"* —
   because naming the right ref never stopped an agent reaching for the habitual one. 11 L1
   checks across four files; four separate mutations go red. **Not flown on a real run.** `docs/landing.md`.
+- **Statistics asks whether conversations count (t695, 2026-09-25).** *Include conversations*
+  beside the Window control folds conversation-kind tasks out of all three tabs when off (t667 billed
+  a whole evening of chat to its model); on is the old answer, remembered per display. `docs/ui.md`.
 
 ## Remaining work — ordered by payoff
 
