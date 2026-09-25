@@ -16,6 +16,7 @@ import { appKey } from './storagekeys'
 
 const VIEWS_KEY = appKey('taskViews')
 const TASK_COLUMNS_KEY = appKey('taskColumns')
+const TASK_COLUMNS_V2_KEY = appKey('taskColumnsV2')
 const TASK_SORT_KEY = appKey('taskSort')
 const FLEET_COLLAPSED_KEY = appKey('fleetCollapsed')
 const FLEET_DENSITY_KEY = appKey('fleetDensity')
@@ -56,6 +57,7 @@ export function writeViews(views: TaskView[]): void {
 /** The optional columns in the task table. Its id is deliberately not a member: it is always shown. */
 export const TASK_COLUMNS = [
   'title',
+  'kind',
   'from',
   'worker',
   'dep',
@@ -80,14 +82,21 @@ export type TaskColumn = (typeof TASK_COLUMNS)[number]
 export function readTaskColumns(): TaskColumn[] {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return [...TASK_COLUMNS]
-    const raw = window.localStorage.getItem(TASK_COLUMNS_KEY)
+    const current = window.localStorage.getItem(TASK_COLUMNS_V2_KEY)
+    const raw = current ?? window.localStorage.getItem(TASK_COLUMNS_KEY)
     if (!raw) return [...TASK_COLUMNS]
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return [...TASK_COLUMNS]
     const known = TASK_COLUMNS.filter((column) => parsed.includes(column))
     // `[]` is a deliberate compact table. A non-empty list with no known name is an obsolete
     // preference, and showing nothing because a column was renamed is not a reasonable migration.
-    return parsed.length > 0 && known.length === 0 ? [...TASK_COLUMNS] : known
+    if (parsed.length > 0 && known.length === 0) return [...TASK_COLUMNS]
+    // Existing displays keep their chosen columns and gain the newly added Type column once.
+    if (current === null && parsed.length > 0 && !known.includes('kind')) {
+      const title = known.indexOf('title')
+      known.splice(title < 0 ? 0 : title + 1, 0, 'kind')
+    }
+    return known
   } catch {
     return [...TASK_COLUMNS]
   }
@@ -96,7 +105,7 @@ export function readTaskColumns(): TaskColumn[] {
 export function writeTaskColumns(columns: TaskColumn[]): void {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return
-    window.localStorage.setItem(TASK_COLUMNS_KEY, JSON.stringify(columns))
+    window.localStorage.setItem(TASK_COLUMNS_V2_KEY, JSON.stringify(columns))
   } catch {
     // A preference that cannot be saved is not an error worth showing anybody.
   }
@@ -105,6 +114,7 @@ export function writeTaskColumns(columns: TaskColumn[]): void {
 const TASK_SORTS: readonly TaskSort[] = [
   'seq',
   'title',
+  'kind',
   'from',
   'worker',
   'dep',

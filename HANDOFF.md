@@ -6,8 +6,8 @@ Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling,
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-24, **Windows 11**): typecheck, lint and build pass; L1 **3,976 passed, 3 skipped** (234 files) in **133.42s**;
-L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L3 **493
+Baseline (2026-09-25, **Windows 11**, t701): typecheck, lint and build pass; L1 **3,992 passed, 3 skipped** (235 files) in **136.83s**.
+Earlier Windows baseline: L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L3 **493
 checks** (4 skipped); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
 t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
 hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
@@ -24,6 +24,7 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 ## Closed in this cleanup
 
+- **The Tasks table shows a sortable Type column (t701, 2026-09-25).** It uses the same five labels as the composer and task thread, including the two plan shapes. Existing saved column layouts gain Type once; a later choice to hide it remains saved. The derived sort orders the whole filtered set before paging. `docs/ui.md`.
 - **The Attention bar's Answer… opens the task on its own project thread (t699, 2026-09-25).** It always routed to `{ kind: 'unassigned' }`, stranding project tasks under `← Unassigned`; `routeForTask` (`renderer/lib/taskview.tsx`, 2 L1) picks the project thread, `openTaskById` (`App.tsx`) asks the daemon when the cached list has not caught up. `docs/ui.md`.
 - **The Plan & Execute approval shows the whole executor instruction (t693 ← t690, 2026-09-25).**
   The handoff card approved a one-line label while the piece's title ran as the executor's prompt verbatim. `splitApprovalFor` (`src/daemon/split.ts`) now builds the card text with the full instruction; `ApprovalBody` (`Questions.tsx`) renders `task_split` bodies in the thread's markdown subset, collapsed past twelve lines behind *Show full instruction*. Split-mode cards stay one-line labels. L1 in `split.test.ts` + `ApprovalBody.test.tsx`. `docs/ui.md`.

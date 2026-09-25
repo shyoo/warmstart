@@ -1,5 +1,6 @@
 import {
   isPlanExecute,
+  taskTypeLabel,
   isTrunkBlockedReason,
   resolveModelChoice,
   resolveRetryCauses,
@@ -568,14 +569,7 @@ export function modelFacts(input: {
  * were drawn for both.
  */
 export function kindLabel(task: Pick<Task, 'kind' | 'mandate' | 'childDefaults'>): string {
-  // ⛔ Through `planModeOf`, never a second reading of the cap. The pane that names the shape and
-  //    the daemon that enforces it have to agree, and the only way to be sure is one function.
-  if (task.kind === 'plan') return isPlanExecute(task) ? 'Plan & Execute' : 'Plan & Split'
-  if (task.kind === 'conversation') return 'Conversation'
-  // ⚠️ The organizer's page, for the same reason: a debate files seats, waits on all of them,
-  // arbitrates and then asks a person what to do. None of that is visible from an ordinary header.
-  if (task.kind === 'debate') return 'Debate'
-  return 'Task'
+  return taskTypeLabel(task)
 }
 
 /**

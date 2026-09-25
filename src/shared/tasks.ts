@@ -390,6 +390,14 @@ export function isPlanExecute(
   return planModeOf(task) === 'execute'
 }
 
+/** The task type shown in the composer, thread, and task list. */
+export function taskTypeLabel(task: Pick<Task, 'kind' | 'mandate' | 'childDefaults'>): string {
+  if (task.kind === 'plan') return isPlanExecute(task) ? 'Plan & Execute' : 'Plan & Split'
+  if (task.kind === 'conversation') return 'Conversation'
+  if (task.kind === 'debate') return 'Debate'
+  return 'Single Task'
+}
+
 /**
  * One seat at a debate: exactly one account, and optionally the model and effort it argues with.
  *
@@ -702,6 +710,7 @@ export interface ProjectActivity {
 export type TaskSort =
   | 'seq'
   | 'title'
+  | 'kind'
   | 'from'
   | 'worker'
   | 'dep'
@@ -713,12 +722,12 @@ export type TaskSort =
   | 'status'
 
 /**
- * The sorts SQLite cannot express, because the value is computed after the row is read.
+ * The sorts SQLite cannot express, because the displayed value is computed after the row is read.
  *
  * ⛔ Exported so `pageTasks` and its test name the same set: a sort that is derived but missing from
  * this list is one that silently orders a page by nothing at all.
  */
-export const DERIVED_TASK_SORTS: readonly TaskSort[] = ['from', 'worker', 'dep', 'took', 'price']
+export const DERIVED_TASK_SORTS: readonly TaskSort[] = ['kind', 'from', 'worker', 'dep', 'took', 'price']
 
 /** Where a cancelled task comes to rest. Cancel is not delete: none of these destroy anything. */
 export type RestingState = 'paused_user' | 'draft' | 'cancelled'

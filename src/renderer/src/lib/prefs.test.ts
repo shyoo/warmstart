@@ -89,8 +89,16 @@ describe('which task columns are visible', () => {
     const store: Record<string, string> = {}
     stub(store)
     expect(readTaskColumns()).toContain('title')
+    expect(readTaskColumns()).toContain('kind')
     writeTaskColumns(['title', 'status'])
     expect(readTaskColumns()).toEqual(['title', 'status'])
+  })
+
+  it('adds Type to a saved pre-Type layout while preserving its other choices', () => {
+    stub({ 'warmstart.taskColumns': '["title","status"]' })
+    expect(readTaskColumns()).toEqual(['title', 'kind', 'status'])
+    stub({ 'warmstart.taskColumns': '[]' })
+    expect(readTaskColumns()).toEqual([])
   })
 
   it('uses the full table when a saved value is malformed or obsolete', () => {

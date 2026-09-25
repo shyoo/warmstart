@@ -3,6 +3,7 @@ import {
   PRIORITY_ORDER,
   ROOT_MANDATE,
   isPlanExecute,
+  taskTypeLabel,
   readDebateState,
   statusesForViews,
   viewForStatus,
@@ -377,7 +378,7 @@ export function taskPageSize(asked?: number): number {
 }
 
 /**
- * Order the five columns SQLite cannot see.
+ * Order the columns SQLite cannot see.
  *
  * ⛔ **`null` sorts last in both directions, and that is not the same as sorting as zero.** A task
  * with no price was not free and one with no active time was not instant — `AGENTS.md` says this
@@ -391,6 +392,7 @@ function sortDerived(tasks: Task[], sort: TaskSort, asc: boolean): Task[] {
     if (sort === 'price') return t.budget.spentUsd ?? null
     if (sort === 'dep') return t.dependsOn.length
     if (sort === 'worker') return t.ranOn ?? t.assignee ?? null
+    if (sort === 'kind') return taskTypeLabel(t)
     // `from`: who filed it. The table prints three words for this, and they are what it sorts by.
     return t.createdBy.kind
   }
@@ -502,11 +504,11 @@ export function pageTasks(
 
   /**
    * ⛔ **The derived columns are sorted after the rows are built, not by SQLite.** Active time, a
-   * price, the dependency count and the account a task last ran on are all computed by `toTasks`
-   * from other tables; there is no expression an `order by` could name. So the whole filtered set is
+   * price, display type, the dependency count and the account a task last ran on are resolved from
+   * loaded tasks; there is no matching SQL `order by`. So the whole filtered set is
    * loaded, ordered, and sliced here. ⚠️ Bounded by the filter the operator is already looking at
    * (242 tasks on this install, one batched timing query and one memoised pricing pass between
-   * them), and paid only while one of those five headers is the chosen sort.
+   * them), and paid only while a derived header is the chosen sort.
    */
   const tasks = sql
     ? toTasks(

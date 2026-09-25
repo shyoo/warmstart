@@ -1359,7 +1359,7 @@ describe('a plan task, as its own page describes it', () => {
     // ⛔ The same kind, a different shape, and the label has to say which: one of these is run
     //    twice and lands its pieces' work itself, and the other is finished at the handoff.
     expect(kindLabel(handoff())).toBe('Plan & Execute')
-    expect(kindLabel(plain({}))).toBe('Task')
+    expect(kindLabel(plain({}))).toBe('Single Task')
     // ⛔ Its own name, not "Task". A conversation's thread behaves differently at the end of every
     // turn — it rests instead of landing, and its finish policy is not the project's — and a header
     // that called it a Task would be telling somebody the opposite of what the buttons do.

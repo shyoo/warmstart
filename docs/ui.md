@@ -671,7 +671,7 @@ the root nothing can clip it; the placement flips **above** the pill when the wi
 which is the ordinary case for a composer sitting near the bottom of the window.
 
 ⭐ **A task's thread says which kind of task it is, and a subtask says whose plan it belongs to.** The
-facts column carries `type` (`Task`, `Plan & Split` or `Conversation`) first, because it changes what everything under it
+facts column carries `type` (`Single Task`, `Plan & Execute`, `Plan & Split`, `Conversation` or `Debate`) first, because it changes what everything under it
 means; `parent`, for a piece of a split — ⛔ **lineage is not a dependency**, the edge points the other
 way, so neither the `depends on` nor the `blocks` list can ever name it; `children`, with how each one
 turned out, failures included; and `executors`, which reads back the accounts and models the Executor row
@@ -686,9 +686,10 @@ it in the table, the thread and the phone. ⛔ It is never written to the row: a
 process, and a stored `landing` would outlive a daemon that died mid-merge.
 
 ⛔ **The title column takes the slack at every width.** `.tbl--tasks` has a fixed column budget:
-ID, worker, active time, price, status and actions keep compact widths, and title receives what
-remains. At 1250px the history dates yield; at 1000px filer and quality yield; at 700px dependencies
-yield. This is a deliberate change of viewpoint, not a change to the operator's Columns preference:
+ID, type, worker, active time, price, status and actions keep compact widths, and title receives what
+remains. Type uses the thread's label and sorts by it. At 1050px the history dates yield; at 850px
+author and quality yield; at 660px type, dependencies and active time yield. This is a deliberate
+change of viewpoint, not a change to the operator's Columns preference:
 the facts needed to act stay visible before horizontal scrolling becomes necessary. A long model id
 ellipsises inside Worker rather than widening the table. ⚠️ `taskLabelShort` bounds the payload (a
 title is the prompt and can be paragraphs), while CSS decides where its visible ellipsis belongs.
@@ -718,9 +719,10 @@ next rename can read its margin off the output.
 
 ⛔ **Every column of the task table sorts, and two kinds of column sort in two different places.**
 `seq`, `title`, `status`, `quality`, `created` and `updated` are real columns: SQLite orders them and
-the pager slices the result. `from`, `worker`, `dep`, `took` and `price` are **derived on read** —
+the pager slices the result. `kind`, `from`, `worker`, `dep`, `took` and `price` are **derived on read** —
 active time is folded from a task's runs minus every stretch spent waiting on a person, a price is
-this task's share of an account's billing window — so no `order by` can name them, and `pageTasks`
+this task's share of an account's billing window, and type distinguishes two plan shapes — so no
+`order by` can name them, and `pageTasks`
 loads the whole filtered set, orders it and slices afterwards (`DERIVED_TASK_SORTS`). ⚠️ Ordering a
 page by a number the database could not see would drop and repeat rows between pages, which looks
 exactly like data loss. A name column opens A→Z and a measurement opens biggest-first; `null` sorts

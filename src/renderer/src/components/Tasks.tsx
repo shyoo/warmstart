@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useDeferredValue, useEffect, useRef, useState } from 'react'
 import type { Project, PullRequestDelivery, Task, TaskSort, TaskView } from '@shared/tasks'
-import { TASK_VIEW_ORDER, TASK_VIEWS } from '@shared/tasks'
+import { TASK_VIEW_ORDER, TASK_VIEWS, taskTypeLabel } from '@shared/tasks'
 import type { ModelOptions } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { showsLiveOutput } from '../lib/live'
@@ -134,7 +134,7 @@ function Stamp({ ts }: { ts: number | null | undefined }): React.JSX.Element {
  * the fastest task in the fleet, and a second click is a poor answer to a default that is wrong for
  * half the table.
  */
-const OPENS_ASCENDING: ReadonlySet<TaskSort> = new Set<TaskSort>(['title', 'from', 'worker', 'status'])
+const OPENS_ASCENDING: ReadonlySet<TaskSort> = new Set<TaskSort>(['title', 'kind', 'from', 'worker', 'status'])
 
 /**
  * How much of a title reaches the DOM, in characters.
@@ -638,7 +638,7 @@ export function Tasks({
                   checked={shown.has(column)}
                   onChange={() => toggleColumn(column)}
                 />
-                {column === 'dep' ? 'Dependencies' : column[0]!.toUpperCase() + column.slice(1)}
+                {column === 'dep' ? 'Dependencies' : column === 'kind' ? 'Type' : column[0]!.toUpperCase() + column.slice(1)}
               </label>
             ))}
           </div>
@@ -713,6 +713,7 @@ export function Tasks({
             <tr>
               <SortHead label="#" column="seq" sort={sort} asc={asc} onSort={sortBy} numeric />
               {shown.has('title') && <SortHead label="Title" column="title" sort={sort} asc={asc} onSort={sortBy} />}
+              {shown.has('kind') && <SortHead label="Type" column="kind" sort={sort} asc={asc} onSort={sortBy} />}
               {shown.has('from') && (
               <SortHead
                 label="From"
@@ -885,6 +886,7 @@ export function Tasks({
                       </div>
                       {task.branch && <div className="tbl-path mono">{task.branch}</div>}
                     </td>}
+                    {shown.has('kind') && <td className="tbl-type-cell">{taskTypeLabel(task)}</td>}
                     {shown.has('from') && <td className="dim">
                       {task.createdBy.kind === 'human'
                         ? 'you'
