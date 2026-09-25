@@ -2,7 +2,7 @@
 import { addMessage, createTask, getTask, getTaskBySeq, messagesFor, requireTask, runForSession, runsFor, setTaskHandoff } from '../tasks.js'
 import { landConversationWork } from '../conversationland.js'
 import { askQuestion } from '../questions.js'
-import { addSplitDependency, applySplit, validateSplit } from '../split.js'
+import { addSplitDependency, applySplit, splitApprovalFor, validateSplit } from '../split.js'
 import {
   becomeConversation,
   nextRound,
@@ -215,44 +215,17 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
         return { ok: false, reply: `That split was not filed: ${precheck.reason}` }
       }
 
-      const listed = pieces
-        .map((piece, i) => {
-          const label = piece.summary?.trim() || piece.title.trim().split(/\r?\n/)[0] || `piece ${i + 1}`
-          const waits = piece.dependsOn?.length
-            ? ` (after ${piece.dependsOn.map((d) => `#${d + 1}`).join(', ')})`
-            : ''
-          return `${i + 1}. ${label}${waits}`
-        })
-        .join('\n')
-
-      // ⛔ **The gate is the same gate; only the sentence about what happens next changes.** A Plan &
-      //    Execute approval is the one and only time a person sees the instruction before the
-      //    executor runs against it — there is no review turn behind it — and telling them it will be
-      //    reviewed would be describing a turn this shape does not have.
+      // The wording lives in `split.ts` beside the filing rules it has to agree with —
+      // in particular the Plan & Execute card carries the whole executor instruction.
+      const approval = splitApprovalFor(parent, pieces)
       const handoff = isPlanExecute(parent)
       const resolution = await askQuestion({
         sessionId: p.sessionId,
         origin: 'task_split',
         kind: 'choice',
-        header: handoff
-          ? `Hand t${parent.seq} to an executor?`
-          : `Split t${parent.seq} into ${pieces.length}?`,
-        question: handoff
-          ? `t${parent.seq} has finished planning and wants to hand the whole job to one executor:\n\n${listed}\n\n` +
-            'Approving files it and starts it as soon as an account is free. It lands on the ' +
-            'project’s own target when it is done — this plan does not come back to review it, which ' +
-            'is what makes this two turns instead of three, so this is your look at the ' +
-            'instruction. Refusing sends your note back to the planner so it can revise.'
-          : `t${parent.seq} wants to split into ${pieces.length} pieces and delegate them:\n\n${listed}\n\n` +
-            'Approving files all of them at once and starts them; they branch off this plan’s branch ' +
-            'and merge back into it, and nothing reaches the trunk until the whole plan is reviewed. ' +
-            'Refusing sends your note back to the planner so it can revise.',
-        options: [
-          handoff
-            ? { id: 'approve', label: 'Hand it over', detail: 'It starts as soon as an account is free' }
-            : { id: 'approve', label: `File all ${pieces.length}`, detail: 'They start as soon as an account is free' },
-          { id: 'refuse', label: 'Not like this', detail: 'Add a note and the planner revises the plan' }
-        ]
+        header: approval.header,
+        question: approval.question,
+        options: approval.options
       })
 
       const approved = resolution.status === 'answered' && resolution.answer?.optionIds?.includes('approve')

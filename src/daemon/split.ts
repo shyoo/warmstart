@@ -15,6 +15,7 @@ import {
   planModeOf,
   type ChildDefaults,
   type Principal,
+  type QuestionOption,
   type Task,
   type TaskConstraints
 } from '@shared/tasks.js'
@@ -210,6 +211,76 @@ export function pieceConstraints(
     ...(efforts && Object.keys(efforts).length > 0 ? { effortsByWorker: efforts } : {}),
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {})
+  }
+}
+
+/**
+ * What the operator is asked before a split is filed.
+ *
+ * ⛔ **Validated, then approved, then written — in that order.** The operator is never shown a
+ * plan that cannot be filed, and nothing is written until they answer, so a refusal costs a
+ * message rather than a cleanup. `agent.split` prechecks with `validateSplit` before calling
+ * this, and files with `applySplit` after the answer.
+ *
+ * ⛔ **A Plan & Execute approval carries the whole executor instruction, not its label.** The
+ * piece's title is the executor's prompt verbatim, and this approval is the one and only time
+ * a person sees it before it runs — there is no review turn behind it. t693: the card used to
+ * show only the first line, so the operator approved a label while these bytes ran. A Plan &
+ * Split approval stays one-line labels: the planner's resolution turn still reviews every
+ * piece before anything reaches the trunk.
+ */
+export interface SplitApproval {
+  header: string
+  question: string
+  options: QuestionOption[]
+}
+
+export function splitApprovalFor(parent: Task, pieces: SplitPiece[]): SplitApproval {
+  const listed = pieces
+    .map((piece, i) => {
+      const label = piece.summary?.trim() || piece.title.trim().split(/\r?\n/)[0] || `piece ${i + 1}`
+      const waits = piece.dependsOn?.length
+        ? ` (after ${piece.dependsOn.map((d) => `#${d + 1}`).join(', ')})`
+        : ''
+      return `${i + 1}. ${label}${waits}`
+    })
+    .join('\n')
+
+  // ⛔ **The gate is the same gate; only the sentence about what happens next changes.** A Plan &
+  //    Execute approval is the one and only time a person sees the instruction before the
+  //    executor runs against it — there is no review turn behind it — and telling them it will be
+  //    reviewed would be describing a turn this shape does not have.
+  const handoff = isPlanExecute(parent)
+  if (handoff) {
+    const instruction = pieces.map((piece) => piece.title.trim()).join('\n')
+    return {
+      header: `Hand t${parent.seq} to an executor?`,
+      question:
+        `t${parent.seq} has finished planning and wants to hand the whole job to one executor:\n\n${listed}\n\n` +
+        'Approving files it and starts it as soon as an account is free. It lands on the ' +
+        'project’s own target when it is done — this plan does not come back to review it, which ' +
+        'is what makes this two turns instead of three, so this is your look at the ' +
+        'instruction. Refusing sends your note back to the planner so it can revise.\n\n' +
+        'The full instruction the executor will receive:\n\n' +
+        instruction,
+      options: [
+        { id: 'approve', label: 'Hand it over', detail: 'It starts as soon as an account is free' },
+        { id: 'refuse', label: 'Not like this', detail: 'Add a note and the planner revises the plan' }
+      ]
+    }
+  }
+
+  return {
+    header: `Split t${parent.seq} into ${pieces.length}?`,
+    question:
+      `t${parent.seq} wants to split into ${pieces.length} pieces and delegate them:\n\n${listed}\n\n` +
+      'Approving files all of them at once and starts them; they branch off this plan’s branch ' +
+      'and merge back into it, and nothing reaches the trunk until the whole plan is reviewed. ' +
+      'Refusing sends your note back to the planner so it can revise.',
+    options: [
+      { id: 'approve', label: `File all ${pieces.length}`, detail: 'They start as soon as an account is free' },
+      { id: 'refuse', label: 'Not like this', detail: 'Add a note and the planner revises the plan' }
+    ]
   }
 }
 

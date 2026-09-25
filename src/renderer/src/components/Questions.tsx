@@ -3,6 +3,7 @@ import type { Question } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { ImageChips, usePastedImages } from '../lib/pasteimages'
+import { Markdown } from './thread/Markdown'
 import { useIsRemote } from '../lib/target'
 import { LatestResponse } from '../lib/latestresponse'
 import { Pill, PillOptions, type PillOption } from './Pill'
@@ -157,7 +158,11 @@ export function QuestionCard({
           </span>
         )}
       </div>
-      <p className="question-text">{question.question}</p>
+      {question.origin === 'task_split' ? (
+        <ApprovalBody text={question.question} />
+      ) : (
+        <p className="question-text">{question.question}</p>
+      )}
 
       {hasOptions && (
         <div className="question-options">
@@ -268,6 +273,53 @@ export function QuestionCard({
               ? 'Saved to thread and included in the next agent turn.'
               : 'Agent is waiting for your response.'}
         </span>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * A split-approval question body: the daemon's framing plus, for a Plan & Execute handoff,
+ * the whole instruction the executor will receive (`splitApprovalFor`).
+ *
+ * ⛔ **Collapsed past twelve lines, open by press — never by itself.** The head is the eight
+ * framing lines the daemon writes (what is being approved and what each press does), so the
+ * card still reads as a decision at a glance; the instruction sits behind the press, in the
+ * card either way (`hidden`, never fetched on open — an expander that loaded on demand would
+ * be a second place the bytes could fail to arrive). Rendered with the thread's closed
+ * markdown subset: the instruction is agent output, and agent output is text, never markup
+ * (`thread/Markdown`). Other origins keep the plain `<p>`: their bodies are conversational,
+ * and collapsing the question being answered would hide the thing the box below answers.
+ */
+const APPROVAL_HEAD_LINES = 8
+const APPROVAL_COLLAPSE_AFTER_LINES = 12
+
+export function ApprovalBody({ text }: { text: string }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const lines = text.split('\n')
+  if (lines.length <= APPROVAL_COLLAPSE_AFTER_LINES) {
+    return (
+      <div className="question-text">
+        <Markdown text={text} />
+      </div>
+    )
+  }
+  const head = lines.slice(0, APPROVAL_HEAD_LINES).join('\n')
+  const rest = lines.slice(APPROVAL_HEAD_LINES).join('\n')
+  const restLines = lines.length - APPROVAL_HEAD_LINES
+  return (
+    <div className="question-text">
+      <Markdown text={head} />
+      <button
+        type="button"
+        className="approval-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        {open ? 'Hide full instruction' : `Show full instruction (${restLines} more lines)`}
+      </button>
+      <div hidden={!open}>
+        <Markdown text={rest} />
       </div>
     </div>
   )

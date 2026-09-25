@@ -4310,6 +4310,23 @@ select:focus-visible,
   border-color: var(--color-text-dim);
 }
 
+.approval-toggle {
+  background: none;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-text-dim);
+  font-size: var(--text-xs);
+  padding: 1px 6px;
+  cursor: pointer;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.approval-toggle:hover {
+  color: var(--color-text);
+  border-color: var(--color-text-dim);
+}
+
 .question-option--on .question-mark {
   border-color: var(--state-human);
 }

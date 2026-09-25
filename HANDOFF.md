@@ -20,8 +20,12 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 `prepaid` is field-normalized $/h to reset (same $3.68 scores 1/24 at 24h, 1 at 1h); the winner's
 `reason` names pin, comparison, or override, and a compared Auto field records `score`. `docs/routing.md` §§3.3a, 4.9.
 
+**Plan & Execute dispatches carry the full instruction (t691).** The planner's brief is what the executor receives; see below (t693) for what the operator sees before it runs.
+
 ## Closed in this cleanup
 
+- **The Plan & Execute approval shows the whole executor instruction (t693 ← t690, 2026-09-25).**
+  The handoff card approved a one-line label while the piece's title ran as the executor's prompt verbatim. `splitApprovalFor` (`src/daemon/split.ts`) now builds the card text with the full instruction; `ApprovalBody` (`Questions.tsx`) renders `task_split` bodies in the thread's markdown subset, collapsed past twelve lines behind *Show full instruction*. Split-mode cards stay one-line labels. L1 in `split.test.ts` + `ApprovalBody.test.tsx`. `docs/ui.md`.
 - **A resumed session no longer holds as *no routable models in 'med' class*, and a busy machine no longer fails a landing (t697 ← t691, 2026-09-25).**
   (1) The class check for a candidate named by model alone (a resumed or warm session, or a pin) read the model's *first* row. MuseFirst lists `xhigh` (high) above `medium` (med), and t691's session had run at `medium`, so the retry held for ever. `pairInClass` (`shared/modelroutes.ts`) now checks every row, the session's effort first, and carries the matching effort. The mutation reproduces the exact hold text.
   (2) t691's landing was **not** handed an outdated workspace: the run started on `e657e74` = `main`, and the branch was one commit on it. The checks ran beside t694's (inkland) suite, and six git-heavy L1 tests timed out at 15s. Reproduced: two L1 runs started together fail 4 tests each, and one alone passes (3,976, 101s). Muse *had* run the full suite before completing. `runChecks` now runs one landing's checks at a time machine-wide. The failure notice's "4 commit(s)" counted `main`'s 3 unpushed commits; it now excludes the local target.

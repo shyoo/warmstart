@@ -483,3 +483,35 @@ describe('pieceConstraints', () => {
     expect(second.ok && second.children[0]!.assigneeHint).toBeNull()
   })
 })
+
+describe('splitApprovalFor', () => {
+  const instruction = [
+    'Rework the retry loop in src/daemon/scheduler.ts.',
+    '',
+    'Change `backoffFor` to cap at 30s, leave everything else alone.',
+    'Done means the existing retry tests pass unchanged.'
+  ].join('\n')
+
+  it('hands the operator the whole executor instruction, not just its first line', () => {
+    const parent = handoffPlanner()
+    const approval = split.splitApprovalFor(parent, [piece(instruction)])
+    // ⛔ t693: the card approved a one-line label while this text became the executor's
+    // prompt verbatim. The approval has to carry the same bytes the executor will receive.
+    expect(approval.question).toContain(instruction)
+    expect(approval.header).toMatch(/Hand t\d+ to an executor/)
+  })
+
+  it('leaves a Plan & Split approval as one-line labels', () => {
+    const parent = planner()
+    const approval = split.splitApprovalFor(parent, [piece('first piece'), piece('second piece')])
+    expect(approval.question).toContain('1. first piece')
+    expect(approval.question).toContain('2. second piece')
+    expect(approval.header).toMatch(/Split t\d+ into 2/)
+  })
+
+  it('does not leak one split piece\u2019s full body into another piece\u2019s approval', () => {
+    const parent = planner()
+    const approval = split.splitApprovalFor(parent, [piece('alpha\nsecond line'), piece('beta')])
+    expect(approval.question).not.toContain('second line')
+  })
+})
