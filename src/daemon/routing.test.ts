@@ -2082,6 +2082,55 @@ describe('model-aware routing', () => {
       expect(choice.model).toBe('claude-opus-5')
     })
 
+    it("⛔ t697: resuming a session that ran at a 'med' row is not held as having nothing in 'med'", () => {
+      // t691, 2026-09-25: MuseFirst listed its model at xhigh (high) above medium (med). The retry
+      // resumed the task's own session, which had run at medium, and the class check read the
+      // model's *first* row — so it held for ever on "no routable models in 'med' class".
+      db.db().prepare('update workers set enabled = 0').run()
+      const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClassRowWorker', enabled: true })
+      workers.updateWorker(w.id, {
+        defaultModel: 'claude-opus-5-5',
+        defaultEffort: 'medium',
+        modelRoutes: [
+          { model: 'claude-opus-5-5', effort: 'xhigh', modelClass: 'high', auto: true },
+          { model: 'claude-opus-5-5', effort: 'medium', modelClass: 'med', auto: true }
+        ]
+      })
+      const task = tasks.createTask({
+        title: 'Resumed med-class task',
+        constraints: { workerId: w.id, modelClass: 'med' }
+      })
+
+      const now = Date.now()
+      db.db()
+        .prepare(
+          `insert into sessions (id, worker_id, adapter_id, transport, cwd, model, effort, state, started_at,
+                                 closed_at, tokens_since_compact, purpose, context_tokens,
+                                 last_request_started_at, cache_expires_at, vendor_session_id)
+           values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        )
+        .run(
+          'sess-med-past', w.id, 'claude-code', 'stream', dir, 'claude-opus-5-5', 'medium', 'closed',
+          now - 600_000, now - 300_000, 0, 'work', 10_000, now - 300_000, now + 600_000, 'vendor-med'
+        )
+      db.db()
+        .prepare('insert into turns (session_id, request_id, ts, input_tokens) values (?,?,?,?)')
+        .run('sess-med-past', 'req-med', now - 300_000, 10)
+      db.db()
+        .prepare(
+          `insert into runs (id, task_id, session_id, worker_id, started_at, ended_at, outcome, model)
+           values (?,?,?,?,?,?,?,?)`
+        )
+        .run('run-med-past', task.id, 'sess-med-past', w.id, now - 600_000, now - 300_000, 'success', 'claude-opus-5-5')
+
+      const choice = scoring.chooseTarget(task)
+      expect(choice.reason ?? '').not.toContain('no routable models')
+      expect(choice.worker?.id).toBe(w.id)
+      expect(choice.model).toBe('claude-opus-5-5')
+      // The pair that matched the class, so the resumed run is not dispatched at xhigh.
+      expect(choice.effort).toBe('medium')
+    })
+
     it('prior session on a different model (Haiku) cannot override task.constraints.model (Opus)', () => {
       db.db().prepare('update workers set enabled = 0').run()
       const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst-PriorSession', enabled: true })

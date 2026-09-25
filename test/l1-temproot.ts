@@ -69,6 +69,13 @@ export function setup(): void {
   process.env.TMPDIR = root
   process.env.TMP = root
   process.env.TEMP = root
+  // ⛔ **And a data directory, for every suite that never names one** (t697, 2026-09-25). 127 of
+  // the 234 L1 files do not set `WARMSTART_DATA_DIR`, so `paths` resolved the operator's real
+  // one: each `npm test` appended ~32 lines to the live `orchestratord-*.log` (554 on 2026-09-24
+  // alone, interleaved with the daemon's own — including the landing check being investigated),
+  // and `dataDir()` ran `adoptLegacyDataDir` against the real profile. Unconditional, not `??=`: a
+  // check the daemon runs inherits whatever it was started with, and L1 must not write there.
+  process.env.WARMSTART_DATA_DIR = join(root, 'data')
   shimVendorClis(root)
 }
 

@@ -487,11 +487,16 @@ export async function finishWithoutLanding(
  * would have switched out from under. A branch name is not a location. A person reading this needs
  * to know whether their work survived and where to go and look for it.
  */
-async function whereTheWorkIs(cwd: string, branch: string): Promise<string> {
+async function whereTheWorkIs(cwd: string, branch: string, target: string): Promise<string> {
   const dirty = porcelainNames(await git(cwd, ['status', '--porcelain']))
-  const carried = (await git(cwd, ['log', '--oneline', branch, '--not', '--remotes', '--']))
-    .split('\n')
-    .filter(Boolean)
+  // ⛔ Not on a remote **and** not on the local target (t697). t691's notice said *"4 commit(s)"*
+  // for a branch one commit ahead of `main`: local `main` was 3 unpushed commits ahead of
+  // `origin/main`, and those read as the task's own — as if the branch had been cut from behind.
+  const carriedOn = async (exclude: string[]): Promise<string[]> =>
+    (await git(cwd, ['log', '--oneline', branch, '--not', '--remotes', ...exclude, '--']))
+      .split('\n')
+      .filter(Boolean)
+  const carried = await carriedOn([target]).catch(() => carriedOn([]))
 
   if (dirty.length === 0) {
     return carried.length > 0
@@ -545,6 +550,37 @@ async function commitsAhead(cwd: string, branch: string, base: string): Promise<
  * making a claim nobody measured.
  */
 async function runChecks(
+  project: Project,
+  cwd: string
+): Promise<{ ok: boolean; output: string; passed: number }> {
+  if (policyFor(project).check.length === 0) return runChecksNow(project, cwd)
+  const waitingOn = checksInFlight
+  let done!: () => void
+  checksInFlight = new Promise<void>((resolve) => (done = resolve))
+  if (checksAhead > 0) log.info(`${project.name}: checks queued behind ${checksAhead} other landing(s)' checks`)
+  checksAhead += 1
+  try {
+    await waitingOn
+    return await runChecksNow(project, cwd)
+  } finally {
+    checksAhead -= 1
+    done()
+  }
+}
+
+/**
+ * ⛔ **One landing's checks at a time on this machine, across every project** (t697, 2026-09-25).
+ * t691's checks ran beside t694's (another project, `npm run test` too) and six git-heavy L1 tests
+ * timed out at 15s; the same branch had passed the whole suite alone minutes earlier. Reproduced
+ * the same day: two copies of this repo's L1 started together failed 4 tests each, all
+ * `Test timed out in 15000ms` in `basesync`/`mergebranch`/`worktrees`; alone, 3,976 passed in
+ * 101s. The per-project `land:<project>` resource does not cover it — the contended resource is
+ * the machine. A red check costs an agent run to "fix"; a queued one costs minutes.
+ */
+let checksInFlight: Promise<void> = Promise.resolve()
+let checksAhead = 0
+
+async function runChecksNow(
   project: Project,
   cwd: string
 ): Promise<{ ok: boolean; output: string; passed: number }> {
@@ -1855,7 +1891,7 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     const fallback = await leaveBranch.land(ctx)
     say(
       `Not landed: ${oneLine(allowed.reason ?? 'the landing was refused')}`,
-      `${allowed.reason ?? 'the landing was refused'}. ${await whereTheWorkIs(ctx.workspacePath, ctx.branch)}`,
+      `${allowed.reason ?? 'the landing was refused'}. ${await whereTheWorkIs(ctx.workspacePath, ctx.branch, landingTargetFor(ctx.task, ctx.project))}`,
       'landing.failed'
     )
     restForHuman(`the work is done but did not land: ${allowed.reason}`)
@@ -1874,7 +1910,7 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     say(
       `Not landed: ${oneLine(result.reason ?? 'the landing did not complete')}`,
       `Landing failed: ${result.reason}. ` +
-        (await whereTheWorkIs(ctx.workspacePath, ctx.branch)) +
+        (await whereTheWorkIs(ctx.workspacePath, ctx.branch, landingTargetFor(ctx.task, ctx.project))) +
         // ⭐ A task that failed *only* because it was queued has nothing wrong with it, and the action
         // is a retry rather than an investigation. That is the difference between an operator opening
         // a branch to find out what broke and an operator pressing one button.

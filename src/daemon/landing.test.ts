@@ -471,6 +471,47 @@ describe('landing without a remote', () => {
     expect(said).not.toContain('')
   })
 
+  it('⛔ counts only the commits the target does not have when a landing fails (t697)', async () => {
+    // t691, 2026-09-25: a branch one commit ahead of `main` was reported as "4 commit(s)", because
+    // `main`'s own unpushed commits counted as the task's — and it read as a stale workspace.
+    const branch = 'warmstart/t87-count'
+    const { project, taskId, root, ws } = seedLocal(branch)
+    writeFileSync(
+      join(root, '.warmstart', 'project.json'),
+      JSON.stringify({ schema_version: 1, name: 'count', vcs: 'git', check: ['git nope-this-is-not-a-command'], landing: { target: 'main' } })
+    )
+    // Committed, so the trunk is clean — and `main` gains a commit the branch was not cut from.
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'the operator declared a check')
+    const reloaded = projects.reloadProject(project.id) ?? project
+    expect(Number(git(ws, 'rev-list', '--count', branch))).toBeGreaterThan(1)
+
+    const result = await land(reloaded, taskId, ws, branch, 'commit-and-merge')
+
+    expect(result.ok).toBe(false)
+    const said = tasks.messagesFor(taskId).map((m) => m.detail ?? '').join('\n')
+    expect(said).toContain(`1 commit(s) are on \`${branch}\``)
+  })
+
+  it('⛔ runs one landing’s checks at a time, even across projects (t697)', async () => {
+    // t691's checks ran beside another project's suite and timed out; the same branch passed alone.
+    const trace = join(dir, 't697-checks.log').replace(/\\/g, '/')
+    const step = "const f=require('fs'),p=process.argv[1];f.appendFileSync(p,'s\\n');setTimeout(()=>f.appendFileSync(p,'e\\n'),400)"
+    const seeded = ['warmstart/t88-one', 'warmstart/t89-two'].map((branch) => {
+      const s = seedLocal(branch)
+      writeFileSync(
+        join(s.root, '.warmstart', 'project.json'),
+        JSON.stringify({ schema_version: 1, name: branch, vcs: 'git', check: [`node -e "${step}" "${trace}"`], landing: { target: 'main' } })
+      )
+      return { ...s, branch, project: projects.reloadProject(s.project.id) ?? s.project }
+    })
+
+    const results = await Promise.all(seeded.map((s) => land(s.project, s.taskId, s.ws, s.branch, 'commit-and-verify')))
+
+    expect(results.map((r) => r.ok)).toEqual([true, true])
+    expect(readFileSync(trace, 'utf8').split('\n').filter(Boolean)).toEqual(['s', 'e', 's', 'e'])
+  })
+
   it('lets the policy choose the strategy, not the project’s legacy field', () => {
     // ⛔ `makeRepo` writes `landing.strategy: 'auto-land'`. Before 2026-08-30 that field decided
     // what ran, so a project resolved to `pull-request` would still have had its trunk pushed.

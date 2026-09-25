@@ -4,6 +4,7 @@ import {
   autoModelCount,
   classOnWorker,
   isRoutableModel,
+  pairInClass,
   routeEffortFor,
   routesFromLegacy,
   type ModelRoute
@@ -48,6 +49,19 @@ describe('model routes (t638)', () => {
     // No line at all: the heuristic.
     expect(classOnWorker(worker, 'gpt-5.6-mini')).toBe('low')
     expect(classOnWorker({ modelRoutes: null }, 'claude-sonnet-5')).toBe('med')
+  })
+
+  it('⛔ a class asks every line of the model, not its first (t697)', () => {
+    // t691: xhigh (high) listed above medium (med); the first-line answer said "nothing in med".
+    expect(pairInClass(worker, 'claude-opus-5-5', null, 'med')).toEqual({ model: 'claude-opus-5-5', effort: 'medium' })
+    // The session's own effort wins when its line is in the class…
+    expect(pairInClass(worker, 'claude-opus-5-5', 'xhigh', 'high')).toEqual({ model: 'claude-opus-5-5', effort: 'xhigh' })
+    // …and yields to a line that is, when it is not.
+    expect(pairInClass(worker, 'claude-opus-5-5', 'xhigh', 'med')).toEqual({ model: 'claude-opus-5-5', effort: 'medium' })
+    expect(pairInClass(worker, 'claude-opus-5-5', null, 'low')).toBeNull()
+    // No line at all: the heuristic, carrying whatever effort the candidate had.
+    expect(pairInClass(worker, 'gpt-5.6-mini', 'low', 'low')).toEqual({ model: 'gpt-5.6-mini', effort: 'low' })
+    expect(pairInClass(worker, null, null, 'med')).toBeNull()
   })
 
   it("an effort inherited from the table prefers the model's auto line", () => {

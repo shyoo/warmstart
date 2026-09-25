@@ -22,6 +22,10 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **A resumed session no longer holds as *no routable models in 'med' class*, and a busy machine no longer fails a landing (t697 ← t691, 2026-09-25).**
+  (1) The class check for a candidate named by model alone (a resumed or warm session, or a pin) read the model's *first* row. MuseFirst lists `xhigh` (high) above `medium` (med), and t691's session had run at `medium`, so the retry held for ever. `pairInClass` (`shared/modelroutes.ts`) now checks every row, the session's effort first, and carries the matching effort. The mutation reproduces the exact hold text.
+  (2) t691's landing was **not** handed an outdated workspace: the run started on `e657e74` = `main`, and the branch was one commit on it. The checks ran beside t694's (inkland) suite, and six git-heavy L1 tests timed out at 15s. Reproduced: two L1 runs started together fail 4 tests each, and one alone passes (3,976, 101s). Muse *had* run the full suite before completing. `runChecks` now runs one landing's checks at a time machine-wide. The failure notice's "4 commit(s)" counted `main`'s 3 unpushed commits; it now excludes the local target.
+  (3) 127 of 234 L1 files named no data dir and wrote ~32 lines per `npm test` into the live daemon log; `globalSetup` now sets `WARMSTART_DATA_DIR`. `docs/routing.md`, `docs/landing.md`, `docs/testing.md`.
 - **Long task threads skip the one-second ledger rerender (t684, 2026-09-24).** `Thread` is memoized and its empty activity tail is stable, so old markdown is parsed only when thread data changes. t667's recorded thread was inaccessible through this task's cross-project `task_read`; this is a renderer-path diagnosis, not a direct profile. `docs/ui.md`.
 - **Muse can use the host's `gh` login (t683 ← t682, 2026-09-24).** Its private XDG root hid
   `gh`'s config even with Full user authority. A Windows reproduction showed auth fail with that XDG
@@ -131,8 +135,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   low through ultra. Added `gpt-6-astra` to `costmodels/openai.codex.2026-08.json` (1.05M context
   window, priority 1 in `models_cache.json`), `benchmarks/coding-agents.2026-09.json` (0.885 agentic),
   and `statistics.ts` model power sorting. `docs/adapters.md` updated.
-- **The ladder word is gone; a finish step is a level (t587, 2026-09-20).** `finishlevel.ts`,
-  `COMMIT/LAND_LEVELS`, `landingLevelFor` et al.; `agent.land`/`land_work` take `finishPolicy`.
 - **A conversation's landing conflicted for ever, because two halves of the tool disagreed about
   which `main` (t586 ← t578, 2026-09-20).** An open conversation resolves its finish policy to
   `await-human` *from its kind* — that is what stops it landing by itself — but **no landing ever
@@ -150,15 +152,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   measured gap to both recovery prompts — *"⛔ … and **not** onto `origin/main`: … 9 commits ahead"* —
   because naming the right ref never stopped an agent reaching for the habitual one. 11 L1
   checks across four files; four separate mutations go red. **Not flown on a real run.** `docs/landing.md`.
-- **Reassign's effort picker could only ever appear for one exact, named model (t619,
-  2026-09-22).** `offeredEfforts` looked `effortLevels` up by the literal selection value, and
-  neither Auto Model (`'__auto__'`) nor the blank account-default choice is a real model id — so
-  the effort control vanished in both of the two states an operator actually leaves the model in,
-  and only reappeared once they had also picked one specific model by name. `effortLookupModel`
-  (`renderer/lib/taskview.tsx`) now resolves effort against the model that would actually run —
-  the inherited default — in both of those states; the blank effort option itself is relabelled
-  `Auto effort (…)` to read the same way Auto Model does. Fixed in both reassign rows
-  (`QuotaDecide`, `Decide`) and mirrored on the phone card. 5 new L1 checks in `taskview.test.ts`.
 
 ## Remaining work — ordered by payoff
 

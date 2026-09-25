@@ -362,6 +362,10 @@ of it, because CI has no vendor CLI and `which()` failed first.
   `${root}_workspaces` isolation root, which is a *sibling* of the directory being removed (376 of
   those), and per-`it` mkdtemps nobody tracked (`prompt.test.ts`, 1,268). A root that still cannot be
   removed **says so on stderr** and is swept by the next run once it is 2h old. ⛔ Never silently.
+  ⛔ The same setup points `WARMSTART_DATA_DIR` at `<root>/data`, unconditionally. 127 of the 234
+  L1 files never name one (measured 2026-09-25), so they resolved the operator's real data directory: every `npm test`
+  appended ~32 lines to the live daemon log (554 on 2026-09-24), including the one a landing check was
+  being debugged from (t697).
 - **Vendor CLIs are findable but not launchable.** `PATH` is prefixed with empty stubs for whichever
   of `claude`, `codex`, `agy`, `muse`, `local-llm-bridge` this machine actually has, so `which()`
   resolves and execution fails into the `catch` that is already there. ⚠️ Only what is *already*

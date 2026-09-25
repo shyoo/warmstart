@@ -844,6 +844,15 @@ If it runs out, or you cancel the task while it is queued, you get the ordinary 
 message says the branch is fine and that landing it again is all it needs, because a queue that ran
 out is a retry rather than an investigation.
 
+⛔ **The checks themselves run one landing at a time on the machine, across projects** (`runChecks`,
+t697). The per-project queue above does not cover it: the contended resource is the CPU. Measured
+2026-09-25: t691's checks ran beside t694's (another project's `npm run test`), and six git-heavy L1
+tests timed out at 15s on a branch that had passed the full suite alone minutes earlier. Two copies of
+this repo's L1 started together fail 4 tests each the same way, and one alone passes in 101s. A red
+check costs an agent run to "fix" a flake; a queued check costs minutes. ⚠️ Time spent behind
+another project's checks counts against the 15-minute per-project wait, because the per-project lock
+is already held while the landing waits for the check gate.
+
 ⛔ Measured 2026-08-29: t26 and t27 were run in parallel and finished within the same second. One
 landed; the other was told *"Waiting to land behind t26"* and parked on a
 person's desk with a perfectly good commit on an intact branch. The lock was doing its job — the

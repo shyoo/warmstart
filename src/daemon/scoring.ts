@@ -3,7 +3,7 @@ import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import type { Objective, Project, Task } from '@shared/tasks.js'
 import { projectTrunkOnly, resolveWorkspaceMode, windowHighWater, WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { WEIGHT_SIGNS } from '@shared/routing.js'
-import { classOnWorker, isRoutableModel } from '@shared/modelroutes.js'
+import { isRoutableModel, pairInClass } from '@shared/modelroutes.js'
 import { adapter } from './adapters/index.js'
 import { paceFactors, paceFor, paceValue, type PaceFactors } from './pace.js'
 import {
@@ -414,14 +414,19 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       classFiltered = true
     }
 
-    if (task.constraints.modelClass) {
+    const modelClass = task.constraints.modelClass
+    if (modelClass) {
       if (!classFiltered) {
-        candidateModels = candidateModels.filter(
-          (c) => c.model !== null && classOnWorker(worker, c.model) === task.constraints.modelClass
-        )
+        // ⛔ Per (model, effort) row, never by the model's first row (`pairInClass`, t697). The session
+        // a candidate continues ran at an effort of its own, and that is the row it is.
+        const sessionEffort = reuseModel ? reuse?.effort : heldModel ? held?.effort : null
+        candidateModels = candidateModels.flatMap((c) => {
+          const pair = pairInClass(worker, c.model, c.effort ?? sessionEffort, modelClass)
+          return pair ? [pair] : []
+        })
       }
       if (candidateModels.length === 0) {
-        reasons.push(`${worker.label}: no routable models in '${task.constraints.modelClass}' class`)
+        reasons.push(`${worker.label}: no routable models in '${modelClass}' class`)
         continue
       }
     }

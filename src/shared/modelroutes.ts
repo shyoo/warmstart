@@ -50,6 +50,38 @@ export function classOnWorker(worker: RoutesHolder, model: string | null | undef
   return any ? routeClass(any) : defaultModelClass(model)
 }
 
+/**
+ * The pair a candidate named by model alone runs as under `modelClass` here, or null if none does.
+ *
+ * ⛔ **Never `classOnWorker(worker, model)` with the effort left out** (t697 ← t691, 2026-09-25).
+ * That answers with the model's *first* row, so a worker listing `muse-spark · xhigh` (high) above
+ * `muse-spark · medium` (med) read as having nothing in `med`. t691's retry resumed a session that
+ * had run at `medium` and held for ever on *"MuseFirst: no routable models in 'med' class"*.
+ *
+ * ⭐ `preferredEffort` is the effort the candidate already carries — a resumed session's own — and
+ * wins when its row is in the class. Otherwise any row of the model in the class answers, an auto
+ * row before a manual one, and its effort is carried so the dispatch runs the pair that matched.
+ * A model with no row at all falls back to the built-in class, as `classOnWorker` does.
+ */
+export function pairInClass(
+  worker: RoutesHolder,
+  model: string | null | undefined,
+  preferredEffort: string | null | undefined,
+  modelClass: ModelClass
+): { model: string; effort: string | null } | null {
+  if (!model) return null
+  const rows = (worker?.modelRoutes ?? []).filter((r) => r.model === model)
+  if (rows.length === 0) {
+    return defaultModelClass(model) === modelClass ? { model, effort: preferredEffort ?? null } : null
+  }
+  const inClass = rows.filter((r) => routeClass(r) === modelClass)
+  const row =
+    (preferredEffort ? inClass.find((r) => r.effort === preferredEffort) : undefined) ??
+    inClass.find((r) => r.auto) ??
+    inClass[0]
+  return row ? { model, effort: row.effort } : null
+}
+
 /** Rows Auto Model may pick, in the operator's order. */
 export function autoRoutes(worker: RoutesHolder): ModelRoute[] {
   return (worker?.modelRoutes ?? []).filter((r) => r.auto)
