@@ -1,6 +1,7 @@
-import type { Session } from '@shared/protocol.js'
+import { sessionEnded, type Session } from '@shared/protocol.js'
+import { TERMINAL_STATUSES } from '@shared/tasks.js'
 import { cacheHasLapsed, getSession, hasOpenRun } from './sessions.js'
-import { lastRunForSession, listTasks, runForSession, runsFor } from './tasks.js'
+import { lastRunForSession, listTasks, runForSession, runsFor, taskOfSession } from './tasks.js'
 import { workspaces } from './scheduler.js'
 
 /**
@@ -48,7 +49,19 @@ export function slotsInUse(
   reuse: Session | null,
   retainedAwaitingHuman = 0
 ): number {
-  const busy = sessions.filter((s) => s.purpose === 'work' && s.id !== reuse?.id).length
+  const busy = sessions.filter((s) => {
+    if (s.purpose !== 'work' && s.purpose != null) return false
+    if (s.id === reuse?.id) return false
+    if (sessionEnded(s.state)) return false
+    if (hasOpenRun(s.id)) return true
+    const task = taskOfSession(s.id)
+    if (task) {
+      if (TERMINAL_STATUSES.has(task.status)) return false
+      if (task.status === 'paused_user') return false
+    }
+    if (cacheHasLapsed(s)) return false
+    return true
+  }).length
   return busy + retainedAwaitingHuman
 }
 

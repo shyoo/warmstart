@@ -969,6 +969,8 @@ export interface Session {
   clockMoveContext: number | null
   startedAt: number
   closedAt: number | null
+  /** Whether this session has no open run actively executing. */
+  idle?: boolean
 }
 
 export type SessionTransport = 'pty' | 'stream'

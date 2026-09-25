@@ -5,7 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Session } from '@shared/protocol.js'
 import type { Project } from '@shared/tasks.js'
 import { cacheHasLapsed } from './sessions.js'
-import { atCapacity, leastValuableResident } from './residency.js'
+import { atCapacity, leastValuableResident, slotsInUse } from './residency.js'
 
 /**
  * Phase 1 of resident sessions: **the workspace belongs to the conversation, not to the run.**
@@ -281,6 +281,37 @@ describe('whether an account has a slot for this task', () => {
     // A session on a *different* worker. Subtracting it here would raise this account's real
     // concurrency by one, quietly, which is the opposite of what the cap is for.
     expect(atCapacity([work('a')], 1, work('elsewhere'))).toBe(true)
+  })
+
+  it('does not count an idle session whose prompt cache has lapsed as using a slot', () => {
+    const lapsed = session({ id: 'lapsed', purpose: 'work', cacheExpiresAt: Date.now() - 1000 })
+    expect(slotsInUse([lapsed], null)).toBe(0)
+    expect(atCapacity([lapsed], 1, null)).toBe(false)
+  })
+
+  it('does not count an idle session whose task is paused_user or completed', async () => {
+    const tasks = await import('./tasks.js')
+    const tPaused = tasks.createTask({ title: 'paused task' })
+    tasks.setStatus(tPaused.id, 'paused_user')
+    db.db().prepare(`
+      insert into runs (id, task_id, session_id, worker_id, started_at, ended_at, kind)
+      values (?, ?, ?, ?, ?, ?, 'work')
+    `).run('r-paused', tPaused.id, 's-paused', 'w1', Date.now() - 10000, Date.now())
+
+    const sessPaused = session({ id: 's-paused', purpose: 'work' })
+    expect(slotsInUse([sessPaused], null)).toBe(0)
+    expect(atCapacity([sessPaused], 1, null)).toBe(false)
+
+    const tCompleted = tasks.createTask({ title: 'completed task' })
+    tasks.setStatus(tCompleted.id, 'completed')
+    db.db().prepare(`
+      insert into runs (id, task_id, session_id, worker_id, started_at, ended_at, kind)
+      values (?, ?, ?, ?, ?, ?, 'work')
+    `).run('r-comp', tCompleted.id, 's-comp', 'w1', Date.now() - 10000, Date.now())
+
+    const sessComp = session({ id: 's-comp', purpose: 'work' })
+    expect(slotsInUse([sessComp], null)).toBe(0)
+    expect(atCapacity([sessComp], 1, null)).toBe(false)
   })
 })
 

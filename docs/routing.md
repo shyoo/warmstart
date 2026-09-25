@@ -73,17 +73,26 @@ Each worker defines `maxConcurrent` (default `1` parallel run):
 - `atCapacity(sessions, maxConcurrent, reuse, retained)` counts active work sessions plus retained task reservations on that worker.
 - ⛔ **The 1-Slot Continuation Rule:** Reusing an existing idle session (`reuse`) starts **no new process**. Therefore, `reuse` is explicitly **exempt** from the capacity count.
 - ⛔ **Retained Task Reservations:** Closed sessions are absent from `sessionsForWorker`. However, tasks parked at `awaiting_human` or tasks still `running` (such as completing/landing work after a one-shot CLI like Codex has exited) still own a slot. `retainedReservations()` counts these uncounted tasks so the scheduler and `spawnSession` do not dispatch into an occupied worker. One task holds one slot: a live session no run references covers one sessionless running task instead of doubling it, and a parked task reassigned elsewhere frees its old worker (t597).
+- ⛔ **No Phantom Capacity Holds (t702):** An idle session whose prompt cache has lapsed, whose task was paused by the operator (`paused_user`), or whose task is settled (`completed`, `cancelled`, `failed`), does not count against concurrency. `sweepStaleSessions()` on the tick and `onTaskSettled` close dead/idle sessions, `resolveTask` closes all live sessions of a task across workers, and `spawnSession` reaps stale sessions before raising capacity errors.
 
 ```typescript
 // src/daemon/residency.ts
-export function atCapacity(
+export function slotsInUse(
   sessions: Session[],
-  maxConcurrent: number,
   reuse: Session | null,
-  retained = 0
-): boolean {
-  const busy = sessions.filter((s) => s.purpose === 'work' && s.id !== reuse?.id).length
-  return busy + retained >= maxConcurrent
+  retainedAwaitingHuman = 0
+): number {
+  const busy = sessions.filter((s) => {
+    if (s.purpose !== 'work' && s.purpose != null) return false
+    if (s.id === reuse?.id) return false
+    if (sessionEnded(s.state)) return false
+    if (hasOpenRun(s.id)) return true
+    const task = taskOfSession(s.id)
+    if (task && (TERMINAL_STATUSES.has(task.status) || task.status === 'paused_user')) return false
+    if (cacheHasLapsed(s)) return false
+    return true
+  }).length
+  return busy + retainedAwaitingHuman
 }
 ```
 

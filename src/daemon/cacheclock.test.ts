@@ -851,4 +851,16 @@ describe('reserve pressure on weekly 7-day windows', () => {
     expect(state97.verdict).toBe('at_risk')
     expect(state97.reason).toContain('at or past the 97% mark')
   })
+
+  it('closes an idle session whose prompt cache has already lapsed to free worker capacity', () => {
+    const OBJECTIVE = { cost: 0.34, velocity: 0.33, quality: 0.33 }
+    const lapsed = session({
+      adapterId: 'claude-code',
+      contextTokens: 50_000,
+      cacheExpiresAt: NOW - 5000
+    })
+    const decision = clock.decide(lapsed, { objective: OBJECTIVE, now: NOW })
+    expect(decision.move).toBe('handoff_close')
+    expect(decision.reason).toContain('the prefix has already lapsed')
+  })
 })

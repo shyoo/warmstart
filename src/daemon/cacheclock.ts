@@ -1,4 +1,4 @@
-import { poolVerdict, resolveAutoCompact, windowsForPool, type ClockDecision, type Objective } from '@shared/tasks.js'
+import { TERMINAL_STATUSES, poolVerdict, resolveAutoCompact, windowsForPool, type ClockDecision, type Objective } from '@shared/tasks.js'
 import type { Session, Settings, Worker } from '@shared/protocol.js'
 import { db } from './db.js'
 import { costModel } from './costmodel.js'
@@ -995,7 +995,22 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   if (untilExpiry > decideBeforeExpiryMs(ttlMs)) {
     return nothing(`${Math.round(untilExpiry / 60000)}m of TTL left - nothing to decide yet`)
   }
-  if (untilExpiry <= 0) return nothing('the prefix has already lapsed')
+  if (untilExpiry <= 0) {
+    if (hasOpenRun(session.id) || quotaOverrideActive) {
+      return nothing(
+        'prefix lapsed, but ' +
+          (hasOpenRun(session.id) ? 'a run is currently open' : 'the quota gate is overridden by hand') +
+          ' - not closing session'
+      )
+    }
+    return {
+      ...base,
+      move: 'handoff_close',
+      reason: 'the prefix has already lapsed — closing session to free worker slot and workspace',
+      expectedIdleMs: 0,
+      estimatedCost: 0
+    }
+  }
 
   // Move 1. An expiring asset turned into work is the cheapest outcome available.
   if (ctx.dispatchTargets?.has(session.id)) {
@@ -1083,7 +1098,7 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
 
   // Move 6.
   if (untilExpiry <= lastChanceMs(ttlMs)) {
-    const run = runForSession(session.id)
+    const run = runForSession(session.id) ?? lastRunForSession(session.id)
     if (run?.taskId && canBePrompted) {
       if (hasOpenRun(session.id) || quotaOverrideActive) {
         return nothing(
@@ -1396,15 +1411,37 @@ async function executeMove(session: Session, decision: ClockDecision): Promise<v
     }
 
     case 'handoff_close': {
+      const run = runForSession(session.id) ?? lastRunForSession(session.id)
+      const task = run?.taskId ? getTask(run.taskId) : null
+      const isLapsed = session.cacheExpiresAt !== null && session.cacheExpiresAt <= Date.now()
+      const isPausedOrSettled = task
+        ? TERMINAL_STATUSES.has(task.status) || task.status === 'paused_user'
+        : false
+      const canPrompt = Boolean(
+        session.workerId && adapter(session.adapterId).info.capabilities.streamPrompts !== 'once'
+      )
+
+      if (isLapsed || isPausedOrSettled || Boolean(task?.handoffNote) || !canPrompt) {
+        if (task && !task.handoffNote && isLapsed) {
+          setTaskHandoff(
+            task.id,
+            'The session was closed when its prompt cache lapsed. No handoff was recorded.'
+          )
+        }
+        log.info(`closing idle session ${session.id.slice(0, 8)} (${decision.reason})`)
+        closeSession(session.id)
+        break
+      }
+
       sendPrompt(session.id, WRAP_UP_PROMPT, [], { housekeeping: true })
       // Give the wrap-up a turn to land before the prefix lapses; the handoff tool writes it.
       setTimeout(() => {
-        const run = runForSession(session.id)
-        if (run?.taskId) {
-          const task = getTask(run.taskId)
-          if (task && !task.handoffNote) {
+        const r = runForSession(session.id) ?? lastRunForSession(session.id)
+        if (r?.taskId) {
+          const t = getTask(r.taskId)
+          if (t && !t.handoffNote) {
             setTaskHandoff(
-              run.taskId,
+              r.taskId,
               'The session was closed when its prompt cache lapsed. No handoff was recorded.'
             )
           }

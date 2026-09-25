@@ -24,6 +24,8 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 ## Closed in this cleanup
 
+- **No phantom worker capacity holds from idle, paused or settled sessions (t702, 2026-09-25).**
+  ClaudeThird was held 2/2 when no runs were active: (1) t667 switched from Claude to Codex; when resolved, only the latest session closed, leaving Claude's session live; (2) t626 sat at `paused_user` with a lapsed cache while `slotsInUse` counted every open session. Now `slotsInUse` ignores sessions with no open run whose task is settled, `paused_user`, or whose cache lapsed; `resolveTask` closes all live sessions of a task across workers; `onTaskSettled` closes live sessions on settlement; `sweepStaleSessions` reaps dead/idle sessions on the tick; and `cacheclock` returns `handoff_close` on lapsed prefixes to free slots and workspaces immediately. L1 in `residency.test.ts`, `cacheclock.test.ts`, `conversationcapacity.test.ts`. `docs/routing.md`.
 - **The Tasks table shows a sortable Type column (t701, 2026-09-25).** It uses the same five labels as the composer and task thread, including the two plan shapes. Existing saved column layouts gain Type once; a later choice to hide it remains saved. The derived sort orders the whole filtered set before paging. `docs/ui.md`.
 - **The Attention bar's Answer… opens the task on its own project thread (t699, 2026-09-25).** It always routed to `{ kind: 'unassigned' }`, stranding project tasks under `← Unassigned`; `routeForTask` (`renderer/lib/taskview.tsx`, 2 L1) picks the project thread, `openTaskById` (`App.tsx`) asks the daemon when the cached list has not caught up. `docs/ui.md`.
 - **The Plan & Execute approval shows the whole executor instruction (t693 ← t690, 2026-09-25).**

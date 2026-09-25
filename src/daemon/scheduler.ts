@@ -74,6 +74,7 @@ import {
   setRunQuota,
   setStatus,
   startRun,
+  onTaskSettled,
   taskOfSession,
   updateTask
 } from './tasks.js'
@@ -134,6 +135,7 @@ import {
   interruptSession,
   isHousekeepingTurn,
   lastRequestEvidenceAt,
+  listSessions,
   markClockMove,
   noteCurrentBranch,
   reopenable,
@@ -509,6 +511,7 @@ export async function tick(): Promise<TickResult> {
   sweepTrunkLeases()
   await retryQueuedLandings()
   escalateStale()
+  await sweepStaleSessions()
 
   // ⛔ Free: writes at most one consult row and returns. Nothing below waits on it, and nothing it
   // does changes what this tick dispatches.
@@ -1798,6 +1801,20 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
       (resumeCompaction?.compact === true || framingLapsed(task.id, revive.id))
   })
   const promptText = prompt.text
+
+  // ⛔ Close any prior idle sessions for this task that are not being revived.
+  // When a task switches workers or starts fresh, leaving its prior sessions open wedges the old worker
+  // at capacity (t702).
+  for (const s of liveSessionsOfTask(task.id)) {
+    if (revive && s.id === revive.id) continue
+    if (hasOpenRun(s.id)) continue
+    log.info(`t${task.seq}: closing prior idle session ${s.id.slice(0, 8)} before dispatching new session`)
+    void (async () => {
+      if (await closeAndWait(s.id)) {
+        await releaseWorkspaceOf(s.id)
+      }
+    })()
+  }
 
   // ⛔ **The spawn happens here, below `promptFor`, and that order is load-bearing.** A
   // `spawn-flag` adapter takes its images as argv on the process that runs the turn — codex has
@@ -3329,14 +3346,12 @@ export async function resolveTask(taskId: string, note?: string): Promise<Task> 
   // will keep ticking. This was t249's bug. setStatus will try to finish runs when the task
   // settles, so we need to do this first with the correct note.
   //
-  // ⛔ **`restingSessionOf`, not `sessionOf`.** A conversation parked at `awaiting_human` has no
-  // open run — `endConversationTurn` finishes it the moment the agent's turn ends — so `sessionOf`
-  // found nothing here and Finish walked past a session that was very much still alive, leaving it
-  // occupying the worker's slot forever and any other task queued behind that worker stuck at
-  // "at capacity" with no way out. Measured against t498's report: closing a held conversation did
-  // not unblock a task waiting on that worker.
-  const session = restingSessionOf(task.id)
-  if (session) {
+  // ⛔ **`liveSessionsOfTask`, not `sessionOf` or `restingSessionOf`.**
+  // A task may have had multiple runs across different sessions/workers (e.g. Claude switched to Codex).
+  // Checking only the most recent run leaves earlier sessions live indefinitely, wedging workers at
+  // capacity (t702).
+  const liveSessions = liveSessionsOfTask(task.id)
+  for (const session of liveSessions) {
     const run = runForSession(session.id)
     if (run && run.endedAt === null) {
       finishRun(run.id, 'completed', 'task resolved by hand while run was still open')
@@ -3361,7 +3376,7 @@ export async function resolveTask(taskId: string, note?: string): Promise<Task> 
   // the now-empty task branch while the live session still claimed its worktree; an immediate
   // **Retire it** then refused the branch as checked out. Measured on t466 (2026-09-15): the task was
   // completed, its run was closed, but session 753261d2 stayed `live` with ws2's open claim.
-  if (session) {
+  for (const session of liveSessions) {
     if (await closeAndWait(session.id)) {
       await releaseWorkspaceOf(session.id)
     } else {
@@ -5041,5 +5056,67 @@ export function restingSessionOf(taskId: string): Session | null {
   const run = runsFor(taskId)[0]
   return run?.sessionId ? getSession(run.sessionId) : null
 }
+
+/**
+ * All live sessions that belong to this task (both from its runs and from active session ownership).
+ */
+export function liveSessionsOfTask(taskId: string): Session[] {
+  const seen = new Set<string>()
+  const result: Session[] = []
+  for (const run of runsFor(taskId)) {
+    if (run.sessionId && !seen.has(run.sessionId)) {
+      seen.add(run.sessionId)
+      const s = getSession(run.sessionId)
+      if (s && !sessionEnded(s.state)) result.push(s)
+    }
+  }
+  for (const s of listSessions()) {
+    if (!sessionEnded(s.state) && !seen.has(s.id)) {
+      const t = taskOfSession(s.id)
+      if (t?.id === taskId) {
+        seen.add(s.id)
+        result.push(s)
+      }
+    }
+  }
+  return result
+}
+
+/**
+ * Close idle sessions whose task has settled, or whose prompt cache has lapsed,
+ * or whose task is paused by the operator with a lapsed cache.
+ *
+ * ⛔ A session left alive for hours after its task completed or paused wedges workers at capacity (t702).
+ */
+export async function sweepStaleSessions(): Promise<void> {
+  const live = listSessions().filter((s) => !sessionEnded(s.state))
+  for (const s of live) {
+    if (hasOpenRun(s.id)) continue
+    const task = taskOfSession(s.id)
+    const isSettled = task ? TERMINAL_STATUSES.has(task.status) : false
+    const isLapsed = cacheHasLapsed(s)
+    const isPausedUser = task?.status === 'paused_user'
+
+    if (isSettled || (isPausedUser && isLapsed) || isLapsed) {
+      log.info(
+        `sweepStaleSessions: closing idle session ${s.id.slice(0, 8)} ` +
+          `(task: ${task ? `t${task.seq} ${task.status}` : 'none'}, cache lapsed: ${isLapsed})`
+      )
+      if (await closeAndWait(s.id)) {
+        await releaseWorkspaceOf(s.id, task?.status === 'awaiting_human' ? task.id : null)
+      }
+    }
+  }
+}
+
+onTaskSettled((taskId, _status) => {
+  for (const s of liveSessionsOfTask(taskId)) {
+    void (async () => {
+      if (await closeAndWait(s.id)) {
+        await releaseWorkspaceOf(s.id)
+      }
+    })()
+  }
+})
 
 export { policyFor }

@@ -180,7 +180,7 @@ function SessionGauge({ session, now }: { session: Session; now: number }): Reac
   const cacheUrgencyClass = cacheUrgency(session.cacheExpiresAt, now)
   const ctxUrgencyClass = ctx && win ? quotaUrgency((ctx / win) * 100) : 'ok'
   const fillClass = `bar-fill--${ctxUrgencyClass}`
-  const isIdle = session.state === 'closed' || session.state === 'idle'
+  const isIdle = session.state === 'closed' || session.state === 'idle' || Boolean(session.idle)
   // ⚠️ Display only — `session.purpose` stays `'work'` on the wire. "Work" read as a chore label
   // beside "idle"; the state this session is actually in is that it's doing something.
   const purposeLabel = session.purpose === 'work' ? 'active' : session.purpose

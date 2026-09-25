@@ -15,7 +15,8 @@ import type {
   Worker
 } from '@shared/protocol.js'
 import { sessionEnded } from '@shared/protocol.js'
-import type { Attachment, CacheMove } from '@shared/tasks.js'
+import { TERMINAL_STATUSES, type Attachment, type CacheMove } from '@shared/tasks.js'
+import { taskOfSession } from './tasks.js'
 import { grantedDirsFor } from './attachments.js'
 import { db, row, rows } from './db.js'
 import { costModel } from './costmodel.js'
@@ -435,7 +436,8 @@ function toSession(r: SessionRow): Session {
     clockMoveAttempts: r.clock_move_attempts ?? 0,
     clockMoveContext: r.clock_move_context,
     startedAt: r.started_at,
-    closedAt: r.closed_at
+    closedAt: r.closed_at,
+    idle: !hasOpenRun(r.id)
   }
 }
 
@@ -974,9 +976,39 @@ export function spawnSession(opts: SpawnOptions): Session {
         .all(worker.id)
     ).filter((r) => !r.session_id || !liveIds.has(r.session_id)).length
 
-    const running = liveWork.length + uncountedOpenRuns
+    let running = liveWork.length + uncountedOpenRuns
     if (running >= worker.maxConcurrent) {
-      throw new Error(capacitySpawnError(worker.label, running, worker.maxConcurrent))
+      for (const s of liveWork) {
+        if (hasOpenRun(s.id)) continue
+        const task = taskOfSession(s.id)
+        const isStale =
+          (task && (TERMINAL_STATUSES.has(task.status) || task.status === 'paused_user')) ||
+          cacheHasLapsed(s)
+        if (isStale) {
+          log.info(
+            `spawnSession closing stale/idle session ${s.id.slice(0, 8)} on ${worker.label} to free slot for dispatch`
+          )
+          closeSession(s.id)
+        }
+      }
+      const refreshedWork = sessionsForWorker(worker.id).filter((s) => s.purpose === 'work')
+      const refreshedIds = new Set(refreshedWork.map((s) => s.id))
+      const refreshedUncounted = rows<{ id: string; session_id: string | null }>(
+        db()
+          .prepare(
+            `select r.id, r.session_id from runs r
+             join tasks t on r.task_id = t.id
+             where r.worker_id = ? and r.ended_at is null
+               and coalesce(r.kind, 'work') = 'work'
+               and t.status in ('running', 'assigned')`
+          )
+          .all(worker.id)
+      ).filter((r) => !r.session_id || !refreshedIds.has(r.session_id)).length
+
+      running = refreshedWork.length + refreshedUncounted
+      if (running >= worker.maxConcurrent) {
+        throw new Error(capacitySpawnError(worker.label, running, worker.maxConcurrent))
+      }
     }
   }
 

@@ -269,3 +269,83 @@ describe('capacity accounting agrees once the resting session is actually gone',
     expect(residency.atCapacity(after, worker.maxConcurrent, null)).toBe(false)
   })
 })
+
+describe('t702: multi-session tasks and stale session sweeping free worker slots', () => {
+  it('resolveTask closes all prior live sessions across different workers', async () => {
+    const worker1 = createWorker('ClaudeThird', 1)
+    const worker2 = createWorker('CodexFirst', 1)
+
+    const task = tasks.createTask({ title: 'multi-session task', createdBy: { kind: 'human' }, kind: 'conversation' })
+
+    // Session 1 on worker1
+    const session1Id = `session-1-${task.id}`
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose, started_at)
+         values (?,?,?,?,?,?,?,?)`
+      )
+      .run(session1Id, worker1.id, 'claude-code', 'stream', dir, 'live', 'work', Date.now() - 10000)
+    const run1 = tasks.startRun({ taskId: task.id, workerId: worker1.id, sessionId: session1Id, projectId: null, quotaUnverified: false, costModelId: null })
+    tasks.finishRun(run1.id, 'completed', 'turn 1 done')
+
+    // Session 2 on worker2 (task switched worker)
+    const session2Id = `session-2-${task.id}`
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose, started_at)
+         values (?,?,?,?,?,?,?,?)`
+      )
+      .run(session2Id, worker2.id, 'claude-code', 'stream', dir, 'live', 'work', Date.now() - 5000)
+    const run2 = tasks.startRun({ taskId: task.id, workerId: worker2.id, sessionId: session2Id, projectId: null, quotaUnverified: false, costModelId: null })
+    tasks.finishRun(run2.id, 'completed', 'turn 2 done')
+    tasks.setStatus(task.id, 'awaiting_human')
+
+    expect(sessions.getSession(session1Id)?.state).toBe('live')
+    expect(sessions.getSession(session2Id)?.state).toBe('live')
+
+    await scheduler.resolveTask(task.id)
+
+    expect(sessions.getSession(session1Id)?.state).toBe('closed')
+    expect(sessions.getSession(session2Id)?.state).toBe('closed')
+    expect(residency.atCapacity(sessions.sessionsForWorker(worker1.id), worker1.maxConcurrent, null)).toBe(false)
+    expect(residency.atCapacity(sessions.sessionsForWorker(worker2.id), worker2.maxConcurrent, null)).toBe(false)
+  })
+
+  it('sweepStaleSessions closes sessions whose tasks are completed or whose cache has lapsed', async () => {
+    const worker = createWorker('ClaudeThird', 2)
+
+    // Session A: Task is completed, but session was left open (e.g. an old orphan)
+    const taskA = tasks.createTask({ title: 'task A', createdBy: { kind: 'human' } })
+    tasks.setStatus(taskA.id, 'completed')
+    const sessA = `session-a-${taskA.id}`
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose, started_at)
+         values (?,?,?,?,?,?,?,?)`
+      )
+      .run(sessA, worker.id, 'claude-code', 'stream', dir, 'live', 'work', Date.now())
+    const runA = tasks.startRun({ taskId: taskA.id, workerId: worker.id, sessionId: sessA, projectId: null, quotaUnverified: false, costModelId: null })
+    tasks.finishRun(runA.id, 'completed', 'done')
+
+    // Session B: Task is paused_user and prompt cache has lapsed
+    const taskB = tasks.createTask({ title: 'task B', createdBy: { kind: 'human' } })
+    const sessB = `session-b-${taskB.id}`
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, purpose, started_at, cache_expires_at)
+         values (?,?,?,?,?,?,?,?,?)`
+      )
+      .run(sessB, worker.id, 'claude-code', 'stream', dir, 'live', 'work', Date.now(), Date.now() - 60000)
+    const runB = tasks.startRun({ taskId: taskB.id, workerId: worker.id, sessionId: sessB, projectId: null, quotaUnverified: false, costModelId: null })
+    tasks.finishRun(runB.id, 'completed', 'done')
+    tasks.setStatus(taskB.id, 'paused_user')
+
+    expect(sessions.sessionsForWorker(worker.id).length).toBe(2)
+
+    await scheduler.sweepStaleSessions()
+
+    expect(sessions.getSession(sessA)?.state).toBe('closed')
+    expect(sessions.getSession(sessB)?.state).toBe('closed')
+    expect(sessions.sessionsForWorker(worker.id).length).toBe(0)
+  })
+})

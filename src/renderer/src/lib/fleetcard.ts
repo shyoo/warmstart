@@ -173,7 +173,7 @@ export interface InstanceUse {
  */
 export function instanceUse(entry: Pick<FleetEntry, 'worker' | 'sessions' | 'reservedSlots'>): InstanceUse {
   const open = entry.sessions.filter((s) => s.purpose === 'work' && !sessionEnded(s.state))
-  const idle = open.filter((s) => s.state === 'idle').length
+  const idle = open.filter((s) => s.idle || s.state === 'idle').length
   const working = open.length - idle
   const held = entry.reservedSlots ?? 0
   const inUse = open.length + held
