@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { dirname, extname, join, win32 } from 'node:path'
+import { homedir } from 'node:os'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot, QuotaWindow } from '@shared/protocol.js'
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
 import type { TranscriptDecoded } from '../transcript.js'
@@ -398,10 +399,25 @@ function envFor(isolationRoot: string): Record<string, string> {
   return {
     XDG_CONFIG_HOME: configHome(isolationRoot),
     XDG_DATA_HOME: dataHome(isolationRoot),
+    // Muse needs a private XDG_CONFIG_HOME, but gh also uses XDG_CONFIG_HOME by default.
+    // Keep gh pointed at the operator's original config, where its keyring account is named.
+    GH_CONFIG_DIR: hostGhConfigDir(),
     // ⛔ A launcher that self-updates mid-fleet swaps a 400 MB binary under a running worker and
     // changes the capability table this adapter was measured against, without anybody asking.
     MUSE_NO_AUTO_UPDATE: '1'
   }
+}
+
+/** Resolve gh's config before Muse replaces XDG_CONFIG_HOME with its worker root. */
+export function hostGhConfigDir(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  home: string = homedir()
+): string {
+  if (env.GH_CONFIG_DIR) return env.GH_CONFIG_DIR
+  if (env.XDG_CONFIG_HOME) return join(env.XDG_CONFIG_HOME, 'gh')
+  if (platform === 'win32' && env.APPDATA) return join(env.APPDATA, 'GitHub CLI')
+  return join(home, '.config', 'gh')
 }
 
 // ---------------------------------------------------------------------------- /usage panel

@@ -442,7 +442,8 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   carries ~20 such variables and a daemon started inside one would hand every worker the operator's
   own session handle. Deny by prefix, not a whitelist of what to keep: a whitelist must enumerate what
   a CLI needs on three platforms, and one omission is a spawn that fails untraceably. Each adapter
-  still deletes its own provider's API keys afterwards.
+  still deletes its own provider's API keys afterwards. Muse also pins `GH_CONFIG_DIR` to the host's
+  original gh config location before replacing `XDG_CONFIG_HOME` for its own account isolation.
 - ⛔ **Nothing about one machine may be hard-coded.** No absolute path from your own disk, no account
   directory names, no assumption that any CLI is installed. The app must open on a clean profile with
   zero workers, say so, and offer the wizard.

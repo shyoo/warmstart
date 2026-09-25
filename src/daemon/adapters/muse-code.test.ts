@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import type { Attachment } from '@shared/tasks.js'
 import type { SpawnPlan } from './types.js'
-import { museBinary, museCode, parseResetTime, trustKey } from './muse-code.js'
+import { hostGhConfigDir, museBinary, museCode, parseResetTime, trustKey } from './muse-code.js'
 import { permissionModeFor } from '../sessions.js'
 import { hostAt, hostPlan, hostScript, shQuote, WINDOWS_DRAIN, type CliHost } from './clihost.js'
 
@@ -934,6 +934,7 @@ describe('plan', () => {
     // ⚠️ Native paths on every platform: nothing is translated any more.
     expect(env.XDG_CONFIG_HOME).toBe(join(root, 'config'))
     expect(env.XDG_DATA_HOME).toBe(join(root, 'data'))
+    expect(env.GH_CONFIG_DIR).toBe(hostGhConfigDir())
     // ⛔ A self-update swaps the binary under a running worker.
     expect(env.MUSE_NO_AUTO_UPDATE).toBe('1')
   })
@@ -1076,6 +1077,24 @@ describe('plan', () => {
       process.env.PATH = saved.PATH
       process.env.LOCALAPPDATA = saved.LOCALAPPDATA
     }
+  })
+})
+
+describe('hostGhConfigDir', () => {
+  it('keeps an explicit host gh config directory', () => {
+    expect(hostGhConfigDir({ GH_CONFIG_DIR: '/custom/gh', XDG_CONFIG_HOME: '/xdg' }, 'linux', '/home/me'))
+      .toBe('/custom/gh')
+  })
+
+  it('uses the host XDG root before Muse replaces it', () => {
+    expect(hostGhConfigDir({ XDG_CONFIG_HOME: '/host/xdg' }, 'linux', '/home/me'))
+      .toBe(join('/host/xdg', 'gh'))
+  })
+
+  it('uses AppData on Windows and the home fallback elsewhere', () => {
+    expect(hostGhConfigDir({ APPDATA: 'C:\\Users\\me\\AppData\\Roaming' }, 'win32', '/home/me'))
+      .toBe(join('C:\\Users\\me\\AppData\\Roaming', 'GitHub CLI'))
+    expect(hostGhConfigDir({}, 'linux', '/home/me')).toBe(join('/home/me', '.config', 'gh'))
   })
 })
 

@@ -7,14 +7,14 @@ model-aware routing, quality review, remote access, packaging, and atomic worker
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-24, **Windows 11**): typecheck, lint and build pass; L1 **3,968 passed, 3 skipped** (234 files) in **73.97s**;
+Baseline (2026-09-24, **Windows 11**): typecheck, lint and build pass; L1 **3,971 passed, 3 skipped** (234 files) in **112.94s**;
 L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L3 **493
 checks** (4 skipped); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
 t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
 hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
 
-**`v0.3.2` is `latest`** (2026-09-22), promoted onto `v0.3.2-rc.1`'s commit `6ddf8093`. The next
-`/release rc` opens the patch series at `0.3.3-rc.1` unless `--bump minor|major` is asked for.
+**`v0.3.3` is `latest`** (t682, 2026-09-24), promoted onto `v0.3.3-rc.1`'s commit `8cf5d301`.
+The next `/release rc` opens the patch series at `0.3.4-rc.1` unless `--bump minor|major` is asked for.
 Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 **Routing Model v1.2 preserves expiry urgency (t552, 2026-09-19).** `prepaid` is field-normalized
@@ -23,6 +23,10 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
 
 ## Closed in this cleanup
 
+- **Muse can use the host's `gh` login (t683 ← t682, 2026-09-24).** Its private XDG root hid
+  `gh`'s config even with Full user authority. A Windows reproduction showed auth fail with that XDG
+  root and succeed when `GH_CONFIG_DIR` named the host config. The adapter now pins that path while
+  keeping Muse's own XDG roots private. `docs/adapters.md`, `docs/security.md`.
 - **An expired question no longer sticks on the banner (t680 ← t679, 2026-09-24).** t679 guarded the renderer against stale `question.list` responses, but the banner's row was a daemon orphan: t667's native `AskUserQuestion` carried two questions, the second was asked 110ms after the first parked and 27 min after the run ended, so `insertQuestion` stored `task_id = null` — out of reach of every task-keyed sweep. Now a question binds to `taskOfSession`, one asked with no open run is filed parked at once (⚠️ only if the session *had* a task — a task-less session's `ask_human` is live, and parking it voided it; L2 caught that), a task-less park is voided, and the startup sweep voids existing orphans — ⛔ now called from `index.ts` after `openDb`: it ran at module load, where `db()` throws and its `try/catch` reported *swept 0*, so it had never swept anything in the shipped daemon (verified on a copy of the live DB: the orphan cleared). 4 L1. `docs/glossary.md` *Parked*.
 - **Sidebar project counts omit empty buckets (t678, 2026-09-24).** `ProjectTaskCount` renders only positive running/awaiting/parked counts, slash separated; colours and hover remain. Six combinations plus empty pinned at L1. `docs/ui.md`.
 - **The `land_work` receipt states previous → next, each named once (t677 ← t667, 2026-09-24).**
@@ -96,9 +100,6 @@ remaining prepaid dollars per hour to reset (`prepaid.ts`): the same $3.68 allow
   ARE honoured, yet the file is per-account against per-session identity (concurrent pool sessions
   would share one), and `exec` has no per-run MCP flag — the t618 codex escape has no muse
   equivalent. Muse asks via `NEEDS DECISION:` text, parsed back by `turnend`. `docs/adapters.md`.
-- **Tasks wait visibly for their first page (t612, 2026-09-22).** `Tasks` no longer renders its
-  actionable **No tasks yet** state from its initial empty array while `task.page` is in flight;
-  it draws two spinning marks and *Loading tasks…* until the first completed answer. `docs/ui.md`.
 - **An Antigravity account whose token died mid-run went back into the fleet unmarked (t610/t611,
   2026-09-22).** t601 (a debate seat) was a false lead — the real report was t610, `/videoaudit
   region 4`, which failed 55 minutes and 28k output tokens in with `UNAUTHENTICATED (code 401):

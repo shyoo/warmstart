@@ -33,6 +33,9 @@ which has never run any other way until an operator opts it in.
 
 - Each account has its own isolation root. Warmstart invokes the vendor's sign-in and never reads,
   copies, stores, or proxies the resulting credential.
+- Muse's private XDG root also redirects `gh`; Muse sessions set `GH_CONFIG_DIR` to the
+  operator's original GitHub CLI config so `gh` can find the host's keyring account. This grants no
+  new OS permission, but makes that existing full-user access usable from `gh`.
 - Spawned CLIs receive a restricted environment rather than a copy of `process.env`; Claude and
   Anthropic credential variables are prefix-denied.
 - A task mandate limits what the agent may ask the *fleet* to do. It is not an OS sandbox.
