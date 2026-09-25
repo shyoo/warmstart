@@ -793,6 +793,16 @@ describe('the capability block', () => {
       expect(warmup?.note).toContain('real turn')
       expect(warmup?.note).toContain('only ever sent when you ask')
     })
+
+    /**
+     * ⛔ t689: the prompt must reach the composer, not the `/usage` panel that just drew. The key
+     * that closes this CLI's own views is its interrupt key — and on a live empty composer it
+     * cancels nothing, so it is safe to send before the prompt.
+     */
+    it('dismisses the usage view before the prompt is typed', () => {
+      expect(warmup?.dismissKey).toBe('\x1b')
+      expect(warmup?.dismissSettleMs).toBeGreaterThan(0)
+    })
   })
 })
 

@@ -181,6 +181,12 @@ const info: AdapterInfo = {
     warmup: {
       prompt: 'What model are you? Answer in one short sentence and do nothing else.',
       completeMs: 90_000,
+      // ⚠️ Inferred 2026-09-25 (t689), not measured: a warm-up typed after the `/usage` panel drew
+      // never ended an unavailable streak, while a `muse exec` turn was measured to end one — the
+      // panel that drew is the prime suspect for eating the prompt, so it is dismissed first.
+      // Escape is this CLI's own interrupt key, and on a live empty composer it cancels nothing.
+      dismissKey: '\x1b',
+      dismissSettleMs: 2000,
       note:
         'Muse Code publishes no `/usage` figures for a window until a turn has completed in it, so a ' +
         'freshly reset (or freshly signed-in) account reads "Currently unavailable" however many ' +

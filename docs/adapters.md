@@ -330,6 +330,12 @@ The rules it is bound by, each of which is an invariant rather than a preference
 - ⛔ **Completion is waited out by the clock, never read off the pane.** `driveWarmupTurn` writes the
   prompt and waits `completeMs`; the TUI is still for humans, and the usage parser is still the only
   thing allowed to turn rendered text into state.
+- ⛔ **The prompt must reach the composer, not the panel that just drew** (t689). A warm-up typed
+  after muse's `/usage` panel drew never ended an unavailable streak — the panel is the prime
+  suspect for eating the keystrokes — so the adapter's declared `dismissKey` (Escape, its own
+  interrupt key, a no-op on a live empty composer) is sent first, then `dismissSettleMs`. Never on
+  the first drive, where a trust dialog could be the thing open, and never after the turn, where it
+  would interrupt a turn still running.
 - ⛔ **An adapter that declares no warm-up is refused, not quietly downgraded** to the free probe.
 - ⚠️ The prompt asks the model about *itself* — no file, no tool — so it cannot fail on an untrusted
   folder, and it cannot touch a repository.

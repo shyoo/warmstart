@@ -189,6 +189,25 @@ describe('screen-answered probes', () => {
  * become a screen-scrape. It waits by the clock and reads nothing back — the pane is never asked
  * whether the turn looks finished.
  */
+describe('dismissing the usage view', () => {
+  /**
+   * ⛔ t689: a warm-up typed after muse's `/usage` panel drew never ended an unavailable streak —
+   * the panel that drew is the prime suspect for eating the prompt. The dismiss key goes first so
+   * the prompt reaches the composer, and the wait is by the clock like the rest of this path:
+   * nothing is read back.
+   */
+  it('sends the key, then waits the settle before anything else is typed', async () => {
+    let now = 0
+    const writes: Array<{ at: number; data: string }> = []
+    await quota.dismissScreenView('\x1b', 2000, (data) => writes.push({ at: now, data }), async (ms) => {
+      now += ms
+    })
+
+    expect(writes.map((w) => w.data)).toEqual(['\x1b'])
+    expect(now).toBe(2000)
+  })
+})
+
 describe('the warm-up turn', () => {
   it('sends the prompt, then waits the declared time before anything else happens', async () => {
     let now = 0

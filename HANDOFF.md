@@ -184,7 +184,7 @@ judgement. Do not replace the missing evidence with a unit test.
 | R1: Claude auto-mode classifier cost | Run the same shell-heavy task on a quiet subscription worker in `auto` and `default`; compare quota delta with transcript tokens. | If billed, `auto` cannot remain a free default. |
 | R2: tokens per quota percent | Sample `/usage` around known transcript work for each worker/model/tokenizer. | Lets quota gates work in tokens rather than percentages. |
 | R4: end-to-end compaction cost | Record a known-size compaction's transcript delta and duration. Six samples exist; `post_tokens` is still null. | Tunes the T+53-minute deadline. |
-| Does a warm-up turn end a `Currently unavailable` streak? | Press **Warm up** on a Muse worker inside a silent window and record whether the next panel publishes. | The feature rests on an inference; if it is wrong the button costs a turn and buys nothing. |
+| Does a warm-up turn end a `Currently unavailable` streak? | t689: press **Warm up** on a Muse worker inside a silent window — the prompt now goes after an Escape that dismisses the drawn panel — and record whether the next panel publishes. | The feature rests on an inference; if it is wrong the button costs a turn and buys nothing. |
 | R8: controller reply shape | Designate a controller, file a `plan`, drain once, then record whether the validator accepted an answer or used its fallback. | Proves the one M4 path L1 cannot reach. |
 | Vertex/Antigravity cache price | Find a published vendor price; do not infer it experimentally. | Keeps `cache.kind: "unpriced"` honest. |
 | Expected-idle estimator | Gather real queue data first. | No honest design exists without it. |

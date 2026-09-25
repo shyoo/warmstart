@@ -1551,6 +1551,21 @@ export interface UsageWarmup {
   /** How long the turn is given to finish before the usage panel is asked again. */
   completeMs: number
   /**
+   * A keypress that closes the usage view before the prompt is typed, so the prompt reaches the
+   * composer instead of a panel that swallows keystrokes.
+   *
+   * ⚠️ Inferred 2026-09-25 (t689), not measured: a warm-up turn typed after muse's `/usage` panel
+   * drew never ended an unavailable streak, while a `muse exec` turn was measured to end one
+   * (transient_docs/muse_code_findings_2026-09-06.md) — the panel that drew is the prime suspect
+   * for eating the prompt. Escape is that CLI's own interrupt key, and on a live empty composer it
+   * cancels nothing, so this is sent only where a panel is known to have just drawn: never on the
+   * first drive, where a trust dialog could be the thing open, and never after the turn, where it
+   * would interrupt a turn that is still running.
+   */
+  dismissKey?: string
+  /** How long the closed view is given to get out of the way before the prompt is typed. */
+  dismissSettleMs?: number
+  /**
    * What a person is told — at commissioning, and again beside the button before they press it.
    *
    * ⚠️ It says what it costs. An operator who did not know a probe could spend a turn is the one

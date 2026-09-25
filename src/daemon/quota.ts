@@ -168,6 +168,24 @@ export async function driveScreenProbe(
  * ⚠️ Same two-write rule as the probe itself: on this CLI a carriage return arriving in the same
  * chunk as the text is not a keypress. See `UsageRefresh.submitDelayMs`.
  */
+/**
+ * Close the usage view so the next thing typed reaches the composer.
+ *
+ * ⛔ Sent only where a panel is known to have just drawn — before the warm-up prompt, never on the
+ * first drive (where a trust dialog could be the thing open) and never after the turn (where it
+ * would interrupt a turn that is still running). The wait is by the clock, like everything else
+ * in the warm-up path: nothing is read back.
+ */
+export async function dismissScreenView(
+  key: string,
+  settleMs: number,
+  write: (data: string) => void,
+  pause: (ms: number) => Promise<void> = wait
+): Promise<void> {
+  write(key)
+  await pause(settleMs)
+}
+
 export async function driveWarmupTurn(
   prompt: string,
   completeMs: number,
@@ -336,6 +354,16 @@ async function readUsage(workerId: string, opts: RefreshOptions = {}): Promise<D
       if (driven.unavailable && warmup) {
         log.info(`warming up ${w.label} with one turn: ${driven.unavailable}`)
         warmedUp = true
+        // ⛔ The panel that just drew may still own the keyboard: a prompt typed into it never
+        // reaches the composer, no turn runs, and the re-drive reads unavailable again (t689).
+        // The adapter declares the key that closes its own view; nothing here names one.
+        if (warmup.dismissKey) {
+          await dismissScreenView(
+            warmup.dismissKey,
+            warmup.dismissSettleMs ?? 1500,
+            (data) => writeSession(session.id, data)
+          )
+        }
         await driveWarmupTurn(
           warmup.prompt,
           warmup.completeMs,
