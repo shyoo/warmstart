@@ -66,7 +66,7 @@ thing entirely. See [`glossary.md`](glossary.md).
 | Component | Screen |
 |---|---|
 | `Flow` | project lifecycle map: 6-column kanban flow with ticket ↔ workspace ↔ worker bindings and read-only grading runs. ⭐ The **trunk** is the first binding row of every git project, labelled with its landing target (`main`); a trunk held by a resting task is drawn *held* and a pool member held by a ticket waiting on a person is drawn *locked*, never *free*, and an inbound ticket is only ever drawn heading for the kind of tree it will get (`computeWorkspaceRows`) |
-| `FleetStrip` `Workers` `ModelTable` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions; one two-column settings card per worker with an inline model-routing/purpose table (`ModelTable`). Default is a radio choice and the one row that cannot be removed. Removing another purpose row clears that purpose too. Summary is one model/effort pair, never every effort row of one model. Selectable legacy efforts normalize to `medium`; `n/a` is reserved for a model with no effort levels. Labels are user-defined refinements for Auto Model. Model edits apply the returned worker row immediately; `worker.changed` updates other windows. Eligibility, capacity, and order changes re-read `fleet.list`. |
+| `FleetStrip` `Workers` `ModelTable` `FleetSettings` | the fleet: per-account quota with its **age**, reset countdowns, live sessions; one two-column settings card per worker with an inline model-routing/purpose table (`ModelTable`). The Adapter cell carries an **MCP / No MCP** badge read off the adapter's declared capability (t706) — never its name — with what a text-fallback worker loses spelled out in its tooltip. Default is a radio choice and the one row that cannot be removed. Removing another purpose row clears that purpose too. Summary is one model/effort pair, never every effort row of one model. Selectable legacy efforts normalize to `medium`; `n/a` is reserved for a model with no effort levels. Labels are user-defined refinements for Auto Model. Model edits apply the returned worker row immediately; `worker.changed` updates other windows. Eligibility, capacity, and order changes re-read `fleet.list`. |
 | `Tasks` `TaskThread` `thread/*` `Dependencies` | the board, one task's thread, and prerequisite edges. Before `task.page` first answers, Tasks shows a spinning mark and *Loading tasks…* — never the actionable **No tasks yet** result, which is true only after an empty answer. ⛔ **Only the first ever answer, not every one.** `refresh` also re-runs on `task.changed`/`run.changed`, which the scheduler tick broadcasts every 10-20s; a `loadedOnce` ref keeps a later refresh from tearing the rendered table back down to the spinner, which used to blip a fully drawn board blank on a timer (t624, 2026-09-22). A project with open PRs renders a dedicated pending pull request banner (`.tasks-pr-banner`) above the filters with task links, PR URLs and an instant **Check merged PRs** action, and tasks with open deliveries carry a purple `PR #N` pill beside their title. Opening a task lands at the **bottom** of its thread, where the recent conversation sits above the reply box — once per navigation, never per render, so a thread growing under a running agent does not yank back a reader who scrolled up (`lib/threadscroll.ts`). The durable `Thread` is memoized, with a stable empty activity tail: the page's one-second clock updates the ledger without rebuilding every message and parsing its markdown again. ⭐ **And stays there only when the whole page is at its bottom.** A scroll listener on `.content` tracks `isNearPageBottom`, and a dependency-free `useLayoutEffect` follows `.content`'s actual bottom after every render. It never follows the shorter thread anchor: the adjacent right pane can continue below the composer and must remain reachable. Scroll away to read and the page stops chasing you; scroll back to the bottom and it resumes. ⛔ A jump the page makes *for* you — pressing the ledger peek — releases the pin itself, not through the `scroll` event it causes: that event arrives a frame later, and a render inside that frame (or a hidden window, which is not reliably handed scroll events) re-pinned the reader to the bottom they had just left (Windows CI, 2026-09-18). |
 | `thread/DiffPanel` | **Changes in this task**: a file list with counts, drawn wherever the change resolves. ⚠️ Collapsed by default everywhere, including at the `awaiting_human` gate (2026-09-14) — it used to spring open on its own there, which read as a surprise rather than a nudge; the person presses it themselves. ⭐ Since t425 it draws **no patch**: a file row, or *Open in Diff pane*, opens the pane at that file. The two patch renderers (`PatchBody`, `SplitBody`) live in this file because its rule governs them: ⛔ every line is a **text node** — in `<pre>` for the single column, in a `<td>` for the split (`lib/sidebyside.ts`) — and the only thing derived from its content is a CSS class from the first character (`lib/diffline.ts`): no markdown, no highlighter, no linkified paths |
 | `DiffPane` | the **Diff pane**: one task's change, every file stacked in one scroll under a sticky path header, in a shell column right of the work (t425). A branch reads `task.diffSummary` + `task.diffFile`; one recorded commit — pressed from the ledger's sha — reads `task.commitDiff` + `task.commitFile`, `<sha>^!`. ⛔ Owned by `App.tsx` as one `DiffPaneRequest` behind `DiffPaneContext` (`lib/diffpane.ts`) and it **follows the route**: it closes the moment the route stops naming its task, survives that task's tabs, and is never a history entry. ⚠️ `initialExpansion` opens files from the top until 12 files or 1,500 counted lines, one `git` call each; the rest open on a press. Between hunks a `⋯ N unmodified lines` row is arithmetic on the `@@` headers (`lib/hunks.ts`), never a read of the file. Decisions: `transient_docs/diff_pane_2026-09-13.md` |
@@ -574,10 +574,14 @@ typed:
   that ran on Opus (`pillLabels`, t674). Only while the selection is untouched and the selected
   account is that run's: a reassignment that has not run yet keeps saying Auto, because the previous
   account's model says nothing about the new one's.
-- **A Delegate pill at the end of that row** (`thread/DelegatePill.tsx`, t704), on work tasks and
+- **A Delegate toggle at the end of that row** (`thread/DelegatePill.tsx`, t704; one-click
+  button since t706 — a menu for a boolean was a click too many), on work tasks and
   conversations. ⛔ Unlike the pills beside it, it is **authority applied at once**, not a next-run
   choice: `task.update { delegation }` writes the task's `spawn_tasks`, and turning it on past a
-  parent that cannot delegate comes back as a refusal under the row. See `docs/mcp.md` §3.1.
+  parent that cannot delegate comes back as a refusal under the row. ⚠️ While it is on and the
+  next-dispatch worker's adapter has no MCP tools, a hint under the row says the agent cannot
+  file splits by tool and to send `/delegate` for written-out pieces instead (t706).
+  See `docs/mcp.md` §3.1.
 - **Slash commands become a chip as they are typed** (`shared/commands.ts`, t704). A `/` at the
   start of the box opens the command menu (Enter or Tab picks the first); `/delegate ` turns into a
   **[Delegate]** chip in front of the box, and Backspace at the start of the box takes the chip off
@@ -814,6 +818,16 @@ returns* names what the literature found past 3–4 seats and rounds, that **non
 this fleet**, and ⭐ the honest caveat: several published results find debate does not beat one strong
 agent at the same token budget. That sentence is on the screen where the money is committed, and it is
 the reason this feature can be trusted.
+
+### The Plan rows carry one MCP notice (t706)
+
+A planner files its pieces with the `task_split` tool, which only MCP-capable workers have
+(`lib/plannernotice.ts`, pure and L1-pinned like the debate notices). Pinned to a worker whose
+adapter lacks MCP — or on Auto with no MCP-capable worker in the fleet at all — a caution under
+the Plan rows says the split cannot be filed by tool and points at the Workers table, where the
+capability badge lives. ⛔ Advisory, never a gate: on the Debate row's rule, a fleet with no
+MCP-capable worker still files. Unknown stays silent: a warning drawn from an adapter list that
+has not loaded yet is a warning about nothing.
 
 ### The debate board
 

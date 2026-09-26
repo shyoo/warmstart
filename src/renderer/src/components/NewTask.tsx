@@ -29,6 +29,7 @@ import type { ModelReportRow } from '@shared/routing'
 import { canWork } from '@shared/protocol'
 import { debateNotices } from '../lib/debatenotice'
 import { executorNotices } from '../lib/executornotice'
+import { plannerMcpNotice } from '../lib/plannernotice'
 import { ImageChips, usePastedImages } from '../lib/pasteimages.js'
 import { rpc, type FleetEntry } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
@@ -722,6 +723,27 @@ export function NewTask({
    */
   const isConversation = kind === 'conversation'
   const isDebate = kind === 'debate'
+  /**
+   * Whether the planner can file its pieces by tool (t706).
+   *
+   * ⛔ **Advisory, never a gate**, on the Debate row's rule: not every fleet has an
+   * MCP-capable worker. Read off the adapter's declared `capabilities.mcp`, never off its
+   * name — the label the seat rows already show (`native MCP` vs `terminal fallback`).
+   */
+  const plannerNote = isPlan
+    ? (() => {
+        const pinned = prefs.workerId ? (pinnable.find((w) => w.id === prefs.workerId) ?? null) : null
+        return plannerMcpNotice(
+          pinned
+            ? {
+                label: pinned.label,
+                hasMcp: adapterMap.get(pinned.adapterId)?.capabilities.mcp ?? null
+              }
+            : null,
+          pinnable.some((w) => adapterMap.get(w.adapterId)?.capabilities.mcp === true)
+        )
+      })()
+    : null
   /**
    * ⛔ **The seats as they will actually be filed**, clamped to what the daemon accepts. The roster
    * is an *ordered* list of exactly-one-(account, model, effort) pins, not a candidate set — so an
@@ -1923,6 +1945,14 @@ export function NewTask({
               {notice.text}
             </li>
           ))}
+        </ul>
+      )}
+
+      {plannerNote && (
+        <ul className="composer-notices" aria-label="Planner tool notice">
+          <li key={plannerNote.id} className={`composer-notice composer-notice--${plannerNote.tone}`}>
+            {plannerNote.text}
+          </li>
         </ul>
       )}
 

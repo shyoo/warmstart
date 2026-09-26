@@ -2,12 +2,6 @@ import { useState } from 'react'
 import type { Task } from '@shared/tasks'
 import { errorMessage } from '@shared/errors.js'
 import { rpc } from '../../lib/daemon'
-import { PillSelect, type PillOption } from '../Pill'
-
-const OPTIONS: PillOption[] = [
-  { value: 'on', label: 'Delegate on' },
-  { value: 'off', label: 'Delegate off' }
-]
 
 /**
  * Whether this thread's agent may hand work to other agents (t704).
@@ -18,6 +12,9 @@ const OPTIONS: PillOption[] = [
  * by one that cannot delegate.
  *
  * ⚠️ Shown on work tasks and conversations only — a plan or a debate splits through its own contract.
+ *
+ * ⚠️ A single toggle, not a menu (t706): there is nothing to choose beyond on and off, so one
+ * click flips it.
  */
 export function delegationPillShown(task: Pick<Task, 'kind'>): boolean {
   return task.kind === 'work' || task.kind === 'conversation'
@@ -25,10 +22,17 @@ export function delegationPillShown(task: Pick<Task, 'kind'>): boolean {
 
 export function DelegatePill({
   task,
-  refresh
+  refresh,
+  hasMcp = null
 }: {
   task: Task
   refresh: () => Promise<void>
+  /**
+   * The next-dispatch worker's adapter MCP capability, or null while unknown (t706).
+   * Shown only when delegation is on and the worker is known to lack MCP tools — a
+   * delegation the agent cannot file by tool.
+   */
+  hasMcp?: boolean | null
 }): React.JSX.Element | null {
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
@@ -36,29 +40,37 @@ export function DelegatePill({
   const on = task.mandate.allowed.includes('spawn_tasks')
   return (
     <>
-      <PillSelect
-        className="compose-assign-pill"
-        label={on ? 'Delegate on' : 'Delegate off'}
-        value={on ? 'on' : 'off'}
-        options={OPTIONS}
-        ariaLabel="Delegation"
-        title={
-          on
-            ? 'The agent may hand parts of this work to other agents. It asks you first, unless you asked with /delegate. Pieces come back as branches it reviews and merges.'
-            : 'The agent does all of this work itself. /delegate switches this back on.'
-        }
-        muted={!on}
-        disabled={busy}
-        onChange={(next) => {
-          setBusy(true)
-          setFailure(null)
-          void rpc('task.update', { id: task.id, delegation: next === 'on' })
-            .then(() => refresh())
-            .catch((err: unknown) => setFailure(errorMessage(err)))
-            .finally(() => setBusy(false))
-        }}
-      />
+      <div className="pill-wrap compose-assign-pill">
+        <button
+          type="button"
+          className={`pill${on ? '' : ' pill--muted'}`}
+          aria-pressed={on}
+          aria-label="Delegation"
+          title={
+            on
+              ? 'The agent may hand parts of this work to other agents. It asks you first, unless you asked with /delegate. Pieces come back as branches it reviews and merges. Click to switch off.'
+              : 'The agent does all of this work itself. /delegate switches this back on. Click to switch on.'
+          }
+          disabled={busy}
+          onClick={() => {
+            setBusy(true)
+            setFailure(null)
+            void rpc('task.update', { id: task.id, delegation: !on })
+              .then(() => refresh())
+              .catch((err: unknown) => setFailure(errorMessage(err)))
+              .finally(() => setBusy(false))
+          }}
+        >
+          {on ? 'Delegate on' : 'Delegate off'}
+        </button>
+      </div>
       {failure && <span className="compose-hint warn">{failure}</span>}
+      {on && hasMcp === false && (
+        <span className="compose-hint warn">
+          This worker has no MCP tools: the agent cannot file splits by tool. Send /delegate and
+          it writes each piece out for you to file.
+        </span>
+      )}
     </>
   )
 }

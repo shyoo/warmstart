@@ -648,7 +648,31 @@ export function Workers({
                         </div>
                       </div>
                     </td>
-                    <td className="dim">{worker.adapterId}</td>
+                    <td className="dim">
+                      {worker.adapterId}{' '}
+                      {(() => {
+                        // ⛔ Read off the adapter's declared capability, never off its id: an
+                        // adapter that gains MCP tools lights up with no UI change. `null` is
+                        // the list not having answered yet — unknown, never "no".
+                        const mcp = adapters.find((a) => a.id === worker.adapterId)?.capabilities.mcp
+                        if (mcp == null) return null
+                        return mcp ? (
+                          <span
+                            className="tag"
+                            title="Native Warmstart MCP tools on this CLI: the agent asks questions with buttons, gets directory grants in one step, and can file splits and land by tool."
+                          >
+                            MCP
+                          </span>
+                        ) : (
+                          <span
+                            className="tag tag--off"
+                            title="No Warmstart MCP tools on this CLI: the agent asks as plain text, folders are attached by hand, and it cannot file splits or land by tool — land from the thread instead."
+                          >
+                            No MCP
+                          </span>
+                        )
+                      })()}
+                    </td>
                     <td>
                       <div className="tbl-path mono" title={worker.isolationRoot}>
                         {worker.isolationRoot}

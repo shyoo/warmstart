@@ -24,7 +24,7 @@ import {
   type TaskMessage,
   type ModelClass
 } from '@shared/tasks'
-import type { ModelOptions, Session } from '@shared/protocol'
+import type { AdapterInfo, ModelOptions, Session } from '@shared/protocol'
 import type { ManualReview, QualityReview } from '@shared/review'
 import { autoModelCount } from '@shared/modelroutes'
 import { rpc, useActivity, useDaemonEvents, useNow, type ActivityLine, type FleetEntry } from '../lib/daemon'
@@ -372,6 +372,14 @@ function TaskDetail({
       .then(setModelOptions)
       .catch(() => setModelOptions([]))
   }, [])
+  // ⚠️ One read, beside the one above: the Delegate hint needs the next-dispatch worker's
+  // adapter MCP capability, which neither the fleet entries nor the model options carry.
+  const [adapters, setAdapters] = useState<AdapterInfo[]>([])
+  useEffect(() => {
+    void rpc('adapter.list')
+      .then(setAdapters)
+      .catch(() => setAdapters([]))
+  }, [])
   const live = showsLiveOutput(task.status)
   const resolve = async () => {
     await rpc('task.resolve', { id: task.id })
@@ -426,6 +434,16 @@ function TaskDetail({
    */
   const assigned =
     fleet.find((e) => e.worker.id === (task.constraints.workerId || task.assignee))?.worker ?? null
+  /**
+   * Whether the worker the next dispatch resolves to can file splits by tool (t706).
+   *
+   * ⛔ Read off the adapter's declared capability, never off its id — and `null` while the
+   * list has not answered or nothing is pinned, which stays silent rather than warning
+   * about a dispatch the scheduler has not resolved yet.
+   */
+  const delegateHasMcp: boolean | null = assigned
+    ? (adapters.find((a) => a.id === assigned.adapterId)?.capabilities.mcp ?? null)
+    : null
   const canSetEffort =
     modelOptions.find((o) => o.adapterId === assigned?.adapterId)?.selectableEffort ?? false
   // ⛔ With the account's own quota reading, because that is what the dispatch resolves against. A
@@ -619,6 +637,7 @@ function TaskDetail({
               blocking={blocking}
               work={work}
               choice={choice}
+              delegateHasMcp={delegateHasMcp}
             />
           )}
           {/* The mark the open-task jump scrolls to: the bottom of the thread, above nothing. */}
@@ -2135,7 +2154,8 @@ function Compose({
   onComplete,
   blocking,
   work,
-  choice
+  choice,
+  delegateHasMcp
 }: {
   task: Task
   refresh: () => Promise<void>
@@ -2144,6 +2164,8 @@ function Compose({
   blocking: number
   work: PendingWorkState
   choice: ReassignChoice
+  /** The next-dispatch worker's adapter MCP capability, or null while unknown. */
+  delegateHasMcp: boolean | null
 }): React.JSX.Element {
   const [text, setText] = useState('')
   // ⭐ A slash command the person picked (t704), held as a chip at the head of the box and sent as
@@ -2428,7 +2450,7 @@ function Compose({
         choice={choice}
         disabled={running || sending}
         disabledReason="Reassign once this turn ends, or Stop it first — the choice decides the next run, not this one."
-        extra={<DelegatePill task={task} refresh={refresh} />}
+        extra={<DelegatePill task={task} refresh={refresh} hasMcp={delegateHasMcp} />}
       />
       {/*
         ⛔ This used to say "Nothing is running, so this waits… prepended to the prompt the next run
