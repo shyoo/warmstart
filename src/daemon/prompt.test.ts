@@ -67,6 +67,34 @@ describe('saved thread messages and live activity', () => {
     ])
     activity.clearActivity(task.id)
   })
+
+  it('keeps the persisted thread in save order when the clock moves backwards', async () => {
+    // The t696 shape: the completion was saved after a human reply, but its host clock read
+    // earlier. The task detail RPC is the renderer's source, so prove the whole read path rather
+    // than just the SQL helper. Also ensure an edit still finds the opening prompt by save order.
+    const task = tasks.createTask({
+      title: 'A thread whose clock steps backwards',
+      prompt: 'Opening instruction',
+      status: 'draft'
+    })
+    const reply = tasks.addMessage(task.id, 'human', 'Reply saved at 07:38 PM')
+    const completion = tasks.addMessage(task.id, 'agent', 'Done, but I have observed an error')
+    const opening = tasks.messagesFor(task.id)[0]!.id
+
+    db.db().prepare('update task_messages set ts = ? where id = ?').run(800, opening)
+    db.db().prepare('update task_messages set ts = ? where id = ?').run(838, reply)
+    db.db().prepare('update task_messages set ts = ? where id = ?').run(813, completion)
+
+    tasks.updateTask(task.id, { prompt: 'Edited opening instruction' })
+    const handlers = api.buildApi({ version: '1.0.0', port: 1234, startedAt: Date.now() })
+    const page = await handlers['task.get']({ id: task.id })
+
+    expect(page?.messages.map(({ id, text, ts }) => ({ id, text, ts }))).toEqual([
+      { id: opening, text: 'Edited opening instruction', ts: 800 },
+      { id: reply, text: 'Reply saved at 07:38 PM', ts: 838 },
+      { id: completion, text: 'Done, but I have observed an error', ts: 813 }
+    ])
+  })
 })
 
 describe('promptFor prompt construction', () => {

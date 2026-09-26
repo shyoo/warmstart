@@ -1540,7 +1540,7 @@ export function updateTask(
   if (patch.prompt !== undefined) {
     const promptText = patch.prompt.trim() || patch.title?.trim() || current.title
     const firstMsg = db()
-      .prepare('select id from task_messages where task_id = ? order by ts, id limit 1')
+      .prepare('select id from task_messages where task_id = ? order by id limit 1')
       .get(id) as { id: number } | undefined
     if (firstMsg) {
       db().prepare('update task_messages set text = ? where id = ?').run(promptText, firstMsg.id)
@@ -1681,6 +1681,16 @@ export function addMessage(
   return id
 }
 
+/**
+ * A task's thread, in the order it was saved.
+ *
+ * ⛔ **Save order, not stamp order.** Every writer stamps `Date.now()`, so the two agree — until
+ * they don't: t696 showed a completion stamped Oct 9 07:13 PM rendered *below* replies stamped
+ * 07:38 PM, and a clock that steps backwards stamps a new message older than the reply it answers.
+ * A message saved later answers what is already on screen, so it stays below it; ordering by the
+ * stamp lets a skewed row drift above a reply that was already stored. `id` is the save order and
+ * the tiebreak in one.
+ */
 export function messagesFor(taskId: string): TaskMessage[] {
   const messages = rows<{
     id: number
@@ -1692,7 +1702,7 @@ export function messagesFor(taskId: string): TaskMessage[] {
     detail: string | null
     delivered_at: number | null
     ts: number
-  }>(db().prepare('select * from task_messages where task_id = ? order by ts, id').all(taskId))
+  }>(db().prepare('select * from task_messages where task_id = ? order by id').all(taskId))
   // ⚠️ One query for every attachment on the thread, not one per message. This runs on the path
   // that renders a task page, which re-renders on every daemon event.
   const attachments = attachmentsFor(messages.map((r) => r.id))

@@ -35,6 +35,10 @@ last saved thread message when they began; saving a reply closes any open stream
 one starts. `lib/threadbubble.ts` uses that boundary to keep new narration below the reply, even if
 wall-clock timestamps tie or shift. Older activity events without the boundary use timestamps.
 
+Durable thread messages use their database insertion order, not their wall-clock timestamp. A newly
+saved reply remains below the message it answers if the host clock moves backwards; the row id also
+identifies the opening prompt when it is edited.
+
 ⛔ **No native modules here.** They live in the daemon so an Electron upgrade cannot break a running
 fleet.
 
