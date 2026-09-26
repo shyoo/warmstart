@@ -210,7 +210,9 @@ export function reportDelegationIfSettled(childId: string, wake: DelegationWaker
 
   if (caller.kind !== 'conversation') return
   // ⚠️ Only a conversation that is working or resting on its turn is woken. One the person stopped,
-  // or one that has finished, keeps the report as a note for whenever it next runs.
+  // or one that has finished, keeps the report as a note for whenever it next runs. One resting
+  // `blocked` on these pieces (t713) needs nothing here: its `settled` edges have already admitted it
+  // to `ready`, before this listener ran, and the report is the next thing its turn reads.
   if (caller.status === 'running' || caller.status === 'assigned') {
     wake.deliver(caller.id, id, `${report.headline}\n${report.body}`)
   } else if (caller.status === 'awaiting_human') {

@@ -1072,6 +1072,23 @@ const TERMINAL_OR_HELD: TaskStatus[] = [
 const SETTLED_STATUSES: TaskStatus[] = ['completed', 'failed', 'cancelled']
 
 /**
+ * The edges this task still waits on.
+ *
+ * ⛔ **The rule is per edge, and `completed` is still the default.** A `settled` edge — written
+ * only by `task_split` — releases on any terminal state, because a planner waiting on its children
+ * has to be woken by the ones that *failed* too; that is the whole point of the resolution turn.
+ * A `completed` edge keeps the meaning a person means by "do B after A", so loosening this
+ * globally would have silently rewritten every edge already in the fleet.
+ */
+export function unmetPrerequisites(task: Task): Array<{ dependsOn: string; require: DependencyRequirement }> {
+  return requirementsFor(task.id).filter((edge) => {
+    const dep = getTask(edge.dependsOn)
+    if (!dep) return true
+    return edge.require === 'settled' ? !SETTLED_STATUSES.includes(dep.status) : dep.status !== 'completed'
+  })
+}
+
+/**
  * Recompute a task's derived status. `blocked`, `scheduled` and `ready` are *facts about the world*
  * - unmet dependencies, a future start time, neither - and are never set by hand.
  */
@@ -1079,16 +1096,13 @@ export function admit(taskId: string): Task {
   const task = requireTask(taskId)
   if (TERMINAL_OR_HELD.includes(task.status)) return task
 
-  // ⛔ **The rule is per edge, and `completed` is still the default.** A `settled` edge — written
-  // only by `task_split` — releases on any terminal state, because a planner waiting on its children
-  // has to be woken by the ones that *failed* too; that is the whole point of the resolution turn.
-  // A `completed` edge keeps the meaning a person means by "do B after A", so loosening this
-  // globally would have silently rewritten every edge already in the fleet.
-  const unmet = requirementsFor(task.id).filter((edge) => {
-    const dep = getTask(edge.dependsOn)
-    if (!dep) return true
-    return edge.require === 'settled' ? !SETTLED_STATUSES.includes(dep.status) : dep.status !== 'completed'
-  })
+  // ⛔ **A conversation's delegation edges release it; they never park it** (t713). A conversation
+  // that delegated rests `blocked` on its pieces, but only from the end of its own turn
+  // (`endConversationTurn`). A person who writes to it meanwhile requeues it to `ready`, and a piece
+  // settling before that turn is dispatched must not push it back to `blocked` and strand the reply.
+  const unmet = unmetPrerequisites(task).filter(
+    (edge) => !(task.kind === 'conversation' && task.status !== 'blocked' && edge.require === 'settled')
+  )
 
   const next: TaskStatus = unmet.length
     ? 'blocked'

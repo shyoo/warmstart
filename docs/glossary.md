@@ -421,7 +421,7 @@ resolution turn. A task that has lost `spawn_tasks` cannot create children — n
 caught it, but because it has no such authority.
 
 **Delegation** — *a work task or conversation handing pieces of its work to other agents* with
-`task_split` (t704). Not a plan: the caller keeps working (a conversation) or waits (a work task),
+`task_split` (t704). Not a plan: the caller waits `blocked` on its pieces — a work task at once, a conversation from the end of its turn, still open to a person's message (t713) —
 each piece is committed on its own branch, and the **caller** merges what it wants. Its authority is
 the task's `spawn_tasks`, which the thread's **Delegate** pill switches — a person narrowing or
 restoring it, never widening it past the parent. See [`mcp.md`](mcp.md) §3.1.

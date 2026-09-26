@@ -116,13 +116,18 @@ describe('filing a delegation', () => {
     expect(delegation.delegationsFor(task.id)).toHaveLength(1)
   })
 
-  it('⛔ leaves a conversation talking — no edges, no block', () => {
+  it('⛔ leaves a conversation talking through the turn, with edges for the end of it (t713)', () => {
     const task = caller('conversation')
-    split.applySplit(task.id, [piece('one')], AGENT)
+    const result = split.applySplit(task.id, [piece('one')], AGENT)
+    if (!result.ok) throw new Error(result.reason)
     const after = tasks.requireTask(task.id)
+    // Not blocked mid-turn: `endConversationTurn` parks it on these edges when the turn ends.
     expect(after.status).toBe('running')
-    expect(after.dependsOn).toHaveLength(0)
+    expect(after.dependsOn).toHaveLength(1)
     expect(tasks.messagesFor(task.id).at(-1)?.event).toBe('delegation.filed')
+    // ⛔ And a piece settling while it talks does not reach into the running turn.
+    tasks.setStatus(result.children[0]!.id, 'completed')
+    expect(tasks.requireTask(task.id).status).toBe('running')
   })
 
   it('blocks a work task on its pieces, the way a planner waits', () => {

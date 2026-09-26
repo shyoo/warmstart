@@ -440,9 +440,11 @@ export function applySplit(
     // The parent waits on every piece, however each one ends.
     // ⛔ Not in Plan & Execute. An edge there would park the planner at `blocked` waiting for a turn
     //    that is never dispatched, which is the one state `admit` has no way out of.
-    // ⛔ Nor for a delegating conversation, which keeps talking while its pieces run and is woken by
-    //    `reportDelegationIfSettled` instead. A delegating work task waits exactly as a planner does.
-    const waits = !handoff && !(delegating && parent.kind === 'conversation')
+    // ⭐ A delegating conversation gets the same edges (t713). It is still `running` here, which
+    //    `admit` leaves alone; the edges park it at `blocked` from the end of this turn
+    //    (`endConversationTurn`) and release it when the last piece settles, so it does not rest at
+    //    `awaiting_human` asking a person for nothing. A person may still write to it meanwhile.
+    const waits = !handoff
     if (waits) for (const child of created) addDependency(parent.id, child.id, 'settled')
     if (delegating) recordDelegation(parent.id, created.map((c) => c.id), opts.requested === true)
   } catch (err) {
@@ -470,7 +472,7 @@ export function applySplit(
         `${listed} ${one ? 'is' : 'are'} committed and checked on ${one ? 'its' : 'their'} own branch, cut ` +
         'from this one, and nothing is merged automatically. ' +
         (conversation
-          ? 'This conversation carries on; when every piece has settled, the agent is told how each turned out and reviews them.'
+          ? 'This conversation waits, blocked, until every piece has settled — you can still write to it meanwhile — and then the agent is told how each turned out and reviews them.'
           : 'This task waits for every piece to settle, then reviews and merges what came back.')
     })
     if (!conversation) {

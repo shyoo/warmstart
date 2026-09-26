@@ -77,6 +77,7 @@ import {
   startRun,
   onTaskSettled,
   taskOfSession,
+  unmetPrerequisites,
   updateTask
 } from './tasks.js'
 import { claimedByAnotherTask, landedCommits, recordTaskCommits, taskCommitShas } from './taskcommits.js'
@@ -3446,7 +3447,10 @@ export function continueTask(taskId: string): 'delivered' | 'requeued' | 'queued
   const task = getTask(taskId)
   if (!task) return 'ignored'
   if (task.status === 'running' || task.status === 'assigned') return 'delivered'
-  if (!CONTINUABLE_FROM.includes(task.status)) return 'queued'
+  // ⚠️ A conversation resting `blocked` on pieces it delegated is still a conversation (t713): a
+  //    person writing to it gets a turn now, and the end of that turn parks it on the pieces again.
+  const delegationRest = task.kind === 'conversation' && task.status === 'blocked'
+  if (!CONTINUABLE_FROM.includes(task.status) && !delegationRest) return 'queued'
 
   // ⛔ Requeuing this task for continuation starts a fresh run. Any lingering open run from an
   // earlier attempt (e.g. after approval escalation or process interruption) must be finished.
@@ -4187,8 +4191,23 @@ export async function endConversationTurn(
   // conversation whose agent asked a question is already resting on that question, and replacing
   // "the agent asked and is waiting on you: …" with this sentence would hide the one thing the
   // operator actually has to answer.
+  //
+  // ⭐ **Unless it is waiting on work it delegated** (t713). Nothing is asked of the person then —
+  // the pieces are the next thing to happen — so it rests `blocked` on the `settled` edges
+  // `applySplit` wrote, and `admit` releases it to `ready` when the last one settles.
   if (task.status === 'running' || task.status === 'assigned') {
-    setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
+    const pending = unmetPrerequisites(task)
+      .map((edge) => getTask(edge.dependsOn))
+      .filter((t): t is Task => !!t)
+    if (pending.length > 0) {
+      const listed = pending.map((t) => `t${t.seq}`).join(', ')
+      setStatus(task.id, 'blocked', {
+        assignee: null,
+        holdReason: `waiting on ${pending.length} delegated piece${pending.length === 1 ? '' : 's'} (${listed})`
+      })
+    } else {
+      setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
+    }
   }
   // ⛔ `releaseFor`, never `releaseWorkspaceOf`. The run's own claims go back so nothing it took
   // leaks; the worktree stays with the session, which is still standing in it.

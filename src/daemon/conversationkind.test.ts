@@ -450,6 +450,43 @@ describe('what ends a conversation turn', () => {
     expect(msgs.slice(msgs.indexOf(agentMsg!) + 1).filter((m) => m.role === 'system')).toHaveLength(0)
   })
 
+  it('⭐ rests blocked, not on the person, while pieces it delegated are still out (t713)', async () => {
+    // ⛔ The t626 shape: a `/delegate`d conversation sat at `awaiting_human` / *your turn* while its
+    // two pieces ran, asking a person for nothing. Its `settled` edges are what it is waiting on.
+    const { task, session } = talking()
+    const out = tasks.createTask({ title: `Piece of turn ${turn}`, kind: 'work', status: 'ready' })
+    const done = tasks.createTask({ title: `Done piece of turn ${turn}`, kind: 'work', status: 'ready' })
+    tasks.setStatus(done.id, 'completed')
+    tasks.addDependency(task.id, out.id, 'settled')
+    tasks.addDependency(task.id, done.id, 'settled')
+
+    await turnend.onStreamResult(session, { isError: false, text: 'Delegated it.', terminalReason: null })
+
+    const rested = tasks.requireTask(task.id)
+    expect(rested.status).toBe('blocked')
+    expect(rested.holdReason).toBe(`waiting on 1 delegated piece (t${out.seq})`)
+
+    // A person may still talk to it: the reply is a turn now, not a note queued behind the pieces…
+    expect(scheduler.continueTask(task.id)).toBe('requeued')
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+    // …and a piece settling before that turn is dispatched does not take it away again.
+    const other = tasks.createTask({ title: `Second piece of turn ${turn}`, kind: 'work', status: 'ready' })
+    tasks.addDependency(task.id, other.id, 'settled')
+    tasks.setStatus(out.id, 'failed')
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+  })
+
+  it('⭐ is released by its pieces settling, with no person in the loop (t713)', async () => {
+    const { task, session } = talking()
+    const out = tasks.createTask({ title: `Piece of turn ${turn}`, kind: 'work', status: 'ready' })
+    tasks.addDependency(task.id, out.id, 'settled')
+    await turnend.onStreamResult(session, { isError: false, text: 'Delegated it.', terminalReason: null })
+    expect(tasks.requireTask(task.id).status).toBe('blocked')
+
+    tasks.setStatus(out.id, 'cancelled')
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+  })
+
   it('persists intermediate streaming activity on the run', async () => {
     const { task, runId, session } = talking()
     const activity = await import('./activity.js')

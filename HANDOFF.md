@@ -23,6 +23,7 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 ## Closed in this cleanup
 
+- **A delegating conversation rests `blocked`, not on the person (t713 ← t626, 2026-09-25).** t626 (live DB, read-only) was a conversation with two `/delegate`d pieces unsettled, sitting at `awaiting_human` / *your turn* — by t704's design, which gave conversations no edges. `applySplit` now writes `settled` edges for a conversation too; `endConversationTurn` rests it `blocked` (*waiting on N delegated pieces*) while any is unmet; the last settle admits it to `ready`. A person can still write: `continueTask` requeues a blocked conversation, and `admit` never re-parks a conversation that is not already `blocked`, so a piece settling cannot strand the reply. Each of the three guards was mutation-tested red (3 L1). ⚠️ t626 itself was filed before this change and has no edges, so it stays at *your turn* until its pieces report. `docs/mcp.md` §3.1, `glossary.md`.
 - **A folded project row draws only its chevron (t709, 2026-09-25).** The folded ▸ carried the open-conversation count, which read as a fourth bucket after the running/awaiting/parked counts (`1 ▸ 1`); folded and unfolded rows now look alike. L3 asserts the toggle text is exactly `▸` (496 checks pass; one earlier run flaked 4 usage-credit checks that pass on rerun and on `main`). `docs/ui.md`.
 - **A Windows pipe close preserves the child tree long enough to stop it (t710, 2026-09-25).**
   t708's three Codex exit 1 retries all reported a thread-store active writer after a session
