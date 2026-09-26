@@ -650,7 +650,7 @@ export async function tick(): Promise<TickResult> {
       const verdict = afterFailedDispatch(err)
       if (verdict.status === 'ready') {
         log.info(`t${task.seq} lost a race for a resource and goes back in the queue: ${verdict.reason}`)
-        setStatus(task.id, 'ready')
+        setStatus(task.id, 'ready', { assignee: null })
         setHoldReason(task.id, verdict.reason)
         skipped.push(`t${task.seq}: ${verdict.reason}`)
         continue
@@ -659,7 +659,7 @@ export async function tick(): Promise<TickResult> {
       addMessage(task.id, 'system', `Could not start: ${oneLine(verdict.reason)}`, null, [], {
         ...(oneLine(verdict.reason) === verdict.reason ? {} : { detail: verdict.reason })
       })
-      setStatus(task.id, 'failed')
+      setStatus(task.id, 'failed', { assignee: null })
     }
   }
 
@@ -712,7 +712,11 @@ export async function tick(): Promise<TickResult> {
  */
 export function afterFailedDispatch(err: unknown): { status: 'ready' | 'failed'; reason: string } {
   const reason = errorMessage(err)
-  return { status: err instanceof Contended ? 'ready' : 'failed', reason }
+  const isContended =
+    err instanceof Contended ||
+    reason.includes('is at its concurrency limit') ||
+    reason.includes('at capacity')
+  return { status: isContended ? 'ready' : 'failed', reason }
 }
 
 /** What the last tick concluded, so an unchanged conclusion is not logged again. */

@@ -293,12 +293,17 @@ export function resumeTask(taskId: string): Task {
   // away — an operator who could see the window had reset had no way to say so. ⚠️ Its `not_before`
   // is cleared with it: resuming by hand *is* the statement that the wait is over, and leaving a
   // resume time behind would let `resumeQuotaPaused` argue with the person who pressed the button.
-  if (task.status !== 'paused_user' && task.status !== 'cancelled' && task.status !== 'paused_quota') {
+  if (
+    task.status !== 'paused_user' &&
+    task.status !== 'cancelled' &&
+    task.status !== 'paused_quota' &&
+    task.status !== 'failed'
+  ) {
     return task
   }
   db().prepare('update tasks set cancel_json = null, not_before = null where id = ?').run(taskId)
-  addMessage(taskId, 'system', 'Resumed')
-  setStatus(taskId, task.status === 'cancelled' ? 'draft' : 'ready')
+  addMessage(taskId, 'system', task.status === 'failed' ? 'Retried' : 'Resumed')
+  setStatus(taskId, task.status === 'cancelled' ? 'draft' : 'ready', { assignee: null })
   return requireTask(taskId)
 }
 

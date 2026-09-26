@@ -1425,6 +1425,11 @@ body {
   font-weight: 600;
 }
 
+.nav-count-failed {
+  color: var(--state-danger);
+  font-weight: 600;
+}
+
 .nav-count-waiting {
   color: var(--state-idle);
   font-weight: 600;

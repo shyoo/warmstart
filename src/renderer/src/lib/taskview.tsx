@@ -4,7 +4,6 @@ import {
   isTrunkBlockedReason,
   resolveModelChoice,
   resolveRetryCauses,
-  TERMINAL_STATUSES,
   type Compaction,
   type ResolveRetryCause,
   type ResolvedModelChoice,
@@ -273,37 +272,47 @@ export function projectWorkState(
 }
 
 /**
- * Counts a project's unfinished tasks for the navigation pane, one number per `StatusAttention`:
+ * Counts a project's tasks for the navigation pane, one number per category:
  * - 'running': the agent bucket (blue) — running, dispatching, queued, grading, landing, cancelling.
- * - 'awaiting': the human bucket (yellow) — the only number that asks something of the person.
- * - 'waiting': the parked bucket (grey) — paused, blocked, quota-held, scheduled, draft.
- * Completed, failed, cancelled and deleted tasks are not counted.
+ * - 'awaiting': the human bucket (yellow) — human action needed (awaiting_human).
+ * - 'failed': the failed bucket (red) — failed tasks needing retry or review.
+ * - 'waiting': the idle / parked bucket (grey) — paused, blocked, quota-held, scheduled, draft.
+ * Completed, cancelled and deleted tasks are not counted.
  */
 export function projectTaskCounts(
   tasks: ReadonlyArray<Pick<Task, 'status'> & Partial<Pick<Task, 'gradingWorkerId' | 'landing' | 'deletedAt'>>>
 ): {
   running: number
   awaiting: number
+  failed: number
   waiting: number
+  idle: number
 } {
   let running = 0
   let awaiting = 0
+  let failed = 0
   let waiting = 0
   for (const t of tasks) {
-    if (t.deletedAt || TERMINAL_STATUSES.has(t.status)) continue
+    if (t.deletedAt) continue
+    if (t.status === 'failed') {
+      failed++
+      continue
+    }
+    if (t.status === 'completed' || t.status === 'cancelled') continue
     const attention = statusAttention(t)
     if (attention === 'agent') running++
     else if (attention === 'human') awaiting++
     else if (attention === 'waiting') waiting++
   }
-  return { running, awaiting, waiting }
+  return { running, awaiting, failed, waiting, idle: waiting }
 }
 
-/** Only unfinished buckets with work appear in the project's sidebar count. */
+/** Unfinished buckets appear in the project's sidebar count: [running]/[human_waiting]/[failed]/[idle] */
 export function ProjectTaskCount({ counts }: { counts: ReturnType<typeof projectTaskCounts> }): React.JSX.Element | null {
   const visible = ([
     ['running', counts.running],
     ['awaiting', counts.awaiting],
+    ['failed', counts.failed],
     ['waiting', counts.waiting]
   ] as const).filter(([, count]) => count > 0)
   if (visible.length === 0) return null
@@ -311,7 +320,7 @@ export function ProjectTaskCount({ counts }: { counts: ReturnType<typeof project
   return (
     <span
       className="nav-count num"
-      title={`${counts.running} running · ${counts.awaiting} awaiting you (human action needed) · ${counts.waiting} paused, blocked, quota-held or scheduled (no action needed)`}
+      title={`${counts.running} running · ${counts.awaiting} awaiting you (human action needed) · ${counts.failed} failed · ${counts.waiting} idle (paused, blocked, quota-held or scheduled)`}
     >
       {visible.map(([bucket, count], index) => (
         <Fragment key={bucket}>

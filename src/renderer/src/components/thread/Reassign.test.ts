@@ -87,4 +87,15 @@ describe('pillLabels (t674)', () => {
     expect(labels.workerLabel).toBe('Auto worker')
     expect(labels.modelLabel).toBe('Auto model')
   })
+
+  it('shows Auto worker when operator explicitly picks Auto worker on a task that ran on a worker', () => {
+    const labels = pillLabels({
+      ...base,
+      workerId: '',
+      changed: true,
+      current: { workerId: 'w1', model: 'claude-opus-5-5', effort: 'high' },
+      currentWorkerLabel: 'ClaudeThird'
+    })
+    expect(labels.workerLabel).toBe('Auto worker')
+  })
 })

@@ -1,4 +1,5 @@
 import { capacitySpawnError } from '@shared/capacity.js'
+import { Contended } from './resources.js'
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -473,7 +474,8 @@ export function listSessions(includeClosed = false): Session[] {
   const sql = includeClosed
     ? 'select * from sessions order by started_at desc'
     : "select * from sessions where state not in ('closed','abandoned','failed') order by started_at desc"
-  return rows<SessionRow>(db().prepare(sql).all()).map(toSession)
+  const allRows = rows<SessionRow>(db().prepare(sql).all())
+  return (includeClosed ? allRows : allRows.filter((r) => !closing.has(r.id))).map(toSession)
 }
 
 /**
@@ -737,7 +739,9 @@ export function sessionsForWorker(workerId: string): Session[] {
     db()
       .prepare("select * from sessions where worker_id = ? and state not in ('closed','abandoned','failed')")
       .all(workerId)
-  ).map(toSession)
+  )
+    .filter((r) => !closing.has(r.id))
+    .map(toSession)
 }
 
 /**
@@ -1007,7 +1011,7 @@ export function spawnSession(opts: SpawnOptions): Session {
 
       running = refreshedWork.length + refreshedUncounted
       if (running >= worker.maxConcurrent) {
-        throw new Error(capacitySpawnError(worker.label, running, worker.maxConcurrent))
+        throw new Contended(capacitySpawnError(worker.label, running, worker.maxConcurrent), worker.id)
       }
     }
   }

@@ -11,7 +11,7 @@ import { mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { applySplit } from './split.js'
-import { cancelTask, deleteBlockers } from './cancel.js'
+import { cancelTask, deleteBlockers, resumeTask } from './cancel.js'
 import { makeTask, openTestDb, seedRun } from './testkit.js'
 import { closeDb, db } from './db.js'
 import { messagesFor, requireTask } from './tasks.js'
@@ -100,5 +100,25 @@ describe('cancel is not delete', () => {
       | { id: string }
       | undefined
     expect(run?.id).toBe('run-doomed')
+  })
+})
+
+describe('resumeTask (failed and paused tasks)', () => {
+  it('resumes a failed task back to ready, clearing assignee and holdReason', () => {
+    const task = makeTask({ title: 'failed task' })
+    db().prepare("update tasks set status = 'failed', assignee = 'w-failed', hold_reason = 'out of capacity' where id = ?").run(task.id)
+    const resumed = resumeTask(task.id)
+    expect(resumed.status).toBe('ready')
+    expect(resumed.assignee).toBeNull()
+    expect(resumed.holdReason).toBeNull()
+    expect(messagesFor(task.id).some((m) => m.text === 'Retried')).toBe(true)
+  })
+
+  it('resumes paused_user task back to ready', () => {
+    const task = makeTask({ title: 'paused task' })
+    db().prepare("update tasks set status = 'paused_user' where id = ?").run(task.id)
+    const resumed = resumeTask(task.id)
+    expect(resumed.status).toBe('ready')
+    expect(messagesFor(task.id).some((m) => m.text === 'Resumed')).toBe(true)
   })
 })

@@ -14,7 +14,7 @@ import { getSession } from '../sessions.js'
 import { getProject, policyFor, requireProject } from '../projects.js'
 import { deleteUnlandedBranch, retireStrandedBranch } from '../worktrees.js'
 import { cleanUpMergedBranch, pendingDeliveries, reconcilePullRequestDeliveries } from '../deliveries.js'
-import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, setHoldReason, setQuotaOverride, setQuotaPreemptWarning, runsFor, setTaskStatsExcluded, setWorkspaceMode, updateTask } from '../tasks.js'
+import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, setHoldReason, setQuotaOverride, setQuotaPreemptWarning, runsFor, setStatus, setTaskStatsExcluded, setWorkspaceMode, updateTask } from '../tasks.js'
 import { taskCommits } from '../taskcommits.js'
 import { commitDiffFor, commitFileFor, diffFileFor, diffSummaryFor } from '../taskdiff.js'
 import { cancelTask, deleteBlockers, deleteTask, restoreTask, resumeTask } from '../cancel.js'
@@ -388,7 +388,10 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         }
         const isResting = !['running', 'assigned'].includes(task.status)
         voidQuestionsForTask(task.id, 'task reassigned')
-        if (isResting) setHoldReason(task.id, null)
+        if (isResting) {
+          setHoldReason(task.id, null)
+          setStatus(task.id, task.status, { assignee: null })
+        }
         return updateTask(p.id, {
           constraints: rest,
           ...(isResting ? { assigneeHint: null } : {})

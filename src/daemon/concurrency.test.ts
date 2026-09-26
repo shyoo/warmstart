@@ -253,6 +253,30 @@ describe('the capacity gate above one slot', () => {
     }
   })
 
+  it('spawnSession evicts idle session from paused_user task without throwing concurrency limit', () => {
+    const worker = add(1)
+    const task = tasks.createTask({ title: 'paused user task' })
+    tasks.setStatus(task.id, 'paused_user')
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, purpose, state, started_at)
+         values ('s-paused-1', ?, 'claude-code', 'stream', 'C:\\dummy', 'work', 'live', ?)`
+      )
+      .run(worker.id, Date.now())
+    db.db()
+      .prepare(
+        `insert into runs (id, task_id, worker_id, session_id, started_at, ended_at, quota_unverified)
+         values ('run-paused-1', ?, ?, 's-paused-1', 1000, 2000, 0)`
+      )
+      .run(task.id, worker.id)
+
+    try {
+      sessions.spawnSession({ workerId: worker.id, purpose: 'work' })
+    } catch (err: unknown) {
+      expect((err as Error).message).not.toMatch(/is at its concurrency limit/)
+    }
+  })
+
   it('runningTaskReservations ignores unclosed runs on non-running tasks', () => {
     const worker = add(1)
     const task = tasks.createTask({ title: 'resting task' })

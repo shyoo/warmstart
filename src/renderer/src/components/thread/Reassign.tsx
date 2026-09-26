@@ -127,17 +127,20 @@ export function useReassignChoice(
   const [workerId, setWorkerId] = useState<string>(c.workerId ?? '')
   const [model, setModel] = useState<string>(pinnedModel)
   const [effort, setEffort] = useState<string>(c.effort ?? '')
+  const [userPickedWorker, setUserPickedWorker] = useState(false)
 
   const reset = (): void => {
     setWorkerId(c.workerId ?? '')
     setModel(pinnedModel)
     setEffort(c.effort ?? '')
+    setUserPickedWorker(false)
   }
   // ⚠️ The pin moved underneath (a write from here, another window, the scheduler): follow it.
   useEffect(() => {
     setWorkerId(c.workerId ?? '')
     setModel(pinnedModel)
     setEffort(c.effort ?? '')
+    setUserPickedWorker(false)
   }, [c.workerId, pinnedModel, c.effort])
 
   const entry = fleet.find((e) => e.worker.id === workerId) ?? null
@@ -150,9 +153,13 @@ export function useReassignChoice(
     ? (offeredModels.find((m) => m.id === effortLookupModel(model, inheritedModel))?.effortLevels ?? [])
     : []
 
-  const changed = workerId !== (c.workerId ?? '') || model !== pinnedModel || effort !== (c.effort ?? '')
+  const workerChanged =
+    workerId !== (c.workerId ?? '') ||
+    (userPickedWorker && !workerId && !!current?.workerId && current.workerId !== (c.workerId ?? ''))
+  const changed = workerChanged || model !== pinnedModel || effort !== (c.effort ?? '')
 
   const pickWorker = (next: string): void => {
+    setUserPickedWorker(true)
     setWorkerId(next)
     if (!next) {
       setModel('')

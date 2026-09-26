@@ -65,4 +65,17 @@ describe('task.message', () => {
     expect(result.outcome).toBe('requeued')
     expect(heard.filter((e) => e.type === 'task.changed' && e.task.id === task.id)).toHaveLength(1)
   })
+
+  it('requeues a failed task back to ready with assignee null', async () => {
+    const handlers = api.buildApi({ version: '1.0.0', startedAt: Date.now(), port: 8080 })
+    const task = tasks.createTask({ title: 'a failed task someone writes to' })
+    tasks.setStatus(task.id, 'failed', { assignee: 'w-failed' })
+
+    const result = await handlers['task.message']({ id: task.id, text: 'retry this please' })
+
+    expect(result.outcome).toBe('requeued')
+    const updated = tasks.requireTask(task.id)
+    expect(updated.status).toBe('ready')
+    expect(updated.assignee).toBeNull()
+  })
 })

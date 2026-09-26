@@ -305,4 +305,20 @@ describe('deciding what a thrown dispatch means', () => {
     const verdict = scheduler.afterFailedDispatch(new resources.Contended('busy', poolId))
     expect(verdict.status).not.toBe('assigned')
   })
+
+  it('sends a task held by worker concurrency limit back to ready', () => {
+    const verdict = scheduler.afterFailedDispatch(
+      new Error("worker 'ClaudeThird' is at its concurrency limit (2 of 2 parallel instances in use). Raise Max parallel instances...")
+    )
+    expect(verdict.status).toBe('ready')
+    expect(verdict.reason).toContain('is at its concurrency limit')
+  })
+
+  it('sends a task held at capacity back to ready', () => {
+    const verdict = scheduler.afterFailedDispatch(
+      new Error("ClaudeThird at capacity — 2 of 2 parallel instances in use.")
+    )
+    expect(verdict.status).toBe('ready')
+    expect(verdict.reason).toContain('at capacity')
+  })
 })

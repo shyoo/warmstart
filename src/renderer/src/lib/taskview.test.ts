@@ -531,10 +531,10 @@ describe('project work state for left pane indicators', () => {
 
 describe('projectTaskCounts for sidebar project numbers', () => {
   it('returns zeros when there are no tasks', () => {
-    expect(projectTaskCounts([])).toEqual({ running: 0, awaiting: 0, waiting: 0 })
+    expect(projectTaskCounts([])).toEqual({ running: 0, awaiting: 0, failed: 0, waiting: 0, idle: 0 })
   })
 
-  it('ignores completed, failed, cancelled, and deleted tasks', () => {
+  it('ignores completed, cancelled, and deleted tasks, and counts failed tasks', () => {
     const tasks: Array<Pick<Task, 'status' | 'deletedAt'>> = [
       { status: 'completed', deletedAt: null },
       { status: 'failed', deletedAt: null },
@@ -542,20 +542,21 @@ describe('projectTaskCounts for sidebar project numbers', () => {
       { status: 'running', deletedAt: Date.now() },
       { status: 'awaiting_human', deletedAt: Date.now() }
     ]
-    expect(projectTaskCounts(tasks)).toEqual({ running: 0, awaiting: 0, waiting: 0 })
+    expect(projectTaskCounts(tasks)).toEqual({ running: 0, awaiting: 0, failed: 1, waiting: 0, idle: 0 })
   })
 
-  it('splits unfinished tasks into agent / human / parked buckets by status colour', () => {
+  it('splits tasks into agent / human / failed / parked buckets by status colour', () => {
     const tasks: Array<Pick<Task, 'status' | 'deletedAt'>> = [
       { status: 'running', deletedAt: null },
       { status: 'assigned', deletedAt: null },
       { status: 'awaiting_human', deletedAt: null },
+      { status: 'failed', deletedAt: null },
       { status: 'paused_quota', deletedAt: null },
       { status: 'paused_user', deletedAt: null },
       { status: 'blocked', deletedAt: null },
       { status: 'completed', deletedAt: null }
     ]
-    expect(projectTaskCounts(tasks)).toEqual({ running: 2, awaiting: 1, waiting: 3 })
+    expect(projectTaskCounts(tasks)).toEqual({ running: 2, awaiting: 1, failed: 1, waiting: 3, idle: 3 })
   })
 
   it('counts grading and landing tasks as running', () => {
@@ -564,7 +565,7 @@ describe('projectTaskCounts for sidebar project numbers', () => {
       { status: 'ready', gradingWorkerId: 'worker-1', deletedAt: null },
       { status: 'awaiting_human', deletedAt: null }
     ]
-    expect(projectTaskCounts(tasks)).toEqual({ running: 2, awaiting: 1, waiting: 0 })
+    expect(projectTaskCounts(tasks)).toEqual({ running: 2, awaiting: 1, failed: 0, waiting: 0, idle: 0 })
   })
 })
 
@@ -596,22 +597,24 @@ describe('routeForTask', () => {
 })
 
 describe('ProjectTaskCount', () => {
-  const render = (running: number, awaiting: number, waiting: number) =>
-    renderToStaticMarkup(createElement(ProjectTaskCount, { counts: { running, awaiting, waiting } }))
+  const render = (running: number, awaiting: number, failed: number, waiting: number) =>
+    renderToStaticMarkup(createElement(ProjectTaskCount, { counts: { running, awaiting, failed, waiting, idle: waiting } }))
 
   it('shows no count when every bucket is empty', () => {
-    expect(render(0, 0, 0)).toBe('')
+    expect(render(0, 0, 0, 0)).toBe('')
   })
 
   it.each([
-    [1, 0, 0, '<span class="nav-count-running">1</span>'],
-    [0, 2, 0, '<span class="nav-count-awaiting">2</span>'],
-    [0, 0, 1, '<span class="nav-count-waiting">1</span>'],
-    [1, 2, 0, '<span class="nav-count-running">1</span>/<span class="nav-count-awaiting">2</span>'],
-    [1, 0, 1, '<span class="nav-count-running">1</span>/<span class="nav-count-waiting">1</span>'],
-    [1, 2, 3, '<span class="nav-count-running">1</span>/<span class="nav-count-awaiting">2</span>/<span class="nav-count-waiting">3</span>']
-  ])('renders only positive buckets for %i/%i/%i', (running, awaiting, waiting, expected) => {
-    const markup = render(running, awaiting, waiting)
+    [1, 0, 0, 0, '<span class="nav-count-running">1</span>'],
+    [0, 2, 0, 0, '<span class="nav-count-awaiting">2</span>'],
+    [0, 0, 1, 0, '<span class="nav-count-failed">1</span>'],
+    [0, 0, 0, 1, '<span class="nav-count-waiting">1</span>'],
+    [1, 2, 0, 0, '<span class="nav-count-running">1</span>/<span class="nav-count-awaiting">2</span>'],
+    [1, 0, 1, 0, '<span class="nav-count-running">1</span>/<span class="nav-count-failed">1</span>'],
+    [0, 1, 1, 0, '<span class="nav-count-awaiting">1</span>/<span class="nav-count-failed">1</span>'],
+    [1, 2, 1, 3, '<span class="nav-count-running">1</span>/<span class="nav-count-awaiting">2</span>/<span class="nav-count-failed">1</span>/<span class="nav-count-waiting">3</span>']
+  ])('renders only positive buckets for %i/%i/%i/%i', (running, awaiting, failed, waiting, expected) => {
+    const markup = render(running, awaiting, failed, waiting)
     expect(markup).toContain(expected)
     expect(markup).not.toContain('>0</span>')
   })

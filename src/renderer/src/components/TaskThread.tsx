@@ -2191,14 +2191,15 @@ function Compose({
   // the two ways to rest a task, and offering both on every turn was half of what made the old
   // *your call* card read as a form in the middle of a chat.
   const stoppedByYou = task.status === 'paused_user'
+  const isFailed = task.status === 'failed'
   // ⚠️ Only between runs: the pin decides the *next* dispatch, not the run in front of you.
   const reassigning = choice.changed && !running
   // ⚠️ A command chip alone is a message: `/delegate` with nothing after it means *what we have just
   //    been discussing*, and the daemon's wrapper says so.
   const hasBody = text.trim().length > 0 || paste.ids.length > 0 || command !== null
-  // ⚠️ With nothing typed on a stopped task the button resumes it — the banner that used to hold
+  // ⚠️ With nothing typed on a stopped or failed task the button resumes / retries it — the banner that used to hold
   // Resume is gone, and a primary button that could not be pressed there would be a dead end.
-  const resuming = stoppedByYou && !hasBody && !reassigning
+  const resuming = (stoppedByYou || isFailed) && !hasBody && !reassigning
 
   const canSend = (hasBody || reassigning || resuming) && !sending && !paste.busy
 
@@ -2428,7 +2429,9 @@ function Compose({
               reassigning
                 ? 'Moves this task to the worker, model and effort chosen below and starts its next run on this same thread, with your message if you typed one.'
                 : resuming
-                  ? 'Puts this task back in the queue. Type a message first to send it with the resume.'
+                  ? isFailed
+                    ? 'Puts this failed task back in the queue to run again. Type a message first to send it with the retry.'
+                    : 'Puts this task back in the queue. Type a message first to send it with the resume.'
                   : undefined
             }
             onClick={() => void send()}
@@ -2436,11 +2439,15 @@ function Compose({
             {sending
               ? reassigning
                 ? 'Reassigning…'
-                : 'Sending…'
+                : isFailed
+                  ? 'Retrying…'
+                  : 'Sending…'
               : reassigning
                 ? 'Reassign'
                 : resuming
-                  ? 'Resume'
+                  ? isFailed
+                    ? 'Retry'
+                    : 'Resume'
                   : 'Send'}
           </button>
         </span>

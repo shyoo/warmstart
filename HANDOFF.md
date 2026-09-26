@@ -6,7 +6,7 @@ Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling,
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-25, **Windows 11**, t710): typecheck, lint and build pass; L1 **4,033 passed, 3 skipped** (238 files) in **102.76s**. L3 **496 checks** (4 skipped; last measured at t704).
+Baseline (2026-09-25, **Windows 11**, t715): typecheck, lint and build pass; L1 **4,044 passed, 3 skipped** (238 files) in **103.54s**. L3 **496 checks** (4 skipped; last measured at t704).
 Earlier Windows baseline: L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
 t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
 hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
@@ -23,6 +23,10 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 ## Closed in this cleanup
 
+- **Worker capacity exhaustion is a hold, failed tasks can retry/reassign, and sidebar shows failed counts (t715 ← t714, 2026-09-25).**
+  (1) t714 failed on `ClaudeThird` concurrency limit when Task 626 was at `paused_user`. `spawnSession` evicted the idle session, but `sessionsForWorker` still counted the closing session while process shutdown was asynchronous (86ms), and `spawnSession` threw a generic error which failed the task permanently. `sessionsForWorker` and `listSessions` now exclude closing sessions immediately, `spawnSession` throws `Contended`, and `afterFailedDispatch` treats capacity limits as `ready` rather than `failed` — upholding *"A contended resource is a hold, never a failure"*.
+  (2) Failed tasks now support **Retry** (via `resumeTask`), **Reassign** (including picking Auto worker explicitly via `userPickedWorker`), and **Send** with a follow-up prompt.
+  (3) Project sidebar task counts render the 4 buckets `[running]/[human_waiting]/[failed]/[idle]`, with `[failed]` highlighted in red (`.nav-count-failed`). L1 in `cancel.test.ts`, `concurrency.test.ts`, `poolgate.test.ts`, `taskmessage.test.ts`, `Reassign.test.ts`, and `taskview.test.ts`. `docs/routing.md`, `docs/ui.md`.
 - **A delegating conversation rests `blocked`, not on the person (t713 ← t626, 2026-09-25).** t626 (live DB, read-only) was a conversation with two `/delegate`d pieces unsettled, sitting at `awaiting_human` / *your turn* — by t704's design, which gave conversations no edges. `applySplit` now writes `settled` edges for a conversation too; `endConversationTurn` rests it `blocked` (*waiting on N delegated pieces*) while any is unmet; the last settle admits it to `ready`. A person can still write: `continueTask` requeues a blocked conversation, and `admit` never re-parks a conversation that is not already `blocked`, so a piece settling cannot strand the reply. Each of the three guards was mutation-tested red (3 L1). ⚠️ t626 itself was filed before this change and has no edges, so it stays at *your turn* until its pieces report. `docs/mcp.md` §3.1, `glossary.md`.
 - **A folded project row draws only its chevron (t709, 2026-09-25).** The folded ▸ carried the open-conversation count, which read as a fourth bucket after the running/awaiting/parked counts (`1 ▸ 1`); folded and unfolded rows now look alike. L3 asserts the toggle text is exactly `▸` (496 checks pass; one earlier run flaked 4 usage-credit checks that pass on rerun and on `main`). `docs/ui.md`.
 - **A Windows pipe close preserves the child tree long enough to stop it (t710, 2026-09-25).**
@@ -135,13 +139,7 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
   `1 / 1` empty; CodexFirst read `2 / 1` beside one task. An unlinked live session now covers one
   sessionless running task (`unclaimedLiveWorkSessions`); a parked task reassigned elsewhere frees
   its old worker. 15 L1 in `slotcount.test.ts` + 2 in `fleetcard.test.ts`. `docs/routing.md` §2.2.
-- **Codex upgraded to 0.155.1 with GPT-6 Astra access on ChatGPT Plus (t594, 2026-09-20).** Upgraded
-  `@openai/codex` to 0.155.1 (0.151.0 refused `gpt-6-astra` on a vendor version error); verified live
-  that `gpt-6-astra` executes and completes tasks on a ChatGPT Plus subscription with reasoning effort
-  low through ultra. Added `gpt-6-astra` to `costmodels/openai.codex.2026-08.json` (1.05M context
-  window, priority 1 in `models_cache.json`), `benchmarks/coding-agents.2026-09.json` (0.885 agentic),
-  and `statistics.ts` model power sorting. `docs/adapters.md` updated.
-- **A conversation's landing conflicted for ever, because two halves of the tool disagreed about which `main` (t586 ← t578, 2026-09-20).** Policy readers saw `origin/<target>` (a conversation kind resolves `await-human` → `leave-branch`) while Land rebased onto the local target — measured 9 commits apart on t578, a loop with no converging state. One authority now: `landingLevelFor` (`shared/policy.ts`), read by `baseRef`, both recovery prompts, the pre-flight and `landConversationWork`; `localBaseNote` names the measured gap. 11 L1, four mutations go red. **Not flown on a real run.** `docs/landing.md`.
+
 - **Statistics asks whether conversations count (t695, 2026-09-25).** *Include conversations*
   beside the Window control folds conversation-kind tasks out of all three tabs when off (t667 billed
   a whole evening of chat to its model); on is the old answer, remembered per display. `docs/ui.md`.
