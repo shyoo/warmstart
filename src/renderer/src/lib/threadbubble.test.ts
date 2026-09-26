@@ -148,5 +148,44 @@ describe('thread bubbles', () => {
         isLiveTail: true
       })
     })
+
+    it('puts a new narrative below the reply even if the clock moved backwards', () => {
+      const before = { text: 'Checking the viewer', ts: 180, afterMessageId: promptMsg.id }
+      const after = { text: 'The screenshot shows an error', ts: 190, afterMessageId: userMsg.id }
+      const items = buildThreadItems([promptMsg, userMsg], [before, after], true)
+      expect(items).toEqual([
+        { kind: 'message', message: promptMsg },
+        { kind: 'activity', id: 'activity-chunk-0', lines: [before], isLiveTail: false },
+        { kind: 'message', message: userMsg },
+        { kind: 'activity', id: 'activity-live-1', lines: [after], isLiveTail: true }
+      ])
+    })
+
+    it('keeps a line sharing the reply millisecond in the live bubble', () => {
+      const line = { text: 'Reply received', ts: userMsg.ts }
+      const items = buildThreadItems([promptMsg, userMsg], [line], true)
+      expect(items).toEqual([
+        { kind: 'message', message: promptMsg },
+        { kind: 'message', message: userMsg },
+        { kind: 'activity', id: 'activity-live-0', lines: [line], isLiveTail: true }
+      ])
+    })
+
+    it('keeps each of two mid-run replies between the activity that preceded and followed it', () => {
+      const secondReply = { id: 3, role: 'human', text: 'One more detail', ts: 300 } as TaskMessage
+      const lines = [
+        { text: 'Before first reply', ts: 150, afterMessageId: 1 },
+        { text: 'After first reply', ts: 250, afterMessageId: 2 },
+        { text: 'After second reply', ts: 350, afterMessageId: 3 }
+      ]
+      expect(buildThreadItems([promptMsg, userMsg, secondReply], lines, true)).toEqual([
+        { kind: 'message', message: promptMsg },
+        { kind: 'activity', id: 'activity-chunk-0', lines: [lines[0]], isLiveTail: false },
+        { kind: 'message', message: userMsg },
+        { kind: 'activity', id: 'activity-chunk-1', lines: [lines[1]], isLiveTail: false },
+        { kind: 'message', message: secondReply },
+        { kind: 'activity', id: 'activity-live-2', lines: [lines[2]], isLiveTail: true }
+      ])
+    })
   })
 })

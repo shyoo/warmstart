@@ -44,7 +44,7 @@ import { emit } from './events.js'
 import { log } from './log.js'
 import { getProject } from './projects.js'
 import { branchNameFor } from './worktrees.js'
-import { consumeRunActivity } from './activity.js'
+import { consumeRunActivity, markThreadMessage } from './activity.js'
 
 /**
  * Tasks.
@@ -1677,6 +1677,7 @@ export function addMessage(
     .run(taskId, role, text, runId, options.event ?? null, options.detail ?? null, Date.now())
   const id = Number(info.lastInsertRowid)
   if (attachmentIds.length > 0) bindAttachments(attachmentIds, taskId, id)
+  markThreadMessage(taskId, id)
   return id
 }
 

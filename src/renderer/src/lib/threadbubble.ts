@@ -1,4 +1,5 @@
 import type { MessageRole, Run, TaskMessage } from '@shared/tasks'
+import type { ActivityLine } from './daemon'
 
 /** Which edge a chat entry occupies. Kept pure so the thread's reading order stays testable. */
 export function bubbleSide(role: MessageRole): 'left' | 'right' {
@@ -60,7 +61,7 @@ export type ThreadItem =
   | {
       kind: 'activity'
       id: string
-      lines: Array<{ text: string; ts: number }>
+      lines: ActivityLine[]
       isLiveTail: boolean
     }
 
@@ -79,7 +80,7 @@ export type ThreadItem =
  */
 export function buildThreadItems(
   messages: TaskMessage[],
-  activity: Array<{ text: string; ts: number }>,
+  activity: ActivityLine[],
   showLive: boolean
 ): ThreadItem[] {
   if (!showLive) {
@@ -101,12 +102,17 @@ export function buildThreadItems(
     if (!m) continue
     // ⛔ Do not emit activity before the first message of the thread — a task cannot have
     // activity before its opening prompt. For subsequent messages, emit any activity that
-    // arrived before or at the message timestamp.
+    // began before the message was saved. Older rows without a message boundary use timestamps.
     if (i > 0) {
-      const chunkLines: Array<{ text: string; ts: number }> = []
+      const chunkLines: ActivityLine[] = []
       while (activityIdx < activity.length) {
         const line = activity[activityIdx]
-        if (!line || line.ts > m.ts) break
+        // The daemon records which saved message preceded the line. Wall clocks can move, and
+        // Date.now has only millisecond resolution; an equal or shifted timestamp must not put
+        // the agent's newest words above the reply it is answering.
+        if (!line || (line.afterMessageId !== undefined
+          ? line.afterMessageId >= m.id
+          : line.ts >= m.ts)) break
         chunkLines.push(line)
         activityIdx++
       }

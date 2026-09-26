@@ -6,7 +6,7 @@ Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling,
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-25, **Windows 11**, t704): typecheck, lint and build pass; L1 **4,021 passed, 3 skipped** (237 files) in **59.5s**. L3 **496 checks** (4 skipped).
+Baseline (2026-09-25, **Windows 11**, t705): typecheck, lint and build pass; L1 **4,027 passed, 3 skipped** (237 files) in **93.0s** (run alongside lint). L3 **496 checks** (4 skipped; last measured at t704).
 Earlier Windows baseline: L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
 t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
 hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
@@ -23,6 +23,7 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 ## Closed in this cleanup
 
+- **Live narration follows the newest reply in the task thread (t705, 2026-09-25).** The screenshot showed a populated activity bubble above a human reply while the live bubble below still said *waiting for the agent’s first words*. Saved messages now mark an explicit activity boundary; streamed lines close there, and the renderer groups by that boundary rather than trusting wall-clock order. Older events retain a timestamp fallback. L1 covers daemon emission, renderer event folding, multiple replies, equal timestamps and a backward clock. `docs/ui.md`.
 - **Any work task or conversation can delegate, and a person can ask with `/delegate` (t704, 2026-09-25).** `task_split` was registered for every session but named only to plans, and refused anything else. It now files 1+ pieces from any task holding `spawn_tasks` — the new **Delegate** pill under the composer — with a per-piece class hint. Pieces are `commit-and-verify` on their own branch cut from the caller's; the caller merges them, because `merge-branch` would park a live conversation's slot. A work task waits `blocked`; a conversation carries on and is woken by `reportDelegationIfSettled`. `/delegate` becomes a chip, is stored as the message's `event`, and skips the approval card for that one delegation. `land_work` refuses over unsettled or unmerged pieces (`set_aside`). Migration 84 (`delegations`). Decisions D1–D6 in [`transient_docs/delegation_2026-09-25.md`](transient_docs/delegation_2026-09-25.md). 24 L1. ⚠️ Composer chip and pill not driven in the app. `docs/mcp.md` §3.1, `ui.md`, `landing.md`, `data-model.md`, `glossary.md`.
 - **The quota preemption choices are aligned and timed choices are explicit (t703, 2026-09-25).** The three wrap-up choices now sit in one countdown group with each explanation beside its button; immediate actions sit below. Handoff & reassign captures destination worker, model and effort in the persisted warning and applies them together after wrap-up, including on vendor refusal. `docs/ui.md`.
 - **No phantom worker capacity holds from idle, paused or settled sessions (t702, 2026-09-25).**

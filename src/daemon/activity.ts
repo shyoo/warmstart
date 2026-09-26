@@ -27,6 +27,7 @@ const MAX_LINE = 400
 interface Entry {
   text: string
   ts: number
+  afterMessageId?: number
 }
 
 /**
@@ -52,6 +53,7 @@ interface Tail {
 
 const tails = new Map<string, Tail>()
 const runTails = new Map<string, Tail>()
+const messageAnchors = new Map<string, number>()
 const RUN_KEEP = 200
 
 function tailFor(map: Map<string, Tail>, key: string, keep: number): Tail {
@@ -65,10 +67,11 @@ function tailFor(map: Map<string, Tail>, key: string, keep: number): Tail {
   return tail
 }
 
-function pushLine(tail: Tail, text: string, keep: number): Entry {
+function pushLine(tail: Tail, text: string, keep: number, taskId?: string): Entry {
   const entry: Entry = {
     text: text.length > MAX_LINE ? `${text.slice(0, MAX_LINE)}…` : text,
-    ts: Date.now()
+    ts: Date.now(),
+    ...(taskId && messageAnchors.has(taskId) ? { afterMessageId: messageAnchors.get(taskId) } : {})
   }
   tail.lines.push(entry)
   while (tail.lines.length > keep) tail.lines.shift()
@@ -82,14 +85,14 @@ function snapshot(tail: Tail | undefined): Entry[] {
   // in progress, not only the ones before it. Read trimmed — the stored form keeps a trailing
   // separator for the next fragment, which is scaffolding, not content.
   if (tail.open && tail.open.text.trim()) {
-    lines.push({ text: tail.open.text.trimEnd(), ts: tail.open.ts })
+    lines.push(shown(tail.open))
   }
   return lines
 }
 
 /** What watchers are shown of an open line: content, without the scaffolding. */
 function shown(open: Entry): Entry {
-  return { text: open.text.trimEnd(), ts: open.ts }
+  return { ...open, text: open.text.trimEnd() }
 }
 
 /**
@@ -125,8 +128,8 @@ function noteMessage(
     // see — both renderers already put every row on its own block.
     const line = raw.replace(/[ \t\f\v]+/g, ' ').trim()
     if (!line) continue
-    const entry = pushLine(taskTail, line, KEEP)
-    emit({ type: 'task.activity', taskId, text: entry.text, ts: entry.ts })
+    const entry = pushLine(taskTail, line, KEEP, taskId)
+    emit({ type: 'task.activity', taskId, ...entry })
     if (runTail) pushLine(runTail, line, RUN_KEEP)
   }
 }
@@ -139,7 +142,7 @@ function closeOpen(taskId: string, taskTail: Tail, runTail: Tail | null): void {
     if (settled.text) {
       taskTail.lines.push({ ...settled })
       while (taskTail.lines.length > KEEP) taskTail.lines.shift()
-      emit({ type: 'task.activity', taskId, text: settled.text, ts: settled.ts, append: true })
+      emit({ type: 'task.activity', taskId, ...settled, append: true })
     }
   }
   if (runTail?.open) {
@@ -226,10 +229,10 @@ function settleLine(
     taskTail.lines.push({ ...settled })
     while (taskTail.lines.length > keep) taskTail.lines.shift()
     taskTail.open = null
-    emit({ type: 'task.activity', taskId, text: settled.text, ts: settled.ts, append: true })
+    emit({ type: 'task.activity', taskId, ...settled, append: true })
   } else {
-    const entry = pushLine(taskTail, line, keep)
-    emit({ type: 'task.activity', taskId, text: entry.text, ts: entry.ts })
+    const entry = pushLine(taskTail, line, keep, taskId)
+    emit({ type: 'task.activity', taskId, ...entry })
   }
   if (runTail) {
     if (runTail.open) {
@@ -259,9 +262,12 @@ function appendOpen(taskTail: Tail, piece: string, taskId: string, runTail: Tail
     // Reads go through `shown`, so the scaffolding never reaches a watcher.
     const start = piece.trimStart()
     if (!start.trim()) return
-    taskTail.open = { text: cap(start), ts: Date.now() }
+    taskTail.open = {
+      text: cap(start), ts: Date.now(),
+      ...(messageAnchors.has(taskId) ? { afterMessageId: messageAnchors.get(taskId) } : {})
+    }
     const first = shown(taskTail.open)
-    emit({ type: 'task.activity', taskId, text: first.text, ts: first.ts })
+    emit({ type: 'task.activity', taskId, ...first })
   } else {
     if (taskTail.open.text.endsWith('…')) return
     const added = joinPiece(taskTail.open.text, piece)
@@ -269,7 +275,7 @@ function appendOpen(taskTail: Tail, piece: string, taskId: string, runTail: Tail
     taskTail.open.text = cap(taskTail.open.text + added)
     taskTail.open.ts = Date.now()
     const grown = shown(taskTail.open)
-    emit({ type: 'task.activity', taskId, text: grown.text, ts: grown.ts, append: true })
+    emit({ type: 'task.activity', taskId, ...grown, append: true })
   }
   if (runTail) {
     if (!runTail.open) {
@@ -306,8 +312,15 @@ function cap(text: string): string {
   return text.length > MAX_LINE ? `${text.slice(0, MAX_LINE)}…` : text
 }
 
-export function activityFor(taskId: string): Array<{ text: string; ts: number }> {
+export function activityFor(taskId: string): Entry[] {
   return snapshot(tails.get(taskId))
+}
+
+/** Keep the next activity line on the far side of a newly saved thread message. */
+export function markThreadMessage(taskId: string, messageId: number): void {
+  const tail = tails.get(taskId)
+  if (tail) closeOpen(taskId, tail, null)
+  messageAnchors.set(taskId, messageId)
 }
 
 /**

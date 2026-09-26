@@ -239,6 +239,7 @@ export function useNow(intervalMs = 1000): number {
 export interface ActivityLine {
   text: string
   ts: number
+  afterMessageId?: number
 }
 
 /**
@@ -253,18 +254,26 @@ export interface ActivityLine {
  */
 export function applyActivityEvent(
   prev: Record<string, ActivityLine[]>,
-  event: { taskId: string; text: string; ts: number; reset?: true; append?: true }
+  event: { taskId: string; text: string; ts: number; afterMessageId?: number; reset?: true; append?: true }
 ): Record<string, ActivityLine[]> {
   // A new attempt starts with an empty pane. See clearActivity.
   if (event.reset) return { ...prev, [event.taskId]: [] }
   const cur = prev[event.taskId] ?? []
   if (event.append && cur.length > 0) {
-    return { ...prev, [event.taskId]: [...cur.slice(0, -1), { text: event.text, ts: event.ts }] }
+    return { ...prev, [event.taskId]: [...cur.slice(0, -1), activityLine(event)] }
   }
   // ⚠️ Bounded here as well as in the daemon. This is agent output arriving as fast as a model
   // can produce it, and an unbounded array in a React state is a memory leak with a pretty UI.
-  const tail = [...cur, { text: event.text, ts: event.ts }].slice(-40)
+  const tail = [...cur, activityLine(event)].slice(-40)
   return { ...prev, [event.taskId]: tail }
+}
+
+function activityLine(event: { text: string; ts: number; afterMessageId?: number }): ActivityLine {
+  return {
+    text: event.text,
+    ts: event.ts,
+    ...(event.afterMessageId !== undefined ? { afterMessageId: event.afterMessageId } : {})
+  }
 }
 
 /**

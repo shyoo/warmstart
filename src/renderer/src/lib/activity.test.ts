@@ -20,6 +20,17 @@ describe('applyActivityEvent', () => {
     expect(state['t']?.map((l) => l.text)).toEqual(['landing corners pass. The'])
   })
 
+  it('carries a reply boundary through both new lines and streaming replacements', () => {
+    let state: Record<string, ActivityLine[]> = {}
+    state = applyActivityEvent(state, { taskId: 't', text: 'Before reply', ts: 100, afterMessageId: 1 })
+    state = applyActivityEvent(state, { taskId: 't', text: 'After', ts: 99, afterMessageId: 2 })
+    state = applyActivityEvent(state, { taskId: 't', text: 'After reply', ts: 98, afterMessageId: 2, append: true })
+    expect(state.t).toEqual([
+      { text: 'Before reply', ts: 100, afterMessageId: 1 },
+      { text: 'After reply', ts: 98, afterMessageId: 2 }
+    ])
+  })
+
   it('pushes a settled row beside the streaming one', () => {
     let state: Record<string, ActivityLine[]> = {}
     state = applyActivityEvent(state, { taskId: 't', text: 'landing', ts: 1 })

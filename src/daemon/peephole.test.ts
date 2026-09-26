@@ -6,6 +6,7 @@ import {
   closingProse,
   consumeRunActivity,
   noteActivity,
+  markThreadMessage,
   proseOf,
   REPORT_PROSE_CHARS,
   runActivityFor,
@@ -186,6 +187,35 @@ describe('a turn off each worker type, read end to end', () => {
 })
 
 describe('a message is a message', () => {
+  it('closes a streaming line at a saved reply and tags the next activity with that reply', () => {
+    const taskId = 't-reply-boundary'
+    const seen: Array<{ text: string; afterMessageId?: number; append?: true }> = []
+    setEventSink((event) => {
+      if (event.type === 'task.activity' && event.taskId === taskId) seen.push(event)
+    })
+    try {
+      clearActivity(taskId)
+      seen.length = 0
+      markThreadMessage(taskId, 1)
+      noteActivity(taskId, 'before', undefined, 'delta')
+      markThreadMessage(taskId, 2)
+      noteActivity(taskId, 'after', undefined, 'delta')
+      noteActivity(taskId, ' reply', undefined, 'delta')
+      expect(activityFor(taskId).map(({ text, afterMessageId }) => ({ text, afterMessageId }))).toEqual([
+        { text: 'before', afterMessageId: 1 },
+        { text: 'after reply', afterMessageId: 2 }
+      ])
+      expect(seen.map(({ text, afterMessageId, append }) => [text, afterMessageId, append ?? false])).toEqual([
+        ['before', 1, false],
+        ['before', 1, true],
+        ['after', 2, false],
+        ['after reply', 2, true]
+      ])
+    } finally {
+      setEventSink(() => {})
+      clearActivity(taskId)
+    }
+  })
   it('gives two messages two rows, with nothing glued between them', () => {
     clearActivity('t-msg-pair')
     noteActivity('t-msg-pair', 'I understand what t269 recorded.', undefined, 'message')

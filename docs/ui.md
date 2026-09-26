@@ -30,6 +30,11 @@ whole line so watchers replace their last row rather than extending it. Getting 
 both directions once each — one word per line on muse (t272), and Claude's messages concatenated with
 their linebreaks gone (t284).
 
+The live task thread splits activity around saved replies. New activity rows carry the id of the
+last saved thread message when they began; saving a reply closes any open streamed row before the next
+one starts. `lib/threadbubble.ts` uses that boundary to keep new narration below the reply, even if
+wall-clock timestamps tie or shift. Older activity events without the boundary use timestamps.
+
 ⛔ **No native modules here.** They live in the daemon so an Electron upgrade cannot break a running
 fleet.
 

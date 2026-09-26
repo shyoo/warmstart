@@ -1984,7 +1984,7 @@ export interface RpcMap {
        */
       commits: TaskCommit[]
       /** The live tail for this task, if anything is running. Same content as `task.activity`. */
-      activity: Array<{ text: string; ts: number }>
+      activity: Array<{ text: string; ts: number; afterMessageId?: number }>
       /** Every quality review of this task, newest first. ⛔ Kept, never replaced. */
       reviews?: QualityReview[]
       /** Operator-entered overall ratings, newest first. */
@@ -3146,6 +3146,8 @@ export type DaemonEvent =
       taskId: string
       text: string
       ts: number
+      /** Last saved thread message when this line began. Orders live output across replies. */
+      afterMessageId?: number
       reset?: true
       /**
        * A fragment of the line still being spoken: replace the watcher's last row with this text

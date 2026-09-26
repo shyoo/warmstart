@@ -27,7 +27,7 @@ import {
 import type { ModelOptions, Session } from '@shared/protocol'
 import type { ManualReview, QualityReview } from '@shared/review'
 import { autoModelCount } from '@shared/modelroutes'
-import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
+import { rpc, useActivity, useDaemonEvents, useNow, type ActivityLine, type FleetEntry } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { ImageChips, usePastedImages } from '../lib/pasteimages'
 import { Pill, PillOptions, type PillOption } from './Pill'
@@ -120,7 +120,7 @@ export interface TaskDetailData {
    * an older build has no such field and must still render.
    */
   commits?: TaskCommit[]
-  activity: Array<{ text: string; ts: number }>
+  activity: ActivityLine[]
   /** How many tasks are held at `blocked` waiting on this one. Counted by the daemon. */
   blocking: number
   dependencies?: Task[]
@@ -144,7 +144,7 @@ export interface TaskDetailData {
 }
 
 // A fresh [] here would defeat Thread's memo on every one-second ledger tick for an idle task.
-const EMPTY_ACTIVITY: Array<{ text: string; ts: number }> = []
+const EMPTY_ACTIVITY: ActivityLine[] = []
 
 /**
  * One task, as a place you can be.
@@ -265,7 +265,7 @@ function TaskDetail({
 }: {
   detail: TaskDetailData
   /** The live tail, kept outside the detail so it survives a re-fetch of it. */
-  activity: Array<{ text: string; ts: number }>
+  activity: ActivityLine[]
   fleet: FleetEntry[]
   /** How many tasks are waiting on this one — the concrete consequence of finishing it or not. */
   blocking: number
@@ -1403,7 +1403,7 @@ const Thread = memo(function Thread({
 }: {
   messages: TaskMessage[]
   runs: Run[]
-  activity: Array<{ text: string; ts: number }>
+  activity: ActivityLine[]
   live: boolean
   landing: boolean
 }): React.JSX.Element {

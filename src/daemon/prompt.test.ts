@@ -13,6 +13,7 @@ let resolutions: typeof import('./resolutions.js')
 let turnend: typeof import('./turnend.js')
 let prompt: typeof import('./prompt.js')
 let api: typeof import('./api.js')
+let activity: typeof import('./activity.js')
 
 let claude: Worker
 let agy: Worker
@@ -27,6 +28,7 @@ beforeAll(async () => {
   turnend = await import('./turnend.js')
   prompt = await import('./prompt.js')
   api = await import('./api.js')
+  activity = await import('./activity.js')
   db.openDb(join(dir, 'prompt.db'))
   claude = workers.createWorker({ adapterId: 'claude-code', label: 'claude-1', enabled: true })
   agy = workers.createWorker({ adapterId: 'antigravity-cli', label: 'agy-1', enabled: true })
@@ -50,6 +52,22 @@ afterAll(() => {
  */
 const promptText = (...args: Parameters<typeof prompt.promptFor>): string =>
   prompt.promptFor(...args).text
+
+describe('saved thread messages and live activity', () => {
+  it('anchors activity on both sides of a reply through addMessage', () => {
+    const task = tasks.createTask({ title: 'Reply during a live narrative', status: 'ready' })
+    activity.clearActivity(task.id)
+    const opening = tasks.addMessage(task.id, 'human', 'Please inspect the viewer')
+    activity.noteActivity(task.id, 'Inspecting the viewer')
+    const reply = tasks.addMessage(task.id, 'human', 'The viewer showed an error')
+    activity.noteActivity(task.id, 'Checking the error')
+    expect(activity.activityFor(task.id).map(({ text, afterMessageId }) => ({ text, afterMessageId }))).toEqual([
+      { text: 'Inspecting the viewer', afterMessageId: opening },
+      { text: 'Checking the error', afterMessageId: reply }
+    ])
+    activity.clearActivity(task.id)
+  })
+})
 
 describe('promptFor prompt construction', () => {
   it('builds prompt for an MCP adapter with task_complete instruction', () => {
