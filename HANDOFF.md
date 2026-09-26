@@ -6,10 +6,8 @@ Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling,
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-26, **Windows 11**, t714): typecheck, lint and build pass; L1 **4,047 passed, 3 skipped** (238 files) in **84.03s**. L3 **496 checks** (4 skipped; last measured at t704).
-Earlier Windows baseline: L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
-t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
-hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
+Baseline (2026-09-26, **Windows 11**, t718): typecheck, lint and build pass; L1 **4,047 passed, 3 skipped** (238 files) in **86.31s**. L2 **204 checks** (7 skipped); L3 **497 checks** (4 skipped); packaged app **19 checks**. The L3 add-project wizard assertion now checks the managed default and portable config introduced at t714.
+⚠️ The `%TEMP%` figure is t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI and the Release workflow are enabled.
 
 **`v0.3.3` is `latest`** (t682, 2026-09-24), promoted onto `v0.3.3-rc.1`'s commit `8cf5d301`.
 The next `/release rc` opens the patch series at `0.3.4-rc.1` unless `--bump minor|major` is asked for.

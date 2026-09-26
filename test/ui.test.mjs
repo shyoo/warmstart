@@ -4417,9 +4417,11 @@ try {
   )
   const setupStep = await evaluate(`document.querySelector('.wizard-body').innerText`)
   check(
-    'the policy step recommends a workspace directory beside the project and names it',
-    setupStep.includes(`${wizardRoot}_workspaces`),
-    setupStep.split('\n').find((l) => l.includes('_workspaces')) ?? setupStep.slice(0, 200)
+    'the policy step recommends a managed workspace directory and names it',
+    setupStep.includes('Automatic (Warmstart)') &&
+      setupStep.includes('Managed by Warmstart.') &&
+      setupStep.includes('\\workspaces\\'),
+    setupStep.split('\n').find((l) => l.includes('workspaces')) ?? setupStep.slice(0, 200)
   )
   check(
     'and it offers every policy tier that resolves task → project → fleet',
@@ -4518,6 +4520,11 @@ try {
   )
   const wizardConfig = JSON.parse(
     readFileSync(join(wizardRoot, '.warmstart', 'project.json'), 'utf8')
+  )
+  check(
+    'and the project records a portable managed workspace location',
+    wizardConfig.workspaces?.location === 'managed' && wizardConfig.workspaces?.root === undefined,
+    JSON.stringify(wizardConfig.workspaces)
   )
   check(
     'and the check commands the wizard proposed are in it',
@@ -6263,7 +6270,6 @@ try {
     rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     if (projectRoot) rmSync(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     if (wizardRoot) rmSync(wizardRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
-    if (wizardRoot) rmSync(`${wizardRoot}_workspaces`, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   } catch {
     // A locked profile directory is not worth failing a passing test over.
   }
