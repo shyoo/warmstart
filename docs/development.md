@@ -386,6 +386,12 @@ if one path traversed the symlink and the other was canonicalized. Always canoni
   CLI installed as a `.cmd` rather than a `.exe`. Everything that starts a CLI goes through
   `launchable()` / `launchArgs()`, **including detection** — `execFile` on a `.cmd` without a shell
   fails with a bare `spawn EINVAL`, and detection that fails for an installed CLI reports it missing.
+- ⛔ **Stop the Windows pipe process tree before its `.cmd` launcher.** t708's Codex session was
+  evicted at 04:00:56 UTC on 2026-09-26; three resumes at 04:01:09, 04:02:00 and 04:02:19 failed
+  with `thread-store conflict: ... already has an active writer` (live daemon log and runs). The
+  old pipe close killed `cmd.exe` before `taskkill /T` could walk its descendants. A detached Codex
+  child retaining the writer is inferred from that order and those errors. `openPipes` now runs the
+  tree stop while the launcher still parents the CLI, then closes its own child handle.
 - ⛔ **`node --experimental-strip-types` resolves no path aliases, and the failure is silent.**
   `local-llm.test.ts` spawns `adapters/local-llm-bridge.ts` as *source* that way rather than building
   it. Type stripping is not compilation: it knows nothing of `@shared`, so an import through the alias

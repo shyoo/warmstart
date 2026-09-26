@@ -6,7 +6,7 @@ Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling,
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-25, **Windows 11**, t705): typecheck, lint and build pass; L1 **4,027 passed, 3 skipped** (237 files) in **93.0s** (run alongside lint). L3 **496 checks** (4 skipped; last measured at t704).
+Baseline (2026-09-25, **Windows 11**, t710): typecheck, lint and build pass; L1 **4,033 passed, 3 skipped** (238 files) in **102.76s**. L3 **496 checks** (4 skipped; last measured at t704).
 Earlier Windows baseline: L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
 t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
 hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
@@ -24,6 +24,11 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 ## Closed in this cleanup
 
 - **A folded project row draws only its chevron (t709, 2026-09-25).** The folded ▸ carried the open-conversation count, which read as a fourth bucket after the running/awaiting/parked counts (`1 ▸ 1`); folded and unfolded rows now look alike. L3 asserts the toggle text is exactly `▸` (496 checks pass; one earlier run flaked 4 usage-credit checks that pass on rerun and on `main`). `docs/ui.md`.
+- **A Windows pipe close preserves the child tree long enough to stop it (t710, 2026-09-25).**
+  t708's three Codex exit 1 retries all reported a thread-store active writer after a session
+  eviction. `openPipes` now stops the tree before closing the `.cmd` launcher. The orphaned child
+  explanation is inferred from the logged sequence; the next live Codex eviction remains to be
+  observed. See `docs/development.md` § Spawning.
 - **Delegate is a one-click toggle, and MCP capability is visible where it matters (t706, 2026-09-26).** The Delegate pill was a two-option menu for a boolean; it now flips on click. Measured the MCP matrix (MCP: claude-code, codex; text-fallback: antigravity, muse, local-llm, declarative) with the fallback inventory in `transient_docs/mcp_gaps_2026-09-26.md`. Operator chose badge plus hint, no planner gate: the Workers Adapter cell carries an MCP / No MCP badge off the declared capability, the Plan rows warn when the split cannot be filed by tool (`lib/plannernotice.ts`, L1), and the Delegate toggle names the `/delegate` route on non-MCP workers. `docs/ui.md`.
 - **Saved thread bubbles retain their causal order through a clock shift (t707, 2026-09-25).** The durable message query now follows database insertion order rather than wall-clock timestamps, so a completion saved after a reply cannot drift above it when the host clock moves backwards. Draft-prompt edits select that same true opening row. L1 drives `task.get` through the skewed t696 shape and mutation-tested both queries. `docs/ui.md`.
 - **Live narration follows the newest reply in the task thread (t705, 2026-09-25).** The screenshot showed a populated activity bubble above a human reply while the live bubble below still said *waiting for the agent’s first words*. Saved messages now mark an explicit activity boundary; streamed lines close there, and the renderer groups by that boundary rather than trusting wall-clock order. Older events retain a timestamp fallback. L1 covers daemon emission, renderer event folding, multiple replies, equal timestamps and a backward clock. `docs/ui.md`.

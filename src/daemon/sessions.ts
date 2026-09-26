@@ -1943,12 +1943,15 @@ function openPipes(
     // A pipe has no geometry. Silently doing nothing is the correct behaviour, not a failure.
     resize: () => undefined,
     kill: () => {
+      // On Windows this is usually cmd.exe around an npm .cmd shim. Killing cmd first can
+      // detach codex.exe before taskkill /T discovers its descendants. That left a writer
+      // holding the conversation while the session row was already closed (t708).
+      if (child.pid) killProcessTree(child.pid)
       try {
         child.kill()
       } catch {
         // Ignored
       }
-      if (child.pid) killProcessTree(child.pid)
     }
   }
 }
