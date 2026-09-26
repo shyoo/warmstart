@@ -303,8 +303,9 @@ no waiter and nothing to return into. That is the only kind antigravity and code
 thread otherwise — and always with a text box, because an option plus a caveat is a better answer
 than either alone.
 
-**Parked** — *a question that outlived its session.* Nobody answered before the session's cache
-expired, so holding the process stopped paying for itself: the task rests at `awaiting_human` and the
+**Parked** — *a question that outlived the tool call that asked it.* Nobody answered before the
+session's cache expired, so holding the process stopped paying for itself — or the turn that asked
+ended first (the CLI can abandon the call, t708): the task rests at `awaiting_human` and the
 question **stays open**. ⛔ Not an answer and not a refusal — timing out has never been either.
 Answering a parked question writes it into the thread and **re-queues the task**, so the answer has a
 run to arrive in: the same task, the same thread, a new run, with the answer left undelivered so the

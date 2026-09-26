@@ -1,5 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js'
+import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { readFileSync } from 'node:fs'
 import http from 'node:http'
@@ -8,7 +10,7 @@ import { conversationLandingResultText, parseOptionList } from '@shared/tasks.js
 import { normaliseAsk } from '@shared/policy.js'
 import { paths } from '../daemon/paths.js'
 import { errorMessage } from '@shared/errors.js'
-import { describeTarget, failed, questionsFrom, text, type NativeQuestion } from './payload.js'
+import { describeTarget, failed, keepAlive, questionsFrom, text, type NativeQuestion } from './payload.js'
 import { appEnv } from '@shared/env.js'
 import { APP_VERSION } from '@shared/version.js'
 
@@ -97,6 +99,41 @@ function rpc<M extends RpcMethod>(method: M, params?: RpcParams<M>): Promise<Rpc
   })
 }
 
+/**
+ * How often a call held open on a person says it is still alive.
+ *
+ * ⛔ **A silent tool call is killed by the client, not by us.** Measured 2026-09-26 in claude-code
+ * 2.1.283's own bundle: a stdio MCP call that sends *"no response or progress notification"* for
+ * 1,800,000 ms is aborted, and only a `notifications/progress` resets that clock. `question.ask`
+ * holds for up to an hour (`MAX_WAIT_MS`), so on t708 the CLI gave up at thirty minutes, the agent
+ * ended its turn, and the operator's answer 51 seconds later went nowhere. Spiked the same day with
+ * the idle timeout forced to 40s: a silent 100s call was aborted at 60s; the same call beating every
+ * 20s returned normally. The CLI sent a `progressToken`, and did **not** cancel the call on our side
+ * when it gave up — so the daemon cannot learn of an abort from here, only prevent one.
+ *
+ * ⚠️ Not a per-server `timeout` in the MCP config: that is also the *hard* wall-clock limit for every
+ * tool on this server (default 1e8 ms there, and "progress notifications do not extend it"), so it
+ * would cap `land_work`'s checks to fix `ask_human`'s wait. A beat resets only the idle clock, and it
+ * costs no tokens — the CLI shows it in its own UI, not to the model.
+ */
+const HEARTBEAT_MS = 60 * 1000
+
+type ToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>
+
+/** `rpc` for a call that may wait on a person or on the project's checks. See HEARTBEAT_MS. */
+async function held<M extends RpcMethod>(
+  extra: ToolExtra | undefined,
+  method: M,
+  params?: RpcParams<M>
+): Promise<RpcResult<M>> {
+  const stop = keepAlive(extra, HEARTBEAT_MS)
+  try {
+    return await rpc(method, params)
+  } finally {
+    stop()
+  }
+}
+
 // ⛔ Must match MCP_SERVER_NAME in mcpconfig.ts - the daemon registers this server under that
 // key and tells the CLI to call `mcp__<that key>__approve`. Not imported: this bundle is spawned as
 // a standalone process and deliberately shares no daemon module.
@@ -141,13 +178,13 @@ server.registerTool(
         toolName === 'ask_human') &&
       askedList.length > 0
     ) {
-      return await answerNativeQuestions(sessionId, askedList)
+      return await answerNativeQuestions(sessionId, askedList, extra)
     }
 
     let decision: 'allow' | 'deny' = 'deny'
     let message: string
     try {
-      const answer = await rpc('approval.request', {
+      const answer = await held(extra, 'approval.request', {
         sessionId,
         origin: 'permission_prompt',
         tool: toolName,
@@ -281,7 +318,7 @@ server.registerTool(
       multiple: z.boolean().optional().describe('Alias for multi_select')
     }
   },
-  async (args) => {
+  async (args, extra) => {
     const sessionId = appEnv('SESSION_ID') ?? ''
     const rawOptions = typeof args.options === 'string' ? parseOptionList(args.options) : (args.options ?? [])
     const explicitMulti =
@@ -308,7 +345,7 @@ server.registerTool(
       )
     })
     try {
-      const resolution = await rpc('question.ask', {
+      const resolution = await held(extra, 'question.ask', {
         sessionId,
         origin: 'ask_human',
         kind: asked.kind,
@@ -354,10 +391,10 @@ server.registerTool(
       next: z.string().describe('What you propose to do next, in one or two sentences')
     }
   },
-  async (args) => {
+  async (args, extra) => {
     const sessionId = appEnv('SESSION_ID') ?? ''
     try {
-      const resolution = await rpc('question.ask', {
+      const resolution = await held(extra, 'question.ask', {
         sessionId,
         origin: 'checkpoint',
         kind: 'choice',
@@ -394,10 +431,10 @@ server.registerTool(
       'according to project policy. Nothing else marks a task complete.',
     inputSchema: { summary: z.string().describe('One line: what was done') }
   },
-  async (args) => {
+  async (args, extra) => {
     const sessionId = appEnv('SESSION_ID') ?? ''
     try {
-      await rpc('agent.complete', { sessionId, summary: args.summary })
+      await held(extra, 'agent.complete', { sessionId, summary: args.summary })
       return { content: [{ type: 'text' as const, text: 'Recorded. The controller is landing the work.' }] }
     } catch (err) {
       return {
@@ -517,10 +554,10 @@ server.registerTool(
         )
     }
   },
-  async (args) => {
+  async (args, extra) => {
     const sessionId = appEnv('SESSION_ID') ?? ''
     try {
-      const result = await rpc('agent.requestDirectory', {
+      const result = await held(extra, 'agent.requestDirectory', {
         sessionId,
         path: args.path,
         reason: args.reason,
@@ -593,10 +630,10 @@ server.registerTool(
         )
     }
   },
-  async (args) => {
+  async (args, extra) => {
     const sessionId = appEnv('SESSION_ID') ?? ''
     try {
-      const result = await rpc('agent.land', {
+      const result = await held(extra, 'agent.land', {
         sessionId,
         ...(args.summary ? { summary: args.summary } : {}),
         ...(args.finishPolicy ? { finishPolicy: args.finishPolicy } : {}),
@@ -1184,13 +1221,14 @@ if (TIER === 'controller') {
  */
 async function answerNativeQuestions(
   sessionId: string,
-  askedList: NativeQuestion[]
+  askedList: NativeQuestion[],
+  extra?: ToolExtra
 ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
   const replies: string[] = []
   for (const asked of askedList) {
     const kind = asked.options.length === 0 ? 'text' : asked.multiSelect ? 'multi' : 'choice'
     try {
-      const resolution = await rpc('question.ask', {
+      const resolution = await held(extra, 'question.ask', {
         sessionId,
         origin: 'native_tool',
         kind,

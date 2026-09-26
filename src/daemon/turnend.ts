@@ -10,7 +10,7 @@ import {
 import type { Session } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
 import { voidApprovalsForSession } from './approvals.js'
-import { fileParkedQuestion, parkQuestionsForSession } from './questions.js'
+import { fileParkedQuestion, parkQuestionsForSession, parkQuestionsForTurnEnd } from './questions.js'
 import { compactionsForTask } from './compaction.js'
 import { addMessage, creditRunListUsd, getTask, isIntegrationParent, runForSession, runsFor, taskOfSession } from './tasks.js'
 import {
@@ -293,6 +293,10 @@ export async function onStreamResult(
     costUsd?: number | null
   }
 ): Promise<void> {
+  // ⛔ **First of all.** A `result` means the turn is over, so no tool call in it is still holding a
+  // question, whichever branch below this turn takes — an interrupted one included, since
+  // `aborted_tools` is the tool call being cut off. See `parkQuestionsForTurnEnd`.
+  parkQuestionsForTurnEnd(session.id)
   // ⭐ t638: Claude acknowledges the preemption control frame with `aborted_tools`. That ended the
   // interrupted work turn, not its still-live JSONL conversation; `/compact` was already queued
   // behind it. Do not clear the queued prompt's housekeeping mark or close the session here.

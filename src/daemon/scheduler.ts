@@ -2502,6 +2502,28 @@ async function warnBeforeQuotaPreempt(
 }
 
 /**
+ * How long a task may read `running` with no open run before a person is handed it.
+ *
+ * ⚠️ Only a grace for writes in flight: dispatch opens the run first, so a correct path is never
+ * seen run-less at all. A minute is several ticks, and far short of the hour t708 waited.
+ */
+export const RUNLESS_AFTER_MS = 60 * 1000
+
+/** Exported for its test. `updatedAt` is when the status was written — the claim being judged. */
+export function runlessOverdue(updatedAt: number, now = Date.now(), after = RUNLESS_AFTER_MS): boolean {
+  return now - updatedAt > after
+}
+
+function handRunlessToHuman(task: Task): void {
+  const why =
+    'no run was open, so nothing was working on this. An answer given just before may not have ' +
+    'reached the agent; reply here to start a new run.'
+  log.warn(`t${task.seq} was running with no open run; handing it to a person`)
+  addMessage(task.id, 'system', 'Nothing was running this — over to you', null, [], { detail: `It read as running, but ${why}` })
+  setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
+}
+
+/**
  * ⛔ Runs before dispatch on every tick, and costs nothing: every input is already in the database.
  *
  * The three failures worth acting on are all *cost* failures - a window about to close on live work,
@@ -2516,7 +2538,16 @@ async function runWatchdogs(): Promise<void> {
   for (const task of listTasks()) {
     if (task.status !== 'running') continue
     const run = runsFor(task.id).find((r) => !r.endedAt)
-    if (!run?.sessionId) continue
+    // ⛔ **`running` with no run is a claim nothing is making good on.** Every dispatch opens its run
+    // before it writes the status, so past a moment's grace this can only be a status set on
+    // evidence that has since gone — t708 (2026-09-26) sat here for an hour behind an answer
+    // delivered into a tool call that had already given up, and nothing below looks at a task with
+    // no run. It is handed to a person, who is the only one with anything left to say to it.
+    if (!run) {
+      if (runlessOverdue(task.updatedAt)) handRunlessToHuman(task)
+      continue
+    }
+    if (!run.sessionId) continue
     // ⛔ Already wrapping up. Every check below is still true of this run and will stay true until it
     // ends, so without this the watchdogs re-fire on it every tick for the whole grace period.
     if (preempting.has(run.id)) continue

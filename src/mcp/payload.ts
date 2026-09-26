@@ -122,3 +122,36 @@ export function describeTarget(input: unknown): string {
   }
   return ''
 }
+
+/** What `keepAlive` needs from a tool call's `extra`: the token it was issued, and a way to notify. */
+export interface ProgressChannel {
+  _meta?: { progressToken?: string | number }
+  sendNotification: (notification: {
+    method: 'notifications/progress'
+    params: { progressToken: string | number; progress: number; message?: string }
+  }) => Promise<void>
+}
+
+/**
+ * Say every `everyMs` that a held call is still alive, until the returned function is called.
+ *
+ * ⚠️ Only when the client sent a `progressToken`: progress for a token nobody issued is a protocol
+ * error, and a client that did not ask has no idle clock to reset. `progress` rises by one each beat,
+ * because the protocol requires it to increase. A beat that cannot be sent is dropped — it changes
+ * nothing about the answer being waited for.
+ */
+export function keepAlive(extra: ProgressChannel | undefined, everyMs: number): () => void {
+  const progressToken = extra?._meta?.progressToken
+  if (!extra || progressToken === undefined) return () => {}
+  let progress = 0
+  const timer = setInterval(() => {
+    progress += 1
+    extra
+      .sendNotification({
+        method: 'notifications/progress',
+        params: { progressToken, progress, message: 'still waiting' }
+      })
+      .catch(() => {})
+  }, everyMs)
+  return () => clearInterval(timer)
+}

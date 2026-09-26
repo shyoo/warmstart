@@ -129,7 +129,15 @@ t249 and t254, 2026-09-06 — the same run left open for forty-five minutes, twi
 
 ⚠️ `ask_human` blocks until somebody answers **or the session's prompt cache expires**. That is
 deliberate: an answer arriving while the session is warm costs a cache read, where the same answer
-after a restart costs a full rebuild. ⛔ It replaced `request_human`, which routed through the approval
+after a restart costs a full rebuild. ⛔ **So the server beats while it waits.** Claude Code aborts a
+stdio call silent for 1800s — well inside that hour — and every call that can wait on a person or on
+the checks (`approve`, `ask_human`, `checkpoint`, `request_directory`, `land_work`, `task_complete`)
+sends `notifications/progress` every 60s (`keepAlive`, [`adapters.md`](adapters.md)). ⛔ And the daemon
+does not trust its waiter alone: a turn's `result` parks any question still open in that session
+(`parkQuestionsForTurnEnd`), and an answer reaches a waiter only while the run that asked is still
+open — otherwise it is a parked answer and re-queues the task. t708 (2026-09-26) is what both cost:
+the CLI gave up at 30 minutes, the answer 51s later was delivered into nothing, and the task read
+`running` with no run. ⛔ It replaced `request_human`, which routed through the approval
 path — an agent asking *"OAuth, session cookies, or magic link?"* got back `The operator agreed.`
 It supports multiple selection via `multi_select: true` (or `multiSelect`), extracts embedded XML
 attributes, and detects multi-select intent from phrasing.

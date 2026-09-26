@@ -130,7 +130,8 @@ escalateStale()         approvals past their deadline
 askForTitle()           at most one title consult; free, changes nothing this tick
 sweepTrunkLeases()      a trunk lease whose task has settled goes back
 retryQueuedLandings()   the ONLY thing that ends a landing_queued hold (trunk free ⇒ land, in background)
-runWatchdogs()          preemption, stall, runaway, finish-overdue — BEFORE new work
+runWatchdogs()          preemption, stall, runaway, finish-overdue, `running` with no open run
+                        (past RUNLESS_AFTER_MS, over to a person — t708) — BEFORE new work
   for each ready task, in schedulingOrder:
     kind === 'plan'  → askForPlan(), never dispatch
     poolPressure()   → hold (before chooseTarget, so contention never costs a consult; asks the

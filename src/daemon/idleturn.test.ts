@@ -148,7 +148,7 @@ beforeAll(async () => {
 beforeEach(() => {
   db.db().exec(
     'delete from runs; delete from sessions; delete from task_messages; delete from tasks;' +
-      ' delete from compactions; delete from settings'
+      ' delete from compactions; delete from settings; delete from questions'
   )
   vi.useFakeTimers({ shouldAdvanceTime: false })
 })
@@ -567,5 +567,138 @@ describe('t254, replayed', () => {
       .get(worker.id) as { n: number }
     expect(open.n).toBe(0)
     expect(tasks.requireRun(run.id).workerId).toBe(worker.id)
+  })
+})
+
+/**
+ * t708, 2026-09-26: the answer that went into a tool call nobody was holding.
+ *
+ * ⛔ Measured from this install's own log and transcript. `ask_human` asked at 22:02:12; Claude Code
+ * 2.1.283 aborted the call at 22:32:12 (*"sent no response or progress for 1800s"*); the agent ended
+ * its turn at 22:32:41; the daemon's waiter, good until the cache deadline at 23:01, took the
+ * operator's answer at 22:33:32 — marked it delivered, and set the task `running` with no run. The UI
+ * read *"waiting for the agent's first words"* for the next hour.
+ */
+describe('a question its turn ended on (t708)', () => {
+  const ask = async (sessionId: string) => {
+    const questions = await import('./questions.js')
+    const pending = questions.askQuestion({
+      sessionId,
+      origin: 'ask_human',
+      kind: 'choice',
+      question: 'Which way now?',
+      options: [
+        { id: 'inline', label: 'Run worker inline in clone' },
+        { id: 'neutralize', label: 'Neutralize the CRL gate' }
+      ]
+    })
+    const [open] = questions.openQuestions()
+    return { questions, pending, question: open! }
+  }
+  const answerByHand = async (id: string) => {
+    const api = await import('./api.js')
+    const handlers = api.buildApi({ version: '1.0.0', startedAt: Date.now(), port: 8080 })
+    return await handlers['question.answer']({ id, optionIds: ['neutralize'] })
+  }
+  const lastHuman = (taskId: string) => tasks.messagesFor(taskId).filter((m) => m.role === 'human').pop()
+
+  it('⭐ a conversation: the late answer starts a new run carrying it, instead of vanishing', async () => {
+    const { task, run, session } = seedRunningTask({ kind: 'conversation' })
+    const { questions, pending, question } = await ask(session.id)
+    expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+
+    await endTurn(session, 'The operator did not respond within the wait window, so I will stop.')
+
+    await expect(pending).resolves.toMatchObject({ status: 'parked' })
+    expect(tasks.requireRun(run.id).endedAt).not.toBeNull()
+    expect(questions.requireQuestion(question.id).parkedAt).not.toBeNull()
+    // ⚠️ Still resting on the question, not overwritten with "your turn".
+    expect(holdReasonOf(task.id)).toContain('Which way now?')
+
+    await answerByHand(question.id)
+
+    // ⛔ `ready`, and the answer undelivered: the next run's prompt is what carries it.
+    expect(tasks.getTask(task.id)?.status).toBe('ready')
+    expect(lastHuman(task.id)?.text).toContain('Neutralize the CRL gate')
+    expect(lastHuman(task.id)?.deliveredAt ?? null).toBeNull()
+  })
+
+  it('a work run: its run is still open, and the answer still restarts the work', async () => {
+    const { task, run, session } = seedRunningTask()
+    const { pending, question } = await ask(session.id)
+    await endTurn(session, 'Stopping until the operator answers.')
+    await expect(pending).resolves.toMatchObject({ status: 'parked' })
+
+    await answerByHand(question.id)
+
+    expect(tasks.getTask(task.id)?.status).toBe('ready')
+    expect(tasks.requireRun(run.id).endedAt).not.toBeNull()
+    expect(lastHuman(task.id)?.deliveredAt ?? null).toBeNull()
+  })
+
+  it('⛔ an answer reaching a waiter whose run has ended is a parked answer, not a live one', async () => {
+    // The guard on its own, with the turn-end park never having run: any path that ends the run
+    // without passing through `onStreamResult` must not hand an answer to a dead tool call.
+    const { task, run, session } = seedRunningTask({ kind: 'conversation' })
+    const { pending, question } = await ask(session.id)
+    tasks.finishRun(run.id, 'completed', 'the turn ended; the conversation is still open')
+
+    const answered = await answerByHand(question.id)
+
+    await expect(pending).resolves.toMatchObject({ status: 'void' })
+    expect(answered.parkedAt).not.toBeNull()
+    expect(tasks.getTask(task.id)?.status).toBe('ready')
+    expect(lastHuman(task.id)?.deliveredAt ?? null).toBeNull()
+  })
+
+  it('leaves alone a status a person set while the question was open', async () => {
+    const { task, session } = seedRunningTask()
+    const { questions, question } = await ask(session.id)
+    tasks.setStatus(task.id, 'paused_user', { assignee: null, holdReason: 'stopped by hand' })
+
+    await endTurn(session)
+
+    expect(questions.requireQuestion(question.id).parkedAt).not.toBeNull()
+    expect(tasks.getTask(task.id)?.status).toBe('paused_user')
+  })
+
+  it('still answers live while the turn is going', async () => {
+    const { task, session } = seedRunningTask()
+    const { pending, question } = await ask(session.id)
+
+    await answerByHand(question.id)
+
+    await expect(pending).resolves.toMatchObject({ status: 'answered' })
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+    expect(lastHuman(task.id)?.deliveredAt).not.toBeNull()
+  })
+})
+
+describe('a task that reads running with no run open', () => {
+  it('⛔ is handed to a person once the grace passes, and only once', async () => {
+    const { task, run } = seedRunningTask({ kind: 'conversation' })
+    tasks.finishRun(run.id, 'completed', 'the turn ended; the conversation is still open')
+    // What the live-answer path used to write over a turn that had already ended.
+    tasks.setStatus(task.id, 'running', { assignee: 'agent', holdReason: null })
+
+    await scheduler.tick()
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+
+    await vi.advanceTimersByTimeAsync(scheduler.RUNLESS_AFTER_MS + 10_000)
+    await scheduler.tick()
+    await scheduler.tick()
+
+    expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+    expect(tasks.getTask(task.id)?.assignee).toBe('human')
+    expect(holdReasonOf(task.id)).toContain('no run was open')
+    const said = tasks.messagesFor(task.id).filter((m) => m.text === 'Nothing was running this — over to you')
+    expect(said).toHaveLength(1)
+  })
+
+  it('does not touch a running task whose run is open', async () => {
+    const { task } = seedRunningTask()
+    await vi.advanceTimersByTimeAsync(scheduler.RUNLESS_AFTER_MS + 10_000)
+    await scheduler.tick()
+    expect(tasks.getTask(task.id)?.status).toBe('running')
   })
 })

@@ -63,7 +63,9 @@ import { cancelTask } from './cancel.js'
  *  2. **It is parked** (D1) — nobody answered before the session's cache expired, so holding the
  *     process stopped paying for itself. The task rests at `awaiting_human` and **the question stays
  *     open**, because it is exactly as good a question as it was a minute ago.
- *  3. **Its session dies** — nothing can consume the answer any more, so it is parked too.
+ *  3. **Its session dies, or its turn ends** — nothing can consume the answer in that tool call any
+ *     more, so it is parked too. The turn ending is the case that bit: the CLI can abandon the call
+ *     while the daemon's waiter is still standing (t708, `parkQuestionsForTurnEnd`).
  */
 
 /**
@@ -355,6 +357,26 @@ function waitFor(id: string, ms: number): Promise<QuestionResolution> {
   })
 }
 
+/**
+ * Is the run that asked this still the one the session is in?
+ *
+ * ⚠️ A question asked with no run (a session that never ran a task) has only its waiter to go on.
+ */
+function askerStillOpen(question: Question): boolean {
+  if (question.runId === null) return true
+  return runForSession(question.sessionId)?.id === question.runId
+}
+
+/** Hand a waiter its resolution, if it still has one, and forget it either way. */
+function resolveWaiter(id: string, resolution: QuestionResolution): void {
+  const waiter = waiters.get(id)
+  const timer = timers.get(id)
+  if (timer) clearTimeout(timer)
+  timers.delete(id)
+  waiters.delete(id)
+  waiter?.(resolution)
+}
+
 // ---------------------------------------------------------------------------- answering
 
 /**
@@ -369,17 +391,33 @@ export function answerQuestion(id: string, answer: QuestionAnswer, by: 'human' =
   const existing = requireQuestion(id)
   if (existing.answeredAt) return existing
 
+  // ⛔ **A waiter is not proof that anybody is still holding the tool call.** It is the daemon's half
+  // of the ask, and the agent's half can go without telling it. Measured on t708, 2026-09-26:
+  // Claude Code 2.1.283 gave up on `ask_human` after its 1800s MCP idle timeout (22:02:12 →
+  // 22:32:12), the agent ended its turn at 22:32:41, and the waiter — good until the cache deadline
+  // at 23:01 — took the operator's answer at 22:33:32. The reply went into a closed tool call, was
+  // marked delivered so no later prompt would carry it, and the task was set `running` with no run
+  // at all: *"waiting for the agent's first words"*, for good. So a waiter counts only while the run
+  // that asked is still the session's open run; otherwise it is dropped and this is a parked answer.
+  const waiter = waiters.get(id)
+  const consumedLive = Boolean(waiter) && askerStillOpen(existing)
+  if (waiter && !consumedLive) resolveWaiter(id, { status: 'void', reply: 'This question is no longer open.', answer: null })
+
   db()
-    .prepare('update questions set answered_at = ?, answer_json = ?, answered_by = ? where id = ?')
-    .run(Date.now(), JSON.stringify(answer), by, id)
+    .prepare(
+      `update questions set answered_at = ?, answer_json = ?, answered_by = ?,
+                            parked_at = coalesce(parked_at, ?) where id = ?`
+    )
+    // ⚠️ Parked as it is answered when nothing live took it, so `question.answer` reads `parkedAt`
+    // and schedules the run that will carry the reply. A question left unparked by a restart (its
+    // waiter died with the old daemon) was answered into nothing the same way.
+    .run(Date.now(), JSON.stringify(answer), by, consumedLive ? null : Date.now(), id)
 
   const answered = requireQuestion(id)
   emit({ type: 'question.answered', question: answered })
 
   const reply = renderAnswer(answered)
-  const waiter = waiters.get(id)
-  const consumedLive = Boolean(waiter)
-  if (waiter) waiter({ status: 'answered', reply, answer })
+  if (consumedLive) waiter?.({ status: 'answered', reply, answer })
 
   // ⛔ Recorded either way, and as a **human** message, because it is one. What differs is
   // only whether it still has to be *delivered*: an answer the waiting agent already took as its
@@ -504,7 +542,7 @@ export function renderAnswer(question: Question): string {
  * two things that changed are that the process waiting for it has stopped being worth holding, and
  * that a person now owns the task. The question is untouched and still answerable.
  */
-function park(id: string, why: string): QuestionResolution {
+function park(id: string, why: string, { hold = true }: { hold?: boolean } = {}): QuestionResolution {
   const question = requireQuestion(id)
   if (question.answeredAt || question.parkedAt) {
     return { status: 'void', reply: 'This question is no longer open.', answer: question.answer }
@@ -518,10 +556,12 @@ function park(id: string, why: string): QuestionResolution {
     // ⚠️ The question itself is already in the thread, written when it was asked. This says
     // only what changed, so a reader is not shown the same sentence twice.
     addMessage(parked.taskId, 'system', 'Still waiting on that decision', null, [], { detail: `${why}.` })
-    setStatus(parked.taskId, 'awaiting_human', {
-      assignee: 'human',
-      holdReason: `the agent asked and is waiting on you: ${parked.question.slice(0, 300)}`
-    })
+    if (hold) {
+      setStatus(parked.taskId, 'awaiting_human', {
+        assignee: 'human',
+        holdReason: `the agent asked and is waiting on you: ${parked.question.slice(0, 300)}`
+      })
+    }
   }
   log.warn(`question ${id.slice(0, 8)} parked: ${why}`)
   // ⛔ A parked question travels on its task's thread; one with no task has nowhere to go, and
@@ -561,13 +601,33 @@ export function parkQuestionsForSession(sessionId: string): number {
   for (const question of openQuestions()) {
     if (question.sessionId !== sessionId) continue
     const resolution = park(question.id, 'the session that asked it ended')
-    waiters.get(question.id)?.(resolution)
-    const timer = timers.get(question.id)
-    if (timer) clearTimeout(timer)
-    timers.delete(question.id)
-    waiters.delete(question.id)
+    resolveWaiter(question.id, resolution)
     parked++
   }
+  return parked
+}
+
+/**
+ * The turn ended, so no tool call in it is still holding a question.
+ *
+ * ⛔ **The vendor's `result` record is the evidence, and the waiter is not.** A tool call can end on
+ * the agent's side without the daemon hearing of it — Claude Code aborts an MCP call that reports
+ * nothing for its idle timeout — and the agent then carries on and finishes its turn. From here on
+ * an answer can only arrive in a *new* run's prompt, which is exactly what a parked question gets.
+ * See `answerQuestion` for what t708 cost while this was missing.
+ *
+ * ⚠️ The status is left alone. Asking already put the task at `awaiting_human`, and anything that
+ * moved it since — a person, a preemption — was deliberate; the turn ending changes neither.
+ */
+export function parkQuestionsForTurnEnd(sessionId: string): number {
+  let parked = 0
+  for (const question of openQuestions()) {
+    if (question.sessionId !== sessionId || question.parkedAt) continue
+    const resolution = park(question.id, 'the agent’s turn ended before an answer arrived', { hold: false })
+    resolveWaiter(question.id, resolution)
+    parked++
+  }
+  if (parked > 0) log.warn(`session ${sessionId.slice(0, 8)}: parked ${parked} question(s) its ended turn left open`)
   return parked
 }
 
@@ -578,11 +638,7 @@ export function voidQuestionsForTask(taskId: string, reason = 'task deleted'): v
   ).map(toQuestion)
   for (const q of open) {
     const resolution = park(q.id, reason)
-    waiters.get(q.id)?.(resolution)
-    const timer = timers.get(q.id)
-    if (timer) clearTimeout(timer)
-    timers.delete(q.id)
-    waiters.delete(q.id)
+    resolveWaiter(q.id, resolution)
     db().prepare('update questions set answered_at = ?, answer_json = ?, answered_by = ? where id = ?')
       .run(Date.now(), JSON.stringify({ optionIds: [], text: reason }), 'system', q.id)
     emit({ type: 'question.answered', question: requireQuestion(q.id) })

@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { describeTarget, failed, questionsFrom, text, type NativeQuestion } from './payload.js'
+import { describe, expect, it, vi } from 'vitest'
+import { describeTarget, failed, keepAlive, questionsFrom, text, type NativeQuestion } from './payload.js'
 
 /**
  * The agent-facing surface, which until now could not be tested at all.
@@ -201,5 +201,74 @@ describe('a tool result', () => {
 
   it('describes a throw that was not an Error', () => {
     expect(failed({ code: 429 }).content[0]?.text).toBe('{"code":429}')
+  })
+})
+
+describe('keepAlive', () => {
+  /**
+   * ⛔ t708: Claude Code aborts an MCP call that is silent for its idle timeout (1800s on 2.1.283),
+   * and `ask_human` is held for up to an hour. A beat is the only thing that resets that clock.
+   */
+  const channel = (progressToken?: string | number) => {
+    const sent: Array<{ progressToken: string | number; progress: number }> = []
+    return {
+      sent,
+      extra: {
+        ...(progressToken === undefined ? {} : { _meta: { progressToken } }),
+        sendNotification: async (n: { params: { progressToken: string | number; progress: number } }) => {
+          sent.push(n.params)
+        }
+      }
+    }
+  }
+
+  it('beats with the issued token and a rising progress count until stopped', () => {
+    vi.useFakeTimers()
+    try {
+      const { sent, extra } = channel(7)
+      const stop = keepAlive(extra, 60_000)
+      vi.advanceTimersByTime(59_999)
+      expect(sent).toHaveLength(0)
+      vi.advanceTimersByTime(120_001)
+      expect(sent).toEqual([
+        { progressToken: 7, progress: 1, message: 'still waiting' },
+        { progressToken: 7, progress: 2, message: 'still waiting' },
+        { progressToken: 7, progress: 3, message: 'still waiting' }
+      ])
+      stop()
+      vi.advanceTimersByTime(600_000)
+      expect(sent).toHaveLength(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stays silent for a client that issued no token', () => {
+    vi.useFakeTimers()
+    try {
+      const { sent, extra } = channel()
+      keepAlive(extra, 60_000)()
+      keepAlive(extra, 60_000)
+      vi.advanceTimersByTime(600_000)
+      expect(sent).toHaveLength(0)
+      expect(() => keepAlive(undefined, 60_000)()).not.toThrow()
+    } finally {
+      vi.clearAllTimers()
+      vi.useRealTimers()
+    }
+  })
+
+  it('shrugs off a beat that could not be sent', async () => {
+    vi.useFakeTimers()
+    try {
+      const stop = keepAlive(
+        { _meta: { progressToken: 'p' }, sendNotification: () => Promise.reject(new Error('closed')) },
+        1000
+      )
+      await vi.advanceTimersByTimeAsync(3000)
+      stop()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
