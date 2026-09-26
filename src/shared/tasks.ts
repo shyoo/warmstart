@@ -39,7 +39,8 @@ export interface ProjectConfig {
    * pool at all, every task takes the trunk lease — see `projectTrunkOnly`. Absent means the
    * default pool, which is what every project did before trunk-only mode existed.
    */
-  workspaces?: { poolSize?: number; root?: string; mode?: WorkspaceMode }
+  /** `managed` is portable; absent preserves older sibling pools. */
+  workspaces?: { poolSize?: number; root?: string; location?: 'managed'; mode?: WorkspaceMode }
   prepare?: string[]
   check?: string[]
   /**
@@ -125,6 +126,8 @@ export interface ProjectPolicyPatch {
    * then derives its own sibling rather than inheriting somebody else's.
    */
   workspaceRoot?: string
+  /** New projects select one location. Existing configs without this key retain sibling pools. */
+  workspaceLocation?: 'managed' | 'custom'
   /** See `ProjectConfig.prompt.orientation`. */
   promptOrientation?: OrientationChoice
   /**
@@ -297,6 +300,7 @@ export interface ProjectCreateRequest {
   scaffoldingGit?: ScaffoldingGitChoice
   /** Empty or absent keeps the derived `<root>_workspaces`. */
   workspaceRoot?: string
+  workspaceLocation?: 'managed' | 'custom'
   policy?: ProjectPolicyPatch
   /** ⚠️ Absent leaves whatever the repo already declared; `[]` is an operator clearing the list. */
   checks?: string[]

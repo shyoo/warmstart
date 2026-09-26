@@ -18,6 +18,7 @@ import { log } from './log.js'
 import {
   addProject,
   defaultWorkspaceRoot,
+  managedWorkspaceRoot,
   detectVcs,
   listProjects,
   policyFor,
@@ -59,11 +60,14 @@ export function workspaceRootReport(
   projectRoot: string,
   chosen: string | undefined,
   /** ⚠️ Excluded from the "taken by" scan, so re-inspecting a project against its own pool is quiet. */
-  exceptProjectId?: string
+  exceptProjectId?: string,
+  location: 'managed' | 'custom' = 'custom'
 ): WorkspaceRootReport {
   const base = canonicalPath(projectRoot)
   const trimmed = chosen?.trim()
-  const path = trimmed ? canonicalPath(resolve(base, trimmed)) : defaultWorkspaceRoot(base)
+  const path = location === 'managed'
+    ? managedWorkspaceRoot(base)
+    : trimmed ? canonicalPath(resolve(base, trimmed)) : defaultWorkspaceRoot(base)
 
   let relativeSpelling: string | null = null
   let state: WorkspaceRootState | null = null
@@ -71,7 +75,7 @@ export function workspaceRootReport(
   let takenBy: string | null = null
 
   try {
-    relativeSpelling = relativeWorkspaceRoot(base, trimmed ?? '')
+    relativeSpelling = location === 'managed' ? null : relativeWorkspaceRoot(base, trimmed ?? '')
   } catch (err) {
     // ⛔ The writer's own refusals, surfaced as a report rather than as a thrown error, because this
     // runs on every keystroke in the form. `relativeWorkspaceRoot` throws for exactly two cases.
@@ -148,6 +152,7 @@ function safeEntries(path: string): string[] {
 export function inspectProjectDirectory(input: {
   root: string
   workspaceRoot?: string
+  workspaceLocation?: 'managed' | 'custom'
 }): ProjectInspection {
   const root = canonicalPath(input.root)
   const exists = existsSync(root)
@@ -176,7 +181,8 @@ export function inspectProjectDirectory(input: {
     docs,
     stack: directory ? detectStack(root) : [],
     proposedChecks: directory ? proposeChecks(root) : [],
-    workspace: workspaceRootReport(root, input.workspaceRoot, registered?.id)
+    workspace: workspaceRootReport(root, input.workspaceRoot, registered?.id,
+      input.workspaceLocation ?? (path === null || config?.workspaces?.location === 'managed' ? 'managed' : 'custom'))
   }
 }
 
@@ -260,8 +266,14 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
   // ⛔ Validated before the project exists. An unusable workspace root is a project that can never
   // claim a workspace, and the form has already been told so — this is the check that makes the
   // refusal true of the RPC and not only of the renderer.
-  if (request.workspaceRoot?.trim()) {
-    const report = workspaceRootReport(root, request.workspaceRoot)
+  const hasConfig = readProjectConfig(root).path !== null
+  const workspaceLocation = request.workspaceLocation ??
+    (request.workspaceRoot?.trim() ? 'custom' : hasConfig ? undefined : 'managed')
+  if (workspaceLocation === 'custom' && !request.workspaceRoot?.trim() && !hasConfig) {
+    throw new Error('a custom workspace directory is required')
+  }
+  if (workspaceLocation === 'managed' || request.workspaceRoot?.trim()) {
+    const report = workspaceRootReport(root, request.workspaceRoot, undefined, workspaceLocation ?? 'custom')
     if (!report.usable) {
       throw new Error(report.note ?? `the workspace directory cannot be used: ${report.path}`)
     }
@@ -281,7 +293,10 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
     configFreshlyWritten = !configExistedBefore && configPath === configFile
     if (request.checks !== undefined) setProjectChecks(project.id, request.checks)
     const policy = { ...request.policy }
-    if (request.workspaceRoot !== undefined) policy.workspaceRoot = request.workspaceRoot
+    if (workspaceLocation !== 'managed' && request.workspaceRoot !== undefined) {
+      policy.workspaceRoot = request.workspaceRoot
+    }
+    if (workspaceLocation !== undefined) policy.workspaceLocation = workspaceLocation
     if (Object.keys(policy).length > 0) await setProjectPolicyAndPool(project.id, policy)
   } catch (err) {
     // ⛔ Reported, not fatal. The project is registered; a policy that did not write is something an

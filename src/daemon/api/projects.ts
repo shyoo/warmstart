@@ -18,12 +18,23 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
     'project.add': (p) => addProject(p),
     'project.relocate': (p) => relocateProject(p.id, p.root),
     'project.inspect': (p) => inspectProjectDirectory(p),
-    'project.workspaceRoot': (p) => workspaceRootReport(p.root, p.workspaceRoot),
+    'project.workspaceRoot': (p) => workspaceRootReport(p.root, p.workspaceRoot, undefined, p.workspaceLocation),
     'project.docTemplates': (p) => ({ docs: proposeProjectDocs(p) }),
     'project.create': (p) => createProject(p),
     'project.reload': (p) => reloadProject(p.id),
     'project.reorder': (p) => reorderProjects(p.ids),
-    'project.archive': (p) => archiveProject(p.id),
+    'project.archive': async (p) => {
+      const project = requireProject(p.id)
+      if (project.config.workspaces?.location === 'managed' && project.vcs === 'git') {
+        try {
+          const result = await prunePoolWorktrees(project)
+          if (result.kept.length > 0) log.info(`${project.name}: kept ${result.kept.length} worktree(s) during archive`)
+        } catch (err) {
+          log.warn(`${project.name}: could not clean managed worktrees during archive:`, err)
+        }
+      }
+      return archiveProject(p.id)
+    },
     'project.writeConfig': (p) => ({ path: writeStarterConfig(p.id) }),
     // ⛔ Resolved here, never in the renderer — see the method's note in protocol.ts.
     'project.flow': (p) => flowWorkspaces(p.projectId),

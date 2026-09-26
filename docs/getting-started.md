@@ -13,6 +13,8 @@ Open **Settings → Workers → Add worker**, choose a CLI and press **Sign in**
 
 Press **+** beside Projects. The wizard inspects the directory, asks about worktrees, the landing branch, finish policy and checks, and changes nothing until **Create**.
 
+For a new project, **Automatic (Warmstart)** keeps one worktree pool per project under `%LOCALAPPDATA%\warmstart\workspaces` on Windows. Choose **Custom directory** to keep that project's pool beside its repository or in another location on the same drive. Each project uses one pool location. Older projects keep their existing sibling pool unless you change the setting; no worktrees are moved silently. Archiving a project prunes idle managed worktrees after rescuing their changes; live trees and trees that cannot be made safe stay in place.
+
 ![New project](images/new-project.png)
 
 ## 3. File a task

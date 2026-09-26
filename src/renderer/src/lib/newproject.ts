@@ -59,7 +59,9 @@ export interface NewProjectDraft {
   name: string
   createDirectory: boolean
   gitInit: boolean
-  /** Empty means the recommended sibling — `<root>_workspaces`. */
+  /** Only one location is used for this project. */
+  workspaceLocation: 'managed' | 'custom'
+  /** Required when workspaceLocation is custom. */
   workspaceRoot: string
   finish: FinishPolicyChoice
   landingTarget: string
@@ -83,6 +85,7 @@ export const EMPTY_DRAFT: NewProjectDraft = {
   createDirectory: false,
   gitInit: false,
   workspaceRoot: '',
+  workspaceLocation: 'managed',
   finish: 'inherit',
   landingTarget: 'main',
   sessionShare: 'inherit',
@@ -148,6 +151,9 @@ export function stepBlockers(
   }
 
   if (step === 'setup') {
+    if (draft.workspaceLocation === 'custom' && !draft.workspaceRoot.trim() && !inspection?.hasConfig) {
+      blockers.push('Choose a custom workspace directory.')
+    }
     if (inspection && !inspection.workspace.usable) {
       blockers.push(inspection.workspace.note ?? 'That workspace directory cannot be used.')
     }

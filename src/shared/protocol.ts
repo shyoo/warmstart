@@ -1879,12 +1879,12 @@ export interface RpcMap {
    * a handful of `existsSync` calls, one directory listing, and one `git rev-parse`.
    */
   'project.inspect': {
-    params: { root: string; workspaceRoot?: string }
+    params: { root: string; workspaceRoot?: string; workspaceLocation?: 'managed' | 'custom' }
     result: ProjectInspection
   }
   /** Just the workspace half of `project.inspect`, for the field that changes on its own. */
   'project.workspaceRoot': {
-    params: { root: string; workspaceRoot?: string }
+    params: { root: string; workspaceRoot?: string; workspaceLocation?: 'managed' | 'custom' }
     result: WorkspaceRootReport
   }
   /**

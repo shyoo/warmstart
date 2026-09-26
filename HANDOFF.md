@@ -6,7 +6,7 @@ Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling,
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-25, **Windows 11**, t715): typecheck, lint and build pass; L1 **4,044 passed, 3 skipped** (238 files) in **103.54s**. L3 **496 checks** (4 skipped; last measured at t704).
+Baseline (2026-09-26, **Windows 11**, t714): typecheck, lint and build pass; L1 **4,047 passed, 3 skipped** (238 files) in **84.03s**. L3 **496 checks** (4 skipped; last measured at t704).
 Earlier Windows baseline: L2 **204 checks** (7 skipped — the two POSIX-only cursor-position checks skip here); L4 **19 checks** against `release/win-unpacked`. ⚠️ The `%TEMP%` figure is
 t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed,
 hardened-runtime bundle. CI is **enabled**, and so is the **Release** workflow.
@@ -23,6 +23,7 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 ## Closed in this cleanup
 
+- **New projects use managed worktree locations by default (t714, 2026-09-26).** The add wizard offers one project pool location: automatic under the local Warmstart app directory (Windows `%LOCALAPPDATA%`) or a custom same-drive directory. `workspaces.location: "managed"` is portable; old configs without it retain sibling pools. Archiving prunes managed pools through the existing safe worktree path and keeps live or unsafe trees. L1 covers distinct paths, portable config, and legacy fallback in `projectsetup.test.ts`. Cross-drive custom roots remain unsupported by the committed relative-path contract.
 - **t714 post-mortem: single-task premature landing and commit provenance (t716, 2026-09-26).**
   (1) **Premature landing on follow-up**: a Single Task paused at `awaiting_human` after the agent asked a question; the human replied, `continueTask` fired, the agent answered the follow-up AND called `task_complete`, and the task landed. This is **correct behavior**: the single-task contract means any human reply is the final unblocking input — the agent proceeds to completion. The user wanted multi-turn clarification, which is the Conversation mode's contract. Recommendation: add a "Convert to Conversation" button when a work task is at `awaiting_human` (changes `task.kind` → `conversation`, `finish_policy` → `inherit`), so a user who realises they need dialogue can switch without cancelling.
   (2) **Commit 5ad7e50 appearing in t714's thread**: `5ad7e50` is t715's commit, already on `main` when t714 was retried. t714's branch was cut from that base and carried **zero commits of its own**. The "weird commit" appeared in the trunk-tripwire warning, which lists commits that reached `main` during the run window. Since t714's branch was empty and `main` included t715's commit, the tripwire fired correctly — but the message listed `5ad7e50` as a commit that appeared, not as a commit t714 authored. No data was wrong; the warning was confusing because the commit predated the retry. No code change needed; no work was misattributed.

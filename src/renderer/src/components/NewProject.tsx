@@ -117,7 +117,8 @@ export function NewProject({
     }
     const seq = ++inspectSeq.current
     const timer = setTimeout(() => {
-      void rpc('project.inspect', { root, workspaceRoot: draft.workspaceRoot.trim() || undefined })
+      void rpc('project.inspect', { root, workspaceRoot: draft.workspaceRoot.trim() || undefined,
+        workspaceLocation: draft.workspaceLocation })
         .then((result) => {
           if (seq !== inspectSeq.current) return
           setInspection(result)
@@ -130,7 +131,7 @@ export function NewProject({
         })
     }, 200)
     return () => clearTimeout(timer)
-  }, [draft.root, draft.workspaceRoot])
+  }, [draft.root, draft.workspaceRoot, draft.workspaceLocation])
 
   /**
    * Fill in the answers the directory itself gives, once, when a new directory is inspected.
@@ -154,6 +155,10 @@ export function NewProject({
       sessionShare: inspection.config?.session?.share ?? current.sessionShare,
       completion: inspection.config?.session?.completion ?? current.completion,
       poolSize: inspection.config?.workspaces?.poolSize ?? current.poolSize,
+      workspaceLocation: inspection.config
+        ? (inspection.config.workspaces?.location === 'managed' ? 'managed' : 'custom')
+        : current.workspaceLocation,
+      workspaceRoot: inspection.config?.workspaces?.root ?? current.workspaceRoot,
       // ⚠️ What the repo already declared beats what the manifests suggest. A committed check list is
       // a decision; a proposal is a guess about a project nobody has run.
       checksText: (inspection.config?.check ?? inspection.proposedChecks).join('\n')
@@ -227,7 +232,8 @@ export function NewProject({
         name: draft.name.trim(),
         createDirectory: draft.createDirectory,
         gitInit: draft.gitInit,
-        workspaceRoot: draft.workspaceRoot.trim(),
+        workspaceRoot: draft.workspaceLocation === 'custom' ? draft.workspaceRoot.trim() : undefined,
+        workspaceLocation: draft.workspaceLocation,
         policy: {
           finish: draft.finish,
           landingTarget: draft.landingTarget.trim(),
@@ -617,12 +623,23 @@ function SetupStep({
         <p className="wizard-sub">
           Directory where isolated git worktrees are stored for parallel task execution.
         </p>
-        <PathField
-          label="Workspace directory"
-          value={draft.workspaceRoot}
-          placeholder={workspace?.path ?? 'Default: ../<project>_workspaces'}
-          onChange={(workspaceRoot) => patch({ workspaceRoot })}
+        <SettingButtonSelect
+          value={draft.workspaceLocation}
+          options={[
+            { value: 'managed', label: 'Automatic (Warmstart)' },
+            { value: 'custom', label: 'Custom directory' }
+          ]}
+          ariaLabel="Workspace location"
+          onChange={(value) => patch({ workspaceLocation: value as 'managed' | 'custom' })}
         />
+        {draft.workspaceLocation === 'custom' && (
+          <PathField
+            label="Workspace directory"
+            value={draft.workspaceRoot}
+            placeholder="Choose a directory"
+            onChange={(workspaceRoot) => patch({ workspaceRoot })}
+          />
+        )}
         {workspace && (
           <p className={workspace.usable ? 'note' : 'warn'}>
             <span className="mono">{workspace.path}</span>
@@ -630,7 +647,8 @@ function SetupStep({
             {workspace.state === 'free' && 'Directory does not exist yet; will be created when first task runs.'}
             {workspace.state === 'empty' && 'Directory exists and is empty.'}
             {workspace.state !== 'free' && workspace.state !== 'empty' && workspace.note}
-            {draft.workspaceRoot.trim() && workspace.relative && (
+            {draft.workspaceLocation === 'managed' && 'Managed by Warmstart. Idle worktrees can be cleaned up safely.'}
+            {draft.workspaceLocation === 'custom' && draft.workspaceRoot.trim() && workspace.relative && (
               <>
                 {' '}
                 Recorded in project.json as <span className="mono">{workspace.relative}</span>.

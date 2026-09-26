@@ -122,6 +122,21 @@ export function dataDir(): string {
   return dir
 }
 
+/** Worktrees are large, local checkouts, so keep them out of the roaming profile. */
+export function managedWorkspacesDir(): string {
+  const override = appEnv('DATA_DIR')
+  if (override?.trim()) return join(override, 'workspaces')
+  const home = homedir()
+  switch (process.platform) {
+    case 'win32':
+      return join(process.env.LOCALAPPDATA ?? join(home, 'AppData', 'Local'), APP_DIR, 'workspaces')
+    case 'darwin':
+      return join(home, 'Library', 'Application Support', APP_DIR, 'workspaces')
+    default:
+      return join(process.env.XDG_DATA_HOME ?? join(home, '.local', 'share'), APP_DIR, 'workspaces')
+  }
+}
+
 export function ensureDir(path: string): string {
   if (/^https?:\/\//i.test(path)) return path
   mkdirSync(path, { recursive: true })

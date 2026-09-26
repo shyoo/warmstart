@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs'
 import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { canonicalPath, samePath } from './fspath.js'
@@ -11,6 +11,7 @@ import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
 import { errorMessage } from '@shared/errors.js'
+import { managedWorkspacesDir } from './paths.js'
 
 /**
  * Projects.
@@ -475,6 +476,14 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
       // directory with a different name then derives its own sibling, which is the whole reason
       // `policyFor` derives it rather than storing it.
       if (rel === null) delete config.workspaces.root
+      if (rel !== null) delete config.workspaces.location
+    }
+    if (patch.workspaceLocation === 'managed') {
+      config.workspaces = { ...config.workspaces, location: 'managed' }
+      delete config.workspaces.root
+    } else if (patch.workspaceLocation === 'custom') {
+      config.workspaces = { ...config.workspaces }
+      delete config.workspaces.location
     }
     if (patch.prepare !== undefined) {
       config.prepare = patch.prepare.map((c) => c.trim()).filter(Boolean)
@@ -514,6 +523,14 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
  */
 export function defaultWorkspaceRoot(root: string): string {
   return canonicalPath(`${canonicalPath(root)}_workspaces`)
+}
+
+/** The path identifies the repository without storing a machine path in project.json. */
+export function managedWorkspaceRoot(root: string): string {
+  const canonical = canonicalPath(root)
+  const digest = createHash('sha256').update(process.platform === 'win32' ? canonical.toLowerCase() : canonical).digest('hex').slice(0, 12)
+  const label = basename(canonical).replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 40) || 'project'
+  return join(managedWorkspacesDir(), `${label}-${digest}`)
 }
 
 /**
@@ -606,7 +623,9 @@ export function policyFor(project: Project): ProjectPolicy {
     // case that was stored — so adding a `workspaces.root` to a project.json silently changed the
     // spelling of every worktree path, and this install ended up with the same directory recorded
     // both ways in `sessions.cwd`.
-    workspaceRoot: c.workspaces?.root
+    workspaceRoot: c.workspaces?.location === 'managed'
+      ? managedWorkspaceRoot(project.root)
+      : c.workspaces?.root
       ? canonicalPath(resolve(project.root, c.workspaces.root))
       : defaultWorkspaceRoot(project.root),
     prepare: c.prepare ?? [],

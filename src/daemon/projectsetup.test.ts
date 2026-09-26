@@ -164,7 +164,7 @@ describe('inspecting a directory before adding it', () => {
     expect(found.workspace.state).toBe('free')
     expect(found.workspace.usable).toBe(true)
     // ⛔ The recommended name, derived once and read by both the resolver and the form.
-    expect(found.workspace.path).toBe(projects.defaultWorkspaceRoot(root))
+    expect(found.workspace.path).toBe(projects.managedWorkspaceRoot(root))
     expect(found.workspace.relative).toBeNull()
   })
 
@@ -200,6 +200,41 @@ describe('inspecting a directory before adding it', () => {
 })
 
 describe('the workspace directory', () => {
+  it('keeps managed pools distinct and the existing sibling default stable', () => {
+    const first = repoDir()
+    const second = repoDir()
+    expect(projects.managedWorkspaceRoot(first)).not.toBe(projects.managedWorkspaceRoot(second))
+    expect(projects.managedWorkspaceRoot(first)).toContain(join(dir, 'workspaces'))
+    const legacy = projects.addProject({ root: first })
+    expect(projects.policyFor(legacy).workspaceRoot).toBe(projects.defaultWorkspaceRoot(first))
+  })
+
+  it('records a managed choice without a machine path and resolves it after reload', () => {
+    const root = repoDir()
+    const project = projects.addProject({ root })
+    const updated = projects.setProjectPolicy(project.id, { workspaceLocation: 'managed' })
+    expect(updated.config.workspaces?.location).toBe('managed')
+    expect(updated.config.workspaces?.root).toBeUndefined()
+    expect(projects.policyFor(projects.reloadProject(project.id)).workspaceRoot)
+      .toBe(projects.managedWorkspaceRoot(root))
+    const sibling = projects.setProjectPolicy(project.id, {
+      workspaceLocation: 'custom', workspaceRoot: projects.defaultWorkspaceRoot(root)
+    })
+    expect(sibling.config.workspaces?.location).toBeUndefined()
+    expect(projects.policyFor(sibling).workspaceRoot).toBe(projects.defaultWorkspaceRoot(root))
+  })
+
+  it('ignores a stale custom path after choosing the managed location', async () => {
+    const root = repoDir()
+    const result = await setup.createProject({
+      root,
+      workspaceLocation: 'managed',
+      workspaceRoot: join(root, 'stale-custom-path')
+    })
+    expect(result.warnings).toEqual([])
+    expect(projects.policyFor(result.project).workspaceRoot).toBe(projects.managedWorkspaceRoot(root))
+  })
+
   it('refuses a directory inside the project, naming why', () => {
     const root = repoDir()
     const report = setup.workspaceRootReport(root, join(root, 'workspaces'))
@@ -292,6 +327,8 @@ describe('creating a project', () => {
     expect((config.landing as Record<string, unknown>).target).toBe('trunk')
     expect((config.session as Record<string, unknown>).share).toBe('on')
     expect((config.workspaces as Record<string, unknown>).poolSize).toBe(4)
+    expect((config.workspaces as Record<string, unknown>).location).toBe('managed')
+    expect((config.workspaces as Record<string, unknown>).root).toBeUndefined()
     expect(config.check).toEqual(['npm run test'])
 
     // The starter files carry the name and the branch that were chosen, not a template's defaults.
