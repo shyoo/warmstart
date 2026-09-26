@@ -1,7 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import {
@@ -4420,7 +4420,7 @@ try {
     'the policy step recommends a managed workspace directory and names it',
     setupStep.includes('Automatic (Warmstart)') &&
       setupStep.includes('Managed by Warmstart.') &&
-      setupStep.includes('\\workspaces\\'),
+      setupStep.includes(`${sep}workspaces${sep}`),
     setupStep.split('\n').find((l) => l.includes('workspaces')) ?? setupStep.slice(0, 200)
   )
   check(
