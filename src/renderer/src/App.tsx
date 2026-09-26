@@ -603,8 +603,9 @@ export function App({
                           }
                         }}
                       >
+                        {/* No count when folded (t709): it read as a second bucket beside the
+                            project's running/awaiting/parked counts. */}
                         {folded ? '▸' : '▾'}
-                        {folded && <span className="nav-count num">{conversations.length}</span>}
                       </span>
                     )}
                   </NavItem>

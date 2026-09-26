@@ -4896,7 +4896,7 @@ try {
   const foldCount = await evaluate(
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.querySelector('.nav-fold')?.innerText.trim() ?? ''`
   )
-  check('the project row folds its conversations away and shows how many are folded', foldedRows.length === 0 && /1/.test(foldCount), `sideRows: ${foldedRows.length}, fold: ${foldCount}`)
+  check('the project row folds its conversations away and draws only the chevron', foldedRows.length === 0 && foldCount === '▸', `sideRows: ${foldedRows.length}, fold: ${foldCount}`)
   await evaluate(
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.querySelector('.nav-fold')?.click()`
   )
