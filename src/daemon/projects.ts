@@ -342,6 +342,20 @@ export function setProjectChecks(id: string, checks: string[]): Project {
 }
 
 /**
+ * Write the post-landing list into the project's committed `project.json`.
+ *
+ * ⚠️ Trimmed and emptied of blanks for the same reason as the check list: an empty string here
+ * is a shell command that runs nothing and fails, which would report a red post-landing step
+ * after every merge on the project.
+ */
+export function setProjectPostLanding(id: string, commands: string[]): Project {
+  return editProjectConfig(id, (config, project) => {
+    config.postLanding = commands.map((c) => c.trim()).filter(Boolean)
+    log.info(`project ${project.name}: ${config.postLanding.length} post-landing command(s) written`)
+  })
+}
+
+/**
  * Read `project.json`, let a caller change part of it, write it back, reload.
  *
  * ⛔ **Narrow on purpose.** It reads what is there, hands the parsed object to one mutator, and
@@ -569,6 +583,7 @@ export interface ProjectPolicy {
   workspaceRoot: string
   prepare: string[]
   check: string[]
+  postLanding: string[]
   /**
    * ⚠️ The pre-2026-08-28 project field, and only a **fallback**. The resolved finish policy
    * chooses the strategy now (`strategyFor`); this is consulted only for `custom`, where the tool is
@@ -630,6 +645,7 @@ export function policyFor(project: Project): ProjectPolicy {
       : defaultWorkspaceRoot(project.root),
     prepare: c.prepare ?? [],
     check: c.check ?? [],
+    postLanding: c.postLanding ?? [],
     landingStrategy: c.landing?.strategy ?? DEFAULTS.landingStrategy,
     landingTarget: c.landing?.target ?? DEFAULTS.landingTarget,
     allowRules: c.permission?.allow ?? [],

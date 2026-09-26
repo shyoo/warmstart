@@ -966,7 +966,8 @@ it to a person with the commits listed, which is the right outcome for evidence 
     "target": "main",
     "finish": "commit-and-merge"
   },
-  "check": ["npm run typecheck", "npm run lint", "npm test", "npm run build"]
+  "check": ["npm run typecheck", "npm run lint", "npm test", "npm run build"],
+  "postLanding": ["./scripts/deploy_dist.sh --go"]
 }
 ```
 
@@ -988,6 +989,13 @@ it to a person with the commits listed, which is the right outcome for evidence 
   Edit them in Project → Settings, or file a task to work them out.
   ⚠️ Keep them fast and deterministic; the heavier
   suites belong in the finishing instruction, where a human or an agent is watching the result.
+- `postLanding` — shell commands run in the trunk checkout **after** a merge lands, in order,
+  stopping at the first failure; a deploy script is the reason this exists. Runs only when the
+  trunk actually moved (`merge-local`, `trunk`, `commit-and-push` onto the project's own
+  target) — a verified-only finish or a pull request runs nothing. ⛔ A red step is reported on
+  the thread with the output and the landing stands: un-landing a merged, retired branch is not
+  a thing the tool can do. Same runner shape as the checks (`spawnEnv` plus the project's
+  `env`, thirty minutes per command). Edit them in Project → Settings, beside the checks.
 
 ⚠️ **`landing.strategy` is the old spelling** and is still read, so an existing file keeps working:
 `auto-land` → `commit-and-push`, `leave-branch` → `await-human`, `pull-request` unchanged. Write

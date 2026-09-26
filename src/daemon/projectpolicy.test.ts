@@ -167,6 +167,24 @@ describe('setting a project’s policy', () => {
   })
 })
 
+describe('post-landing commands', () => {
+  it('resolves to an empty list when the project declares none', () => {
+    expect(projects.policyFor(makeProject()).postLanding).toEqual([])
+    expect(projects.policyFor(makeProject({ check: ['npm test'] })).postLanding).toEqual([])
+  })
+
+  it('writes the spelling policyFor reads, trimmed and emptied of blanks', () => {
+    const project = makeProject()
+    const updated = projects.setProjectPostLanding(project.id, [
+      '  ./scripts/deploy_dist.sh --go  ',
+      '',
+      '   '
+    ])
+    expect(configOnDisk(updated).postLanding).toEqual(['./scripts/deploy_dist.sh --go'])
+    expect(projects.policyFor(updated).postLanding).toEqual(['./scripts/deploy_dist.sh --go'])
+  })
+})
+
 /**
  * ⛔ The cached row is not the config. `projects.config_json` is a copy of a file in the *user's own
  * repo*, and everything the landing gate turns on is read out of it — so the question is not whether

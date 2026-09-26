@@ -1,5 +1,5 @@
 /** Projects: registration, configuration, checks and the flow view. */
-import { addProject, archiveProject, listProjects, relocateProject, reloadProject, reorderProjects, requireProject, setProjectChecks, setProjectPolicy, writeStarterConfig } from '../projects.js'
+import { addProject, archiveProject, listProjects, relocateProject, reloadProject, reorderProjects, requireProject, setProjectChecks, setProjectPolicy, setProjectPostLanding, writeStarterConfig } from '../projects.js'
 import { proposeChecks } from '../projectstack.js'
 import { createProject, inspectProjectDirectory, proposeProjectDocs, workspaceRootReport } from '../projectsetup.js'
 import { flowWorkspaces } from '../flow.js'
@@ -10,7 +10,7 @@ import type { Api, ApiContext } from './support.js'
 type ProjectMethod =
   | 'project.list' | 'project.add' | 'project.relocate' | 'project.inspect' | 'project.workspaceRoot' | 'project.docTemplates'
   | 'project.create' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.writeConfig' | 'project.flow'
-  | 'project.proposeChecks' | 'project.setChecks' | 'project.setPolicy' | 'project.pruneWorktrees'
+  | 'project.proposeChecks' | 'project.setChecks' | 'project.setPostLanding' | 'project.setPolicy' | 'project.pruneWorktrees'
 
 export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
   return {
@@ -40,6 +40,7 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
     'project.flow': (p) => flowWorkspaces(p.projectId),
     'project.proposeChecks': (p) => ({ checks: proposeChecks(requireProject(p.id).root) }),
     'project.setChecks': (p) => setProjectChecks(p.id, p.checks),
+    'project.setPostLanding': (p) => setProjectPostLanding(p.id, p.commands),
     /**
      * ⛔ **The pool follows the policy here, not on some later dispatch.** `poolSize` is only a
      * number in `project.json` until `ensurePool` turns it into worktrees and a Resource capacity,

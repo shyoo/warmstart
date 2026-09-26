@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -1713,4 +1713,103 @@ describe('a trunk that cannot be read because its config names a work tree git c
     expect(readFileSync(config, 'utf8')).not.toMatch(/worktree = /)
     expect(git(root, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main')
   })
+})
+
+/**
+ * Per-project post-landing commands (t722): a project that declares them runs them in its own
+ * trunk checkout after a merge lands, e.g. a deploy script. Real git and real commands
+ * throughout — the question is what runs where, so a stubbed spawn would prove nothing.
+ *
+ * ⛔ `node -e` rather than a shell builtin: the runner uses `shell: true`, which is `cmd.exe`
+ * on Windows and `sh` elsewhere, and neither shares builtins. Node is the one runtime every
+ * platform this suite runs on already has.
+ */
+describe('post-landing commands', () => {
+  const marker = (root: string): string =>
+    `node -e "require('node:fs').writeFileSync('${join(root, 'deployed.txt').replace(/\\/g, '/')}','go')"`
+  const fail = `node -e "process.exit(1)"`
+
+  /** A trunk on `main` plus a worktree holding a branch with one real commit. */
+  function seedPostLanding(branch: string): { project: Project; taskId: string; root: string; ws: string } {
+    seq += 1
+    const root = makeRepo(`postland${seq}`)
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({
+      title: `postland ${seq}`,
+      projectId: project.id,
+      createdBy: { kind: 'human' }
+    })
+    const ws = join(dir, `postland${seq}-ws`)
+    git(root, 'worktree', 'add', '-b', branch, ws, 'main')
+    writeFileSync(join(ws, 'work.txt'), 'agent work\n')
+    git(ws, 'add', '-A')
+    git(ws, 'commit', '-m', 'the agent did the work')
+    return { project, taskId: task.id, root, ws }
+  }
+
+  /** `setProjectPostLanding` writes `project.json` into the trunk, which must be committed:
+   * `merge-local` refuses a trunk with uncommitted files in it. */
+  function declare(project: Project, root: string, commands: string[]): Project {
+    const updated = projects.setProjectPostLanding(project.id, commands)
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'declare the post-landing commands')
+    return updated
+  }
+
+  it('runs after a merge, in the trunk, and says so on the thread', async () => {
+    const branch = 'warmstart/t900-postland'
+    const { project, taskId, root, ws } = seedPostLanding(branch)
+    const updated = declare(project, root, [marker(root)])
+
+    const result = await landing.landTask({
+      project: updated,
+      task: tasks.requireTask(taskId),
+      workspacePath: ws,
+      branch,
+      policy: 'commit-and-merge'
+    })
+
+    expect(result.ok, result.reason).toBe(true)
+    expect(existsSync(join(root, 'deployed.txt'))).toBe(true)
+    expect(tasks.messagesFor(taskId).map(messageBody).join('\n')).toContain('Post-landing')
+  }, 30_000)
+
+  it('a failing step keeps the landing landed, reports, and stops the list', async () => {
+    const branch = 'warmstart/t901-postland-fail'
+    const { project, taskId, root, ws } = seedPostLanding(branch)
+    const updated = declare(project, root, [fail, marker(root)])
+
+    const result = await landing.landTask({
+      project: updated,
+      task: tasks.requireTask(taskId),
+      workspacePath: ws,
+      branch,
+      policy: 'commit-and-merge'
+    })
+
+    // ⛔ The merge already happened: a red deploy step is a message, never an un-landing.
+    expect(result.ok, result.reason).toBe(true)
+    expect(git(root, 'rev-parse', 'main')).toBe(git(root, 'rev-parse', 'HEAD'))
+    expect(existsSync(join(root, 'deployed.txt'))).toBe(false)
+    expect(tasks.messagesFor(taskId).map(messageBody).join('\n')).toContain('Post-landing step failed')
+  }, 30_000)
+
+  it('does not run when nothing merged', async () => {
+    const { project, taskId, root } = seedTask('warmstart/t902-postland-verify')
+    writeFileSync(join(root, 'new.txt'), 'a real change\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'a real change')
+    const updated = declare(project, root, [marker(root)])
+
+    const result = await landing.landTask({
+      project: updated,
+      task: tasks.requireTask(taskId),
+      workspacePath: root,
+      branch: 'warmstart/t902-postland-verify',
+      policy: 'commit-and-verify'
+    })
+
+    expect(result.ok, result.reason).toBe(true)
+    expect(existsSync(join(root, 'deployed.txt'))).toBe(false)
+  }, 30_000)
 })

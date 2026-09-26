@@ -44,6 +44,12 @@ export interface ProjectConfig {
   prepare?: string[]
   check?: string[]
   /**
+   * Shell commands run in the trunk checkout after a merge lands, in order, stopping at the
+   * first failure — e.g. a deploy script. Absent or empty runs nothing. A red step is reported
+   * on the thread; the landing already happened and is never undone by it.
+   */
+  postLanding?: string[]
+  /**
    * ⚠️ `strategy` is the pre-2026-08-28 spelling and is still read, so an existing project.json keeps
    * working. It is migrated to `finish` on load; write `finish` in new files.
    */

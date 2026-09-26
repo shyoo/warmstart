@@ -2311,6 +2311,8 @@ export interface RpcMap {
   'project.proposeChecks': { params: { id: string }; result: { checks: string[] } }
   /** Write the check list into the project's committed `project.json`. */
   'project.setChecks': { params: { id: string; checks: string[] }; result: Project }
+  /** Write the post-landing list into the project's committed `project.json`. */
+  'project.setPostLanding': { params: { id: string; commands: string[] }; result: Project }
   /**
    * Set per-project policy — the tier between the fleet default and the task.
    *

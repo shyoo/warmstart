@@ -621,6 +621,51 @@ async function runChecksNow(
 }
 
 /**
+ * Run the project's post-landing commands in its trunk checkout, once per merged landing.
+ *
+ * ⛔ **The same runner shape as the checks, deliberately.** Operator-declared shell commands run
+ * with `spawnEnv()` plus the project's own `env`, `shell: true`, thirty minutes per command, in
+ * order, stopping at the first failure. The one difference that matters is *when*: checks gate
+ * the merge, these run after it — so a red step here is reported, never un-landed. See the hook
+ * in `landTask`.
+ *
+ * ⚠️ The caller names the checkout: this is the trunk the merge just moved, not the task's
+ * workspace. A deploy script must see the landed trunk, and the pooled worktree may already be
+ * released or reclaimed by the time this runs.
+ */
+export async function runPostLanding(
+  project: Project,
+  cwd: string
+): Promise<{ ok: boolean; output: string; passed: number; failedCommand?: string }> {
+  const policy = policyFor(project)
+  const commands = policy.postLanding
+  const env: Record<string, string> = { ...spawnEnv(), NO_COLOR: '1', FORCE_COLOR: '0' }
+  for (const [k, v] of Object.entries(policy.env)) {
+    env[k] = String(v)
+  }
+  let output = ''
+  let passed = 0
+  for (const command of commands) {
+    try {
+      const result = await spawn.run(command, {
+        cwd,
+        env,
+        shell: true,
+        maxBuffer: 8 * 1024 * 1024,
+        timeout: 30 * 60 * 1000
+      } as never)
+      output += `$ ${command}\n${stripAnsi(result.stdout)}${stripAnsi(result.stderr)}\n`
+      passed += 1
+    } catch (err) {
+      const e = err as { stdout?: string; stderr?: string; message?: string }
+      output += `$ ${command}\n${stripAnsi(e.stdout ?? '')}${stripAnsi(e.stderr ?? '')}${e.message ?? ''}\n`
+      return { ok: false, output: output.slice(-8000), passed, failedCommand: command }
+    }
+  }
+  return { ok: true, output: output.slice(-8000), passed }
+}
+
+/**
  * Run the project's checks against the branch as the agent committed it, and report. Moves nothing.
  *
  * ⛔ The commit is not conditional on the result — the daemon never authors or unwinds one. What the
@@ -1772,6 +1817,49 @@ export function strategyFor(
 export { isTaskLanding }
 
 /**
+ * Run the project's post-landing commands after a merge moved its trunk, and say what happened.
+ *
+ * ⛔ **Only when the trunk actually moved.** `verify-only` and `leave-branch` succeed without
+ * merging anything, `pull-request` lands elsewhere, and `merge-branch` moves a planner branch —
+ * none of those is a new trunk state to act on. `merge-local` can also land into a planner
+ * branch, so the target has to be the project's own trunk as well as the strategy being one
+ * that merges into it. Returns null when there is nothing to run, so the common case posts no
+ * extra line at all.
+ *
+ * ⛔ **A red step is a message, never an un-landing.** The merge already happened and the branch
+ * is retired; failing the task now would claim the work did not land when it did. The task's
+ * status is left exactly as the landing left it.
+ */
+async function runPostLandingIfMerged(
+  ctx: LandingContext,
+  result: LandingResult
+): Promise<{ headline: string; detail: string } | null> {
+  if (!result.ok || result.nothingToLand) return null
+  if (result.strategy !== 'merge-local' && result.strategy !== 'trunk' && result.strategy !== 'auto-land') {
+    return null
+  }
+  if (landingTargetFor(ctx.task, ctx.project) !== policyFor(ctx.project).landingTarget) return null
+  const commands = policyFor(ctx.project).postLanding
+  if (commands.length === 0) return null
+  const run = await runPostLanding(ctx.project, ctx.project.root)
+  if (run.ok) {
+    log.info(`${ctx.project.name}: ${run.passed} post-landing command(s) passed`)
+    return {
+      headline: `Post-landing: ${run.passed} command(s) passed`,
+      detail: commands.map((c) => `$ ${c}`).join('\n')
+    }
+  }
+  log.warn(`${ctx.project.name}: post-landing step failed: ${run.failedCommand}`)
+  return {
+    headline: `Post-landing step failed: ${run.failedCommand ?? 'a command'}`,
+    detail:
+      `${run.output}\n\nThe landing itself stands — the work is on ` +
+      `\`${policyFor(ctx.project).landingTarget}\` and the branch is retired. Re-run the command ` +
+      `by hand in ${ctx.project.root}.`
+  }
+}
+
+/**
  * Land, or fall back honestly.
  *
  * ⛔ Nothing is ever forced. A task that cannot land keeps its branch, gets an `awaiting_human` entry
@@ -1946,8 +2034,15 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     )
     // ⛔ Handed back rather than posted under `quiet`, so one landing puts one *"Landed as …"* line
     // on the thread however many callers want to describe it. See `LandingResult.message`.
-    if (ctx.quiet) result.message = said
-    else say(said.headline, said.detail, 'landing.landed')
+    const post = await runPostLandingIfMerged(ctx, result)
+    if (ctx.quiet) {
+      result.message = post
+        ? { headline: said.headline, detail: `${said.detail}\n\n${post.headline}\n${post.detail}` }
+        : said
+    } else {
+      say(said.headline, said.detail, 'landing.landed')
+      if (post) say(post.headline, post.detail)
+    }
   }
     return result
   } finally {

@@ -91,6 +91,10 @@ export const REMOTE_METHODS = {
   'task.removeDependency': 'deny',
   'project.proposeChecks': 'deny',
   'project.setChecks': 'deny',
+  // ⛔ Denied like every other project-config write — and doubly so here, because this list runs
+  // shell commands after a merge. A phone that could rewrite it could make the next landing on
+  // this project run anything.
+  'project.setPostLanding': 'deny',
   'project.setPolicy': 'deny',
   'project.pruneWorktrees': 'deny',
   'approval.list': 'read',

@@ -106,6 +106,7 @@ export function ProjectSettings({
       <RemoteProjectAccess project={project} />
       <ColdStartPanel project={project} setPolicy={setPolicy} />
       <ChecksPanel project={project} fleetFinish={fleetFinish} />
+      <PostLandingPanel project={project} />
       <ProjectResources project={project} resources={resources} />
     </div>
   )
@@ -844,6 +845,76 @@ function ChecksPanel({
           onClick={() => void fileTask()}
         >
           File a task to work them out
+        </button>
+      </div>
+      {note && <p className="note">{note}</p>}
+    </div>
+  )
+}
+
+/**
+ * The commands that run after work reaches the trunk.
+ *
+ * ⛔ **After the merge, never before it — and a red step here lands nothing and un-lands
+ * nothing.** The checks above gate whether the work may merge; these run once it has, in the
+ * trunk checkout, in order, stopping at the first failure. A failure is reported on the
+ * thread with the output; the task stays landed. An empty list runs nothing, which is every
+ * project on its first day.
+ *
+ * ⚠️ One command per line, like the checks. These are the operator's own commands running with
+ * the daemon's authority — a deploy script, a notification, a mirror push — so they belong to
+ * the project, in its committed `project.json`, exactly like the check list.
+ */
+function PostLandingPanel({ project }: { project: ProjectRecord }): React.JSX.Element {
+  // ⚠️ Joined once and depended on as a string, for the same reason as the checks box above:
+  // the array identity changes on every refresh of an unchanged project.
+  const declaredText = (project.config?.postLanding ?? []).join('\n')
+  const declared = declaredText ? declaredText.split('\n') : []
+  const [text, setText] = useState(declaredText)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<string | null>(null)
+
+  useEffect(() => setText(declaredText), [declaredText])
+
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean)
+  const dirty = lines.join('\n') !== declared.join('\n')
+
+  const save = async (): Promise<void> => {
+    setBusy(true)
+    setNote(null)
+    try {
+      await rpc('project.setPostLanding', { id: project.id, commands: lines })
+      setNote(`Saved ${lines.length} command(s) to project.json.`)
+    } catch (err) {
+      setNote(errorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="panel checks-panel">
+      <header className="panel-head">
+        <div>
+          <h2>Post-landing</h2>
+          <p className="panel-sub">
+            Run in the trunk checkout after a merge lands, in this order, stopping at the
+            first failure. A failure is reported on the thread; the landing stands.
+          </p>
+        </div>
+      </header>
+      <textarea
+        className="text-input checks-input"
+        rows={Math.max(2, lines.length + 1)}
+        value={text}
+        disabled={busy}
+        spellCheck={false}
+        placeholder="./scripts/deploy_dist.sh --go"
+        onChange={(e) => setText(e.target.value)}
+      />
+      <div className="checks-actions">
+        <button className="btn btn--primary" disabled={busy || !dirty} onClick={() => void save()}>
+          {busy ? 'Saving…' : 'Save to project.json'}
         </button>
       </div>
       {note && <p className="note">{note}</p>}
