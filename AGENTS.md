@@ -80,9 +80,9 @@ measurement behind it, in [`docs/architecture.md`](docs/architecture.md) §4. Th
 - **The TUI is for humans; the transcript is for the machine.** Never parse ANSI to determine state.
   One narrow declared exception exists (`usageRefresh.answer: 'screen'`) and it may produce a quota
   reading and nothing else.
-- **The scheduler costs zero tokens.** A loop running every 10s for weeks must bill nothing. The LLM
-  controller is consulted only on discrete judgment events, and is **never in the critical path** —
-  every judgment event needs a deterministic fallback on a timer, written first.
+- **The scheduler costs zero tokens** (one bounded exception: the usage warm-up, once per silent
+  streak). A loop running every 10s for weeks must bill nothing. The LLM controller is consulted only
+  on discrete judgment events, is **never in the critical path**, and needs a timer fallback first.
 - **A decision re-evaluated before its action lands is a loop.** Record the ask *with the evidence
   that would prove it landed*, and re-read before acting on the far side of the wait. Three
   components learned this separately; one sent `/compact` thirteen times in two minutes.

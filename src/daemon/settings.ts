@@ -90,6 +90,15 @@ export const DEFAULT_SETTINGS: Settings = {
   summariseTitles: false,
 
   /**
+   * Whether a usage probe may spend one warm-up turn on an account whose provider publishes nothing.
+   *
+   * ⚠️ Default **on** (t723): the operator asked for the probe itself to end a `Currently
+   * unavailable` streak, twice. Bounded to one trivial turn per streak per account; see
+   * `autoWarmupRefusal`.
+   */
+  autoWarmUsage: true,
+
+  /**
    * What finishing a task means when nothing more specific says otherwise.
    *
    * ⚠️ `agent-lands` matches what the project default has always effectively been, so this is not a

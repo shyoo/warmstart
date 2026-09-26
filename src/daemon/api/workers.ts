@@ -114,7 +114,9 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
       const w = requireWorker(p.id)
       const info = adapter(w.adapterId).info
       if (info.usageRefresh) {
-        await refreshNow(p.id, 0)
+        // ⚠️ A person asking for a number on a silent account gets the warm-up that produces one,
+        // within the same once-per-streak bound the sweep has (t723).
+        await refreshNow(p.id, 0, { autoWarmUp: true })
       } else {
         await probeWorker(p.id).catch((err: unknown) => {
           log.warn(`quota probe failed for ${p.id}:`, err)

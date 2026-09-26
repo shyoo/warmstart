@@ -982,7 +982,9 @@ whose entire design is to be invisible.
   `AdapterFacts`, and `quotaGap`'s hint switches from *start a session and probe again* to the button
   only when one is on offer. ⚠️ Where a warm-up ran and the provider still published nothing, the
   daemon's sentence says a turn was already spent and not to send another — the one state in which
-  "try again" is the wrong advice.
+  "try again" is the wrong advice. Since t723 the probe sends one on its own, once per silent streak,
+  behind the Fleet settings switch **Warm up accounts whose usage is unavailable** (default on); the
+  button remains for a second turn past that bound.
 - ⛔ **A window label names the window, not the card it is on.** Adapters name a quota window by its
   pool *and* its length — `Muse 5h` — because a reading has to be legible wherever it is quoted. On a
   worker card the pool half is the card's own title repeated down the rows, paid for out of the

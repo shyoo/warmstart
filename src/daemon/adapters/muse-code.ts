@@ -168,6 +168,8 @@ const info: AdapterInfo = {
     rows: 30,
     submitDelayMs: 400,
     // ⛔ **The one probe in this app that spends money, and the only adapter that declares one.**
+    // ⭐ Sent by the sweep and by Probe on their own since t723, once per silent streak — see
+    // `autoWarmupRefusal` — as well as by the Warm up button.
     // ⭐ *Inferred*, not measured (2026-09-19): it rests on the 427-sample reading of MuseFirst's own
     // `quota_samples` history described under `usageUnavailable` — every `Currently unavailable`
     // streak begins as a window's `resetsAt` passes and ends with a low first reading, which is this
@@ -192,7 +194,8 @@ const info: AdapterInfo = {
         'freshly reset (or freshly signed-in) account reads "Currently unavailable" however many ' +
         'times it is probed. Warmstart can send one very small turn — a question about the model ' +
         'itself, touching no files — to bring the reading back. ⚠️ It is a real turn on your ' +
-        'subscription, so it is only ever sent when you ask for it.'
+        'subscription. Probes send it on their own at most once until a reading arrives (Fleet ' +
+        'settings can turn that off); this button sends another.'
     }
   },
   // ⛔ Measured on a fresh config root, 2026-09-06: a bare `muse` opens **"Do you trust this
@@ -522,8 +525,8 @@ function parseUsage(screen: string, now: number = Date.now()): QuotaWindow[] | n
  *
  * ⭐ **And that is what `usageRefresh.warmup` offers to end** (t570): if the provider publishes only
  * once a window has been spent in, the cheapest way to a real reading is to spend the smallest turn
- * there is. ⛔ Offered on a button and never taken on a timer — it costs a turn, and the scheduler
- * spends nothing.
+ * there is. Offered on a button since t570, and taken by the probe itself since t723 — at most once
+ * per streak, never beside a run in flight (`autoWarmupRefusal`).
  */
 function usageUnavailable(screen: string): string | null {
   // ⚠️ Unanchored, for the reason `parseUsage` is: through a PTY this panel arrives on one line.

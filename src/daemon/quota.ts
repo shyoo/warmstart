@@ -16,6 +16,7 @@ import { log } from './log.js'
 import { bumpPricingEpoch } from './price.js'
 import { probeSpendFor } from './spend.js'
 import { markRunOverage } from './tasks.js'
+import { accountRefusal } from './eligibility.js'
 
 /**
  * The quota poller.
@@ -266,21 +267,89 @@ export async function refreshUsage(workerId: string, opts: RefreshOptions = {}):
 
 export interface RefreshOptions {
   /**
-   * May this refresh spend a turn to make a silent provider publish?
+   * Did a person ask for this refresh to spend a turn to make a silent provider publish?
    *
-   * ⛔ **Never defaulted true, and never set by anything on a timer.** Only `worker.warmUsage`,
-   * which exists for a person's press, passes it — see `UsageWarmup`. A refresh that arrives here
-   * without it behaves exactly as it always has and bills nothing.
+   * ⛔ Only `worker.warmUsage`, which exists for a person's press, passes it — see `UsageWarmup`.
+   * It skips `autoWarmupRefusal`'s once-per-streak bound, because the operator is the bound. A
+   * refresh without it may still warm up on its own, but only where that function allows (t723).
    */
   warmUp?: boolean
+  /**
+   * May this refresh spend the warm-up turn on its own, where `autoWarmupRefusal` allows?
+   *
+   * ⚠️ Opt-in per caller, not per refresh. The poller's sweep and a person's Probe pass it; the
+   * dispatch gate does not, because a task is about to spend in that window anyway and holding it
+   * behind a warm-up turn buys a reading minutes before the task's own turn would have produced it.
+   */
+  autoWarmUp?: boolean
+}
+
+/**
+ * When this daemon last spent an *automatic* warm-up turn on each account.
+ *
+ * ⛔ The ask, recorded with the evidence that would prove it landed: a reading with windows sampled
+ * after it. Until that evidence exists the ask is not repeated — a warm-up that did not end the
+ * streak would not end it the second time either, and a probe that re-decided on every sweep is
+ * the `/compact`-thirteen-times loop with a bill attached.
+ *
+ * ⚠️ Process-local. A daemon restart forgets it, so a streak that outlives a restart can cost one
+ * more turn; that is one turn per restart, not one per sweep.
+ */
+const autoWarmups = new Map<string, number>()
+
+/** Test seam: `autoWarmups` is process-local state, and a test that seeds a fleet needs it empty. */
+export function forgetAutoWarmups(): void {
+  autoWarmups.clear()
+}
+
+/** Test seam: record an automatic warm-up as though a probe had just sent one. */
+export function noteAutoWarmup(workerId: string, at: number = Date.now()): void {
+  autoWarmups.set(workerId, at)
+}
+
+/**
+ * Why a probe that found the provider silent may *not* spend a warm-up turn on its own, or `null`.
+ *
+ * ⭐ **t723: the operator asked for the probe itself to end a `Currently unavailable` streak.** t570
+ * put the warm-up behind a button and t689 made the button's turn reach the composer, but every
+ * timer probe kept reporting the streak and spending nothing — so the button was the only exit and
+ * nobody was pressing it. This is the bounded version of that ask:
+ *
+ * - ⛔ **Once per streak.** A streak ends with a reading that carries windows; an automatic warm-up
+ *   already sent after the last such reading refuses the next one (`autoWarmups`).
+ * - ⛔ **Never while a run is in flight on the account.** That run is spending in the window itself,
+ *   and a second turn beside it buys nothing but a bill.
+ * - ⛔ **Only on an account `accountRefusal` would hand a turn.** A warm-up is a turn; the one list
+ *   of account gates answers for it as it does for work and judgment.
+ * - ⚠️ The operator's `autoWarmUsage` switch turns the whole thing off; the button still works.
+ */
+export function autoWarmupRefusal(workerId: string): string | null {
+  const w = requireWorker(workerId)
+  if (!adapter(w.adapterId).info.usageRefresh?.warmup) return 'this CLI declares no warm-up turn'
+  if (!settings().autoWarmUsage) return 'automatic warm-up is turned off in Fleet settings'
+  const refused = accountRefusal(w)
+  if (refused) return refused.why
+  const inFlight = db()
+    .prepare('select 1 from runs where worker_id = ? and ended_at is null limit 1')
+    .get(workerId)
+  if (inFlight) return 'a run is in flight on this account and will spend in the window itself'
+  const sent = autoWarmups.get(workerId)
+  if (sent !== undefined && (latestSampleTime(workerId, true) ?? 0) <= sent) {
+    return (
+      `a warm-up turn was already sent automatically at ${new Date(sent).toLocaleTimeString()} and ` +
+      'no reading has arrived since; press Warm up to spend another'
+    )
+  }
+  return null
 }
 
 async function readUsage(workerId: string, opts: RefreshOptions = {}): Promise<DatedQuota> {
   const w = requireWorker(workerId)
   const refresh = adapter(w.adapterId).info.usageRefresh
-  // ⚠️ Both halves asked once, here: the operator's request *and* whether this adapter has anything
-  // to spend it on. Below, `warmup` being non-null is the whole of "was a turn paid for?".
-  const warmup = opts.warmUp ? (refresh?.warmup ?? null) : null
+  // ⚠️ Whether this adapter has anything to spend at all. Whether *this* refresh may spend it is
+  // decided below, only once the provider has said it has nothing — asked any earlier, a probe that
+  // reads a perfectly good panel would be refused for reasons that never mattered.
+  const warmup = refresh?.warmup ?? null
 
   if (!refresh) {
     // Not a failure. Most CLIs have nothing to drive, and saying so beats a probe that quietly
@@ -312,6 +381,8 @@ async function readUsage(workerId: string, opts: RefreshOptions = {}): Promise<D
   // ⚠️ Whether a turn was actually spent, as opposed to offered: it changes what the operator is
   // told, because "probe again later" is the wrong advice to give somebody who has just paid.
   let warmedUp = false
+  // ⚠️ Why a turn was *not* spent where it could have been, so the operator is told what ended it.
+  let notWarmed: string | null = null
   try {
     const session = spawnSession({
       workerId,
@@ -351,9 +422,15 @@ async function readUsage(workerId: string, opts: RefreshOptions = {}): Promise<D
       // confusion is how a diagnostic becomes a bill.
       // ⚠️ In the session already open, not a second one: it is the same account, it is already past
       // its slow TUI start, and a fresh spawn would pay that start twice for one turn.
-      if (driven.unavailable && warmup) {
-        log.info(`warming up ${w.label} with one turn: ${driven.unavailable}`)
+      // ⭐ Asked or automatic (t723): a person's press spends unconditionally; anything else spends
+      // only where `autoWarmupRefusal` allows, which is at most once per silent streak.
+      const auto = !opts.warmUp
+      notWarmed = driven.unavailable && warmup && auto && opts.autoWarmUp ? autoWarmupRefusal(workerId) : null
+      if (driven.unavailable && warmup && (opts.warmUp || (opts.autoWarmUp && !notWarmed))) {
+        log.info(`warming up ${w.label} with one turn${auto ? ' (automatic)' : ''}: ${driven.unavailable}`)
         warmedUp = true
+        // ⛔ Recorded before the turn is sent, so a probe that throws half-way still counts it.
+        if (auto) autoWarmups.set(workerId, Date.now())
         // ⛔ The panel that just drew may still own the keyboard: a prompt typed into it never
         // reaches the composer, no turn runs, and the re-drive reads unavailable again (t689).
         // The adapter declares the key that closes its own view; nothing here names one.
@@ -414,7 +491,9 @@ async function readUsage(workerId: string, opts: RefreshOptions = {}): Promise<D
         ? ' A warm-up turn was sent on this account and the panel still reads the same, so the ' +
           'provider has not published this window yet; leave it and probe again later rather than ' +
           'spending another.'
-        : ''
+        : notWarmed
+          ? ` No warm-up turn was sent: ${notWarmed}.`
+          : ''
       const why = stated
         ? `${w.label}: ${stated}${spent}`
         : `\`${refresh.command}\` was typed into ${w.label} but its usage panel did not appear. ` +
@@ -1436,7 +1515,8 @@ export class QuotaPoller {
           // ⛔ Through the same ledger the dispatch gate uses, so two reasons to refresh one account
           // inside a minute open one terminal between them rather than two. The floor is the
           // caller's: see `refreshNow` and `forcedGapMs`.
-          if (await refreshNow(w.id, this.forcedGapMs(forced, demand))) {
+          // ⭐ The sweep may warm a silent account up on its own (t723); `autoWarmupRefusal` bounds it.
+          if (await refreshNow(w.id, this.forcedGapMs(forced, demand), { autoWarmUp: true })) {
             log.info(`refreshed ${w.label}'s quota: ${forced.why}`)
             continue
           }

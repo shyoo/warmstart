@@ -791,7 +791,9 @@ describe('the capability block', () => {
     /** ⚠️ The price, in the operator's own sentence: this is the whole reason the note exists. */
     it('says what it costs, where a person will read it', () => {
       expect(warmup?.note).toContain('real turn')
-      expect(warmup?.note).toContain('only ever sent when you ask')
+      // ⚠️ t723: the probe may send it on its own, so the note must say when and how to stop it.
+      expect(warmup?.note).toContain('at most once until a reading arrives')
+      expect(warmup?.note).toContain('Fleet settings')
     })
 
     /**

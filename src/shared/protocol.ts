@@ -154,6 +154,17 @@ export interface Settings {
    */
   summariseTitles: boolean
   /**
+   * May a usage probe spend the adapter's declared warm-up turn when the provider says it has no
+   * reading yet? Default **true** (t723).
+   *
+   * ⚠️ The one switch that lets a *probe* bill. On a provider that publishes a window only once
+   * something has been spent in it, no free probe can read a freshly reset account, and the operator
+   * asked for the probe to buy that reading rather than wait for a person's press. It is bounded to
+   * one trivial turn per silent streak per account, never while a run is in flight there, and only
+   * on an account `accountRefusal` would hand a turn — see `autoWarmupRefusal` in quota.ts.
+   */
+  autoWarmUsage: boolean
+  /**
    * What finishing a task means, fleet-wide, for every project that has not said otherwise.
    *
    * ⚠️ The odd one out in this interface, and deliberately so. The three switches above gate an
@@ -1528,10 +1539,13 @@ export interface UsageRefresh {
 /**
  * A turn spent to make a silent provider start publishing its numbers.
  *
- * ⛔ **This is the one probe in this app that costs money, and it is why it may only ever run from
- * a person's own press.** The scheduler spends zero tokens (see the invariant in AGENTS.md); a
- * refresh that quietly sent a prompt every time a window reset would bill a fleet for sitting idle,
- * which is the exact failure that invariant exists to forbid. Nothing on a timer may reach it.
+ * ⛔ **This is the one probe in this app that costs money.** Until t723 it ran only from a person's
+ * press; the operator then asked for the probe itself to end a silent streak, because nobody was
+ * pressing the button and every timer probe reported the same `Currently unavailable`. The poller's
+ * sweep and `worker.probe` may now send it, bounded by `autoWarmupRefusal` in quota.ts to one turn
+ * per silent streak per account, never beside a run in flight, behind the `autoWarmUsage` switch.
+ * ⚠️ That bound is the whole of what keeps this from billing a fleet for sitting idle — a streak
+ * ends only with a reading that carries windows, so widening it is widening a bill.
  *
  * ⚠️ Declared by the adapter, never inferred from its id — an adapter that does not declare this
  * has no warm-up, and the button that offers one is not drawn. A missing feature is a missing
@@ -1787,9 +1801,10 @@ export interface RpcMap {
   /**
    * Spend one small turn on this account, then read its usage panel again.
    *
-   * ⛔ **Separate from `worker.probe` on purpose.** Probe is free and is allowed to run from a
-   * timer; this is neither. A single method with a `warmUp` flag would have put a paid path one
-   * defaulted argument away from every caller that already refreshes quota on a schedule.
+   * ⛔ **Separate from `worker.probe` on purpose.** Probe may spend one warm-up turn per silent
+   * streak on its own (t723); this spends one every time it is pressed, past that bound. A single
+   * method with a `warmUp` flag would have put the unbounded path one defaulted argument away from
+   * every caller that already refreshes quota on a schedule.
    *
    * ⚠️ Refuses, rather than falling back to a free probe, where the worker's adapter declares no
    * `usageRefresh.warmup`: the operator asked for the paid thing and is owed the news that this

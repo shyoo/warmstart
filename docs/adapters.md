@@ -316,15 +316,20 @@ resets. `scoring.ts`'s `inferredFreshWindows` reads that as 0% used (t516).
 
 ⛔ **If a provider publishes only once a window has been spent in, no free probe can ever produce a
 reading on a fresh one.** Since t570 an adapter may declare `usageRefresh.warmup` — a prompt, a
-completion wait, and the sentence a person is shown — and `worker.warmUsage` sends that one small
-turn in the probe session already open, then re-drives `/usage `. Muse Code is the only adapter that
+completion wait, and the sentence a person is shown — and the probe sends that one small turn in
+the probe session already open, then re-drives `/usage `. Muse Code is the only adapter that
 declares one. ⚠️ **Inferred, not measured** (2026-09-19): it rests on the sample reading above, and
 nobody has yet watched a deliberate warm-up turn end a streak. The button says so.
 
 The rules it is bound by, each of which is an invariant rather than a preference:
 
-- ⛔ **Nothing on a timer may reach it.** The scheduler spends zero tokens; `RefreshOptions.warmUp`
-  is passed by `worker.warmUsage` and by nothing else, and `worker.probe` stays free.
+- ⛔ **Once per silent streak when nobody asked** (t723). The operator asked for the probe itself
+  to end a streak, so the poller's sweep and `worker.probe` pass `RefreshOptions.autoWarmUp`, and
+  `autoWarmupRefusal` refuses a second automatic turn until a reading with windows has arrived, any
+  turn while a run is in flight on the account, any account `accountRefusal` refuses, and
+  everything when the **Warm up accounts whose usage is unavailable** fleet switch is off. The
+  refusal is appended to the logged sentence. `worker.warmUsage` (the button) spends past that
+  bound; the dispatch gate and run-bracketing refreshes never warm up.
 - ⛔ **Only where the provider itself said it has nothing** — `driveScreenProbe`'s `unavailable`, the
   adapter's own words. A screen that merely failed to parse is a probe fault, and a turn cannot fix it.
 - ⛔ **Completion is waited out by the clock, never read off the pane.** `driveWarmupTurn` writes the

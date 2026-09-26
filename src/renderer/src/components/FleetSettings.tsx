@@ -83,6 +83,7 @@ export function FleetSettings(): React.JSX.Element {
   const spendCreditsPastLimit = settings?.spendCreditsPastLimit ?? false
   const autoRunawayStop = settings?.autoRunawayStop ?? false
   const summariseTitles = settings?.summariseTitles ?? false
+  const autoWarmUsage = settings?.autoWarmUsage ?? true
   const modelExploration = settings?.modelExploration ?? false
   const modelExplorationRate = settings?.modelExplorationRate ?? 0.1
   const liveNarration = settings?.liveNarration ?? 'summary'
@@ -303,6 +304,25 @@ export function FleetSettings(): React.JSX.Element {
               on={summariseTitles}
               busy={disabled}
               onToggle={() => void save({ summariseTitles: !summariseTitles })}
+            />
+          }
+        />
+
+        {/* ⚠️ The one switch that lets a quota probe bill: one tiny turn per silent streak, on a
+            provider that publishes no usage until something has been spent in the window. */}
+        <SettingRow
+          title="Warm up accounts whose usage is unavailable"
+          description={
+            autoWarmUsage
+              ? 'When a usage probe reads "Currently unavailable", it sends one very small turn on that account and reads the panel again — at most once until a reading arrives, and never while a run is using the account.'
+              : 'A probe that reads "Currently unavailable" reports it and spends nothing; the Warm up button on the worker still sends the turn on request.'
+          }
+          control={
+            <SettingSwitch
+              label="Warm up accounts whose usage is unavailable"
+              on={autoWarmUsage}
+              busy={disabled}
+              onToggle={() => void save({ autoWarmUsage: !autoWarmUsage })}
             />
           }
         />

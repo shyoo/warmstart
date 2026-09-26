@@ -334,13 +334,17 @@ LLM controller is consulted only on discrete judgment events, is **never in the 
 every question has a deterministic fallback on a timer. When you add a judgment event, **write the
 fallback first** — it is the normal path, not the error path.
 
-⚠️ **The usage warm-up is the one probe that bills, and it is a person's press, not a loop.** One
-provider publishes a subscription window only once something has been spent in it, so a freshly
-reset account cannot be read for free at all (`adapters.md`). `usageRefresh.warmup` declares a turn
-small enough to buy that reading; `worker.warmUsage` is the only caller, `RefreshOptions.warmUp`
-defaults false, and the poller, the dispatch gate and `worker.probe` all still spend nothing. ⛔ This
-widens *who may spend*, not *what a timer may do*: the moment anything scheduled can reach it, the
-invariant above is broken.
+⚠️ **The usage warm-up is the one probe that bills, and the one bounded exception to this
+invariant** (t723). One provider publishes a subscription window only once something has been spent
+in it, so a freshly reset account cannot be read for free at all (`adapters.md`).
+`usageRefresh.warmup` declares a turn small enough to buy that reading. Until t723 only a person's
+press (`worker.warmUsage`) could send it; the operator then asked for the probe to do it, because
+every sweep reported `Currently unavailable` and nobody pressed the button. The poller's sweep and
+`worker.probe` now pass `RefreshOptions.autoWarmUp`, and `autoWarmupRefusal` (quota.ts) holds them
+to **one turn per silent streak per account** — a streak ends only with a reading that carries
+windows — never beside a run in flight, only on an account `accountRefusal` passes, and behind the
+`autoWarmUsage` fleet switch. The dispatch gate and the run-bracketing refreshes do not opt in.
+⛔ That bound is the exception; anything that could send a warm-up per sweep breaks the invariant.
 
 ### A decision that triggers an action, re-evaluated before the action lands, is a loop
 

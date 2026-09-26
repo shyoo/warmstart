@@ -894,3 +894,85 @@ describe('vendorSilent: the vendor\'s own "nothing published yet" survives to a 
     expect(quota.lastQuota(worker)?.vendorSilent).toBeUndefined()
   })
 })
+
+/**
+ * ⭐ t723: the probe itself may spend the warm-up turn, because the button was the only exit from a
+ * `Currently unavailable` streak and nobody pressed it. What is pinned here is the *bound* — the
+ * only thing standing between a probe that bills once per reset and one that bills every sweep.
+ */
+describe('automatic usage warm-up', () => {
+  let adapters: typeof import('./adapters/index.js')
+  let installed: () => boolean
+
+  beforeAll(async () => {
+    adapters = await import('./adapters/index.js')
+    installed = adapters.adapter('muse-code').isInstalled
+    // ⚠️ `accountRefusal` asks whether the CLI is on PATH, and CI has none. The gate under test is
+    // the bound, not the host.
+    adapters.adapter('muse-code').isInstalled = () => true
+  })
+
+  afterAll(() => {
+    adapters.adapter('muse-code').isInstalled = installed
+  })
+
+  beforeEach(() => {
+    quota.forgetAutoWarmups()
+    db.db().exec('delete from runs')
+  })
+
+  function silentMuse(label: string): string {
+    const id = seedWorker(label, 'muse-code')
+    enable(id)
+    return id
+  }
+
+  function reading(workerId: string, at: number): void {
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,'5h','Muse 5h',4,null,'cli',?)`
+      )
+      .run(workerId, at)
+  }
+
+  it('allows one turn on a silent account nothing else is using', () => {
+    expect(quota.autoWarmupRefusal(silentMuse('never-warmed'))).toBeNull()
+  })
+
+  it('refuses a second turn in the same streak, and allows one once a reading has ended it', () => {
+    const worker = silentMuse('warmed-once')
+    reading(worker, Date.now() - 60 * MIN)
+    quota.noteAutoWarmup(worker, Date.now() - 10 * MIN)
+    expect(quota.autoWarmupRefusal(worker)).toContain('already sent automatically')
+
+    // The streak ended: a reading with windows arrived after the warm-up.
+    reading(worker, Date.now() - MIN)
+    expect(quota.autoWarmupRefusal(worker)).toBeNull()
+  })
+
+  it('refuses while a run is in flight on the account', () => {
+    const worker = silentMuse('busy')
+    db.db()
+      .prepare('insert into runs (id, worker_id, started_at) values (?,?,?)')
+      .run('run-in-flight', worker, Date.now())
+    expect(quota.autoWarmupRefusal(worker)).toContain('run is in flight')
+  })
+
+  it('refuses an account the eligibility list would not hand a turn', () => {
+    const worker = seedWorker('switched-off', 'muse-code')
+    expect(quota.autoWarmupRefusal(worker)).toContain('disabled')
+  })
+
+  it('refuses when the operator has turned it off', () => {
+    const worker = silentMuse('opted-out')
+    settings.setSetting('autoWarmUsage', false)
+    expect(quota.autoWarmupRefusal(worker)).toContain('turned off')
+  })
+
+  it('refuses on a CLI that declares no warm-up', () => {
+    const worker = seedWorker('no-warmup', 'claude-code')
+    enable(worker)
+    expect(quota.autoWarmupRefusal(worker)).toContain('declares no warm-up')
+  })
+})
