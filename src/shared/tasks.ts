@@ -409,6 +409,16 @@ export function taskTypeLabel(task: Pick<Task, 'kind' | 'mandate' | 'childDefaul
 }
 
 /**
+ * A start time a person set that has not arrived yet — what **Start now** (`task.startNow`, t759)
+ * cancels. A `blocked` task can carry one too, because unmet prerequisites outrank the clock.
+ * ⚠️ `paused_quota` also writes `notBefore`, but that is a quota reset, not a schedule.
+ */
+export function hasPendingSchedule(task: Pick<Task, 'status' | 'notBefore'>, now = Date.now()): boolean {
+  if (task.status === 'scheduled') return true
+  return task.status === 'blocked' && task.notBefore != null && task.notBefore > now
+}
+
+/**
  * One seat at a debate: exactly one account, and optionally the model and effort it argues with.
  *
  * ⛔ **Not `ChildDefaults.workerIds`, which is a closed list the scheduler may pick *from*.** A

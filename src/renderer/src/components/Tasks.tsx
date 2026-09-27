@@ -1,6 +1,6 @@
 import { Fragment, useCallback, useDeferredValue, useEffect, useRef, useState } from 'react'
 import type { Project, PullRequestDelivery, Task, TaskSort, TaskView } from '@shared/tasks'
-import { TASK_VIEW_ORDER, TASK_VIEWS, taskTypeLabel } from '@shared/tasks'
+import { hasPendingSchedule, TASK_VIEW_ORDER, TASK_VIEWS, taskTypeLabel } from '@shared/tasks'
 import type { ModelOptions } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { showsLiveOutput } from '../lib/live'
@@ -1099,6 +1099,20 @@ export function Tasks({
                                 }}
                               >
                                 Queue
+                              </button>
+                            )}
+                            {hasPendingSchedule(task) && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="action-menu-item"
+                                title="Cancel the start time and queue this task now."
+                                onClick={() => {
+                                  setMenuTaskId(null)
+                                  void act(() => rpc('task.startNow', { id: task.id }))
+                                }}
+                              >
+                                Start now
                               </button>
                             )}
                             {hasPriorActions && <div className="action-menu-divider" />}

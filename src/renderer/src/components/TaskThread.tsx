@@ -22,7 +22,8 @@ import {
   type TaskCommit,
   type TaskDiffSummary,
   type TaskMessage,
-  type ModelClass
+  type ModelClass,
+  hasPendingSchedule
 } from '@shared/tasks'
 import type { AdapterInfo, ModelOptions, Session } from '@shared/protocol'
 import type { ManualReview, QualityReview } from '@shared/review'
@@ -387,6 +388,10 @@ function TaskDetail({
   }
   const cancel = async () => {
     await rpc('task.cancel', { id: task.id })
+    await refresh()
+  }
+  const startNow = async () => {
+    await rpc('task.startNow', { id: task.id })
     await refresh()
   }
   // ⭐ One read of the workspace and one worker/model/effort pick, shared by the settle strip above
@@ -1163,13 +1168,28 @@ function TaskDetail({
               />
             </Fact>
             <Fact label="created" className="fact--created">{when(task.createdAt)}</Fact>
-            {task.status === 'scheduled' && task.notBefore && (
+            {/* ⭐ The schedule can be cancelled from where it is shown (t759). A blocked task can
+                carry one too — prerequisites outrank the clock — and would still wait for it after
+                its edges clear, so it is offered there as well. */}
+            {hasPendingSchedule(task, now) && task.notBefore && (
               <Fact label="scheduled">
                 <span title={new Date(task.notBefore).toLocaleString()}>
                   {task.notBefore > now
                     ? `in ${duration(task.notBefore - now)} (${when(task.notBefore)})`
                     : when(task.notBefore)}
                 </span>
+                <button
+                  type="button"
+                  className="task-start-now"
+                  title={
+                    task.status === 'blocked'
+                      ? 'Cancel the start time. It still waits for its prerequisites, then runs at once.'
+                      : 'Cancel the start time and queue this task now.'
+                  }
+                  onClick={() => void startNow()}
+                >
+                  Start now
+                </button>
               </Fact>
             )}
             {task.firstRunAt && <Fact label="started" className="fact--started">{when(task.firstRunAt)}</Fact>}

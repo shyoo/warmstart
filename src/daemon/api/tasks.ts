@@ -14,7 +14,7 @@ import { getSession } from '../sessions.js'
 import { getProject, policyFor, requireProject } from '../projects.js'
 import { deleteUnlandedBranch, retireStrandedBranch } from '../worktrees.js'
 import { cleanUpMergedBranch, pendingDeliveries, reconcilePullRequestDeliveries } from '../deliveries.js'
-import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, setHoldReason, setQuotaOverride, setQuotaPreemptWarning, runsFor, setStatus, setTaskStatsExcluded, setWorkspaceMode, updateTask } from '../tasks.js'
+import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, startScheduledNow, setHoldReason, setQuotaOverride, setQuotaPreemptWarning, runsFor, setStatus, setTaskStatsExcluded, setWorkspaceMode, updateTask } from '../tasks.js'
 import { taskCommits } from '../taskcommits.js'
 import { commitDiffFor, commitFileFor, diffFileFor, diffSummaryFor } from '../taskdiff.js'
 import { cancelTask, deleteBlockers, deleteTask, restoreTask, resumeTask } from '../cancel.js'
@@ -49,7 +49,7 @@ type TaskMethod =
   | 'task.setModel' | 'task.setWorker' | 'task.setPriority' | 'task.land' | 'task.resolveConflict'
   | 'task.resolveRetry' | 'task.resolveChecks' | 'task.resolveCommit' | 'task.message' | 'task.cancel'
   | 'task.resume' | 'task.overrideQuota' | 'task.resolve' | 'task.deleteCheck' | 'task.delete'
-  | 'task.restore' | 'task.promote' | 'task.addDependency' | 'task.removeDependency' | 'approval.list'
+  | 'task.restore' | 'task.promote' | 'task.startNow' | 'task.addDependency' | 'task.removeDependency' | 'approval.list'
   | 'approval.request' | 'approval.answer' | 'approval.rules' | 'approval.addRule' | 'approval.removeRule'
   | 'question.ask' | 'question.list' | 'question.forTask' | 'question.answer' | 'resource.list'
   | 'conversation.list' | 'looseend.list' | 'looseend.retire' | 'looseend.delete' | 'looseend.dismiss'
@@ -657,6 +657,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
     'task.delete': (p) => deleteTask(p.id, { ...(p.hard ? { hard: true } : {}), ...(p.force ? { force: true } : {}) }),
     'task.restore': (p) => restoreTask(p.id),
     'task.promote': (p) => promoteDraft(p.id),
+    'task.startNow': (p) => startScheduledNow(p.id),
     //
     // ⛔ `requireTask` on both ends and the cycle check live in `tasks.ts`, so the error a person
     // sees here is the same one an agent filing a task with `depends_on` sees. There is one rule

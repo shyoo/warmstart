@@ -103,7 +103,7 @@ cancelling · cancelled · completed · failed
 
 ⛔ **Every held status needs something that ends the hold.** `blocked` ← `admitDependents()`, fired by
 `setStatus` on the transition into any settled status and never by a call site, with `admitBlocked()`
-on the tick as the backstop; `scheduled` ← `admitScheduled()`; `paused_quota` ← `resumeQuotaPaused()`, which
+on the tick as the backstop; `scheduled` ← `admitScheduled()`, or a person's **Start now** (`startScheduledNow`, t759), which clears `not_before` and re-admits; `paused_quota` ← `resumeQuotaPaused()`, which
 reads a clock **and** `quotaReleaseFor()`; `landing_queued` ← `retryQueuedLandings()`, which lands the
 branch once the trunk lease is free and the checkout is clean (t401). A new held status owes a releaser, or it is a task nothing
 will ever move.

@@ -30,6 +30,7 @@ import {
   type TaskPage,
   type ProjectActivity,
   DERIVED_TASK_SORTS,
+  hasPendingSchedule,
   projectTrunkOnly,
   type TaskSort,
   type TaskStatus,
@@ -1669,6 +1670,31 @@ export function promoteDraft(id: string): Task {
   const task = requireTask(id)
   if (task.status !== 'draft') return task
   setStatus(id, 'ready')
+  return admit(id)
+}
+
+/**
+ * Drop a scheduled task's start time so it is admitted now (t759).
+ *
+ * ⛔ The schedule is *cleared*, not moved to the present: `admit()` derives `scheduled` from
+ * `not_before` alone, so a start time left in the row would be a second place a later admission
+ * could read it back from. It goes through `admit()` rather than straight to `ready`, so a task with
+ * unmet prerequisites lands at `blocked` and says why, instead of skipping the edge it waits on.
+ *
+ * ⚠️ A `blocked` task carrying a start time is cleared too: unmet prerequisites outrank the clock,
+ * so a task filed with both reads `blocked` and would still wait for its start time after the
+ * edges clear. A `paused_quota` row's `not_before` is a quota reset, not a schedule, and is left
+ * alone; anything else is returned unchanged.
+ */
+export function startScheduledNow(id: string): Task {
+  const task = requireTask(id)
+  if (!hasPendingSchedule(task)) return task
+  db().prepare('update tasks set not_before = null where id = ?').run(id)
+  addMessage(id, 'system', 'Schedule cancelled: started now', null, [], {
+    detail: task.notBefore
+      ? `It was scheduled for ${new Date(task.notBefore).toISOString()}. It is queued now and the scheduler dispatches it when a worker can take it.`
+      : 'It is queued now and the scheduler dispatches it when a worker can take it.'
+  })
   return admit(id)
 }
 

@@ -2280,6 +2280,12 @@ export interface RpcMap {
   'task.delete': { params: { id: string; hard?: boolean; force?: boolean }; result: Task }
   'task.restore': { params: { id: string }; result: Task }
   'task.promote': { params: { id: string }; result: Task }
+  /**
+   * Cancel a task's pending start time and queue it now (t759) — a `scheduled` task, or a `blocked`
+   * one whose start time has not arrived. Prerequisites still hold: a task that waits on another
+   * stays `blocked`, without the clock. Any other task comes back unchanged.
+   */
+  'task.startNow': { params: { id: string }; result: Task }
 
   /**
    * Say by hand that this task waits on another one - and unsay it.

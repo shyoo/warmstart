@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import type { Task } from '@shared/tasks.js'
+import { hasPendingSchedule, type Task } from '@shared/tasks.js'
 
 let dir: string
 let db: typeof import('./db.js')
@@ -145,5 +145,48 @@ describe('scheduled task admission and lifecycle', () => {
     }) as Task
     expect(tCustom.status).toBe('scheduled')
     expect(tCustom.notBefore).toBe(now + 86400 * 1000)
+  })
+})
+
+describe('task.startNow (t759)', () => {
+  it('cancels the schedule, queues the task and says so on its thread', () => {
+    const scheduled = tasks.createTask({ title: 'later', notBefore: Date.now() + 3600 * 1000 })
+    const started = handlers['task.startNow']({ id: scheduled.id }) as Task
+    expect(started.status).toBe('ready')
+    expect(started.notBefore).toBeNull()
+    expect(tasks.messagesFor(scheduled.id).some((m) => m.text === 'Schedule cancelled: started now')).toBe(true)
+    // The cleared start time is what keeps a later admission from parking it again.
+    expect(tasks.admit(scheduled.id).status).toBe('ready')
+  })
+
+  it('still honours prerequisites: a task waiting on another lands at blocked', () => {
+    const prereq = tasks.createTask({ title: 'first' })
+    const scheduled = tasks.createTask({
+      title: 'later, after first',
+      dependsOn: [prereq.id],
+      notBefore: Date.now() + 3600 * 1000
+    })
+    const started = handlers['task.startNow']({ id: scheduled.id }) as Task
+    expect(started.status).toBe('blocked')
+    expect(started.notBefore).toBeNull()
+  })
+
+  it('leaves a task that is not scheduled unchanged', () => {
+    const ready = tasks.createTask({ title: 'now' })
+    const before = tasks.messagesFor(ready.id).length
+    expect((handlers['task.startNow']({ id: ready.id }) as Task).status).toBe('ready')
+    expect(tasks.messagesFor(ready.id)).toHaveLength(before)
+  })
+})
+
+describe('hasPendingSchedule (t759)', () => {
+  it('is a start time a person set that has not arrived, and never a quota reset', () => {
+    const now = 1_000_000
+    expect(hasPendingSchedule({ status: 'scheduled', notBefore: now + 1 }, now)).toBe(true)
+    expect(hasPendingSchedule({ status: 'blocked', notBefore: now + 1 }, now)).toBe(true)
+    expect(hasPendingSchedule({ status: 'blocked', notBefore: now - 1 }, now)).toBe(false)
+    expect(hasPendingSchedule({ status: 'blocked', notBefore: null }, now)).toBe(false)
+    expect(hasPendingSchedule({ status: 'paused_quota', notBefore: now + 1 }, now)).toBe(false)
+    expect(hasPendingSchedule({ status: 'ready', notBefore: null }, now)).toBe(false)
   })
 })
