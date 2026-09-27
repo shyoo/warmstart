@@ -258,7 +258,7 @@ export function PillSelect({
           ariaLabel={ariaLabel}
           onPick={(next) => {
             close()
-            if (next !== value) onChange(next)
+            onChange(next)
           }}
         />
       )}

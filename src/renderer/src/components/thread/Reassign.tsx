@@ -89,7 +89,13 @@ export function pillLabels(input: {
   inheritedLabel: string
   current: CurrentAssignment | null
   currentWorkerLabel: string | null
-}): { workerLabel: string; modelLabel: string; effortLabel: string; currentEffort: boolean } {
+}): {
+  workerLabel: string
+  modelLabel: string
+  effortLabel: string
+  currentEffort: boolean
+  selectedWorkerId: string
+} {
   const { workerId, model, effort, worker, current } = input
   const onCurrent =
     !input.changed && !!current && (!workerId || workerId === current.workerId)
@@ -98,6 +104,8 @@ export function pillLabels(input: {
     ? `Auto effort (${effortLabel(worker.defaultEffort) ?? worker.defaultEffort})`
     : 'Auto effort'
   const currentEffort = onCurrent && !effort && !!current?.effort
+  const selectedWorkerId =
+    onCurrent && !workerId && current?.workerId ? current.workerId : workerId
   return {
     workerLabel: worker
       ? worker.label
@@ -118,7 +126,8 @@ export function pillLabels(input: {
       : currentEffort && current?.effort
         ? (effortLabel(current.effort) ?? current.effort)
         : defaultEffort,
-    currentEffort
+    currentEffort,
+    selectedWorkerId
   }
 }
 
@@ -126,6 +135,11 @@ export interface ReassignChoice {
   workerId: string
   model: string
   effort: string
+  /**
+   * The worker shown as selected by the worker pill's dropdown menu. Matches `workerId` when explicitly
+   * chosen or pinned, or the latest run's worker when left to the scheduler (`onCurrent`).
+   */
+  selectedWorkerId: string
   /** The selection differs from what the task is pinned to now. */
   changed: boolean
   setWorker: (workerId: string) => void
@@ -265,8 +279,16 @@ export function useReassignChoice(
       /* ⛔ Deactivated accounts are not offered: the scheduler would never hand one a turn. The
          account this task is already pinned to stays listed so the pill reads its name. */
       ...fleet
-        .filter((e) => (e.worker.enabled && canWork(e.worker.role)) || e.worker.id === workerId)
-        .map((e) => ({ value: e.worker.id, label: `${e.worker.label} (${e.worker.adapterId})` }))
+        .filter(
+          (e) =>
+            (e.worker.enabled && canWork(e.worker.role)) ||
+            e.worker.id === workerId ||
+            e.worker.id === labels.selectedWorkerId
+        )
+        .map((e) => ({ value: e.worker.id, label: `${e.worker.label} (${e.worker.adapterId})` })),
+      ...(labels.selectedWorkerId && !fleet.some((e) => e.worker.id === labels.selectedWorkerId)
+        ? [{ value: labels.selectedWorkerId, label: labels.workerLabel }]
+        : [])
     ],
     modelOptions: [
       ...(unavailableClass
@@ -323,12 +345,12 @@ export function AssignPills({
       <PillSelect
         className={cls}
         label={choice.workerLabel}
-        value={choice.workerId}
+        value={choice.selectedWorkerId}
         options={choice.workerOptions}
         onChange={choice.setWorker}
         ariaLabel="Reassign worker"
         title={hint}
-        muted={!choice.workerId}
+        muted={!choice.selectedWorkerId}
         disabled={disabled}
       />
       <PillSelect

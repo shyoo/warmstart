@@ -584,6 +584,9 @@ typed:
   **Reassign**: one `task.setWorker` write, then `task.message` with what was typed, or `Continue.`
   when nothing was — `task.message` is the only RPC that continues a resting task and it takes a text.
   On a failed task, explicitly picking Auto worker sets `userPickedWorker` so the composer enables Reassign.
+  The worker pill passes `selectedWorkerId` to `PillSelect` rather than `workerId`: when an unpinned task ran on a worker,
+  the dropdown checkmark and focus match that running worker instead of checking Auto, allowing the operator to click
+  Auto to reassign back to the scheduler (t763). `PillSelect` invokes `onChange` unconditionally on pick.
   The pills are read-only while a run is live, because the pin decides the next dispatch. They start
   where the box does (`.compose-assign`, `padding-left: --compose-attach-w + --sp-2`, t673), not
   right-aligned under Send. ⛔ A pill whose pin is left to the scheduler (Auto worker, an Auto /

@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { PillOptions } from '../Pill'
 import { availableAutoClasses, pillLabels } from './Reassign'
 
 const base = {
@@ -18,7 +20,8 @@ describe('pillLabels (t674)', () => {
       workerLabel: 'Auto worker',
       modelLabel: 'Auto model',
       effortLabel: 'Auto effort',
-      currentEffort: false
+      currentEffort: false,
+      selectedWorkerId: ''
     })
   })
 
@@ -29,6 +32,7 @@ describe('pillLabels (t674)', () => {
       currentWorkerLabel: 'ClaudeFirst'
     })
     expect(labels.workerLabel).toBe('ClaudeFirst')
+    expect(labels.selectedWorkerId).toBe('w1')
     expect(labels.modelLabel).not.toMatch(/auto/i)
     expect(labels.modelLabel).toMatch(/opus/i)
     expect(labels.effortLabel).toBe('High')
@@ -45,6 +49,7 @@ describe('pillLabels (t674)', () => {
       currentWorkerLabel: 'CodexFirst'
     })
     expect(labels.workerLabel).toBe('CodexFirst')
+    expect(labels.selectedWorkerId).toBe('w2')
     expect(labels.modelLabel).not.toMatch(/auto/i)
     expect(labels.effortLabel).not.toMatch(/auto/i)
   })
@@ -59,6 +64,8 @@ describe('pillLabels (t674)', () => {
       current: { workerId: 'w1', model: 'claude-opus-5-5', effort: 'high' },
       currentWorkerLabel: 'ClaudeFirst'
     })
+    expect(labels.workerLabel).toBe('ClaudeFirst')
+    expect(labels.selectedWorkerId).toBe('w1')
     expect(labels.modelLabel).toMatch(/sonnet/i)
     expect(labels.effortLabel).toBe('Low')
   })
@@ -73,6 +80,7 @@ describe('pillLabels (t674)', () => {
       currentWorkerLabel: 'ClaudeFirst'
     })
     expect(labels.workerLabel).toBe('CodexFirst')
+    expect(labels.selectedWorkerId).toBe('w2')
     expect(labels.modelLabel).toBe('Auto Model')
     expect(labels.currentEffort).toBe(false)
   })
@@ -85,6 +93,7 @@ describe('pillLabels (t674)', () => {
       currentWorkerLabel: 'ClaudeFirst'
     })
     expect(labels.workerLabel).toBe('Auto worker')
+    expect(labels.selectedWorkerId).toBe('')
     expect(labels.modelLabel).toBe('Auto model')
   })
 
@@ -97,6 +106,77 @@ describe('pillLabels (t674)', () => {
       currentWorkerLabel: 'ClaudeThird'
     })
     expect(labels.workerLabel).toBe('Auto worker')
+    expect(labels.selectedWorkerId).toBe('')
+  })
+})
+
+describe('worker dropdown menu selection (t763)', () => {
+  const options = [
+    { value: '', label: 'Auto (scheduler decides)' },
+    { value: 'w1', label: 'ClaudeFirst (claude-code)' },
+    { value: 'w2', label: 'ClaudeSecond (claude-code)' },
+    { value: 'w3', label: 'ClaudeThird (claude-code)' }
+  ]
+
+  it('shows the running worker as selected and Auto unselected when task ran under Auto worker', () => {
+    // When a task ran under Auto worker on ClaudeThird (w3), pillLabels yields selectedWorkerId === 'w3'.
+    const labels = pillLabels({
+      ...base,
+      workerId: '',
+      changed: false,
+      current: { workerId: 'w3', model: 'claude-opus-5-5', effort: 'high' },
+      currentWorkerLabel: 'ClaudeThird'
+    })
+    expect(labels.workerLabel).toBe('ClaudeThird')
+    expect(labels.selectedWorkerId).toBe('w3')
+
+    const html = renderToStaticMarkup(
+      <PillOptions
+        options={options}
+        value={labels.selectedWorkerId}
+        ariaLabel="Reassign worker"
+        onPick={() => {}}
+      />
+    )
+
+    // ClaudeThird must be marked selected with the checkmark
+    expect(html).toContain('data-value="w3"')
+    expect(html).toMatch(/data-value="w3"[^>]*aria-selected="true"/)
+    expect(html).toMatch(/data-value="w3"[^>]*pill-option--on/)
+
+    // Auto (scheduler decides) must NOT be marked selected or checked
+    expect(html).toMatch(/data-value=""[^>]*aria-selected="false"/)
+    expect(html).not.toMatch(/data-value=""[^>]*pill-option--on/)
+  })
+
+  it('shows Auto as selected and running worker unselected once operator picks Auto worker', () => {
+    // Once operator picks Auto, changed is true, and selectedWorkerId reverts to ''
+    const labels = pillLabels({
+      ...base,
+      workerId: '',
+      changed: true,
+      current: { workerId: 'w3', model: 'claude-opus-5-5', effort: 'high' },
+      currentWorkerLabel: 'ClaudeThird'
+    })
+    expect(labels.workerLabel).toBe('Auto worker')
+    expect(labels.selectedWorkerId).toBe('')
+
+    const html = renderToStaticMarkup(
+      <PillOptions
+        options={options}
+        value={labels.selectedWorkerId}
+        ariaLabel="Reassign worker"
+        onPick={() => {}}
+      />
+    )
+
+    // Auto (scheduler decides) must be marked selected with the checkmark
+    expect(html).toMatch(/data-value=""[^>]*aria-selected="true"/)
+    expect(html).toMatch(/data-value=""[^>]*pill-option--on/)
+
+    // ClaudeThird must NOT be marked selected
+    expect(html).toMatch(/data-value="w3"[^>]*aria-selected="false"/)
+    expect(html).not.toMatch(/data-value="w3"[^>]*pill-option--on/)
   })
 })
 
