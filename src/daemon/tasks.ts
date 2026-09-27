@@ -77,6 +77,7 @@ interface TaskRow {
   assignee_hint: string | null
   last_run_worker_id?: string | null
   last_run_model?: string | null
+  last_run_effort?: string | null
   grading_worker_id?: string | null
   manual_review_count?: number | null
   mandate_json: string
@@ -150,6 +151,8 @@ const TASK_SELECT = `
       order by r.started_at desc limit 1) as last_run_worker_id,
     (select r.model from runs r where r.task_id = t.id and r.kind = 'work'
       order by r.started_at desc limit 1) as last_run_model,
+    (select s.effort from runs r left join sessions s on s.id = r.session_id where r.task_id = t.id and r.kind = 'work'
+      order by r.started_at desc limit 1) as last_run_effort,
     (select q.reviewer_worker_id from quality_reviews q
       where q.task_id = t.id and q.status = 'pending'
       order by q.created_at desc limit 1) as grading_worker_id,
@@ -280,6 +283,7 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     activeSince: timing.activeSince,
     ranOn: r.last_run_worker_id ?? null,
     ranModel: r.last_run_model ?? null,
+    ranEffort: r.last_run_effort ?? null,
     deletedAt: r.deleted_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at

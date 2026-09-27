@@ -536,7 +536,7 @@ dispatches. The column drew the account default through the whole of `dispatchin
 spent claiming a worktree and running `prepare` — so a row read *GPT 5.6 Sol* and then *GPT 5.6
 Terra* the instant its first run was recorded, which reads as the model being switched underneath the
 operator (t336). It now says **router picks**, with the count of routable models in the tooltip, and
-`ranModel` still wins the moment a run has one. ⚠️ The thread's model row had this right first
+`ranModel` / `ranEffort` still win the moment a run has one (t743). ⚠️ The thread's model row had this right first
 (*chosen at dispatch from N routable models*); the fix was to make the list ask the *same* predicate
 — `routerPicksModel` in `taskview.tsx` — rather than to write the test out a second time, because a
 row and the page it opens naming different models is its own bug.
@@ -544,7 +544,7 @@ row and the page it opens naming different models is its own bug.
 ⭐ **The ledger says what a task is on now and what it will be on next as two rows each, not one row
 with a caption (t564).** `cur worker` (the live session's account, else `ranOn`) sits over
 `next worker` (the pin picker), and `cur model` (`ModelFact`, the transcript's answer with its
-effort) over `next model` (the model and effort pickers, with the cache-cost `(i)` in their row). A
+effort from the live session or `ranEffort`, t743) over `next model` (the model and effort pickers, with the cache-cost `(i)` in their row). A
 task that has never run has no *cur* and reads plain `worker` / `model`, where the model row's
 headline still says what the next dispatch would ask for. The old shape — a picker with *last run on
 X* under it, a headline with *(Current)* and a `next` pill after it — read as one control, and the

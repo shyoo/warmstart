@@ -102,6 +102,7 @@ function draftTask(input: DebatePreviewInput): Task {
     activeSince: null,
     ranOn: null,
     ranModel: null,
+    ranEffort: null,
     deletedAt: null,
     createdAt: Date.now(),
     updatedAt: Date.now()

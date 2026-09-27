@@ -286,6 +286,11 @@ at all. Both the Worker column and the thread's model row test this with one pre
 task at `dispatching` read *GPT 5.6 Sol* and then *GPT 5.6 Terra* seconds later, which looks exactly
 like a model being switched underneath the operator (t336, 2026-09-09).
 
+**`ranEffort`** — *the effort the same run was dispatched with*, derived from the same run's session that
+`ranModel` and `ranOn` come from. ⛔ Never re-resolved: what the task or account's current defaults would
+resolve to is what a future run would ask for, not what actually metered the past run. Populated on `Task`
+from `last_run_effort` in `TASK_SELECT` (t743).
+
 **Approval** — *an interrupt on a session*, not a task: a permission or tool gate that blocks one
 live session, with a closed answer set supplied by the adapter and a deadline equal to that session's
 cache expiry. Answered by project policy where possible, by one keystroke on the **Attention bar**

@@ -1194,22 +1194,27 @@ describe('answering a task that is waiting on a person', () => {
     // ⚠️ A run's model is snapshotted from its session at dispatch, and is legitimately null where
     // the session has not learned one yet; the UI falls back to what the next dispatch would ask
     // for and says which it is showing.
-    const { task, worker } = seedRunningTask()
+    const { task, worker, session } = seedRunningTask()
     db.db().prepare('update runs set model = ? where task_id = ?').run('claude-sonnet-5', task.id)
+    db.db().prepare('update sessions set effort = ? where id = ?').run('high', session.id)
     expect(tasks.getTask(task.id)?.ranModel).toBe('claude-sonnet-5')
+    expect(tasks.getTask(task.id)?.ranEffort).toBe('high')
     expect(tasks.getTask(task.id)?.ranOn).toBe(worker.id)
 
     // A second, newer run wins - the same rule `ranOn` follows.
+    const session2 = seedSession('5e551011-0000-4000-8000-000000000099', worker.id, {})
+    db.db().prepare('update sessions set effort = ? where id = ?').run('low', session2.id)
     const later = tasks.startRun({
       taskId: task.id,
       workerId: worker.id,
-      sessionId: null,
+      sessionId: session2.id,
       projectId: null,
       quotaUnverified: true,
       costModelId: null
     })
     db.db().prepare('update runs set model = ? where id = ?').run('claude-opus-5', later.id)
     expect(tasks.getTask(task.id)?.ranModel).toBe('claude-opus-5')
+    expect(tasks.getTask(task.id)?.ranEffort).toBe('low')
   })
 
   it('is idempotent, so a double click is not a second decision', async () => {

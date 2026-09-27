@@ -148,4 +148,19 @@ describe('resolving effort, where the CLI can be told one', () => {
     expect(r.effort).toBe('low')
     expect(r.effortSource).toBe('worker')
   })
+
+  it('prefers the route effort matching modelClass when the task specifies a class', () => {
+    const acc = {
+      defaultModel: 'claude-opus-5',
+      defaultEffort: 'medium',
+      modelRoutes: rows(['claude-opus-5', 'high'])
+    }
+    const r = resolveModelChoice(
+      { model: 'claude-opus-5', modelClass: 'high' },
+      acc,
+      true
+    )
+    expect(r.effort).toBe('high')
+    expect(r.effortSource).toBe('worker')
+  })
 })

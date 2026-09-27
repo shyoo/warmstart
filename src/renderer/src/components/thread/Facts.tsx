@@ -21,15 +21,18 @@ import { modelFacts } from '../../lib/taskview'
 export function ModelFact({
   session,
   ran,
+  ranEffort,
   requested
 }: {
   session: Session | null
   ran: string | null
+  ranEffort?: string | null
   requested: { model: string | null; effort: string | null; source: string; undecided?: boolean }
 }): React.JSX.Element {
   const { headline, note } = modelFacts({
     observed: session ? { model: session.model ?? null, effort: session.effort ?? null } : null,
     ran,
+    ranEffort,
     requested
   })
   return (

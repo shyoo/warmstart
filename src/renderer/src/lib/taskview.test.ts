@@ -780,6 +780,7 @@ describe('the model under the account, in the Worker column', () => {
   const routed = (over: Partial<Routed> = {}): Routed => ({
     ranOn: null,
     ranModel: null,
+    ranEffort: null,
     assignee: 'w1',
     constraints: {},
     ...over
@@ -802,6 +803,15 @@ describe('the model under the account, in the Worker column', () => {
       options
     )
     expect(line).toMatchObject({ label: 'Opus 5 Med', id: 'claude-opus-5', ran: true })
+  })
+
+  it('reports the measured effort that actually ran, not the account default effort', () => {
+    const line = modelLine(
+      routed({ ranOn: 'w1', ranModel: 'claude-opus-5', ranEffort: 'high' }),
+      fleet(worker({ defaultModel: 'claude-opus-5', defaultEffort: 'medium' })),
+      options
+    )
+    expect(line).toMatchObject({ label: 'Opus 5 High', id: 'claude-opus-5', ran: true })
   })
 
   it('prefers a pin on the task over the account default', () => {
@@ -935,6 +945,16 @@ describe('the model row in the thread', () => {
       requested: requested()
     })
     expect(headline.text).toBe('Gemini 3.8 Flash Med')
+  })
+
+  it('reports the last run’s model and effort once the session that ran it has closed', () => {
+    const { headline } = modelFacts({
+      observed: null,
+      ran: 'claude-sonnet-5',
+      ranEffort: 'high',
+      requested: requested()
+    })
+    expect(headline.text).toBe('Sonnet 5 High')
   })
 
   it('does not repeat a confirmation when the model agrees', () => {

@@ -423,7 +423,7 @@ export function assigneeLabel(task: Task, fleet: FleetEntry[]): string {
  * told a model and never run one. ⛔ The cell then shows the worker alone rather than a placeholder:
  * "the CLI picks" is the honest reading, and it is already what the detail pane says at length.
  */
-export type Routed = Pick<Task, 'ranOn' | 'ranModel' | 'assignee' | 'constraints'>
+export type Routed = Pick<Task, 'ranOn' | 'ranModel' | 'ranEffort' | 'assignee' | 'constraints'>
 
 export interface ModelLine {
   /** What the cell draws. */
@@ -492,7 +492,8 @@ export function modelLine(
   // ⚠️ Only where the options actually describe this model. A list that has not arrived, or one
   // whose adapter failed to price, knows nothing about its levels — and silence there is not zero.
   const spec = options?.models.find((m) => m.id === id) ?? null
-  const label = modelLabel(id, spec && spec.effortLevels.length === 0 ? null : resolved.effort)
+  const effort = task.ranModel !== null ? (task.ranEffort ?? resolved.effort) : resolved.effort
+  const label = modelLabel(id, spec && spec.effortLevels.length === 0 ? null : effort)
   if (!label) return null
   return { label, id, ran: task.ranModel !== null, undecided: false, routable: 0 }
 }
@@ -521,6 +522,8 @@ export function modelFacts(input: {
   observed: { model: string | null; effort: string | null } | null
   /** What the last run recorded, for a task whose session has since closed. */
   ran: string | null
+  /** Effort recorded by the last run, when the session has closed. */
+  ranEffort?: string | null
   requested: {
     model: string | null
     effort: string | null
@@ -542,7 +545,7 @@ export function modelFacts(input: {
 } {
   const { observed, ran, requested } = input
   const model = observed?.model ?? ran ?? null
-  const effort = observed?.effort ?? null
+  const effort = observed?.effort ?? input.ranEffort ?? null
   // ⚠️ The CLI's own default is a real answer and reads as one. "—" would look like a broken field.
   const asked = requested.undecided
     ? 'chosen at dispatch'

@@ -409,7 +409,7 @@ function TaskDetail({
       ? {
           workerId: currentWorkerId,
           model: liveSession?.model || task.ranModel || runs[0]?.model || null,
-          effort: lastSession?.effort ?? null
+          effort: lastSession?.effort ?? task.ranEffort ?? null
         }
       : null
   )
@@ -821,6 +821,7 @@ function TaskDetail({
                 <ModelFact
                   session={liveSession ?? null}
                   ran={task.ranModel ?? runs[0]?.model ?? null}
+                  ranEffort={task.ranEffort ?? lastSession?.effort ?? null}
                   requested={requestedModel}
                 />
               </Fact>
@@ -833,6 +834,7 @@ function TaskDetail({
                 <ModelFact
                   session={liveSession ?? null}
                   ran={task.ranModel ?? runs[0]?.model ?? null}
+                  ranEffort={task.ranEffort ?? lastSession?.effort ?? null}
                   requested={requestedModel}
                 />
               )}

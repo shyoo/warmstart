@@ -17,7 +17,7 @@
 
 import type { QuotaSnapshot, QuotaWindow, Worker } from './protocol.js'
 import type { ModelClass } from './modelclass.js'
-import { routeEffortFor, type ModelRoute } from './modelroutes.js'
+import { pairInClass, routeEffortFor, type ModelRoute } from './modelroutes.js'
 
 export type { ModelClass } from './modelclass.js'
 
@@ -1221,6 +1221,14 @@ export interface Task {
    * ⚠️ Null until something has run, and null on a run whose session never learned a model.
    */
   ranModel: string | null
+  /**
+   * The effort the most recent run was dispatched with, from the same session `ranModel` names.
+   *
+   * ⛔ Read off the run's session, never re-resolved.
+   *
+   * ⚠️ Null until something has run, and null on a model with no effort levels.
+   */
+  ranEffort: string | null
   /**
    * The commit range this task landed, recorded at the moment the landing knew it.
    *
@@ -3350,6 +3358,7 @@ export function resolveModelChoice(
     | (Pick<TaskConstraints, 'model' | 'effort'> & {
         modelsByWorker?: Record<string, string>
         effortsByWorker?: Record<string, string>
+        modelClass?: ModelClass | null
       })
     | null
     | undefined,
@@ -3425,9 +3434,14 @@ export function resolveModelChoice(
       ? constraints.effortsByWorker[worker.id]
       : undefined
   const effort = workerSpecificEffort || constraints?.effort || null
+  const classPair =
+    constraints?.modelClass && resolvedModel
+      ? pairInClass(worker, resolvedModel, effort, constraints.modelClass)
+      : null
   // ⛔ The default row's effort for the default model; otherwise the effort the model's own row in
   // the worker's table carries; otherwise the account's default effort, as before there was a table.
   const workerEffort =
+    classPair?.effort ??
     (resolvedModel && resolvedModel === worker?.defaultModel ? worker.defaultEffort : null) ??
     routeEffortFor(worker, resolvedModel) ??
     worker?.defaultEffort ??
