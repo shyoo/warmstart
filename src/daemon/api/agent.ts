@@ -16,7 +16,7 @@ import { cancelTask } from '../cancel.js'
 import { getProject } from '../projects.js'
 import { branchNameFor } from '../worktrees.js'
 import { requestDirectory } from '../dirgrants.js'
-import { completeTask, continueTask, endPlannerForSplit, parkForHuman } from '../scheduler.js'
+import { completeTask, continueTask, endPlannerForSplit, noteHandoffRecorded, parkForHuman } from '../scheduler.js'
 import { updateTask } from '../tasks.js'
 import {
   DEBATE_VERDICT_DETAILS,
@@ -502,6 +502,8 @@ ${agreement}
         setTaskHandoff(run.taskId, p.note)
         addMessage(run.taskId, 'agent', `Handoff recorded:
 ${p.note}`, run.id)
+        // ⚠️ The evidence a quota wrap-up waits for; it ends early on this plus the turn's end.
+        noteHandoffRecorded(run.id)
       }
       return { ok: true as const }
     }

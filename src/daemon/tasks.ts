@@ -1184,20 +1184,23 @@ export function resumeQuotaPaused(released?: (task: Task) => string | null): num
     if (!onTime && !early) continue
 
     db().prepare('update tasks set not_before = null where id = ?').run(r.id)
-    addMessage(
-      r.id,
-      'system',
-      early ? 'Back in the queue ahead of its own timer' : 'Back in the queue: the quota window has reset',
-      null,
-      [],
-      {
-        detail: early
-          ? `${early} The dispatch gate reads the quota again, so a worker still over its limit will ` +
-            'hold this rather than run it.'
-          : 'The quota window this task was waiting on has reset. The dispatch gate reads the quota ' +
-            'again, so a worker still over its limit will hold it rather than run it.'
-      }
-    )
+    // ⛔ *"The window has reset"* only when a reset time was recorded and has passed. With none there
+    // is nothing it could have reset from — t753 (2026-09-26) was told this six seconds after its
+    // pause, by an account reading 99% — so that case says only what is known.
+    const headline = early
+      ? 'Back in the queue ahead of its own timer'
+      : r.not_before === null
+        ? 'Back in the queue'
+        : 'Back in the queue: the quota window has reset'
+    const why = early
+      ? early
+      : r.not_before === null
+        ? 'This quota pause carried no reset time to wait for, so it is not held.'
+        : 'The quota window this task was waiting on has reset.'
+    addMessage(r.id, 'system', headline, null, [], {
+      detail: `${why} The dispatch gate reads the quota again, so a worker still over its limit will ` +
+        'hold it rather than run it.'
+    })
     setStatus(r.id, 'ready', { assignee: null })
     resumed += 1
   }

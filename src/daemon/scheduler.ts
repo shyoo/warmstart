@@ -1738,7 +1738,13 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // which is precisely what t91 and t92 did on 2026-09-01, at 13.3M tokens for one of them, back when
   // the work went to a stash instead and nothing mentioned that either.
   const rescued = branch ? await rescueAtTip(cwd) : null
-  if (rescued) {
+  // ⚠️ The agent is always told (`rescueNotice` below); the thread only when `announceRescue` has
+  // not already said it. t753 (2026-09-26) read the same *"Rescued 22 uncommitted file(s) as
+  // 802d4885"* twice, 50 seconds apart — once when the slot was parked, once when it was claimed.
+  const rescueSaid = rescued
+    ? messagesFor(task.id).some((m) => m.role === 'system' && m.text.includes(` as ${rescued.sha.slice(0, 8)} on `))
+    : false
+  if (rescued && !rescueSaid) {
     addMessage(
       task.id,
       'system',
@@ -2439,9 +2445,40 @@ interface ActivePreemption {
   action: 'compact' | 'handoff'
   reassignWorkerId?: string | null
   choice?: Task['quotaPreemptWarning']
+  /** When the agent called `handoff` during this wrap-up; the evidence the ask landed. */
+  handoffAt?: number
+  /** Park now rather than at the deadline — the wrap-up has been seen to land. */
+  finishNow: () => void
   cancelTimer: () => void
 }
 const activePreemptions = new Map<string, ActivePreemption>()
+
+/**
+ * The agent answered a wrap-up with `handoff`. Called by `agent.handoff`.
+ *
+ * ⛔ Recorded, not acted on: the handoff tool returns into a turn that is still going — the agent may
+ * yet commit or say where it stopped — so closing the session here would cut off the wrap-up it
+ * was asked for. `settleWrapUp` acts once the turn has also ended.
+ */
+export function noteHandoffRecorded(runId: string): void {
+  const active = activePreemptions.get(runId)
+  if (active?.action === 'handoff' && active.handoffAt === undefined) active.handoffAt = Date.now()
+}
+
+/**
+ * End a hand-off wrap-up as soon as it has visibly landed, instead of sitting out the deadline.
+ *
+ * ⭐ t753 (2026-09-26) is why this matters twice over: an agent that obeys in thirty seconds used to
+ * hold its old account — at 95% and climbing — for the rest of the two minutes, and a *Hand off &
+ * reassign* waited that long to move. Evidence rather than a guess (AGENTS.md: record the ask with
+ * what proves it landed): a `handoff` call during this wrap-up, **and** a turn that ended after it.
+ */
+function settleWrapUp(runId: string, sessionId: string): void {
+  const active = activePreemptions.get(runId)
+  if (active?.action !== 'handoff' || active.handoffAt === undefined) return
+  const idle = idleTurnFor(sessionId)
+  if (idle && idle.runId === runId && idle.at >= active.handoffAt) active.finishNow()
+}
 
 /** Give a watching operator one durable minute to overrule an avoidable quota preemption. */
 async function warnBeforeQuotaPreempt(
@@ -2552,7 +2589,10 @@ async function runWatchdogs(): Promise<void> {
     if (!run.sessionId) continue
     // ⛔ Already wrapping up. Every check below is still true of this run and will stay true until it
     // ends, so without this the watchdogs re-fire on it every tick for the whole grace period.
-    if (preempting.has(run.id)) continue
+    if (preempting.has(run.id)) {
+      settleWrapUp(run.id, run.sessionId)
+      continue
+    }
     const session = getSession(run.sessionId)
     if (!session) continue
 
@@ -3029,6 +3069,47 @@ function noteCreditsStandDown(run: Run, task: Task, what: 'preempt' | 'compact')
 }
 
 /**
+ * Move a handed-off task to the account the operator chose, and put it straight back in the queue.
+ *
+ * ⛔ **`ready`, never `paused_quota`.** All three hand-off-and-reassign paths used to park the task at
+ * `paused_quota` with no reset time, which `resumeQuotaPaused` released on the next tick as *"Back in
+ * the queue: the quota window has reset"* — a window nobody had waited for and that had not reset
+ * (t753 → t762, 2026-09-26: ClaudeThird read 99% six seconds later). The detour also drew the
+ * paused-quota card, Override & continue and all, for the seven seconds it lasted. Nothing is being
+ * waited for here, so the task goes where the dispatch gate reads it.
+ *
+ * ⚠️ No `destination` means *Auto*: the pin is dropped and the scheduler picks.
+ */
+function redirectHandoff(
+  taskId: string,
+  destination: Worker | null | undefined,
+  choice: Task['quotaPreemptWarning'] | undefined,
+  why: string
+): void {
+  const { workerId, adapterId, model, effort, modelPolicy, modelClass, workerIds, ...rest } =
+    requireTask(taskId).constraints
+  updateTask(taskId, {
+    constraints: destination
+      ? { ...rest, workerId: destination.id, adapterId: destination.adapterId,
+          model: choice?.reassignModel ?? undefined, effort: choice?.reassignEffort ?? undefined,
+          modelPolicy: choice?.reassignModelPolicy ?? 'inherit',
+          modelClass: choice?.reassignModelClass ?? undefined }
+      : rest,
+    notBefore: null,
+    assigneeHint: destination?.id ?? null
+  })
+  const where = destination ? destination.label : 'whichever account the scheduler picks'
+  addMessage(taskId, 'system', `Back in the queue for ${destination ? destination.label : 'another account'}`, null, [], {
+    event: 'quota.preempted',
+    detail:
+      `${why} Hand off & reassign was chosen, so this task is queued for ${where} now rather than ` +
+      "waiting for the old account's window to reset. The dispatch gate still reads the destination's " +
+      'quota, so an account that is itself over its limit holds the task rather than running it.'
+  })
+  setStatus(taskId, 'ready', { assignee: null })
+}
+
+/**
  * Wrap up before the window closes.
  *
  * ⛔ The task goes to `paused_quota`, **not** cancelled: it carries `not_before = resets_at` and
@@ -3070,9 +3151,13 @@ async function preempt(
   const action = requestedAction === 'compact' && !canCompact
     ? 'handoff'
     : (requestedAction ?? automaticAction)
-  const minutes = Math.max(1, Math.round((resumeAt - Date.now()) / 60000))
+  // ⛔ **The deadline this function enforces, not the window's reset.** This used to be
+  // `resumeAt - now`, the time until the window *reopens*, so t753's agent (2026-09-26) was told
+  // *"roughly 220 minute(s)"* and given two: it went on writing tests, started a full suite in the
+  // background, and the session was closed under it with 22 files uncommitted and no handoff.
+  const wrapUpUntil = Date.now() + WRAP_UP_GRACE_MS
   const budgetLine = info.policy.needsExplicitBudget
-    ? `You have roughly ${minutes} minute(s) of window left and no more. `
+    ? `You have about ${Math.round(WRAP_UP_GRACE_MS / 60000)} minutes before this session is closed, and no more. `
     : ''
 
   // ⛔ The row id, not just the fact of the ask. If the run ends on its own before the boundary
@@ -3101,12 +3186,12 @@ async function preempt(
     try {
       sendPrompt(
         session.id,
-        `${budgetLine}Wrap up now. Commit anything that safely compiles on this branch. ` +
+        `${budgetLine}Wrap up now. Commit anything that safely compiles on this branch first. ` +
           (handoffFile
             ? 'Update HANDOFF.md with what is done, what remains, validation status, and the next step. '
             : '') +
           'Then call the `handoff` tool with what you were doing, what is done, validation status, and the next step. ' +
-          'Do not start new work.'
+          'Do not start new work or a long test run; say in the handoff what is still unverified.'
       )
     } catch (err) {
       log.warn(`could not send the wrap-up for t${task.seq}:`, err)
@@ -3127,13 +3212,15 @@ async function preempt(
         'been asked for.'
       : ''
   const reassigning = action === 'handoff' && reassignWorkerId !== undefined
+  const namedDestination = reassigning && reassignWorkerId ? getWorker(reassignWorkerId) : undefined
   addMessage(
     task.id,
     'system',
     because === 'runaway'
       ? `Preempted: ${action === 'compact' ? 'compacting' : 'wrapping up'} — well past its estimate`
       : reassigning
-        ? 'Preempted for quota — wrapping up, then moving to another account'
+        ? `Preempted for quota — wrapping up until ${clockTime(wrapUpUntil)}, then moving to ` +
+          (namedDestination ? namedDestination.label : 'another account')
         : `Preempted for quota — ${action === 'compact' ? 'compacting' : 'wrapping up'}, resumes ${clockTime(resumeAt)}`,
     null,
     [],
@@ -3145,7 +3232,9 @@ async function preempt(
           : reassigning
             ? `Preempting before the quota window closes (${because}) by committing and writing a handoff, then reassigning to ` +
               `${reassignWorkerId ? 'the chosen account' : 'whichever account the scheduler picks'} instead of waiting for this ` +
-              `account's window to reset.${shownLine}`
+              `account's window to reset. The agent has until ${clockTime(wrapUpUntil)}; it moves as soon as its handoff ` +
+              'is recorded and its turn ends, and anything left uncommitted at the deadline is committed onto the ' +
+              `branch for the next run.${shownLine}`
             : `Preempting before the quota window closes (${because}) by ${action === 'compact' ? 'compacting the conversation' : 'committing and writing a handoff'}. Resuming automatically after the ` +
                `reset, expected ${new Date(resumeAt).toISOString()}.${shownLine}`
     }
@@ -3157,8 +3246,8 @@ async function preempt(
   }
 
   // Give the selected protocol time to land, then park the task so it resumes itself. Compaction
-  // closes as soon as its boundary arrives; handoff has no structured completion event, so it uses
-  // the existing bounded grace period.
+  // closes as soon as its boundary arrives; a handoff closes once the agent has recorded one *and*
+  // its turn has ended (`settleWrapUp`, from the watchdog tick), and otherwise at the deadline.
   let settled = false
   let stopWaiting = (): void => {}
   const park = (landed: boolean): void => {
@@ -3166,6 +3255,7 @@ async function preempt(
     settled = true
     stopWaiting()
     clearTimeout(timer)
+    const handedOff = run ? activePreemptions.get(run.id)?.handoffAt !== undefined : false
     if (run) activePreemptions.delete(run.id)
     // ⛔ A destination named when the operator chose "hand off & reassign" but gone by the time
     // the wrap-up lands (deleted, disabled) is not silently dropped: `destination` stays
@@ -3192,19 +3282,7 @@ async function preempt(
             fresh.status !== 'cancelled' &&
             fresh.constraints.workerId === session.workerId
           ) {
-            const { workerId, adapterId, model, effort, modelPolicy, modelClass, workerIds, ...rest } =
-              fresh.constraints
-            updateTask(task.id, {
-              constraints: destination
-                ? { ...rest, workerId: destination.id, adapterId: destination.adapterId,
-                    model: choice?.reassignModel ?? undefined, effort: choice?.reassignEffort ?? undefined,
-                    modelPolicy: choice?.reassignModelPolicy ?? 'inherit',
-                    modelClass: choice?.reassignModelClass ?? undefined }
-                : rest,
-              notBefore: null,
-              assigneeHint: destination?.id ?? null
-            })
-            setStatus(task.id, 'paused_quota', { assignee: null })
+            redirectHandoff(task.id, destination, choice, 'The run ended on its own during the wrap-up.')
           }
           // The pause is moot, but the compaction verdict is still owed when this ask is the one
           // still outstanding: t446's preemption ask sat unlanded with no message because the run
@@ -3223,25 +3301,13 @@ async function preempt(
             detail: 'The task is still paused safely and the compaction request remains recorded as unlanded.'
           })
         }
-        if (action === 'handoff' && !requireTask(task.id).handoffNote) {
+        // ⛔ Recorded *during this wrap-up*, not merely present: `handoff_note` outlives the run that
+        // wrote it, so an earlier run's note used to stand in for a handoff this one never made.
+        if (action === 'handoff' && !handedOff) {
           setTaskHandoff(task.id, 'Preemption closed the session before the agent recorded a handoff. Inspect the branch and workspace before continuing.')
         }
         if (run) finishRun(run.id, 'preempted', because)
-        if (reassigningNow) {
-          const { workerId, adapterId, model, effort, modelPolicy, modelClass, workerIds, ...rest } =
-            requireTask(task.id).constraints
-          updateTask(task.id, {
-            constraints: destination
-              ? { ...rest, workerId: destination.id, adapterId: destination.adapterId,
-                  model: choice?.reassignModel ?? undefined, effort: choice?.reassignEffort ?? undefined,
-                  modelPolicy: choice?.reassignModelPolicy ?? 'inherit',
-                  modelClass: choice?.reassignModelClass ?? undefined }
-              : rest,
-            notBefore: null,
-            assigneeHint: destination?.id ?? null
-          })
-          setStatus(task.id, 'paused_quota', { assignee: null })
-        } else {
+        if (!reassigningNow) {
           db()
             .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
             .run(because === 'runaway' ? null : resumeAt, Date.now(), task.id)
@@ -3249,13 +3315,34 @@ async function preempt(
         }
         closeSession(session.id)
         if (run) {
-          await releaseFor(run.id, task.id, task.projectId)
+          // ⛔ **Released before it is queued, when it is being moved.** t753 went `ready` and was
+          // assigned at 06:21:53 while this release was still committing its 22 files (06:21:55):
+          // the claim kept the two apart (inferred: its session did not spawn until 06:22:45), but the
+          // thread read "back in the queue" before it read what had been rescued. A task that waits out a reset
+          // has no such race, so its status still moves first.
+          try {
+            await releaseFor(run.id, task.id, task.projectId)
+          } finally {
+            if (reassigningNow) {
+              redirectHandoff(
+                task.id,
+                destination,
+                choice,
+                handedOff
+                  ? 'The agent recorded its handoff and ended its turn.'
+                  : `The wrap-up deadline passed without a handoff, so the session was closed; ` +
+                    'anything it left uncommitted was committed onto the branch for the next run.'
+              )
+            }
+          }
           // ⛔ Preemption is a run ending just as completion or a failed turn is. The urgent probe
           // above refreshes the account card, but it does not attach a closing reading to this run;
           // without this call every watchdog-preempted run permanently had `quotaAfter: null`.
           // Keep it after release, matching the other endings: the slow probe must hold neither the
           // workspace nor the run's resource claims.
           await captureQuotaAfter(requireRun(run.id))
+        } else if (reassigningNow) {
+          redirectHandoff(task.id, destination, choice, 'The wrap-up deadline passed.')
         }
       } finally {
         if (run) {
@@ -3273,6 +3360,7 @@ async function preempt(
       action,
       reassignWorkerId,
       choice,
+      finishNow: () => park(true),
       cancelTimer: () => {
         settled = true
         stopWaiting()
@@ -4336,36 +4424,13 @@ export async function endUnfinishedRun(
           activePreempt.cancelTimer()
           activePreemptions.delete(run.id)
         }
-        addMessage(
+        redirectHandoff(
           task.id,
-          'system',
-          `Turn refused on quota; reassigning${destination ? ` to ${destination.label}` : ''}`,
-          null,
-          [],
-          {
-            event: 'quota.preempted',
-            detail:
-              `${why} This account is out of quota, but hand-off and reassign was chosen — ` +
-              `reassigning immediately rather than waiting until ${new Date(parkAt).toISOString()}.`
-          }
+          destination,
+          choice,
+          `The vendor refused this account's turn (${why}), so it moves now rather than waiting until ` +
+            `${new Date(parkAt).toISOString()}.`
         )
-        const { workerId, adapterId, model, effort, modelPolicy, modelClass, workerIds, ...rest } =
-          task.constraints
-        updateTask(task.id, {
-          constraints: destination
-            ? { ...rest, workerId: destination.id, adapterId: destination.adapterId,
-                model: choice?.reassignModel ?? undefined, effort: choice?.reassignEffort ?? undefined,
-                modelPolicy: choice?.reassignModelPolicy ?? 'inherit',
-                modelClass: choice?.reassignModelClass ?? undefined }
-            : rest,
-          notBefore: null,
-          assigneeHint: destination?.id ?? null
-        })
-        setStatus(task.id, 'paused_quota', {
-          assignee: null,
-          holdReason: null,
-          holdUntil: null
-        })
         requestUrgentProbe(run.workerId, `a run here was refused for quota (t${task.seq})`)
         closeSession(session.id)
       } else {

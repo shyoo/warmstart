@@ -643,6 +643,12 @@ the worker list excludes the preempted account and defaults to Auto. The model a
 saved with the timed choice and applied atomically when the handoff finishes.
 If the vendor refuses the turn on quota during the warning or wrap-up, the reassignment applies
 immediately rather than stranding the task on the exhausted account.
+⛔ A reassigning hand-off goes **straight to `ready`** (`redirectHandoff`, t762), never through
+`paused_quota`: that detour drew this card's paused state for one tick and came back as *"the quota
+window has reset"*, which it had not. The wrap-up ends as soon as the agent has called `handoff`
+**and** its turn has ended (`settleWrapUp`), else at the two-minute deadline the prompt now states;
+the slot is released before the task is queued. The thread reads *Preempted … wrapping up until
+HH:MM, then moving to X* → *Rescued …* (once) → *Back in the queue for X* → *Worker switched*.
 
 ⛔ **Neither Commit nor Land ends the conversation, and neither writes a level.** Both used to write
 the chosen level onto the task, which took it out of `isOpenConversation` for ever — so pressing either

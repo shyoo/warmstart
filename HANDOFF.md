@@ -6,7 +6,7 @@ Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling,
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-26, **Windows 11**, t734): typecheck, lint and build pass; L1 **4,115 passed, 3 skipped** (241 files) in **70.52s**. L3 **497 checks** (4 skipped) is t733's, L2 **204 checks** (7 skipped) t727's and packaged app **19 checks** t723's, not re-run here. The L3 add-project wizard assertion checks the managed default and portable config introduced at t714, using the host path separator on Linux and Windows.
+Baseline (2026-09-26, **Windows 11**, t762): typecheck, lint and build pass; L1 **4,128 passed, 3 skipped** (243 files) in **66.06s**. L3 **497 checks** (4 skipped) is t733's, L2 **204 checks** (7 skipped) t727's and packaged app **19 checks** t723's, not re-run here. The L3 add-project wizard assertion checks the managed default and portable config introduced at t714, using the host path separator on Linux and Windows.
 ⚠️ The `%TEMP%` figure is t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI and the Release workflow are enabled.
 
 **`v0.3.3` is `latest`** (t682, 2026-09-24), promoted onto `v0.3.3-rc.1`'s commit `8cf5d301`.
@@ -21,6 +21,9 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 ## Closed in this cleanup
 
+- **Hand off & reassign moves when the handoff lands, says so truthfully, and tells the agent its real deadline (t762 ← t753, 2026-09-26).**
+  Measured from the live log and t753's transcript: operator chose reassign at 06:18:59; wrap-up sent 06:19:44 saying *"roughly 220 minute(s) of window left"* (`resumeAt − now`, the time to reset) while the grace was 120s, so the agent kept writing tests and started a full suite; closed at 06:21:44 with no handoff and 22 files uncommitted; parked `paused_quota` with no `not_before`, which `resumeQuotaPaused` released 7s later as *"the quota window has reset"* (ClaudeThird then read 99%) — the 7s drew the paused card with *Override & continue*; the rescue commit was announced twice (park, then claim).
+  Now: the prompt states the two-minute deadline; `redirectHandoff` (all three reassign paths) goes straight to `ready` with *Back in the queue for X*, after the slot is released; `settleWrapUp` ends the wrap-up once `handoff` was called **and** a turn ended after it; the fallback note keys on a handoff *during this wrap-up*, not a stale `handoff_note`; a null-`not_before` resume no longer claims a reset; dispatch skips a rescue line already on the thread. L1 in `preemption.test.ts` (1 new, 4 tightened), mutation-checked red (prompt, status, early settle). `docs/ui.md`, `docs/cost-model.md`.
 - **An Auto-worker task shows the model choice it was filed with (t760, 2026-09-26).** Until an account was chosen, the Tasks cell drew `—` and no model, and the thread's model row said *CLI default*. `modelLine` and the thread's `requestedModel` now answer with `autoModelLabel` (*Auto Model*, *Auto Model (high/med/low)*, *account default*) when there is no account and no pin; the list's account cell reads *Auto Worker* or the pinned account (`workerCellLabel`). What ran still wins. L1 in `taskview.test.ts`; L3 497 pass (its task is assigned before the check, so it exercises the old path). ⚠️ The unassigned thread row was not driven in the app. `docs/ui.md`.
 - **A scheduled task can be started now (t759 ← t753, 2026-09-26).** There was no way to cancel a start time once filed. `task.startNow` (`startScheduledNow`, `tasks.ts`) clears `not_before`, posts *Schedule cancelled: started now* and re-admits through `admit()`, so unmet prerequisites still hold it at `blocked`. Offered via **Start now** on the thread's `scheduled` fact and in the Tasks row menu, for `scheduled` tasks and `blocked` ones with a future start time (`hasPendingSchedule`, `@shared/tasks`); never on `paused_quota`, whose `not_before` is a quota reset. Remote tier: `write`. L1 in `scheduledtask.test.ts` (mutation-tested red). ⚠️ Not driven in the app. `docs/ui.md`, `data-model.md`.
 - **The prerequisite picker shows only tasks worth waiting on, coloured by status, in a fixed order (t757, 2026-09-26).** `candidatesFor` now drops `completed` beside `failed`/`cancelled` (an edge to a finished task changes nothing), in the composer and the thread alike. The composer's menu draws each status in its `STATUS_TONE` colour (running blue, waiting-on-you amber) and ticks a pick in place instead of hoisting it above the list. L1 in `Dependencies.test.ts`. ⚠️ Not driven in the app. `docs/ui.md`.
@@ -94,9 +97,6 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 - **Worker model edits now apply their returned row immediately (t664, 2026-09-23).** The model table no longer waits for or causes a fleet-wide `fleet.list` reload after each click; `worker.changed` keeps other windows current. Events still re-read the fleet when eligibility, capacity, or ordering changes; `docs/ui.md`.
 - **Worker model rows now have independent summary selection and explicit effort (t663, 2026-09-23).** Summary persists a model/effort pair, so toggling Gemini 3.8 Flash selects only that row and leaves other efforts removable. Migration 83 converts legacy selectable blank efforts to `medium` and de-duplicates any pairs that conversion exposes. `docs/ui.md`.
 - **Conversation selection and Antigravity default rows repaired (t660, 2026-09-23).** A listed conversation now owns the sidebar highlight while its thread is open; other project tabs and unlisted threads still highlight the project. Antigravity's per-pool default now identifies one model/effort pair rather than every effort row of its model, so non-default Gemini rows can be removed, and selecting a default also updates its no-quota fallback pair. `docs/ui.md`.
-- **Statistics trade-off scatters put quality on *y* and active time on *x* (t651, 2026-09-23).**
-  `SCATTER_PAIRS` now draws Quality vs Cost, Quality vs Active time and Cost vs Active time, titled
-  *y* vs *x*; `docs/images/tradeoffs.png` regenerated. `docs/ui.md`.
 - **Trunk conversations were told to commit on a task branch that never existed (t649 ← t648,
   2026-09-23).** Commit instruction, conversation contract and `land_work` reply now have trunk
   variants (no branch, no squash); pull-request refused up front; `pendingWorkFor` reads the root.
@@ -122,17 +122,6 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
   it and a real `api_error` non-match. `docs/adapters.md`.
 - **Worker routable model picker overhauled to inline table (t638, 2026-09-23).**
   Replaced separate popovers and standalone default/grading model dropdowns in Settings > Workers with an inline `ModelTable` component displaying every available model with columns: `Model`, `Effort`, `Default`, `Auto-Routable`, `Class`, `Grading`, and `Judgment`, plus `+ Add model/effort` for multiple effort levels of the same model. Replaced "CLI default" with concrete effort levels whenever the model supports reasoning effort. Stored unified per-worker routes in `workers.model_routes_json` (migration 81) folding legacy routable/class/effort maps. `docs/routing.md`, `data-model.md`, `ui.md`.
-- **Codex CLI per-session MCP support and Debate fallback for non-MCP agents (t618, 2026-09-22).**
-  (1) Measured and enabled per-invocation MCP for Codex CLI (`openai-compatible` adapter) using
-  `-c mcp_servers.<name>...` and auto-approval mode `-c mcp_servers.<name>.default_tools_approval_mode="approve"`
-  without modifying global user config; `capabilities.mcp` is now `true`.
-  (2) Supported Debate mode for non-MCP agents via a structured terminal contract fallback
-  (`DEBATE ROUND CONTINUE:` and `DEBATE ROUND CONVERGED:`), removing the `needs: ['mcp']` constraint
-  and allowing any agent to serve as organizer or seat. Turn-end handles round continuation and parses
-  verdict agreements, pausing for operator confirmation on debate choices.
-  (3) UI clearly surfaces organizer and seat MCP capabilities (`native MCP` vs `terminal fallback`) in
-  task creation and debate notices. L1 tests updated across adapters, debate, prompt, questions,
-  and debatenotice. `docs/adapters.md`.
 - **No MCP Questions API on Muse (t676, 2026-09-23).** t665 ran on Codex, not Muse — but the answer
   stands: `mcp: false`, so no `ask_human`. Measured on 1.3.0 that `settings.json` stdio+env entries
   ARE honoured, yet the file is per-account against per-session identity (concurrent pool sessions

@@ -28,6 +28,7 @@ let scheduler: typeof import('./scheduler.js')
 let settings: typeof import('./settings.js')
 let quota: typeof import('./quota.js')
 let sessions: typeof import('./sessions.js')
+let turnend: typeof import('./turnend.js')
 
 /** The estimate the runaway factor is measured against; one completed run is enough to have one. */
 const ESTIMATE = 100_000
@@ -150,6 +151,7 @@ beforeAll(async () => {
   settings = await import('./settings.js')
   quota = await import('./quota.js')
   sessions = await import('./sessions.js')
+  turnend = await import('./turnend.js')
   db.openDb(join(dir, 'preempt.db'))
 })
 
@@ -313,19 +315,70 @@ describe('the switches that gate all of this', () => {
       reassignModel: 'destination-model', reassignModelPolicy: 'inherit', reassignEffort: 'high'
     })
 
+    const prompts: string[] = []
+    vi.spyOn(sessions, 'sendPrompt').mockImplementation((_id, text) => {
+      prompts.push(text)
+    })
+
     await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS)
     await scheduler.tick()
+    // ⛔ t753: the agent was told *"roughly 220 minute(s)"* — the time to the window's reset — and
+    // given two. The window here resets in ten minutes, so the old line would say 9 or 10.
+    expect(prompts.some((p) => p.includes('about 2 minutes before this session is closed'))).toBe(true)
+    expect(prompts.some((p) => /\b(9|10) minute/.test(p))).toBe(false)
     await vi.advanceTimersByTimeAsync(130_000)
+    await scheduler.tick()
 
     expect(tasks.requireRun(run.id).outcome).toBe('preempted')
     const after = tasks.getTask(task.id)
-    expect(after?.status).toBe('paused_quota')
+    // ⛔ Straight to `ready` (t762). Through `paused_quota` it drew the paused card for a tick and
+    // came back announcing *"the quota window has reset"*, which nobody had waited for.
+    expect(after?.status).toBe('ready')
     // ⛔ Immediate, not the original account's reset time — waiting for a window on the account this
     // task is no longer pinned to would strand it exactly as long as if reassignment had done nothing.
     expect(after?.notBefore).toBeNull()
     expect(after?.constraints.workerId).toBe(other)
     expect(after?.constraints.model).toBe('destination-model')
     expect(after?.constraints.effort).toBe('high')
+    const said = tasks.messagesFor(task.id).map(messageBody)
+    expect(said.some((m) => m.startsWith(`Back in the queue for ${workers.getWorker(other)!.label}`))).toBe(true)
+    expect(said.some((m) => /wrap-up deadline passed without a handoff/.test(m))).toBe(true)
+    expect(said.some((m) => /quota window has reset/.test(m))).toBe(false)
+    expect(tasks.requireTask(task.id).handoffNote).toMatch(/before the agent recorded a handoff/)
+  })
+
+  it('moves a hand-off as soon as the agent has handed off and its turn has ended (t762)', async () => {
+    const { task, run, sessionId } = seedRunawayTask(0)
+    seedClosingWindow(tasks.requireRun(run.id).workerId)
+    const other = seedWorker()
+    vi.spyOn(sessions, 'sendPrompt').mockImplementation(() => {})
+
+    await scheduler.tick()
+    const warning = tasks.requireTask(task.id).quotaPreemptWarning
+    tasks.setQuotaPreemptWarning(task.id, { ...warning!, reassignWorkerId: other })
+    await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS)
+    await scheduler.tick()
+    expect(wrapUpsOn(task.id)).toBe(1)
+
+    // ⚠️ A turn that ended *before* the handoff is not the evidence: the wrap-up prompt may still be
+    // queued behind it, and closing the session then would cut off the wrap-up it was asked for.
+    turnend.noteIdleTurn(sessions.getSession(sessionId)!, tasks.requireRun(run.id), 'working')
+    await vi.advanceTimersByTimeAsync(10)
+    scheduler.noteHandoffRecorded(run.id)
+    await scheduler.tick()
+    expect(tasks.requireRun(run.id).endedAt).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(10)
+    turnend.noteIdleTurn(sessions.getSession(sessionId)!, tasks.requireRun(run.id), 'handed off')
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Seconds into the two-minute grace, not at its end.
+    expect(tasks.requireRun(run.id).outcome).toBe('preempted')
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+    expect(tasks.requireTask(task.id).constraints.workerId).toBe(other)
+    const said = tasks.messagesFor(task.id).map(messageBody)
+    expect(said.some((m) => /recorded its handoff and ended its turn/.test(m))).toBe(true)
   })
 
   it('reassigns immediately instead of parking on exhausted account when turn fails with vendor refusal during wrap-up', async () => {
@@ -355,7 +408,7 @@ describe('the switches that gate all of this', () => {
 
     expect(tasks.requireRun(run.id).outcome).toBe('preempted')
     const after = tasks.getTask(task.id)
-    expect(after?.status).toBe('paused_quota')
+    expect(after?.status).toBe('ready')
     // Reassignment must happen immediately, not parked until 11pm on the exhausted account:
     expect(after?.notBefore).toBeNull()
     expect(after?.constraints.workerId).toBe(other)
@@ -363,7 +416,7 @@ describe('the switches that gate all of this', () => {
     expect(after?.constraints.modelClass).toBe('high')
 
     const messages = tasks.messagesFor(task.id).map((m) => m.text)
-    expect(messages.some((m) => /Turn refused on quota; reassigning/.test(m))).toBe(true)
+    expect(messages.some((m) => m.startsWith('Back in the queue for'))).toBe(true)
   })
 
   it('reassigns immediately if turn fails with vendor refusal while preemption warning is still active', async () => {
@@ -386,7 +439,7 @@ describe('the switches that gate all of this', () => {
 
     expect(tasks.requireRun(run.id).outcome).toBe('preempted')
     const after = tasks.getTask(task.id)
-    expect(after?.status).toBe('paused_quota')
+    expect(after?.status).toBe('ready')
     expect(after?.notBefore).toBeNull()
     expect(after?.constraints.workerId).toBe(other)
   })
@@ -897,6 +950,9 @@ describe('a task parked for a quota window', () => {
     const task = park(null)
     expect(tasks.resumeQuotaPaused()).toBe(1)
     expect(tasks.requireTask(task.id).status).toBe('ready')
+    // ⛔ And does not claim a reset it never waited for (t753 → t762: said at 99% used).
+    expect(tasks.messagesFor(task.id).some((m) => messageBody(m).includes('has reset'))).toBe(false)
+    expect(tasks.messagesFor(task.id).some((m) => messageBody(m).includes('no reset time'))).toBe(true)
   })
 
   it('leaves a pause a person chose alone', () => {

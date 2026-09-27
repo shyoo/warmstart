@@ -175,7 +175,9 @@ per-request timing.
 | Cached prefixes | still occupy the context window. Caching changes what you pay, not what fits |
 
 Consequences: a wrap-up instruction sent to Opus must **state the remaining budget explicitly**,
-because that model is not told it. And any stored estimate whose tokenizer generation no longer
+because that model is not told it — and the budget is the wrap-up's own deadline (two minutes), not
+the time until the window resets: t753 was told *"roughly 220 minute(s)"*, kept working, and was
+closed with 22 files uncommitted (t762). And any stored estimate whose tokenizer generation no longer
 matches is **discarded, not scaled**.
 
 ## 3. The four states of a session, priced
