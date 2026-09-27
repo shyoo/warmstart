@@ -675,15 +675,34 @@ const Y_AXIS_HINT = 'top is better'
 const INVERTED_AXES: ReadonlySet<Axis> = new Set(['cost', 'velocity'])
 
 /** Maps a raw measured value to where it plots, and back again — the transform is its own inverse. */
-function axisPosition(axis: Axis, value: number, max: number): number {
-  return INVERTED_AXES.has(axis) ? max - value : value
+function axisPosition(axis: Axis, value: number, min: number, max: number): number {
+  return INVERTED_AXES.has(axis) ? max + min - value : value
 }
 
-/** ⛔ Quality is always read on its published 0..10 rubric scale; cost and active time have no
- *  fixed ceiling, so their axis stretches to the worst measured point instead. */
-function axisMax(points: ModelPoint[], axis: Axis): number {
-  if (axis === 'quality') return 10
-  return Math.max(...points.map((p) => p[axis]), axis === 'cost' ? 0.01 : 1)
+/**
+ * ⛔ Measured quality grades on the published 0..10 rubric, but the models cluster high (most
+ * between 7.5 and 9) — a 0..10 axis flattens the very differences the plot exists to show. So the
+ * quality axis is zoomed to 5..10 wherever it appears (t778): the axis runs the top half of the
+ * rubric, and a point below 5 clamps to the axis edge rather than plotting off the chart.
+ * Cost and active time have no fixed ceiling, so their axes still run 0 to the worst measured point.
+ */
+export const QUALITY_AXIS_MIN = 5
+export const QUALITY_AXIS_MAX = 10
+
+function axisRange(points: ModelPoint[], axis: Axis): { min: number; max: number } {
+  if (axis === 'quality') return { min: QUALITY_AXIS_MIN, max: QUALITY_AXIS_MAX }
+  return { min: 0, max: Math.max(...points.map((p) => p[axis]), axis === 'cost' ? 0.01 : 1) }
+}
+
+/**
+ * Where the gridlines fall. Quality ticks read whole rubric points across the zoomed 5..10 span
+ * (`toFixed(1)` renders them 5.0–10.0); every other axis keeps its five ticks from 0 to its max.
+ */
+function axisTicks(axis: Axis, min: number, max: number): number[] {
+  if (axis === 'quality')
+    return Array.from({ length: QUALITY_AXIS_MAX - QUALITY_AXIS_MIN + 1 }, (_, i) => QUALITY_AXIS_MIN + i)
+  const tickCount = 4
+  return Array.from({ length: tickCount + 1 }, (_, i) => min + ((max - min) / tickCount) * i)
 }
 
 /** A mark's name label, where it was placed, and whether it had to move off its mark to fit. */
@@ -799,13 +818,15 @@ export function ScatterPlot({
   const marginBottom = 30
   const plotW = width - marginLeft - marginRight
   const plotH = height - marginTop - marginBottom
-  const maxX = axisMax(points, xAxis)
-  const maxY = axisMax(points, yAxis)
-  const scaleX = (v: number): number => marginLeft + (v / maxX) * plotW
-  const scaleY = (v: number): number => height - marginBottom - (v / maxY) * plotH
-  const tickCount = 4
-  const xTicks = Array.from({ length: tickCount + 1 }, (_, i) => (maxX / tickCount) * i)
-  const yTicks = Array.from({ length: tickCount + 1 }, (_, i) => (maxY / tickCount) * i)
+  const { min: minX, max: maxX } = axisRange(points, xAxis)
+  const { min: minY, max: maxY } = axisRange(points, yAxis)
+  // A point outside a zoomed span (quality below 5) holds at the axis edge — never off the chart.
+  const clampX = (v: number): number => Math.min(maxX, Math.max(minX, v))
+  const clampY = (v: number): number => Math.min(maxY, Math.max(minY, v))
+  const scaleX = (v: number): number => marginLeft + ((clampX(v) - minX) / (maxX - minX)) * plotW
+  const scaleY = (v: number): number => height - marginBottom - ((clampY(v) - minY) / (maxY - minY)) * plotH
+  const xTicks = axisTicks(xAxis, minX, maxX)
+  const yTicks = axisTicks(yAxis, minY, maxY)
   const active = points.find((p) => p.key === hovered)
   const iconSize = 14
   const midY = (marginTop + height - marginBottom) / 2
@@ -867,12 +888,12 @@ export function ScatterPlot({
             textAnchor="middle"
             className="scatter-plot-tick"
           >
-            {AXIS_RENDER[xAxis](axisPosition(xAxis, t, maxX))}
+            {AXIS_RENDER[xAxis](axisPosition(xAxis, t, minX, maxX))}
           </text>
         ))}
         {yTicks.map((t, i) => (
           <text key={`yl-${i}`} x={marginLeft - 6} y={scaleY(t) + 3} textAnchor="end" className="scatter-plot-tick">
-            {AXIS_RENDER[yAxis](axisPosition(yAxis, t, maxY))}
+            {AXIS_RENDER[yAxis](axisPosition(yAxis, t, minY, maxY))}
           </text>
         ))}
         <text
@@ -896,8 +917,8 @@ export function ScatterPlot({
           points.map((point) => ({
             key: point.key,
             text: point.shortLabel,
-            cx: scaleX(axisPosition(xAxis, point[xAxis], maxX)),
-            cy: scaleY(axisPosition(yAxis, point[yAxis], maxY))
+            cx: scaleX(axisPosition(xAxis, point[xAxis], minX, maxX)),
+            cy: scaleY(axisPosition(yAxis, point[yAxis], minY, maxY))
           })),
           { left: marginLeft, right: width - marginRight, top: marginTop, bottom: height - marginBottom },
           iconSize / 2
@@ -923,8 +944,8 @@ export function ScatterPlot({
           </g>
         ))}
         {points.map((point) => {
-          const cx = scaleX(axisPosition(xAxis, point[xAxis], maxX))
-          const cy = scaleY(axisPosition(yAxis, point[yAxis], maxY))
+          const cx = scaleX(axisPosition(xAxis, point[xAxis], minX, maxX))
+          const cy = scaleY(axisPosition(yAxis, point[yAxis], minY, maxY))
           const r = (hovered === point.key ? iconSize + 4 : iconSize) / 2
           return (
             <g

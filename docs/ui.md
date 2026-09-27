@@ -254,9 +254,12 @@ from all three scatters entirely — a mark has no column to dim a thin count in
 rather than drawn as a confident point over a guess. ⭐ **Every axis is better away from the origin (2026-09-14)**, and its
 title says so by position — *right is better*, *top is better* — since "higher" read as a claim about
 the number on an inverted axis. Cost and active time are measured such that a *smaller* number is the better outcome,
-so `axisPosition` plots them on an inverted position (`max - value`) while the tick labels and tooltip
+so `axisPosition` plots them on an inverted position (`max + min - value`) while the tick labels and tooltip
 still show the real dollar/duration — a mark further from the origin is always the better outcome, on
-every axis, without needing to reverse quality too. ⭐ **The hover legend is a reserved-height strip
+every axis, without needing to reverse quality too. ⭐ **The quality axis is zoomed to 5.0–10.0
+(t778)**, ticked at whole rubric points, because measured models cluster between 7.5 and 9 and a
+0..10 axis flattened the differences the plot exists to show; a grade below 5 holds at the axis edge
+rather than plotting off the chart. Cost and active time still run 0 to the worst measured point. ⭐ **The hover legend is a reserved-height strip
 below each chart, not a line in the head.** The head used to grow the tooltip inline and push the
 chart down on hover; `.scatter-plot-legend` always renders (a non-breaking space when nothing is
 hovered) so its height never changes and the chart above it never moves.

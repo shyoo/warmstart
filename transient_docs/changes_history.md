@@ -3989,3 +3989,8 @@ Fixes: `commitsOnlyOn` for every branch measure, a tip-equals-base backstop in `
 closing reply posted whole (`closingReply`, `replyBesideContract`), the guard reworded and
 Complete retiring the empty branch (operator's decisions), and `disownForeignCommits` with
 `disowned_commits` (migration 85) and `revoked` reviews.
+
+## Statistics quality axis zoomed to 5.0-10.0 (t778, 2026-09-27)
+
+The two Quality tradeoff scatters (vs Cost, vs Active time) drew quality on a 0..10 axis, but measured models cluster between 7.5 and 9, so the marks sat in a flat band near the top and the differences the plot exists to show were unreadable. The quality axis now spans 5..10 (`QUALITY_AXIS_MIN`/`MAX`, `axisRange`/`axisTicks` in `Statistics.tsx`), ticked at whole rubric points (5.0-10.0); a grade below 5 clamps to the axis edge rather than plotting off the chart. Cost and active time axes are unchanged (0 to worst measured). L1 in Statistics.test.tsx (ticks, mark spread, clamp).
+

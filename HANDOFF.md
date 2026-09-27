@@ -6,7 +6,7 @@ Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling,
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-27, **Windows 11**, t779): typecheck, lint and build pass; L1 **4,144 passed, 3 skipped** (243 files) in **62.73s**. L3 **497 checks** (4 skipped) is t733's, L2 **204 checks** (7 skipped) t727's and packaged app **19 checks** t723's, not re-run here. The L3 add-project wizard assertion checks the managed default and portable config introduced at t714, using the host path separator on Linux and Windows.
+Baseline (2026-09-27, **Windows 11**, t778): typecheck, lint and build pass; L1 **4,148 passed, 3 skipped** (243 files) in **61.03s**. L3 **497 checks** (4 skipped) is t733's, L2 **204 checks** (7 skipped) t727's and packaged app **19 checks** t723's, not re-run here. The L3 add-project wizard assertion checks the managed default and portable config introduced at t714, using the host path separator on Linux and Windows.
 ⚠️ The `%TEMP%` figure is t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI and the Release workflow are enabled.
 
 **`v0.3.3` is `latest`** (t682, 2026-09-24), promoted onto `v0.3.3-rc.1`'s commit `8cf5d301`.
@@ -21,6 +21,7 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 ## Closed in this cleanup
 
+- **Statistics quality axes zoom to 5.0–10.0 (t778, 2026-09-27).** Quality vs Cost and Quality vs Active time drew 0..10 while measured models cluster at 7.5–9, flattening the differences the plot exists to show. The quality axis now spans 5..10 ticked at whole rubric points; a sub-5 grade clamps to the axis edge. L1 in `Statistics.test.tsx`. `docs/ui.md`.
 - **A 7d window at its gate now warns mid-run, reviews stop spending it, and a slot left mid-rebase no longer fails the next dispatch (t779 ← t778, 2026-09-27).** Measured from the log: MuseFirst's 7d read 94% at dispatch, 97% at 16:25:58, 99% at 16:32:11; the run died at 16:35 on a failed stream with no warning, while batch reviews kept spawning on MuseFirst throughout.
   (1) `overrunVerdict` read only the 5h window. It now takes the run's pool's weekly window (`weeklyWindowOf`) and, at `QUOTA_7D_MIDRUN_PREEMPT_WATER` (= the 97% dispatch gate), raises the usual overridable 60s warning, parked against the **weekly** reset. A vendor `seven_day` caution alone still does nothing (t71).
   (2) `reviewCandidates`/`hasBatchReviewer` gated on the 5h window only; they now use `poolVerdict` over the grading model's pool, so a 7d at 97% refuses a review.

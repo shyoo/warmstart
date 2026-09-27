@@ -170,64 +170,84 @@ describe('measuredModelPoints', () => {
  * mount into. It is enough for what is being claimed: that all three scatters render, one mark per
  * measured model, positioned inside its own plot area.
  */
-describe('the trade-off scatters draw one mark per model on every pair of axes', () => {
-  // ⚠️ Five by default, at `MIN_TRUSTED_SAMPLES` — otherwise both models here would be dropped by
-  // the sample-count filter and this suite would be asserting properties of an empty plot.
-  function distribution(average: number, samples = 5) {
-    return { samples, average, p50: average, p99: average, p100: average }
-  }
+// ⚠️ Five by default, at `MIN_TRUSTED_SAMPLES` — otherwise both models here would be dropped by
+// the sample-count filter and this suite would be asserting properties of an empty plot.
+function distribution(average: number, samples = 5) {
+  return { samples, average, p50: average, p99: average, p100: average }
+}
 
-  /** Two models, each measured on all three axes, which is the gate the plot renders behind. */
-  function measuredReport(): StatisticsReport {
-    const model = (name: string, average: number) => ({
-      key: `claude-code/${name}`,
-      level: 'model' as const,
-      label: name,
-      adapterId: 'claude-code',
-      model: name,
-      effort: null,
-      distribution: distribution(average)
-    })
-    const quality = (name: string, average: number) => ({
-      ...model(name, average),
-      prior: null,
-      priorBasis: null,
-      cleanComposite: null,
-      clean: 0,
-      samples: 0,
-      fitness: null,
-      fitnessBasis: null,
-      tasks: 1
-    })
-    const price = (name: string, average: number): PriceStatRow => ({
-      ...model(name, average),
-      basis: 'subscription',
-      unpriced: 0
-    })
-    return {
-      generatedAt: 0,
-      sampleLimit: null,
-      window: 'all',
-      includeConversations: true,
-      price: { rows: [price('claude-opus-5', 3), price('claude-sonnet-5', 1)], tasks: 2, unpriced: 0, estimated: false },
-      velocity: {
-        rows: [
-          { ...model('claude-code', 4), key: 'claude-code', level: 'agent' as const, label: 'Claude Code', model: null },
-          model('claude-opus-5', 9),
-          model('claude-sonnet-5', 4)
-        ],
-        tasks: 2,
-        untimed: 0
-      },
-      quality: {
-        rows: [quality('claude-opus-5', 9), quality('claude-sonnet-5', 6)],
-        totalReviews: 2,
-        ungraded: 0,
-        rubricVersion: 'v1'
-      }
+function scatterModel(name: string, average: number) {
+  return {
+    key: `claude-code/${name}`,
+    level: 'model' as const,
+    label: name,
+    adapterId: 'claude-code',
+    model: name,
+    effort: null,
+    distribution: distribution(average)
+  }
+}
+
+function scatterQuality(name: string, average: number) {
+  return {
+    ...scatterModel(name, average),
+    prior: null,
+    priorBasis: null,
+    cleanComposite: null,
+    clean: 0,
+    samples: 0,
+    fitness: null,
+    fitnessBasis: null,
+    tasks: 1
+  }
+}
+
+function scatterPrice(name: string, average: number): PriceStatRow {
+  return {
+    ...scatterModel(name, average),
+    basis: 'subscription',
+    unpriced: 0
+  }
+}
+
+/** Two models, each measured on all three axes, which is the gate the plot renders behind. */
+function measuredReport(sonnetQuality = 6): StatisticsReport {
+  return {
+    generatedAt: 0,
+    sampleLimit: null,
+    window: 'all',
+    includeConversations: true,
+    price: {
+      rows: [scatterPrice('claude-opus-5', 3), scatterPrice('claude-sonnet-5', 1)],
+      tasks: 2,
+      unpriced: 0,
+      estimated: false
+    },
+    velocity: {
+      rows: [
+        {
+          ...scatterModel('claude-code', 4),
+          key: 'claude-code',
+          level: 'agent' as const,
+          label: 'Claude Code',
+          model: null
+        },
+        scatterModel('claude-opus-5', 9),
+        scatterModel('claude-sonnet-5', 4)
+      ],
+      tasks: 2,
+      untimed: 0
+    },
+    quality: {
+      rows: [scatterQuality('claude-opus-5', 9), scatterQuality('claude-sonnet-5', sonnetQuality)],
+      totalReviews: 2,
+      ungraded: 0,
+      rubricVersion: 'v1'
     }
   }
+}
 
+describe('the trade-off scatters draw one mark per model on every pair of axes', () => {
   const markup = renderToStaticMarkup(<TradeoffPlots report={measuredReport()} />)
 
   it('draws three scatters, one per pair of measured axes', () => {
@@ -276,6 +296,54 @@ describe('the trade-off scatters draw one mark per model on every pair of axes',
 
   it('leaves no trace of the retired 3D plot classes', () => {
     expect(markup).not.toMatch(/three-axis/)
+  })
+})
+
+/**
+ * The quality axis is zoomed to 5..10 (t778): the models cluster high (most between 7.5 and 9),
+ * so a 0..10 axis flattens the very differences the plot exists to show.
+ */
+describe('the quality axis shows 5.0 to 10.0', () => {
+  const markup = renderToStaticMarkup(<TradeoffPlots report={measuredReport()} />)
+  const svgs = markup.split('class="scatter-plot-svg"').slice(1)
+  const yTicksOf = (svg: string): string[] =>
+    [...svg.matchAll(/<text[^>]*text-anchor="end"[^>]*class="scatter-plot-tick"[^>]*>([^<]+)</g)].map(
+      (m) => m[1]!
+    )
+  const circlesOf = (svg: string): Array<{ cx: number; cy: number }> =>
+    [...svg.matchAll(/<circle cx="([-\d.]+)" cy="([-\d.]+)"/g)].map((m) => ({
+      cx: Number(m[1]),
+      cy: Number(m[2])
+    }))
+
+  it('labels the quality y axis 5.0 to 10.0 on both quality scatters', () => {
+    expect(svgs).toHaveLength(3)
+    expect(yTicksOf(svgs[0]!)).toEqual(['5.0', '6.0', '7.0', '8.0', '9.0', '10.0'])
+    expect(yTicksOf(svgs[1]!)).toEqual(['5.0', '6.0', '7.0', '8.0', '9.0', '10.0'])
+  })
+
+  it('leaves the cost y axis starting at zero', () => {
+    const costTicks = yTicksOf(svgs[2]!)
+    expect(costTicks).toHaveLength(5)
+    expect(costTicks[costTicks.length - 1]).toBe('$0.00')
+  })
+
+  it('spreads neighbouring grades across the zoomed span', () => {
+    // Quality 9 vs 6 is 3 rubric points over a 5-point span: 60% of the 178px plot height —
+    // on the old 0..10 axis the same pair sat 53px apart.
+    const [a, b] = circlesOf(svgs[0]!)
+    expect(Math.abs(a!.cy - b!.cy)).toBeGreaterThan(100)
+  })
+
+  it('holds a sub-5 grade at the axis edge instead of off the chart', () => {
+    // Sonnet grading 2 — below the zoomed span — but still measured on all three axes.
+    const low = renderToStaticMarkup(<TradeoffPlots report={measuredReport(2)} />)
+    const first = low.split('class="scatter-plot-svg"').slice(1)[0]!
+    for (const { cy } of circlesOf(first)) {
+      // Plot area runs marginTop 12 to height - marginBottom 190; nothing may fall below it.
+      expect(cy).toBeLessThanOrEqual(190)
+    }
+    expect(first).toMatch(/<circle cx="[-\d.]+" cy="190"/)
   })
 })
 
