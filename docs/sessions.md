@@ -177,6 +177,13 @@ be open, the task must be resting rather than running, the **daemon** must not b
 and the last run must have ended more than five seconds ago, because the tail of a turn can arrive
 after the record that ended it.
 
+⚠️ **A session that ended with its turn can never come back this way** (t740 ← t726). A
+`streamPrompts: 'once'` CLI (codex `exec`) exits when the turn ends, and the first refusal above —
+the conversation must still be open — is then permanent. An agent there that says it will keep
+working in the background and report back is making a promise nothing can keep: the task rests at
+`awaiting_human` and the next turn starts only when the person replies. The conversation prompt
+says so in those words, decided from `capabilities.streamPrompts` and never from an adapter name.
+
 ## What a returning agent is told, and what it is not
 
 A run into a session **that has already heard this task** is sent the new message and nothing else. No

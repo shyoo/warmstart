@@ -1702,6 +1702,39 @@ describe('the pre-completion rebase check', () => {
     expect(text).not.toContain('has fallen behind or diverged')
   })
 
+  /**
+   * ⭐ **t740 ← t726.** A Codex conversation ended its turn saying it would keep working in the
+   * background and report back, and the task rested at `awaiting_human` with that promise as its
+   * last word — the operator could not tell whether anything was running. Nothing was: a
+   * `streamPrompts: 'once'` session ends with its turn, so `resumeIdleConversation` (which refuses
+   * ended sessions) can never wake it. The prompt now says so up front, in both vocabularies, so
+   * the agent does not make a promise the system cannot keep.
+   */
+  it('tells a one-shot conversation its session ends and not to promise background follow-up', () => {
+    for (const adapterId of ['openai-compatible', 'antigravity-cli']) {
+      const task = tasks.createTask({ title: 'Talk it through', kind: 'conversation', status: 'ready' })
+      const text = promptText(task, adapterId, false, { markDelivered: false })
+      if (adapterId === 'openai-compatible') {
+        expect(text, adapterId).toContain('This session ends when your turn ends')
+        expect(text, adapterId).toContain('do not say you will keep working in the background')
+        expect(text, adapterId).toContain('your next turn starts only when they reply')
+      } else {
+        // ⛔ Not one-shot: antigravity stays on the persistent contract, in its own vocabulary.
+        expect(text, adapterId).not.toContain('This session ends when your turn ends')
+        expect(text, adapterId).toContain('the only thing that can bring you back')
+      }
+      expect(text, adapterId).toContain('waits for the person')
+    }
+  })
+
+  it('tells a persistent conversation the only self-wake is a command left running', () => {
+    const task = tasks.createTask({ title: 'Talk it through', kind: 'conversation', status: 'ready' })
+    const text = promptText(task, 'claude-code', false, { markDelivered: false })
+    expect(text).not.toContain('This session ends when your turn ends')
+    expect(text).toContain('the only thing that can bring you back')
+    expect(text).toContain('Do not promise background follow-up you have not left running')
+  })
+
   // ⛔ t649: a trunk conversation has no branch of its own, and the contract must not promise one.
   it('tells a trunk conversation it works on the target, with no branch to land or carry on in', async () => {
     const project = await gitProject('trunk-conversation', {

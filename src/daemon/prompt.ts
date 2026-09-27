@@ -467,8 +467,13 @@ export function verdictInstruction(verdict: DebateVerdict, checkLead: string, co
  * agent has no `land_work` and no `task_complete`; its terminal contract is a line of text, and its
  * route to a landing is a person pressing **Land** after it says the commit is ready. Naming the
  * wrong one would be naming a channel the agent has not got.
+ *
+ * ⚠️ **Plus a continuation sentence, decided from `capabilities.streamPrompts` (t740).** A `once`
+ * session ends with its turn, so nothing can wake it afterwards and a promise to work in the
+ * background and report back cannot land — the resting task waits for the person. A `conversation`
+ * session stays open, where a command left running in it is the one thing that can (t369).
  */
-function conversationInstruction(mcpLess: boolean, trunk: string | null = null): string {
+function conversationInstruction(mcpLess: boolean, trunk: string | null = null, oneShot = false): string {
   // ⛔ **A trunk conversation has no branch of its own** (t649). It commits straight onto the target
   // in the operator's checkout, so "your own branch" names something that does not exist, and a
   // landing there verifies and pushes rather than rebasing and handing out a next branch.
@@ -503,7 +508,15 @@ function conversationInstruction(mcpLess: boolean, trunk: string | null = null):
         'Landing does not end this task. ' +
         'Do not call `task_complete` on your own judgement — call it only if you are told the work ' +
         'is done. ' +
-        ASK_HUMAN_CLAUSE)
+        ASK_HUMAN_CLAUSE) +
+    ' ' +
+    (oneShot
+      ? 'This session ends when your turn ends — do not say you will keep working in the background ' +
+        'or report back on your own. When you stop, the task waits for the person, and your next ' +
+        'turn starts only when they reply.'
+      : 'When you stop, the task waits for the person — the only thing that can bring you back ' +
+        'without their reply is a command you left running in this session. Do not promise ' +
+        'background follow-up you have not left running.')
   )
 }
 
@@ -1025,7 +1038,13 @@ export function promptFor(
     if (isOpenConversation(task)) {
       // ⚠️ Withheld only on a follow-up into the session that was already told it — see `followUp`.
       if (!followUp) {
-        parts.push(conversationInstruction(false, trunkTarget))
+        parts.push(
+          conversationInstruction(
+            false,
+            trunkTarget,
+            adapter(adapterId).info.capabilities.streamPrompts === 'once'
+          )
+        )
         if (mayDelegate) parts.push(delegationClause(true))
       }
     } else if (planPhase === 'planning') {
@@ -1083,7 +1102,11 @@ export function promptFor(
     } else {
       parts.push(
       isOpenConversation(task)
-        ? conversationInstruction(true, trunkTarget)
+        ? conversationInstruction(
+            true,
+            trunkTarget,
+            adapter(adapterId).info.capabilities.streamPrompts === 'once'
+          )
         : checkLead +
         (reportsOnly ? 'When the work is finished, end' : 'When the work is finished, commit what you have and end') +
         ' with a line beginning `TASK COMPLETE: ` ' +
