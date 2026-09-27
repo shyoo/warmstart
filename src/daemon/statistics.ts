@@ -60,16 +60,37 @@ function limitFor(window: StatisticsWindow): number | null {
 const NO_MODEL = '?'
 
 /**
+ * Antigravity blended reasoning effort into the model id itself before t645 gave it a selectable
+ * `--effort` flag; `costmodel.ts#modelSpec` resolves prices against these the same way. A run from
+ * before that split recorded no `sessions.effort` at all, but the level it ran at is still legible
+ * in the id, so `legacyEffortSuffix` recovers it rather than leaving the sample unclassified.
+ */
+const LEGACY_EFFORT_SUFFIX = /^(.+)-(xhigh|high|medium|med|low|minimal|min|max)$/
+
+function legacyEffortSuffix(model: string): { base: string; effort: string } | null {
+  const m = LEGACY_EFFORT_SUFFIX.exec(model)
+  return m ? { base: m[1]!, effort: m[2]! } : null
+}
+
+/**
  * The model identity Statistics groups on.
  *
  * Claude records both a stable name and a dated build name for the same model.  The renderer has
  * always deliberately hidden that date in `modelLabel`; grouping by the unnormalised id therefore
  * made two indistinguishable "Haiku 4.5" rows.  Keep the aggregation identity in step with that
  * display rule, before the tree is made, so every statistic and chart uses the same evidence.
+ *
+ * ⛔ **Also folds a legacy blended-effort id down to its base model.** `gemini-3.8-flash-high` and
+ * `gemini-3.8-flash-medium` are `gemini-3.8-flash` run at two efforts, not two models — leaving them
+ * unstripped split one model into false siblings with nothing to say they were the same thing, one
+ * of which (whichever the id happened to spell without a suffix) then looked like it was outscoring
+ * "High" and "Med" rows that were really its own history. `legacyEffortSuffix` is where the effort
+ * itself is recovered for `samples()`; this only has to agree with it on the base.
  */
 export function statisticsModelId(model: string | null): string | null {
   if (!model || model === NO_MODEL || model === '<synthetic>') return null
-  return (model.trim().split('/').pop() ?? '').replace(/-\d{8}$/, '') || null
+  const named = (model.trim().split('/').pop() ?? '').replace(/-\d{8}$/, '')
+  return legacyEffortSuffix(named)?.base || named || null
 }
 
 // ---------------------------------------------------------------------------- the pure arithmetic
@@ -223,11 +244,16 @@ export function samples(
     const overage = price?.overageUsd ?? null
     const usd = price?.usd ?? null
     const subscription = usd === null ? null : usd - (overage ?? 0)
+    const sessionEffort = credit.sessionId ? (efforts.get(credit.sessionId) ?? null) : null
+    // ⚠️ A session from before Antigravity's effort flag existed recorded no `effort` column at
+    //    all; the level it ran at is still spelled out in its (pre-unblending) model id, so a
+    //    missing session effort falls back to that rather than the sample going unclassified.
+    const recoveredEffort = credit.model ? legacyEffortSuffix(credit.model)?.effort : undefined
     out.push({
       taskId: id,
       adapterId: credit.adapterId,
       model: statisticsModelId(credit.model),
-      effort: credit.sessionId ? (efforts.get(credit.sessionId) ?? null) : null,
+      effort: sessionEffort ?? recoveredEffort ?? null,
       usd,
       subscriptionUsd: subscription,
       overageUsd: overage,

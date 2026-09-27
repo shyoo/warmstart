@@ -491,6 +491,13 @@ behaviour falls out of it:
     now lists unblended base model identifiers and declares `effort_levels` explicitly. Models
     without selectable effort (e.g. `claude-sonnet-4-6`) declare empty `effort_levels`. Effort is
     selected per line in the Routable Models table and passed via `--effort` at spawn.
+    ⚠️ **Migration 82 unblended the `workers` config, not history.** A run dispatched before this
+    date still has `gemini-3.8-flash-high` / `-medium` sitting in `runs.model` and
+    `quality_reviews.subject_model`, with `sessions.effort` left null — nothing rewrote those rows.
+    `statisticsModelId` (`daemon/statistics.ts`) folds a trailing legacy effort suffix back onto its
+    base model on read, and recovers the effort itself from the id when the session carries none
+    (t793) — otherwise Statistics grouped `gemini-3.8-flash-high` as a model in its own right,
+    sitting beside the unblended `gemini-3.8-flash` as a false sibling with no effort of its own.
   - **`openai-compatible`: true, promoted 2026-09-15.** `codex exec --help` lists no
     `--reasoning-effort` flag; `-c model_reasoning_effort=<level>` is the only route in. Run against a
     signed-in ChatGPT account (codex-cli 0.151.0), on a fresh `exec` and on `exec resume`: both turns'

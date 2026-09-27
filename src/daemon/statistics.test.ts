@@ -350,6 +350,39 @@ describe('the agent → model → effort tree', () => {
       8 * MIN
     ])
   })
+
+  // ⛔ t793: Antigravity blended effort into the model id before it had a selectable `--effort`
+  //    flag, and never recorded a session effort for those runs. Left unstripped, `gemini-3.8-flash`,
+  //    `gemini-3.8-flash-high` and `gemini-3.8-flash-medium` folded into three false sibling
+  //    "models", one of which (however it happened to be spelled unblended) could plot as though it
+  //    outscored the "High" and "Med" rows that were really its own history.
+  it('folds a legacy blended-effort model id into its base model, not a false sibling', () => {
+    finishedTask({ adapter: 'antigravity-cli', model: 'gemini-3.8-flash-high', effort: null, activeMs: 3 * MIN })
+    finishedTask({
+      adapter: 'antigravity-cli',
+      model: 'gemini-3.8-flash-medium',
+      effort: null,
+      activeMs: 5 * MIN
+    })
+    finishedTask({ adapter: 'antigravity-cli', model: 'gemini-3.8-flash', effort: 'high', activeMs: 7 * MIN })
+    const rows = stats.statisticsReport().velocity.rows
+    const models = rows.filter((r) => r.level === 'model')
+    expect(models).toHaveLength(1)
+    expect(models[0]?.label).toBe('gemini-3.8-flash')
+    expect(models[0]?.distribution.samples).toBe(3)
+  })
+
+  it('recovers a legacy blended run\'s effort from its id when the session never recorded one', () => {
+    finishedTask({ adapter: 'antigravity-cli', model: 'gemini-3.8-flash-high', effort: null, activeMs: 3 * MIN })
+    finishedTask({
+      adapter: 'antigravity-cli',
+      model: 'gemini-3.8-flash-medium',
+      effort: null,
+      activeMs: 5 * MIN
+    })
+    const efforts = stats.statisticsReport().velocity.rows.filter((r) => r.level === 'effort')
+    expect(efforts.map((r) => r.label).sort()).toEqual(['high', 'medium'])
+  })
 })
 
 describe('velocity', () => {
