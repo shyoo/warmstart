@@ -194,3 +194,34 @@ export function settleControls(
     uncommitted
   }
 }
+
+/**
+ * What the card says when `cannotLook` is set: the line under the buttons, and the Commit tooltip's
+ * last sentence.
+ *
+ * ⛔ **A trunk checkout on another branch was read, not missed** (t788 ← t786). Both used to say
+ * *"Could not read this task's workspace … Commit checks the branch out again"*, which is a pooled
+ * worktree's remedy: nothing checks a branch out for a trunk task. The agent is authorised to switch
+ * the trunk back to its target, so that is what Commit asks for, and what the card says.
+ */
+export function unreadWorkspaceNotes(pending: {
+  reason: string
+  trunkOffTarget?: { branch: string | null; target: string }
+}): { line: string; tooltip: string } {
+  const off = pending.trunkOffTarget
+  if (off) {
+    const where = off.branch ?? 'a detached HEAD'
+    return {
+      line: `The trunk checkout is on ${where}, not ${off.target} — Commit asks the agent to switch it back first`,
+      tooltip:
+        `The trunk checkout is on ${where}, not ${off.target}: the agent switches it back to ${off.target} ` +
+        `(never forced) before it commits. Nothing on ${off.branch ?? 'that HEAD'} is moved or lost.`
+    }
+  }
+  return {
+    line: `Could not read this task’s workspace (${pending.reason}) — Commit checks the branch out again`,
+    tooltip:
+      `Could not read this task’s workspace (${pending.reason}), so there is no telling what is ` +
+      'uncommitted; the run checks the branch out again.'
+  }
+}

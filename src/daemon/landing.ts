@@ -1764,7 +1764,9 @@ export const trunkLanding: LandingStrategy = {
     if (head !== target) {
       return {
         ok: false,
-        reason: `the trunk has ${head === 'HEAD' ? 'a detached HEAD' : `\`${head}\``} checked out rather than \`${target}\``
+        reason:
+          `the trunk has ${head === 'HEAD' ? 'a detached HEAD' : `\`${head}\``} checked out rather than ` +
+          `\`${target}\` — switch it back with \`git switch ${target}\` and land again`
       }
     }
     return { ok: true }

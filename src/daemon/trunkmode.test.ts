@@ -27,6 +27,7 @@ let landingbase: typeof import('./landingbase.js')
 let resources: typeof import('./resources.js')
 let scheduler: typeof import('./scheduler.js')
 let resolutions: typeof import('./resolutions.js')
+let conversationland: typeof import('./conversationland.js')
 
 let root: string
 let project: Project
@@ -61,6 +62,7 @@ beforeAll(async () => {
   resources = await import('./resources.js')
   scheduler = await import('./scheduler.js')
   resolutions = await import('./resolutions.js')
+  conversationland = await import('./conversationland.js')
   db.openDb(join(dir, 'trunk.db'))
   root = freshRepo()
   project = projects.addProject({ root, name: 'trunky' })
@@ -191,6 +193,80 @@ describe('what a trunk task walks into', () => {
     expect(notice).toMatch(/directly in this project's trunk checkout/)
     expect(notice).toMatch(/merge is in progress here, with conflicts in a\.txt/)
     expect(notice).toMatch(/already uncommitted when you arrived and are not yours: .*scratch\.md/)
+    // On the target already: nothing to switch back from.
+    expect(notice).not.toContain('Switch it back')
+  })
+
+  /**
+   * ⛔ t788 ← t786 (2026-09-27): inkland-site's checkout had been left on `trailer-recut`, one commit
+   * ahead of `main`. The notice said *do not switch branches … stop and ask*, and the agent spent two
+   * `ask_human` round trips and a hand push reaching `main`. Trunk mode is working on the target, so
+   * the switch back is authorised — never forced — and the commits it leaves behind are named.
+   */
+  it('authorises switching a checkout found on another branch back to the target (t788)', async () => {
+    const repo = freshRepo()
+    const p = projects.addProject({ root: repo, name: 'recut' })
+    git(repo, 'switch', '-c', 'trailer-recut')
+    writeFileSync(join(repo, 'b.txt'), 'recut\n')
+    git(repo, 'add', 'b.txt')
+    git(repo, 'commit', '-m', 'recut')
+    writeFileSync(join(repo, 'notes.md'), 'operator\n')
+
+    const survey = await worktrees.surveyTrunk(p)
+    expect(survey.branch).toBe('trailer-recut')
+    expect(survey.aheadOfTarget).toBe(1)
+
+    const notice = scheduler.trunkArrivalNotice(survey, 'main')
+    expect(notice).toContain('`main` is your branch')
+    expect(notice).toContain('The checkout is on `trailer-recut`, not `main`. Switch it back')
+    expect(notice).toContain('`git switch main`')
+    expect(notice).toMatch(/Never add `--force` or `--discard-changes`/)
+    expect(notice).toContain('`trailer-recut` has 1 commit(s) that `main` does not')
+    expect(notice).toMatch(/never by rewriting either branch/)
+    // ⛔ The words that paralysed t786 are gone: the switch to the target is not forbidden, and an
+    //    off-target checkout is not by itself a reason to stop.
+    expect(notice).not.toMatch(/Do not create, switch or delete branches/)
+    expect(notice).not.toMatch(/Do not commit there; if your task does not say otherwise, stop and ask/)
+    // ⚠️ Still forbidden: every other branch operation.
+    expect(notice).toContain('switch to any branch but `main`')
+    expect(notice).toContain('do not stash, and do not reset')
+
+    // What the notice promises is what git does: the switch carries the uncommitted file across and
+    // leaves the other branch holding its commit.
+    git(repo, 'switch', 'main')
+    expect(git(repo, 'status', '--porcelain')).toContain('notes.md')
+    expect(git(repo, 'rev-list', '--count', 'main..trailer-recut')).toBe('1')
+    expect((await worktrees.surveyTrunk(p)).aheadOfTarget).toBe(0)
+  })
+
+  it('names no commits ahead when the other branch holds nothing the target lacks', async () => {
+    const repo = freshRepo()
+    const p = projects.addProject({ root: repo, name: 'level' })
+    git(repo, 'switch', '-c', 'level-with-main')
+    const survey = await worktrees.surveyTrunk(p)
+    expect(survey.aheadOfTarget).toBe(0)
+    const notice = scheduler.trunkArrivalNotice(survey, 'main')
+    expect(notice).toContain('`git switch main`')
+    expect(notice).not.toContain('does not.')
+  })
+
+  it('says a detached HEAD is switched back the same way', () => {
+    const notice = scheduler.trunkArrivalNotice(
+      { branch: null, dirtyFiles: [], untrackedFiles: [], operation: null, conflicted: [], aheadOfTarget: 0 },
+      'main'
+    )
+    expect(notice).toContain('The checkout is on a detached HEAD, not `main`. Switch it back')
+  })
+
+  it('does not ask for a switch git would refuse, mid-operation on another branch', () => {
+    const notice = scheduler.trunkArrivalNotice(
+      { branch: 'feature', dirtyFiles: ['a.txt'], untrackedFiles: [], operation: 'rebase', conflicted: ['a.txt'], aheadOfTarget: 2 },
+      'main'
+    )
+    expect(notice).not.toContain('Switch it back')
+    expect(notice).toContain('in the middle of the operation below')
+    expect(notice).toContain('If finishing it is not your task, stop and ask')
+    expect(notice).toMatch(/rebase is in progress here, with conflicts in a\.txt/)
   })
 })
 
@@ -494,9 +570,24 @@ describe('the trunk finish ladder', () => {
     expect(finish.decideTrunkFinish(base({ commitsThisRun: 0 })).kind).toBe('done')
   })
 
-  it('refuses a trunk left off its target', () => {
-    const d = finish.decideTrunkFinish(base({ survey: { branch: 'feature', dirtyFiles: [], untrackedFiles: [], operation: null, conflicted: [] } }))
-    expect(d.kind).toBe('await-human')
+  // ⛔ t788: the switch back is the agent's to make, so it is asked for once before a person is.
+  it('asks once to switch a trunk left off its target back, then hands it to a person', () => {
+    const input = base({ survey: { branch: 'feature', dirtyFiles: [], untrackedFiles: [], operation: null, conflicted: [] } })
+    const first = finish.decideTrunkFinish(input)
+    expect(first.kind).toBe('ask-agent')
+    expect(first.kind === 'ask-agent' && first.instruction).toContain('`git switch main`, never forced')
+    expect(first.kind === 'ask-agent' && first.instruction).toMatch(/If you committed on `feature`, then bring those commits onto `main`/)
+    const second = finish.decideTrunkFinish({ ...input, task: { ...input.task, finishAskedAt: 1 } })
+    expect(second.kind).toBe('await-human')
+    expect(second.kind === 'await-human' && second.reason).toMatch(/still elsewhere after the agent was asked to switch back. Nothing was moved/)
+    // A detached HEAD reads the same way.
+    const detached = finish.decideTrunkFinish(base({ survey: { branch: null, dirtyFiles: [], untrackedFiles: [], operation: null, conflicted: [] } }))
+    expect(detached.kind === 'ask-agent' && detached.instruction).toContain('The trunk checkout is on a detached HEAD')
+  })
+
+  it('asks about an operation in progress before the branch, since git will not switch mid-operation', () => {
+    const d = finish.decideTrunkFinish(base({ survey: { branch: 'feature', dirtyFiles: [], untrackedFiles: [], operation: 'rebase', conflicted: [] } }))
+    expect(d.kind === 'ask-agent' && d.instruction).toMatch(/rebase is still in progress/)
   })
 
   it('maps the levels: wait, stop, verify, and push only with checks', () => {
@@ -538,6 +629,46 @@ describe('what the Commit button asks of a trunk conversation (t649)', () => {
     expect(tasks.requireTask(task.id).branch).toBeNull()
   })
 
+  /**
+   * ⛔ t788 ← t786: the card read *"Could not read this task's workspace (… the trunk is not on
+   * `main`) — Commit checks the branch out again"*. The checkout had been read fine, and nothing
+   * checks a branch out for a trunk task. It now says where the checkout is, and the Commit it
+   * offers tells the agent to switch back.
+   */
+  it('says where an off-target checkout is, rather than that it could not be read (t788)', async () => {
+    const repo = freshRepo()
+    const home = projects.addProject({ root: repo, name: 'trunk-chat-off' })
+    const task = tasks.createTask({ title: 'Chat off target', kind: 'conversation', status: 'ready', projectId: home.id, workspaceMode: 'trunk' })
+    tasks.setStatus(task.id, 'awaiting_human')
+    git(repo, 'switch', '-c', 'trailer-recut')
+    writeFileSync(join(repo, 'a.txt'), 'changed\n')
+
+    const pending = await resolutions.pendingWorkFor(task.id)
+    expect(pending.supported).toBe(false)
+    expect(pending.trunkOffTarget).toEqual({ branch: 'trailer-recut', target: 'main' })
+    expect(pending.reason).toBe('this conversation works on `main` in the trunk, and the checkout is on `trailer-recut`')
+    expect(pending.reason).not.toMatch(/could not/i)
+
+    await expect(resolutions.commitConversation(task.id, 'commit-and-verify')).resolves.toEqual({ ok: true })
+    const asked = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)?.text ?? ''
+    expect(asked).toContain('If the checkout is on another branch, `git switch main` first (never forced')
+    expect(asked).not.toContain('do not create or switch to one')
+
+    git(repo, 'switch', 'main')
+    const back = await resolutions.pendingWorkFor(task.id)
+    expect(back.supported).toBe(true)
+    expect(back.trunkOffTarget).toBeUndefined()
+  })
+
+  it('does not report a worktree conversation as off target', async () => {
+    const repo = freshRepo()
+    const home = projects.addProject({ root: repo, name: 'worktree-chat' })
+    const task = tasks.createTask({ title: 'Chat in a worktree', kind: 'conversation', status: 'ready', projectId: home.id })
+    tasks.setStatus(task.id, 'awaiting_human')
+    git(repo, 'switch', '-c', 'elsewhere')
+    expect((await resolutions.pendingWorkFor(task.id)).trunkOffTarget).toBeUndefined()
+  })
+
   it('refuses a pull request up front, which a trunk conversation cannot open', async () => {
     const repo = freshRepo()
     const home = projects.addProject({ root: repo, name: 'trunk-chat-pr' })
@@ -547,5 +678,57 @@ describe('what the Commit button asks of a trunk conversation (t649)', () => {
     const answer = await resolutions.commitConversation(task.id, 'pull-request')
     expect(answer.ok).toBe(false)
     expect(answer.reason).toMatch(/works in the trunk: a pull request needs a branch/)
+  })
+})
+
+/**
+ * ⛔ t788 ← t786: `land_work` refused a trunk conversation on `trailer-recut` with *"nothing of this
+ * conversation's to verify there"*, and the agent — told never to switch branches — asked the
+ * operator for leave to push by hand. The refusal now says how to get back, moves nothing itself, and
+ * the same call lands once the checkout is on the target.
+ */
+describe('land_work in a trunk left on another branch (t788)', () => {
+  it('refuses with the switch that fixes it, moves nothing, and lands after the switch', async () => {
+    const repo = freshRepo()
+    const home = projects.addProject({ root: repo, name: 'trunk-land-off' })
+    const task = tasks.createTask({ title: 'Land from trunk', kind: 'conversation', status: 'ready', projectId: home.id, workspaceMode: 'trunk' })
+    tasks.setStatus(task.id, 'awaiting_human')
+    git(repo, 'switch', '-c', 'trailer-recut')
+    writeFileSync(join(repo, 'b.txt'), 'recut\n')
+    git(repo, 'add', 'b.txt')
+    git(repo, 'commit', '-m', 'recut')
+    const recut = git(repo, 'rev-parse', 'HEAD')
+    const mainBefore = git(repo, 'rev-parse', 'main')
+
+    const refused = await conversationland.landConversationWork(task.id, { finishPolicy: 'commit-and-verify' })
+    expect(refused.ok).toBe(false)
+    const reason = refused.ok ? '' : refused.reason
+    expect(reason).toContain('the trunk checkout is on `trailer-recut`, not `main`, so nothing was verified or pushed')
+    expect(reason).toContain('run `git switch main` in the trunk (never forced)')
+    expect(reason).not.toContain('nothing of this conversation')
+    // ⛔ The tool never switches the operator's checkout itself.
+    expect(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('trailer-recut')
+    expect(git(repo, 'rev-parse', 'main')).toBe(mainBefore)
+
+    // What the agent is now authorised to do: switch back and bring the commit across.
+    git(repo, 'switch', 'main')
+    git(repo, 'merge', '--ff-only', 'trailer-recut')
+    const landed = await conversationland.landConversationWork(task.id, { finishPolicy: 'commit-and-verify' })
+    expect(landed).toEqual({ ok: true, landedSha: recut, target: 'main' })
+    expect(git(repo, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('main')
+    // ⚠️ The branch it left is untouched — nothing of the operator's is deleted.
+    expect(git(repo, 'rev-parse', 'trailer-recut')).toBe(recut)
+  })
+
+  it('says the same from the trunk strategy, which the operator’s Land and a finish reach', async () => {
+    const repo = freshRepo()
+    const home = projects.addProject({ root: repo, name: 'trunk-canland-off' })
+    const task = tasks.createTask({ title: 'canLand', projectId: home.id, workspaceMode: 'trunk' })
+    git(repo, 'switch', '-c', 'side')
+    const answer = await landing.trunkLanding.canLand({ project: home, task, policy: 'commit-and-verify' } as never)
+    expect(answer.ok).toBe(false)
+    expect(answer.reason).toBe('the trunk has `side` checked out rather than `main` — switch it back with `git switch main` and land again')
+    // ⚠️ Still classified as the wrong-branch refusal it always was.
+    expect(isTrunkBlockedReason(answer.reason ?? '')).toBe(true)
   })
 })

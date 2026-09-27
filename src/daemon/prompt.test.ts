@@ -1750,6 +1750,38 @@ describe('the pre-completion rebase check', () => {
     }
   })
 
+  // ⛔ t788 ← t786: "never create or switch branches" left an agent on `trailer-recut` unable to
+  // reach `main` without asking twice. The switch back to the target is the one it may make.
+  it('authorises a trunk conversation to switch back to the target, and nothing else', async () => {
+    const project = await gitProject('trunk-conversation-switch', {
+      landing: { finish: 'commit-and-merge' },
+      workspaces: { mode: 'trunk' }
+    })
+    const task = tasks.createTask({ title: 'Switch back', kind: 'conversation', status: 'ready', projectId: project.id })
+    for (const mcp of [true, false]) {
+      const text = promptText(task, mcp ? 'claude-code' : 'openai-compatible', false, { markDelivered: false })
+      expect(text).toContain('`git switch main` back to it (never forced) before you change anything; that switch is yours to make')
+      expect(text).toContain('Never create branches, switch to any other branch, rewrite existing commits, or push by hand')
+      expect(text).not.toContain('never create or switch branches')
+    }
+  })
+
+  it('tells a trunk work task to switch back and to finish on the target', async () => {
+    const project = await gitProject('trunk-work-switch', {
+      landing: { finish: 'commit-and-merge' },
+      workspaces: { mode: 'trunk' }
+    })
+    const task = tasks.createTask({ title: 'Work in the trunk', status: 'ready', projectId: project.id })
+    for (const mcp of [true, false]) {
+      const text = promptText(task, mcp ? 'claude-code' : 'openai-compatible', false, { markDelivered: false })
+      expect(text).toContain('You are committing directly on `main` in the trunk. If the checkout is on another branch, `git switch main` first, never forced.')
+      expect(text).toContain('Do not create branches, switch to any other branch, rewrite or squash existing commits')
+      expect(text).toContain('make sure the trunk is on `main`, that no merge, rebase or cherry-pick is left in progress')
+      expect(text).not.toContain('stash, switch branches or reset')
+      expect(text).not.toContain('squash them into one coherent commit')
+    }
+  })
+
   /**
    * ⚠️ A follow-up into the session that already read the clause is **pointed** at it rather than
    * given it again — the same subtraction `resumedAnchor` makes for the checks and the hygiene. What

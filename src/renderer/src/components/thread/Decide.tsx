@@ -32,7 +32,8 @@ import {
   landLevelsForMode,
   levelOrigin,
   settleControls,
-  TRUNK_LAND_FALLBACK
+  TRUNK_LAND_FALLBACK,
+  unreadWorkspaceNotes
 } from '../../lib/finishlevel'
 import { duration } from '../../lib/format'
 import { effortLabel, modelLabel } from '../../lib/modelname'
@@ -703,6 +704,8 @@ export function Decide({
   const unlandedNow = controls.land
   // ⛔ "I could not look" is not "there is nothing there", and it must not render as one (t280).
   const cannotLook = controls.cannotLook
+  // ⚠️ A trunk checkout left on another branch was read fine; it is not "could not read" (t788).
+  const unreadNotes = cannotLook && pending ? unreadWorkspaceNotes(pending) : null
 
   /**
    * The level each settle-it button starts on, and where that answer came from.
@@ -823,9 +826,7 @@ export function Decide({
     (uncommittedNow && pending?.unclaimed
       ? ' This task is not holding that workspace any more; the branch and these files are still in it, and the run prefers that tree.'
       : '') +
-    (cannotLook
-      ? ` ⚠️ Could not read this task’s workspace (${pending?.reason}), so there is no telling what is uncommitted; the run checks the branch out again.`
-      : '')
+    (unreadNotes ? ` ⚠️ ${unreadNotes.tooltip}` : '')
   const landCommon =
     `Lands ${pending?.unlandedCommits === 1 ? '1 commit' : `${pending?.unlandedCommits ?? 0} commits`} ` +
     `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landLevel]} (${landLevelWhere}). ` +
@@ -928,11 +929,7 @@ export function Decide({
             : `Commit first; Complete releases ${uncommittedCount === 1 ? 'it' : 'them'} with the workspace`}
         </div>
       )}
-      {cannotLook && (
-        <div className="decide-note decide-warn">
-          ⚠️ Could not read this task’s workspace ({pending?.reason}) — Commit checks the branch out again
-        </div>
-      )}
+      {unreadNotes && <div className="decide-note decide-warn">⚠️ {unreadNotes.line}</div>}
       {commitError && <div className="decide-note decide-warn">⚠️ {commitError}</div>}
       {waitingLine && <div className="decide-note">{waitingLine}</div>}
       {resolveCauses.length > 0 && (

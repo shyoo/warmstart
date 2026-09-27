@@ -11,7 +11,8 @@ import {
   landLevelsForMode,
   levelOrigin,
   settleControls,
-  TRUNK_LAND_FALLBACK
+  TRUNK_LAND_FALLBACK,
+  unreadWorkspaceNotes
 } from './finishlevel'
 
 /**
@@ -257,5 +258,39 @@ describe('which settle-it controls the card draws', () => {
     expect(controls.commit).toBe(false)
     expect(controls.uncommitted).toBe(false)
     expect(controls.land).toBe(true)
+  })
+})
+
+/**
+ * ⛔ t788 ← t786: a trunk conversation whose checkout was on `trailer-recut` read *"Could not read
+ * this task's workspace (… the trunk is not on `main`) — Commit checks the branch out again"* on
+ * every turn. The checkout was read fine, and nothing checks a branch out for a trunk task.
+ */
+describe('what the card says when it cannot measure the tree', () => {
+  it('says where an off-target trunk checkout is, and that Commit switches it back', () => {
+    const notes = unreadWorkspaceNotes({
+      reason: 'this conversation works on `main` in the trunk, and the checkout is on `trailer-recut`',
+      trunkOffTarget: { branch: 'trailer-recut', target: 'main' }
+    })
+    expect(notes.line).toBe('The trunk checkout is on trailer-recut, not main — Commit asks the agent to switch it back first')
+    expect(notes.tooltip).toContain('switches it back to main (never forced) before it commits')
+    expect(notes.tooltip).toContain('Nothing on trailer-recut is moved or lost')
+    for (const text of [notes.line, notes.tooltip]) {
+      expect(text).not.toMatch(/Could not read/)
+      expect(text).not.toMatch(/checks the branch out again/)
+    }
+  })
+
+  it('names a detached HEAD rather than a branch', () => {
+    const notes = unreadWorkspaceNotes({ reason: 'x', trunkOffTarget: { branch: null, target: 'main' } })
+    expect(notes.line).toContain('on a detached HEAD, not main')
+  })
+
+  it('keeps the worktree wording for a read that really failed', () => {
+    const notes = unreadWorkspaceNotes({ reason: 'this task is not holding a workspace and has no branch' })
+    expect(notes.line).toBe(
+      'Could not read this task’s workspace (this task is not holding a workspace and has no branch) — Commit checks the branch out again'
+    )
+    expect(notes.tooltip).toMatch(/no telling what is uncommitted; the run checks the branch out again/)
   })
 })

@@ -962,6 +962,16 @@ Five decisions were taken with the operator and each is enforced in code:
    branch, uncommitted files and a merge/rebase/cherry-pick in progress; the first prompt says each
    (`trunkArrivalNotice`), and the files already there are stored on the run
    (`runs.trunk_dirty_before_json`) so the finish never asks the agent to commit them.
+   ⛔ **The target is the agent's branch, so switching back to it is the agent's to do** (t788 ←
+   t786, 2026-09-27). The notice used to forbid every switch and, for a checkout found elsewhere,
+   say *stop and ask*. t786 arrived on `trailer-recut` in inkland-site (one commit ahead of `main`,
+   left there by earlier work). It asked the operator twice, `land_work` refused because the
+   checkout was not on `main`, and the push ended up done by hand. Every trunk prompt now authorises exactly one switch,
+   `git switch <target>`, never forced. The notice names the commits the other branch holds that
+   the target lacks (`TrunkSurvey.aheadOfTarget`) and says to bring them across only if the task
+   needs them, by fast-forward or merge. It is not asked mid-operation, because git will not switch
+   then. ⚠️ The **tool** still never switches the operator's checkout: the agent does, and git
+   refuses any switch that would overwrite an uncommitted file.
 4. **`pull-request` cannot run in the trunk** — there is no branch to push. Refused where it is chosen
    (`task.create`, `task.setWorkspaceMode`, `task.setFinishPolicy`, `setProjectPolicy`) and refused at
    dispatch if it arrives anyway (`trunkPolicyConflict`).
@@ -972,8 +982,8 @@ Five decisions were taken with the operator and each is enforced in code:
    ⛔ `parkWorkspace` refuses the project root outright.
 
 **The finish ladder is shorter, because half of it has already happened** (`decideTrunkFinish`). An
-operation left in progress, or files the agent changed and did not commit, are asked about once; a
-checkout left on another branch goes to a person. There is **no trunk tripwire** — it exists to catch an
+operation left in progress, a checkout left on another branch, or files the agent changed and did
+not commit, are asked about once, then go to a person. There is **no trunk tripwire** — it exists to catch an
 agent working in the trunk, which is what this mode is — so a run that committed nothing is simply
 `done`. The levels map as: `await-human` rests, `commit-only` is done, and `commit-and-verify`,
 `commit-and-merge` and `commit-and-push` all land with the **`trunk` strategy**: under the landing lease,
@@ -998,6 +1008,11 @@ place, only your own changes, no branch, squash, stash or reset. `conversationIn
 own branch* and *the new branch to carry on in*; `land_work`'s reply names the trunk rather than an
 absent `nextBranch`; Commit refuses pull-request up front; and `pendingWorkFor` reads the project root
 for a trunk conversation that holds no lease between turns, rather than reporting it has no branch.
+When that root is on another branch, `pendingWorkFor` sets `trunkOffTarget`. The card then says
+*"The trunk checkout is on `X`, not `main` — Commit asks the agent to switch it back first"*
+(`unreadWorkspaceNotes`). It no longer says *"Could not read this task's workspace … Commit checks the
+branch out again"*, a worktree's remedy for a checkout that had been read fine (t788). `land_work`'s
+refusal there names the `git switch` that fixes it, and the trunk strategy's `canLand` does the same.
 
 ⚠️ **Known limit.** A *worktree* task whose branch stays empty while a trunk task commits can still trip
 the trunk tripwire, because a trunk task's commits are recorded only at its finish. The tripwire hands

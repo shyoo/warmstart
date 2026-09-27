@@ -206,11 +206,11 @@ const HAND_BACK_CLAUSE =
  * in progress, or a change left uncommitted, blocks whoever uses this checkout next — and the finish
  * (`decideTrunkFinish`) will ask about both.
  */
-function trunkIntegrationClause(mcpLess: boolean): string {
+function trunkIntegrationClause(mcpLess: boolean, target: string): string {
   const declare = mcpLess ? 'write the `TASK COMPLETE: ` line' : 'call `task_complete`'
   return (
-    `Immediately before you ${declare}, make sure no merge, rebase or cherry-pick is left in progress in ` +
-    'the trunk and that every change of yours is committed. Do not push unless your task says to — the ' +
+    `Immediately before you ${declare}, make sure the trunk is on \`${target}\`, that no merge, rebase or ` +
+    'cherry-pick is left in progress there, and that every change of yours is committed. Do not push unless your task says to — the ' +
     "finish policy decides that, and verifies the trunk first."
   )
 }
@@ -477,10 +477,14 @@ function conversationInstruction(mcpLess: boolean, trunk: string | null = null, 
   // ⛔ **A trunk conversation has no branch of its own** (t649). It commits straight onto the target
   // in the operator's checkout, so "your own branch" names something that does not exist, and a
   // landing there verifies and pushes rather than rebasing and handing out a next branch.
+  // ⛔ **And the target is its to switch back to** (t788): "never switch branches" left t786 unable
+  // to reach `main` from a checkout someone had left on `trailer-recut`.
   const commits = trunk
     ? `You work directly on \`${trunk}\` in the trunk, with no branch of your own: you may commit your own ` +
-      'changes there whenever it helps — never files that were already uncommitted when you arrived — ' +
-      'but never create or switch branches, rewrite existing commits, or push. '
+      'changes there whenever it helps — never files that were already uncommitted when you arrived. ' +
+      `If the checkout is on another branch, \`git switch ${trunk}\` back to it (never forced) before you ` +
+      'change anything; that switch is yours to make. Never create branches, switch to any other branch, ' +
+      'rewrite existing commits, or push by hand — a push is the landing’s, below. '
     : 'You may commit on your own branch whenever it helps — a commit is how work survives between ' +
       'turns — but never merge or push to the landing target yourself. '
   const landing = trunk
@@ -963,9 +967,10 @@ export function promptFor(
   const commitHygiene = inTrunk
     ? reportsOnly
       ? 'This task reports on its thread and changes nothing: do not commit, and leave the trunk exactly as you found it.'
-      : `You are committing directly on \`${landingTargetFor(task, project)}\` in the trunk. Commit only your own ` +
-        'changes, never files that were already uncommitted when you arrived. Do not rewrite or squash existing ' +
-        'commits, force-push, stash, switch branches or reset.'
+      : `You are committing directly on \`${trunkTarget}\` in the trunk. If the checkout is on another ` +
+        `branch, \`git switch ${trunkTarget}\` first, never forced. Commit only your own changes, never files ` +
+        'that were already uncommitted when you arrived. Do not create branches, switch to any other ' +
+        'branch, rewrite or squash existing commits, force-push, stash or reset.'
     : reportsOnly
     ? 'This task reports on its thread and lands nothing: do not commit, and leave the branch and ' +
       'the working tree exactly as you found them.'
@@ -988,7 +993,7 @@ export function promptFor(
   const toolRunsChecks = adapter(adapterId).info.capabilities.streamPrompts === 'once'
   const integration =
     project?.vcs === 'git' && !reportsOnly && inTrunk
-      ? trunkIntegrationClause(!adapter(adapterId).info.capabilities.mcp)
+      ? trunkIntegrationClause(!adapter(adapterId).info.capabilities.mcp, trunkTarget ?? landingTargetFor(task, project))
       : project?.vcs === 'git' && !reportsOnly
       ? integrationClause(
           landingTargetFor(task, project),

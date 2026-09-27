@@ -4971,17 +4971,42 @@ function holderLabel(holder: string): string {
  * ⛔ **Said, never tidied** (decided 2026-09-12). The tool does not stash, commit or abort anything
  * in the operator's checkout to make room; it names what is there so the agent can work around it —
  * or, for a merge in progress, recognise that finishing it may be the job.
+ *
+ * ⛔ **But the target is the agent's to be on** (t788 ← t786, 2026-09-27). This used to forbid every
+ * branch switch and, for a checkout found on another branch, say *stop and ask*. t786 arrived on
+ * `trailer-recut` in inkland-site, could not commit on `main` without switching, and spent two
+ * `ask_human` round trips and a hand push getting there — while `land_work` refused because the
+ * checkout was not on `main`. Trunk mode means working on the target, so one switch is authorised:
+ * `git switch <target>`, never forced. It destroys nothing — git refuses a switch that would
+ * overwrite an uncommitted file, and the branch left behind keeps every commit it had.
  */
 export function trunkArrivalNotice(survey: TrunkSurvey, target: string): string {
   const lines: string[] = [
     `⚠️ You are working **directly in this project's trunk checkout**, not in a worktree. There is no ` +
-      `task branch: commit on \`${target}\` itself. Do not create, switch or delete branches, do not ` +
-      'stash, and do not reset — other people and other agents rely on this checkout.'
+      `task branch: \`${target}\` is your branch and you commit on it directly. Do not create or delete ` +
+      `branches or switch to any branch but \`${target}\`, do not stash, and do not reset — other ` +
+      'people and other agents rely on this checkout.'
   ]
-  if (survey.branch !== target) {
+  if (survey.branch !== target && !survey.operation) {
+    const where = survey.branch ? `\`${survey.branch}\`` : 'a detached HEAD'
+    const ahead =
+      survey.branch && survey.aheadOfTarget > 0
+        ? ` \`${survey.branch}\` has ${survey.aheadOfTarget} commit(s) that \`${target}\` does not. Switching ` +
+          `leaves them there. They are not yours: bring them onto \`${target}\` only if your task needs ` +
+          'them, and then only by fast-forward or merge, never by rewriting either branch; say so in your reply.'
+        : ''
+    lines.push(
+      `⚠️ The checkout is on ${where}, not \`${target}\`. Switch it back before you change anything: ` +
+        `\`git switch ${target}\`. Never add \`--force\` or \`--discard-changes\`. Uncommitted files ` +
+        'come with you, and if git refuses because one would be overwritten, stop and ask rather than ' +
+        'forcing it.' +
+        ahead
+    )
+  } else if (survey.branch !== target) {
     lines.push(
       `⚠️ The checkout is on ${survey.branch ? `\`${survey.branch}\`` : 'a detached HEAD'}, not ` +
-        `\`${target}\`. Do not commit there; if your task does not say otherwise, stop and ask.`
+        `\`${target}\`, in the middle of the operation below. Git will not switch branches until it ` +
+        `is finished. If finishing it is not your task, stop and ask.`
     )
   }
   if (survey.operation) {

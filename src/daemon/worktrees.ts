@@ -444,6 +444,12 @@ export interface TrunkSurvey {
   operation: TrunkOperation | null
   /** Conflicted paths, when an operation stopped on them. */
   conflicted: string[]
+  /**
+   * Commits on the checked-out branch that the target does not have — `0` on the target itself.
+   * ⭐ Said to the agent before it switches the checkout back to the target (t788): switching leaves
+   * that branch exactly where it is, but its commits are somebody's work the target is missing.
+   */
+  aheadOfTarget: number
 }
 
 /**
@@ -455,10 +461,12 @@ export interface TrunkSurvey {
  * ⚠️ Never throws: an unreadable reading is an empty one, and the agent is still told the branch.
  */
 export async function surveyTrunk(project: Project): Promise<TrunkSurvey> {
-  const survey: TrunkSurvey = { branch: null, dirtyFiles: [], untrackedFiles: [], operation: null, conflicted: [] }
+  const survey: TrunkSurvey = { branch: null, dirtyFiles: [], untrackedFiles: [], operation: null, conflicted: [], aheadOfTarget: 0 }
   if (project.vcs !== 'git') return survey
   const state = await workspaceState(project.root, policyFor(project).landingTarget)
   survey.branch = state.branch
+  // ⚠️ `unlandedCommits` is what only the checked-out branch holds, so on the target it is not this.
+  survey.aheadOfTarget = state.branch === policyFor(project).landingTarget ? 0 : state.unlandedCommits
   survey.dirtyFiles = state.dirtyFiles
   survey.untrackedFiles = state.untrackedFiles
   const marker = async (name: string): Promise<boolean> => {

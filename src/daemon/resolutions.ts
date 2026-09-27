@@ -396,9 +396,15 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
     // measurement outstanding. Answered as `supported`, which draws no warning and no Commit or
     // Land button, because there is nothing for either of them to do.
     if (trunk) {
+      const on = trunkState?.branch ?? null
       return {
         ...none,
-        reason: `this conversation works in the trunk, and the trunk is not on \`${target}\``
+        reason:
+          trunkState === null
+            ? `this conversation works in the trunk, and the trunk could not be read`
+            : `this conversation works on \`${target}\` in the trunk, and the checkout is on ` +
+              `${on ? `\`${on}\`` : 'a detached HEAD'}`,
+        ...(trunkState !== null ? { trunkOffTarget: { branch: on, target } } : {})
       }
     }
     if (branch && !(await branchExists(project, branch))) {
@@ -630,9 +636,10 @@ export function commitConversationInstruction({
   // that were never this agent's — and nothing that rewrites, moves or hides the target.
   const commitStep = inTrunk
     ? `Commit your changes directly on \`${branch}\` in the trunk — this conversation has no branch of ` +
-      'its own, so do not create or switch to one. Commit only your own changes, never files that were ' +
-      'already uncommitted when you arrived. Do not rewrite or squash existing commits, force-push, ' +
-      'stash or reset. '
+      `its own, so do not create one. If the checkout is on another branch, \`git switch ${branch}\` ` +
+      'first (never forced; if git refuses, stop and say why). Commit only your own changes, never files ' +
+      'that were already uncommitted when you arrived. Do not rewrite or squash existing commits, ' +
+      'force-push, stash or reset. '
     : `Commit everything you have changed on \`${branch}\`. ` +
       'If two or more commits ahead of this branch’s landing target all belong to this task, squash ' +
       'them into one coherent commit where safe. Do not rewrite commits already on the landing ' +

@@ -147,8 +147,19 @@ export async function landConversationWork(
       return { ok: false, reason: `this conversation works in the trunk, where ${level} has nothing to do` }
     }
     const state = await workspaceState(project.root, target)
+    // ⛔ **A refusal the agent can act on** (t788 ← t786). This said *"nothing of this conversation's
+    // to verify there"* and stopped, so t786's agent — told never to switch branches — asked the
+    // operator for leave to push by hand. It may switch back; the reply says how, and that nothing
+    // moved. The tool itself still never switches the operator's checkout.
     if (state.branch !== target) {
-      return { ok: false, reason: `the trunk is not on \`${target}\`, so there is nothing of this conversation's to verify there` }
+      return {
+        ok: false,
+        reason:
+          `the trunk checkout is on ${state.branch ? `\`${state.branch}\`` : 'a detached HEAD'}, not ` +
+          `\`${target}\`, so nothing was verified or pushed. This conversation works on \`${target}\`: ` +
+          `run \`git switch ${target}\` in the trunk (never forced), make sure your commits are on ` +
+          `\`${target}\`, and land again`
+      }
     }
     const trunkBase = runsFor(task.id).filter((r) => r.kind === 'work').at(0)?.trunkShaBefore ?? null
     const result = await landTask({ project, task, workspacePath: project.root, branch: target, policy: level, quiet: true, trunkBase })

@@ -2884,6 +2884,15 @@ export interface PendingWork {
   unlandedCommits: number
   /** Is there **uncommitted** work here? The one question the Commit button and the Finish warning ask. */
   hasDiff: boolean
+  /**
+   * A trunk conversation whose checkout is on another branch (`null`: a detached HEAD) than its target.
+   *
+   * ⛔ **Not a failed look** (t788 ← t786). The card read *"Could not read this task's workspace …
+   * Commit checks the branch out again"* — a worktree's remedy, about a checkout that was read fine
+   * and that nothing checks out for a trunk task. The trunk agent is authorised to switch back to the
+   * target, so the card says where the checkout is and who moves it.
+   */
+  trunkOffTarget?: { branch: string | null; target: string }
 }
 
 /** One changed file in a task's diff. Counts always; contents only on request. */

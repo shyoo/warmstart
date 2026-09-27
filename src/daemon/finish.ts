@@ -513,12 +513,28 @@ export function decideTrunkFinish(input: TrunkFinishInputs): FinishDecision {
   }
 
   // 1. Off the target. Commits made on another branch in the operator's checkout are not this mode.
+  //    ⛔ **Asked once, because switching back is the agent's to do** (t788): the prompt authorises
+  //    `git switch <target>`, so a checkout left elsewhere is a step skipped, not a person's call —
+  //    until the agent has been asked and it is still elsewhere.
   if (survey.branch !== target) {
+    const where = survey.branch ? `\`${survey.branch}\`` : 'a detached HEAD'
+    if (!asked) {
+      return {
+        kind: 'ask-agent',
+        reason: `the trunk is on ${where} rather than \`${target}\``,
+        instruction:
+          `The trunk checkout is on ${where}, not \`${target}\` — and this task works on \`${target}\`. ` +
+          `Switch it back with \`git switch ${target}\`, never forced. If you committed on ${where}, then ` +
+          `bring those commits onto \`${target}\` by fast-forward or merge, never by rewriting either ` +
+          `branch. If git refuses the switch, say why in your summary rather than forcing it. Then report ` +
+          'the task complete again.'
+      }
+    }
     return {
       kind: 'await-human',
       reason:
-        `the trunk is on ${survey.branch ? `\`${survey.branch}\`` : 'a detached HEAD'} rather than ` +
-        `\`${target}\` — a trunk task commits on \`${target}\` itself. Nothing was moved.`
+        `the trunk is on ${where} rather than \`${target}\` — a trunk task commits on \`${target}\` ` +
+        'itself, and it was still elsewhere after the agent was asked to switch back. Nothing was moved.'
     }
   }
 
