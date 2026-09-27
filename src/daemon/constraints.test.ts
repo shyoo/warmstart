@@ -41,6 +41,17 @@ beforeAll(async () => {
   claude = workers.createWorker({ adapterId: 'claude-code', label: 'pin-me', enabled: false })
 })
 
+/**
+ * The one Antigravity account a machine may hold, created or reused — agy keeps credentials in the OS
+ * keyring, so `createWorker` refuses a second one.
+ */
+function antigravity(defaults: Parameters<typeof workers.updateWorker>[1]): Worker {
+  const existing =
+    workers.listWorkers().find((w) => w.adapterId === 'antigravity-cli') ??
+    workers.createWorker({ adapterId: 'antigravity-cli', label: 'Antigravity', enabled: false })
+  return workers.updateWorker(existing.id, { defaultModel: null, defaultModels: null, ...defaults })
+}
+
 afterAll(() => {
   db.closeDb()
   try {
@@ -191,17 +202,38 @@ describe('choosing an effort level', () => {
   it('holds an inherited level to every pool default, not just the one winning today', () => {
     // ⛔ A multi-pool account picks between its defaults at dispatch on live quota. A level legal for
     // one pool and not the other would file cleanly and then fail whenever the other pool won.
+    // `gemini-3.1-pro` takes low|high only.
+    const w = antigravity({ defaultModels: { a: 'gemini-3.8-flash', b: 'gemini-3.1-pro' } })
+    expect(() => api.checkConstraints({ workerId: w.id, effort: 'medium' })).toThrow(
+      /'gemini-3.1-pro' has no effort level 'medium'/
+    )
+    expect(() => api.checkConstraints({ workerId: w.id, effort: 'high' })).not.toThrow()
+  })
+
+  it('does not hold an inherited level to a pool default that takes no effort at all (t777)', () => {
+    // ⭐ The shape that swallowed t777's reassignment: Antigravity's pools are Gemini and Claude, and
+    // `claude-sonnet-4-6` lists no levels. Dispatch drops the flag for such a model, so it cannot fail
+    // the run — refusing here made every effort unfileable on the account.
+    const w = antigravity({
+      defaultModel: 'gemini-3.8-flash',
+      defaultModels: { gemini: 'gemini-3.8-flash', claude: 'claude-sonnet-4-6' }
+    })
+    expect(() => api.checkConstraints({ workerId: w.id, effort: 'high' })).not.toThrow()
+    expect(() => api.checkConstraints({ workerId: w.id, effort: 'telepathy' })).toThrow(
+      /'gemini-3.8-flash' has no effort level 'telepathy'/
+    )
+  })
+
+  it('still refuses an effort when no inherited default takes one', () => {
     const w = workers.createWorker({
       adapterId: 'claude-code',
-      label: 'inherit-effort-pools',
+      label: 'inherit-effort-none',
       enabled: false
     })
     // `claude-haiku-4-5` lists no effort levels at all — see `checkWorkerDefaults`'s own test.
-    workers.updateWorker(w.id, {
-      defaultModels: { a: 'claude-opus-5', b: 'claude-haiku-4-5' }
-    })
+    workers.updateWorker(w.id, { defaultModel: 'claude-haiku-4-5' })
     expect(() => api.checkConstraints({ workerId: w.id, effort: 'high' })).toThrow(
-      /'claude-haiku-4-5' has no effort level/
+      /'claude-haiku-4-5' has no effort level 'high'/
     )
   })
 })
@@ -389,6 +421,32 @@ describe('task.setWorker RPC', () => {
     })
     expect(reassigned.constraints.modelPolicy).toBeUndefined()
     expect(tasks.requireTask(task.id).constraints.model).toBe('claude-opus-5')
+  })
+
+  it('moves a Claude task to Antigravity on its account default at an explicit effort (t777)', async () => {
+    // The live t777 write, from the live Antigravity row: the pills read *Antigravity · Gemini 3.8
+    // Flash · High* with the model left on account default, and the door refused it over the
+    // Claude pool's `claude-sonnet-4-6` — so the task stayed on ClaudeThird.
+    const tasks = await import('./tasks.js')
+    const handlers = api.buildApi({ version: '1.0.0', startedAt: Date.now(), port: 8080 })
+    const agy = antigravity({
+      defaultModel: 'gemini-3.8-flash',
+      defaultEffort: 'high',
+      defaultModels: { gemini: 'gemini-3.8-flash', claude: 'claude-sonnet-4-6' }
+    })
+    const task = tasks.createTask({ title: 'reassign to Antigravity', constraints: { workerId: claude.id, model: 'claude-opus-5' } })
+
+    const moved = await handlers['task.setWorker']({
+      id: task.id,
+      workerId: agy.id,
+      model: null,
+      modelPolicy: 'inherit',
+      modelClass: null,
+      effort: 'high'
+    })
+
+    expect(moved.constraints).toMatchObject({ workerId: agy.id, adapterId: 'antigravity-cli', effort: 'high', modelPolicy: 'inherit' })
+    expect(moved.constraints.model).toBeUndefined()
   })
 
   it('clears workerIds when setting a specific worker or unpinning to auto', async () => {

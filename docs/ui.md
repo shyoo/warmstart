@@ -583,7 +583,8 @@ typed:
   pick that differs from the task's pin draws the row in the accent, shows *undo*, and turns Send into
   **Reassign**: one `task.setWorker` write, then `task.message` with what was typed, or `Continue.`
   when nothing was — `task.message` is the only RPC that continues a resting task and it takes a text.
-  On a failed task, explicitly picking Auto worker sets `userPickedWorker` so the composer enables Reassign.
+  A refused write (or send) is drawn under the pills as `.compose-assign-error`, never dropped — t777's
+  Reassign was refused at the door and only the daemon log said so. On a failed task, explicitly picking Auto worker sets `userPickedWorker` so the composer enables Reassign.
   The worker pill passes `selectedWorkerId` to `PillSelect` rather than `workerId`: when an unpinned task ran on a worker,
   the dropdown checkmark and focus match that running worker instead of checking Auto, allowing the operator to click
   Auto to reassign back to the scheduler (t763). `PillSelect` invokes `onChange` unconditionally on pick.

@@ -372,14 +372,26 @@ export function checkConstraints(c: TaskConstraints): TaskConstraints {
         // whole run later rather than this call now.
         throw new Error('an effort level means nothing without a model to apply it to')
       }
+      // ⛔ Held to the rule dispatch applies, not a stricter one. A pool default that declares *no*
+      // levels takes no effort, and dispatch drops the flag for it (`scheduler.ts`), so it cannot fail
+      // the run. Refusing over it made every effort unfileable on an account that keeps such a model
+      // in one pool: Antigravity's `claude-sonnet-4-6` beside `gemini-3.8-flash` swallowed a
+      // reassignment to *account default (Gemini 3.8 Flash) · High* (t777). A default that lists
+      // levels without this one is still refused, and so is an effort no default takes at all.
+      let takesEffort = false
       for (const m of inherited) {
         const spec = cm.modelSpec(m)
         if (!spec) {
           throw new Error(`'${m}' is not a model ${info.label} can be priced for`)
         }
+        if (spec.effort_levels.length === 0) continue
         if (!spec.effort_levels.includes(c.effort)) {
           throw new Error(`'${m}' has no effort level '${c.effort}'`)
         }
+        takesEffort = true
+      }
+      if (!takesEffort) {
+        throw new Error(`'${inherited.join("', '")}' has no effort level '${c.effort}'`)
       }
     }
   }
