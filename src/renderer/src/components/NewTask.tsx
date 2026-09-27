@@ -35,7 +35,7 @@ import { rpc, type FleetEntry } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { candidatesFor, useTaskCandidates } from './Dependencies'
 import { effortLabel, modelLabel } from '../lib/modelname'
-import { taskLabelShort } from '../lib/taskview'
+import { statusLabel, STATUS_TONE, taskLabelShort } from '../lib/taskview'
 import { Pill, PillOptions, PillSelect, SegmentedControl, type PillOption } from './Pill'
 import {
   MAX_PIECES,
@@ -2075,10 +2075,13 @@ function DependencyMenu({
   projectNames: Map<string, string>
 }): React.JSX.Element {
   const [query, setQuery] = useState('')
-  const picked = chosen
-    .map((id) => all.find((t) => t.id === id))
-    .filter((t): t is Task => !!t)
-  const candidates = useMemo(() => candidatesFor(all, null, chosen), [all, chosen])
+  // ⛔ One list in one order, the chosen rows marked in place. Lifting a pick to the top moved the
+  // row out from under the pointer and reshuffled everything below it (t757). A chosen task stays
+  // listed even if it has since stopped being a candidate, so it can still be unticked.
+  const candidates = useMemo(() => {
+    const offered = new Set(candidatesFor(all, null, []).map((t) => t.id))
+    return all.filter((t) => offered.has(t.id) || chosen.includes(t.id))
+  }, [all, chosen])
   const needle = query.trim().toLowerCase()
   const shown = needle
     ? candidates.filter(
@@ -2101,7 +2104,7 @@ function DependencyMenu({
           t{task.seq} · {taskLabelShort(task, 44)}
         </span>
         <span className="pill-option-hint">
-          {task.status}
+          <span className={`status ${STATUS_TONE[task.status] ?? ''}`}>{statusLabel(task)}</span>
           {task.projectId && projectNames.get(task.projectId)
             ? ` · ${projectNames.get(task.projectId)}`
             : ''}
@@ -2124,11 +2127,12 @@ function DependencyMenu({
         onChange={(e) => setQuery(e.target.value)}
       />
       <div className="pill-options">
-        {picked.map((t) => row(t, true))}
-        {shown.slice(0, 40).map((t) => row(t, false))}
-        {picked.length === 0 && shown.length === 0 && (
+        {shown
+          .filter((t, i) => i < 40 || chosen.includes(t.id))
+          .map((t) => row(t, chosen.includes(t.id)))}
+        {shown.length === 0 && (
           <p className="pill-empty">
-            {all.length === 0 ? 'No available tasks to depend on.' : 'No matching tasks.'}
+            {candidates.length === 0 ? 'No available tasks to depend on.' : 'No matching tasks.'}
           </p>
         )}
       </div>

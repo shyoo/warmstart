@@ -18,8 +18,13 @@ import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
  * and a second copy of "which tasks may I depend on" would be a second chance to offer a cycle.
  */
 
-/** Statuses that can never reach `completed`, so an edge to one would block its dependent for ever. */
-const NEVER_COMPLETES = new Set<Task['status']>(['cancelled', 'failed'])
+/**
+ * Statuses never offered as a prerequisite. `cancelled` and `failed` can never reach `completed`, so
+ * an edge to one would hold its dependent at `blocked` until somebody noticed; `completed` is
+ * satisfied the moment it is made, so the edge would change nothing and only lengthen the list
+ * (t757).
+ */
+const NOT_OFFERED = new Set<Task['status']>(['completed', 'cancelled', 'failed'])
 
 /**
  * Every task that could be a prerequisite, newest first, refreshed on demand.
@@ -71,10 +76,7 @@ export function candidatesFor(all: Task[], taskId: string | null, chosen: string
   return all.filter((t) => {
     if (t.id === taskId) return false
     if (chosen.includes(t.id)) return false
-    // ⚠️ A completed task is still offered. It is an edge that is satisfied the moment it is made,
-    // which is a perfectly ordinary thing to want to record; a cancelled or failed one is not, and
-    // would hold its dependent at `blocked` until somebody noticed.
-    if (NEVER_COMPLETES.has(t.status)) return false
+    if (NOT_OFFERED.has(t.status)) return false
     return !(taskId && reaches(t.id, taskId))
   })
 }
