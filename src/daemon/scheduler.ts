@@ -12,12 +12,14 @@ import type {
   TaskStatus
 } from '@shared/tasks.js'
 import {
+  WINDOW_7D_HIGH_WATER,
   WINDOW_HIGH_WATER,
+  isWeeklyWindow,
   windowHighWater,
   resolveModelChoice,
   TERMINAL_STATUSES
 } from '@shared/tasks.js'
-import type { Session, Worker } from '@shared/protocol.js'
+import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
 import type { ProbeDemand } from './quota.js'
 import { recordRoutingDecision } from './routingdecisions.js'
@@ -307,6 +309,31 @@ export const QUOTA_MIDRUN_PREEMPT_WATER = 95
  */
 export const QUOTA_WARNED_PREEMPT_WATER = 50
 
+/**
+ * When the run's own **weekly** window reads this high mid-run, warn and wrap up.
+ *
+ * ⭐ t778 (2026-09-27): MuseFirst's 7d read 94% at dispatch, 97% at 16:25:58 and 99% at 16:32:11, and
+ * the run died on a failed stream at 16:35 with an unfinished rebase and no warning. Nothing here
+ * looked at a weekly window — the "a weekly caution changes nothing" rule below is about a vendor
+ * *warning*, and a measured 99% is not a caution. ⚠️ The dispatch gate itself, not a point above it
+ * as the 5h pair has: readings arrive minutes apart and moved two points between two of them on t778,
+ * so waiting for 98 would have warned at 99.
+ */
+export const QUOTA_7D_MIDRUN_PREEMPT_WATER = WINDOW_7D_HIGH_WATER
+
+/**
+ * The busiest unexpired weekly window among these, or null. Read by the watchdog from the same
+ * pool-scoped reading as the 5h percent, so another pool's week cannot stop this run.
+ */
+export function weeklyWindowOf(windows: QuotaWindow[]): { percent: number; resetsAt: number | null } | null {
+  let worst: QuotaWindow | null = null
+  for (const w of windows) {
+    if (!isWeeklyWindow(w) || windowExpired(w)) continue
+    if (!worst || w.percent > worst.percent) worst = w
+  }
+  return worst ? { percent: Math.round(worst.percent), resetsAt: worst.resetsAt ?? null } : null
+}
+
 /** Time for a watching operator to overrule an automatic, still-avoidable quota preemption. */
 export const QUOTA_PREEMPT_WARNING_MS = 60_000
 
@@ -348,6 +375,8 @@ export function overrunVerdict(
      * account that is saying no".
      */
     quotaOverride?: boolean
+    /** This run's pool's weekly window, from the same reading as `percent`. See `weeklyWindowOf`. */
+    weekly?: { percent: number; resetsAt: number | null } | null
   } = {}
 ): { reason: string; resumeAt: number; overridable: boolean } | null {
   const park = (sample: LiveRateLimit | null): number =>
@@ -365,7 +394,7 @@ export function overrunVerdict(
     }
   }
 
-  if (percent === null) return null
+  if (percent === null && !opts.weekly) return null
 
   // ⛔ Below the refusal and above everything else. Dispatching a task under an override and then
   // preempting it three points later would be the fleet granting a permission and revoking it before
@@ -373,7 +402,7 @@ export function overrunVerdict(
   // and nothing else.
   if (opts.quotaOverride) return null
 
-  if (percent >= QUOTA_MIDRUN_PREEMPT_WATER) {
+  if (percent !== null && percent >= QUOTA_MIDRUN_PREEMPT_WATER) {
     return {
       reason: `${percent}% of 5h window used`,
       resumeAt: park(sessionRateLimit(workerId)),
@@ -387,11 +416,24 @@ export function overrunVerdict(
     warned &&
     warned.status !== 'allowed' &&
     isSessionRateWindow(warned.windowId) &&
+    percent !== null &&
     percent >= QUOTA_WARNED_PREEMPT_WATER
   ) {
     return {
       reason: `${percent}% of 5h window used, and the vendor is warning about it (${warned.status})`,
       resumeAt: park(warned),
+      overridable: true
+    }
+  }
+
+  // ⛔ Parked against the *weekly* reset, never the 5h one (rule 3 above): the account cannot serve
+  // this run again until the week turns over, and a person who would rather move it has the warning's
+  // minute to choose Hand off & reassign.
+  if (opts.weekly && opts.weekly.percent >= QUOTA_7D_MIDRUN_PREEMPT_WATER) {
+    const resetsAt = opts.weekly.resetsAt
+    return {
+      reason: `${opts.weekly.percent}% of 7d window used`,
+      resumeAt: resetsAt && resetsAt > Date.now() ? resetsAt : Date.now() + BLIND_PARK_MS,
       overridable: true
     }
   }
@@ -2801,10 +2843,13 @@ async function runWatchdogs(): Promise<void> {
       const worker = watchdogWorker
       const quota = lastQuota(run.workerId)
       let percent: number | null = null
+      let weekly: { percent: number; resetsAt: number | null } | null = null
       if (worker && quota && !quota.stale) {
         const choice = resolveModelChoice(task.constraints, worker, false, quota)
-        const win = sessionWindowFor(quota.windows, poolFor(worker, runningModel ?? choice.model))
+        const pool = poolFor(worker, runningModel ?? choice.model)
+        const win = sessionWindowFor(quota.windows, pool)
         if (win && !windowExpired(win)) percent = Math.round(win.percent)
+        weekly = weeklyWindowOf(windowsForPool(quota.windows, pool))
       } else if (worker && run.quotaBefore && !run.quotaBefore.stale) {
         // Fall back to the baseline snapshot taken at dispatch if mid-run staleness elapsed (>15m)
         const pool = poolFor(worker, run.model)
@@ -2819,7 +2864,8 @@ async function runWatchdogs(): Promise<void> {
       }
 
       const verdict = overrunVerdict(run.workerId, percent, {
-        quotaOverride: quotaOverridden(task)
+        quotaOverride: quotaOverridden(task),
+        weekly
       })
       if (verdict && onCredits) {
         // ⛔ The window is exhausted and the account is spending credits: this is the case the

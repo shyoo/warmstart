@@ -728,6 +728,41 @@ describe('the switches that gate all of this', () => {
     expect(tasks.getTask(task.id)?.status).toBe('paused_quota')
   })
 
+  it('warns when the weekly window reaches its gate mid-run, and parks against the weekly reset (t778)', async () => {
+    // ⭐ t778: MuseFirst's 7d read 94% at dispatch, 97% eleven minutes later and 99% six after that,
+    // and the run died on a failed stream with no warning — only the 5h window was ever read here.
+    const { task, run } = seedRunawayTask(0)
+    const workerId = tasks.requireRun(run.id).workerId
+    const weekReset = Date.now() + 3 * 24 * 3_600_000
+    const insert = db.db().prepare(
+      `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+       values (?,?,?,?,?,?,?)`
+    )
+    insert.run(workerId, '5h', 'Muse 5h', 43, Date.now() + 3_600_000, 'probe', Date.now())
+    insert.run(workerId, '7d', 'Muse 7d', scheduler.QUOTA_7D_MIDRUN_PREEMPT_WATER, weekReset, 'probe', Date.now())
+
+    await scheduler.tick()
+    const warning = tasks.requireTask(task.id).quotaPreemptWarning
+    expect(warning?.trigger).toBe('overrun')
+    expect(warning?.reason).toBe(`${scheduler.QUOTA_7D_MIDRUN_PREEMPT_WATER}% of 7d window used`)
+    // ⛔ The weekly reset, never the 5h one an hour out — the account cannot serve this run before then.
+    expect(warning?.resumeAt).toBe(weekReset)
+  })
+
+  it('leaves a run alone while the weekly window is below its gate', async () => {
+    const { task, run } = seedRunawayTask(0)
+    const workerId = tasks.requireRun(run.id).workerId
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run(workerId, '7d', 'Muse 7d', scheduler.QUOTA_7D_MIDRUN_PREEMPT_WATER - 1, Date.now() + 86_400_000, 'probe', Date.now())
+
+    await scheduler.tick()
+    expect(tasks.requireTask(task.id).quotaPreemptWarning).toBeNull()
+  })
+
   /**
    * ⛔ **The minute is a deadline, not a countdown that re-arms.** The watchdog re-evaluates the
    * same trigger every ten seconds, and the reading behind it moves; if a fresher percentage wrote a

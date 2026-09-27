@@ -421,6 +421,14 @@ and every prepare now begins with `ensureWorktreePointer`, which runs `git workt
 pointer that does not resolve — measured to mend exactly this — before anything asks git about the
 directory. See `docs/adapters.md` for why a bridged agent was tempted.
 
+⛔ **And it cannot be in the middle of a rebase.** t778 (2026-09-27): an agent committed, rebased
+onto `main`, staged its conflict resolution and died on `rebase --continue`; the reassignment's
+`git switch` refused *"cannot switch branch while rebasing"* and the task failed. Prepare, park and
+`parkOtherHolders` (a slot mid-rebase lists as `detached` yet still holds its branch) now call
+`unwindAbandonedRebase`: **rescue first** — HEAD is detached, so the half-finished resolution is
+stashed — **then** `rebase --abort`, which puts the branch back on its pre-rebase tip. An abort before
+the rescue would reset the resolution away. Never on the trunk.
+
 ⭐ **It is committed onto the task's branch**, with a `wip:` subject and a
 `Multi-Agent-Controller-Rescue` trailer, so the next run of that task inherits it by doing nothing
 more than checking the branch out — in whichever workspace it is later dispatched into. The run that

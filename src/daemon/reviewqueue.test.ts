@@ -337,6 +337,29 @@ describe('what a batch would attempt', () => {
       db.db().exec("delete from quota_samples where worker_id = 'w-openai-quota'")
     }
   })
+
+  it('skips tasks whose only peer is past its weekly gate, however quiet its 5h window is (t778)', async () => {
+    // ⭐ t778: MuseFirst graded batch after batch while its 7d climbed 94% → 99%, because only the 5h
+    // window was read here — spending the end of its week on grades beside a task running on it.
+    worker('w-openai-week', 'openai-compatible')
+    try {
+      const now = Date.now()
+      const insert = db.db().prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?, ?, ?, ?, null, 'probe', ?)`
+      )
+      insert.run('w-openai-week', '5h', '5h', 10, now)
+      insert.run('w-openai-week', '7d', '7d', 97, now)
+
+      const t = task()
+      grade(t, 'antigravity-cli', 'complete', 8.5)
+      const candidates = await quality.batchCandidates(2, null)
+      expect(candidates.map((c) => c.taskId)).not.toContain(t)
+    } finally {
+      db.db().exec("delete from workers where id = 'w-openai-week'")
+      db.db().exec("delete from quota_samples where worker_id = 'w-openai-week'")
+    }
+  })
 })
 
 /**

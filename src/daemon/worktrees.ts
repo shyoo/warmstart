@@ -990,6 +990,8 @@ export async function prepareWorkspace(
       // *carries* uncommitted changes with it, so a task that ended without committing leaves its
       // edits sitting in the slot, and the next task to claim that slot dies on `switch -c` with
       // git's "local changes would be overwritten" — an error about files it has never heard of.
+      // ⛔ Not the trunk, whose rebase is the operator's (see `parkWorkspace`).
+      if (!samePath(workspace.path, project.root)) await unwindAbandonedRebase(workspace.path, branch)
       await rescueDirt(workspace.path, branch)
       if (await gitOk(workspace.path, ['rev-parse', '--verify', branch])) {
         await git(workspace.path, ['switch', branch])
@@ -1073,26 +1075,33 @@ export async function parkOtherHolders(
     return
   }
 
-  let path: string | null = null
+  // ⚠️ A worktree mid-rebase lists as `detached`, yet git still refuses to check its branch out
+  // anywhere else — so a detached entry is asked what it is rebasing (t778).
+  const entries: { path: string; branch: string | null }[] = []
   for (const line of listing.split(/\r?\n/)) {
-    if (line.startsWith('worktree ')) path = line.slice('worktree '.length).trim()
-    else if (line.startsWith('branch ') && path) {
-      const held = line.slice('branch '.length).trim()
-      const samePath = normalise(path) === normalise(keepPath) || normalise(path) === normalise(project.root)
-      if (held === `refs/heads/${branch}` && !samePath) {
-        try {
-          // ⚠️ The trunk, not the caller's base. The caller may be cutting a subtask from its
-          // parent's branch, and parking a stranger's worktree onto that would be nonsense.
-          const base = await trunkBaseRef(project)
-          cleanStaleGitLocks(path)
-          await ensureWorktreePointer(project, path)
-          await rescueDirt(path, base)
-          await git(path, ['switch', '--detach', base])
-          log.info(`parked ${path}, which still held ${branch}`)
-        } catch (err) {
-          log.warn(`could not park ${path} off ${branch}:`, err)
-        }
-      }
+    if (line.startsWith('worktree ')) entries.push({ path: line.slice('worktree '.length).trim(), branch: null })
+    else if (line.startsWith('branch ') && entries.length > 0) {
+      entries[entries.length - 1]!.branch = line.slice('branch '.length).trim()
+    }
+  }
+
+  const ref = `refs/heads/${branch}`
+  for (const { path, branch: held } of entries) {
+    const samePath = normalise(path) === normalise(keepPath) || normalise(path) === normalise(project.root)
+    if (samePath) continue
+    if (held !== ref && (held !== null || (await rebasingBranch(path)) !== ref)) continue
+    try {
+      // ⚠️ The trunk, not the caller's base. The caller may be cutting a subtask from its
+      // parent's branch, and parking a stranger's worktree onto that would be nonsense.
+      const base = await trunkBaseRef(project)
+      cleanStaleGitLocks(path)
+      await ensureWorktreePointer(project, path)
+      await unwindAbandonedRebase(path, base)
+      await rescueDirt(path, base)
+      await git(path, ['switch', '--detach', base])
+      log.info(`parked ${path}, which still held ${branch}`)
+    } catch (err) {
+      log.warn(`could not park ${path} off ${branch}:`, err)
     }
   }
 }
@@ -1255,6 +1264,53 @@ async function unhideIndexEntries(path: string): Promise<string[]> {
 }
 
 /**
+ * The branch a rebase left unfinished in this worktree is rebasing (`refs/heads/…`), `''` when it
+ * cannot say, or `null` when no rebase is in progress.
+ */
+async function rebasingBranch(path: string): Promise<string | null> {
+  for (const name of ['rebase-merge', 'rebase-apply']) {
+    try {
+      const dir = resolve(path, await git(path, ['rev-parse', '--git-path', name]))
+      if (!existsSync(dir)) continue
+      try {
+        return readFileSync(join(dir, 'head-name'), 'utf8').trim()
+      } catch {
+        return ''
+      }
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+/**
+ * Undo a rebase an agent started and never finished, **after** getting its working tree to safety.
+ *
+ * ⛔ Measured on t778 (2026-09-27). Muse committed, ran `git rebase main`, resolved `HANDOFF.md`, and
+ * its turn died on the interactive `rebase --continue`. The operator's reassignment then claimed the
+ * slot: `rescueDirt` stashed the five files and `git switch` failed on *"cannot switch branch while
+ * rebasing"*, so the task went to `failed` — and would have on every retry, since nothing undid it.
+ * `parkWorkspace` already aborted blindly; the claim path never did.
+ *
+ * ⛔ **Rescue first, abort second.** `rebase --abort` resets the working tree to where the rebase
+ * began, so an abort before the rescue discards the conflict resolution the agent was part-way
+ * through. HEAD is detached mid-rebase, so `rescueDirt` stashes it — recoverable by name — and the
+ * abort then puts the branch back on its own pre-rebase tip, where every commit already made is.
+ */
+async function unwindAbandonedRebase(path: string, destination: string): Promise<boolean> {
+  const rebasing = await rebasingBranch(path)
+  if (rebasing === null) return false
+  await rescueDirt(path, destination)
+  await git(path, ['rebase', '--abort'])
+  log.warn(
+    `aborted an unfinished rebase of ${rebasing.replace(/^refs\/heads\//, '') || 'a detached head'} in ${path}; ` +
+      'the branch is back on its pre-rebase tip'
+  )
+  return true
+}
+
+/**
  * Get uncommitted work out of the way of a branch switch — **onto the branch when there is one.**
  *
  * ⛔ **Committed if possible, stashed if not, discarded never.** `reset --hard` would be one line and
@@ -1367,13 +1423,12 @@ export async function parkWorkspace(project: Project, path: string): Promise<Res
     repairTrunkConfig(project)
     await ensureWorktreePointer(project, path)
     const base = await trunkBaseRef(project)
-    // ⛔ Blind, and deliberately first. `git switch` **refuses** while a rebase is in progress, so a
-    // workspace abandoned mid-rebase can never be parked and the slot is lost until somebody notices
-    // by hand. `beginConflictResolution` leaves exactly that state on purpose and every caller is
-    // required to undo it — this is the net for the time one of them does not, which is a daemon
-    // crash between starting the rebase and sending the prompt.
-    // ⚠️ Aborting discards no work: the branch goes back to where the rebase started.
-    await gitOk(path, ['rebase', '--abort'])
+    // ⛔ First. `git switch` **refuses** while a rebase is in progress, so a workspace abandoned
+    // mid-rebase can never be parked and the slot is lost until somebody notices by hand.
+    // `beginConflictResolution` leaves exactly that state on purpose and every caller is required to
+    // undo it — this is the net for the time one of them does not, and for an agent that stopped
+    // half-way through its own rebase (t778). The tree is rescued before the abort resets it.
+    await unwindAbandonedRebase(path, base)
     const rescued = await rescueDirt(path, base)
     await git(path, ['switch', '--detach', base])
     return rescued

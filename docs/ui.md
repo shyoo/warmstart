@@ -364,7 +364,8 @@ from `quality.batch`, and the reviews themselves are ordinary runs on ordinary t
 table and the task threads are where they are watched. ⚠️ **Concurrency is not a number written
 anywhere**: `requestReview` synchronously claims an account before its first await, the driver starts
 everything that can start, and `reviewCandidates` refuses an account
-that is already reviewing, so a two-account fleet grades two tasks at once and a one-account fleet
+that is already reviewing — or past the gate on **any** window of its grading model's pool, the 7d
+included (`poolVerdict`; t778, where MuseFirst kept grading from 94% to 99% of its week) — so a two-account fleet grades two tasks at once and a one-account fleet
 grades one. ⛔ **The count is what is *attempted*, not what is graded** — a task that is skipped stays
 visible as a skip with its own reason rather than being silently replaced by the next one, because
 *no peer left* and *the branch is gone so there is nothing to diff* are the fleet facts the page was

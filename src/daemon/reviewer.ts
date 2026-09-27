@@ -1,8 +1,9 @@
 import type { QualityReview } from '@shared/review.js'
 import type { Worker } from '@shared/protocol.js'
 import type { Project, Task } from '@shared/tasks.js'
-import { WINDOW_HIGH_WATER } from '@shared/tasks.js'
+import { poolVerdict, windowsForPool, type BlockingWindow } from '@shared/tasks.js'
 import { adapter } from './adapters/index.js'
+import { costModel } from './costmodel.js'
 import { accountUnavailability } from './eligibility.js'
 import { extractJson } from './controller.js'
 import { db, rows } from './db.js'
@@ -197,10 +198,27 @@ export function typicalReviewMs(workerId: string): number | null {
 }
 
 /** The 5h window this fleet gates on, or null when nothing fresh enough to trust says. */
-function window5h(workerId: string): { percent: number } | null {
-  const quota = lastQuota(workerId)
+/**
+ * The window that refuses this account a review, through the same `poolVerdict` work goes through.
+ *
+ * ⛔ **Every window of the grading model's pool, the weekly one included.** This read only the 5h
+ * window, so on t778 (2026-09-27) MuseFirst went on grading batch after batch while its 7d climbed
+ * 94% → 99% — spending the last of the week on grades while a task ran on the same account, and
+ * carrying on past it. ⚠️ The grading model's pool, not the account's busiest: an Antigravity Claude
+ * pool at its gate says nothing about the Gemini model it grades with.
+ */
+function reviewQuotaBlock(worker: Worker): BlockingWindow | null {
+  const quota = lastQuota(worker.id)
   if (!quota || quota.stale) return null
-  return quota.windows.find((w) => w.id === 'session' || w.id === '5h') ?? null
+  let pool: string | null = null
+  try {
+    pool = worker.gradingModel
+      ? (costModel(adapter(worker.adapterId).info.policy.costModelId).modelSpec(worker.gradingModel)?.pool ?? null)
+      : null
+  } catch {
+    // No loadable cost model: every window the account has, which is the conservative reading.
+  }
+  return poolVerdict(windowsForPool(quota.windows, pool)).blocking
 }
 
 /**
@@ -265,11 +283,13 @@ function reviewCandidates(task: Task, requireAvailable: boolean): { candidates: 
       rejected.push(blocked)
       continue
     }
-    const win = window5h(worker.id)
-    if (win && win.percent >= WINDOW_HIGH_WATER) {
+    const block = reviewQuotaBlock(worker)
+    if (block) {
       // ⛔ The same gate work goes through. A review is cheap but not free, and spending the last
-      // 8% of a window on a grade rather than on work is the wrong trade.
-      rejected.push(`${worker.label} is at ${Math.round(win.percent)}% of its 5h window`)
+      // of a window on a grade rather than on work is the wrong trade.
+      rejected.push(
+        `${worker.label} is at ${Math.round(block.window.percent)}% of its ${block.window.label ?? block.window.id} window`
+      )
       continue
     }
     // ⚠️ Two spellings of one fact, because a review has two phases: `claimedReviewers` covers the
@@ -324,7 +344,7 @@ export function reviewerAvailability(
 /**
  * Does this task have at least one eligible peer capable of reviewing it during a batch?
  * A worker is viable for a batch if it is not an author, not already graded, grading-enabled,
- * enabled, capable, and its quota is not permanently over WINDOW_HIGH_WATER (unless actively reviewing).
+ * enabled, capable, and no window of its grading pool is past its gate (`poolVerdict`) (unless actively reviewing).
  */
 export function hasBatchReviewer(task: Task): boolean {
   const { authors } = authorshipOf(task.id)
@@ -337,8 +357,7 @@ export function hasBatchReviewer(task: Task): boolean {
     const info = adapter(worker.adapterId).info
     if (!info.capabilities.readOnlyPermissionMode || !info.capabilities.transports.includes('stream')) continue
     if (accountUnavailability(worker)) continue
-    const win = window5h(worker.id)
-    if (win && win.percent >= WINDOW_HIGH_WATER) {
+    if (reviewQuotaBlock(worker)) {
       const isBusy = claimedReviewers.has(worker.id) || sessionsForWorker(worker.id).some((s) => s.purpose === 'review')
       if (!isBusy) continue
     }

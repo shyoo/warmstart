@@ -319,6 +319,79 @@ describe('an interrupted run that never committed', () => {
 })
 
 /**
+ * A run that stopped half-way through its own rebase.
+ *
+ * ⛔ t778, 2026-09-27. Muse committed, ran `git rebase main`, resolved the conflict in `HANDOFF.md`,
+ * staged it, and its turn died on `rebase --continue`. The operator reassigned the task; the claim
+ * stashed the five files and then `git switch` refused with *"cannot switch branch while rebasing"*,
+ * so the task went to `failed` — as it would have on every retry.
+ */
+describe('a workspace left in the middle of a rebase', () => {
+  /** t778's state, in the claimed slot: one commit on the branch, a conflicted rebase resolved and staged. */
+  async function strandMidRebase(project: Project, holder: string, n: number) {
+    const ws = await worktrees.claimWorkspace(project, holder)
+    const branch = worktrees.branchNameFor(n, 'zoom the quality axis')
+    await worktrees.prepareWorkspace(project, ws!, branch)
+    writeFileSync(join(ws!.path, 'kept.txt'), 'the agent’s commit\n')
+    git(ws!.path, 'commit', '-am', 'the agent’s work')
+    const tip = git(ws!.path, 'rev-parse', 'HEAD')
+    writeFileSync(join(project.root, 'kept.txt'), 'main moved underneath\n')
+    git(project.root, 'commit', '-am', 'main moves')
+    expect(() => git(ws!.path, 'rebase', 'main')).toThrow()
+    writeFileSync(join(ws!.path, 'kept.txt'), 'the half-finished resolution\n')
+    git(ws!.path, 'add', 'kept.txt')
+    expect(git(ws!.path, 'status')).toMatch(/rebase in progress/)
+    return { ws: ws!, branch, tip }
+  }
+
+  it('is unwound when the task is dispatched into the same slot again, and its commit is kept', async () => {
+    const project = makeProject()
+    const { ws, branch, tip } = await strandMidRebase(project, 'run-1', 778)
+    worktrees.releaseWorkspace(ws.claimId)
+
+    const next = await worktrees.claimWorkspace(project, 'run-2')
+    const result = await worktrees.prepareWorkspace(project, next!, branch)
+
+    expect(result.error).toBeUndefined()
+    expect(result.ok).toBe(true)
+    expect(git(next!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(branch)
+    expect(git(next!.path, 'rev-parse', 'HEAD')).toBe(tip)
+    // ⛔ The resolution went to a stash before the abort reset the tree — never discarded.
+    expect(git(next!.path, 'stash', 'show', '-p', 'stash@{0}')).toContain('the half-finished resolution')
+    worktrees.releaseWorkspace(next!.claimId)
+  })
+
+  it('is unwound in another slot that is still rebasing the branch the dispatch needs', async () => {
+    // ⚠️ `worktree list` calls a slot mid-rebase `detached`, yet git refuses the branch everywhere else.
+    const project = makeProject(2)
+    const { ws, branch, tip } = await strandMidRebase(project, 'run-1', 779)
+    const other = await worktrees.claimWorkspace(project, 'run-2')
+    expect(other!.path).not.toBe(ws.path)
+
+    const result = await worktrees.prepareWorkspace(project, other!, branch)
+
+    expect(result.error).toBeUndefined()
+    expect(git(other!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(branch)
+    expect(git(other!.path, 'rev-parse', 'HEAD')).toBe(tip)
+    expect(git(ws.path, 'status')).not.toMatch(/rebase in progress/)
+    worktrees.releaseWorkspace(ws.claimId)
+    worktrees.releaseWorkspace(other!.claimId)
+  }, 20_000)
+
+  it('is parked with its half-finished resolution stashed, not reset away', async () => {
+    const project = makeProject()
+    const { ws, branch, tip } = await strandMidRebase(project, 'run-1', 780)
+
+    await worktrees.parkWorkspace(project, ws.path)
+
+    expect(git(ws.path, 'status')).not.toMatch(/rebase in progress/)
+    expect(git(ws.path, 'rev-parse', branch)).toBe(tip)
+    expect(git(ws.path, 'stash', 'show', '-p', 'stash@{0}')).toContain('the half-finished resolution')
+    worktrees.releaseWorkspace(ws.claimId)
+  })
+})
+
+/**
  * Lending a resident conversation's worktree to another task.
  *
  * ⛔ Phase 2 of resident sessions. A session now keeps its worktree for as long as it lives, so the
