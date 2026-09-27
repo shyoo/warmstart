@@ -64,6 +64,7 @@ import {
   holdLine,
   isWorking,
   routerPicksModel,
+  autoModelLabel,
   statusLabel,
   STOPPABLE,
   taskLabel,
@@ -479,16 +480,22 @@ function TaskDetail({
   // ⛔ The predicate itself lives in `taskview.tsx`, beside the list cell that asks the same
   // question. The row and the page it opens must not name different models for the same task.
   const routerPicks = routerPicksModel(task.constraints, assigned, resolved.modelSource)
+  // ⛔ No account yet and no pin (an Auto worker): there is no default to resolve, and *CLI default*
+  // was not what was filed. Say the model choice the task was filed with instead (t760).
+  const unrouted = !task.constraints.workerId && !task.assignee && !task.constraints.model
   const requestedModel = {
-    model: routerPicks ? null : resolved.model,
-    undecided: routerPicks,
+    model: routerPicks || unrouted ? null : resolved.model,
+    undecided: routerPicks || unrouted,
+    ...(unrouted ? { label: autoModelLabel(task.constraints) } : {}),
     // ⛔ Dropped where the model in effect declares no levels, matching what the dispatch sends: an
     // account defaulting to `medium` inherits that level onto `claude-haiku-4-5`, which takes no
     // effort at all, and this row read *Haiku 4.5 Med* for a flag nothing applied.
     // ⚠️ Only where the model list actually describes it — an unlisted model says nothing about
     // its levels, and dropping there would hide one the CLI is really being sent.
-    effort: resolvedSpec && resolvedSpec.effortLevels.length === 0 ? null : resolved.effort,
-    source: routerPicks
+    effort: unrouted || (resolvedSpec && resolvedSpec.effortLevels.length === 0) ? null : resolved.effort,
+    source: unrouted
+      ? 'as filed — the scheduler picks the account and the model together at dispatch'
+      : routerPicks
       ? `chosen at dispatch from ${autoModelCount(assigned)} auto-routed models${assigned ? ` on ${assigned.label}` : ''}`
       : resolved.modelSource === 'task'
         ? 'pinned on this task'

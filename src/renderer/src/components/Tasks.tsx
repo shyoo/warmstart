@@ -26,7 +26,7 @@ import type { TaskColumn } from '../lib/prefs'
 import {
   activeTime,
   activeTimeTitle,
-  assigneeLabel,
+  workerCellLabel,
   CANCELLABLE,
   dependencyTooltip,
   holdLine,
@@ -895,7 +895,7 @@ export function Tasks({
                           : 'agent'}
                     </td>}
                     {shown.has('worker') && <td className={task.ranOn || task.assignee ? '' : 'dim'}>
-                      {assigneeLabel(task, fleet)}
+                      {workerCellLabel(task, fleet)}
                       {/* ⚠️ The id in the tooltip, always. The label is written for reading at a
                           glance; the operator chasing a routing mistake needs the exact string that
                           was dispatched, and it must never be more than a hover away. */}
@@ -903,7 +903,9 @@ export function Tasks({
                         <div
                           className={`tbl-model${model.undecided ? ' dim' : ''}`}
                           title={
-                            model.undecided
+                            model.unrouted
+                              ? 'Filed with this model choice. The scheduler picks the account and the model together at dispatch.'
+                              : model.undecided
                               ? `Chosen at dispatch from ${model.routable} routable models on this account — naming one before the tick that picks it would be a guess`
                               : model.ran
                                 ? `${model.id} — the model the last run was dispatched with`

@@ -436,6 +436,36 @@ export interface ModelLine {
   undecided: boolean
   /** How many models it will be scoring, for the tooltip. Zero unless `undecided`. */
   routable: number
+  /** No account is chosen yet either: the scheduler picks the account and the model together. */
+  unrouted?: boolean
+}
+
+/**
+ * The model answer a task was filed with, in the composer's own words (t760).
+ *
+ * ⛔ **For a task no account has been chosen for yet.** With an Auto worker there is no account to
+ * resolve a default against and no allowlist to count, so the cell and the thread's model row used
+ * to say nothing — or *CLI default*, which is not what was filed. What *was* filed is the policy and
+ * its class, and those are facts even before the scheduler acts on them.
+ */
+export function autoModelLabel(constraints: Pick<Task['constraints'], 'modelPolicy' | 'modelClass'>): string {
+  if (constraints.modelPolicy === 'inherit') return 'account default'
+  return constraints.modelClass ? `Auto Model (${constraints.modelClass})` : 'Auto Model'
+}
+
+/**
+ * The Tasks list's account cell: who ran it, else who it is going to, else what was filed.
+ *
+ * ⚠️ `assigneeLabel` answers only the first two and draws `—` for the rest; an Auto-worker task that
+ * has not been dispatched reads *Auto Worker*, as its composer pill did, and a pin not yet taken up
+ * names the pinned account (t760).
+ */
+export function workerCellLabel(task: Task, fleet: FleetEntry[]): string {
+  const label = assigneeLabel(task, fleet)
+  if (label !== '—') return label
+  const pin = task.constraints.workerId
+  if (!pin) return 'Auto Worker'
+  return fleet.find((f) => f.worker.id === pin)?.worker.label ?? pin.slice(0, 8)
 }
 
 /**
@@ -464,6 +494,11 @@ export function modelLine(
   modelOptions: ModelOptions[]
 ): ModelLine | null {
   const account = task.ranOn ?? task.constraints.workerId ?? task.assignee
+  // ⛔ No account yet and no pin: the scheduler picks both at dispatch, so what can be said is what
+  // was filed (t760). A task-level pin names its model below whether or not an account is known.
+  if (task.ranModel === null && !account && !task.constraints.model) {
+    return { label: autoModelLabel(task.constraints), id: null, ran: false, undecided: true, routable: 0, unrouted: true }
+  }
   const entry = fleet.find((f) => f.worker.id === account) ?? null
   const options = modelOptions.find((o) => o.adapterId === entry?.worker.adapterId) ?? null
   const resolved = resolveModelChoice(
@@ -538,6 +573,8 @@ export function modelFacts(input: {
      * explicitly listed the models it wants scored.
      */
     undecided?: boolean
+    /** What to call an undecided choice, where it was filed with one (`autoModelLabel`, t760). */
+    label?: string
   }
 }): {
   headline: { text: string; title: string }
@@ -548,7 +585,7 @@ export function modelFacts(input: {
   const effort = observed?.effort ?? input.ranEffort ?? null
   // ⚠️ The CLI's own default is a real answer and reads as one. "—" would look like a broken field.
   const asked = requested.undecided
-    ? 'chosen at dispatch'
+    ? (requested.label ?? 'chosen at dispatch')
     : (modelLabel(requested.model, requested.effort) ?? 'CLI default')
   const askedTitle = `${requested.undecided ? 'not yet decided' : (requested.model ?? 'no model chosen')} — what the next run asks for, ${requested.source}`
 

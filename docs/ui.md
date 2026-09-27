@@ -539,7 +539,11 @@ operator (t336). It now says **router picks**, with the count of routable models
 `ranModel` / `ranEffort` still win the moment a run has one (t743). ⚠️ The thread's model row had this right first
 (*chosen at dispatch from N routable models*); the fix was to make the list ask the *same* predicate
 — `routerPicksModel` in `taskview.tsx` — rather than to write the test out a second time, because a
-row and the page it opens naming different models is its own bug.
+row and the page it opens naming different models is its own bug. ⭐ **Before any account is chosen,
+the row says what was filed (t760).** An Auto-worker task has no account to resolve against, so the
+list cell was empty and the thread's model row said *CLI default*. Both now read the composer's words
+from `autoModelLabel` — *Auto Model*, *Auto Model (high|med|low)*, or *account default* for inherit —
+and the list's account cell reads *Auto Worker* (or the pinned account) via `workerCellLabel`.
 
 ⭐ **The ledger says what a task is on now and what it will be on next as two rows each, not one row
 with a caption (t564).** `cur worker` (the live session's account, else `ranOn`) sits over

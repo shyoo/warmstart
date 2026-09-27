@@ -17,6 +17,7 @@ import { routesFromLegacy } from '@shared/modelroutes'
 import {
   activeTime,
   activeTimeTitle,
+  autoModelLabel,
   canRelandTask,
   chronologicalRuns,
   chronologicalTimeline,
@@ -38,6 +39,7 @@ import {
   pieceSettings,
   plannedAssignment,
   routeForTask,
+  workerCellLabel,
   statusToneFor,
   reassignmentModel,
   resolveRetryCauses,
@@ -852,7 +854,61 @@ describe('the model under the account, in the Worker column', () => {
   it('says nothing where no model has been chosen and none has run', () => {
     // ⚠️ Not a placeholder. "The CLI picks" is the true answer, and the cell shows the account alone.
     expect(modelLine(routed(), fleet(worker({ defaultModel: null })), options)).toBeNull()
-    expect(modelLine(routed({ assignee: null }), fleet(), options)).toBeNull()
+  })
+
+  it('⛔ names the model choice an Auto-worker task was filed with, before any account is chosen (t760)', () => {
+    // No account, no pin: the cell used to be empty, so an operator could not see what they filed.
+    expect(modelLine(routed({ assignee: null }), fleet(), options)).toMatchObject({
+      label: 'Auto Model',
+      id: null,
+      ran: false,
+      undecided: true,
+      unrouted: true
+    })
+    for (const modelClass of ['high', 'med', 'low'] as const) {
+      expect(
+        modelLine(routed({ assignee: null, constraints: { modelPolicy: 'auto', modelClass } }), fleet(), options)
+          ?.label
+      ).toBe(`Auto Model (${modelClass})`)
+    }
+    expect(
+      modelLine(routed({ assignee: null, constraints: { modelPolicy: 'inherit' } }), fleet(), options)?.label
+    ).toBe('account default')
+    // A pin is still named, account or no account.
+    expect(
+      modelLine(routed({ assignee: null, constraints: { model: 'claude-opus-5' } }), fleet(), options)?.label
+    ).toBe('Opus 5')
+    // And what ran still beats what was filed.
+    expect(
+      modelLine(
+        routed({ assignee: null, ranModel: 'claude-opus-5', constraints: { modelClass: 'high' } }),
+        fleet(),
+        options
+      )?.unrouted
+    ).toBeUndefined()
+  })
+
+  it('says Auto Worker, or the pinned account, where nothing has been dispatched (t760)', () => {
+    const t = (over: Partial<Task>): Task =>
+      ({ ranOn: null, assignee: null, constraints: {}, ...over }) as Task
+    expect(workerCellLabel(t({}), fleet())).toBe('Auto Worker')
+    expect(workerCellLabel(t({ constraints: { workerId: 'w1' } }), fleet())).toBe(worker().label)
+    expect(workerCellLabel(t({ assignee: 'w1' }), fleet())).toBe(worker().label)
+  })
+
+  it('an undecided model filed with a class says so in the thread headline (t760)', () => {
+    const { headline } = modelFacts({
+      observed: null,
+      ran: null,
+      requested: {
+        model: null,
+        effort: null,
+        source: 'as filed',
+        undecided: true,
+        label: autoModelLabel({ modelPolicy: 'auto', modelClass: 'high' })
+      }
+    })
+    expect(headline.text).toBe('Auto Model (high)')
   })
 
   it('still names a model when the adapter options have not arrived yet', () => {

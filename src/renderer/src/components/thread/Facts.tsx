@@ -27,7 +27,7 @@ export function ModelFact({
   session: Session | null
   ran: string | null
   ranEffort?: string | null
-  requested: { model: string | null; effort: string | null; source: string; undecided?: boolean }
+  requested: { model: string | null; effort: string | null; source: string; undecided?: boolean; label?: string }
 }): React.JSX.Element {
   const { headline, note } = modelFacts({
     observed: session ? { model: session.model ?? null, effort: session.effort ?? null } : null,
