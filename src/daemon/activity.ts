@@ -401,6 +401,87 @@ export function runActivityFor(runId: string): Array<{ text: string; ts: number 
   return snapshot(runTails.get(runId))
 }
 
+// ---------------------------------------------------------------------------- the closing reply
+
+/**
+ * What the agent said last, whole — the reply a person reads as the outcome of the run.
+ *
+ * ⛔ **Not the peephole, which is lossy by design** (t731 ← t734, 2026-09-26). The tails above cut
+ * every line at `MAX_LINE` and keep a bounded count, which is right for *"what is it doing now"* and
+ * wrong for *"what did it answer"*. t731 asked which command to put in `project.json`; the agent's
+ * whole answer — the `bash.exe -lc` line, *run it with cwd at the repo root*, the `DEPLOY_FREEZE`
+ * caveat — survived only as two ellipsised rows under *Intermediate activity*, while the thread
+ * showed a one-line summary that named none of it.
+ *
+ * ⭐ **A block is the prose between two tool calls.** The closing reply is the block still open or,
+ * when a tool call has just closed it, the block that call closed — which is exactly the prose an
+ * agent writes before calling `task_complete`, whether or not that call has been announced by the
+ * time the completion is read. A tool call with no prose before it closes an empty block, so a run
+ * that ended in silence reports no reply rather than narration from three tool calls earlier.
+ *
+ * ⚠️ Kept verbatim — linebreaks, fences and all — because it is posted to the thread as markdown.
+ * Bounded at `REPLY_KEEP_CHARS`, keeping the end, since the end is where an answer concludes.
+ */
+interface ReplyState {
+  current: string
+  closed: string
+}
+
+const replies = new Map<string, ReplyState>()
+export const REPLY_KEEP_CHARS = 64_000
+
+function replyFor(runId: string): ReplyState {
+  let state = replies.get(runId)
+  if (!state) {
+    state = { current: '', closed: '' }
+    replies.set(runId, state)
+  }
+  return state
+}
+
+/** Prose the agent spoke on this run: a whole message, or a fragment of one (`OutputFraming`). */
+export function noteReplyText(runId: string, text: string, framing: OutputFraming = 'message'): void {
+  const state = replyFor(runId)
+  const piece = text.replace(/\r\n?/g, '\n')
+  // ⚠️ Separate messages are separate paragraphs; fragments of one message spell their own joins.
+  const joined =
+    framing === 'message' && state.current.trim() && piece.trim()
+      ? `${state.current.replace(/\n+$/, '')}\n\n${piece}`
+      : state.current + piece
+  state.current = joined.length > REPLY_KEEP_CHARS ? joined.slice(-REPLY_KEEP_CHARS) : joined
+}
+
+/** A tool call: whatever was said before it is a finished block. */
+export function noteReplyBoundary(runId: string): void {
+  const state = replyFor(runId)
+  state.closed = state.current
+  state.current = ''
+}
+
+/** The run's closing reply, trimmed; empty when the run's last block said nothing. */
+export function closingReply(runId: string): string {
+  const state = replies.get(runId)
+  if (!state) return ''
+  return state.current.trim() || state.closed.trim()
+}
+
+/**
+ * The thread's completion message: the agent's summary, then its closing reply in full.
+ *
+ * ⛔ **Every completion, not only an empty branch** (operator's choice, t734): the reply is the
+ * outcome a person reads, whether the run answered a question or changed forty files. The summary
+ * stays first — it is the agent's own headline — and is not repeated when the reply already says it.
+ * ⚠️ Pure and exported for its test.
+ */
+export function completionMessage(summary: string, reply: string): string {
+  const s = summary.trim()
+  const r = reply.trim()
+  if (!r) return s
+  if (!s || s === 'Completed' || r.includes(s)) return r
+  if (s.includes(r)) return s
+  return `${s}\n\n${r}`
+}
+
 /**
  * Take accumulated intermediate activity for a run and release the memory.
  * Called when a run is finished and about to be persisted into SQLite.
@@ -409,11 +490,13 @@ export function consumeRunActivity(runId: string): Array<{ text: string; ts: num
   const tail = runTails.get(runId)
   const got = snapshot(tail)
   runTails.delete(runId)
+  replies.delete(runId)
   return got
 }
 
 export function clearRunActivity(runId: string): void {
   runTails.delete(runId)
+  replies.delete(runId)
 }
 
 /**

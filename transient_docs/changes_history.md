@@ -3971,3 +3971,21 @@ to the configured model with a log line. Warmth is kept in both cases. Already-p
 on the next respawn via the spawn upsert. 1 shared + 1 metering + 1 routing L1; the ghost e2e fails
 on the old code with exactly the incident signature (`4-8` chosen over `5-5`). `docs/routing.md`
 §2.4.
+
+## t734 — an answer-only task was "landed" as another task's commit, and its answer hidden (2026-09-26, from t731)
+
+t731 asked which command to put in inkland's `project.json`. Muse answered in full and ended with
+`TASK COMPLETE: documented the Git Bash login-shell command…`; `taskCompletionIn` kept that line
+and nothing else, so the thread never showed the command, which survived only as two
+400-character peephole rows. The finish then read the empty branch as 5 commits, because
+`workspaceState` counted `origin/main..branch` and inkland's `main` was 5 commits ahead of
+origin (the branch is cut from local `main`). It chose `land`; rebase and fast-forward moved
+nothing; the thread said *"Landed as `ab96d6f5`"*, which was t729's commit, and
+`recordLandedCommits` recorded it as t731's (the tip is always kept). A read-only scan of the live
+DB, then a dry run on a copy, found the same shape on 19 tasks (40 commits). 16 of them had
+completed quality reviews covering other tasks' work: 11 that landed nothing of their own and 5
+that also carried their own (32 reviews).
+Fixes: `commitsOnlyOn` for every branch measure, a tip-equals-base backstop in `landTask`, the
+closing reply posted whole (`closingReply`, `replyBesideContract`), the guard reworded and
+Complete retiring the empty branch (operator's decisions), and `disownForeignCommits` with
+`disowned_commits` (migration 85) and `revoked` reviews.

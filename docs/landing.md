@@ -178,9 +178,14 @@ so they are the ones with a bar. All of these must hold:
    leaves them untouched, while one tracked modification refuses outright — *"cannot rebase: You have
    unstaged changes"*. `LandingContext.keepsWorkspace` carries the distinction and nothing but
    `landConversationWork` sets it.
-2. **The branch carries commits** `origin/<target>` does not already have — the remote, not your
-   local copy of it, for the reason [below](#landed-means-pushed). A task that answered a question
-   and changed no file is finished, and reporting it as *landed* would be false.
+2. **The branch carries commits of its own** — on neither `origin/<target>` nor your local
+   `<target>` (`commitsOnlyOn`; `workspaceState.unlandedCommits` measures the same). ⛔ Not
+   `origin/<target>..branch` alone: a branch is cut from the *local* target, so on a trunk ahead of
+   its remote that count is the trunk's unpushed backlog. t731 (2026-09-26) committed nothing, read as
+   5 commits, was "landed" by a rebase and fast-forward that moved nothing, and its thread said
+   *"Landed as `ab96d6f5`"* — t729's commit. ⭐ A backstop in `landTask` refuses the same sentence
+   whatever the measurement: a success whose tip equals its own attribution base moved nothing of this
+   task's. See [below](#when-the-agent-made-no-commits).
 3. **The task's mandate allows `land`.** ⛔ This is authority, not preference: it is inherited down a
    lineage so an agent-spawned subtask cannot grant itself more than its parent had, and **no
    dropdown can widen it**.
@@ -237,6 +242,24 @@ kept, and the message says how to get the work back. ⚠️ Attributed by branch
 stashes live in the repository's shared object store, so every pooled workspace reports the same list
 and a global count would let one unrelated leftover hold every future task in the project. Git's own
 `On <branch>:` prefix is the tie.
+
+### When the agent made no commits
+
+⭐ **The empty commit guard stays** (5de8a42; the operator re-confirmed it on t734): a clean branch with
+nothing of its own rests at `awaiting_human`, from `decideFinish` or from `landTask`'s own guard, with
+one wording (`noCommitsReason` in [`finish.ts`](../src/daemon/finish.ts)): *the agent made no commits*,
+**that can be intentional** — a question answered, or a decision that nothing needed to change — and
+the agent's reply above is then the whole outcome. The hold reason is the short `NO_COMMITS_HOLD`.
+
+- **Complete** accepts it. `resolveTask` then retires the branch through `retireEmptyBranch`, which
+  deletes a *name* only: it refuses a branch with a commit of its own, a stash taken off it, or an
+  uncommitted file in the pool member that has it checked out, and never switches your own checkout.
+  A later reply cuts a fresh branch from the target as it stands then (`prepareWorkspace`).
+- **Reply** to ask for more, on the same branch.
+
+⭐ The answer itself is on the thread: since t734 a completion posts the agent's **closing reply**
+whole under its one-line summary (`closingReply` / `completionMessage` in `activity.ts`; for an
+MCP-less adapter the final message minus its `TASK COMPLETE:` line, `replyBesideContract`).
 
 ### When the trunk moved while the branch stayed empty
 
@@ -694,7 +717,9 @@ downstream of the pushed base and an ancestor of what landed — the two conditi
 provably tighter floor rather than a guess. Fail either and the base the landing already had is used,
 because a narrower range nobody can prove is worse than a generous one. `claimedByAnotherTask` is the
 backstop beneath it, dropping a commit some other task already recorded as its own — never the tip,
-which a landing must always record for itself.
+which a landing must always record for itself. ⛔ That is safe only because a landing whose tip is
+another task's commit is no longer reported at all: a tip equal to the attribution base moved nothing
+of this task's, and `landTask` holds it as *the agent made no commits* (t731).
 
 ⛔ **The message says what the landing did, one clause per fact it actually knows.** For most of
 this tool's life it said *"Landed as a166a6a onto main."* and nothing else — while the landing had
@@ -802,6 +827,19 @@ back from that tip would be a guess: 141 of the 347 commits on this repository's
 by no task at all. Measured against a copy of this fleet's database on 2026-09-05: **207 commits
 across 200 tasks**, **148** ranges filled in, **8** shas that no longer resolve, and the gradable
 count moving from **51 of 233 tasks to 199**.
+
+⛔ **And what a false landing attributed is taken back, on the same boot, after salvage** (t734,
+`disownForeignCommits` in [`disown.ts`](../src/daemon/disown.ts)). A `task_commits` row is another
+task's when either proof holds: another task recorded the same sha **onto the same target** earlier
+(a split planner carrying its pieces' commits onto the trunk is not a second owner), or the commit was
+already an ancestor of the trunk at the task's first run (`runs.trunk_sha_before`; one `git` per row,
+so it runs once per database, `meta` key `disown.ancestry.v1`). Each such row goes to
+`disowned_commits` — which `recordTaskCommits` then refuses, so salvage cannot write it back — the
+range is re-derived from what is left, every complete or pending quality review of the task is
+**revoked** (kept, with its reason, and outside every score), and one `landing.corrected` line says so
+on the thread. Measured on a copy of the live database on 2026-09-26: **40** commits across **19**
+tasks (12 that landed nothing of their own, 7 carrying their own work too), **32** reviews revoked; a
+second sweep and a re-salvage wrote nothing.
 
 ## Two tasks finishing at once
 

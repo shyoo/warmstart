@@ -255,7 +255,24 @@ describe('landing work that is committed', () => {
       hasChecks: true
     })
     expect(decision.kind).toBe('await-human')
-    expect('reason' in decision && decision.reason).toContain('No work landed')
+    expect('reason' in decision && decision.reason).toContain('the agent made no commits')
+    // ⭐ t734: marked, so the hold reason is the short one, and the sentence says it can be right
+    // and names the press that accepts it.
+    expect(decision.kind === 'await-human' && decision.noCommits).toBe(true)
+    expect('reason' in decision && decision.reason).toContain('That can be intentional')
+    expect('reason' in decision && decision.reason).toContain('Press **Complete** to accept it')
+    expect(finish.NO_COMMITS_HOLD).toBe('the agent made no commits — Complete accepts that, or reply to continue')
+  })
+
+  it('does not mark a hold about uncommitted work as the empty-branch guard', () => {
+    const decision = finish.decideFinish({
+      task: makeTask({ asked: true }),
+      project: null,
+      state: clean({ unlandedCommits: 0, dirtyFiles: ['a.ts'] }),
+      hasChecks: true
+    })
+    expect(decision.kind).toBe('await-human')
+    expect(decision.kind === 'await-human' && decision.noCommits).toBeFalsy()
   })
 })
 
@@ -542,7 +559,7 @@ describe('a run whose branch is empty while the trunk moved', () => {
       trunk: null
     })
     expect(decision.kind).toBe('await-human')
-    expect('reason' in decision && decision.reason).toContain('No work landed')
+    expect('reason' in decision && decision.reason).toContain('the agent made no commits')
   })
 
   it('declines on a run that took no reading, rather than assuming it is innocent', () => {
@@ -555,7 +572,7 @@ describe('a run whose branch is empty while the trunk moved', () => {
       hasChecks: false
     })
     expect(decision.kind).toBe('await-human')
-    expect('reason' in decision && decision.reason).toContain('No work landed')
+    expect('reason' in decision && decision.reason).toContain('the agent made no commits')
   })
 
   it('does not fire trunk-moved on two readings that are the same, falling back to empty commit guard', () => {
@@ -567,7 +584,7 @@ describe('a run whose branch is empty while the trunk moved', () => {
       trunk: moved({ after: 'aaaaaaaa1111' })
     })
     expect(decision.kind).toBe('await-human')
-    expect('reason' in decision && decision.reason).toContain('No work landed')
+    expect('reason' in decision && decision.reason).toContain('the agent made no commits')
   })
 
   it('takes precedence over uncommitted work being asked about first', () => {

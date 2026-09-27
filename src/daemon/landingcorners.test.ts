@@ -174,10 +174,10 @@ describe('a task whose run was preempted', () => {
 
     const result = await land(project, taskId, root, branch)
     expect(result.ok).toBe(false)
-    expect(result.reason).toContain('no work landed')
+    expect(result.reason).toContain('the agent made no commits')
     expect(tasks.getTask(taskId)?.status).toBe('awaiting_human')
     // ⛔ And the reason is the empty-commit guard, NOT because of the other branch's stash
-    expect(tasks.getTask(taskId)?.holdReason).toBe('no commits were produced on this branch')
+    expect(tasks.getTask(taskId)?.holdReason).toBe('the agent made no commits — Complete accepts that, or reply to continue')
   })
 
   it('refuses a tip that is only the rescue, however many times it was preempted', async () => {

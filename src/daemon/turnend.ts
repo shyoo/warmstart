@@ -431,7 +431,13 @@ export async function onStreamResult(
         if (openRun && runTask) await endConversationTurn(session, openRun, runTask, effectiveText)
         return
       }
-      await completeTask(session.id, completion ?? (result.text?.trim() || 'Completed'))
+      // ⭐ With the rest of the final message as the reply (t731 ← t734): the contract line is the
+      // summary, and everything the agent wrote above it is the answer a person came for.
+      await completeTask(
+        session.id,
+        completion ?? (result.text?.trim() || 'Completed'),
+        completion ? replyBesideContract(result.text) : undefined
+      )
       return
     }
     // ⛔ The turn that has just ended on an MCP adapter, which nothing else closes. See
@@ -448,7 +454,7 @@ export async function onStreamResult(
     return
   }
   if (completion) {
-    await completeTask(session.id, completion)
+    await completeTask(session.id, completion, replyBesideContract(result.text))
     return
   }
   const run = runForSession(session.id)
@@ -519,6 +525,24 @@ export function needsDecisionIn(
   const isMulti = isMultiSelectQuestion(rawQuestion, options)
   const kind: QuestionKind = options.length === 0 ? 'text' : isMulti ? 'multi' : 'choice'
   return { question, options, kind }
+}
+
+/**
+ * The final message with its `TASK COMPLETE:` line taken out — the reply the contract summarises.
+ *
+ * ⛔ **The contract line was all that reached the thread** (t731, 2026-09-26). Muse wrote its whole
+ * answer and then `TASK COMPLETE: documented the Git Bash login-shell command…`; `taskCompletionIn`
+ * kept the one line, and the command the operator had asked for was never posted. ⚠️ `undefined`
+ * when there is no final message to read, so the caller falls back to the run's `closingReply`;
+ * an empty string when the contract line was all the agent wrote.
+ */
+export function replyBesideContract(text: string | null | undefined): string | undefined {
+  if (!text?.trim()) return undefined
+  return stripAnsi(text)
+    .split(/\r?\n/)
+    .filter((line) => !/^[ \t>*-]*TASK COMPLETE:/i.test(line))
+    .join('\n')
+    .trim()
 }
 
 /** The completion contract for adapters that cannot call the MCP task_complete tool. */

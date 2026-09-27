@@ -851,6 +851,11 @@ export type MessageEvent =
   | 'landing.landed'
   /** A later fetch proved a local-only landing has subsequently reached its remote target. */
   | 'landing.pushed-later'
+  /**
+   * An earlier *Landed as* line named commits this task did not write, and they were taken off it
+   * (t734, `disown.ts`). ⚠️ Deliberately does not start with *Landed as*, so salvage never reads it.
+   */
+  | 'landing.corrected'
   | 'landing.failed'
   /** A finish verdict that stopped short of landing; the resolve buttons read the last of these. */
   | 'finish.held'
@@ -3013,6 +3018,11 @@ export interface LandingResult {
    * message says plainly that the trunk was not touched rather than claiming a commit landed.
    */
   nothingToLand?: boolean
+  /**
+   * `ok: false` because the agent made no commits and nothing moved the target past the branch —
+   * the empty commit guard. A person accepts it with Complete (t734).
+   */
+  noCommits?: boolean
   /**
    * The id of the task this one had to queue behind, because landing is serialised per project.
    *

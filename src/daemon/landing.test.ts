@@ -30,6 +30,7 @@ let commits: typeof import('./taskcommits.js')
 let resources: typeof import('./resources.js')
 let deliveries: typeof import('./deliveries.js')
 let events: typeof import('./events.js')
+let worktrees: typeof import('./worktrees.js')
 /** `landing.landQueue` and its shipped values, bound after the dynamic import. */
 let landingQueue: { waitMs: number; pollMs: number }
 let queueDefaults: { waitMs: number; pollMs: number }
@@ -87,6 +88,7 @@ beforeAll(async () => {
   resources = await import('./resources.js')
   deliveries = await import('./deliveries.js')
   events = await import('./events.js')
+  worktrees = await import('./worktrees.js')
   landingQueue = landing.landQueue
   queueDefaults = { ...landingQueue }
   db.openDb(join(dir, 'landing.db'))
@@ -615,7 +617,10 @@ describe('a task that produced no commits', () => {
     })
     const said = tasks.messagesFor(taskId).map(messageBody).join('\n')
     expect(said).toContain('Not landed')
-    expect(said).toContain('no work landed')
+    expect(said).toContain('made no commits')
+    // ⭐ And that this can be the right outcome, with the one press that accepts it (t734).
+    expect(said).toContain('That can be intentional')
+    expect(said).toContain('Press **Complete** to accept it')
     // ⛔ And never the sentence that started this. "Landed as <sha>" is what somebody skims.
     expect(said).not.toContain('Landed as')
   })
@@ -632,11 +637,11 @@ describe('a task that produced no commits', () => {
       branch: 'warmstart/t4-question'
     })
     const line = tasks.messagesFor(taskId).find((m) => m.role === 'system' && m.text.startsWith('Not landed'))
-    expect(line?.text).toBe('Not landed: no commits were produced')
+    expect(line?.text).toBe('Not landed: the agent made no commits')
     expect(line?.event).toBe('landing.failed')
-    expect(line?.detail).toContain('carries no commits that')
-    expect(line?.detail).toContain('Check if the agent answered as a question instead of making changes')
-    expect(line?.detail).toContain('The branch has been kept')
+    expect(line?.detail).toContain('holds nothing `main` does not already have')
+    expect(line?.detail).toContain('a question answered, or a decision that nothing needed to change')
+    expect(line?.detail).toContain('The branch has been kept until you press Complete')
   })
 
   it('guards against empty commits by going to awaiting_human so a person can review or close', async () => {
@@ -651,7 +656,7 @@ describe('a task that produced no commits', () => {
     })
     expect(result.ok).toBe(false)
     expect(tasks.getTask(taskId)?.status).toBe('awaiting_human')
-    expect(tasks.getTask(taskId)?.holdReason).toBe('no commits were produced on this branch')
+    expect(tasks.getTask(taskId)?.holdReason).toBe('the agent made no commits — Complete accepts that, or reply to continue')
   })
 
   it('still defers to a task that asked to be checked', async () => {
@@ -667,6 +672,207 @@ describe('a task that produced no commits', () => {
     })
     expect(result.nothingToLand).toBeUndefined()
     expect(tasks.getTask(taskId)?.status).toBe('awaiting_human')
+  })
+})
+
+/**
+ * ⛔ **t731, 2026-09-26: an empty branch on a trunk ahead of its remote was "landed".**
+ *
+ * t731 answered a question and committed nothing. inkland's local `main` was 5 commits ahead of
+ * `origin/main`, and the branch was cut from local `main`, so `origin/main..branch` counted those 5
+ * as the branch's. The finish chose `land`, the rebase and fast-forward moved nothing, and the thread
+ * said *"Landed as `ab96d6f5` onto `main`"* — t729's commit — and recorded it in `task_commits` as
+ * t731's, where the quality review would have graded it. A real remote, because the whole shape is
+ * *the local trunk is ahead of origin* and nothing else builds it.
+ */
+describe('an empty branch on a trunk ahead of its remote (t731)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  /** A trunk with `ahead` unpushed commits of other tasks, and an empty branch cut from it. */
+  function seedAhead(ahead = 2): { project: Project; taskId: string; root: string; ws: string; branch: string; tip: string } {
+    seq += 1
+    const root = makeRepo(`ahead${seq}`)
+    const remote = join(dir, `ahead-remote${seq}.git`)
+    git(dir, 'init', '--bare', '--initial-branch=main', remote)
+    git(root, 'remote', 'add', 'origin', remote)
+    git(root, 'push', '-u', 'origin', 'main')
+    // ⚠️ Local-only landings, as `commit-and-merge` leaves them. Other tasks' work, not this one's.
+    for (let i = 0; i < ahead; i++) {
+      writeFileSync(join(root, `earlier-${i}.txt`), `${i}\n`)
+      git(root, 'add', '-A')
+      git(root, 'commit', '-m', `an earlier task's landing ${i}`)
+    }
+    const tip = git(root, 'rev-parse', 'main')
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({ title: `ahead ${seq}`, projectId: project.id, createdBy: { kind: 'human' } })
+    const branch = `warmstart/t${seq}-a-question`
+    const ws = join(dir, `ahead${seq}-ws`)
+    git(root, 'worktree', 'add', '-b', branch, ws, 'main')
+    return { project, taskId: task.id, root, ws, branch, tip }
+  }
+
+  it('measures the branch as holding nothing of its own', async () => {
+    const { ws, branch } = seedAhead(5)
+    // Five is what `origin/main..branch` says, and it is the trunk's backlog, not the branch's work.
+    expect(git(ws, 'rev-list', '--count', `origin/main..${branch}`)).toBe('5')
+    const state = await worktrees.workspaceState(ws, 'main')
+    expect(state.unlandedCommits).toBe(0)
+    expect(state.landedRef).toBe('origin/main')
+  })
+
+  it('is not landed, not attributed, and says the agent made no commits', async () => {
+    const { project, taskId, root, ws, branch, tip } = seedAhead()
+    const result = await landing.landTask({
+      project,
+      task: tasks.requireTask(taskId),
+      workspacePath: ws,
+      branch,
+      policy: 'commit-and-merge'
+    })
+    expect(result.ok).toBe(false)
+    expect(result.noCommits).toBe(true)
+    expect(result.commit).toBeUndefined()
+    const said = tasks.messagesFor(taskId).map(messageBody).join('\n')
+    // ⛔ The sentence that started this, naming somebody else's commit.
+    expect(said).not.toContain('Landed as')
+    expect(said).toContain('the agent made no commits')
+    expect(said).toContain('That can be intentional')
+    // Nothing recorded as this task's, so nothing for a review to grade.
+    expect(commits.taskCommits(taskId)).toEqual([])
+    expect(tasks.requireTask(taskId).landedHeadSha).toBeNull()
+    // The trunk is exactly where it was and the branch is kept for the person to decide.
+    expect(git(root, 'rev-parse', 'main')).toBe(tip)
+    expect(git(root, 'rev-parse', '--verify', branch)).toBe(tip)
+    const task = tasks.requireTask(taskId)
+    expect(task.status).toBe('awaiting_human')
+    expect(task.holdReason).toBe('the agent made no commits — Complete accepts that, or reply to continue')
+  }, 30_000)
+
+  it('is not reported as landed even when the guard cannot measure (the backstop)', async () => {
+    // ⚠️ A guard that cannot read `commitsOnlyOn` falls back to the old `origin/main..branch` count —
+    // exactly t731's miscount — so the strategy really runs: rebase, checks, fast-forward. What it
+    // produces is a tip equal to its own base, and that must never become *"Landed as <sha>"*.
+    const { project, taskId, root, ws, branch, tip } = seedAhead()
+    vi.spyOn(worktrees, 'commitsOnlyOn').mockRejectedValue(new Error('git could not count'))
+    const result = await landing.landTask({
+      project,
+      task: tasks.requireTask(taskId),
+      workspacePath: ws,
+      branch,
+      policy: 'commit-and-merge'
+    })
+    expect(result.ok).toBe(false)
+    expect(result.noCommits).toBe(true)
+    const said = tasks.messagesFor(taskId).map(messageBody).join('\n')
+    expect(said).not.toContain('Landed as')
+    expect(commits.taskCommits(taskId)).toEqual([])
+    expect(tasks.requireTask(taskId).landedHeadSha).toBeNull()
+    expect(git(root, 'rev-parse', 'main')).toBe(tip)
+    expect(tasks.requireTask(taskId).status).toBe('awaiting_human')
+  }, 30_000)
+
+  it('still lands, and attributes, the one commit a branch on that trunk did write', async () => {
+    const { project, taskId, root, ws, branch, tip } = seedAhead()
+    writeFileSync(join(ws, 'mine.txt'), 'this task’s work\n')
+    git(ws, 'add', '-A')
+    git(ws, 'commit', '-m', 'the work this task did')
+    const mine = git(ws, 'rev-parse', 'HEAD')
+    const result = await landing.landTask({
+      project,
+      task: tasks.requireTask(taskId),
+      workspacePath: ws,
+      branch,
+      policy: 'commit-and-merge'
+    })
+    expect(result.ok, result.reason).toBe(true)
+    expect(result.commit).toBe(mine)
+    expect(git(root, 'rev-parse', 'main')).toBe(mine)
+    expect(git(root, 'rev-parse', 'main^')).toBe(tip)
+    expect(commits.taskCommits(taskId).map((c) => c.sha)).toEqual([mine])
+  }, 30_000)
+})
+
+/**
+ * ⭐ **Complete on an empty branch retires it** (t734). The operator accepts the guard's outcome and
+ * the branch — which holds nothing — goes, so a later reply starts from a fresh one. ⛔ It deletes a
+ * name, never work: a commit, a stash or an uncommitted file anywhere on it keeps it.
+ */
+describe('retiring an empty branch a person accepted', () => {
+  function seedBranch(): { project: Project; root: string; branch: string } {
+    seq += 1
+    const root = makeRepo(`retire${seq}`)
+    const project = projects.addProject({ root })
+    const branch = `warmstart/t${seq}-accepted`
+    git(root, 'branch', branch)
+    return { project, root, branch }
+  }
+  const exists = (root: string, branch: string): boolean => {
+    try {
+      git(root, 'rev-parse', '--verify', '--quiet', `refs/heads/${branch}`)
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  it('deletes a branch that holds nothing', async () => {
+    const { project, root, branch } = seedBranch()
+    expect(await landing.retireEmptyBranch(project, branch, 'main')).toBe(true)
+    expect(exists(root, branch)).toBe(false)
+  })
+
+  it('deletes an empty branch on a trunk ahead of its remote — the t731 shape', async () => {
+    seq += 1
+    const root = makeRepo(`retire-ahead${seq}`)
+    const remote = join(dir, `retire-remote${seq}.git`)
+    git(dir, 'init', '--bare', '--initial-branch=main', remote)
+    git(root, 'remote', 'add', 'origin', remote)
+    git(root, 'push', '-u', 'origin', 'main')
+    writeFileSync(join(root, 'earlier.txt'), 'x\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', "an earlier task's landing")
+    const project = projects.addProject({ root })
+    const branch = `warmstart/t${seq}-accepted`
+    git(root, 'branch', branch)
+    expect(await landing.retireEmptyBranch(project, branch, 'main')).toBe(true)
+    expect(exists(root, branch)).toBe(false)
+  })
+
+  it('keeps a branch with a commit of its own', async () => {
+    const { project, root, branch } = seedBranch()
+    git(root, 'switch', branch)
+    writeFileSync(join(root, 'work.txt'), 'work\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'real work')
+    git(root, 'switch', 'main')
+    expect(await landing.retireEmptyBranch(project, branch, 'main')).toBe(false)
+    expect(exists(root, branch)).toBe(true)
+  })
+
+  it('keeps a branch something was stashed off', async () => {
+    const { project, root, branch } = seedBranch()
+    git(root, 'switch', branch)
+    writeFileSync(join(root, 'README.md'), '# changed\n')
+    git(root, 'stash', 'push', '-m', 'interrupted run')
+    git(root, 'switch', 'main')
+    expect(await landing.retireEmptyBranch(project, branch, 'main')).toBe(false)
+    expect(exists(root, branch)).toBe(true)
+  })
+
+  it('never switches the operator’s own checkout off a task branch', async () => {
+    const { project, root, branch } = seedBranch()
+    git(root, 'switch', branch)
+    expect(await landing.retireEmptyBranch(project, branch, 'main')).toBe(false)
+    expect(git(root, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe(branch)
+    git(root, 'switch', 'main')
+  })
+
+  it('never deletes the target itself, and answers false for a branch that is not there', async () => {
+    const { project } = seedBranch()
+    expect(await landing.retireEmptyBranch(project, 'main', 'main')).toBe(false)
+    expect(await landing.retireEmptyBranch(project, 'warmstart/t0-never-cut', 'main')).toBe(false)
   })
 })
 

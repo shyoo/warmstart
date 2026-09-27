@@ -123,8 +123,11 @@ export interface DimensionScore {
   rationale: string
 }
 
-/** `cancelled` is an operator stopping an in-flight grade, never a verdict on the task. */
-export type ReviewStatus = 'pending' | 'complete' | 'failed' | 'refused' | 'cancelled'
+/**
+ * `cancelled` is an operator stopping an in-flight grade, never a verdict on the task. `revoked` is a
+ * grade withdrawn because it was of commits the task did not write (t734, `revokeReviews`).
+ */
+export type ReviewStatus = 'pending' | 'complete' | 'failed' | 'refused' | 'cancelled' | 'revoked'
 
 /** One entry of `authorship`: an adapter that contributed non-failed work runs to the task. */
 export interface ReviewAuthor {

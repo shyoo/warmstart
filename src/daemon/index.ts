@@ -32,6 +32,7 @@ import { reconcileConsults, startController, stopController } from './controller
 import { reconcileReviews } from './reviewer.js'
 import { sweepSettledTaskQuestions } from './questions.js'
 import { salvageLandedCommits } from './taskcommits.js'
+import { disownForeignCommits } from './disown.js'
 import { reconcilePushedLandings } from './pushreconcile.js'
 import { creditTurn, runForSession } from './tasks.js'
 import { recordRateLimit } from './quota.js'
@@ -46,7 +47,7 @@ import { log, onLog } from './log.js'
 import { setEventSink } from './events.js'
 import { forgetStreamUsage, noteStepUsage, takeTurnUsage, takeUnfinishedTurn } from './streamusage.js'
 import { onShutdownRequest } from './lifecycle.js'
-import { noteActivity } from './activity.js'
+import { noteActivity, noteReplyBoundary, noteReplyText } from './activity.js'
 import { onSettingChange } from './settings.js'
 import { paths } from './paths.js'
 import { reconcilePullRequestDeliveries } from './deliveries.js'
@@ -133,9 +134,12 @@ async function main(): Promise<void> {
   // disconnected volume would otherwise delay the whole app for something no caller is waiting on.
   // ⚠️ Idempotent and additive by construction, so running it on every boot costs one git call and
   // writes nothing once a fleet is salvaged. See `taskcommits.ts`.
-  void salvageLandedCommits().catch((err) =>
-    log.warn(`could not salvage landed commits: ${String(err)}`)
-  )
+  // ⛔ **Then** the disown sweep (t734), which takes back what a false landing attributed — after
+  // salvage, because salvage is what would otherwise have just written some of it back.
+  void salvageLandedCommits()
+    .catch((err) => log.warn(`could not salvage landed commits: ${String(err)}`))
+    .then(() => disownForeignCommits())
+    .catch((err) => log.warn(`could not disown foreign commits: ${String(err)}`))
 
   // A local landing may be pushed later by the operator.  Reconcile that distinct observation in
   // the background: it does network I/O and therefore must never delay the endpoint or scheduler.
@@ -258,6 +262,8 @@ async function main(): Promise<void> {
         if (run?.taskId) {
           const line = event.kind === 'tool_use' ? event.summary : '[thinking…]'
           noteActivity(run.taskId, `${line}\n`, run.id, 'message')
+          // ⭐ A tool call closes the prose block before it, which is what `closingReply` reads.
+          if (event.kind === 'tool_use') noteReplyBoundary(run.id)
         }
       }
       if (event.kind === 'assistant_text') {
@@ -273,6 +279,7 @@ async function main(): Promise<void> {
             ? adapter(session.adapterId).info.capabilities.outputFraming
             : 'message'
           noteActivity(run.taskId, event.text, run.id, framing)
+          noteReplyText(run.id, event.text, framing)
         }
       }
       // ⛔ And the record that says the turn failed, which nothing was listening to. A `stream`

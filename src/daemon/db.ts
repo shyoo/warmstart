@@ -2317,7 +2317,19 @@ const MIGRATIONS: Migration[] = [
     created_at integer not null,
     reported_at integer
   );
-  create index if not exists delegations_task on delegations(task_id);`
+  create index if not exists delegations_task on delegations(task_id);`,
+  // 85 - commits a task was once recorded as landing and was shown not to own (t734). t731's landing
+  // moved nothing and recorded t729's `ab96d6f5` as its own; a sweep found 19 tasks carrying another
+  // task's commits. ⛔ A row here is what stops `salvageLandedCommits` — which re-reads every *"Landed
+  // as <sha>"* thread line on every boot — from writing the same false attribution straight back.
+  // ⚠️ `if not exists`, like 84: `versionBefore` rewinds and replays.
+  `create table if not exists disowned_commits (
+    task_id text not null references tasks(id) on delete cascade,
+    sha text not null,
+    reason text not null,
+    disowned_at integer not null,
+    primary key (task_id, sha)
+  );`
 ]
 
 /**

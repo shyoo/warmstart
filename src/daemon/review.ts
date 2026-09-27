@@ -1044,6 +1044,35 @@ export function deleteReview(id: string): { ok: true } | { ok: false; reason: st
   return { ok: true }
 }
 
+/**
+ * Withdraw every grade of a task that was graded on work it did not write.
+ *
+ * ⛔ **Revoked, not deleted** (t734). A review of the wrong diff produces a number that reads exactly
+ * like a real one, so it must stop counting — `revoked` is outside every `status = 'complete'`
+ * aggregate — but the row stays, with the reason, because *"this task was graded 8.0 on t298's
+ * commit"* is the audit trail of what went wrong, and a delete would erase it.
+ *
+ * ⚠️ `complete` and `pending` only. A failed, refused or cancelled review carries no score, and a
+ * pending one revoked here can no longer complete: `completeReview` writes only over `pending`.
+ * Returns how many were revoked.
+ */
+export function revokeReviews(taskId: string, reason: string): number {
+  const res = db()
+    .prepare(
+      `update quality_reviews
+          set status = 'revoked', failure_reason = ?, completed_at = coalesce(completed_at, ?)
+        where task_id = ? and status in ('complete', 'pending')`
+    )
+    .run(reason, Date.now(), taskId)
+  const revoked = Number(res.changes ?? 0)
+  if (revoked > 0) {
+    recomputeTaskQuality(taskId)
+    log.info(`revoked ${revoked} quality review(s) of task ${taskId.slice(0, 8)}: ${reason}`)
+    emit({ type: 'task.changed', task: requireTaskRow(taskId) })
+  }
+  return revoked
+}
+
 /** Re-derive a task's headline quality after any review or rating is written or removed. */
 function recomputeTaskQuality(taskId: string): void {
   db().prepare(`${TASK_QUALITY_RECOMPUTE_SQL} where id = ?`).run(taskId)

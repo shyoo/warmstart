@@ -47,6 +47,30 @@ export function landingLevel(
   return sharedLandingLevelFor(task, project, settings().finishPolicy, explicit)
 }
 
+// ---------------------------------------------------------------------------- the empty branch
+
+/**
+ * What a task whose agent made no commits is held with — one wording, for `decideFinish` and for
+ * `landTask`'s own guard, so the two paths that can reach it never read as two different outcomes.
+ *
+ * ⛔ **The guard stays (5de8a42, operator's choice, re-confirmed on t734).** An empty branch is the
+ * honest shape of a question answered *and* of work that went somewhere else, so a person confirms
+ * it. ⭐ What changed is that the sentence says so plainly — no commits, and that can be the right
+ * outcome — and names the one press that accepts it: **Complete**, which retires the empty branch
+ * (`retireEmptyBranch`), so a later reply starts from a fresh one.
+ */
+export const NO_COMMITS_HOLD = 'the agent made no commits — Complete accepts that, or reply to continue'
+
+export function noCommitsReason(branch: string | null, ref: string): string {
+  return (
+    'the agent made no commits, so there is nothing to land. ' +
+    `\`${branch ?? 'The branch'}\` holds nothing \`${ref}\` does not already have. ` +
+    'That can be intentional — a question answered, or a decision that nothing needed to change — ' +
+    "and the agent's reply above is then the whole outcome. Press **Complete** to accept it: nothing " +
+    'lands and the empty branch is deleted. Or reply to ask for more.'
+  )
+}
+
 // ---------------------------------------------------------------------------- the decision
 
 /**
@@ -60,8 +84,11 @@ export function landingLevel(
 export type FinishDecision =
   /** Send `instruction` into the session and wait for the agent to report completion again. */
   | { kind: 'ask-agent'; instruction: string; reason: string }
-  /** Stop. The work is intact and a person decides what happens to it. */
-  | { kind: 'await-human'; reason: string }
+  /**
+   * Stop. The work is intact and a person decides what happens to it. `noCommits` marks the empty
+   * branch guard, whose hold reason is the short `NO_COMMITS_HOLD` rather than the whole sentence.
+   */
+  | { kind: 'await-human'; reason: string; noCommits?: true }
   /** Run the project's landing strategy. */
   | { kind: 'land' }
   /** Nothing was produced, and saying "landed" about it would be false. */
@@ -243,9 +270,9 @@ export function decideFinish({
   //     report that still leaves something goes to a person with the work intact. The tool itself
   //     discards nothing.
   //
-  // ⚠️ `state.unlandedCommits` must be `commitsOnlyOn`'s count here, not `landedRef`'s: a report-only
-  //     branch is cut from the *local* target, so on a trunk ahead of its remote the `landedRef` count
-  //     is the trunk's own history. The caller owes that measurement (`landCompletion`).
+  // ⚠️ `state.unlandedCommits` is `commitsOnlyOn`'s count, not `landedRef..branch`: a branch is cut
+  //     from the *local* target, so on a trunk ahead of its remote the latter is the trunk's own
+  //     history. `workspaceState` measures it that way for every caller since t734.
   //
   // ⚠️ After the rebase guard, which outranks everything: a half-finished rebase is a broken tree
   //     however little the task was expected to leave behind.
@@ -376,13 +403,8 @@ export function decideFinish({
       }
     }
     // ⭐ Empty commit guard: if no commits were produced on this branch and no work landed on the remote,
-    // ask a person how to proceed rather than automatically completing.
-    return {
-      kind: 'await-human',
-      reason:
-        `\`${state.branch}\` carries no commits that \`${state.landedRef}\` does not already have. ` +
-        'No work landed — check if the agent answered as a question instead of making changes.'
-    }
+    // ask a person how to proceed rather than automatically completing. See `noCommitsReason`.
+    return { kind: 'await-human', reason: noCommitsReason(state.branch, state.landedRef), noCommits: true }
   }
 
   if (policy === 'await-human') {

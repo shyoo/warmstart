@@ -86,7 +86,7 @@ import { DebateBoard } from './thread/DebateBoard'
 import { CompactionRow, ReviewRow, RunRow } from './thread/RunRow'
 import { LedgerPeek } from './thread/LedgerPeek'
 import { TitleEditor } from './thread/TitleEditor'
-import { Markdown } from './thread/Markdown'
+import { FoldedMarkdown, Markdown } from './thread/Markdown'
 import {
   compactionChoice,
   completionChoice,
@@ -1392,7 +1392,17 @@ function MessageImage({ attachment }: { attachment: Attachment }): React.JSX.Ele
  * not swallow the whitespace either side of them, which is what carries the line breaks the daemon
  * wrote.
  */
-function MessageText({ text, markdown = false }: { text: string; markdown?: boolean }): React.JSX.Element {
+function MessageText({
+  text,
+  markdown = false,
+  foldable = false
+}: {
+  text: string
+  markdown?: boolean
+  /** An agent's reply, which is posted whole since t734 and folds past `COLLAPSE_AFTER_LINES`. */
+  foldable?: boolean
+}): React.JSX.Element {
+  if (markdown && foldable) return <FoldedMarkdown text={text} />
   if (markdown) return <Markdown text={text} />
   // ⚠️ Stripped here as well as where the daemon writes: a thread written before 2026-09-11 holds
   // check output with vitest's colour codes in it, and a person reading it now should not.
@@ -1490,7 +1500,7 @@ const Thread = memo(function Thread({
                         {commandForEvent(m.event)!.label}
                       </span>
                     )}
-                    <MessageText text={m.text} markdown={m.role !== 'human'} />
+                    <MessageText text={m.text} markdown={m.role !== 'human'} foldable={m.role === 'agent'} />
                     {m.attachments.length > 0 && (
                       <span className="msg-images">
                         {m.attachments.map((a) =>

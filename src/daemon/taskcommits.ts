@@ -137,10 +137,14 @@ export function recordTaskCommits(
 ): number {
   const full = commits.filter((c) => /^[0-9a-f]{40}$/i.test(c.sha))
   if (full.length === 0) return 0
+  // ⛔ **Never a commit this task has been shown not to own** (`disowned_commits`, t734). Salvage
+  // re-reads every *"Landed as"* line on every boot, and without this it would write back each false
+  // attribution the sweep in `disown.ts` took out.
   const stmt = db().prepare(
     `insert or ignore into task_commits
        (task_id, sha, subject, authored_at, target, recorded_at, source, position)
-     values (?, ?, ?, ?, ?, ?, ?, ?)`
+     select ?, ?, ?, ?, ?, ?, ?, ?
+      where not exists (select 1 from disowned_commits d where d.task_id = ? and d.sha = ?)`
   )
   const now = Date.now()
   let written = 0
@@ -156,7 +160,9 @@ export function recordTaskCommits(
       target,
       now,
       source,
-      position
+      position,
+      taskId,
+      c.sha.toLowerCase()
     )
     written += Number(res.changes ?? 0)
   }
@@ -394,7 +400,7 @@ function indexHistory(commits: RecordedCommit[]): (abbrev: string) => RecordedCo
  *
  * ⚠️ Never overwrites: `coalesce` in SQL keeps whatever a landing recorded at the time.
  */
-async function fillRangeFromCommits(cwd: string, taskId: string): Promise<boolean> {
+export async function fillRangeFromCommits(cwd: string, taskId: string): Promise<boolean> {
   const list = taskCommits(taskId)
   const head = list[list.length - 1]?.sha
   if (!head) return false

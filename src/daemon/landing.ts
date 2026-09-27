@@ -25,12 +25,13 @@ import {
 } from './tasks.js'
 import { getSession } from './sessions.js'
 import { claimedByAnotherTask, landedCommits, recordTaskCommits } from './taskcommits.js'
-import { landedRef, parkOtherHolders, parkPooledHolders, repairTrunkConfig, rescueAtTip, trunkHolder } from './worktrees.js'
+import { commitsOnlyOn, landedRef, parkOtherHolders, parkPooledHolders, repairTrunkConfig, rescueAtTip, trunkHolder, workspaceOnBranch } from './worktrees.js'
 import { launchArgs, spawnEnv, which } from './which.js'
 import { log } from './log.js'
 import { git, tryGit } from './git.js'
 import { errorMessage } from '@shared/errors.js'
 import { oneLine } from './threadline.js'
+import { NO_COMMITS_HOLD, noCommitsReason } from './finish.js'
 import * as spawn from './spawn.js'
 import { stripAnsi } from './stream.js'
 import { emit } from './events.js'
@@ -434,6 +435,13 @@ async function mergeBase(cwd: string, a: string, b: string): Promise<string | nu
   }
 }
 
+/** Two full or abbreviated shas naming the same commit. */
+function sameCommit(a: string, b: string): boolean {
+  const x = a.toLowerCase()
+  const y = b.toLowerCase()
+  return x.length >= 7 && y.length >= 7 && (x.startsWith(y) || y.startsWith(x))
+}
+
 async function retireBranch(cwd: string, branch: string): Promise<boolean> {
   try {
     if ((await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])) === branch) {
@@ -475,6 +483,45 @@ export async function finishWithoutLanding(
       ? ` The branch has been deleted; continuing this task cuts a fresh \`${branch}\` from ` +
         `\`${base}\`, so it starts from the work that landed rather than from behind it.`
       : ''
+  }
+}
+
+/**
+ * Delete a task's branch when a person has accepted a finish that left nothing on it.
+ *
+ * ⭐ **Complete on an empty branch is a decision, and it is the one the empty commit guard asks for**
+ * (t734). The guard holds a task whose agent made no commits — rightly, since that is also the shape
+ * of work that went somewhere else — and the operator accepts it with Complete. Before this the
+ * branch then stayed under Loose ends for ever, and a later reply resumed on a branch cut from a trunk
+ * that had since moved. Retired here, the next reply cuts a fresh one from where the trunk is now.
+ *
+ * ⛔ **Only a branch that holds nothing**: no commit on neither the local target nor its remote
+ * (`commitsOnlyOn`), no stash taken off it, and no uncommitted file in whichever pool member has it
+ * checked out. Any one of those is work, and this deletes names, never work. A trunk task has no
+ * branch of its own and is never asked. ⚠️ Never throws; a branch it cannot prove empty is kept.
+ */
+export async function retireEmptyBranch(
+  project: Project,
+  branch: string,
+  target: string
+): Promise<boolean> {
+  if (project.vcs !== 'git' || branch === target) return false
+  try {
+    if (!(await tryGit(project.root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]))) return false
+    if ((await commitsOnlyOn(project.root, branch, target)) !== 0) return false
+    if ((await stashesFrom(project.root, branch)) > 0) return false
+    const holder = await workspaceOnBranch(project, branch, target)
+    if (holder) {
+      if (holder.dirtyFiles.length > 0 || holder.untrackedFiles.length > 0) return false
+      return await retireBranch(holder.path, branch)
+    }
+    // ⚠️ The operator's own checkout is never switched: a trunk sitting on a task branch is theirs.
+    if ((await tryGit(project.root, ['rev-parse', '--abbrev-ref', 'HEAD'])) === branch) return false
+    await git(project.root, ['branch', '-D', branch])
+    return true
+  } catch (err) {
+    log.warn(`could not retire the empty branch ${branch}: ${errorMessage(err)}`)
+    return false
   }
 }
 
@@ -1892,6 +1939,14 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     }
     setStatus(ctx.task.id, 'landing_queued', { assignee: null, holdReason: reason })
   }
+  // ⭐ The empty commit guard's one outcome, reached from before the strategy and — as a backstop —
+  // from after it. Same words as `decideFinish`'s (`noCommitsReason`).
+  const heldEmpty = (ref: string, tail = ' ⛔ The branch has been kept until you press Complete.'): LandingResult => {
+    const reason = noCommitsReason(ctx.branch, ref)
+    say('Not landed: the agent made no commits', `${reason.charAt(0).toUpperCase()}${reason.slice(1)}${tail}`, 'landing.failed')
+    restForHuman(NO_COMMITS_HOLD)
+    return { strategy: strategy.id, ok: false, branch: ctx.branch, reason, noCommits: true }
+  }
 
   // ⛔ Before the strategy, and only when the workspace is clean. A task that produced **no commits**
   // has nothing to land, and saying "landed as <the commit that was already there>" is not a
@@ -1910,7 +1965,14 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
   ) {
     const target = landingTargetFor(ctx.task, ctx.project)
     const base = await landedRef(ctx.workspacePath, target)
-    if ((await commitsAhead(ctx.workspacePath, ctx.branch, base)) === 0) {
+    // ⛔ **What only this branch holds**, not `base..branch` (t731 ← t734). The branch is cut from the
+    // local target, so on a trunk ahead of its remote `base..branch` is the trunk's unpushed backlog:
+    // t731 committed nothing, read as 5 commits here, and was reported as landing t729's `ab96d6f5`.
+    // ⚠️ A branch git cannot measure keeps the old count, which errs toward attempting the landing.
+    const own = await commitsOnlyOn(ctx.workspacePath, ctx.branch, target).catch(() =>
+      commitsAhead(ctx.workspacePath, ctx.branch, base)
+    )
+    if (own === 0) {
       // ⛔ **Asked before the verdict, because the verdict is otherwise unfalsifiable.** Everything
       // this branch reads — a clean tree, a branch level with the trunk — is equally true of a task
       // that answered a question and of a task whose entire output was stashed out from under it.
@@ -1955,17 +2017,7 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
         }
       }
       // ⭐ Empty commit guard: if no commits were produced and no work landed, ask a person.
-      const reason =
-        `\`${ctx.branch}\` carries no commits that \`${base}\` does not already have and no work landed. ` +
-        'Check if the agent answered as a question instead of making changes.'
-      say('Not landed: no commits were produced', `${reason} ⛔ The branch has been kept.`, 'landing.failed')
-      restForHuman('no commits were produced on this branch')
-      return {
-        strategy: strategy.id,
-        ok: false,
-        branch: ctx.branch,
-        reason
-      }
+      return heldEmpty(base)
     }
   }
 
@@ -1987,6 +2039,21 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
   }
 
   const result = await strategy.land(ctx)
+  // ⛔ **A landing whose tip is its own base moved nothing of this task's, whatever the strategy
+  // says** (t731 ← t734). `base` is where this task's work starts (`attributionBase`); a tip equal to
+  // it means the rebase and the fast-forward carried no commit of the branch's own, and *"Landed as
+  // <sha>"* would name somebody else's commit — t731 named t729's `ab96d6f5`, recorded it as its own
+  // in `task_commits`, and a quality review would have graded t729's work as t731's. The guard above
+  // is what should catch this; this is the backstop that makes the false sentence unreachable.
+  if (result.ok && result.commit && result.base && sameCommit(result.commit, result.base)) {
+    log.warn(`t${ctx.task.seq} landing moved nothing of its own (${result.commit.slice(0, 8)}); not reported as landed`)
+    const target = landingTargetFor(ctx.task, ctx.project)
+    return heldEmpty(
+      target,
+      (result.pushed ? ` ⚠️ The landing still pushed \`${target}\` as it already stood.` : '') +
+        (result.branchDeleted ? ' The empty branch was deleted.' : ' ⛔ The branch has been kept until you press Complete.')
+    )
+  }
   // ⚠️ Named by seq, not by id. `contendedWith` is a task id because that is what the resource broker
   // records; an operator reading a message wants `t26`.
   const behind = result.contendedWith ? getTask(result.contendedWith) : null

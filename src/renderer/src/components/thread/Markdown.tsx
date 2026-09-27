@@ -1,5 +1,6 @@
-import { Fragment } from 'react'
+import { Fragment, useState } from 'react'
 import { stripAnsi } from '@shared/ansi'
+import { foldAt } from '../../lib/collapse'
 import { markdownBlocks, type Block, type Inline } from '../../lib/markdown'
 
 /**
@@ -25,6 +26,32 @@ export function Markdown({ text }: { text: string }): React.JSX.Element {
         <MarkdownBlock key={i} block={block} />
       ))}
     </div>
+  )
+}
+
+/**
+ * `Markdown`, folded past `COLLAPSE_AFTER_LINES` behind a press — for an agent's whole closing
+ * reply (t734). Open by press only, and the rest is in the DOM either way (`hidden`). See `foldAt`.
+ */
+export function FoldedMarkdown({ text }: { text: string }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const folded = foldAt(text)
+  if (!folded) return <Markdown text={text} />
+  return (
+    <>
+      <Markdown text={folded.head} />
+      <div hidden={!open}>
+        <Markdown text={folded.rest} />
+      </div>
+      <button
+        type="button"
+        className="approval-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((prev) => !prev)}
+      >
+        {open ? 'Show less' : `Show more (${folded.restLines} more lines)`}
+      </button>
+    </>
   )
 }
 

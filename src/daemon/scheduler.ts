@@ -111,7 +111,6 @@ import {
   surveyTrunk,
   trunkHolder,
   type TrunkSurvey,
-  commitsOnlyOn,
   parkWorkspace,
   prepareWorkspace,
   releaseWorkspace,
@@ -151,7 +150,8 @@ import {
   finishWithoutLanding,
   isTaskLanding,
   landTask,
-  readMergeability
+  readMergeability,
+  retireEmptyBranch
 } from './landing.js'
 import {
   describeTree,
@@ -164,7 +164,7 @@ import {
   STALL_CONFIRM_AFTER_MS,
   type TreeSample
 } from './stall.js'
-import { decideFinish, decideTrunkFinish, landingLevel, resolveFinishPolicy, type TrunkReading } from './finish.js'
+import { decideFinish, decideTrunkFinish, landingLevel, NO_COMMITS_HOLD, resolveFinishPolicy, type TrunkReading } from './finish.js'
 import {
   mismatch,
   rank,
@@ -178,6 +178,8 @@ import {
   activityFor,
   clearActivity,
   closingProse,
+  closingReply,
+  completionMessage,
   proseOf,
   REPORT_PROSE_CHARS,
   runActivityFor,
@@ -3433,6 +3435,21 @@ export async function resolveTask(taskId: string, note?: string): Promise<Task> 
     }
   }
 
+  // ⭐ **Accepting a finish that left nothing on the branch retires the branch** (t734). This is the
+  // press the empty commit guard asks for; `retireEmptyBranch` proves the branch holds no commit, no
+  // stash and no uncommitted file before it deletes the name, and a later reply cuts a fresh branch.
+  const project = task.projectId ? getProject(task.projectId) : null
+  if (project && task.branch && resolveWorkspaceMode(task, project).mode !== 'trunk') {
+    const target = landingTargetFor(task, project)
+    if (await retireEmptyBranch(project, task.branch, target)) {
+      addMessage(task.id, 'system', `Deleted the empty branch \`${task.branch}\``, null, [], {
+        detail:
+          `\`${task.branch}\` held no commit, stash or uncommitted file of its own, so nothing was lost. ` +
+          `Replying to this task starts a fresh branch from \`${target}\` as it stands then.`
+      })
+    }
+  }
+
   // ⚠️ Dependents are admitted by the `setStatus` above, for every path that completes a task. The
   // explicit call that used to sit here was one of three, and the four paths without one is how
   // t193 stayed blocked behind a finished t192.
@@ -3533,7 +3550,12 @@ export function continueTask(taskId: string): 'delivered' | 'requeued' | 'queued
  */
 export const completing = new Set<string>()
 
-export async function completeTask(sessionId: string, summary: string): Promise<void> {
+/**
+ * ⚠️ `reply` is the agent's closing reply when the caller holds it whole — the text-contract path
+ * has the final message itself (`result.text`). Absent, `landCompletion` reads the run's
+ * `closingReply`, which is what an MCP `task_complete` gets.
+ */
+export async function completeTask(sessionId: string, summary: string, reply?: string): Promise<void> {
   let run = runForSession(sessionId)
   if (!run?.taskId || run.outcome) {
     const session = getSession(sessionId)
@@ -3547,7 +3569,7 @@ export async function completeTask(sessionId: string, summary: string): Promise<
   if (completing.has(sessionId)) return
   completing.add(sessionId)
   try {
-    await landCompletion(sessionId, run, task, summary)
+    await landCompletion(sessionId, run, task, summary, reply)
   } catch (err) {
     log.error(`could not complete task ${task.id} on session ${sessionId}:`, err)
     const session = getSession(sessionId)
@@ -3709,7 +3731,8 @@ async function landCompletion(
   sessionId: string,
   run: Run,
   task: Task,
-  summary: string
+  summary: string,
+  reply?: string
 ): Promise<void> {
 
   // A first landing failure gets one fresh run. This is carried to the common teardown below so the
@@ -3717,14 +3740,22 @@ async function landCompletion(
   let automaticRetry = false
 
   let effectiveSummary = (summary ?? '').trim()
+  // ⭐ **The agent's closing reply, whole, under its summary** (t731 ← t734). The summary is one line
+  // by contract; the reply is the answer. t731's thread said *"documented the Git Bash login-shell
+  // command…"* and never the command, which sat cut to 400 characters in the activity peephole.
+  const closing = (reply ?? closingReply(run.id)).trim()
   if (!effectiveSummary || effectiveSummary === 'Completed') {
     const proseLines = proseOf(activityFor(task.id))
-    if (proseLines.length > 0) {
+    if (closing) {
+      effectiveSummary = closing
+    } else if (proseLines.length > 0) {
       effectiveSummary = proseLines.slice(-3).join('\n')
     } else {
       effectiveSummary = 'Completed'
     }
-  } else if (task.finishPolicy === 'report-only') {
+  } else if (task.finishPolicy !== 'report-only') {
+    effectiveSummary = completionMessage(effectiveSummary, closing)
+  } else {
     // ⭐ **A report-only task's deliverable is the thread, so what it said on the way is kept.**
     //    `task_complete` describes its summary as *one line*, and a debate seat that obeys the tool
     //    over its prompt leaves a sentence where its whole position should be — t382 (2026-09-12)
@@ -3858,23 +3889,12 @@ async function landCompletion(
     // never authors a commit here.
     const policy = policyFor(project)
     const finishPolicy = resolveFinishPolicy(task, project).policy
-    const measured = await workspaceState(held.workspace.path, landingTargetFor(task, project))
-    // ⛔ **A report-only branch is judged by what only it holds.** It is cut from the *local* target
-    // and lands nowhere, so `landedRef`'s count is the trunk's unpushed history, not this task's —
-    // t393–t395 each read as 15 commits with none of their own. `decideFinish` now refuses `done`
-    // on anything left, so this is the difference between a finished seat and a stalled one.
-    // ⚠️ A branch git cannot measure keeps the conservative reading.
-    const state =
-      finishPolicy === 'report-only' && measured.branch
-        ? {
-            ...measured,
-            unlandedCommits: await commitsOnlyOn(
-              held.workspace.path,
-              measured.branch,
-              landingTargetFor(task, project)
-            ).catch(() => measured.unlandedCommits)
-          }
-        : measured
+    // ⛔ **Every branch is judged by what only it holds** — `workspaceState` counts commits on
+    // neither the local target nor `origin/<target>`. This was a report-only special case (t393–t395
+    // each read as 15 commits with none of their own) until t731 showed the same miscount on
+    // `commit-and-merge`: an answer-only branch read as the trunk's 5 unpushed commits, was "landed",
+    // and was reported as landing t729's commit.
+    const state = await workspaceState(held.workspace.path, landingTargetFor(task, project))
     // ⛔ Read **before** anything lands. `landTask` fast-forwards the trunk itself on a project with
     // no remote, so a reading taken afterwards would report the tool's own push as the movement it
     // is looking for — a tripwire that fires on its own footsteps is worse than none.
@@ -4063,7 +4083,10 @@ async function landCompletion(
         event: 'finish.held',
         detail: decision.reason
       })
-      setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: decision.reason })
+      setStatus(task.id, 'awaiting_human', {
+        assignee: 'human',
+        holdReason: decision.noCommits ? NO_COMMITS_HOLD : decision.reason
+      })
     } else if (decision.kind === 'trunk-moved') {
       // ⛔ Handed to a person rather than reported as finished. The run is still closed normally by
       //    the tail below — what is refused is the *verdict*, because commits that reached the trunk

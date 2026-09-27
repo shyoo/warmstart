@@ -314,7 +314,7 @@ function failures(): Array<{ status: string; count: number; lastReason: string |
                   where q2.status = q1.status and q2.failure_reason is not null
                   order by q2.created_at desc limit 1) as reason
            from quality_reviews q1
-          where status in ('failed', 'refused', 'pending')
+          where status in ('failed', 'refused', 'pending', 'revoked')
           group by status`
       )
       .all()

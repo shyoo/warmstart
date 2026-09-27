@@ -564,11 +564,91 @@ describe('a report-only completion keeps what the run said', () => {
     expect(said(task.id)).toBe('Position: admit from the tick.')
   })
 
-  it('changes nothing for a task under any other policy', async () => {
+  it('keeps the peephole’s narration out of a task under any other policy', async () => {
     const { task, session, run } = seedRunningTask({ metered: 500 })
     activity.noteActivity(task.id, 'Narration that stays in the peephole.', run.id, 'message')
     await scheduler.completeTask(session.id, 'did the thing')
     expect(said(task.id)).toBe('did the thing')
+  })
+})
+
+/**
+ * ⭐ **The agent's closing reply reaches the thread whole** (t731 ← t734, 2026-09-26).
+ *
+ * t731 asked which command to put in `project.json`. The agent answered in full and then wrote
+ * `TASK COMPLETE: documented the Git Bash login-shell command…`; the thread showed that one line,
+ * and the command itself survived only as two rows cut at 400 characters under *Intermediate
+ * activity*. The fixture below is t731's own final message, verbatim from its Muse transcript.
+ */
+describe('a completion posts the agent’s closing reply under its summary', () => {
+  const T731_FINAL =
+    'Your instinct is right — as-is under PS1 it will not work. `deploy_dist.sh` is a bash script with ' +
+    'MSYS path conventions (`MSYS_NO_PATHCONV=1`, absolute `/c/msys64/...` tool paths), so PowerShell ' +
+    "can't execute it at all.\n\n" +
+    '**Put this in project.json** (with the working directory set to the checkout root):\n\n' +
+    '```json\n"C:\\\\Program Files\\\\Git\\\\bin\\\\bash.exe -lc \\"./scripts/deploy_dist.sh --go\\""\n```\n\n' +
+    'i.e. argv form: `C:\\Program Files\\Git\\bin\\bash.exe`, `-lc`, `./scripts/deploy_dist.sh --go`. ' +
+    'Three details that matter:\n\n' +
+    "- **Git Bash's `bash.exe`, not MSYS2's and not `sh`.** The script pins rsync/ssh to absolute MSYS2 " +
+    'paths but finds `npm` via the inherited Windows PATH.\n' +
+    '- **`-l` (login shell).** Needed so the profile/PATH setup the script relies on is loaded.\n' +
+    '- **Run it with cwd at the repo root** (or prefix `cd <checkout> &&`). The script checks for ' +
+    '`DEPLOY_FREEZE` at the root and uses relative paths throughout.\n\n' +
+    'TASK COMPLETE: documented the Git Bash login-shell command for project.json to deploy remotely ' +
+    'after landing; no repo changes needed.'
+
+  const agentText = (taskId: string): string =>
+    tasks
+      .messagesFor(taskId)
+      .filter((m) => m.role === 'agent')
+      .map((m) => m.text)
+      .join('\n---\n')
+
+  it('posts t731’s whole answer, not only its contract line', async () => {
+    const { task, session } = seedRunningTask({ adapterId: 'muse-code', metered: 500 })
+    await turnend.onStreamResult(session, { isError: false, text: T731_FINAL, terminalReason: null })
+    const text = agentText(task.id)
+    expect(text.startsWith('documented the Git Bash login-shell command for project.json')).toBe(true)
+    // The three things the operator needed, which the old thread line named none of.
+    expect(text).toContain('bash.exe -lc')
+    expect(text).toContain('**Run it with cwd at the repo root**')
+    expect(text).toContain('`DEPLOY_FREEZE`')
+    // ⚠️ Whole: the fence survives intact and nothing is cut with an ellipsis.
+    expect(text).toContain('```json\n"C:\\\\Program Files')
+    expect(text).not.toContain('…')
+    // ⛔ The contract line is the summary, said once — not repeated at the bottom.
+    expect(text).not.toContain('TASK COMPLETE:')
+    expect(tasks.messagesFor(task.id).filter((m) => m.role === 'agent')).toHaveLength(1)
+  })
+
+  it('posts an MCP completion’s closing prose whole, from the reply tracker rather than the peephole', async () => {
+    const { task, session, run } = seedRunningTask({ adapterId: 'claude-code', metered: 500 })
+    const long = `Answer: ${'x'.repeat(900)} — end of a long line.`
+    activity.noteReplyText(run.id, 'Let me check the script.', 'message')
+    activity.noteReplyBoundary(run.id)
+    activity.noteReplyText(run.id, long, 'message')
+    activity.noteReplyText(run.id, 'Second paragraph of the answer.', 'message')
+    // The `task_complete` call itself, announced before the MCP call reaches the daemon.
+    activity.noteReplyBoundary(run.id)
+    await scheduler.completeTask(session.id, 'answered the deploy question')
+    expect(agentText(task.id)).toBe(`answered the deploy question\n\n${long}\n\nSecond paragraph of the answer.`)
+  })
+
+  it('says only the summary when the agent called task_complete without writing anything first', async () => {
+    const { task, session, run } = seedRunningTask({ adapterId: 'claude-code', metered: 500 })
+    activity.noteReplyText(run.id, 'Now let me run the tests.', 'message')
+    activity.noteReplyBoundary(run.id) // the test run
+    activity.noteReplyBoundary(run.id) // task_complete, with no prose between
+    await scheduler.completeTask(session.id, 'fixed the gauge')
+    // ⛔ Not narration from two tool calls earlier dressed up as the answer.
+    expect(agentText(task.id)).toBe('fixed the gauge')
+  })
+
+  it('uses the reply as the whole message when the summary says nothing', async () => {
+    const { task, session, run } = seedRunningTask({ adapterId: 'claude-code', metered: 500 })
+    activity.noteReplyText(run.id, 'The quota shows up after the first metered turn.', 'message')
+    await scheduler.completeTask(session.id, 'Completed')
+    expect(agentText(task.id)).toBe('The quota shows up after the first metered turn.')
   })
 })
 
@@ -882,7 +962,10 @@ describe('a result that is not an error', () => {
     })
     expect(tasks.requireRun(run.id).outcome).toBe('completed')
     expect(tasks.getTask(task.id)?.status).toBe('completed')
-    expect(tasks.messagesFor(task.id).some((m) => m.text === 'fixed the session context gauge')).toBe(true)
+    // ⭐ The contract line heads the message and what the agent wrote above it follows (t734).
+    expect(
+      tasks.messagesFor(task.id).some((m) => m.text === 'fixed the session context gauge\n\nAll checks passed.')
+    ).toBe(true)
   })
 
   it('determines the last terminal contract from text when both or neither appear', () => {

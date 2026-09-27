@@ -168,6 +168,11 @@ ignore, and no distinction between `main` the branch and main the adjective. `li
 splits the text and `.msg-code` sets the fenced runs in the mono face. A span never crosses a
 newline, so the worst an unmatched backtick can do is print itself.
 
+⭐ **An agent's completion bubble is its summary, then its closing reply whole** (t734): t731's answer
+had reached the operator only as two 400-character rows under the `⚙` chip. Past `COLLAPSE_AFTER_LINES`
+(40) the bubble shows the first 30 and folds the rest behind *Show more* (`FoldedMarkdown`,
+`lib/collapse.ts`), never inside a fenced block.
+
 ⭐ **And an agent's, a controller's and this codebase's own lines are read as markdown, while a
 person's are not** (t369, 2026-09-11). The risk that kept markdown out — *an agent's own prose
 reaching this path* — arrived anyway when conversations did: an agent's reply is written by a CLI

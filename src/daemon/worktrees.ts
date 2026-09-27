@@ -1413,7 +1413,10 @@ export interface WorkspaceState {
   dirtyFiles: string[]
   /** Files git has never seen. ⚠️ Excludes ignored ones, so `node_modules` is not "work". */
   untrackedFiles: string[]
-  /** Commits on this branch that `landedRef` does not have. */
+  /**
+   * Commits on this branch that neither `landedRef` nor the local target has — the task's own work.
+   * ⚠️ Not `landedRef..branch`: on a trunk ahead of its remote that counts the trunk's backlog (t731).
+   */
   unlandedCommits: number
   /**
    * The ref `unlandedCommits` was measured against: `origin/<target>` when there is a remote, the
@@ -1794,8 +1797,14 @@ export async function workspaceState(path: string, target: string): Promise<Work
       // ⛔ Against the landing target, not against `--remotes`. A branch whose commits are already on
       // main is finished, however many commits it carries, and counting them as unlanded work would
       // put every completed task on the loose-ends list forever.
-      const commits = await git(path, ['rev-list', '--count', `${state.landedRef}..${state.branch}`])
-      state.unlandedCommits = Number.parseInt(commits, 10) || 0
+      //
+      // ⛔ **And against the local target as well as `landedRef`** (t731 ← t734, 2026-09-26). A task
+      // branch is cut from the *local* target, so on a trunk ahead of its remote `landedRef..branch`
+      // counts the trunk's own unpushed history. t731 answered a question and committed nothing; its
+      // branch read as 5 unlanded commits (inkland's `main` was 5 ahead of `origin/main`), the finish
+      // chose `land`, the rebase and fast-forward moved nothing, and the thread said *"Landed as
+      // `ab96d6f5`"* — t729's commit. Same measure as `commitsOnlyOn`: what only this branch holds.
+      state.unlandedCommits = await commitsOnlyOn(path, state.branch, target)
     } catch {
       // A target that does not resolve - a fresh repo with no main yet - is not an error here.
     }
