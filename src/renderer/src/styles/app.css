@@ -5789,6 +5789,13 @@ select:focus-visible,
   line-height: var(--leading-body);
 }
 
+.compose-assign-error {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: var(--text-meta);
+  color: var(--state-warn);
+}
+
 .thread {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);

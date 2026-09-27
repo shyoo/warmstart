@@ -2232,7 +2232,7 @@ function Compose({
   const stoppedByYou = task.status === 'paused_user'
   const isFailed = task.status === 'failed'
   // ⚠️ Only between runs: the pin decides the *next* dispatch, not the run in front of you.
-  const reassigning = choice.changed && !running
+  const reassigning = choice.changed && !running && !choice.invalidModelMessage
   // ⚠️ A command chip alone is a message: `/delegate` with nothing after it means *what we have just
   //    been discussing*, and the daemon's wrapper says so.
   const hasBody = text.trim().length > 0 || paste.ids.length > 0 || command !== null

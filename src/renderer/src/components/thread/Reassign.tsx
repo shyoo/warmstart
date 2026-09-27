@@ -8,7 +8,9 @@
  * pick in the other (t669).
  */
 import { canWork, type ModelOptions } from '@shared/protocol'
-import { resolveModelChoice, type ModelClass, type Task } from '@shared/tasks'
+import { MODEL_CLASSES, type ModelClass } from '@shared/modelclass'
+import { autoRoutes, classOnWorker, routeClass, type ModelRoute } from '@shared/modelroutes'
+import { resolveModelChoice, type Task } from '@shared/tasks'
 import { useEffect, useState } from 'react'
 import { rpc, type FleetEntry } from '../../lib/daemon'
 import { effortLabel, modelLabel } from '../../lib/modelname'
@@ -32,6 +34,30 @@ const AUTO_MODEL_LABELS: Record<string, string> = {
   '__auto__:high': 'Auto Model (high)',
   '__auto__:med': 'Auto Model (med)',
   '__auto__:low': 'Auto Model (low)'
+}
+
+const INVALID_AUTO_PREFIX = '__invalid_auto__:'
+
+/** Auto tiers this particular account can actually honour. Kept pure for L1 coverage. */
+export function availableAutoClasses(
+  worker: { modelRoutes?: ModelRoute[] | null } | null,
+  inheritedModel: string | null
+): ModelClass[] {
+  if (!worker) return []
+  const routes = autoRoutes(worker)
+  if (routes.length > 0) return MODEL_CLASSES.filter((modelClass) => routes.some((route) => routeClass(route) === modelClass))
+  return inheritedModel ? [classOnWorker(worker, inheritedModel)] : []
+}
+
+function invalidAutoClass(model: string): ModelClass | null {
+  if (!model.startsWith(INVALID_AUTO_PREFIX)) return null
+  const value = model.slice(INVALID_AUTO_PREFIX.length)
+  return MODEL_CLASSES.includes(value as ModelClass) ? (value as ModelClass) : null
+}
+
+function unavailableAutoClass(model: string, available: ModelClass[]): ModelClass | null {
+  const requested = model.startsWith('__auto__:') ? (model.slice('__auto__:'.length) as ModelClass) : null
+  return requested && MODEL_CLASSES.includes(requested) && !available.includes(requested) ? requested : null
 }
 
 /**
@@ -81,6 +107,8 @@ export function pillLabels(input: {
     modelLabel:
       onCurrent && autoModel && current?.model
         ? (modelLabel(current.model) ?? current.model)
+        : invalidAutoClass(model)
+          ? 'Choose another model'
         : !workerId
           ? 'Auto model'
           : (AUTO_MODEL_LABELS[model] ??
@@ -114,6 +142,8 @@ export interface ReassignChoice {
   effortLabel: string
   /** The effort pill names the latest run's effort, which is worth showing even with no list to pick from. */
   currentEffort: boolean
+  /** A previously selected Auto tier cannot run on the newly picked account. */
+  invalidModelMessage: string | null
 }
 
 export function useReassignChoice(
@@ -149,6 +179,8 @@ export function useReassignChoice(
   const offeredModels = adapter?.models ?? []
   const canSetEffort = adapter?.selectableEffort ?? false
   const inheritedModel = resolveModelChoice(null, worker, canSetEffort, entry?.quota).model
+  const autoClasses = availableAutoClasses(worker, inheritedModel)
+  const unavailableClass = invalidAutoClass(model) ?? unavailableAutoClass(model, autoClasses)
   const offeredEfforts = canSetEffort
     ? (offeredModels.find((m) => m.id === effortLookupModel(model, inheritedModel))?.effortLevels ?? [])
     : []
@@ -168,6 +200,15 @@ export function useReassignChoice(
     }
     const w = fleet.find((e) => e.worker.id === next)?.worker
     const offered = options.find((o) => o.adapterId === w?.adapterId)?.models ?? []
+    const nextAdapter = options.find((o) => o.adapterId === w?.adapterId)
+    const nextInherited = resolveModelChoice(null, w ?? null, nextAdapter?.selectableEffort ?? false, fleet.find((e) => e.worker.id === next)?.quota).model
+    const nextAutoClasses = availableAutoClasses(w ?? null, nextInherited)
+    const requestedClass = model.startsWith('__auto__:') ? model.split(':')[1] as ModelClass : null
+    if (requestedClass && !nextAutoClasses.includes(requestedClass)) {
+      setModel(`${INVALID_AUTO_PREFIX}${requestedClass}`)
+      setEffort('')
+      return
+    }
     if (model && !model.startsWith('__auto__') && model !== '__inherit__' && !offered.some((m) => m.id === model)) {
       setModel(reassignmentModel(model, offered))
       setEffort('')
@@ -175,6 +216,7 @@ export function useReassignChoice(
   }
 
   const apply = async (): Promise<void> => {
+    if (unavailableClass) throw new Error('choose another model or Auto tier before reassigning')
     const isAuto = model.startsWith('__auto__')
     const modelPolicy = isAuto ? 'auto' : !model || model === '__inherit__' ? 'inherit' : null
     const modelClass = isAuto && model.includes(':') ? (model.split(':')[1] as ModelClass) : null
@@ -227,12 +269,13 @@ export function useReassignChoice(
         .map((e) => ({ value: e.worker.id, label: `${e.worker.label} (${e.worker.adapterId})` }))
     ],
     modelOptions: [
-      ...(offeredModels.length > 1
+      ...(unavailableClass
+        ? [{ value: model, label: 'Choose another model', hint: `This account has no Auto Model (${unavailableClass}) route.`, disabled: true }]
+        : []),
+      ...(autoClasses.length > 0
         ? [
             { value: '__auto__', label: 'Auto Model (scheduler decides)' },
-            { value: '__auto__:high', label: 'Auto Model (high)' },
-            { value: '__auto__:med', label: 'Auto Model (med)' },
-            { value: '__auto__:low', label: 'Auto Model (low)' }
+            ...autoClasses.map((modelClass) => ({ value: `__auto__:${modelClass}`, label: `Auto Model (${modelClass})` }))
           ]
         : []),
       { value: '', label: inheritedModel ? `account default (${inheritedLabel})` : 'CLI default model' },
@@ -245,7 +288,10 @@ export function useReassignChoice(
           ...offeredEfforts.map((level) => ({ value: level, label: effortLabel(level) ?? level }))
         ]
       : [],
-    ...labels
+    ...labels,
+    invalidModelMessage: unavailableClass
+      ? `This account cannot run Auto Model (${unavailableClass}). Choose another model or tier.`
+      : null
   }
 }
 
@@ -315,6 +361,7 @@ export function AssignPills({
         </button>
       )}
       {extra}
+      {choice.invalidModelMessage && <p className="compose-assign-error" role="alert">{choice.invalidModelMessage}</p>}
     </div>
   )
 }

@@ -6,7 +6,7 @@ import { routeLabel, type ModelRoute } from '@shared/modelroutes.js'
 import type { ChildDefaults, Task, TaskConstraints } from '@shared/tasks.js'
 import { windowsForPool } from '@shared/tasks.js'
 import { adapter } from '../adapters/index.js'
-import { listWorkers, requireWorker, modelRoutingActive, routableModelsFor } from '../workers.js'
+import { listWorkers, requireWorker, modelRoutingActive, routableCandidatesFor, routableModelsFor } from '../workers.js'
 import { accountUnavailability } from '../eligibility.js'
 import { dispatchCountsByPair } from '../routingdecisions.js'
 import type { ModelReport, ModelReportRow, VelocityReport } from '@shared/routing.js'
@@ -327,6 +327,14 @@ export function checkConstraints(c: TaskConstraints): TaskConstraints {
       throw new Error(`${worker.label} has role '${worker.role}' and cannot be assigned to work tasks`)
     }
     checked.adapterId = worker.adapterId
+  }
+
+  // An Auto tier is a promise about this account's next dispatch, not merely a routing preference.
+  // Refuse it at admission when the account has no matching pair: otherwise it waits in the queue
+  // forever with no action a scheduler tick can take. The picker makes the same test before it
+  // offers a tier, but this is the authoritative boundary for stale windows and API callers.
+  if (worker && c.modelPolicy === 'auto' && c.modelClass && routableCandidatesFor(worker, c.modelClass).length === 0) {
+    throw new Error(`${worker.label} has no Auto Model (${c.modelClass}) route — choose another model or tier`)
   }
 
   const adapterId = checked.adapterId

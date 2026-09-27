@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { pillLabels } from './Reassign'
+import { availableAutoClasses, pillLabels } from './Reassign'
 
 const base = {
   workerId: '',
@@ -97,5 +97,25 @@ describe('pillLabels (t674)', () => {
       currentWorkerLabel: 'ClaudeThird'
     })
     expect(labels.workerLabel).toBe('Auto worker')
+  })
+})
+
+describe('availableAutoClasses (t764)', () => {
+  it('offers only tiers that an account’s Auto routes can actually dispatch', () => {
+    expect(
+      availableAutoClasses(
+        {
+          modelRoutes: [
+            { model: 'gemini-3.8-flash', effort: 'high', modelClass: 'med', auto: true },
+            { model: 'gemini-3.1-pro', effort: 'high', modelClass: 'high', auto: false }
+          ]
+        },
+        'gemini-3.8-flash'
+      )
+    ).toEqual(['med'])
+  })
+
+  it('uses the inherited model’s class when this account has no Auto table', () => {
+    expect(availableAutoClasses({ modelRoutes: [] }, 'gemini-3.8-flash')).toEqual(['med'])
   })
 })

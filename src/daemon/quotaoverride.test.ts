@@ -315,6 +315,9 @@ describe('task.overrideQuota', () => {
   it('redirects a hand-off to another worker instead of waiting on this one', async () => {
     const worker = seedWorker('ClaudeThird')
     const other = seedWorker('CodexFirst')
+    // The redirect asks for Auto (high), so its destination must actually have a high pair. The
+    // admission guard rejects a purely nominal tier rather than letting it wait in the queue.
+    workers.updateWorker(other.id, { defaultModel: 'claude-opus-5' })
     const task = pinnedTask(worker.id, ADAPTER)
     tasks.setStatus(task.id, 'running', { assignee: worker.id })
     tasks.setQuotaPreemptWarning(task.id, {

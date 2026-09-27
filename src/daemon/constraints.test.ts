@@ -105,6 +105,22 @@ describe('choosing a model', () => {
     // another, which fails at spawn on somebody's window instead of here for free.
     expect(() => api.checkConstraints({ model: 'claude-opus-5' })).toThrow(/choose a worker/)
   })
+
+  it('refuses an Auto tier the selected account has no route for', () => {
+    const antigravity = workers.createWorker({ adapterId: 'antigravity-cli', label: 'Antigravity', enabled: false })
+    try {
+      workers.updateWorker(antigravity.id, {
+        modelRoutes: [{ model: 'gemini-3.8-flash', effort: 'high', modelClass: 'med', auto: true }]
+      })
+
+      expect(() => api.checkConstraints({ workerId: antigravity.id, modelPolicy: 'auto', modelClass: 'high' })).toThrow(
+        /Antigravity has no Auto Model \(high\) route/
+      )
+      expect(() => api.checkConstraints({ workerId: antigravity.id, modelPolicy: 'auto', modelClass: 'med' })).not.toThrow()
+    } finally {
+      workers.retireWorker(antigravity.id)
+    }
+  })
 })
 
 describe('choosing an effort level', () => {
