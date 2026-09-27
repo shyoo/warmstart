@@ -40,8 +40,21 @@ export function QuestionCard({
   compact?: boolean
 }): React.JSX.Element {
   const { settings } = useUiSettings()
-  const [isMulti, setIsMulti] = useState(question.kind === 'multi')
-  const [chosen, setChosen] = useState<string[]>([])
+  /**
+   * ⛔ One state object, updated only through functional updaters. `isMulti` and `chosen` used to
+   * be separate `useState`s, with `toggle` reading `isMulti` straight from the render closure. A
+   * real click on "+ select multiple" immediately followed by clicks on two options can land in
+   * the same React batch (no repaint between them, e.g. React 18+ automatic batching across
+   * same-tick event dispatches) — every queued update then runs against the *pre-toggle* closure,
+   * so the option clicks saw `isMulti` still `false` and only the last click's option survived, as
+   * if it were still single-select. Keeping both fields in one object updated via `setSelection(prev
+   * => ...)` makes every update read the true latest state in order, batched or not.
+   */
+  const [selection, setSelection] = useState<{ isMulti: boolean; chosen: string[] }>({
+    isMulti: question.kind === 'multi',
+    chosen: []
+  })
+  const { isMulti, chosen } = selection
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
   /**
@@ -67,32 +80,34 @@ export function QuestionCard({
   const remoteFleet = useIsRemote()
 
   useEffect(() => {
-    setIsMulti(question.kind === 'multi')
+    setSelection((prev) => ({ ...prev, isMulti: question.kind === 'multi' }))
   }, [question.kind])
 
   const hasOptions = question.options.length > 0
 
   const toggle = (id: string): void => {
     setOther(false)
-    setChosen((prev) =>
-      isMulti ? (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]) : [id]
-    )
+    setSelection((prev) => ({
+      ...prev,
+      chosen: prev.isMulti
+        ? prev.chosen.includes(id)
+          ? prev.chosen.filter((x) => x !== id)
+          : [...prev.chosen, id]
+        : [id]
+    }))
   }
 
   const toggleMulti = (): void => {
-    setIsMulti((prev) => {
-      const next = !prev
-      if (!next && chosen.length > 1) {
-        setChosen(chosen.slice(0, 1))
-      }
-      return next
+    setSelection((prev) => {
+      const next = !prev.isMulti
+      return { isMulti: next, chosen: next ? prev.chosen : prev.chosen.slice(0, 1) }
     })
   }
 
   const chooseOther = (): void => {
     setOther((prev) => {
       if (prev) return false
-      setChosen([])
+      setSelection((sel) => ({ ...sel, chosen: [] }))
       // ⚠️ After the state settles, so the box it focuses is the one this click just made relevant.
       setTimeout(() => textRef.current?.focus(), 0)
       return true
