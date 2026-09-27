@@ -635,6 +635,13 @@ export function pieceSettings(
   const single = ids.length <= 1 ? (defaults.model ?? fallback.model ?? null) : null
   if (single) {
     rows.push({ label: 'model', value: modelLabel(single, defaults.effort ?? fallback.effort ?? null) ?? single })
+  } else {
+    // ⛔ The pieces' Auto answer, in the composer's own words: without this row a class the
+    // operator chose would be invisible everywhere but the filed children's constraints.
+    const policy = defaults.modelPolicy ?? fallback.modelPolicy ?? null
+    const klass = defaults.modelClass ?? fallback.modelClass ?? null
+    if (policy === 'inherit') rows.push({ label: 'model', value: 'Inherit — account default' })
+    else if (klass) rows.push({ label: 'model', value: `Auto Model (${klass})` })
   }
   rows.push({ label: 'priority', value: defaults.priority ?? task.priority })
   if (defaults.finishPolicy) rows.push({ label: 'finish', value: defaults.finishPolicy })

@@ -463,6 +463,32 @@ export function NewTask({
   const [pieceModels, setPieceModels] = useState<Record<string, string>>({})
   const [pieceEfforts, setPieceEfforts] = useState<Record<string, string>>({})
   /**
+   * The Executor row's Auto model answer, in the planner Model pill's own values: unset is the
+   * scheduler's default routing, `policy:auto:*` narrows it to a capability class, and
+   * `policy:inherit` takes each dispatched account's default. A specific model id is never
+   * offered here — an id belongs to one CLI, so a fleet-wide pin would hand at least one
+   * account a model it cannot start on; per-account models stay in the Workers picker.
+   */
+  const [pieceModel, setPieceModel] = useState<string>('')
+  const pieceModelClass: ModelClass | undefined =
+    pieceModel === MODEL_AUTO_HIGH
+      ? 'high'
+      : pieceModel === MODEL_AUTO_MED
+        ? 'med'
+        : pieceModel === MODEL_AUTO_LOW
+          ? 'low'
+          : undefined
+  const pieceModelLabel =
+    pieceModel === MODEL_AUTO_HIGH
+      ? 'Auto Model (high)'
+      : pieceModel === MODEL_AUTO_MED
+        ? 'Auto Model (med)'
+        : pieceModel === MODEL_AUTO_LOW
+          ? 'Auto Model (low)'
+          : pieceModel === MODEL_INHERIT
+            ? 'Inherit — account default'
+            : 'Auto Model'
+  /**
    * The roster, the round budget and the exchange rule, held as one so a seat change is one write.
    *
    * ⚠️ Seeded from `composerprefs` at first render like every other pill, and written back through
@@ -917,11 +943,14 @@ export function NewTask({
           return
         }
         const pieceConstraints =
-          pieceWorkerIds.length > 0 || Object.keys(pieceModels).length > 0 || Object.keys(pieceEfforts).length > 0
+          pieceWorkerIds.length > 0 || Object.keys(pieceModels).length > 0 || Object.keys(pieceEfforts).length > 0 ||
+          pieceModel === MODEL_INHERIT || pieceModelClass !== undefined
             ? {
                 ...(pieceWorkerIds.length > 0 ? { workerIds: pieceWorkerIds } : {}),
                 ...(Object.keys(pieceModels).length > 0 ? { modelsByWorker: pieceModels } : {}),
-                ...(Object.keys(pieceEfforts).length > 0 ? { effortsByWorker: pieceEfforts } : {})
+                ...(Object.keys(pieceEfforts).length > 0 ? { effortsByWorker: pieceEfforts } : {}),
+                ...(pieceModel === MODEL_INHERIT ? { modelPolicy: 'inherit' as const } : {}),
+                ...(pieceModelClass ? { modelClass: pieceModelClass } : {})
               }
             : undefined
 
@@ -957,12 +986,17 @@ export function NewTask({
             finishPolicy: pieceFinishPolicy,
             sessionSharing: pieceSessionSharing,
             maxChildren: filedLimit,
-            // ⛔ All three, and they are what `applySplit` actually files each piece with. The
+            // ⛔ All of these, and they are what `applySplit` actually files each piece with. The
             // efforts used to be sent in `pieceConstraints` only, so a split read from
             // `childDefaults` — which is the field `task_split` is handed — silently lost them.
             ...(pieceWorkerIds.length > 0 ? { workerIds: pieceWorkerIds } : {}),
             ...(Object.keys(pieceModels).length > 0 ? { modelsByWorker: pieceModels } : {}),
-            ...(Object.keys(pieceEfforts).length > 0 ? { effortsByWorker: pieceEfforts } : {})
+            ...(Object.keys(pieceEfforts).length > 0 ? { effortsByWorker: pieceEfforts } : {}),
+            // ⛔ The pieces' Auto answer, in the planner constraints' own spelling: `inherit`
+            // files a policy, a class files a tier, and bare Auto files nothing — absent is
+            // already auto-routing, so a value here would be a second name for the default.
+            ...(pieceModel === MODEL_INHERIT ? { modelPolicy: 'inherit' as const } : {}),
+            ...(pieceModelClass ? { modelClass: pieceModelClass } : {})
           },
           constraints: {
             ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
@@ -1880,18 +1914,36 @@ export function NewTask({
                     />
                   </td>
                   <td>
-                    <WorkersPicker
-                      workers={pinnable}
-                      modelOptions={options}
-                      selectedWorkerIds={pieceWorkerIds}
-                      selectedModels={pieceModels}
-                      selectedEfforts={pieceEfforts}
-                      onChange={(workerIds, models, efforts) => {
-                        setPieceWorkerIds(workerIds)
-                        setPieceModels(models)
-                        setPieceEfforts(efforts)
-                      }}
-                    />
+                    <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
+                      <PillSelect
+                        ariaLabel="Piece Model"
+                        align="right"
+                        title="Model policy for each subtask. Auto Model routes within a capability class; Inherit uses each dispatched account's default."
+                        muted={pieceModel === ''}
+                        value={pieceModel}
+                        label={pieceModelLabel}
+                        options={[
+                          { value: '', label: 'Auto Model', hint: 'Scheduler selects the worker account and its optimal model' },
+                          { value: MODEL_AUTO_HIGH, label: 'Auto Model (high)', hint: 'Scheduler routes pieces to high capability models' },
+                          { value: MODEL_AUTO_MED, label: 'Auto Model (med)', hint: 'Scheduler routes pieces to medium capability models' },
+                          { value: MODEL_AUTO_LOW, label: 'Auto Model (low)', hint: 'Scheduler routes pieces to economy capability models' },
+                          { value: MODEL_INHERIT, label: 'Inherit — account default', hint: 'Use default model of the dispatched account' }
+                        ]}
+                        onChange={setPieceModel}
+                      />
+                      <WorkersPicker
+                        workers={pinnable}
+                        modelOptions={options}
+                        selectedWorkerIds={pieceWorkerIds}
+                        selectedModels={pieceModels}
+                        selectedEfforts={pieceEfforts}
+                        onChange={(workerIds, models, efforts) => {
+                          setPieceWorkerIds(workerIds)
+                          setPieceModels(models)
+                          setPieceEfforts(efforts)
+                        }}
+                      />
+                    </div>
                   </td>
                 </tr>
               </tbody>
@@ -2110,7 +2162,9 @@ function WorkersPicker({
   ) => void
 }): React.JSX.Element {
   const label = useMemo(() => {
-    if (selectedWorkerIds.length === 0) return 'Workers'
+    // ⛔ Named for what it is: nobody checked means the scheduler picks, which is Auto by any
+    // other name, and a muted "Workers" reads as a control that was never answered.
+    if (selectedWorkerIds.length === 0) return 'Auto'
     if (selectedWorkerIds.length === 1) {
       const w = workers.find((x) => x.id === selectedWorkerIds[0])
       return w ? w.label : '1 Worker'

@@ -1414,6 +1414,18 @@ describe('a plan task, as its own page describes it', () => {
     expect(rows.find((r) => r.label === 'workers')?.value).toBe('any account the scheduler picks')
   })
 
+  it('names the Auto answer the pieces were filed with, beside the open workers row', () => {
+    // ⛔ t732: a class the operator chose would otherwise be invisible everywhere but the filed
+    // children's constraints — the ledger would read exactly like full-Auto routing.
+    const classed = pieceSettings(planner({ childDefaults: { modelClass: 'low' } }), fleet)
+    expect(classed.find((r) => r.label === 'workers')?.value).toBe('any account the scheduler picks')
+    expect(classed.find((r) => r.label === 'model')?.value).toBe('Auto Model (low)')
+    const inherited = pieceSettings(planner({ childDefaults: { modelPolicy: 'inherit' } }), fleet)
+    expect(inherited.find((r) => r.label === 'model')?.value).toBe('Inherit — account default')
+    // ⛔ And still nothing where nothing was chosen: today's plans gain no new row.
+    expect(pieceSettings(planner(), fleet).find((r) => r.label === 'model')).toBeUndefined()
+  })
+
   it('says nothing at all about pieces for an ordinary task', () => {
     expect(
       pieceSettings(plain({}), fleet)

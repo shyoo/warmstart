@@ -490,6 +490,10 @@ than scored lower. Measured on t197: the row was sent, stored and validated, and
 the singular `workerId` beside it — so every piece was filed with no constraint at all, went through the
 ordinary dispatcher, and was handed the largest model in the fleet for work whose whole point was that it
 was small. A setting that is displayed and then not read is worse than one never offered.
+Beside it a Model pill gives the pieces the planner row's Auto answer: *Auto Model (high/med/low)*
+files the class into `childDefaults`, which `pieceConstraints` carries onto every piece so the router
+narrows Auto rows to it; *Inherit — account default* files `modelPolicy: 'inherit'`. Leaving both
+rows on Auto is full-Auto routing, and the ledger's model row then stays silent (t732).
 
 ⛔ **The Model pill offers two answers that are not models, and it is never disabled.** *Auto Model*
 hands the choice to the router, which scores every model on the chosen account's `routableModels`

@@ -231,6 +231,11 @@ export function pieceConstraints(
   // cannot start on — which is why the per-account maps exist at all.
   const model = ids.length > 1 ? null : (defaults?.model ?? fallback.model ?? null)
   const effort = ids.length > 1 ? null : (defaults?.effort ?? fallback.effort ?? null)
+  // ⛔ The Auto answer travels beside the pins, never instead of them: a class narrows whichever
+  // accounts the list above names, or the whole fleet where it named none. Dropped where a pin
+  // already says the model, because scoring reads the pin first and the class would be dead text.
+  const modelPolicy = model ? undefined : (defaults?.modelPolicy ?? fallback.modelPolicy ?? undefined)
+  const modelClass = model ? undefined : (defaults?.modelClass ?? fallback.modelClass ?? undefined)
 
   return {
     ...(ids.length === 1 ? { workerId: ids[0]! } : {}),
@@ -238,7 +243,9 @@ export function pieceConstraints(
     ...(models && Object.keys(models).length > 0 ? { modelsByWorker: models } : {}),
     ...(efforts && Object.keys(efforts).length > 0 ? { effortsByWorker: efforts } : {}),
     ...(model ? { model } : {}),
-    ...(effort ? { effort } : {})
+    ...(effort ? { effort } : {}),
+    ...(modelPolicy ? { modelPolicy } : {}),
+    ...(modelClass ? { modelClass } : {})
   }
 }
 
@@ -370,9 +377,15 @@ export function applySplit(
   // ⛔ Resolved once, before the loop, so every piece of one plan is filed with the identical set of
   // accounts. Recomputing per child would be a second place for the answer to differ.
   const constraints = pieceConstraints(parent, inherit)
-  // ⚠️ The agent's class hint only where the operator pinned nothing: a model or an account chosen
-  // in the composer is not something an agent may talk its way out of.
-  const pinned = !!(constraints.model || constraints.workerId || constraints.workerIds?.length)
+  // ⚠️ The agent's class hint only where the operator pinned nothing: a model, an account, or
+  // an Auto answer chosen in the composer is not something an agent may talk its way out of.
+  const pinned = !!(
+    constraints.model ||
+    constraints.workerId ||
+    constraints.workerIds?.length ||
+    constraints.modelPolicy ||
+    constraints.modelClass
+  )
   const delegating = isDelegation(parent)
   const handoff = isPlanExecute(parent)
   const created: Task[] = []

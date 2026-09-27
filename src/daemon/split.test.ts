@@ -417,6 +417,57 @@ describe('pieceConstraints', () => {
     expect(constraints).toMatchObject({ workerId: CX, model: '5.6-terra', effort: 'medium' })
   })
 
+  it('carries an Auto model class and policy the operator chose for the pieces', () => {
+    // ⛔ t732: the Executor row had no Auto Model answer, so pieces could only be pinned or left
+    // to full-Auto routing. The class has to reach the child's constraints, which is the only
+    // artefact the scheduler reads when it narrows Auto rows.
+    const parent = planner({ childDefaults: { modelPolicy: 'inherit' } })
+    expect(split.pieceConstraints(parent, parent.childDefaults)).toMatchObject({
+      modelPolicy: 'inherit'
+    })
+    const classed = planner({ childDefaults: { modelClass: 'low' } })
+    expect(split.pieceConstraints(classed, classed.childDefaults)).toMatchObject({
+      modelClass: 'low'
+    })
+  })
+
+  it('reads the class from the planner’s own pieceConstraints when childDefaults is silent', () => {
+    const parent = planner({
+      constraints: { pieceConstraints: { modelClass: 'med' } }
+    })
+    expect(split.pieceConstraints(parent, parent.childDefaults)).toMatchObject({
+      modelClass: 'med'
+    })
+  })
+
+  it('lets the operator’s class beat the agent’s hint, and the hint stand otherwise', () => {
+    const pinned = planner({ childDefaults: { modelClass: 'high' } })
+    const over = split.applySplit(
+      pinned.id,
+      [{ ...piece('a'), modelClass: 'low' as const }, { ...piece('b'), modelClass: 'low' as const }],
+      AGENT,
+      pinned.childDefaults
+    )
+    expect(over.ok).toBe(true)
+    if (!over.ok) return
+    for (const child of over.children) {
+      expect(tasks.requireTask(child.id).constraints.modelClass).toBe('high')
+    }
+
+    const open = planner()
+    const hinted = split.applySplit(
+      open.id,
+      [{ ...piece('a'), modelClass: 'low' as const }, { ...piece('b'), modelClass: 'low' as const }],
+      AGENT,
+      open.childDefaults
+    )
+    expect(hinted.ok).toBe(true)
+    if (!hinted.ok) return
+    for (const child of hinted.children) {
+      expect(tasks.requireTask(child.id).constraints.modelClass).toBe('low')
+    }
+  })
+
   it('files every piece against the named accounts and never against the fleet', () => {
     const parent = planner({
       childDefaults: {

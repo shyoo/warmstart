@@ -587,6 +587,13 @@ export interface ChildDefaults {
   workerIds?: string[]
   model?: string | null
   effort?: string | null
+  /**
+   * The pieces' Auto model answer (t732): `modelPolicy` with a `modelClass` tier is what the
+   * composer's Executor row files where the Planner row files the same pair. Absent means the
+   * scheduler scores every routable model, exactly like an absent policy on a task.
+   */
+  modelPolicy?: 'auto' | 'inherit'
+  modelClass?: ModelClass
   /** The model each named account runs a piece with — a model id belongs to one CLI, never to a fleet. */
   modelsByWorker?: Record<string, string>
   /** The effort each named account is asked for, where its CLI takes an effort flag at all. */
