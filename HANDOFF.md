@@ -6,7 +6,7 @@ Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling,
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-26, **Windows 11**, t727): typecheck, lint and build pass; L1 **4,068 passed, 3 skipped** (238 files) in **72.32s**; L2 **204 checks** (7 skipped). L3 **497 checks** (4 skipped) and packaged app **19 checks** are t723's, not re-run here. The L3 add-project wizard assertion checks the managed default and portable config introduced at t714, using the host path separator on Linux and Windows.
+Baseline (2026-09-26, **Windows 11**, t733): typecheck, lint and build pass; L1 **4,068 passed, 3 skipped** (238 files) in **60.68s**; L3 **497 checks** (4 skipped). L2 **204 checks** (7 skipped) is t727's and packaged app **19 checks** t723's, not re-run here. The L3 add-project wizard assertion checks the managed default and portable config introduced at t714, using the host path separator on Linux and Windows.
 ⚠️ The `%TEMP%` figure is t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI and the Release workflow are enabled.
 
 **`v0.3.3` is `latest`** (t682, 2026-09-24), promoted onto `v0.3.3-rc.1`'s commit `8cf5d301`.
@@ -21,6 +21,7 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 ## Closed in this cleanup
 
+- **Workers shows MCP support as its own field (t733, 2026-09-26).** The t706 badge sat inside the Adapter cell; it is now an *MCP supported* column / card field beside Adapter, reading *Supported* / *Not supported* (*unknown* until the adapter list answers). Every later card label, the note row's span and L3's positional selectors moved by one. L3 497 pass. `docs/ui.md`.
 - **An answer can no longer be delivered into a tool call nobody is holding (t727 ← t708, 2026-09-26).**
   t708 read *waiting for the agent's first words* for an hour after the operator chose an option. Measured from the log and transcript: Claude Code 2.1.283 aborts a stdio MCP call silent for 1800s, `ask_human` waits up to the cache deadline (≤1h), so the call died at 22:32:12, the turn ended at 22:32:41, and the daemon's still-standing waiter took the 22:33:32 answer — marked it delivered and set `running` with no run. Fixed three ways: the MCP server sends `notifications/progress` every 60s on blocking calls (`keepAlive`; spiked live — a silent call dies, a beating one returns); a turn's `result` parks any question still open in its session (`parkQuestionsForTurnEnd`) and an answer reaches a waiter only while the asking run is open; `runWatchdogs` hands a `running` task with no open run to a person after `RUNLESS_AFTER_MS`. L1 in `idleturn.test.ts`, `payload.test.ts`; `docs/mcp.md`, `adapters.md`, `glossary.md`, `architecture.md`.
   ⚠️ **t708 itself** stays `running` in the live DB until the daemon restarts (`reconcileTasks` moves it to `awaiting_human`), and its answer is marked delivered, so no prompt will carry it — reply *Neutralize the CRL gate (B)* again to resume it.

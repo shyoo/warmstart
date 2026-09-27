@@ -3112,20 +3112,23 @@ body {
    keeps it painted and clickable above its overlapping sibling. Reported 2026-09-13; pinned by
    *the reorder arrows stay on top of the cell they overlap* in `test/ui.test.mjs`. */
 .tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(1) { grid-column: 1; grid-row: 1; display: block; width: 24px; padding: 0; position: relative; z-index: 1; }
-.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(2) { grid-column: 1; grid-row: 1 / span 10; display: block; padding: 0 0 0 32px; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(2) { grid-column: 1; grid-row: 1 / span 11; display: block; padding: 0 0 0 32px; }
 .tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(3)::before { content: 'Adapter'; }
-.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(4)::before { content: 'Config location'; }
-.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(5)::before { content: 'Account'; }
-.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(6)::before { content: 'Quota'; }
-.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(7)::before { content: 'Max parallel instances'; }
-.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(8)::before { content: 'Models'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(4)::before { content: 'MCP supported'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(5)::before { content: 'Config location'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(6)::before { content: 'Account'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(7)::before { content: 'Quota'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(8)::before { content: 'Max parallel instances'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(9)::before { content: 'Models'; }
 /* ⛔ One label per <td>, counted against the twelve cells the row actually has — order,
    worker, then the ten fields. A new field shifts every subsequent card label, so its label
    belongs in this same edit; `ui.test.mjs` reads the computed sequence to keep that true. */
-.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(9)::before { content: 'Unattended'; }
-.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(10)::before { content: 'Usage credits'; }
-.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(11)::before { content: 'Actions'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(10)::before { content: 'Unattended'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(11)::before { content: 'Usage credits'; }
+.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(12)::before { content: 'Actions'; }
 .tbl-workers .worker-cell { overflow: visible; }
+/* A grid item stretches by default, which would paint the tag's background across the field. */
+.tbl-workers .worker-mcp > span { justify-self: start; }
 .tbl-workers .worker-identity { display: flex; align-items: center; gap: var(--sp-2); }
 .tbl-workers .worker-identity-info { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-1); }
 .tbl-workers .worker-account { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); min-width: 0; }

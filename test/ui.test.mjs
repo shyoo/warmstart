@@ -3477,7 +3477,7 @@ try {
        document.querySelectorAll('.tbl-workers > thead > tr > th').length
      ])`
   )
-  check('the workers card fields describe every setting the header declares', colCount === '[11,11]', colCount)
+  check('the workers card fields describe every setting the header declares', colCount === '[12,12]', colCount)
 
   const cardLabels = await evaluate(
     `JSON.stringify([...document.querySelector('.tbl-workers > tbody > tr:not(.tbl-row--note)').children]
@@ -3487,7 +3487,7 @@ try {
   check(
     'every worker card field keeps its own label without separate Summary model column',
     cardLabels === JSON.stringify([
-      'Adapter', 'Config location', 'Account', 'Quota', 'Max parallel instances', 'Models',
+      'Adapter', 'MCP supported', 'Config location', 'Account', 'Quota', 'Max parallel instances', 'Models',
       'Unattended', 'Usage credits', 'Actions'
     ]),
     cardLabels
@@ -3523,14 +3523,14 @@ try {
        rows: document.querySelectorAll('.tbl-workers > tbody > tr.tbl-row--note').length,
        note: document.querySelector('.tbl-workers > tbody > tr.tbl-row--note')?.innerText ?? '',
        span: document.querySelector('.tbl-workers > tbody > tr.tbl-row--note td')?.colSpan ?? 0,
-       inAccountColumn: [...document.querySelectorAll('.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(5)')]
+       inAccountColumn: [...document.querySelectorAll('.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(6)')]
          .some(td => td.innerText.includes('subscription expired'))
      })`
   )
   {
     const seen = JSON.parse(noteCell)
     check('an account with something wrong gets a note row of its own', seen.rows >= 1, noteCell)
-    check('which spans the card rather than sitting in one field', seen.span === 11, String(seen.span))
+    check('which spans the card rather than sitting in one field', seen.span === 12, String(seen.span))
     check(
       'and carries the reason the run failed, plus what to do about it',
       /subscription expired/.test(seen.note) && /Recheck/.test(seen.note),
@@ -3723,10 +3723,10 @@ try {
   // ⭐ The account's configured models, as one table (t638): a line per (model, effort) with a tick for
   // Default, Auto-route, Grading and Judgment. It replaced a default-model picker, a routable-models
   // menu behind a pen button and a grading-model picker — three menus over one question.
-  // ⚠️ Column 8: the reorder arrows took the first cell on 2026-08-29 and shifted every column after
+  // ⚠️ Column 9: the reorder arrows took the first cell on 2026-08-29 and shifted every column after
   // them. A positional selector is the one thing that breaks silently when a table grows a column,
   // so it is called out rather than quietly renumbered.
-  const modelsCell = `document.querySelector('.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(8)')`
+  const modelsCell = `document.querySelector('.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(9)')`
   const firstWorkerRpc = `window.agentyard.rpc('fleet.list').then(f => f[0]?.worker)`
   const modelRows = `${modelsCell}?.querySelectorAll('.worker-models-table tbody tr')`
   const modelsDrawn = await evaluate(`String(${modelRows}?.length ?? 0)`)

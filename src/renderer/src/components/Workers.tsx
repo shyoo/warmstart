@@ -397,7 +397,7 @@ export function Workers({
         </div>
       ) : (
         <table className="tbl tbl-workers">
-          {/* ⛔ Eleven columns, eleven <col>s. A missing column makes a fixed-layout table
+          {/* ⛔ Twelve columns, twelve <col>s. A missing column makes a fixed-layout table
               hand the final cell no width at all, and Sign in / Probe / Retire then wrap one per
               line inside a cell the width of a button. Keep this count in lockstep with the
               headers and cells; the card layout below also labels by this same position.
@@ -408,11 +408,12 @@ export function Workers({
             <col style={{ width: '3%' }} />
             <col style={{ width: '14%' }} />
             <col style={{ width: '7%' }} />
+            <col style={{ width: '6%' }} />
             <col style={{ width: '12%' }} />
             <col style={{ width: '10%' }} />
             <col style={{ width: '10%' }} />
             <col style={{ width: '5%' }} />
-            <col style={{ width: '35%' }} />
+            <col style={{ width: '29%' }} />
             <col style={{ width: '8%' }} />
             <col style={{ width: '9%' }} />
             <col style={{ width: '9%' }} />
@@ -424,6 +425,7 @@ export function Workers({
               <th />
               <th>Worker</th>
               <th>Adapter</th>
+              <th>MCP supported</th>
               <th>Config location</th>
               <th>Account</th>
               <th>Quota</th>
@@ -648,27 +650,27 @@ export function Workers({
                         </div>
                       </div>
                     </td>
-                    <td className="dim">
-                      {worker.adapterId}{' '}
+                    <td className="dim">{worker.adapterId}</td>
+                    <td className="worker-mcp">
                       {(() => {
                         // ⛔ Read off the adapter's declared capability, never off its id: an
                         // adapter that gains MCP tools lights up with no UI change. `null` is
                         // the list not having answered yet — unknown, never "no".
                         const mcp = adapters.find((a) => a.id === worker.adapterId)?.capabilities.mcp
-                        if (mcp == null) return null
+                        if (mcp == null) return <span className="dim">unknown</span>
                         return mcp ? (
                           <span
                             className="tag"
                             title="Native Warmstart MCP tools on this CLI: the agent asks questions with buttons, gets directory grants in one step, and can file splits and land by tool."
                           >
-                            MCP
+                            Supported
                           </span>
                         ) : (
                           <span
                             className="tag tag--off"
                             title="No Warmstart MCP tools on this CLI: the agent asks as plain text, folders are attached by hand, and it cannot file splits or land by tool — land from the thread instead."
                           >
-                            No MCP
+                            Not supported
                           </span>
                         )
                       })()}
@@ -889,7 +891,7 @@ export function Workers({
                       the time — is one an operator learns to stop reading. */}
                   {notes.length > 0 && (
                     <tr className={`tbl-row--note${worker.enabled ? '' : ' tbl-row--off'}`}>
-                       <td colSpan={11}>
+                       <td colSpan={12}>
                         {notes.map((n) => (
                           <div key={n.key} className="tbl-note">
                             <span className={`tbl-note-label ${n.tone}`}>{n.label}</span>
