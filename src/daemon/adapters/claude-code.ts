@@ -1161,8 +1161,9 @@ export const claudeCode: AgentAdapter = {
       request: { subtype: 'interrupt' }
     }),
 
-  // ⭐ Measured on t638, 2026-09-23: the response to the frame above is a result with this
-  // terminal reason. It ends the interrupted turn, while stdin remains available for the queued
-  // `/compact`; treating it as a vendor failure closes that session before the command can run.
-  isStreamInterruptResult: (terminalReason) => terminalReason === 'aborted_tools'
+  // ⭐ t638 returned aborted_tools; t828 returned aborted_streaming for the same control frame
+  // (2026-09-28). Both end the interrupted turn while stdin remains available for `/compact`.
+  // sessions.ts accepts either only while a control interrupt is pending.
+  isStreamInterruptResult: (terminalReason) =>
+    terminalReason === 'aborted_tools' || terminalReason === 'aborted_streaming'
 }

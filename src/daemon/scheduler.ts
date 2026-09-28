@@ -2516,6 +2516,8 @@ const preempting = new Set<string>()
 interface ActivePreemption {
   sessionId: string
   action: 'compact' | 'handoff'
+  /** A quota interruption still owns the retry if the CLI exits before its compaction lands. */
+  quotaResumeAt: number | null
   reassignWorkerId?: string | null
   choice?: Task['quotaPreemptWarning']
   /** When the agent called `handoff` during this wrap-up; the evidence the ask landed. */
@@ -3436,6 +3438,7 @@ async function preempt(
     activePreemptions.set(run.id, {
       sessionId: session.id,
       action,
+      quotaResumeAt: because === 'runaway' ? null : resumeAt,
       reassignWorkerId,
       choice,
       finishNow: () => park(true),
@@ -4460,7 +4463,15 @@ export async function endUnfinishedRun(
   // ⛔ **Asked before the run is wound up, because it changes what the run *was*.** A turn the
   // vendor refused for want of quota is not a failure of the work; it is the same event the mid-run
   // watchdog handles by parking the task, arriving by a different door. See `quotaFailurePark`.
-  const parkAt = task && outcome === 'failed' ? quotaFailurePark(session, run, why) : null
+  const quotaRefusalAt = task && outcome === 'failed' ? quotaFailurePark(session, run, why) : null
+  // ⭐ t828: a quota preemption had already queued /compact when Claude's interrupted turn
+  // returned aborted_streaming and the session exited. The partial output contained no refusal
+  // wording, so the ordinary failure path handed the task to a person. The active preemption is
+  // evidence of why this turn was stopped, even if no compaction boundary follows.
+  const interruptedForQuota = task && outcome === 'failed'
+    ? activePreemptions.get(run.id)?.quotaResumeAt ?? null
+    : null
+  const parkAt = quotaRefusalAt ?? interruptedForQuota
   const overloadRetry =
     task && outcome === 'failed' && parkAt === null
       ? overloadFailureRetry(session, run, why, task)
@@ -4519,7 +4530,9 @@ export async function endUnfinishedRun(
         addMessage(task.id, 'system', `Parked on quota until ${clockTime(parkAt)}`, null, [], {
           event: 'quota.parked',
           detail:
-            `${why} That is this account's quota window, not a fault in the work — parked until it ` +
+            `${interruptedForQuota !== null && quotaRefusalAt === null
+              ? `The session ended during quota preemption (${why});`
+              : `${why} That is this account's quota window, not a fault in the work;`} parked until it ` +
             `resets, expected ${new Date(parkAt).toISOString()}, and the fleet puts this back in the ` +
             'queue by itself then (sooner, if a reading shows the window has already come back).'
         })
@@ -4533,7 +4546,9 @@ export async function endUnfinishedRun(
           assignee: null,
           // This is the vendor's refusal, not the scheduler's percentage watermark. Keep it on
           // the held row so a later renderer does not invent an overridable reason for the park.
-          holdReason: `Vendor refused this turn: ${why}`,
+          holdReason: interruptedForQuota !== null && quotaRefusalAt === null
+            ? `Session ended during quota preemption: ${why}`
+            : `Vendor refused this turn: ${why}`,
           holdUntil: parkAt
         })
         // ⭐ The same nudge preemption sends. The poller schedules its next look from

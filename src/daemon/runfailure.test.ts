@@ -285,6 +285,32 @@ describe('an error the CLI reports without exiting', () => {
     expect(sessions.isHousekeepingTurn(session.id)).toBe(true)
   })
 
+  it('keeps the queued compaction alive when Claude acknowledges the interrupt as aborted_streaming (t828)', async () => {
+    const { run, session, task } = seedRunningTask({ adapterId: 'claude-code', metered: 1000 })
+    sessions.noteStreamInterrupt(session.id, session.adapterId)
+    sessions.markHousekeepingPrompt(session.id)
+
+    await turnend.onStreamResult(session, {
+      isError: true,
+      text: 'partial tool output',
+      terminalReason: 'aborted_streaming'
+    })
+
+    expect(tasks.requireRun(run.id).endedAt).toBeNull()
+    expect(tasks.requireTask(task.id).status).toBe('running')
+    expect(sessions.isHousekeepingTurn(session.id)).toBe(true)
+  })
+
+  it('still reports aborted_streaming as a failure without a pending control interrupt', async () => {
+    const { run, session } = seedRunningTask({ adapterId: 'claude-code', metered: 1000 })
+    await turnend.onStreamResult(session, {
+      isError: true,
+      text: 'stream failed',
+      terminalReason: 'aborted_streaming'
+    })
+    expect(tasks.requireRun(run.id).outcome).toBe('failed')
+  })
+
   it('does not mistake an ordinary Claude api_error for an interrupt acknowledgement', async () => {
     const { run, session } = seedRunningTask({ adapterId: 'claude-code', metered: 1000 })
     sessions.noteStreamInterrupt(session.id, session.adapterId)

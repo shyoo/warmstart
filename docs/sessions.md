@@ -118,6 +118,12 @@ A quota handoff that will close a session also removes it from the cache clock's
 passes the in-flight closing session to the clock after the persisted preemption warning is cleared;
 neither the warning minute nor the wrap-up gap may send a cache-clock prompt that races the handoff.
 If the same conversation resumes later, the resume path decides whether it needs compaction.
+Claude's stream control interrupt can end the active turn with `aborted_tools` or
+`aborted_streaming`; while that interrupt is pending, neither result is a work failure. The queued
+`/compact` gets its chance to land. If the session instead exits or fails before a compaction
+boundary, the recorded quota preemption still parks the task until the window resets; the unlanded
+compaction remains visible, and the next run may resume or start fresh according to the normal
+context and cache rules.
 
 ## Too full to lend, and what the clock does about it
 

@@ -658,6 +658,7 @@ describe('a stream transport has two halves, and only one of them was wired', ()
     expect(adapter('antigravity-cli').encodeStreamInterrupt).toBeUndefined()
     expect(adapter('openai-compatible').encodeStreamInterrupt).toBeUndefined()
     expect(adapter('claude-code').isStreamInterruptResult?.('aborted_tools')).toBe(true)
+    expect(adapter('claude-code').isStreamInterruptResult?.('aborted_streaming')).toBe(true)
     expect(adapter('claude-code').isStreamInterruptResult?.('api_error')).toBe(false)
   })
 

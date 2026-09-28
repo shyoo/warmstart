@@ -787,6 +787,39 @@ describe('the switches that gate all of this', () => {
     expect(tasks.getTask(task.id)?.status).toBe('paused_quota')
   })
 
+  it('parks for automatic retry when a turn fails during quota preemption before compaction lands (t828)', async () => {
+    const { task, run, sessionId } = seedRunawayTask(0, 'claude-code')
+    const reset = Date.now() + 3_600_000
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run(run.workerId, '5h', 'Claude 5h', 96, reset, 'probe', Date.now())
+
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS)
+    await scheduler.tick()
+    expect(wrapUpsOn(task.id)).toBe(1)
+
+    const session = sessions.getSession(sessionId)
+    expect(session).not.toBeNull()
+    await turnend.onStreamResult(session!, {
+      isError: true,
+      text: 'partial tool output',
+      terminalReason: 'aborted_streaming'
+    })
+
+    expect(tasks.requireRun(run.id).outcome).toBe('preempted')
+    expect(tasks.requireTask(task.id).status).toBe('paused_quota')
+    expect(tasks.requireTask(task.id).notBefore).toBe(reset)
+    await vi.advanceTimersByTimeAsync(130_000)
+    expect(tasks.requireTask(task.id).status).toBe('paused_quota')
+    db.db().prepare('update tasks set not_before = ? where id = ?').run(Date.now() - 1, task.id)
+    expect(tasks.resumeQuotaPaused()).toBe(1)
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+  })
+
   it('warns when the weekly window reaches its gate mid-run, and parks against the weekly reset (t778)', async () => {
     // ⭐ t778: MuseFirst's 7d read 94% at dispatch, 97% eleven minutes later and 99% six after that,
     // and the run died on a failed stream with no warning — only the 5h window was ever read here.
