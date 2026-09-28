@@ -7,6 +7,7 @@ import {
   measuredModelPoints,
   placeScatterLabels,
   priceRowsForGraph,
+  sampleNote,
   TradeoffPlots,
   withoutSoleEfforts
 } from './Statistics.js'
@@ -253,6 +254,16 @@ describe('measuredModelPoints by effort', () => {
     expect(measuredModelPoints(sole, false, true).map((p) => p.shortLabel)).toEqual(['Opus 5 High'])
   })
 
+  /**
+   * t814: gpt-5.6-terra's *Med* mark graded 9.4 over 10 tasks while the model graded 8.1 over 109;
+   * the hover has to say the mark is a slice of its model, not the model.
+   */
+  it('gives an effort mark its model\'s task count, and a model mark none', () => {
+    const [high] = measuredModelPoints(twoEfforts, false, true)
+    expect(sampleNote(high!)).toBe("n=5 · of the model's 10 tasks")
+    expect(sampleNote(measuredModelPoints(twoEfforts)[0]!)).toBe('n=10')
+  })
+
   it('keeps a model with no recorded effort as its one model-level point', () => {
     const none = report({
       price: [at('model', 'claude-haiku-4-5', null, 1)],
@@ -408,6 +419,13 @@ describe('the trade-off scatters draw one mark per model on every pair of axes',
     expect([...markup.matchAll(/class="scatter-plot-mark-label"/g)]).toHaveLength(6)
     expect(markup).toMatch(/>Opus 5<\/text>/)
     expect(markup).toMatch(/>Sonnet 5<\/text>/)
+  })
+
+  /** t814: a mark's hover says how many tasks stand behind it, on the icon's own title too. */
+  it('prints n= in every mark\'s hover', () => {
+    const titles = [...markup.matchAll(/<title>([^<]+)<\/title>/g)].map((m) => m[1]!)
+    expect(titles.length).toBeGreaterThan(0)
+    expect(titles.every((t) => /\(n=\d+\)/.test(t))).toBe(true)
   })
 
   it('says which side of each axis is better by position, not "higher", since cost is plotted inverted', () => {

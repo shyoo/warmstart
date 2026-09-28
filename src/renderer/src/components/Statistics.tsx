@@ -575,6 +575,19 @@ type ModelPoint = {
   quality: number
   /** The fewest finished tasks backing any of the three axes. See `MIN_TRUSTED_SAMPLES`. */
   samples: number
+  /** On an effort mark only: every finished task of its model, recorded effort or not (t814). */
+  modelTasks?: number
+}
+
+/**
+ * The `n=` a hover prints. ⚠️ An effort mark also says how much of its model it is: gpt-5.6-terra's
+ * *Med* mark was 10 of 109 tasks and graded 9.4 against the model's 8.1 (t814), and without the
+ * denominator nothing on the page said the two numbers were over different tasks.
+ */
+export function sampleNote(point: Pick<ModelPoint, 'samples' | 'modelTasks'>): string {
+  return point.modelTasks === undefined
+    ? `n=${point.samples}`
+    : `n=${point.samples} · of the model's ${point.modelTasks} task${point.modelTasks === 1 ? '' : 's'}`
 }
 
 /**
@@ -656,6 +669,9 @@ export function measuredModelPoints(
   add(report.velocity.rows, 'velocity')
   add(report.quality.rows, 'quality')
   const agents = new Map(report.velocity.rows.filter((r) => r.level === 'agent').map((r) => [r.adapterId, r.label]))
+  const modelTasks = new Map(
+    report.quality.rows.filter((r) => r.level === 'model').map((r) => [`${r.adapterId}/${r.model}`, r.tasks])
+  )
   return [...points.entries()]
     .filter(([, p]) => p.cost !== undefined && p.velocity !== undefined && p.quality !== undefined)
     .map(([key, p]) => ({
@@ -668,7 +684,8 @@ export function measuredModelPoints(
       cost: p.cost!,
       velocity: p.velocity!,
       quality: p.quality!,
-      samples: Math.min(p.costSamples!, p.velocitySamples!, p.qualitySamples!)
+      samples: Math.min(p.costSamples!, p.velocitySamples!, p.qualitySamples!),
+      ...(p.effort ? { modelTasks: modelTasks.get(`${p.adapterId}/${p.model}`) } : {})
     }))
     .filter((point) => point.samples >= MIN_TRUSTED_SAMPLES)
     .sort((a, b) => a.label.localeCompare(b.label))
@@ -973,6 +990,9 @@ export function ScatterPlot({
           const cx = scaleX(axisPosition(xAxis, point[xAxis], minX, maxX))
           const cy = scaleY(axisPosition(yAxis, point[yAxis], minY, maxY))
           const r = (hovered === point.key ? iconSize + 4 : iconSize) / 2
+          // ⚠️ Given to the icon as well: its own `<title>` is the innermost one, so it is the one a
+          //    browser shows while the pointer is over the mark.
+          const tip = `${point.label} (${sampleNote(point)})\n${AXIS_TITLE[xAxis]} ${AXIS_RENDER[xAxis](point[xAxis])} · ${AXIS_TITLE[yAxis]} ${AXIS_RENDER[yAxis](point[yAxis])}`
           return (
             <g
               key={point.key}
@@ -981,11 +1001,9 @@ export function ScatterPlot({
             >
               <circle cx={cx} cy={cy} r={r + 3} className="scatter-plot-point-halo" />
               <g transform={`translate(${cx - r}, ${cy - r})`}>
-                <AgentIcon adapterId={point.adapterId} size={r * 2} title={point.label} />
+                <AgentIcon adapterId={point.adapterId} size={r * 2} title={tip} />
               </g>
-              <title>
-                {`${point.label}\n${AXIS_TITLE[xAxis]} ${AXIS_RENDER[xAxis](point[xAxis])} · ${AXIS_TITLE[yAxis]} ${AXIS_RENDER[yAxis](point[yAxis])}`}
-              </title>
+              <title>{tip}</title>
             </g>
           )
         })}
@@ -993,7 +1011,8 @@ export function ScatterPlot({
       <div className="scatter-plot-legend">
         {active ? (
           <>
-            <strong>{active.label}</strong> · {AXIS_TITLE[xAxis]} {AXIS_RENDER[xAxis](active[xAxis])} ·{' '}
+            <strong>{active.label}</strong> <span className="dim">{sampleNote(active)}</span> ·{' '}
+            {AXIS_TITLE[xAxis]} {AXIS_RENDER[xAxis](active[xAxis])} ·{' '}
             {AXIS_TITLE[yAxis]} {AXIS_RENDER[yAxis](active[yAxis])}
           </>
         ) : (

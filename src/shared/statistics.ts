@@ -71,7 +71,8 @@ export interface StatRow {
   /** Null except on an `effort` row. */
   effort: string | null
   /**
-   * An `effort` row that is its model's only recorded effort. ⚠️ It restates its parent, so the
+   * An `effort` row that is its model's only effort *and* covers every one of its tasks — none left
+   * with no effort recorded (t814). ⚠️ It restates its parent, so the
    * tables and graphs hide it (`withoutSoleEfforts`); the trade-off scatters' *Show effort level*
    * breakdown still needs it to place a single-effort model at the effort it ran at (t812).
    */

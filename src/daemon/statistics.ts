@@ -420,6 +420,10 @@ function tree<T extends Sample, R extends { sole?: boolean }>(
         // ⚠️ Marked `sole` when the model ran at exactly one effort: a lone child that restates its
         //    parent's numbers is a row that costs a line and says nothing, so the tables hide it —
         //    but the scatters' effort breakdown needs it to know *which* effort that was (t812).
+        //    ⛔ Only when it covers *every* task of its model (t814): gpt-5.6-terra's lone `medium`
+        //    row held its 10 newest tasks of 109 (effort went unrecorded before 2026-09-23) and graded
+        //    9.4 against the model's 8.1 — hidden as a restatement, it was a number no table showed.
+        const covered = [...byEffort.values()].reduce((n, g) => n + g.length, 0) === splitGroup.length
         for (const [effort, effortGroup] of [...byEffort.entries()].sort((a, b) =>
           compareEffortPower(a[0], b[0])
         )) {
@@ -429,7 +433,7 @@ function tree<T extends Sample, R extends { sole?: boolean }>(
             split ? `${modelKey}/${effort}` : `${adapterId}/${model}/${effort}`,
             effortGroup
           )
-          if (byEffort.size === 1) row.sole = true
+          if (byEffort.size === 1 && covered) row.sole = true
           out.push(row)
         }
       }

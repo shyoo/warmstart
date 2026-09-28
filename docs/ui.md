@@ -254,8 +254,13 @@ it (t812, `measuredModelPoints(report, excludeApiMixed, byEffort)`, remembered b
 *Opus 5 High*. It folds the report's `effort` rows, including the ones marked `sole`: the daemon
 emits a model's only effort row with `sole: true` rather than dropping it, because that row is the
 one place the effort is named, and `withoutSoleEfforts` removes those rows from all three tabs
-because there they would just repeat the model row. A model is split on every axis or on none. A model with no recorded effort
-keeps its model-level mark, and a task with no recorded effort is left out of every effort mark. ⛔ A model whose weakest axis rests on
+because there they would just repeat the model row. ⛔ `sole` also requires the row to cover every
+task of its model (t814): gpt-5.6-terra's lone *Med* row was its 10 newest tasks of 109 (Codex effort
+went unrecorded before 2026-09-23), graded 9.4 against the model's 8.1, and a table hiding it left
+the mark's number nowhere on the page. A model is split on every axis or on none. A model with no recorded effort
+keeps its model-level mark, and a task with no recorded effort is left out of every effort mark. Every
+mark's hover (and the legend under the plot) prints `n=` — the fewest samples on any axis — and an
+effort mark adds its model's task count (`sampleNote`), e.g. *n=10 · of the model's 109 tasks*. ⛔ A model whose weakest axis rests on
 fewer than `MIN_TRUSTED_SAMPLES` (5, the same floor the price table dims its `n` column at) is dropped
 from all three scatters entirely — a mark has no column to dim a thin count in, so it is excluded
 rather than drawn as a confident point over a guess. ⭐ **Every axis is better away from the origin (2026-09-14)**, and its

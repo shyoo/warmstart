@@ -335,6 +335,15 @@ describe('the agent → model → effort tree', () => {
     expect(efforts.map((r) => [r.effort, r.sole, r.distribution.samples])).toEqual([['high', true, 2]])
   })
 
+  it('does not mark a lone effort row sole when other tasks of its model recorded no effort', () => {
+    // t814: gpt-5.6-terra's `medium` row was 10 of 109 tasks, graded 9.4 against the model's 8.1,
+    // and hidden from every table as though it restated the model.
+    finishedTask({ adapter: 'codex', model: 'terra', effort: 'medium', activeMs: 6 * MIN })
+    finishedTask({ adapter: 'codex', model: 'terra', effort: null, activeMs: 2 * MIN })
+    const efforts = stats.statisticsReport().velocity.rows.filter((r) => r.level === 'effort')
+    expect(efforts.map((r) => [r.effort, r.sole ?? false, r.distribution.samples])).toEqual([['medium', false, 1]])
+  })
+
   it('does not mark either row of a model that ran at two efforts sole', () => {
     finishedTask({ adapter: 'claude-code', model: 'opus', effort: 'high', activeMs: 6 * MIN })
     finishedTask({ adapter: 'claude-code', model: 'opus', effort: 'low', activeMs: 2 * MIN })
