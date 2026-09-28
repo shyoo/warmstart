@@ -530,7 +530,11 @@ both of which name one real model before dispatch. ⚠️ This is deliberately t
 `effortLookupModel` (`lib/taskview.tsx`), which resolves a *reassign* row's effort against the
 inherited model even under Auto Model: there the model that would run *right now* is already
 knowable, so showing it is the honest thing to do; here, before any worker or model is chosen, it is
-not.
+not. ⛔ **Hidden is not cleared, so hidden must also mean not filed** (t811): the remembered level
+survived a switch from a pinned model to *Auto Model (med)*, and t809/t810 went out as `med` +
+`high`. `filedModelChoice` is what all three submit paths file, and `filedReassignEffort` does the
+same for Reassign, Decide and the handoff picker: under an Auto choice, a level the pill is not
+offering is never written.
 
 ⛔ **A model the router has not chosen yet is not named anywhere.** The Tasks list's Worker column
 stacks the model under the account, and for a task that has not run it shows what the next dispatch

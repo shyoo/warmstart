@@ -82,6 +82,29 @@ export function pairInClass(
   return row ? { model, effort: row.effort } : null
 }
 
+/**
+ * The effort `model` runs at when the task asked for `Auto Model (modelClass)`.
+ *
+ * ⛔ **The class names a (model, effort) row, so it owns the effort too** (t811, 2026-09-28). t809
+ * and t810 were filed `Auto Model (med)` on a worker whose `med` row is `claude-opus-5-5 · medium`,
+ * with a stale `effort: high` the composer no longer showed. Scoring picked the `med` row and the
+ * dispatch then ran the task's own effort over it, so both ran Opus at `high` — the `high` class
+ * the operator had not asked for.
+ *
+ * ⭐ A task effort survives only where its own row is in the class (`pairInClass` prefers it); any
+ * other is replaced by the class row's effort. With no class, or no row in it, the effort passes
+ * through unchanged: scoring has already held a task with nothing in its class.
+ */
+export function classBoundEffort(
+  worker: RoutesHolder,
+  model: string | null | undefined,
+  effort: string | null,
+  modelClass: ModelClass | null | undefined
+): string | null {
+  if (!modelClass || !model) return effort
+  return pairInClass(worker, model, effort, modelClass)?.effort ?? effort
+}
+
 /** Rows Auto Model may pick, in the operator's order. */
 export function autoRoutes(worker: RoutesHolder): ModelRoute[] {
   return (worker?.modelRoutes ?? []).filter((r) => r.auto)

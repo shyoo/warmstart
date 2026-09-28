@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   DEFAULT_COMPOSER_PREFS,
+  filedModelChoice,
   modelChoiceFor,
   readComposerPrefs,
   rememberModelChoice,
@@ -332,5 +333,72 @@ describe('showsEffortPicker', () => {
 
   it('shows it for Inherit, which names one known model — the account default', () => {
     expect(showsEffortPicker('', 'inherit')).toBe(true)
+  })
+})
+
+describe('filedModelChoice (t811)', () => {
+  const OPUS_LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
+
+  it('⛔ t809/t810: Auto Model (med) files the class and never the remembered effort it hides', () => {
+    // How the composer got there: Opus 5.5 at High pinned, then Auto Model (med) picked. The pick
+    // carried the effort into the remembered choice while the Effort pill disappeared.
+    let prefs = rememberModelChoice(DEFAULT_COMPOSER_PREFS, 'w-claude', {
+      model: 'claude-opus-5-5',
+      effort: 'high',
+      policy: 'auto'
+    })
+    const pinned = modelChoiceFor(prefs, 'w-claude')
+    prefs = rememberModelChoice(prefs, 'w-claude', { model: '', effort: pinned.effort, policy: 'auto', modelClass: 'med' })
+    const auto = modelChoiceFor(prefs, 'w-claude')
+    expect(auto.effort).toBe('high')
+
+    const filed = filedModelChoice({
+      model: auto.model,
+      modelPolicy: auto.policy,
+      modelClass: auto.modelClass,
+      effort: auto.effort,
+      efforts: OPUS_LEVELS
+    })
+    expect(filed).toEqual({ modelClass: 'med' })
+  })
+
+  it('files no effort for any Auto Model variant', () => {
+    for (const modelClass of [undefined, 'high', 'med', 'low'] as const) {
+      const filed = filedModelChoice({ model: '', modelPolicy: 'auto', modelClass, effort: 'max', efforts: OPUS_LEVELS })
+      expect(filed.effort).toBeUndefined()
+      expect(filed).toEqual(modelClass ? { modelClass } : {})
+    }
+  })
+
+  it('files a pinned model with the effort its pill is showing', () => {
+    expect(
+      filedModelChoice({ model: 'claude-opus-5-5', modelPolicy: 'auto', effort: 'high', efforts: OPUS_LEVELS })
+    ).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
+  })
+
+  it("files Inherit with the effort chosen for the account's default", () => {
+    expect(filedModelChoice({ model: '', modelPolicy: 'inherit', effort: 'xhigh', efforts: OPUS_LEVELS })).toEqual({
+      modelPolicy: 'inherit',
+      effort: 'xhigh'
+    })
+  })
+
+  it('drops a level the pinned model does not offer', () => {
+    expect(filedModelChoice({ model: 'claude-haiku-4-5', modelPolicy: 'auto', effort: 'high', efforts: [] })).toEqual({
+      model: 'claude-haiku-4-5'
+    })
+  })
+
+  it('never files a class beside a pinned model or under Inherit', () => {
+    expect(
+      filedModelChoice({ model: 'claude-opus-5-5', modelPolicy: 'auto', modelClass: 'med', effort: '', efforts: OPUS_LEVELS })
+    ).toEqual({ model: 'claude-opus-5-5' })
+    expect(filedModelChoice({ model: '', modelPolicy: 'inherit', modelClass: 'med', effort: '', efforts: [] })).toEqual({
+      modelPolicy: 'inherit'
+    })
+  })
+
+  it('files nothing for plain Auto with no effort, so `constraints` stays absent', () => {
+    expect(filedModelChoice({ model: '', modelPolicy: 'auto', effort: '', efforts: OPUS_LEVELS })).toEqual({})
   })
 })

@@ -14,7 +14,7 @@ import { resolveModelChoice, type Task } from '@shared/tasks'
 import { useEffect, useState } from 'react'
 import { rpc, type FleetEntry } from '../../lib/daemon'
 import { effortLabel, modelLabel } from '../../lib/modelname'
-import { effortLookupModel, reassignmentModel } from '../../lib/taskview'
+import { effortLookupModel, filedReassignEffort, reassignmentModel } from '../../lib/taskview'
 import { PillSelect, type PillOption } from '../Pill'
 
 export function initialSelectedModel(
@@ -135,6 +135,8 @@ export interface ReassignChoice {
   workerId: string
   model: string
   effort: string
+  /** What `apply` would file for effort: `effort`, unless it is a level an Auto choice is not offering. */
+  filedEffort: string | null
   /**
    * The worker shown as selected by the worker pill's dropdown menu. Matches `workerId` when explicitly
    * chosen or pinned, or the latest run's worker when left to the scheduler (`onCurrent`).
@@ -203,6 +205,7 @@ export function useReassignChoice(
     workerId !== (c.workerId ?? '') ||
     (userPickedWorker && !workerId && !!current?.workerId && current.workerId !== (c.workerId ?? ''))
   const changed = workerChanged || model !== pinnedModel || effort !== (c.effort ?? '')
+  const filedEffort = filedReassignEffort(model, effort, offeredEfforts)
 
   const pickWorker = (next: string): void => {
     setUserPickedWorker(true)
@@ -240,7 +243,7 @@ export function useReassignChoice(
     await rpc('task.setWorker', {
       id: task.id,
       workerId: workerId || null,
-      ...(workerId ? { model: pinned, modelPolicy, modelClass, effort: effort || null } : {})
+      ...(workerId ? { model: pinned, modelPolicy, modelClass, effort: filedEffort } : {})
     })
   }
 
@@ -265,6 +268,7 @@ export function useReassignChoice(
     workerId,
     model,
     effort,
+    filedEffort,
     changed,
     setWorker: pickWorker,
     setModel: (next) => {

@@ -97,6 +97,43 @@ export function showsEffortPicker(model: string, modelPolicy: ModelPolicy): bool
   return Boolean(model) || modelPolicy === 'inherit'
 }
 
+/** The model fields a composer row files into `constraints`. Absent means the scheduler's answer. */
+export interface FiledModelChoice {
+  model?: string
+  modelPolicy?: 'inherit'
+  modelClass?: ModelClass
+  effort?: string
+}
+
+/**
+ * What the composer's model and effort pills file, and nothing they are not showing.
+ *
+ * ⛔ **An effort the pill is not offering is never filed** (t811, 2026-09-28). The pick is remembered
+ * per account, and moving from `Opus 5.5 · High` to `Auto Model (med)` hid the Effort pill
+ * (`showsEffortPicker`) without clearing it: t809 and t810 went out as `modelClass: med,
+ * effort: high` and ran Opus at `high`, the `high` class. The daemon now keeps a class's own effort
+ * (`classBoundEffort`), and this is the other half: what was filed is what the pills said.
+ *
+ * ⚠️ `efforts` is the list the pill offers for the model that would run; a level outside it is a
+ * leftover from another model, not a choice.
+ */
+export function filedModelChoice(input: {
+  model: string
+  modelPolicy: ModelPolicy
+  modelClass?: ModelClass
+  effort: string
+  efforts: readonly string[]
+}): FiledModelChoice {
+  const { model, modelPolicy, modelClass, effort, efforts } = input
+  const showsEffort = showsEffortPicker(model, modelPolicy) && efforts.includes(effort)
+  return {
+    ...(model ? { model } : {}),
+    ...(modelPolicy === 'inherit' && !model ? { modelPolicy: 'inherit' as const } : {}),
+    ...(modelClass && !model && modelPolicy === 'auto' ? { modelClass } : {}),
+    ...(effort && showsEffort ? { effort } : {})
+  }
+}
+
 export interface ComposerPrefs {
   priority: Priority
   kind: ComposerKind

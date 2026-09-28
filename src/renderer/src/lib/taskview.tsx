@@ -733,6 +733,22 @@ export function reassignmentModel(model: string, offeredModels: ReadonlyArray<{ 
  * could only ever be picked once an operator had also picked one exact, named model — not the
  * ordinary case of leaving the model on Auto or on the account default.
  */
+/**
+ * The effort a reassignment files, given what its Model pill says and the levels its Effort pill offers.
+ *
+ * ⛔ **Under an Auto Model choice, only a level the pill is offering** (t811, 2026-09-28). An Auto
+ * class names no model, so its Effort pill offers nothing — but the state is seeded from the task's
+ * own `constraints.effort`, and re-applying (a worker change, a retry) filed that hidden level again.
+ * The daemon keeps a class's own effort regardless (`classBoundEffort`); this keeps the write honest.
+ * ⚠️ A pinned model's effort is left alone: its pill names it, and an options list that has not
+ * arrived yet is not evidence the level is wrong.
+ */
+export function filedReassignEffort(selectedModel: string, effort: string, offered: readonly string[]): string | null {
+  if (!effort) return null
+  if (selectedModel.startsWith('__auto__') && !offered.includes(effort)) return null
+  return effort
+}
+
 export function effortLookupModel(selectedModel: string, inheritedModel: string | null): string {
   return selectedModel && selectedModel !== '__auto__' && selectedModel !== '__inherit__'
     ? selectedModel

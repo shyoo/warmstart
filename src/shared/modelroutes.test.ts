@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   autoCandidates,
   autoModelCount,
+  classBoundEffort,
   classOnWorker,
   isRoutableModel,
   pairInClass,
@@ -105,5 +106,46 @@ describe('model routes (t638)', () => {
     expect(isRoutableModel(worker, undefined)).toBe(false)
     expect(isRoutableModel(null, 'claude-opus-5-5')).toBe(false)
     expect(isRoutableModel({ modelRoutes: null }, 'claude-opus-5-5')).toBe(false)
+  })
+})
+
+describe('classBoundEffort (t811)', () => {
+  // ClaudeFirst's table when t809 and t810 ran: opus·high is `high` by the built-in heuristic.
+  const claudeFirst = {
+    modelRoutes: [
+      row('claude-opus-5-5', 'high'),
+      row('claude-opus-5-5', 'medium', true, 'med'),
+      row('claude-sonnet-5', 'medium', true, 'low')
+    ]
+  }
+
+  it('⛔ replaces a task effort that would take the model out of the requested class', () => {
+    expect(classBoundEffort(claudeFirst, 'claude-opus-5-5', 'high', 'med')).toBe('medium')
+    expect(classBoundEffort(claudeFirst, 'claude-opus-5-5', 'medium', 'high')).toBe('high')
+    expect(classBoundEffort(claudeFirst, 'claude-sonnet-5', 'max', 'low')).toBe('medium')
+  })
+
+  it("an effort absent from the table is not a class row, so the class row's effort answers", () => {
+    expect(classBoundEffort(claudeFirst, 'claude-opus-5-5', 'xhigh', 'med')).toBe('medium')
+    expect(classBoundEffort(claudeFirst, 'claude-opus-5-5', null, 'med')).toBe('medium')
+  })
+
+  it('keeps a task effort whose own row is in the class', () => {
+    const w = { modelRoutes: [row('claude-opus-5-5', 'high', true, 'high'), row('claude-opus-5-5', 'max', false, 'high')] }
+    expect(classBoundEffort(w, 'claude-opus-5-5', 'max', 'high')).toBe('max')
+    expect(classBoundEffort(w, 'claude-opus-5-5', 'high', 'high')).toBe('high')
+  })
+
+  it('passes the effort through where there is no class, no model or no row in the class', () => {
+    expect(classBoundEffort(claudeFirst, 'claude-opus-5-5', 'low', null)).toBe('low')
+    expect(classBoundEffort(claudeFirst, 'claude-opus-5-5', 'low', undefined)).toBe('low')
+    expect(classBoundEffort(claudeFirst, null, 'low', 'med')).toBe('low')
+    // Scoring holds a task with nothing in its class; this does not invent a row for it.
+    expect(classBoundEffort(claudeFirst, 'claude-sonnet-5', 'high', 'high')).toBe('high')
+  })
+
+  it("a model with no rows keeps the task's effort when the built-in class matches", () => {
+    expect(classBoundEffort({ modelRoutes: [] }, 'claude-opus-5-5', 'xhigh', 'high')).toBe('xhigh')
+    expect(classBoundEffort(null, 'claude-opus-5-5', 'xhigh', 'high')).toBe('xhigh')
   })
 })

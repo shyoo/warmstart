@@ -22,6 +22,7 @@ import {
   chronologicalRuns,
   chronologicalTimeline,
   effortLookupModel,
+  filedReassignEffort,
   elapsed,
   hasQuotaGate,
   holdLine,
@@ -1647,5 +1648,25 @@ describe('isQuotaGated and hasQuotaGate', () => {
     }
     expect(isQuotaGated(task, now)).toBe(false)
     expect(hasQuotaGate(task, now)).toBe(false)
+  })
+})
+
+describe('filedReassignEffort (t811)', () => {
+  it('⛔ an Auto class, which offers no levels, never re-files the effort the task was seeded with', () => {
+    // Reassign seeds its effort state from `constraints.effort`; t810 carried `high` beside `med`.
+    expect(filedReassignEffort('__auto__:med', 'high', [])).toBeNull()
+    expect(filedReassignEffort('__auto__:high', 'medium', [])).toBeNull()
+  })
+
+  it('plain Auto keeps a level its pill is offering, and drops one it is not', () => {
+    expect(filedReassignEffort('__auto__', 'high', ['low', 'high'])).toBe('high')
+    expect(filedReassignEffort('__auto__', 'max', ['low', 'high'])).toBeNull()
+  })
+
+  it('a pinned model, the account default or no effort at all are left as they are', () => {
+    expect(filedReassignEffort('claude-opus-5-5', 'high', [])).toBe('high')
+    expect(filedReassignEffort('__inherit__', 'xhigh', [])).toBe('xhigh')
+    expect(filedReassignEffort('', 'low', [])).toBe('low')
+    expect(filedReassignEffort('__auto__:med', '', [])).toBeNull()
   })
 })

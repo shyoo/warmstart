@@ -3452,11 +3452,14 @@ export function resolveModelChoice(
     worker && 'id' in worker && worker.id && constraints?.effortsByWorker
       ? constraints.effortsByWorker[worker.id]
       : undefined
-  const effort = workerSpecificEffort || constraints?.effort || null
+  const asked = workerSpecificEffort || constraints?.effort || null
   const classPair =
     constraints?.modelClass && resolvedModel
-      ? pairInClass(worker, resolvedModel, effort, constraints.modelClass)
+      ? pairInClass(worker, resolvedModel, asked, constraints.modelClass)
       : null
+  // ⛔ A task effort that takes the model out of its requested class is not the task's answer: the
+  // class row's effort is (t811, `classBoundEffort`).
+  const effort = classPair?.effort && asked !== classPair.effort ? null : asked
   // ⛔ The default row's effort for the default model; otherwise the effort the model's own row in
   // the worker's table carries; otherwise the account's default effort, as before there was a table.
   const workerEffort =

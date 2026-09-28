@@ -40,6 +40,7 @@ import { effortLabel, modelLabel } from '../../lib/modelname'
 import {
   canRelandTask,
   effortLookupModel,
+  filedReassignEffort,
   holdLine,
   resolveRetryCauses,
   type ResolveRetryCause,
@@ -194,7 +195,7 @@ export function QuotaDecide({
             reassignModelPolicy: preemptModel.startsWith('__auto__') ? 'auto' : 'inherit',
             reassignModelClass: preemptModel.startsWith('__auto__:')
               ? preemptModel.split(':')[1] as ModelClass : null,
-            reassignEffort: preemptEffort || null
+            reassignEffort: filedReassignEffort(preemptModel, preemptEffort, preemptEfforts)
           } : {})
         } : {})
       })
@@ -218,7 +219,9 @@ export function QuotaDecide({
       await rpc('task.setWorker', {
         id: task.id,
         workerId: selectedWorkerId || null,
-        ...(selectedWorkerId ? { model, modelPolicy, modelClass, effort: selectedEffort || null } : {})
+        ...(selectedWorkerId
+          ? { model, modelPolicy, modelClass, effort: filedReassignEffort(selectedModel, selectedEffort, offeredEfforts) }
+          : {})
       })
       const note = reassignNote.trim()
       if (note) {
@@ -766,7 +769,7 @@ export function Decide({
         model: isAuto ? null : selected || null,
         modelPolicy: isAuto ? 'auto' : 'inherit',
         modelClass: isAuto && selected.includes(':') ? (selected.split(':')[1] as ModelClass) : null,
-        effort: choice.effort || null
+        effort: choice.filedEffort
       })
       await onRefresh()
     })

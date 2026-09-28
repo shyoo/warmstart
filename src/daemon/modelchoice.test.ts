@@ -164,3 +164,47 @@ describe('resolving effort, where the CLI can be told one', () => {
     expect(r.effortSource).toBe('worker')
   })
 })
+
+describe('an Auto class with a task effort beside it (t811)', () => {
+  // ClaudeFirst when t809 and t810 ran: its default is Opus 5.5 at medium, and the `med` row is too.
+  const claudeFirst = {
+    defaultModel: 'claude-opus-5-5',
+    defaultEffort: 'medium',
+    modelRoutes: [
+      { model: 'claude-opus-5-5', effort: 'high', modelClass: null, auto: true },
+      { model: 'claude-opus-5-5', effort: 'medium', modelClass: 'med' as const, auto: true },
+      { model: 'claude-sonnet-5', effort: 'medium', modelClass: 'low' as const, auto: true }
+    ]
+  }
+
+  it("⛔ the class row's effort wins over a task effort outside the class", () => {
+    const r = resolveModelChoice({ modelClass: 'med', effort: 'high' }, claudeFirst, true)
+    expect([r.model, r.effort]).toEqual(['claude-opus-5-5', 'medium'])
+    expect(r.effortSource).toBe('worker')
+  })
+
+  it('a task effort that is the class row is still the task speaking', () => {
+    const r = resolveModelChoice({ modelClass: 'high', effort: 'high' }, claudeFirst, true)
+    expect(r.effort).toBe('high')
+    expect(r.effortSource).toBe('task')
+  })
+
+  it('the worker-specific effort of a split piece is bound the same way', () => {
+    const r = resolveModelChoice(
+      { modelClass: 'med', effortsByWorker: { w1: 'max' } },
+      { ...claudeFirst, id: 'w1' },
+      true
+    )
+    expect(r.effort).toBe('medium')
+  })
+
+  it('no class leaves the task effort alone', () => {
+    const r = resolveModelChoice({ effort: 'high' }, claudeFirst, true)
+    expect(r.effort).toBe('high')
+    expect(r.effortSource).toBe('task')
+  })
+
+  it('an adapter that takes no effort still gets none', () => {
+    expect(resolveModelChoice({ modelClass: 'med', effort: 'high' }, claudeFirst, false).effort).toBeNull()
+  })
+})

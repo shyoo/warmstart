@@ -41,6 +41,7 @@ import {
   MAX_PIECES,
   MIN_PIECES,
   PLAN_EXECUTE_PIECES,
+  filedModelChoice,
   modelChoiceFor,
   readComposerPrefs,
   rememberModelChoice,
@@ -644,6 +645,9 @@ export function NewTask({
   // model while the model pill itself said the router would choose, which reads as a promise this
   // control cannot honour.
   const showEffort = efforts.length > 0 && showsEffortPicker(model, modelPolicy)
+  // ⛔ What every submit path files for this row: the pills as drawn, never a hidden leftover (t811).
+  const filedModel = filedModelChoice({ model, modelPolicy, modelClass, effort, efforts })
+  const hasFiledModel = Object.keys(filedModel).length > 0
 
   const hasMultiPoolDefaults =
     pinned?.defaultModels && Object.values(pinned.defaultModels).filter(Boolean).length > 1
@@ -1000,10 +1004,7 @@ export function NewTask({
           },
           constraints: {
             ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
-            ...(model ? { model } : {}),
-            ...(modelPolicy === 'inherit' && !model ? { modelPolicy: 'inherit' as const } : {}),
-            ...(modelClass && !model ? { modelClass } : {}),
-            ...(effort ? { effort } : {}),
+            ...filedModel,
             piecePriority,
             pieceLimit: filedLimit,
             pieceFinishPolicy,
@@ -1041,16 +1042,8 @@ export function NewTask({
           exchange: debatePrefs.exchange,
           // ⚠️ The organizer's own pin: a debate task is its organizer, so this is the ordinary
           // Worker and Model answer rather than a second control saying the same thing.
-          ...(prefs.workerId || model || effort || modelPolicy === 'inherit' || modelClass
-            ? {
-                constraints: {
-                  ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
-                  ...(model ? { model } : {}),
-                  ...(modelPolicy === 'inherit' && !model ? { modelPolicy: 'inherit' as const } : {}),
-                  ...(modelClass && !model ? { modelClass } : {}),
-                  ...(effort ? { effort } : {})
-                }
-              }
+          ...(prefs.workerId || hasFiledModel
+            ? { constraints: { ...(prefs.workerId ? { workerId: prefs.workerId } : {}), ...filedModel } }
             : {})
         })
         if (!filed.ok) {
@@ -1090,16 +1083,8 @@ export function NewTask({
           // nothing rather than three questions left to the scheduler.
           // ⚠️ `modelPolicy: 'inherit'` counts as a constraint on its own — it is the one answer on
           // that pill the daemon cannot infer from silence, since silence is what `auto` means.
-          ...(prefs.workerId || model || effort || modelPolicy === 'inherit' || modelClass
-            ? {
-                constraints: {
-                  ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
-                  ...(model ? { model } : {}),
-                  ...(modelPolicy === 'inherit' && !model ? { modelPolicy: 'inherit' as const } : {}),
-                  ...(modelClass && !model ? { modelClass } : {}),
-                  ...(effort ? { effort } : {})
-                }
-              }
+          ...(prefs.workerId || hasFiledModel
+            ? { constraints: { ...(prefs.workerId ? { workerId: prefs.workerId } : {}), ...filedModel } }
             : {})
         })
       }
@@ -2185,10 +2170,14 @@ function WorkersPicker({
     }
   }
 
-  const setWorkerModel = (id: string, model: string): void => {
+  const setWorkerModel = (id: string, model: string, levels: readonly string[]): void => {
     const nextModels = { ...selectedModels, [id]: model }
     if (!model) delete nextModels[id]
-    onChange(selectedWorkerIds, nextModels, selectedEfforts)
+    // ⛔ The effort select disappears with a model that has no such level, so the level goes with it:
+    // a value nobody can see is still filed as `effortsByWorker` (t811).
+    const nextEfforts = { ...selectedEfforts }
+    if (nextEfforts[id] && !levels.includes(nextEfforts[id])) delete nextEfforts[id]
+    onChange(selectedWorkerIds, nextModels, nextEfforts)
   }
 
   const setWorkerEffort = (id: string, effort: string): void => {
@@ -2247,7 +2236,13 @@ function WorkersPicker({
                         aria-label={`Model for ${w.label}`}
                         className="workers-menu-model-select"
                         value={selectedModel}
-                        onChange={(e) => setWorkerModel(w.id, e.target.value)}
+                        onChange={(e) =>
+                          setWorkerModel(
+                            w.id,
+                            e.target.value,
+                            canEffort ? (models.find((m) => m.id === e.target.value)?.effortLevels ?? []) : []
+                          )
+                        }
                       >
                         <option value="">
                           CLI default (

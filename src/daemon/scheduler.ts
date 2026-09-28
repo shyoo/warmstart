@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import type {
   Attachment,
   Project,
+  ResolvedModelChoice,
   Run,
   RunQuota,
   Task,
@@ -207,7 +208,7 @@ import { settings } from './settings.js'
 import { overrunFactor } from './estimator.js'
 import type { Objective } from '@shared/tasks.js'
 import { resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
-import { routeEffortFor } from '@shared/modelroutes.js'
+import { classBoundEffort, routeEffortFor } from '@shared/modelroutes.js'
 import {
   DEFAULT_OBJECTIVE,
   policy,
@@ -1571,6 +1572,64 @@ export function noteRoutingDecision(task: Task, choice: WorkerChoice): void {
   }
 }
 
+/**
+ * The (model, effort) a cold dispatch of `task` on `worker` will spawn, given the routed `choice`.
+ *
+ * ⚠️ Pure over the store: exported so the tests can hold the real dispatch to what a task asked for,
+ * since nothing here can spawn a CLI (t811).
+ */
+export function dispatchModelChoice(
+  task: Task,
+  worker: Worker,
+  choice: Pick<WorkerChoice, 'model' | 'effort'>
+): ResolvedModelChoice {
+  const canSetEffort = adapter(worker.adapterId).info.capabilities.selectableEffort
+  // ⛔ The effort is dropped, not forwarded, when the adapter says it cannot take one. A level
+  // passed to a CLI with no flag for it is either an argument error charged to somebody's window or
+  // — worse, because it is quiet — a task that records a setting nothing ever applied. The form
+  // will not have offered the choice for such a worker; this is the guard for every other caller.
+  // ⛔ Task → worker → the CLI's own choice, resolved in one place shared with the renderer so the
+  // form cannot promise an inheritance the scheduler does not perform. `null` at the end is a real
+  // answer: let the CLI pick, which is what every dispatch did before there was a default.
+  const picked = resolveModelChoice(task.constraints, worker, canSetEffort, lastQuota(worker.id))
+  if (choice.model) {
+    picked.model = choice.model
+    // ⛔ The routed row's effort, unless the task pinned its own. A row picked from the worker's table
+    // is a (model, effort) pair; running its model at some other effort is not what was routed.
+    if (canSetEffort && picked.effortSource !== 'task') {
+      const routed =
+        choice.effort ??
+        (choice.model === worker.defaultModel ? worker.defaultEffort : null) ??
+        routeEffortFor(worker, choice.model)
+      if (routed) picked.effort = routed
+    }
+  }
+  // ⛔ Against the model that will actually run, not the one the resolver guessed before routing.
+  // `Auto Model (med)` must not dispatch a pair the worker files under `high` (t811).
+  if (canSetEffort && task.constraints.modelClass) {
+    const bound = classBoundEffort(worker, picked.model, picked.effort, task.constraints.modelClass)
+    if (bound !== picked.effort) {
+      log.info(
+        `t${task.seq}: effort ${picked.effort} would take ${picked.model} out of Auto Model (${task.constraints.modelClass}) on ${worker.label}; running at ${bound}`
+      )
+      picked.effort = bound
+    }
+  }
+  // ⛔ An effort the *model* has no levels for is dropped here, the same way one the *adapter* cannot
+  // take is dropped above. claude-code takes the flag and haiku-4.5 takes no effort at all (measured
+  // 2026-08-29), so an account whose default effort is `medium` sent `--effort medium` on every haiku
+  // dispatch and the thread reported the run as "Haiku 4.5 Med" — a setting nothing applied.
+  // ⚠️ Only where the cost model actually declares the model. An id it cannot price says nothing
+  // about which levels exist, and dropping there would throw away a level the CLI would have honoured.
+  if (picked.effort && picked.model) {
+    const spec = costModel(adapter(worker.adapterId).info.policy.costModelId).modelSpec(picked.model)
+    if (spec && Array.isArray(spec.effort_levels) && spec.effort_levels.length === 0) {
+      picked.effort = null
+    }
+  }
+  return picked
+}
+
 async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   const worker = choice.worker as Worker
   const quotaUnverified = choice.quotaUnverified
@@ -1715,39 +1774,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // workspace-trust dialog is skipped only in non-interactive mode, and would otherwise block every
   // dispatch into a fresh worktree with nobody there to answer; and `--permission-prompt-tool` -
   // the entire structured approval channel - exists only in non-interactive mode.
-  // ⛔ The effort is dropped, not forwarded, when the adapter says it cannot take one. A level
-  // passed to a CLI with no flag for it is either an argument error charged to somebody's window or
-  // — worse, because it is quiet — a task that records a setting nothing ever applied. The form
-  // will not have offered the choice for such a worker; this is the guard for every other caller.
-  const canSetEffort = adapter(worker.adapterId).info.capabilities.selectableEffort
-  // ⛔ Task → worker → the CLI's own choice, resolved in one place shared with the renderer so the
-  // form cannot promise an inheritance the scheduler does not perform. `null` at the end is a real
-  // answer: let the CLI pick, which is what every dispatch did before there was a default.
-  const picked = resolveModelChoice(task.constraints, worker, canSetEffort, lastQuota(worker.id))
-  if (choice.model) {
-    picked.model = choice.model
-    // ⛔ The routed row's effort, unless the task pinned its own. A row picked from the worker's table
-    // is a (model, effort) pair; running its model at some other effort is not what was routed.
-    if (canSetEffort && picked.effortSource !== 'task') {
-      const routed =
-        choice.effort ??
-        (choice.model === worker.defaultModel ? worker.defaultEffort : null) ??
-        routeEffortFor(worker, choice.model)
-      if (routed) picked.effort = routed
-    }
-  }
-  // ⛔ An effort the *model* has no levels for is dropped here, the same way one the *adapter* cannot
-  // take is dropped above. claude-code takes the flag and haiku-4.5 takes no effort at all (measured
-  // 2026-08-29), so an account whose default effort is `medium` sent `--effort medium` on every haiku
-  // dispatch and the thread reported the run as "Haiku 4.5 Med" — a setting nothing applied.
-  // ⚠️ Only where the cost model actually declares the model. An id it cannot price says nothing
-  // about which levels exist, and dropping there would throw away a level the CLI would have honoured.
-  if (picked.effort && picked.model) {
-    const spec = costModel(adapter(worker.adapterId).info.policy.costModelId).modelSpec(picked.model)
-    if (spec && Array.isArray(spec.effort_levels) && spec.effort_levels.length === 0) {
-      picked.effort = null
-    }
-  }
+  const picked = dispatchModelChoice(task, worker, choice)
   // ⭐ The conversation this task was already having, if it is still on disk and this is the same
   // account and the same tree. Resuming costs the read of a cache that is very likely cold by now;
   // *not* resuming costs rebuilding the whole prefix and re-discovering the branch, the files and
