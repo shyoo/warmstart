@@ -668,7 +668,9 @@ along undelivered into the next run of a task still `ready` behind the gate); wi
 `task.resume`. During a quota preemption warning, a titled group shows the three choices that
 take effect when the countdown expires, each button beside its own explanation. Immediate actions
 sit below a separate heading. `Hand off & reassign` offers destination worker, model and effort;
-the worker list excludes the preempted account and defaults to Auto. The model and effort are
+  the worker list excludes the preempted account. The operator must choose a destination explicitly,
+  including if that destination is Auto; the button is disabled while it reads *Choose destination…*.
+  The model and effort are
 saved with the timed choice and applied atomically when the handoff finishes.
 If the vendor refuses the turn on quota during the warning or wrap-up, the reassignment applies
 immediately rather than stranding the task on the exhausted account.

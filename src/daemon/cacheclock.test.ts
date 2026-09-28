@@ -343,6 +343,17 @@ describe('the compaction the full window never asked for', () => {
     expect(decision.reason).toContain('reserve at risk')
   })
 
+  it('does not compact a full-window session already closing through a quota handoff', () => {
+    seedWindow(92)
+    const decision = clock.decide(stranded(), {
+      objective: OBJECTIVE,
+      now: NOW,
+      closingForHandoff: new Set([stranded().id])
+    })
+    expect(decision.move).toBe('none')
+    expect(decision.reason).toContain('handoff')
+  })
+
   it('does not ask twice for a session that has just been compacted', () => {
     // ⛔ The 2026-08-26 repeat with a new trigger. A full window stays full for hours, so a move-5
     // condition that ignored `tokensSinceCompact` would send `/compact` every four minutes until

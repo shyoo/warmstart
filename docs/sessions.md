@@ -114,6 +114,11 @@ session":
 The emptiest qualifying conversation is offered first, since it has the most room for the borrower's
 own work.
 
+A quota handoff that will close a session also removes it from the cache clock's moves. The scheduler
+passes the in-flight closing session to the clock after the persisted preemption warning is cleared;
+neither the warning minute nor the wrap-up gap may send a cache-clock prompt that races the handoff.
+If the same conversation resumes later, the resume path decides whether it needs compaction.
+
 ## Too full to lend, and what the clock does about it
 
 Past **70%** of its window, a conversation a queued task was refused becomes something the cache

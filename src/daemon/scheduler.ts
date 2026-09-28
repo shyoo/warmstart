@@ -717,7 +717,10 @@ export async function tick(): Promise<TickResult> {
   const clock = await runCacheClock({
     objective: settings().objective ?? DEFAULT_OBJECTIVE,
     dispatchTargets,
-    borrowWanted: sessionsWantedForBorrow(held)
+    borrowWanted: sessionsWantedForBorrow(held),
+    closingForHandoff: new Set([...activePreemptions]
+      .filter(([, move]) => move.action === 'handoff')
+      .map(([, move]) => move.sessionId))
   })
 
   const parts: string[] = []
@@ -2511,6 +2514,7 @@ const WRAP_UP_GRACE_MS = 120_000
 const preempting = new Set<string>()
 
 interface ActivePreemption {
+  sessionId: string
   action: 'compact' | 'handoff'
   reassignWorkerId?: string | null
   choice?: Task['quotaPreemptWarning']
@@ -3430,6 +3434,7 @@ async function preempt(
   if (action === 'compact') stopWaiting = onCompactionLanded(session.id, () => park(true))
   if (run) {
     activePreemptions.set(run.id, {
+      sessionId: session.id,
       action,
       reassignWorkerId,
       choice,

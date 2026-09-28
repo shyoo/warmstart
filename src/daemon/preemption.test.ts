@@ -29,6 +29,7 @@ let settings: typeof import('./settings.js')
 let quota: typeof import('./quota.js')
 let sessions: typeof import('./sessions.js')
 let turnend: typeof import('./turnend.js')
+let api: typeof import('./api.js')
 
 /** The estimate the runaway factor is measured against; one completed run is enough to have one. */
 const ESTIMATE = 100_000
@@ -152,6 +153,7 @@ beforeAll(async () => {
   quota = await import('./quota.js')
   sessions = await import('./sessions.js')
   turnend = await import('./turnend.js')
+  api = await import('./api.js')
   db.openDb(join(dir, 'preempt.db'))
 })
 
@@ -345,6 +347,63 @@ describe('the switches that gate all of this', () => {
     expect(said.some((m) => /wrap-up deadline passed without a handoff/.test(m))).toBe(true)
     expect(said.some((m) => /quota window has reset/.test(m))).toBe(false)
     expect(tasks.requireTask(task.id).handoffNote).toMatch(/before the agent recorded a handoff/)
+  })
+
+  it('does not compact the old account after its handoff turn ends but before the session closes', async () => {
+    const { task, run, sessionId } = seedRunawayTask(0, 'claude-code', 'claude-opus-5-5')
+    const workerId = tasks.requireRun(run.id).workerId
+    seedClosingWindow(workerId, 10 * 60_000, 94)
+    db.db().prepare(
+      'update sessions set context_tokens = 371269, tokens_since_compact = 100000, cache_expires_at = ? where id = ?'
+    ).run(Date.now() + 50 * 60_000, sessionId)
+    const prompts: string[] = []
+    vi.spyOn(sessions, 'sendPrompt').mockImplementation((_id, prompt) => { prompts.push(prompt) })
+
+    await scheduler.tick()
+    const warning = tasks.requireTask(task.id).quotaPreemptWarning
+    expect(warning?.canCompact).toBe(true)
+    tasks.setQuotaPreemptWarning(task.id, { ...warning!, action: 'handoff', reassignWorkerId: null })
+    await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS)
+    await scheduler.tick()
+    expect(prompts.some((p) => p.includes('Wrap up now'))).toBe(true)
+
+    // The t805 gap: the last agent turn ended, but the two-minute wrap-up timer had not
+    // released its session yet. The cache clock runs on this next tick with no open run.
+    tasks.finishRun(run.id, 'completed')
+    tasks.setStatus(task.id, 'awaiting_human')
+    await scheduler.tick()
+    expect(prompts).not.toContain('/compact')
+    expect(db.db().prepare('select count(*) as n from compactions where session_id = ?')
+      .get(sessionId)).toMatchObject({ n: 0 })
+  })
+
+  it('carries a named worker, Opus model and high effort from the RPC through handoff', async () => {
+    const { task, run } = seedRunawayTask(0, 'claude-code', 'claude-opus-5-5')
+    seedClosingWindow(tasks.requireRun(run.id).workerId)
+    const destination = seedWorker('claude-code')
+    workers.updateWorker(destination, { defaultModel: 'claude-opus-5-5' })
+    vi.spyOn(sessions, 'sendPrompt').mockImplementation(() => {})
+
+    await scheduler.tick()
+    const handlers = api.buildApi({ version: '0.0.0', startedAt: Date.now(), port: 0 })
+    const saved = await handlers['task.overrideQuota']({
+      id: task.id, preemptionAction: 'handoff', reassignWorkerId: destination,
+      reassignModel: 'claude-opus-5-5', reassignModelPolicy: 'inherit', reassignEffort: 'high'
+    })
+    expect(saved.task.quotaPreemptWarning).toMatchObject({
+      action: 'handoff', reassignWorkerId: destination,
+      reassignModel: 'claude-opus-5-5', reassignEffort: 'high'
+    })
+
+    await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS)
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(130_000)
+
+    expect(tasks.requireTask(task.id)).toMatchObject({
+      status: 'ready', constraints: {
+        workerId: destination, model: 'claude-opus-5-5', effort: 'high'
+      }
+    })
   })
 
   it('moves a hand-off as soon as the agent has handed off and its turn has ended (t762)', async () => {

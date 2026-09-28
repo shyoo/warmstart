@@ -91,15 +91,15 @@ export function QuotaDecide({
   }, [task.constraints.workerId, task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass, task.constraints.effort])
 
   const warning = task.status === 'running' ? task.quotaPreemptWarning : null
-  const [preemptReassignWorkerId, setPreemptReassignWorkerId] = useState<string>(
-    warning?.reassignWorkerId ?? ''
+  const [preemptReassignWorkerId, setPreemptReassignWorkerId] = useState<string | null>(
+    warning?.reassignWorkerId === undefined ? null : warning.reassignWorkerId ?? ''
   )
   const [preemptModel, setPreemptModel] = useState(warning?.reassignModelPolicy === 'auto'
     ? `__auto__${warning.reassignModelClass ? `:${warning.reassignModelClass}` : ''}`
     : warning?.reassignModel ?? '')
   const [preemptEffort, setPreemptEffort] = useState(warning?.reassignEffort ?? '')
   useEffect(() => {
-    setPreemptReassignWorkerId(warning?.reassignWorkerId ?? '')
+    setPreemptReassignWorkerId(warning?.reassignWorkerId === undefined ? null : warning.reassignWorkerId ?? '')
     setPreemptModel(warning?.reassignModelPolicy === 'auto'
       ? `__auto__${warning.reassignModelClass ? `:${warning.reassignModelClass}` : ''}`
       : warning?.reassignModel ?? '')
@@ -137,6 +137,7 @@ export function QuotaDecide({
 
   const currentPreemptWorkerId = task.assignee || task.constraints.workerId
   const redirectOptions = [
+    { value: '__choose__', label: 'Choose destination…' },
     { value: '', label: 'Auto (scheduler decides)' },
     ...fleet
       .filter(
@@ -302,17 +303,21 @@ export function QuotaDecide({
               </div>
               <div className="decide-option">
                 <button type="button" className={handoffReassignActive ? 'btn btn--primary' : 'btn'}
-                  disabled={busy || reassignMatchesSelection}
-                  onClick={() => void handlePreemptionAction('handoff', preemptReassignWorkerId || null)}>
+                  disabled={busy || preemptReassignWorkerId === null || reassignMatchesSelection}
+                  onClick={() => {
+                    if (preemptReassignWorkerId !== null) {
+                      void handlePreemptionAction('handoff', preemptReassignWorkerId || null)
+                    }
+                  }}>
                   Hand off & reassign
                 </button>
                 <div className="decide-what">
                   Commits safe work and writes a handoff brief. After the timer expires and the handoff finishes, the task moves to the destination below.
                   <div className="reassign-row quota-destination">
-                    <SettingButtonSelect className="reassign-select" value={preemptReassignWorkerId} disabled={busy}
+                    <SettingButtonSelect className="reassign-select" value={preemptReassignWorkerId ?? '__choose__'} disabled={busy}
                       ariaLabel="Handoff destination worker" options={redirectOptions}
                       onChange={(nextId) => {
-                        setPreemptReassignWorkerId(nextId)
+                        setPreemptReassignWorkerId(nextId === '__choose__' ? null : nextId)
                         setPreemptModel('')
                         setPreemptEffort('')
                       }} />

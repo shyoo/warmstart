@@ -281,6 +281,8 @@ export interface ClockContext {
    * living here is a second answer waiting to disagree with the first.
    */
   borrowWanted?: Set<string>
+  /** Sessions the scheduler is already closing through a quota handoff. */
+  closingForHandoff?: Set<string>
   now?: number
   /** Fleet switches. Read once per tick and passed in, so one tick cannot disagree with itself. */
   settings?: Settings
@@ -815,6 +817,13 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
   })
 
   if (!expiry) return nothing('no cached prefix yet - nothing to preserve')
+  // A quota handoff is already using this process for its wrap-up. Another clock prompt would
+  // race that handoff and may never reach a compaction boundary before the process closes. A task
+  // returning to this conversation can compact on resume. The warning is durable; the scheduler's
+  // in-flight set covers the gap after it clears the warning and before the session closes.
+  if (task?.quotaPreemptWarning?.action === 'handoff' || ctx.closingForHandoff?.has(session.id)) {
+    return nothing('quota handoff is closing this conversation')
+  }
 
   /**
    * Can this session be spoken to at all?
