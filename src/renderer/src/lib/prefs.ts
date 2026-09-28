@@ -372,6 +372,30 @@ export function writeStatisticsExcludeApiMixed(value: boolean): void {
   }
 }
 
+const STATISTICS_SHOW_EFFORT_KEY = appKey('statisticsShowEffort')
+
+/**
+ * Whether the trade-off scatters' "Show effort level" breakdown was on last time (t812). Off —
+ * one mark per model — is the default, so nobody's plot changes who never asked.
+ */
+export function readStatisticsShowEffort(): boolean {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return false
+    return window.localStorage.getItem(STATISTICS_SHOW_EFFORT_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+export function writeStatisticsShowEffort(value: boolean): void {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return
+    window.localStorage.setItem(STATISTICS_SHOW_EFFORT_KEY, String(value))
+  } catch {
+    // A preference that cannot be saved is not an error worth showing anybody.
+  }
+}
+
 const STATISTICS_INCLUDE_CONVERSATIONS_KEY = appKey('statisticsIncludeConversations')
 
 /**

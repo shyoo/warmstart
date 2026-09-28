@@ -70,6 +70,12 @@ export interface StatRow {
   model: string | null
   /** Null except on an `effort` row. */
   effort: string | null
+  /**
+   * An `effort` row that is its model's only recorded effort. ⚠️ It restates its parent, so the
+   * tables and graphs hide it (`withoutSoleEfforts`); the trade-off scatters' *Show effort level*
+   * breakdown still needs it to place a single-effort model at the effort it ran at (t812).
+   */
+  sole?: boolean
   distribution: Distribution
 }
 
@@ -127,6 +133,8 @@ export interface QualityStatRow {
   adapterId: string
   model: string | null
   effort: string | null
+  /** See `StatRow.sole`. */
+  sole?: boolean
   /** 0..1 benchmark prior. `null` on an effort row, and on any model nobody has benchmarked. */
   prior: number | null
   priorBasis: string | null

@@ -326,10 +326,20 @@ describe('the agent → model → effort tree', () => {
     expect(efforts.map((r) => r.label).sort()).toEqual(['high', 'low'])
   })
 
-  it('suppresses a lone effort row, which would only restate its parent', () => {
+  it('marks a lone effort row sole, since it would only restate its parent', () => {
+    // t812: still emitted, so the scatters' effort breakdown knows which effort the model ran at;
+    // the tables hide it on `sole`.
     finishedTask({ adapter: 'claude-code', model: 'opus', effort: 'high', activeMs: 6 * MIN })
     finishedTask({ adapter: 'claude-code', model: 'opus', effort: 'high', activeMs: 2 * MIN })
-    expect(stats.statisticsReport().velocity.rows.filter((r) => r.level === 'effort')).toEqual([])
+    const efforts = stats.statisticsReport().velocity.rows.filter((r) => r.level === 'effort')
+    expect(efforts.map((r) => [r.effort, r.sole, r.distribution.samples])).toEqual([['high', true, 2]])
+  })
+
+  it('does not mark either row of a model that ran at two efforts sole', () => {
+    finishedTask({ adapter: 'claude-code', model: 'opus', effort: 'high', activeMs: 6 * MIN })
+    finishedTask({ adapter: 'claude-code', model: 'opus', effort: 'low', activeMs: 2 * MIN })
+    const efforts = stats.statisticsReport().velocity.rows.filter((r) => r.level === 'effort')
+    expect(efforts.some((r) => r.sole)).toBe(false)
   })
 
   it('gives a task whose effort was never recorded no effort row at all', () => {
@@ -337,7 +347,8 @@ describe('the agent → model → effort tree', () => {
     //    setting somebody chose.
     finishedTask({ adapter: 'claude-code', model: 'opus', effort: null, activeMs: 6 * MIN })
     finishedTask({ adapter: 'claude-code', model: 'opus', effort: 'high', activeMs: 2 * MIN })
-    expect(stats.statisticsReport().velocity.rows.filter((r) => r.level === 'effort')).toEqual([])
+    const efforts = stats.statisticsReport().velocity.rows.filter((r) => r.level === 'effort')
+    expect(efforts.map((r) => [r.effort, r.distribution.samples])).toEqual([['high', 1]])
   })
 
   it('keeps two agents apart rather than pooling the fleet', () => {

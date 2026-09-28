@@ -352,7 +352,7 @@ export function compareModelPower(a: string, b: string): number {
  * up.** A median of medians is not a median, and a p99 of p99s is not anything at all — so each
  * depth re-folds the raw samples it covers rather than combining the level below it.
  */
-function tree<T extends Sample, R>(
+function tree<T extends Sample, R extends { sole?: boolean }>(
   all: T[],
   agentLabel: (adapterId: string) => string,
   fold: (level: 'agent' | 'model' | 'effort', label: string, key: string, group: T[]) => R,
@@ -417,15 +417,20 @@ function tree<T extends Sample, R>(
           list.push(s)
           byEffort.set(s.effort, list)
         }
-        // ⚠️ Suppressed when the model ran at exactly one effort: a lone child that restates its
-        //    parent's numbers is a row that costs a line and says nothing.
-        if (byEffort.size < 2) continue
+        // ⚠️ Marked `sole` when the model ran at exactly one effort: a lone child that restates its
+        //    parent's numbers is a row that costs a line and says nothing, so the tables hide it —
+        //    but the scatters' effort breakdown needs it to know *which* effort that was (t812).
         for (const [effort, effortGroup] of [...byEffort.entries()].sort((a, b) =>
           compareEffortPower(a[0], b[0])
         )) {
-          out.push(
-            fold('effort', effort, split ? `${modelKey}/${effort}` : `${adapterId}/${model}/${effort}`, effortGroup)
+          const row = fold(
+            'effort',
+            effort,
+            split ? `${modelKey}/${effort}` : `${adapterId}/${model}/${effort}`,
+            effortGroup
           )
+          if (byEffort.size === 1) row.sole = true
+          out.push(row)
         }
       }
     }

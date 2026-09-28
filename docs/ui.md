@@ -248,7 +248,14 @@ subscription-only price simply drops out of every scatter rather than being pric
 dollars; the section itself keeps showing (with the checkbox still reachable) as long as *something*
 measured has ever qualified unfiltered. ⭐ The checkbox is a per-display preference
 (`readStatisticsExcludeApiMixed`/`writeStatisticsExcludeApiMixed` in `lib/prefs.ts`), so it survives a
-page change or an app restart rather than resetting to off. ⛔ A model whose weakest axis rests on
+page change or an app restart rather than resetting to off. ⭐ A **Show effort level** checkbox beside
+it (t812, `measuredModelPoints(report, excludeApiMixed, byEffort)`, remembered by
+`readStatisticsShowEffort`) splits each model into one mark per effort it ran at, labelled
+*Opus 5 High*. It folds the report's `effort` rows, including the ones marked `sole`: the daemon
+emits a model's only effort row with `sole: true` rather than dropping it, because that row is the
+one place the effort is named, and `withoutSoleEfforts` removes those rows from all three tabs
+because there they would just repeat the model row. A model is split on every axis or on none. A model with no recorded effort
+keeps its model-level mark, and a task with no recorded effort is left out of every effort mark. ⛔ A model whose weakest axis rests on
 fewer than `MIN_TRUSTED_SAMPLES` (5, the same floor the price table dims its `n` column at) is dropped
 from all three scatters entirely — a mark has no column to dim a thin count in, so it is excluded
 rather than drawn as a confident point over a guess. ⭐ **Every axis is better away from the origin (2026-09-14)**, and its

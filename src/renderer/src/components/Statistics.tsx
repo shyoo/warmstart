@@ -13,9 +13,11 @@ import { duration, money, when } from '../lib/format'
 import { compactModelLabel, effortLabel, modelLabel } from '../lib/modelname'
 import {
   readStatisticsExcludeApiMixed,
+  readStatisticsShowEffort,
   readStatisticsIncludeConversations,
   readStatisticsWindow,
   writeStatisticsExcludeApiMixed,
+  writeStatisticsShowEffort,
   writeStatisticsIncludeConversations,
   writeStatisticsWindow
 } from '../lib/prefs'
@@ -590,11 +592,21 @@ export const MIN_TRUSTED_SAMPLES = 5
  * `excludeApiMixed` drops price rows billed at an API rate or mixed basis, so the cost axis folds
  * only amortised subscription dollars — the two kinds of dollar are not interchangeable (see the
  * price tab's own note), and a bubble is one point that cannot say which basis it is in.
+ *
+ * `byEffort` splits each model into one point per effort level it ran at (t812), folded from the
+ * `effort` rows — `sole` ones included, which is the only place a single-effort model's effort is
+ * named. ⚠️ A task whose effort was never recorded has no effort row, so it is out of every effort
+ * point; a model with no recorded effort at all keeps its one model-level point rather than vanish.
  */
-export function measuredModelPoints(report: StatisticsReport, excludeApiMixed = false): ModelPoint[] {
+export function measuredModelPoints(
+  report: StatisticsReport,
+  excludeApiMixed = false,
+  byEffort = false
+): ModelPoint[] {
   type PartialPoint = {
     adapterId: string
     model: string
+    effort: string | null
     cost?: number
     velocity?: number
     quality?: number
@@ -603,6 +615,15 @@ export function measuredModelPoints(report: StatisticsReport, excludeApiMixed = 
     qualitySamples?: number
   }
   const points = new Map<string, PartialPoint>()
+  // ⚠️ Decided across all three axes at once, so a model is split on every axis or on none — a
+  // model-level cost could never meet an effort-level velocity in one point.
+  const effortModels = new Set(
+    byEffort
+      ? [...report.price.rows, ...report.velocity.rows, ...report.quality.rows]
+          .filter((row) => row.level === 'effort' && row.model && row.effort)
+          .map((row) => `${row.adapterId}/${row.model}`)
+      : []
+  )
   const add = (
     rows: Array<StatRow & { basis?: PriceBasis }>,
     axis: 'cost' | 'velocity' | 'quality',
@@ -610,14 +631,17 @@ export function measuredModelPoints(report: StatisticsReport, excludeApiMixed = 
   ): void => {
     const grouped = new Map<string, { total: number; samples: number }>()
     for (const row of rows) {
-      if (row.level !== 'model' || !row.model || row.distribution.average === null) continue
+      if (!row.model || row.distribution.average === null) continue
+      const split = effortModels.has(`${row.adapterId}/${row.model}`)
+      if (row.level !== (split ? 'effort' : 'model')) continue
       if (skip?.(row)) continue
-      const key = `${row.adapterId}/${row.model}`
+      const effort = split ? row.effort : null
+      const key = effort ? `${row.adapterId}/${row.model}/${effort}` : `${row.adapterId}/${row.model}`
       const current = grouped.get(key) ?? { total: 0, samples: 0 }
       current.total += row.distribution.average * row.distribution.samples
       current.samples += row.distribution.samples
       grouped.set(key, current)
-      if (!points.has(key)) points.set(key, { adapterId: row.adapterId, model: row.model })
+      if (!points.has(key)) points.set(key, { adapterId: row.adapterId, model: row.model, effort })
     }
     for (const [key, value] of grouped) {
       const point = points.get(key)
@@ -636,8 +660,10 @@ export function measuredModelPoints(report: StatisticsReport, excludeApiMixed = 
     .filter(([, p]) => p.cost !== undefined && p.velocity !== undefined && p.quality !== undefined)
     .map(([key, p]) => ({
       key,
-      label: `${agents.get(p.adapterId) ?? p.adapterId} · ${modelLabel(p.model) ?? p.model}`,
-      shortLabel: compactModelLabel(p.model) ?? p.model,
+      label: `${agents.get(p.adapterId) ?? p.adapterId} · ${modelLabel(p.model, p.effort) ?? p.model}`,
+      // ⚠️ Compact the model alone, then append the effort: compacting `Opus 5 High` drops the
+      // family and prints `5 High`, which Sonnet 5 High would print too.
+      shortLabel: [compactModelLabel(p.model) ?? p.model, effortLabel(p.effort)].filter(Boolean).join(' '),
       adapterId: p.adapterId,
       cost: p.cost!,
       velocity: p.velocity!,
@@ -1000,10 +1026,17 @@ export function TradeoffPlots({ report }: { report: StatisticsReport }): React.J
     writeStatisticsExcludeApiMixed(value)
     setExcludeApiMixed(value)
   }
+  // ⭐ One mark per model, or one per model *and* effort level it ran at (t812). Remembered alike.
+  const [showEffort, setShowEffort] = useState(() => readStatisticsShowEffort())
+  const toggleShowEffort = (value: boolean): void => {
+    writeStatisticsShowEffort(value)
+    setShowEffort(value)
+  }
   // ⛔ The gate on whether this section exists at all reads the unfiltered set: hiding the whole
-  // section (and its own toggle) the moment the filter empties it would leave no way back to "off".
+  // section (and its own toggles) the moment a filter empties it would leave no way back to "off".
   const everPoints = measuredModelPoints(report)
-  const points = measuredModelPoints(report, excludeApiMixed)
+  const points = measuredModelPoints(report, excludeApiMixed, showEffort)
+  const noun = showEffort ? 'model/effort pair' : 'model'
   if (everPoints.length === 0) return null
   return (
     <section className="scatter-plots" aria-label="Quality, cost and velocity model comparison">
@@ -1011,7 +1044,7 @@ export function TradeoffPlots({ report }: { report: StatisticsReport }): React.J
         <div>
           <h3>Measured model trade-offs</h3>
           <p>
-            Each mark is the icon of the agent that ran it, one model per mark, measured on at least{' '}
+            Each mark is the icon of the agent that ran it, one {noun} per mark, measured on at least{' '}
             {MIN_TRUSTED_SAMPLES} finished tasks on every axis. Hover a mark for its exact numbers.
           </p>
         </div>
@@ -1026,9 +1059,20 @@ export function TradeoffPlots({ report }: { report: StatisticsReport }): React.J
           />
           Exclude API rate &amp; mixed
         </label>
+        <label
+          className="scatter-plots-filter"
+          title="When on, each model is split into one mark per effort level it ran at. Every mark still needs five finished tasks on every axis, so a thinly used effort drops out; tasks whose effort was never recorded are left out of the split."
+        >
+          <input type="checkbox" checked={showEffort} onChange={(e) => toggleShowEffort(e.target.checked)} />
+          Show effort level
+        </label>
       </div>
       {points.length === 0 ? (
-        <p className="notice">No model has a subscription-only price under this filter. Uncheck it to see every measured model again.</p>
+        <p className="notice">
+          {showEffort
+            ? `No model/effort pair has ${excludeApiMixed ? 'a subscription-only price and ' : ''}${MIN_TRUSTED_SAMPLES} finished tasks on every axis. Uncheck a filter to see every measured model again.`
+            : 'No model has a subscription-only price under this filter. Uncheck it to see every measured model again.'}
+        </p>
       ) : (
         <>
           <div className="scatter-plots-grid">
@@ -1037,7 +1081,8 @@ export function TradeoffPlots({ report }: { report: StatisticsReport }): React.J
             ))}
           </div>
           <p className="dim">
-            {points.length} model{points.length === 1 ? '' : 's'} with all three measurements.
+            {points.length} {noun}
+            {points.length === 1 ? '' : 's'} with all three measurements.
           </p>
         </>
       )}
@@ -1216,14 +1261,27 @@ export function Statistics({
       ) : !report ? (
         <p className="dim">Folding what the fleet has finished…</p>
       ) : tab === 'price' ? (
-        <PriceTab report={report} />
+        <PriceTab report={withoutSoleEfforts(report)} />
       ) : tab === 'velocity' ? (
-        <VelocityTab report={report} />
+        <VelocityTab report={withoutSoleEfforts(report)} />
       ) : (
-        <QualityTab report={report} onOpenQualityReview={onOpenQualityReview} />
+        <QualityTab report={withoutSoleEfforts(report)} onOpenQualityReview={onOpenQualityReview} />
       )}
     </div>
   )
+}
+
+/**
+ * The report the tabs draw: a `sole` effort row restates its model's numbers, so it would cost a
+ * line and say nothing. Only the trade-off scatters read it (t812).
+ */
+export function withoutSoleEfforts(report: StatisticsReport): StatisticsReport {
+  return {
+    ...report,
+    price: { ...report.price, rows: report.price.rows.filter((r) => !r.sole) },
+    velocity: { ...report.velocity, rows: report.velocity.rows.filter((r) => !r.sole) },
+    quality: { ...report.quality, rows: report.quality.rows.filter((r) => !r.sole) }
+  }
 }
 
 function Window({ report }: { report: StatisticsReport }): React.JSX.Element {

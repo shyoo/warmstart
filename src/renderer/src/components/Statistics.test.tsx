@@ -7,7 +7,8 @@ import {
   measuredModelPoints,
   placeScatterLabels,
   priceRowsForGraph,
-  TradeoffPlots
+  TradeoffPlots,
+  withoutSoleEfforts
 } from './Statistics.js'
 
 function row(key: string, basis: PriceStatRow['basis']): PriceStatRow {
@@ -156,6 +157,127 @@ describe('measuredModelPoints', () => {
     expect(points).toHaveLength(1)
     // velocityRow/qualityRow above both fold 5 samples; price folds 5 too, so the weakest is 5.
     expect(points[0]!.samples).toBe(5)
+  })
+})
+
+/**
+ * t812: "Show effort level" splits each model into one point per effort it ran at.
+ */
+describe('measuredModelPoints by effort', () => {
+  const dist = (average: number, samples = 5) => ({ samples, average, p50: average, p99: average, p100: average })
+  function at(
+    level: 'model' | 'effort',
+    model: string,
+    effort: string | null,
+    average: number,
+    extra: { basis?: PriceStatRow['basis']; sole?: boolean; samples?: number } = {}
+  ) {
+    return {
+      key: `claude-code/${model}${effort ? `/${effort}` : ''}${extra.basis ? `/${extra.basis}` : ''}`,
+      level,
+      label: effort ?? model,
+      adapterId: 'claude-code',
+      model,
+      effort,
+      ...(extra.sole ? { sole: true } : {}),
+      distribution: dist(average, extra.samples)
+    }
+  }
+  function quality(row: ReturnType<typeof at>) {
+    return {
+      ...row,
+      prior: null,
+      priorBasis: null,
+      cleanComposite: row.distribution.average,
+      clean: row.distribution.samples,
+      samples: row.distribution.samples,
+      fitness: null,
+      fitnessBasis: null,
+      tasks: row.distribution.samples
+    }
+  }
+  function report(rows: {
+    price: Array<ReturnType<typeof at>>
+    velocity: Array<ReturnType<typeof at>>
+    quality: Array<ReturnType<typeof at>>
+  }): StatisticsReport {
+    return {
+      generatedAt: 0,
+      sampleLimit: null,
+      window: 'all',
+      includeConversations: true,
+      price: {
+        rows: rows.price.map((r) => ({ basis: 'subscription' as const, unpriced: 0, ...r })),
+        tasks: 1,
+        unpriced: 0,
+        estimated: false
+      },
+      velocity: { rows: rows.velocity, tasks: 1, untimed: 0 },
+      quality: { rows: rows.quality.map(quality), totalReviews: 0, ungraded: 0, rubricVersion: 'v1' }
+    }
+  }
+
+  const twoEfforts = report({
+    price: [
+      at('model', 'claude-opus-5', null, 3, { samples: 10 }),
+      at('effort', 'claude-opus-5', 'high', 4),
+      at('effort', 'claude-opus-5', 'low', 2)
+    ],
+    velocity: [
+      at('model', 'claude-opus-5', null, 30, { samples: 10 }),
+      at('effort', 'claude-opus-5', 'high', 40),
+      at('effort', 'claude-opus-5', 'low', 20)
+    ],
+    quality: [
+      at('model', 'claude-opus-5', null, 8, { samples: 10 }),
+      at('effort', 'claude-opus-5', 'high', 9),
+      at('effort', 'claude-opus-5', 'low', 7)
+    ]
+  })
+
+  it('draws one point per model when off, and one per effort when on', () => {
+    expect(measuredModelPoints(twoEfforts).map((p) => p.cost)).toEqual([3])
+    const split = measuredModelPoints(twoEfforts, false, true)
+    expect(split.map((p) => [p.shortLabel, p.cost, p.velocity, p.quality])).toEqual([
+      ['Opus 5 High', 4, 40, 9],
+      ['Opus 5 Low', 2, 20, 7]
+    ])
+  })
+
+  it('places a single-effort model at its effort from the sole row', () => {
+    const sole = report({
+      price: [at('model', 'claude-opus-5', null, 3), at('effort', 'claude-opus-5', 'high', 3, { sole: true })],
+      velocity: [at('model', 'claude-opus-5', null, 30), at('effort', 'claude-opus-5', 'high', 30, { sole: true })],
+      quality: [at('model', 'claude-opus-5', null, 8), at('effort', 'claude-opus-5', 'high', 8, { sole: true })]
+    })
+    expect(measuredModelPoints(sole, false, true).map((p) => p.shortLabel)).toEqual(['Opus 5 High'])
+  })
+
+  it('keeps a model with no recorded effort as its one model-level point', () => {
+    const none = report({
+      price: [at('model', 'claude-haiku-4-5', null, 1)],
+      velocity: [at('model', 'claude-haiku-4-5', null, 10)],
+      quality: [at('model', 'claude-haiku-4-5', null, 7)]
+    })
+    expect(measuredModelPoints(none, false, true).map((p) => p.shortLabel)).toEqual(['Haiku 4.5'])
+  })
+
+  it('holds each effort point to the same five-task floor', () => {
+    const thin = report({
+      price: [at('model', 'claude-opus-5', null, 3, { samples: 8 }), at('effort', 'claude-opus-5', 'high', 4), at('effort', 'claude-opus-5', 'low', 2, { samples: 3 })],
+      velocity: [at('model', 'claude-opus-5', null, 30, { samples: 8 }), at('effort', 'claude-opus-5', 'high', 40), at('effort', 'claude-opus-5', 'low', 20, { samples: 3 })],
+      quality: [at('model', 'claude-opus-5', null, 8, { samples: 8 }), at('effort', 'claude-opus-5', 'high', 9), at('effort', 'claude-opus-5', 'low', 7, { samples: 3 })]
+    })
+    expect(measuredModelPoints(thin, false, true).map((p) => p.shortLabel)).toEqual(['Opus 5 High'])
+  })
+
+  it('hides sole effort rows from the tabs, but no other row', () => {
+    const rows = [at('model', 'claude-opus-5', null, 3), at('effort', 'claude-opus-5', 'high', 3, { sole: true })]
+    const shown = withoutSoleEfforts(report({ price: rows, velocity: rows, quality: rows }))
+    expect(shown.price.rows.map((r) => r.level)).toEqual(['model'])
+    expect(shown.velocity.rows.map((r) => r.level)).toEqual(['model'])
+    expect(shown.quality.rows.map((r) => r.level)).toEqual(['model'])
+    expect(withoutSoleEfforts(twoEfforts).velocity.rows).toHaveLength(3)
   })
 })
 

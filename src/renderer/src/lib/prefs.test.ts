@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest'
 import type { TaskView } from '@shared/tasks'
 import {
   readStatisticsExcludeApiMixed,
+  readStatisticsShowEffort,
   writeStatisticsExcludeApiMixed,
+  writeStatisticsShowEffort,
   readStatisticsIncludeConversations,
   writeStatisticsIncludeConversations,
   readStatisticsWindow,
@@ -370,6 +372,19 @@ describe('the statistics exclude-API-mixed filter', () => {
     stub({}, true)
     expect(readStatisticsExcludeApiMixed()).toBe(false)
     expect(() => writeStatisticsExcludeApiMixed(true)).not.toThrow()
+  })
+
+  // t812: the "Show effort level" breakdown beside it is remembered the same way.
+  it('remembers the show-effort breakdown too, off by default', () => {
+    stub({})
+    expect(readStatisticsShowEffort()).toBe(false)
+    const store: Record<string, string> = {}
+    stub(store)
+    writeStatisticsShowEffort(true)
+    expect(readStatisticsShowEffort()).toBe(true)
+    stub({}, true)
+    expect(readStatisticsShowEffort()).toBe(false)
+    expect(() => writeStatisticsShowEffort(true)).not.toThrow()
   })
 })
 
