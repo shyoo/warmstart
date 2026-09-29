@@ -2894,8 +2894,18 @@ export interface RpcMap {
       /**
        * `modelClass` is the agent's capability-class hint for the piece (t704). The scheduler routes
        * within it; it never names an account. Ignored where the operator's piece settings pin one.
+       * `adapter`, `worker`, `model` and `effort` route or pin the piece to a specific target (t843).
        */
-      pieces: Array<{ title: string; summary?: string; dependsOn: number[]; modelClass?: ModelClass }>
+      pieces: Array<{
+        title: string
+        summary?: string
+        dependsOn: number[]
+        modelClass?: ModelClass
+        adapter?: string
+        worker?: string
+        model?: string
+        effort?: string
+      }>
     }
     result: { ok: boolean; reply: string; seqs?: number[] }
   }

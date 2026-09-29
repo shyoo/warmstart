@@ -317,7 +317,7 @@ export function delegationClause(conversation: boolean): string {
   return (
     'You may delegate: if part of this work would be better done by another agent — in parallel, ' +
     'or on a cheaper model — commit what the pieces will need, then call `task_split` with a ' +
-    'self-contained instruction for each piece (optionally a `class` hint: low, med or high). The ' +
+    'self-contained instruction for each piece (optionally target `worker`, `adapter`, `model`, `effort`, or `class`). The ' +
     'person approves the pieces before anything is filed. Each piece is committed and checked on ' +
     'its own branch, cut from yours, and nothing is merged for you: when every piece has settled ' +
     'you are told how each turned out and you merge what you want yourself. ' +
@@ -353,7 +353,7 @@ export function delegateCommandPrompt(text: string, mcp: boolean): string {
     lead +
     'Prepare the delegation: work out the pieces — one if it is one job, several with dependency ' +
     'edges if it splits — commit anything they will need from your workspace, and call `task_split` ' +
-    'once with a self-contained instruction for each, because the agent that runs a piece has not ' +
+    'once with a self-contained instruction for each (optionally target worker, adapter, model, effort, or class), because the agent that runs a piece has not ' +
     'read this conversation. Because the person asked, the pieces are filed without a further ' +
     'approval card. Do not do the delegated work yourself; when `task_split` returns, do what its ' +
     'reply says.'

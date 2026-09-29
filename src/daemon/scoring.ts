@@ -391,9 +391,12 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     // filter below must not run on them a second time against a different row.
     let classFiltered = false
     if (task.constraints.model) {
-      candidateModels = [{ model: task.constraints.model, effort: null }]
+      candidateModels = [{ model: task.constraints.model, effort: task.constraints.effort ?? null }]
     } else if (task.constraints.modelsByWorker && task.constraints.modelsByWorker[worker.id]) {
-      candidateModels = [{ model: task.constraints.modelsByWorker[worker.id]!, effort: null }]
+      candidateModels = [{
+        model: task.constraints.modelsByWorker[worker.id]!,
+        effort: task.constraints.effortsByWorker?.[worker.id] ?? task.constraints.effort ?? null
+      }]
     } else if (task.constraints.modelPolicy === 'inherit') {
       // ⛔ The account's own default, and nothing scored against it. A task filed this way asked for
       // the model the account uses, which is a different answer from *any of the models it may be

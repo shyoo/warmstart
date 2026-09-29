@@ -18,6 +18,7 @@ let dir: string
 let db: typeof import('./db.js')
 let tasks: typeof import('./tasks.js')
 let split: typeof import('./split.js')
+let workers: typeof import('./workers.js')
 
 const AGENT: Principal = {
   kind: 'agent',
@@ -32,12 +33,14 @@ beforeAll(async () => {
   db = await import('./db.js')
   tasks = await import('./tasks.js')
   split = await import('./split.js')
+  workers = await import('./workers.js')
   db.openDb(join(dir, 'split.db'))
 })
 
 beforeEach(() => {
   db.db().exec('delete from task_deps')
   db.db().exec('delete from tasks')
+  db.db().exec('delete from workers')
 })
 
 afterAll(() => {
@@ -568,5 +571,151 @@ describe('splitApprovalFor', () => {
     const parent = planner()
     const approval = split.splitApprovalFor(parent, [piece('alpha\nsecond line'), piece('beta')])
     expect(approval.question).not.toContain('second line')
+  })
+})
+
+describe('delegation target routing (worker, adapter, model, effort) (t843)', () => {
+  it('resolves adapters by id, command, label, and alias', () => {
+    expect(split.resolveAdapterReference('openai-compatible')).toBe('openai-compatible')
+    expect(split.resolveAdapterReference('codex')).toBe('openai-compatible')
+    expect(split.resolveAdapterReference('OpenAI Codex')).toBe('openai-compatible')
+    expect(split.resolveAdapterReference('claude')).toBe('claude-code')
+    expect(split.resolveAdapterReference('claude-code')).toBe('claude-code')
+    expect(split.resolveAdapterReference('anthropic')).toBe('claude-code')
+    expect(split.resolveAdapterReference('agy')).toBe('antigravity-cli')
+    expect(split.resolveAdapterReference('antigravity')).toBe('antigravity-cli')
+    expect(split.resolveAdapterReference('muse')).toBe('muse-code')
+    expect(split.resolveAdapterReference('unknown-adapter')).toBeNull()
+  })
+
+  it('resolves workers by id, label, case-insensitively, and normalized', () => {
+    const w = workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexFirst', enabled: true })
+    expect(split.resolveWorkerReference(w.id)?.id).toBe(w.id)
+    expect(split.resolveWorkerReference('CodexFirst')?.id).toBe(w.id)
+    expect(split.resolveWorkerReference('codexfirst')?.id).toBe(w.id)
+    expect(split.resolveWorkerReference('codex first')?.id).toBe(w.id)
+    expect(split.resolveWorkerReference('NonExistent')).toBeNull()
+  })
+
+  it('validates target worker and adapter constraints', () => {
+    const parent = planner()
+    const active = workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexActive', enabled: true })
+    const disabled = workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexDisabled', enabled: false })
+    const retired = workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexRetired', enabled: true })
+    workers.retireWorker(retired.id)
+
+    // Unknown worker
+    const unknownWorker = split.validateSplit(parent, [
+      { ...piece('p1'), worker: 'Ghost' },
+      piece('p2')
+    ])
+    expect(unknownWorker.ok).toBe(false)
+    expect(unknownWorker.ok === false && unknownWorker.reason).toMatch(/unknown worker 'Ghost'/)
+
+    // Disabled worker
+    const dis = split.validateSplit(parent, [
+      { ...piece('p1'), worker: disabled.id },
+      piece('p2')
+    ])
+    expect(dis.ok).toBe(false)
+    expect(dis.ok === false && dis.reason).toMatch(/cannot do work/)
+
+    // Retired worker
+    const ret = split.validateSplit(parent, [
+      { ...piece('p1'), worker: retired.id },
+      piece('p2')
+    ])
+    expect(ret.ok).toBe(false)
+    expect(ret.ok === false && ret.reason).toMatch(/retired worker/)
+
+    // Unknown adapter
+    const unknownAdapter = split.validateSplit(parent, [
+      { ...piece('p1'), adapter: 'nonexistent-adapter' },
+      piece('p2')
+    ])
+    expect(unknownAdapter.ok).toBe(false)
+    expect(unknownAdapter.ok === false && unknownAdapter.reason).toMatch(/unknown adapter 'nonexistent-adapter'/)
+
+    // Conflicting worker and adapter
+    const conflict = split.validateSplit(parent, [
+      { ...piece('p1'), worker: active.id, adapter: 'claude-code' },
+      piece('p2')
+    ])
+    expect(conflict.ok).toBe(false)
+    expect(conflict.ok === false && conflict.reason).toMatch(/conflicts with specified adapter/)
+
+    // Invalid modelClass
+    const badClass = split.validateSplit(parent, [
+      { ...piece('p1'), modelClass: 'ultra' as unknown as 'high' },
+      piece('p2')
+    ])
+    expect(badClass.ok).toBe(false)
+    expect(badClass.ok === false && badClass.reason).toMatch(/invalid model class/)
+
+    // Valid configuration
+    const valid = split.validateSplit(parent, [
+      { ...piece('p1'), worker: 'CodexActive', adapter: 'codex', modelClass: 'high' },
+      piece('p2')
+    ])
+    expect(valid.ok).toBe(true)
+  })
+
+  it('formats target labels on approval cards', () => {
+    const parent = planner()
+    const w = workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexFirst', enabled: true })
+    const approval = split.splitApprovalFor(parent, [
+      { ...piece('first piece'), worker: w.id, modelClass: 'high' },
+      { ...piece('second piece'), adapter: 'claude-code', model: 'claude-sonnet-5-5', effort: 'high' },
+      { ...piece('third piece'), worker: 'CodexFirst', model: 'AutoModel (med)' }
+    ])
+    expect(approval.question).toContain('1. first piece _(worker: CodexFirst, class: high)_')
+    expect(approval.question).toContain('2. second piece _(adapter: claude-code, model: claude-sonnet-5-5, effort: high)_')
+    expect(approval.question).toContain('3. third piece _(worker: CodexFirst, class: med)_')
+  })
+
+  it('applies worker, adapter, model, and effort to child task constraints and assigneeHint', () => {
+    const parent = planner()
+    const codex = workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexFirst', enabled: true })
+    workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst', enabled: true })
+
+    const result = split.applySplit(
+      parent.id,
+      [
+        { ...piece('task for codex'), worker: 'CodexFirst', modelClass: 'high' },
+        { ...piece('task for claude'), adapter: 'claude', model: 'claude-sonnet-5-5', effort: 'high' },
+        { ...piece('task auto model parse'), worker: codex.id, model: 'AutoModel (low)' }
+      ],
+      AGENT
+    )
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const [c1, c2, c3] = result.children
+
+    // Child 1: pinned to CodexFirst worker, class high
+    const t1 = tasks.requireTask(c1!.id)
+    expect(t1.assigneeHint).toBe(codex.id)
+    expect(t1.constraints.workerId).toBe(codex.id)
+    expect(t1.constraints.workerIds).toEqual([codex.id])
+    expect(t1.constraints.adapterId).toBe('openai-compatible')
+    expect(t1.constraints.modelClass).toBe('high')
+    expect(t1.constraints.modelPolicy).toBe('auto')
+
+    // Child 2: pinned to claude adapter, model claude-sonnet-5-5, effort high
+    const t2 = tasks.requireTask(c2!.id)
+    expect(t2.assigneeHint).toBeNull()
+    expect(t2.constraints.adapterId).toBe('claude-code')
+    expect(t2.constraints.model).toBe('claude-sonnet-5-5')
+    expect(t2.constraints.effort).toBe('high')
+    expect(t2.constraints.modelClass).toBeUndefined()
+
+    // Child 3: AutoModel parsed from model string to class low
+    const t3 = tasks.requireTask(c3!.id)
+    expect(t3.assigneeHint).toBe(codex.id)
+    expect(t3.constraints.workerId).toBe(codex.id)
+    expect(t3.constraints.adapterId).toBe('openai-compatible')
+    expect(t3.constraints.modelClass).toBe('low')
+    expect(t3.constraints.modelPolicy).toBe('auto')
+    expect(t3.constraints.model).toBeUndefined()
   })
 })

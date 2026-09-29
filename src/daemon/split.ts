@@ -22,8 +22,11 @@ import {
   type Task,
   type TaskConstraints
 } from '@shared/tasks.js'
-import type { ModelClass } from '@shared/modelclass.js'
+import { MODEL_CLASSES, type ModelClass } from '@shared/modelclass.js'
+import { canWork, type Worker } from '@shared/protocol.js'
 import { errorMessage } from '@shared/errors.js'
+import { listWorkers } from './workers.js'
+import { adapters } from './adapters/index.js'
 
 /**
  * Plan & Split: turning one planner's plan into the tasks that carry it out.
@@ -65,6 +68,14 @@ export interface SplitPiece {
    * account — and ignored where the operator's piece settings already pin an account or a model.
    */
   modelClass?: ModelClass
+  /** Target adapter type, command name, or alias (e.g. 'codex', 'claude-code', 'antigravity-cli'). */
+  adapter?: string
+  /** Target worker label or ID (e.g. 'CodexFirst', 'ClaudeFirst', or UUID). */
+  worker?: string
+  /** Specific model name to run on. */
+  model?: string
+  /** Reasoning effort level (e.g. 'low', 'medium', 'high'). */
+  effort?: string
 }
 
 /**
@@ -84,6 +95,169 @@ export type SplitResult =
   | { ok: false; reason: string }
 
 const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+const clean = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+
+const ADAPTER_ALIASES: Record<string, string> = {
+  codex: 'openai-compatible',
+  'codex-cli': 'openai-compatible',
+  'codex cli': 'openai-compatible',
+  openai: 'openai-compatible',
+  'openai-codex': 'openai-compatible',
+  'openai codex': 'openai-compatible',
+  openaicodex: 'openai-compatible',
+  'openai-compatible': 'openai-compatible',
+  claude: 'claude-code',
+  'claude-code': 'claude-code',
+  'claude code': 'claude-code',
+  claudecode: 'claude-code',
+  anthropic: 'claude-code',
+  antigravity: 'antigravity-cli',
+  'antigravity-cli': 'antigravity-cli',
+  'antigravity cli': 'antigravity-cli',
+  agy: 'antigravity-cli',
+  google: 'antigravity-cli',
+  muse: 'muse-code',
+  'muse-code': 'muse-code',
+  'muse code': 'muse-code',
+  local: 'local-llm',
+  'local-llm': 'local-llm',
+  'local llm': 'local-llm'
+}
+
+export function resolveAdapterReference(ref: string): string | null {
+  const trimmed = ref.trim().toLowerCase()
+  if (!trimmed) return null
+  const cleaned = clean(trimmed)
+  if (ADAPTER_ALIASES[trimmed]) {
+    return ADAPTER_ALIASES[trimmed]
+  }
+  if (ADAPTER_ALIASES[cleaned]) {
+    return ADAPTER_ALIASES[cleaned]
+  }
+  const all = adapters()
+  const byId = all.find((a) => a.info.id.toLowerCase() === trimmed || clean(a.info.id) === cleaned)
+  if (byId) return byId.info.id
+  const byCommand = all.find((a) => a.info.command.toLowerCase() === trimmed || clean(a.info.command) === cleaned)
+  if (byCommand) return byCommand.info.id
+  const byLabel = all.find((a) => a.info.label.toLowerCase() === trimmed || clean(a.info.label) === cleaned)
+  if (byLabel) return byLabel.info.id
+  return null
+}
+
+export function resolveWorkerReference(ref: string): Worker | null {
+  const trimmed = ref.trim()
+  if (!trimmed) return null
+  const all = listWorkers(true)
+  const byId = all.find((w) => w.id === trimmed)
+  if (byId) return byId
+  const lower = trimmed.toLowerCase()
+  const byLabel = all.find((w) => w.label.toLowerCase() === lower)
+  if (byLabel) return byLabel
+  const cleaned = clean(trimmed)
+  const byClean = all.find((w) => clean(w.label) === cleaned)
+  if (byClean) return byClean
+  return null
+}
+
+export function pieceTargetLabel(piece: SplitPiece): string {
+  const tags: string[] = []
+  if (piece.worker) {
+    const w = resolveWorkerReference(piece.worker)
+    tags.push(`worker: ${w ? w.label : piece.worker}`)
+  } else if (piece.adapter) {
+    const a = resolveAdapterReference(piece.adapter)
+    tags.push(`adapter: ${a ?? piece.adapter}`)
+  }
+
+  let pieceModel = piece.model?.trim()
+  let pieceClass = piece.modelClass
+
+  if (pieceModel) {
+    const autoMatch = pieceModel.match(/^auto(?:[-_\s]*model)?(?:\s*\((low|med|high)\))?$/i)
+    if (autoMatch) {
+      if (autoMatch[1]) pieceClass = autoMatch[1].toLowerCase() as ModelClass
+      pieceModel = undefined
+    }
+  }
+
+  if (pieceModel) {
+    tags.push(`model: ${pieceModel}`)
+  } else if (pieceClass) {
+    tags.push(`class: ${pieceClass}`)
+  }
+
+  if (piece.effort?.trim()) {
+    tags.push(`effort: ${piece.effort.trim()}`)
+  }
+
+  return tags.length > 0 ? `_(${tags.join(', ')})_` : ''
+}
+
+export function pieceResolvedConstraints(
+  piece: SplitPiece,
+  baseConstraints: TaskConstraints,
+  operatorPinned: boolean
+): { constraints: TaskConstraints; assigneeHint: string | null } {
+  const result: TaskConstraints = { ...baseConstraints }
+  let assigneeHint = baseConstraints.workerId ?? null
+
+  const resolvedWorker = piece.worker ? resolveWorkerReference(piece.worker) : null
+  const resolvedAdapterId = piece.adapter ? resolveAdapterReference(piece.adapter) : null
+
+  if (resolvedWorker) {
+    result.workerId = resolvedWorker.id
+    result.workerIds = [resolvedWorker.id]
+    result.adapterId = resolvedWorker.adapterId
+    assigneeHint = resolvedWorker.id
+    if (baseConstraints.adapterId && baseConstraints.adapterId !== resolvedWorker.adapterId) {
+      delete result.model
+    }
+  } else if (resolvedAdapterId) {
+    result.adapterId = resolvedAdapterId
+    if (result.workerId) {
+      const w = resolveWorkerReference(result.workerId)
+      if (w && w.adapterId !== resolvedAdapterId) {
+        delete result.workerId
+        delete result.workerIds
+        assigneeHint = null
+      }
+    }
+    if (baseConstraints.adapterId && baseConstraints.adapterId !== resolvedAdapterId) {
+      delete result.model
+    }
+  }
+
+  let pieceModel = piece.model?.trim()
+  let pieceClass = piece.modelClass
+
+  if (pieceModel) {
+    const autoMatch = pieceModel.match(/^auto(?:[-_\s]*model)?(?:\s*\((low|med|high)\))?$/i)
+    if (autoMatch) {
+      if (autoMatch[1]) {
+        pieceClass = autoMatch[1].toLowerCase() as ModelClass
+      }
+      pieceModel = undefined
+    }
+  }
+
+  if (pieceModel) {
+    result.model = pieceModel
+    delete result.modelClass
+    delete result.modelPolicy
+  } else if (pieceClass) {
+    if (!operatorPinned || resolvedWorker || resolvedAdapterId) {
+      result.modelClass = pieceClass
+      result.modelPolicy = 'auto'
+      delete result.model
+    }
+  }
+
+  if (piece.effort?.trim()) {
+    result.effort = piece.effort.trim()
+  }
+
+  return { constraints: result, assigneeHint }
+}
 
 /**
  * Everything that can be said about a proposed split without writing to the database.
@@ -170,6 +344,50 @@ export function validateSplit(
             'Dependencies point backwards, by position, starting at 0.'
         }
       }
+    }
+
+    if (piece.worker) {
+      const w = resolveWorkerReference(piece.worker)
+      if (!w) {
+        return { ok: false, reason: `piece ${i + 1} names unknown worker '${piece.worker}'` }
+      }
+      if (w.retiredAt !== null) {
+        return { ok: false, reason: `piece ${i + 1} names retired worker '${w.label}'` }
+      }
+      if (!w.enabled || !canWork(w.role)) {
+        return {
+          ok: false,
+          reason: `piece ${i + 1} names worker '${w.label}', which cannot do work (role: '${w.role}', enabled: ${w.enabled})`
+        }
+      }
+    }
+
+    if (piece.adapter) {
+      const a = resolveAdapterReference(piece.adapter)
+      if (!a) {
+        return { ok: false, reason: `piece ${i + 1} names unknown adapter '${piece.adapter}'` }
+      }
+      if (piece.worker) {
+        const w = resolveWorkerReference(piece.worker)
+        if (w && w.adapterId !== a) {
+          return {
+            ok: false,
+            reason: `piece ${i + 1} worker '${w.label}' uses adapter '${w.adapterId}', which conflicts with specified adapter '${piece.adapter}'`
+          }
+        }
+      }
+    }
+
+    if (piece.modelClass && !MODEL_CLASSES.includes(piece.modelClass)) {
+      return { ok: false, reason: `piece ${i + 1} has invalid model class '${piece.modelClass}' (expected 'low', 'med', or 'high')` }
+    }
+
+    if (piece.model !== undefined && typeof piece.model === 'string' && piece.model.trim().length === 0) {
+      return { ok: false, reason: `piece ${i + 1} has empty model name` }
+    }
+
+    if (piece.effort !== undefined && typeof piece.effort === 'string' && piece.effort.trim().length === 0) {
+      return { ok: false, reason: `piece ${i + 1} has empty effort level` }
     }
   }
 
@@ -277,7 +495,8 @@ export function splitApprovalFor(parent: Task, pieces: SplitPiece[]): SplitAppro
       const waits = piece.dependsOn?.length
         ? ` (after ${piece.dependsOn.map((d) => `#${d + 1}`).join(', ')})`
         : ''
-      return `${i + 1}. ${label}${waits}`
+      const target = pieceTargetLabel(piece)
+      return `${i + 1}. ${label}${waits}${target ? ` ${target}` : ''}`
     })
     .join('\n')
 
@@ -292,7 +511,10 @@ export function splitApprovalFor(parent: Task, pieces: SplitPiece[]): SplitAppro
   if (isDelegation(parent)) {
     const one = pieces.length === 1
     const instructions = pieces
-      .map((piece, i) => `**${i + 1}.** ${piece.title.trim()}` + (piece.modelClass ? ` _(class: ${piece.modelClass})_` : ''))
+      .map((piece, i) => {
+        const target = pieceTargetLabel(piece)
+        return `**${i + 1}.** ${piece.title.trim()}${target ? ` ${target}` : ''}`
+      })
       .join('\n\n')
     return {
       header: `Delegate from t${parent.seq}?`,
@@ -392,6 +614,10 @@ export function applySplit(
 
   try {
     for (const piece of pieces) {
+      const resolvedTarget = pieceResolvedConstraints(piece, constraints, pinned)
+      const childConstraints = resolvedTarget.constraints
+      const childAssigneeHint = resolvedTarget.assigneeHint
+
       const child = createTask({
         title: piece.title.trim(),
         projectId: parent.projectId,
@@ -402,7 +628,7 @@ export function applySplit(
         priority: inherit.priority ?? parent.priority,
         // ⚠️ The hint is only meaningful for one account. With a list it is left unset and the
         // `workerIds` gate below is what does the narrowing.
-        assigneeHint: constraints.workerId ?? null,
+        assigneeHint: childAssigneeHint,
         // ⛔ **A delegated piece never merges anywhere.** Committed and checked on its own branch,
         //    and the caller merges it — see `delegation.ts` for why the daemon cannot.
         finishPolicy: delegating ? 'commit-and-verify' : (inherit.finishPolicy ?? 'inherit'),
@@ -422,7 +648,7 @@ export function applySplit(
         // ⚠️ These are **pins**, not the `assigneeHint` above, and the composer's Pieces row says so:
         // an operator who names accounts for the pieces has chosen them, and the scheduler skipping
         // every other worker is precisely the behaviour they asked for.
-        constraints: piece.modelClass && !pinned ? { ...constraints, modelClass: piece.modelClass } : constraints,
+        constraints: childConstraints,
         // ⚠️ A delegated piece gets a worktree of its own even in a trunk-mode project: the trunk has
         //    one holder, and a conversation that delegated from it may still be holding it. Only a
         //    trunk-only project (no pool at all) leaves it to inherit.

@@ -786,6 +786,25 @@ server.registerTool(
                 'Optional capability class for the agent that runs this piece: low for mechanical ' +
                   'work a cheaper model can do, high for hard reasoning. The scheduler picks the account.'
               ),
+            adapter: z
+              .string()
+              .optional()
+              .describe(
+                'Optional target adapter type or command alias (e.g. "openai-compatible", "codex", ' +
+                  '"claude-code", "claude", "antigravity-cli", "antigravity", "agy", "muse-code", "muse").'
+              ),
+            worker: z
+              .string()
+              .optional()
+              .describe('Optional target worker label or UUID (e.g. "CodexFirst", "ClaudeFirst").'),
+            model: z
+              .string()
+              .optional()
+              .describe('Optional target model name (e.g. "gpt-5-codex", "claude-sonnet-5-5").'),
+            effort: z
+              .string()
+              .optional()
+              .describe('Optional reasoning effort level where supported (e.g. "low", "medium", "high").'),
             depends_on: z
               .array(z.number().int())
               .optional()
@@ -810,6 +829,10 @@ server.registerTool(
           title: p.instruction,
           ...(p.summary ? { summary: p.summary } : {}),
           ...(p.class ? { modelClass: p.class } : {}),
+          ...(p.adapter ? { adapter: p.adapter } : {}),
+          ...(p.worker ? { worker: p.worker } : {}),
+          ...(p.model ? { model: p.model } : {}),
+          ...(p.effort ? { effort: p.effort } : {}),
           dependsOn: p.depends_on ?? []
         }))
       })
