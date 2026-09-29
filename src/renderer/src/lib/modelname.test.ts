@@ -18,6 +18,7 @@ describe('modelLabel', () => {
     // anthropic.subscription.2026-08 — the vendor prefix is what the family name already says.
     expect(modelLabel('claude-opus-5-5')).toBe('Opus 5.5')
     expect(modelLabel('claude-opus-5')).toBe('Opus 5')
+    expect(modelLabel('claude-sonnet-5-5')).toBe('Sonnet 5.5')
     expect(modelLabel('claude-sonnet-5')).toBe('Sonnet 5')
     // A version split across segments is one number, not two words.
     expect(modelLabel('claude-haiku-4-5')).toBe('Haiku 4.5')

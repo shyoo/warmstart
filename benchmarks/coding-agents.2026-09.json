@@ -46,6 +46,13 @@
       "note": "Terminal-Bench 2.1 accuracy, 84.64%, as 'Claude Opus 5' on the public leaderboard."
     },
     {
+      "id": "claude-sonnet-5-5",
+      "agentic": 0.745,
+      "basis": "inferred",
+      "source": "vals-terminal-bench-2.1",
+      "note": "No published Terminal-Bench 2.1 score for Sonnet 5.5 as of 2026-09-28; its predecessor claude-sonnet-5's 74.53% stands in, the same figure the claude-sonnet family prior gives. Replace when a score is published."
+    },
+    {
       "id": "claude-sonnet-5",
       "agentic": 0.745,
       "basis": "published",

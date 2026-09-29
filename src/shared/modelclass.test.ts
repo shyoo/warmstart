@@ -5,6 +5,7 @@ describe('modelclass', () => {
   it('identifies default model classes for known models', () => {
     expect(defaultModelClass('claude-opus-5-5')).toBe('high')
     expect(defaultModelClass('claude-opus-5')).toBe('high')
+    expect(defaultModelClass('claude-sonnet-5-5')).toBe('med')
     expect(defaultModelClass('claude-sonnet-5')).toBe('med')
     expect(defaultModelClass('claude-haiku-4-5')).toBe('low')
 

@@ -27,7 +27,7 @@ Source: Claude docs, *Prompt caching* / *Context windows* / *Compaction* / *Cont
 | Cache **read**, either TTL | **0.1×** base input |
 | **A read refreshes the TTL, free** | *"The cache is refreshed for no additional cost each time the cached content is used."* |
 | TTL is counted from | the **start of the request** that writes or reads it — not the end of the response |
-| Minimum cacheable prefix | 512 tok (Opus 5, Fable 5) · 1,024 (Sonnet 5) · 4,096 (Haiku 4.5). Below this, **no caching and no error** |
+| Minimum cacheable prefix | 512 tok (Opus 5.5, Opus 5, Sonnet 5.5, Fable 5) · 1,024 (Sonnet 5) · 4,096 (Haiku 4.5). Below this, **no caching and no error** |
 | Cache breakpoints per request | max 4 |
 | Invalidation | cascades `tools → system → messages`. **Changing tool definitions invalidates everything.** Effort and thinking params are model-dependent |
 | Cache scope | **isolated per workspace within an organization** (org-level on Bedrock / Google Cloud) |
@@ -167,7 +167,7 @@ per-request timing.
 
 | Fact | Value |
 |---|---|
-| 1M-token window | Opus 5, Opus 4.8 / 4.7 / 4.6, Sonnet 5, Sonnet 4.6, Fable 5, Mythos 5 — default, no beta header, standard pricing |
+| 1M-token window | Opus 5.5, Opus 5, Sonnet 5.5, Opus 4.8 / 4.7 / 4.6, Sonnet 5, Sonnet 4.6, Fable 5, Mythos 5 — default, no beta header, standard pricing |
 | 200k window | Sonnet 4.5 and older |
 | **Context rot is documented** | *"As token count grows, accuracy and recall degrade."* Not folklore — this justifies the context-degradation penalty in scoring |
 | **Context awareness is per-model** | Sonnet 5 / 4.6 / 4.5 and Haiku 4.5 receive injected `<budget:token_budget>` and `<system_warning>Token usage: X/Y` tags. **Opus 4.7+, Fable 5 and Mythos 5 do not** |

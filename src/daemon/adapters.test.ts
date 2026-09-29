@@ -278,6 +278,9 @@ describe('a cost model may say it does not know', () => {
       'max'
     ])
     expect(claude.modelSpec('claude-opus-5-5')?.context_window).toBe(1000000)
+    expect(claude.modelIds()).toContain('claude-sonnet-5-5')
+    expect(claude.modelSpec('claude-sonnet-5-5')?.effort_levels).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(claude.modelSpec('claude-sonnet-5-5')?.context_window).toBe(1000000)
   })
 
   it('anthropic and openai price a steerable cache; google does not', () => {

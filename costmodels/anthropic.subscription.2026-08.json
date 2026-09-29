@@ -30,6 +30,7 @@
       "claude-opus-5": 512,
       "claude-fable-5": 512,
       "claude-mythos-5": 512,
+      "claude-sonnet-5-5": 512,
       "claude-sonnet-5": 1024,
       "claude-sonnet-4-6": 1024,
       "claude-opus-4-8": 1024,
@@ -64,6 +65,15 @@
       "output_per_mtok": 25.0,
       "tokenizer": "v2",
       "context_awareness": false,
+      "effort_levels": ["low", "medium", "high", "xhigh", "max"]
+    },
+    {
+      "id": "claude-sonnet-5-5",
+      "context_window": 1000000,
+      "input_per_mtok": 2.0,
+      "output_per_mtok": 10.0,
+      "tokenizer": "v2",
+      "context_awareness": true,
       "effort_levels": ["low", "medium", "high", "xhigh", "max"]
     },
     {
@@ -123,6 +133,7 @@
 
   "$owed": [
     "input/output per-MTok for models other than Opus 5 were not verified on 2026-08-24 and are null rather than guessed.",
+    "claude-sonnet-5-5 ($2/$10, 1M, low..max, 512-token cache floor) is from the Claude model docs, 2026-09-28, and was checked the same day on claude 2.1.284: a headless turn's total_cost_usd back-solves to $2.00/MTok input at 0.1x reads and 2x 1h writes, and --effort low and max both ran. context_awareness copies claude-sonnet-5 and is inferred.",
     "Under a subscription these are used only to express output as a multiple of input (5x) and to render API-equivalent value; the scheduler's gates run on tokens, not dollars."
   ]
 }

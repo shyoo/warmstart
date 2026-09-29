@@ -481,10 +481,12 @@ behaviour falls out of it:
   false, so an adapter reading `SpawnRequest.effort` can trust it said it could act on one.
   **Re-measured 2026-08-29, and it moved:**
   - **`claude-code`: true.** claude 2.1.250 takes `--effort low|medium|high|xhigh|max` — the same
-    five its cost model lists for `claude-opus-5-5`, `claude-opus-5` and `claude-sonnet-5`, and none for
-    `claude-haiku-4-5`, which takes no effort at all. ⭐ Promoted on a run, not on `--help`: a
+    five its cost model lists for `claude-opus-5-5`, `claude-opus-5`, `claude-sonnet-5-5` and
+    `claude-sonnet-5`, and none for `claude-haiku-4-5`, which takes no effort at all. ⭐ Promoted on a run, not on `--help`: a
     headless call with `--effort low` came back with `effort: "low"` on its transcript's assistant
-    record, the field `transcript.ts` already parses. Set *and* observable.
+    record, the field `transcript.ts` already parses. Set *and* observable. `claude-sonnet-5-5`
+    was run on 2.1.284 (2026-09-28, t837) at `--effort low` and `max`, and both answered;
+    `modelUsage` reported `contextWindow: 1000000`.
   - **`antigravity-cli`: true (promoted 2026-09-23, t645).** Antigravity CLI supports
     `--effort low|medium|high` on base models (`gemini-3.8-flash`, `gemini-3.7-flash`,
     `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`, `gpt-oss-120b`). The cost model

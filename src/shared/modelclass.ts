@@ -25,6 +25,7 @@ export const DEFAULT_MODEL_CLASSES: Record<string, ModelClass> = {
   'claude-opus-5': 'high',
   'claude-opus-4-8': 'high',
   'claude-opus-4-6': 'high',
+  'claude-sonnet-5-5': 'med',
   'claude-sonnet-5': 'med',
   'claude-sonnet-4-6': 'med',
   'claude-haiku-4-5': 'low',
