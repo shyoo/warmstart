@@ -738,3 +738,90 @@ export function reconcileConsults(): number {
   if (stranded.length) log.warn(`requeued ${stranded.length} consult(s) interrupted by a restart`)
   return stranded.length
 }
+
+// ---------------------------------------------------------------------------- pull request summary
+
+/**
+ * Build the prompt asking a controller to summarize a pull request.
+ *
+ * ⛔ CRITICAL SECURITY & PRIVACY RULE: PR titles and descriptions are published
+ * to external hosting providers (e.g. GitHub). The prompt instructs the model
+ * strictly to focus on technical commit changes and avoid leaking private user prompts,
+ * credentials, personal details, or conversational context.
+ */
+export function prSummaryQuestion(input: {
+  commits: string
+  diffStat?: string
+  taskHint?: string
+}): string {
+  return [
+    'You are generating a pull request title and description for a Git pull request on a public repository.',
+    '',
+    '# Git Commits',
+    input.commits || '(no commit messages)',
+    '',
+    ...(input.diffStat ? ['# Diff Stat', input.diffStat, ''] : []),
+    ...(input.taskHint ? ['# High-Level Context', input.taskHint, ''] : []),
+    '# Instructions',
+    'Reply with a single JSON object and nothing else:',
+    '```json',
+    '{"title": "...", "body": "..."}',
+    '```',
+    '',
+    '- "title": concise one-line summary (at most 100 characters) describing the change (e.g. "feat(auth): support session persistence across restarts").',
+    '- "body": a concise description (1-3 short paragraphs or bullet points) explaining what changed and why based on the commits.',
+    '',
+    '⛔ CRITICAL SECURITY AND PRIVACY RULE:',
+    'This pull request will be posted publicly to a Git hosting provider (e.g. GitHub).',
+    'Do NOT include any personal information, private user prompts, personal names, account identifiers, passwords, credentials, tokens, or private conversational details.',
+    'Focus ONLY on the technical code changes and their software engineering purpose.'
+  ].join('\n')
+}
+
+/**
+ * Ask a controller model to summarize a pull request from commits and diff stat.
+ *
+ * ⛔ Discrete operator/finish event: never in the critical scheduling path.
+ * Has a strict timeout and returns null on failure so landing falls back immediately
+ * to deterministic commit subjects without blocking.
+ */
+export async function requestPullRequestSummary(input: {
+  commits: string
+  diffStat?: string
+  taskHint?: string
+  timeoutMs?: number
+}): Promise<{ title: string; body: string } | null> {
+  if (!input.commits.trim() && !input.diffStat?.trim()) return null
+  const choice = chooseController({ kind: 'title' }).worker
+    ? chooseController({ kind: 'title' })
+    : chooseController()
+  if (!choice.worker) return null
+
+  let sessionId: string | null = null
+  try {
+    const session = spawnSession({
+      workerId: choice.worker.id,
+      transport: 'stream',
+      purpose: 'consult',
+      ...(choice.model ? { model: choice.model } : {}),
+      ...(choice.effort ? { effort: choice.effort } : {})
+    })
+    sessionId = session.id
+    const question = prSummaryQuestion(input)
+    const timeoutMs = input.timeoutMs ?? 25_000
+    const text = await ask(session.id, question, timeoutMs)
+    if (!text) return null
+    const parsed = extractJson(text)
+    if (!parsed) return null
+    const title = typeof parsed.title === 'string' ? parsed.title.trim() : null
+    const body = typeof parsed.body === 'string' ? parsed.body.trim() : ''
+    if (!title) return null
+    return { title, body }
+  } catch (err) {
+    log.warn('requestPullRequestSummary failed:', err)
+    return null
+  } finally {
+    if (sessionId) closeSession(sessionId)
+  }
+}
+

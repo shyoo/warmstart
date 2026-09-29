@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { MIN_ANSWER_MS, answerTimeoutFor, consultDeadline, extractJson } from './controller.js'
+import { MIN_ANSWER_MS, answerTimeoutFor, consultDeadline, extractJson, prSummaryQuestion } from './controller.js'
 import {
   MAX_DECOMPOSE_CHILDREN,
   validateDecomposition,
@@ -196,5 +196,33 @@ describe('a consult waits no longer than its own window (t501)', () => {
     const route = { kind: 'route' as const, createdAt: created + 10_000 }
     expect(consultDeadline(route)).toBeLessThan(consultDeadline(title))
     expect(MIN_ANSWER_MS).toBeLessThan(answerTimeoutFor(route, route.createdAt))
+  })
+})
+
+describe('prSummaryQuestion', () => {
+  it('formats git commits, diffStat, and taskHint while specifying privacy instructions', () => {
+    const q = prSummaryQuestion({
+      commits: 'abc1234 fix: prevent token leak in headers',
+      diffStat: 'src/auth.ts | 2 +-\n 1 file changed',
+      taskHint: 'Authentication header sanitization'
+    })
+    expect(q).toContain('abc1234 fix: prevent token leak in headers')
+    expect(q).toContain('src/auth.ts | 2 +-')
+    expect(q).toContain('Authentication header sanitization')
+    expect(q).toContain('CRITICAL SECURITY AND PRIVACY RULE')
+    expect(q).toContain('{"title": "...", "body": "..."}')
+  })
+
+  it('handles optional diffStat and taskHint when omitted', () => {
+    const q = prSummaryQuestion({ commits: 'def5678 chore: bump deps' })
+    expect(q).toContain('def5678 chore: bump deps')
+    expect(q).not.toContain('# Diff Stat')
+    expect(q).not.toContain('# High-Level Context')
+  })
+
+  it('extracts valid JSON title and body from model response', () => {
+    const modelReply = 'Here is the summary:\n```json\n{"title": "feat: sanitize PR titles", "body": "Removes raw prompts."}\n```'
+    const parsed = extractJson(modelReply)
+    expect(parsed).toEqual({ title: 'feat: sanitize PR titles', body: 'Removes raw prompts.' })
   })
 })

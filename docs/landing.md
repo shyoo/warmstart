@@ -773,6 +773,14 @@ and the **last** one (`pullRequestUrlIn`): that error quotes the whole `gh pr cr
 title and body included, ahead of gh's own URL, and on t389 (2026-09-12) the first-URL rule recorded
 the issue the title named, `…/issues/133`, as the delivery. Migration 69 removed such rows.
 
+⛔ **PR title and body never leak the raw user prompt** (t847, 2026-09-28). Previously, `pullRequest.land`
+defaulted to `t<seq>: <task.title>`, which on t846 leaked private composer instructions into a public
+GitHub PR. PR titles and bodies are now sanitized in priority order: (1) explicit `pr_title` and `pr_body`
+supplied to `task_complete` or `land_work`; (2) asynchronous controller summarization
+(`requestPullRequestSummary`) which writes a technical title and description from git commits and diff stat
+while strictly prohibiting personal or prompt disclosures; or (3) deterministic fallback to `task.titleSummary`
+(concise AI headline) or the HEAD commit subject — raw `task.title` is never used.
+
 ⛔ **Updating an already-open PR retries the push force, and that is deliberate** (t509, 2026-09-17).
 The closing contract every run gets forbids rewriting commits already on the *landing target*
 (`prompt.ts`), but says nothing about the task's own branch — so a later run legitimately squashes

@@ -3724,7 +3724,12 @@ export const completing = new Set<string>()
  * has the final message itself (`result.text`). Absent, `landCompletion` reads the run's
  * `closingReply`, which is what an MCP `task_complete` gets.
  */
-export async function completeTask(sessionId: string, summary: string, reply?: string): Promise<void> {
+export async function completeTask(
+  sessionId: string,
+  summary: string,
+  reply?: string,
+  prOptions?: { prTitle?: string; prBody?: string }
+): Promise<void> {
   let run = runForSession(sessionId)
   if (!run?.taskId || run.outcome) {
     const session = getSession(sessionId)
@@ -3738,7 +3743,7 @@ export async function completeTask(sessionId: string, summary: string, reply?: s
   if (completing.has(sessionId)) return
   completing.add(sessionId)
   try {
-    await landCompletion(sessionId, run, task, summary, reply)
+    await landCompletion(sessionId, run, task, summary, reply, prOptions)
   } catch (err) {
     log.error(`could not complete task ${task.id} on session ${sessionId}:`, err)
     const session = getSession(sessionId)
@@ -3901,7 +3906,8 @@ async function landCompletion(
   run: Run,
   task: Task,
   summary: string,
-  reply?: string
+  reply?: string,
+  prOptions?: { prTitle?: string; prBody?: string }
 ): Promise<void> {
 
   // A first landing failure gets one fresh run. This is carried to the common teardown below so the
@@ -4033,7 +4039,9 @@ async function landCompletion(
         workspacePath: project.root,
         branch: target,
         policy: resolved.policy,
-        trunkBase: run.trunkShaBefore
+        trunkBase: run.trunkShaBefore,
+        prTitle: prOptions?.prTitle ?? (summary?.trim() || null),
+        prBody: prOptions?.prBody ?? null
       })
       if (result.ok) setStatus(task.id, 'completed')
       else if (!result.trunkBusy) automaticRetry = true
@@ -4243,7 +4251,9 @@ async function landCompletion(
         // project's legacy `landing.strategy`, so the policy resolved task > project > fleet and the
         // action that ran were two different answers - a project set to `pull-request` with no
         // `strategy` would have had its trunk pushed.
-        policy: resolveFinishPolicy(task, project).policy
+        policy: resolveFinishPolicy(task, project).policy,
+        prTitle: prOptions?.prTitle ?? (summary?.trim() || null),
+        prBody: prOptions?.prBody ?? null
       })
       if (result.ok) setStatus(task.id, 'completed')
       else if (!result.trunkBusy) automaticRetry = true

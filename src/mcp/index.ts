@@ -429,12 +429,35 @@ server.registerTool(
     description:
       'Call this when the work is done. The controller will run the project checks and land the branch ' +
       'according to project policy. Nothing else marks a task complete.',
-    inputSchema: { summary: z.string().describe('One line: what was done') }
+    inputSchema: {
+      summary: z.string().describe('One line: what was done'),
+      pr_title: z
+        .string()
+        .optional()
+        .describe(
+          'When landing under pull-request: a concise, public-safe pull request title. Omit to let the controller summarize from commits.'
+        ),
+      prTitle: z.string().optional().describe('Alias for pr_title.'),
+      pr_body: z
+        .string()
+        .optional()
+        .describe(
+          'When landing under pull-request: a public-safe pull request description. Omit to let the controller summarize from commits.'
+        ),
+      prBody: z.string().optional().describe('Alias for pr_body.')
+    }
   },
   async (args, extra) => {
     const sessionId = appEnv('SESSION_ID') ?? ''
+    const prTitle = args.pr_title ?? args.prTitle
+    const prBody = args.pr_body ?? args.prBody
     try {
-      await held(extra, 'agent.complete', { sessionId, summary: args.summary })
+      await held(extra, 'agent.complete', {
+        sessionId,
+        summary: args.summary,
+        ...(prTitle ? { prTitle } : {}),
+        ...(prBody ? { prBody } : {})
+      })
       return { content: [{ type: 'text' as const, text: 'Recorded. The controller is landing the work.' }] }
     } catch (err) {
       return {
@@ -621,6 +644,20 @@ server.registerTool(
         .describe(
           'How far to take it, when the person named one. Omit to use the project\'s own policy.'
         ),
+      pr_title: z
+        .string()
+        .optional()
+        .describe(
+          'When landing under pull-request: a concise, public-safe pull request title. Omit to let the controller summarize from commits.'
+        ),
+      prTitle: z.string().optional().describe('Alias for pr_title.'),
+      pr_body: z
+        .string()
+        .optional()
+        .describe(
+          'When landing under pull-request: a public-safe pull request description. Omit to let the controller summarize from commits.'
+        ),
+      prBody: z.string().optional().describe('Alias for pr_body.'),
       set_aside: z
         .array(z.number().int())
         .optional()
@@ -632,11 +669,15 @@ server.registerTool(
   },
   async (args, extra) => {
     const sessionId = appEnv('SESSION_ID') ?? ''
+    const prTitle = args.pr_title ?? args.prTitle
+    const prBody = args.pr_body ?? args.prBody
     try {
       const result = await held(extra, 'agent.land', {
         sessionId,
         ...(args.summary ? { summary: args.summary } : {}),
         ...(args.finishPolicy ? { finishPolicy: args.finishPolicy } : {}),
+        ...(prTitle ? { prTitle } : {}),
+        ...(prBody ? { prBody } : {}),
         ...(args.set_aside?.length ? { setAside: args.set_aside } : {})
       })
       if (!result.ok) {

@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Project } from '@shared/tasks.js'
 import { isOpenConversation } from '@shared/tasks.js'
 
@@ -447,6 +447,47 @@ describe('the agent.land RPC', () => {
       ok: false,
       reason: 'this session is not working on a task'
     })
+  })
+
+  it('forwards prTitle, prBody, and summary to landConversationWork', async () => {
+    const { project, taskId, workspace } = await seedConversation('chat to land')
+    const worker = workers.createWorker({ adapterId: 'claude-code', label: `w-${seq}`, enabled: true })
+    tasks.startRun({
+      taskId,
+      workerId: worker.id,
+      sessionId: `s-${seq}`,
+      projectId: project.id,
+      quotaUnverified: false,
+      costModelId: null
+    })
+    commitInWorkspace(workspace, 'feature.txt')
+
+    const spy = vi.spyOn(conversationland, 'landConversationWork').mockResolvedValue({
+      ok: true,
+      branch: 'warmstart/t-next',
+      worktree: workspace,
+      commit: 'abc1234'
+    } as never)
+
+    const agent = api.apiAgent({} as never)
+    const result = await agent['agent.land']({
+      sessionId: `s-${seq}`,
+      prTitle: 'Public feature',
+      prBody: 'Safe description',
+      summary: 'Landed feature cleanly'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(spy).toHaveBeenCalledWith(
+      taskId,
+      expect.objectContaining({
+        sessionId: `s-${seq}`,
+        prTitle: 'Public feature',
+        prBody: 'Safe description',
+        summary: 'Landed feature cleanly'
+      })
+    )
+    spy.mockRestore()
   })
 })
 

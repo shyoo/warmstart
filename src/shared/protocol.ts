@@ -2835,7 +2835,10 @@ export interface RpcMap {
     result: { task: Task; messages: TaskMessage[]; runs: Run[] } | null
   }
   /** ⛔ The only signal that a task succeeded. A process exiting says nothing about the work. */
-  'agent.complete': { params: { sessionId: string; summary: string }; result: { ok: true } }
+  'agent.complete': {
+    params: { sessionId: string; summary: string; prTitle?: string; prBody?: string }
+    result: { ok: true }
+  }
   /**
    * Agent-authored work. Bounded by the calling task's inherited mandate and budget.
    *
@@ -2959,7 +2962,14 @@ export interface RpcMap {
      * `setAside` names delegated pieces (by seq) the agent reviewed and deliberately did not merge —
      * the one way past the guard that refuses a landing without a completed piece's work (t704).
      */
-    params: { sessionId: string; summary?: string; finishPolicy?: FinishPolicy; setAside?: number[] }
+    params: {
+      sessionId: string
+      summary?: string
+      finishPolicy?: FinishPolicy
+      setAside?: number[]
+      prTitle?: string
+      prBody?: string
+    }
     result: {
       ok: boolean
       /** The refusal, verbatim. The agent is shown exactly this and nothing is moved. */

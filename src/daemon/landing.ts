@@ -37,6 +37,7 @@ import { stripAnsi } from './stream.js'
 import { emit } from './events.js'
 import { beginLanding, endLanding, isTaskLanding } from './landingstate.js'
 import { pullRequestUrlIn, recordPullRequestDelivery } from './deliveries.js'
+import { requestPullRequestSummary } from './controller.js'
 
 // ⛔ Re-exported, not redefined: every existing caller keeps one import site and one answer.
 export { landingBaseFor }
@@ -109,6 +110,10 @@ export interface LandingContext {
    * Land button was never drawn because the tree was not pristine.
    */
   keepsWorkspace?: boolean
+  /** When landing under pull-request: public-safe PR title provided by caller/tool (t847). */
+  prTitle?: string | null
+  /** When landing under pull-request: public-safe PR body/description provided by caller/tool (t847). */
+  prBody?: string | null
 }
 
 export interface LandingStrategy {
@@ -1563,6 +1568,108 @@ export const autoLand: LandingStrategy = {
  * checks**. A pull request exists so that CI and a person do that. Rebasing here would rewrite a
  * branch somebody is about to review, and running checks locally would duplicate what the PR is for.
  */
+/**
+ * Resolve public-safe pull request title and body.
+ *
+ * ⛔ **Never leaks raw task prompts or personal information.**
+ * In t846, `ctx.task.title` contained the raw first task message (which often includes
+ * user instructions, personal account names, login details, etc.), exposing private data
+ * to external Git hosts.
+ *
+ * Resolution precedence:
+ * 1. Explicit PR message from the agent/tool (`ctx.prTitle`, `ctx.prBody`).
+ * 2. LLM controller summary generated from the branch commits and diff stat.
+ * 3. Deterministic safe fallback: `ctx.task.titleSummary` or commit subject from `HEAD`,
+ *    with a bulleted commit log. Raw `ctx.task.title` is NEVER used.
+ */
+export async function resolvePullRequestDetails(
+  ctx: LandingContext,
+  baseSha: string | null
+): Promise<{ title: string; body: string }> {
+  const policy = policyFor(ctx.project)
+  const formatTitle = (raw: string) => {
+    const clean = raw.trim().replace(/^t\d+:\s*/i, '').trim()
+    return `t${ctx.task.seq}: ${clean}`.slice(0, 120)
+  }
+
+  const formatBody = (description: string) => {
+    return [
+      description.trim(),
+      '',
+      '---',
+      `Opened by Warmstart for task t${ctx.task.seq}.`,
+      '',
+      `- branch: \`${ctx.branch}\``,
+      `- base: \`${policy.landingTarget}\``,
+      '',
+      '⚠️ Written by an agent. The project checks were **not** run locally — that is what this pull request is for.'
+    ].join('\n')
+  }
+
+  // 1. Explicit PR title provided by caller/tool (e.g. land_work, task_complete)
+  if (ctx.prTitle?.trim()) {
+    const bodyDesc = ctx.prBody?.trim() ?? ''
+    return {
+      title: formatTitle(ctx.prTitle),
+      body: bodyDesc ? formatBody(bodyDesc) : [
+        `Opened by Warmstart for task t${ctx.task.seq}.`,
+        '',
+        `- branch: \`${ctx.branch}\``,
+        `- base: \`${policy.landingTarget}\``,
+        '',
+        '⚠️ Written by an agent. The project checks were **not** run locally — that is what this pull request is for.'
+      ].join('\n')
+    }
+  }
+
+  // 2. Ask controller to summarize PR from commits and diff stat
+  const revisionRange = baseSha ? `${baseSha}..HEAD` : 'HEAD'
+  const commits = await git(ctx.workspacePath, ['log', '--format=%h %s', revisionRange]).catch(() => '')
+  const diffStat = await git(ctx.workspacePath, ['diff', '--stat', revisionRange]).catch(() => '')
+
+  if (commits.trim() || diffStat.trim()) {
+    try {
+      const summary = await requestPullRequestSummary({
+        commits: commits.trim(),
+        diffStat: diffStat.trim(),
+        ...(ctx.task.titleSummary ? { taskHint: ctx.task.titleSummary } : {})
+      })
+      if (summary?.title) {
+        return {
+          title: formatTitle(summary.title),
+          body: formatBody(summary.body)
+        }
+      }
+    } catch (err) {
+      log.warn(`t${ctx.task.seq}: controller PR summarization failed, using fallback:`, err)
+    }
+  }
+
+  // 3. Fallback: safe technical summary (titleSummary or commit subject) — NEVER raw task.title
+  let fallbackTitle: string
+  if (ctx.task.titleSummary?.trim()) {
+    fallbackTitle = ctx.task.titleSummary.trim()
+  } else {
+    const headSubject = await git(ctx.workspacePath, ['log', '-1', '--format=%s', 'HEAD']).catch(() => '')
+    fallbackTitle = headSubject.trim() || `Pull request for ${ctx.branch}`
+  }
+
+  const commitsList = await git(ctx.workspacePath, ['log', '--format=- %s', revisionRange]).catch(() => '')
+  const fallbackDesc = commitsList.trim() ? `### Changes\n\n${commitsList.trim()}` : ''
+
+  return {
+    title: formatTitle(fallbackTitle),
+    body: fallbackDesc ? formatBody(fallbackDesc) : [
+      `Opened by Warmstart for task t${ctx.task.seq}.`,
+      '',
+      `- branch: \`${ctx.branch}\``,
+      `- base: \`${policy.landingTarget}\``,
+      '',
+      '⚠️ Written by an agent. The project checks were **not** run locally — that is what this pull request is for.'
+    ].join('\n')
+  }
+}
+
 export const pullRequest: LandingStrategy = {
   id: 'pull-request',
 
@@ -1593,7 +1700,6 @@ export const pullRequest: LandingStrategy = {
   },
 
   async land(ctx): Promise<LandingResult> {
-    const policy = policyFor(ctx.project)
     try {
       // ⛔ Push first and separately. If the PR call fails, the work is already safe on the remote
       // and the operator can open one by hand - which is a much better failure than a branch that
@@ -1620,17 +1726,7 @@ export const pullRequest: LandingStrategy = {
       // may carry commits this branch does not. The merge base is the commit the branch actually
       // diverged from, which is the range a reviewer wants either way.
       const baseSha = await mergeBase(ctx.workspacePath, landingTargetFor(ctx.task, ctx.project), 'HEAD')
-      const title = `t${ctx.task.seq}: ${ctx.task.title}`.slice(0, 120)
-      const body = [
-        ctx.task.handoffNote ? `${ctx.task.handoffNote}\n` : '',
-        `Opened by Warmstart for task t${ctx.task.seq}.`,
-        '',
-        `- branch: \`${ctx.branch}\``,
-        `- base: \`${policy.landingTarget}\``,
-        '',
-        '⚠️ Written by an agent. The project checks were **not** run locally — that is what this ' +
-          'pull request is for.'
-      ].join('\n')
+      const { title, body } = await resolvePullRequestDetails(ctx, baseSha)
 
       const resolved = which('gh')
       if (!resolved) throw new Error('gh vanished between the check and the call')

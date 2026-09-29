@@ -1709,6 +1709,142 @@ describe('pull-request landing strategy', () => {
     ])
   })
 
+  it('uses explicit prTitle and prBody without leaking raw task.title', async () => {
+    const branch = 'warmstart/t847-explicit-pr'
+    const { project, task, ws } = seedRepoWithRemote(branch)
+    tasks.updateTask(task.id, { title: 'PRIVATE: secret token 12345 in prompt' })
+    const currentTask = tasks.requireTask(task.id)
+
+    const spawn = await import('./spawn.js')
+    const realRun = spawn.run
+    let capturedArgs: string[] = []
+    vi.spyOn(spawn, 'run').mockImplementation((async (cmd: unknown, ...rest: unknown[]) => {
+      if (isGhCall(cmd, rest[0])) {
+        capturedArgs = rest[0] as string[]
+        return {
+          stdout: 'https://github.com/shyoo/awardtracker/pull/847\n',
+          stderr: ''
+        }
+      }
+      return (realRun as (...args: unknown[]) => unknown)(cmd, ...rest)
+    }) as never)
+
+    const result = await landing.pullRequest.land({
+      project,
+      task: currentTask,
+      workspacePath: ws,
+      branch,
+      policy: 'pull-request',
+      prTitle: 'Public feature title',
+      prBody: 'Public description of changes'
+    })
+
+    expect(result.ok).toBe(true)
+    const titleIdx = capturedArgs.indexOf('--title')
+    const bodyIdx = capturedArgs.indexOf('--body')
+    expect(titleIdx).toBeGreaterThanOrEqual(0)
+    expect(bodyIdx).toBeGreaterThanOrEqual(0)
+    const passedTitle = capturedArgs[titleIdx + 1]
+    const passedBody = capturedArgs[bodyIdx + 1]
+
+    expect(passedTitle).toBe(`t${currentTask.seq}: Public feature title`)
+    expect(passedBody).toContain('Public description of changes')
+    expect(passedTitle).not.toContain('PRIVATE')
+    expect(passedBody).not.toContain('PRIVATE')
+  })
+
+  it('uses controller summarization when explicit prTitle is omitted', async () => {
+    const branch = 'warmstart/t847-controller-pr'
+    const { project, task, ws } = seedRepoWithRemote(branch)
+    tasks.updateTask(task.id, { title: 'PRIVATE: secret token 12345 in prompt' })
+    const currentTask = tasks.requireTask(task.id)
+
+    const controller = await import('./controller.js')
+    const summarySpy = vi.spyOn(controller, 'requestPullRequestSummary').mockResolvedValue({
+      title: 'feat: add public feature safely',
+      body: 'Detailed technical summary of changes.'
+    })
+
+    const spawn = await import('./spawn.js')
+    const realRun = spawn.run
+    let capturedArgs: string[] = []
+    vi.spyOn(spawn, 'run').mockImplementation((async (cmd: unknown, ...rest: unknown[]) => {
+      if (isGhCall(cmd, rest[0])) {
+        capturedArgs = rest[0] as string[]
+        return {
+          stdout: 'https://github.com/shyoo/awardtracker/pull/848\n',
+          stderr: ''
+        }
+      }
+      return (realRun as (...args: unknown[]) => unknown)(cmd, ...rest)
+    }) as never)
+
+    const result = await landing.pullRequest.land({
+      project,
+      task: currentTask,
+      workspacePath: ws,
+      branch,
+      policy: 'pull-request'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(summarySpy).toHaveBeenCalled()
+    const titleIdx = capturedArgs.indexOf('--title')
+    const bodyIdx = capturedArgs.indexOf('--body')
+    const passedTitle = capturedArgs[titleIdx + 1]
+    const passedBody = capturedArgs[bodyIdx + 1]
+
+    expect(passedTitle).toBe(`t${currentTask.seq}: feat: add public feature safely`)
+    expect(passedBody).toContain('Detailed technical summary of changes.')
+    expect(passedTitle).not.toContain('PRIVATE')
+    expect(passedBody).not.toContain('PRIVATE')
+  })
+
+  it('falls back to titleSummary or commit subject and NEVER raw task.title when controller is unavailable', async () => {
+    const branch = 'warmstart/t847-fallback-pr'
+    const { project, task, ws } = seedRepoWithRemote(branch)
+    tasks.updateTask(task.id, {
+      title: 'PRIVATE: secret token 12345 in prompt',
+      titleSummary: 'Sanitized AI headline'
+    })
+    const currentTask = tasks.requireTask(task.id)
+
+    const controller = await import('./controller.js')
+    vi.spyOn(controller, 'requestPullRequestSummary').mockResolvedValue(null)
+
+    const spawn = await import('./spawn.js')
+    const realRun = spawn.run
+    let capturedArgs: string[] = []
+    vi.spyOn(spawn, 'run').mockImplementation((async (cmd: unknown, ...rest: unknown[]) => {
+      if (isGhCall(cmd, rest[0])) {
+        capturedArgs = rest[0] as string[]
+        return {
+          stdout: 'https://github.com/shyoo/awardtracker/pull/849\n',
+          stderr: ''
+        }
+      }
+      return (realRun as (...args: unknown[]) => unknown)(cmd, ...rest)
+    }) as never)
+
+    const result = await landing.pullRequest.land({
+      project,
+      task: currentTask,
+      workspacePath: ws,
+      branch,
+      policy: 'pull-request'
+    })
+
+    expect(result.ok).toBe(true)
+    const titleIdx = capturedArgs.indexOf('--title')
+    const bodyIdx = capturedArgs.indexOf('--body')
+    const passedTitle = capturedArgs[titleIdx + 1]
+    const passedBody = capturedArgs[bodyIdx + 1]
+
+    expect(passedTitle).toBe(`t${currentTask.seq}: Sanitized AI headline`)
+    expect(passedTitle).not.toContain('PRIVATE')
+    expect(passedBody).not.toContain('PRIVATE')
+  })
+
   it('detects existing pull request on gh pr create failure and succeeds with prUrl', async () => {
     const branch = 'warmstart/t372-existing-pr'
     const { project, task, ws } = seedRepoWithRemote(branch)

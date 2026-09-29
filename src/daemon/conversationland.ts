@@ -95,14 +95,19 @@ function levelFor(
  * mandate, the clean tree, real commits and the project's declared checks all have to hold, and a
  * refusal returns the reason and moves nothing.
  */
+export interface LandConversationOptions {
+  sessionId?: string
+  finishPolicy?: FinishPolicy
+  /** How strictly delegated pieces are checked (t704). A person's Land checks only running ones. */
+  delegation?: { checkMerged: boolean; setAside?: number[] }
+  prTitle?: string
+  prBody?: string
+  summary?: string
+}
+
 export async function landConversationWork(
   taskId: string,
-  opts: {
-    sessionId?: string
-    finishPolicy?: FinishPolicy
-    /** How strictly delegated pieces are checked (t704). A person's Land checks only running ones. */
-    delegation?: { checkMerged: boolean; setAside?: number[] }
-  } = {}
+  opts: LandConversationOptions = {}
 ): Promise<ConversationLanding> {
   const task = getTask(taskId)
   if (!task) return { ok: false, reason: 'no such task' }
@@ -162,7 +167,17 @@ export async function landConversationWork(
       }
     }
     const trunkBase = runsFor(task.id).filter((r) => r.kind === 'work').at(0)?.trunkShaBefore ?? null
-    const result = await landTask({ project, task, workspacePath: project.root, branch: target, policy: level, quiet: true, trunkBase })
+    const result = await landTask({
+      project,
+      task,
+      workspacePath: project.root,
+      branch: target,
+      policy: level,
+      quiet: true,
+      trunkBase,
+      prTitle: opts.prTitle ?? (opts.summary?.trim() || null),
+      prBody: opts.prBody ?? null
+    })
     if (!result.ok || !result.commit) return { ok: false, reason: result.reason ?? 'the landing did not complete' }
     addMessage(task.id, 'system', result.message?.headline ?? `Landed as \`${result.commit.slice(0, 8)}\` onto \`${target}\``, null, [], {
       event: 'landing.landed',
@@ -176,6 +191,11 @@ export async function landConversationWork(
 
   const level = levelFor(task, project, opts.finishPolicy)
 
+  const prOptions = {
+    prTitle: opts.prTitle ?? (opts.summary?.trim() || null),
+    prBody: opts.prBody ?? null
+  }
+
   // ⛔ **The workspace the conversation is already holding, found the way `pendingWorkFor` finds
   // it**, in all three places a holder can be: the session (a live turn), the task (a conversation
   // resting between turns) and the pool member that still has the branch checked out (a conversation
@@ -188,7 +208,7 @@ export async function landConversationWork(
   const found = held
     ? await workspaceState(held.path, target)
     : await workspaceOnBranch(project, branch, target)
-  if (found) return landIn(task, project, found, branch, level, target, session)
+  if (found) return landIn(task, project, found, branch, level, target, session, prOptions)
 
   // ⛔ **The fourth place, and the one t481 needed: nowhere.** A conversation on an adapter whose
   // turn ends its process has its tree parked when the process exits — measured on ws1's reflog,
@@ -209,7 +229,7 @@ export async function landConversationWork(
   try {
     const prepared = await prepareWorkspace(project, borrowed, branch, task)
     if (!prepared.ok) return { ok: false, reason: prepared.error ?? 'could not prepare a workspace to land from' }
-    return await landIn(task, project, await workspaceState(borrowed.path, target), branch, level, target, null)
+    return await landIn(task, project, await workspaceState(borrowed.path, target), branch, level, target, null, prOptions)
   } finally {
     await parkWorkspace(project, borrowed.path)
     releaseWorkspace(borrowed.claimId)
@@ -224,7 +244,8 @@ async function landIn(
   branch: string,
   level: FinishPolicy,
   target: string,
-  session: { id: string } | null
+  session: { id: string } | null,
+  prOptions?: { prTitle?: string | null; prBody?: string | null }
 ): Promise<ConversationLanding> {
   const decision = decideFinish({
     task,
@@ -257,7 +278,9 @@ async function landIn(
     quiet: true,
     // ⛔ And the same reading of the tree the decision above was made on, or the strategy's own
     // `canLand` would refuse what `decideFinish` had just allowed. See `LandingContext.keepsWorkspace`.
-    keepsWorkspace: true
+    keepsWorkspace: true,
+    prTitle: prOptions?.prTitle ?? null,
+    prBody: prOptions?.prBody ?? null
   })
   if (!result.ok || !result.commit) {
     return { ok: false, reason: result.reason ?? 'the landing did not complete' }

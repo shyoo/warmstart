@@ -105,7 +105,10 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
       return { task: other, messages: messagesFor(other.id), runs: runsFor(other.id) }
     },
     'agent.complete': async (p) => {
-      await completeTask(p.sessionId, p.summary)
+      await completeTask(p.sessionId, p.summary, undefined, {
+        ...(p.prTitle ? { prTitle: p.prTitle } : {}),
+        ...(p.prBody ? { prBody: p.prBody } : {})
+      })
       return { ok: true as const }
     },
     /**
@@ -487,7 +490,10 @@ ${agreement}
         ...(p.finishPolicy ? { finishPolicy: p.finishPolicy } : {}),
         // ⛔ The agent's own landing also checks that delegated work it was handed back is in the
         //    branch — or was set aside by name. See `delegationLandingBlocker`.
-        delegation: { checkMerged: true, setAside: p.setAside ?? [] }
+        delegation: { checkMerged: true, setAside: p.setAside ?? [] },
+        ...(p.prTitle ? { prTitle: p.prTitle } : {}),
+        ...(p.prBody ? { prBody: p.prBody } : {}),
+        ...(p.summary ? { summary: p.summary } : {})
       })
       // ⚠️ The summary is recorded on the thread rather than used to decide anything. It is what
       // the agent says the landing contains, and the operator reads it beside the landing line.
