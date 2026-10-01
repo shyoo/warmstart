@@ -2578,4 +2578,29 @@ describe('model-aware routing', () => {
     // Score gap = 1.070 - (-0.030) = 1.100 >> 0.10. Cheap model wins cleanly!
     expect(scoreA - scoreB).toBeCloseTo(1.100, 3)
   })
+
+  it('treats unpriceable model constraint as a standing refusal (t868)', () => {
+    const w = workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexForStanding', enabled: true })
+    const task = tasks.createTask({
+      title: 'unpriceable model task',
+      constraints: { workerId: w.id, model: 'sol-6' }
+    })
+    const choice = scoring.chooseTarget(task)
+    expect(choice.worker).toBeNull()
+    expect(choice.standing).toBe(true)
+    expect(choice.reason).toMatch(/cannot be priced/i)
+  })
+
+  it('treats suspect quarantine on a pinned worker as a standing refusal (t868)', () => {
+    const w = workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexSuspect', enabled: true })
+    workers.recordDispatchFailure(w.id, 'CLI failed 400', null)
+    const task = tasks.createTask({
+      title: 'pinned to suspect worker',
+      constraints: { workerId: w.id }
+    })
+    const choice = scoring.chooseTarget(task)
+    expect(choice.worker).toBeNull()
+    expect(choice.standing).toBe(true)
+    expect(choice.reason).toMatch(/held out/i)
+  })
 })

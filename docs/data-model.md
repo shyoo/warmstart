@@ -121,8 +121,8 @@ to a person as `awaiting_human` once the same standing reason has outlived `STAN
 (ten minutes, a margin kept from when a WSL-bridged adapter's `isInstalled()` read *false* until its first probe returned).
 ⚠️ Not `failed`: nothing was attempted and nothing was lost, and a reply re-queues it through
 `continueTask`. ⚠️ The two refusals a person is already holding — **disabled** and
-**human-occupied** — are deliberately *not* standing, nor is `suspect`, which a background usage
-probe or a turn clears without anybody being asked. ⛔ That is only true because the probe is
+**human-occupied** — are deliberately *not* standing, nor is an unpinned `suspect`, which a background usage
+probe or a turn clears without anybody being asked (a task pinned to a suspect worker or constrained to an unpriceable model treats it as standing, t868). ⛔ That is only true because the probe is
 *allowed* on a held-out account (t309); when it was not, `standing: false` was a promise the fleet
 had no way to keep.
 

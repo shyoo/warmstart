@@ -483,4 +483,39 @@ describe('task.setWorker RPC', () => {
     expect(unpinned.constraints.workerId).toBeUndefined()
     expect(unpinned.constraints.workerIds).toBeUndefined()
   })
+
+  it('drops an unpriceable model when reassigning worker without explicit model (t868)', async () => {
+    const tasks = await import('./tasks.js')
+    const handlers = api.buildApi({ version: '1.0.0', startedAt: Date.now(), port: 8080 })
+    const codex = workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexFirst', enabled: false })
+    const task = tasks.createTask({
+      title: 'task with invalid model',
+      constraints: { workerId: codex.id, adapterId: 'openai-compatible', model: 'sol-6' }
+    })
+    expect(task.constraints.model).toBe('sol-6')
+
+    const updated = await handlers['task.setWorker']({ id: task.id, workerId: claude.id })
+    expect(updated.constraints.model).toBeUndefined()
+    expect(updated.constraints.modelPolicy).toBe('inherit')
+    expect(updated.constraints.workerId).toBe(claude.id)
+  })
+
+  it('clears holdReason when changing model on a resting task (t868)', async () => {
+    const tasks = await import('./tasks.js')
+    const handlers = api.buildApi({ version: '1.0.0', startedAt: Date.now(), port: 8080 })
+    const task = tasks.createTask({
+      title: 'held task',
+      constraints: { workerId: claude.id, adapterId: 'claude-code' }
+    })
+    tasks.setHoldReason(task.id, 'CodexFirst cannot run model sol-6')
+    expect(tasks.requireTask(task.id).holdReason).toBe('CodexFirst cannot run model sol-6')
+
+    await handlers['task.setModel']({
+      id: task.id,
+      model: 'claude-opus-5',
+      effort: null,
+      modelPolicy: null
+    })
+    expect(tasks.requireTask(task.id).holdReason).toBeNull()
+  })
 })

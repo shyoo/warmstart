@@ -4617,17 +4617,30 @@ export async function endUnfinishedRun(
         }
         setStatus(task.id, 'ready', { assignee: null })
       } else {
-        recordDispatchFailure(run.workerId, reason, run.id)
-        addMessage(task.id, 'system', 'Nothing ran on this worker — back in the queue for another', null, [], {
-          detail:
-            `Nothing ran on this worker. ${reason} That account is held out of dispatch until it is ` +
-            'probed again; this task goes back in the queue for another one.'
-        })
-        // ⚠️ Back to `ready`, not to a person. The gate added by `recordDispatchFailure` means the next
-        // tick cannot choose the same account, so this re-routes rather than loops - and when there is
-        // no other eligible worker the task holds at `ready` with the reason on its row, which is the
-        // true statement. ⛔ It is not marked `failed`: nothing about the work has been attempted.
-        setStatus(task.id, 'ready', { assignee: null })
+        const isModelConstraintFault =
+          /model .* is not supported/i.test(reason) ||
+          /not a valid model/i.test(reason) ||
+          /unknown model/i.test(reason) ||
+          /model .* not found/i.test(reason) ||
+          /model_not_found/i.test(reason)
+        if (isModelConstraintFault) {
+          addMessage(task.id, 'system', `Model not supported by CLI: ${oneLine(reason)}`, null, [], {
+            detail: `${reason} This task was filed with a model the CLI cannot run. Over to you to choose another model or worker.`
+          })
+          setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: reason })
+        } else {
+          recordDispatchFailure(run.workerId, reason, run.id)
+          addMessage(task.id, 'system', 'Nothing ran on this worker — back in the queue for another', null, [], {
+            detail:
+              `Nothing ran on this worker. ${reason} That account is held out of dispatch until it is ` +
+              'probed again; this task goes back in the queue for another one.'
+          })
+          // ⚠️ Back to `ready`, not to a person. The gate added by `recordDispatchFailure` means the next
+          // tick cannot choose the same account, so this re-routes rather than loops - and when there is
+          // no other eligible worker the task holds at `ready` with the reason on its row, which is the
+          // true statement. ⛔ It is not marked `failed`: nothing about the work has been attempted.
+          setStatus(task.id, 'ready', { assignee: null })
+        }
       }
     } else if (isOverload) {
       const statusPage =

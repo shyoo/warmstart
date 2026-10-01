@@ -6,6 +6,7 @@ import type { Task, WorkspaceModeChoice } from '@shared/tasks.js'
 import type { ModelClass } from '@shared/modelclass.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { adapter } from '../adapters/index.js'
+import { costModel } from '../costmodel.js'
 import { manualReviewsForTask, reviewsForTask } from '../review.js'
 import { attachmentBytes, createAttachment, createFolderAttachment, requireAttachment } from '../attachments.js'
 import { getWorker, listWorkers, requireWorker } from '../workers.js'
@@ -83,13 +84,26 @@ function reassignForResolveRetry(
   const adapterChanged = task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId
   const { workerIds: _workerIds, ...baseConstraints } = task.constraints
   const modelClass = choice.modelClass !== undefined ? (choice.modelClass ?? undefined) : (choice.model ? undefined : task.constraints.modelClass)
+  const targetCm = costModel(adapter(worker.adapterId).info.policy.costModelId)
+  const candidateModel = choice.model !== undefined ? (choice.model ?? undefined) : (adapterChanged ? undefined : task.constraints.model)
+  const model = candidateModel && targetCm.modelSpec(candidateModel) ? candidateModel : undefined
+  let effort = model
+    ? (choice.effort !== undefined ? (choice.effort ?? undefined) : (adapterChanged ? undefined : task.constraints.effort))
+    : undefined
+  if (model && effort) {
+    const spec = targetCm.modelSpec(model)
+    if (spec && Array.isArray(spec.effort_levels) && !spec.effort_levels.includes(effort)) {
+      effort = undefined
+    }
+  }
+  const modelPolicy = adapterChanged || !model ? (choice.modelPolicy ?? 'inherit') : (choice.modelPolicy ?? 'inherit')
   const constraints = checkConstraints({
     ...baseConstraints,
     workerId: worker.id,
     adapterId: worker.adapterId,
-    model: adapterChanged ? undefined : (choice.model ?? undefined),
-    effort: adapterChanged ? undefined : (choice.effort ?? undefined),
-    modelPolicy: adapterChanged ? 'inherit' : (choice.modelPolicy ?? 'inherit'),
+    model,
+    effort,
+    modelPolicy,
     modelClass
   })
   if (!constraints.model) delete constraints.model
@@ -362,6 +376,20 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         }
       }
 
+      let effort = p.effort !== undefined ? (p.effort ? p.effort : undefined) : task.constraints.effort
+      if (task.constraints.adapterId && model) {
+        try {
+          const info = adapter(task.constraints.adapterId).info
+          const cm = costModel(info.policy.costModelId)
+          const spec = cm.modelSpec(model)
+          if (effort && spec && Array.isArray(spec.effort_levels) && !spec.effort_levels.includes(effort)) {
+            effort = undefined
+          }
+        } catch {
+          // ignore
+        }
+      }
+
       // ⛔ Through the same door a filing goes through. The adapter has to be known before a model
       // can be checked, and `checkConstraints` is where that argument already lives.
       const constraints = checkConstraints({
@@ -369,12 +397,14 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         model,
         modelPolicy,
         modelClass,
-        ...(p.effort !== undefined ? (p.effort ? { effort: p.effort } : { effort: undefined }) : {})
+        effort
       })
       if (!model) delete constraints.model
       if (!modelPolicy) delete constraints.modelPolicy
       if (!modelClass) delete constraints.modelClass
-      if (p.effort !== undefined && !p.effort) delete constraints.effort
+      if (!effort) delete constraints.effort
+      const isResting = !['running', 'assigned'].includes(task.status)
+      if (isResting) setHoldReason(task.id, null)
       return updateTask(p.id, { constraints })
     },
     'task.setWorker': (p) => {
@@ -407,11 +437,23 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       // default model start a run before the explicit choice arrived.
       const adapterChanged = task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId
       const hasModelChoice = p.model !== undefined || p.modelPolicy !== undefined || p.effort !== undefined || p.modelClass !== undefined
-      const model = hasModelChoice ? (p.model ?? undefined) : (adapterChanged ? undefined : task.constraints.model)
-      const effort = hasModelChoice ? (p.effort ?? undefined) : (adapterChanged ? undefined : task.constraints.effort)
+      const targetCm = costModel(adapter(worker.adapterId).info.policy.costModelId)
+      const existingModel = !adapterChanged && task.constraints.model && targetCm.modelSpec(task.constraints.model)
+        ? task.constraints.model
+        : undefined
+      const model = hasModelChoice ? (p.model ?? undefined) : existingModel
+      let effort = hasModelChoice
+        ? (p.effort ?? undefined)
+        : (model ? (adapterChanged ? undefined : task.constraints.effort) : undefined)
+      if (model && effort) {
+        const spec = targetCm.modelSpec(model)
+        if (spec && Array.isArray(spec.effort_levels) && !spec.effort_levels.includes(effort)) {
+          effort = undefined
+        }
+      }
       const modelPolicy = hasModelChoice
         ? (p.modelPolicy ?? (p.model ? undefined : 'inherit'))
-        : (adapterChanged ? 'inherit' : (task.constraints.modelPolicy ?? (task.constraints.model ? undefined : 'inherit')))
+        : (adapterChanged || !model ? 'inherit' : (task.constraints.modelPolicy ?? (task.constraints.model ? undefined : 'inherit')))
       const modelClass = p.modelClass !== undefined ? (p.modelClass ?? undefined) : (p.model ? undefined : task.constraints.modelClass)
       const { workerIds: _workerIds, ...baseConstraints } = task.constraints
       const constraints = checkConstraints({

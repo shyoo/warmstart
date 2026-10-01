@@ -662,9 +662,9 @@ default (t583).
 The Tasks table hides Type along with From and Quality below an 850px table container, giving
 the title the width those fixed columns would otherwise consume.
 
-`QuotaDecide` keeps preemption and quota holds in a framed card above the
+`QuotaDecide` keeps preemption, quota holds, and general task holds (t868) in a framed card above the
 composer, with the older button-beside-paragraph rows and its own *Reassign* option and `ReassignNote`
-box. With a note, `task.message` is the resume (it requeues a `paused_quota` task itself, and rides
+box (held `ready` tasks surface their hold reason, offer one-click **Probe** for held-out accounts, display *Invalid model: <model>* in model pickers, and permit reassigning to valid models). With a note, `task.message` is the resume (it requeues a `paused_quota` task itself, and rides
 along undelivered into the next run of a task still `ready` behind the gate); without one,
 `task.resume`. During a quota preemption warning, a titled group shows the three choices that
 take effect when the countdown expires, each button beside its own explanation. Immediate actions

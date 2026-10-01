@@ -382,6 +382,14 @@ export class CostModel {
         return { ...base, id }
       }
     }
+    // Snapshot date suffixes (e.g. claude-haiku-4-5-20251001) resolve against the base model id
+    const dateMatch = /^(.*)-\d{8}$/.exec(id)
+    if (dateMatch) {
+      const base = this.data.models?.find((m) => m.id === dateMatch[1])
+      if (base) {
+        return { ...base, id }
+      }
+    }
     return null
   }
 

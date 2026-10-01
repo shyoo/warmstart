@@ -127,7 +127,16 @@ export function QuotaDecide({
     : []
 
   const isPaused = task.status === 'paused_quota'
-  const isReadyHeld = task.status === 'ready' && /% of its .* window/i.test(task.holdReason ?? '')
+  const isQuotaHeld = task.status === 'ready' && /% of its .* window/i.test(task.holdReason ?? '')
+  const isOtherHeld = task.status === 'ready' && !isQuotaHeld && Boolean(task.holdReason)
+  const isReadyHeld = isQuotaHeld || isOtherHeld
+  const heldWorkerId = task.constraints.workerId || task.assignee
+  const heldWorker = heldWorkerId ? (fleet.find((e) => e.worker.id === heldWorkerId) ?? null) : null
+  const isWorkerHeld = Boolean(
+    isOtherHeld &&
+    heldWorker &&
+    (heldWorker.worker.health?.state === 'suspect' || /held out|press probe/i.test(task.holdReason ?? ''))
+  )
   // This prefix is written only by the daemon's failed-turn quota path. Unlike a percentage
   // watermark, an explicit vendor refusal cannot be overridden locally.
   const vendorRefused = task.holdReason?.startsWith('Vendor refused this turn: ') ?? false
@@ -183,6 +192,16 @@ export function QuotaDecide({
     }
   }
 
+  const handleProbeWorker = async (workerId: string) => {
+    setBusy(true)
+    try {
+      await rpc('worker.probe', { id: workerId })
+      await onRefresh()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const handlePreemptionAction = async (action: 'compact' | 'handoff', reassignWorkerId?: string | null) => {
     setBusy(true)
     try {
@@ -206,7 +225,16 @@ export function QuotaDecide({
     }
   }
 
+  const isInvalidConcreteModel = Boolean(
+    selectedModel &&
+    !selectedModel.startsWith('__auto__') &&
+    selectedModel !== '__inherit__' &&
+    offeredModels.length > 0 &&
+    !offeredModels.some((m) => m.id === selectedModel)
+  )
+
   const handleReassign = async () => {
+    if (isInvalidConcreteModel) throw new Error('choose another model before reassigning')
     setBusy(true)
     try {
       const isAuto = selectedModel.startsWith('__auto__')
@@ -253,7 +281,9 @@ export function QuotaDecide({
               ? 'quota gate — preempted'
               : warning
                 ? 'quota gate — preemption warning'
-                : 'quota gate — held'}
+                : isOtherHeld
+                  ? 'task held'
+                  : 'quota gate — held'}
         </span>
         <span className="decide-why">
           {live
@@ -346,36 +376,56 @@ export function QuotaDecide({
               </div>
             </section>
           )}
-          {warning && <div className="quota-immediate-head">Take action now</div>}          {!vendorRefused && <div className="decide-option">
-            <button
-              type="button"
-              className="btn btn--warn"
-              disabled={busy}
-              title={
-                warning
-                  ? 'Keep this run going until the quota window resets rather than wrapping it up now.'
+          {warning && <div className="quota-immediate-head">Take action now</div>}
+          {!vendorRefused && !isOtherHeld && (
+            <div className="decide-option">
+              <button
+                type="button"
+                className="btn btn--warn"
+                disabled={busy}
+                title={
+                  warning
+                    ? 'Keep this run going until the quota window resets rather than wrapping it up now.'
+                    : isPaused
+                      ? 'Override preemption and resume this task immediately even though the account is at or past its window watermark.'
+                      : 'Dispatch this task immediately even though the account is at or past its quota watermark.'
+                }
+                onClick={() => void handleOverride(false)}
+              >
+                {warning
+                  ? 'Override preemption'
                   : isPaused
-                    ? 'Override preemption and resume this task immediately even though the account is at or past its window watermark.'
-                    : 'Dispatch this task immediately even though the account is at or past its quota watermark.'
-              }
-              onClick={() => void handleOverride(false)}
-            >
-              {warning
-                ? 'Override preemption'
-                : isPaused
-                  ? 'Override & continue'
-                  : 'Run now anyway'}
-            </button>
-            <span className="decide-what">
-              <strong>Override the quota gate.</strong>{' '}
-              {warning
-                ? `Keeps this run going until ${new Date(warning.resumeAt).toLocaleTimeString()} rather than wrapping it up now.`
-                : isPaused
-                  ? 'Resumes immediately and overrides the quota gate until the window resets.'
-                  : 'Dispatches this task immediately even though the account is past its quota watermark.'}{' '}
-              ⚠️ A turn the vendor actually refuses will still stop it.
-            </span>
-          </div>}
+                    ? 'Override & continue'
+                    : 'Run now anyway'}
+              </button>
+              <span className="decide-what">
+                <strong>Override the quota gate.</strong>{' '}
+                {warning
+                  ? `Keeps this run going until ${new Date(warning.resumeAt).toLocaleTimeString()} rather than wrapping it up now.`
+                  : isPaused
+                    ? 'Resumes immediately and overrides the quota gate until the window resets.'
+                    : 'Dispatches this task immediately even though the account is past its quota watermark.'}{' '}
+                ⚠️ A turn the vendor actually refuses will still stop it.
+              </span>
+            </div>
+          )}
+
+          {isWorkerHeld && heldWorker && (
+            <div className="decide-option">
+              <button
+                type="button"
+                className="btn btn--primary"
+                disabled={busy}
+                title={`Probe ${heldWorker.worker.label} to check availability and clear the hold if healthy.`}
+                onClick={() => void handleProbeWorker(heldWorker.worker.id)}
+              >
+                Probe {heldWorker.worker.label}
+              </button>
+              <span className="decide-what">
+                <strong>Probe account.</strong> Rechecks {heldWorker.worker.label}'s health and quota to clear the hold if the account is ready.
+              </span>
+            </div>
+          )}
 
           {isPaused && (
             <div className="decide-option">
@@ -422,7 +472,7 @@ export function QuotaDecide({
                 type="button"
                 className="btn btn--primary"
                 title="Reassigns this task to another worker or Auto and resumes it immediately."
-                disabled={busy}
+                disabled={busy || isInvalidConcreteModel}
                 onClick={() => void handleReassign()}
               >
                 Reassign
@@ -475,6 +525,14 @@ export function QuotaDecide({
                       disabled={busy}
                       ariaLabel="Reassign model"
                       options={[
+                        ...(isInvalidConcreteModel
+                          ? [
+                              {
+                                value: selectedModel,
+                                label: `Invalid model: ${modelLabel(selectedModel) ?? selectedModel}`
+                              }
+                            ]
+                          : []),
                         ...(offeredModels.length > 1
                           ? [
                               { value: '__auto__', label: 'Auto Model (scheduler decides)' },
@@ -492,19 +550,21 @@ export function QuotaDecide({
                         ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
                       ]}
                       displayLabel={
-                        selectedModel === '__auto__'
-                          ? 'Auto Model'
-                          : selectedModel === '__auto__:high'
-                            ? 'Auto Model (high)'
-                            : selectedModel === '__auto__:med'
-                              ? 'Auto Model (med)'
-                              : selectedModel === '__auto__:low'
-                                ? 'Auto Model (low)'
-                          : !selectedModel || selectedModel === '__inherit__'
-                            ? inheritedModel
-                              ? (modelLabel(inheritedModel) ?? inheritedModel)
-                              : 'CLI default model'
-                            : undefined
+                        isInvalidConcreteModel
+                          ? `Invalid model: ${modelLabel(selectedModel) ?? selectedModel}`
+                          : selectedModel === '__auto__'
+                            ? 'Auto Model'
+                            : selectedModel === '__auto__:high'
+                              ? 'Auto Model (high)'
+                              : selectedModel === '__auto__:med'
+                                ? 'Auto Model (med)'
+                                : selectedModel === '__auto__:low'
+                                  ? 'Auto Model (low)'
+                            : !selectedModel || selectedModel === '__inherit__'
+                              ? inheritedModel
+                                ? (modelLabel(inheritedModel) ?? inheritedModel)
+                                : 'CLI default model'
+                              : undefined
                       }
                       onChange={(val) => {
                         setSelectedModel(val)
@@ -535,6 +595,11 @@ export function QuotaDecide({
                     />
                   )}
                 </div>
+                {isInvalidConcreteModel && (
+                  <div style={{ color: 'var(--tone-danger, #e06c75)', marginTop: 'var(--sp-1)', fontSize: 'var(--font-sm)' }}>
+                    This account cannot run model '{selectedModel}'. Choose another model.
+                  </div>
+                )}
                 <ReassignNote
                   value={reassignNote}
                   disabled={busy}

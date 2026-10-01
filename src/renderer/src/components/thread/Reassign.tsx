@@ -89,6 +89,7 @@ export function pillLabels(input: {
   inheritedLabel: string
   current: CurrentAssignment | null
   currentWorkerLabel: string | null
+  invalidConcreteModel?: boolean
 }): {
   workerLabel: string
   modelLabel: string
@@ -117,6 +118,8 @@ export function pillLabels(input: {
         ? (modelLabel(current.model) ?? current.model)
         : invalidAutoClass(model)
           ? 'Choose another model'
+        : input.invalidConcreteModel
+          ? `Invalid model: ${modelLabel(model) ?? model}`
         : !workerId
           ? 'Auto model'
           : (AUTO_MODEL_LABELS[model] ??
@@ -197,6 +200,13 @@ export function useReassignChoice(
   const inheritedModel = resolveModelChoice(null, worker, canSetEffort, entry?.quota).model
   const autoClasses = availableAutoClasses(worker, inheritedModel)
   const unavailableClass = invalidAutoClass(model) ?? unavailableAutoClass(model, autoClasses)
+  const isInvalidConcreteModel = Boolean(
+    model &&
+    !model.startsWith('__auto__') &&
+    model !== '__inherit__' &&
+    offeredModels.length > 0 &&
+    !offeredModels.some((m) => m.id === model)
+  )
   const offeredEfforts = canSetEffort
     ? (offeredModels.find((m) => m.id === effortLookupModel(model, inheritedModel))?.effortLevels ?? [])
     : []
@@ -234,6 +244,7 @@ export function useReassignChoice(
 
   const apply = async (): Promise<void> => {
     if (unavailableClass) throw new Error('choose another model or Auto tier before reassigning')
+    if (isInvalidConcreteModel) throw new Error('choose another model before reassigning')
     const isAuto = model.startsWith('__auto__')
     const modelPolicy = isAuto ? 'auto' : !model || model === '__inherit__' ? 'inherit' : null
     const modelClass = isAuto && model.includes(':') ? (model.split(':')[1] as ModelClass) : null
@@ -261,7 +272,8 @@ export function useReassignChoice(
     current,
     currentWorkerLabel: current
       ? (fleet.find((e) => e.worker.id === current.workerId)?.worker.label ?? current.workerId.slice(0, 8))
-      : null
+      : null,
+    invalidConcreteModel: isInvalidConcreteModel
   })
 
   return {
@@ -295,6 +307,9 @@ export function useReassignChoice(
         : [])
     ],
     modelOptions: [
+      ...(isInvalidConcreteModel
+        ? [{ value: model, label: `Invalid model: ${modelLabel(model) ?? model}`, hint: `This account cannot run '${model}'. Choose another model.`, disabled: true }]
+        : []),
       ...(unavailableClass
         ? [{ value: model, label: 'Choose another model', hint: `This account has no Auto Model (${unavailableClass}) route.`, disabled: true }]
         : []),
@@ -317,7 +332,9 @@ export function useReassignChoice(
     ...labels,
     invalidModelMessage: unavailableClass
       ? `This account cannot run Auto Model (${unavailableClass}). Choose another model or tier.`
-      : null
+      : isInvalidConcreteModel
+        ? `This account cannot run model '${model}'. Choose another model.`
+        : null
   }
 }
 

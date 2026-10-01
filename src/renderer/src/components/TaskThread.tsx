@@ -598,7 +598,8 @@ function TaskDetail({
           {/* ⛔ Shown around the composer, matching `Decide`: quota override decisions are an
               action on the work and belong where the operator gives instructions, not only in the
               read-only ledger on the right. */}
-          {hasQuotaGate(task, now) && task.status !== 'awaiting_human' && (
+          {(hasQuotaGate(task, now) || (task.status === 'ready' && Boolean(task.holdReason))) &&
+            task.status !== 'awaiting_human' && (
             <QuotaDecide
               task={task}
               fleet={fleet}
@@ -852,7 +853,7 @@ function TaskDetail({
               )}
               {/* ⚠️ Only where the account's CLI has models to offer. A fleet whose cost models failed
                   to load still runs work; it just cannot be re-pointed from here. */}
-              {(offered.length > 0 || taskEfforts.length > 0) && (
+              {(offered.length > 0 || taskEfforts.length > 0 || Boolean(task.constraints.model)) && (
                 <div className="model-next">
                 <SettingButtonSelect
                   value={
@@ -864,6 +865,14 @@ function TaskDetail({
                       : '')
                   }
                   options={[
+                    ...(task.constraints.model && !offered.some((m) => m.id === task.constraints.model)
+                      ? [
+                          {
+                            value: task.constraints.model,
+                            label: `Invalid model: ${modelLabel(task.constraints.model) ?? task.constraints.model}`
+                          }
+                        ]
+                      : []),
                     ...(offered.length > 1
                       ? [
                           { value: '__auto__', label: 'Auto Model (scheduler decides)' },
@@ -890,7 +899,9 @@ function TaskDetail({
                     'the cached context away.'
                   }
                   displayLabel={
-                    task.constraints.modelPolicy === 'auto'
+                    task.constraints.model && !offered.some((m) => m.id === task.constraints.model)
+                      ? `Invalid model: ${modelLabel(task.constraints.model) ?? task.constraints.model}`
+                      : task.constraints.modelPolicy === 'auto'
                       ? task.constraints.modelClass
                         ? `Auto Model (${task.constraints.modelClass})`
                         : 'Auto Model'

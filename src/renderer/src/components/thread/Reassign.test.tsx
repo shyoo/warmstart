@@ -108,6 +108,15 @@ describe('pillLabels (t674)', () => {
     expect(labels.workerLabel).toBe('Auto worker')
     expect(labels.selectedWorkerId).toBe('')
   })
+
+  it('says Invalid model: <model> when invalidConcreteModel is true (t868)', () => {
+    const labels = pillLabels({
+      ...base,
+      model: 'sol-6',
+      invalidConcreteModel: true
+    })
+    expect(labels.modelLabel).toBe('Invalid model: Sol 6')
+  })
 })
 
 describe('worker dropdown menu selection (t763)', () => {

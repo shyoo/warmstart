@@ -289,7 +289,9 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     // that has to know *what is being asked* stays below, where the task is in scope.
     const unfit = accountRefusal(worker)
     if (unfit) {
-      refuse(worker, 'account', unfit.why, unfit.standing)
+      const isPinnedToWorker = task.constraints.workerId === worker.id
+      const isStanding = unfit.standing || (isPinnedToWorker && worker.health?.state === 'suspect')
+      refuse(worker, 'account', unfit.why, isStanding)
       continue
     }
 
@@ -390,11 +392,59 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     // ⛔ Auto rows are narrowed to the class *before* they are reduced to one per model, so the class
     // filter below must not run on them a second time against a different row.
     let classFiltered = false
+    let cm: CostModel | null
+    try {
+      cm = costModel(info.policy.costModelId)
+    } catch {
+      cm = null
+    }
+
     if (task.constraints.model) {
+      const spec = cm?.modelSpec(task.constraints.model)
+      if (!spec) {
+        refuse(
+          worker,
+          'account',
+          `${worker.label} cannot run model '${task.constraints.model}': model cannot be priced for ${info.label}`,
+          true
+        )
+        continue
+      }
+      if (task.constraints.effort) {
+        if (!info.capabilities.selectableEffort) {
+          refuse(
+            worker,
+            'account',
+            `${worker.label} takes no effort flag, so '${task.constraints.model}' cannot run at effort '${task.constraints.effort}'`,
+            true
+          )
+          continue
+        }
+        if (Array.isArray(spec.effort_levels) && !spec.effort_levels.includes(task.constraints.effort)) {
+          refuse(
+            worker,
+            'account',
+            `${worker.label} cannot run '${task.constraints.model}' at effort '${task.constraints.effort}'`,
+            true
+          )
+          continue
+        }
+      }
       candidateModels = [{ model: task.constraints.model, effort: task.constraints.effort ?? null }]
     } else if (task.constraints.modelsByWorker && task.constraints.modelsByWorker[worker.id]) {
+      const targetModel = task.constraints.modelsByWorker[worker.id]!
+      const spec = cm?.modelSpec(targetModel)
+      if (!spec) {
+        refuse(
+          worker,
+          'account',
+          `${worker.label} cannot run model '${targetModel}': model cannot be priced for ${info.label}`,
+          true
+        )
+        continue
+      }
       candidateModels = [{
-        model: task.constraints.modelsByWorker[worker.id]!,
+        model: targetModel,
         effort: task.constraints.effortsByWorker?.[worker.id] ?? task.constraints.effort ?? null
       }]
     } else if (task.constraints.modelPolicy === 'inherit') {

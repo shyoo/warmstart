@@ -827,12 +827,24 @@ export function Tasks({
               // model options, and the cell reads it more than once.
               const model = modelLine(task, fleet, modelOptions)
 
+              const heldWorkerId = task.constraints.workerId || task.assignee
+              const heldWorker = heldWorkerId ? fleet.find((e) => e.worker.id === heldWorkerId)?.worker : null
+              const isWorkerHeld = Boolean(
+                task.status === 'ready' &&
+                heldWorker &&
+                (heldWorker.health?.state === 'suspect' || /held out|press probe/i.test(task.holdReason ?? ''))
+              )
+
               const hasPriorActions =
                 CANCELLABLE.has(task.status) ||
                 task.status === 'paused_user' ||
                 task.status === 'cancelled' ||
+                task.status === 'paused_quota' ||
                 task.status === 'awaiting_human' ||
-                task.status === 'draft'
+                task.status === 'draft' ||
+                hasPendingSchedule(task) ||
+                (task.status === 'ready' && /% of its .* window/.test(task.holdReason ?? '')) ||
+                isWorkerHeld
 
               const taskPr = deliveryByTaskId.get(task.id)
 
@@ -1068,6 +1080,20 @@ export function Tasks({
                                 }}
                               >
                                 Run now anyway
+                              </button>
+                            )}
+                            {isWorkerHeld && heldWorker && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="action-menu-item"
+                                title={`Probe ${heldWorker.label} to clear the hold if the account is available.`}
+                                onClick={() => {
+                                  setMenuTaskId(null)
+                                  void act(() => rpc('worker.probe', { id: heldWorker.id }))
+                                }}
+                              >
+                                Probe {heldWorker.label}
                               </button>
                             )}
                             {/* ⛔ `paused_user` included. Stopping a task and judging it
