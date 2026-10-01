@@ -27,6 +27,7 @@ import { canWork, type Worker } from '@shared/protocol.js'
 import { errorMessage } from '@shared/errors.js'
 import { listWorkers } from './workers.js'
 import { adapters } from './adapters/index.js'
+import { costModel } from './costmodel.js'
 
 /**
  * Plan & Split: turning one planner's plan into the tasks that carry it out.
@@ -93,6 +94,9 @@ export const MIN_DELEGATION_PIECES = 1
 export type SplitResult =
   | { ok: true; children: Task[] }
   | { ok: false; reason: string }
+
+/** `Auto`, `AutoModel`, `Auto Model (med)`: the shorthand for a class rather than a model id. */
+const AUTO_MODEL_RE = /^auto(?:[-_\s]*model)?(?:\s*\((low|med|high)\))?$/i
 
 const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 const clean = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -173,7 +177,7 @@ export function pieceTargetLabel(piece: SplitPiece): string {
   let pieceClass = piece.modelClass
 
   if (pieceModel) {
-    const autoMatch = pieceModel.match(/^auto(?:[-_\s]*model)?(?:\s*\((low|med|high)\))?$/i)
+    const autoMatch = pieceModel.match(AUTO_MODEL_RE)
     if (autoMatch) {
       if (autoMatch[1]) pieceClass = autoMatch[1].toLowerCase() as ModelClass
       pieceModel = undefined
@@ -231,7 +235,7 @@ export function pieceResolvedConstraints(
   let pieceClass = piece.modelClass
 
   if (pieceModel) {
-    const autoMatch = pieceModel.match(/^auto(?:[-_\s]*model)?(?:\s*\((low|med|high)\))?$/i)
+    const autoMatch = pieceModel.match(AUTO_MODEL_RE)
     if (autoMatch) {
       if (autoMatch[1]) {
         pieceClass = autoMatch[1].toLowerCase() as ModelClass
@@ -257,6 +261,67 @@ export function pieceResolvedConstraints(
   }
 
   return { constraints: result, assigneeHint }
+}
+
+/** The words of a model id, vendor prefix dropped, so `sol-6` and `gpt-6-sol` read as the same words. */
+const modelWords = (id: string): string =>
+  norm(id)
+    .split(' ')
+    .filter((w) => w && w !== 'gpt')
+    .sort()
+    .join(' ')
+
+/**
+ * Why a piece's model name cannot be filed, or `null` where it can (t867).
+ *
+ * ⛔ **A model an agent typed is a claim, not an id.** t866 was filed `model: 'sol-6'` for a worker
+ * whose table lists `gpt-6-sol`; nothing checked it, the id reached `codex exec -m` verbatim, and the
+ * CLI answered *"The 'sol-6' model is not supported when using Codex with a ChatGPT account"* — a
+ * 400 that held the whole account out and left the task `ready` behind a hold that read like quota.
+ * It was not a retired model (`gpt-6-sol` last completed a run 2026-09-29): the name was never one.
+ * The same door as `checkConstraints` — the cost model can price it or it is refused — and refused
+ * *here*, where the planner is still in the turn that can fix it, with the id it probably meant.
+ *
+ * ⚠️ The adapter that will run it picks the list. With none named, a name is accepted if any
+ * adapter's cost model can price it; the child's own admission narrows it from there.
+ */
+function unknownModelReason(i: number, piece: SplitPiece, parentWorkerId: string | null): string | null {
+  const name = piece.model?.trim()
+  if (!name || AUTO_MODEL_RE.test(name)) return null
+
+  const worker = piece.worker
+    ? resolveWorkerReference(piece.worker)
+    : piece.adapter
+      ? null
+      : parentWorkerId
+        ? resolveWorkerReference(parentWorkerId)
+        : null
+  const adapterId = worker?.adapterId ?? (piece.adapter ? resolveAdapterReference(piece.adapter) : null)
+  const candidates = adapters().filter((a) => !adapterId || a.info.id === adapterId)
+  const models = candidates.map((a) => ({ info: a.info, cm: costModel(a.info.policy.costModelId) }))
+
+  const spec = models.map((m) => m.cm.modelSpec(name)).find((s) => s)
+  if (spec) {
+    const effort = piece.effort?.trim()
+    if (effort && !spec.effort_levels.includes(effort)) {
+      return `piece ${i + 1} model '${name}' has no effort level '${effort}' (it has ${spec.effort_levels.join(', ') || 'none'})`
+    }
+    return null
+  }
+
+  const ids = [...new Set(models.flatMap((m) => m.cm.modelIds()))]
+  const words = modelWords(name)
+  const near = ids.filter((id) => modelWords(id) === words)
+  const owner = adapterId ? ` for '${adapterId}'` : ''
+  return (
+    `piece ${i + 1} names model '${name}', which is not a model${owner} Warmstart can run` +
+    (near.length > 0
+      ? ` — did you mean ${near.map((id) => `'${id}'`).join(' or ')}?`
+      : ids.length > 0
+        ? `. Models it knows: ${ids.join(', ')}.`
+        : '.') +
+    " Use one of those ids exactly, or 'AutoModel (low|med|high)' to let the scheduler choose."
+  )
 }
 
 /**
@@ -319,6 +384,9 @@ export function validateSplit(
   if (pieces.length > cap) {
     return { ok: false, reason: `${pieces.length} pieces exceeds this task's fan-out cap of ${cap}` }
   }
+
+  // The account the operator pinned for the pieces, which is whose CLI an unaddressed model name is for.
+  const parentWorkerId = pieceConstraints(parent, parent.childDefaults).workerId ?? null
 
   const seen = new Set<string>()
   for (const [i, piece] of pieces.entries()) {
@@ -389,6 +457,9 @@ export function validateSplit(
     if (piece.effort !== undefined && typeof piece.effort === 'string' && piece.effort.trim().length === 0) {
       return { ok: false, reason: `piece ${i + 1} has empty effort level` }
     }
+
+    const unknownModel = unknownModelReason(i, piece, parentWorkerId)
+    if (unknownModel) return { ok: false, reason: unknownModel }
   }
 
   // ⚠️ Asserted rather than assumed. Children are cut *from* this branch, so it has to exist before

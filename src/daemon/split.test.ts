@@ -660,6 +660,43 @@ describe('delegation target routing (worker, adapter, model, effort) (t843)', ()
     expect(valid.ok).toBe(true)
   })
 
+  it('refuses a model name nothing can run, and names the id it probably meant (t867 ← t866)', () => {
+    const parent = planner()
+    workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexFirst', enabled: true })
+    workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFirst', enabled: true })
+
+    // t866's exact piece: a worker, plus a name an agent made up from "Sol 6".
+    const made = split.validateSplit(parent, [{ ...piece('p1'), worker: 'CodexFirst', model: 'sol-6', effort: 'medium' }, piece('p2')])
+    expect(made.ok).toBe(false)
+    expect(made.ok === false && made.reason).toMatch(/model 'sol-6'.*did you mean 'gpt-6-sol'\?/)
+
+    // The list belongs to the account's CLI: a Claude id on a Codex worker is not a model there.
+    const wrongCli = split.validateSplit(parent, [{ ...piece('p1'), worker: 'CodexFirst', model: 'claude-sonnet-5-5' }, piece('p2')])
+    expect(wrongCli.ok).toBe(false)
+    expect(wrongCli.ok === false && wrongCli.reason).toMatch(/Models it knows: .*gpt-6-sol/)
+
+    // With no account named, any adapter's table may answer.
+    expect(split.validateSplit(parent, [{ ...piece('p1'), model: 'gpt-6-sol' }, piece('p2')]).ok).toBe(true)
+    expect(split.validateSplit(parent, [{ ...piece('p1'), model: 'sol-6' }, piece('p2')]).ok).toBe(false)
+
+    // The real id, an effort it has, and the Auto shorthand all still pass.
+    expect(split.validateSplit(parent, [{ ...piece('p1'), worker: 'CodexFirst', model: 'gpt-6-sol', effort: 'high' }, piece('p2')]).ok).toBe(true)
+    expect(split.validateSplit(parent, [{ ...piece('p1'), worker: 'CodexFirst', model: 'AutoModel (med)' }, piece('p2')]).ok).toBe(true)
+
+    // An effort the model lacks is refused here too, rather than at the CLI.
+    const badEffort = split.validateSplit(parent, [{ ...piece('p1'), worker: 'CodexFirst', model: 'gpt-6-sol', effort: 'turbo' }, piece('p2')])
+    expect(badEffort.ok).toBe(false)
+    expect(badEffort.ok === false && badEffort.reason).toMatch(/no effort level 'turbo'/)
+  })
+
+  it('uses the pinned account to say whose model list a bare name belongs to', () => {
+    const codex = workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexFirst', enabled: true })
+    const parent = planner({ childDefaults: { workerId: codex.id } })
+    const result = split.validateSplit(parent, [{ ...piece('p1'), model: 'claude-sonnet-5-5' }, piece('p2')])
+    expect(result.ok).toBe(false)
+    expect(result.ok === false && result.reason).toMatch(/for 'openai-compatible'/)
+  })
+
   it('formats target labels on approval cards', () => {
     const parent = planner()
     const w = workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexFirst', enabled: true })
