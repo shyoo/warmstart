@@ -124,6 +124,13 @@ Claude's stream control interrupt can end the active turn with `aborted_tools` o
 boundary, the recorded quota preemption still parks the task until the window resets; the unlanded
 compaction remains visible, and the next run may resume or start fresh according to the normal
 context and cache rules.
+⛔ A *conversation's* run ends with the `/compact` turn's own `result`, before the transcript
+tailer reads the boundary back, so the park above finds the run closed. `endConversationTurn`
+therefore rests the task itself (`restForQuota`) when a quota preemption is active, and the park
+only closes the session (t849, 2026-10-01: it used to rest at *your turn* with nothing to resume
+it). A `handoff` wrap-up does the same once the agent has recorded its handoff; a destination
+reassign and a runaway preemption do not. The project's `quota.autoResume: false` turns every quota
+rest into `awaiting_human` (`landing.md`, project.json fields).
 
 ## Too full to lend, and what the clock does about it
 

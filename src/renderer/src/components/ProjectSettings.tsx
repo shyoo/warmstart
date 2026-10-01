@@ -446,6 +446,23 @@ function PolicyPanel({
           }
         />
 
+        <SettingRow
+          title="Auto-resume after quota comes back"
+          description={
+            project.config.quota?.autoResume === false
+              ? 'Off — a task that runs out of quota rests with you, and nothing restarts it when the window reopens.'
+              : 'On — a task that runs out of quota waits for the window to reopen and carries on by itself.'
+          }
+          control={
+            <SettingSwitch
+              label="Auto-resume after quota comes back"
+              on={project.config.quota?.autoResume !== false}
+              busy={busy}
+              onToggle={() => apply({ quotaAutoResume: project.config.quota?.autoResume === false })}
+            />
+          }
+        />
+
         {project.vcs === 'git' && (
           <SettingRow
             title="Default workspace"

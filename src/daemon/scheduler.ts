@@ -2529,6 +2529,27 @@ interface ActivePreemption {
 const activePreemptions = new Map<string, ActivePreemption>()
 
 /**
+ * Runs whose conversation turn ended during a quota preemption and rested the task for the quota
+ * itself (`endConversationTurn`). `preempt`'s park reads it to close the session it still owes,
+ * since it will find the run already ended.
+ */
+const turnEndedForQuota = new Set<string>()
+
+/**
+ * The quota preemption this ending turn answered, where it is one that waits out a window here.
+ *
+ * ⚠️ Not a destination reassign (`redirectHandoff` owns that), not a runaway (`quotaResumeAt` is
+ * null: no window is closing), and a `handoff` only once the agent has recorded one — before that
+ * the turn ending is the work turn finishing, with the wrap-up prompt still queued behind it.
+ */
+function quotaPreemptionAtTurnEnd(runId: string): ActivePreemption | null {
+  const active = activePreemptions.get(runId)
+  if (!active || active.quotaResumeAt === null || active.reassignWorkerId !== undefined) return null
+  if (active.action === 'handoff' && active.handoffAt === undefined) return null
+  return active
+}
+
+/**
  * The agent answered a wrap-up with `handoff`. Called by `agent.handoff`.
  *
  * ⛔ Recorded, not acted on: the handoff tool returns into a turn that is still going — the agent may
@@ -3189,6 +3210,46 @@ function redirectHandoff(
 }
 
 /**
+ * Rest a task whose account ran out of quota: at `paused_quota` until the window reopens, or — only
+ * where the project turned `quotaAutoResume` off — at `awaiting_human` for a person to resume.
+ *
+ * ⛔ **One writer for every quota rest.** A conversation's `/compact` turn ends its run before the
+ * boundary is read back, so `preempt`'s park found no open run, did nothing, and t849 (2026-10-01)
+ * sat at *your turn* after a quota preemption with nothing left to bring it back. Three places now
+ * rest a task for quota; the switch and the `not_before`-before-status ordering live here.
+ *
+ * ⚠️ `not_before` is written first and both before anything else can read the row: a `paused_quota`
+ * task with no reset time is one `resumeQuotaPaused` releases at once, back into the account that
+ * just ran dry.
+ */
+function quotaAutoResumeOn(task: Task): boolean {
+  const project = task.projectId ? getProject(task.projectId) : null
+  return project ? policyFor(project).quotaAutoResume : true
+}
+
+function restForQuota(task: Task, resumeAt: number, holdReason?: string): void {
+  if (!quotaAutoResumeOn(task)) {
+    const why = holdReason ?? 'Paused for quota.'
+    db().prepare('update tasks set not_before = null, updated_at = ? where id = ?').run(Date.now(), task.id)
+    addMessage(task.id, 'system', 'Quota window closed — waiting for you to resume', null, [], {
+      event: 'quota.parked',
+      detail:
+        `${why} This project has "auto-resume after quota comes back" turned off, so the task ` +
+        `rests with you rather than restarting by itself when the window reopens, expected ` +
+        `${new Date(resumeAt).toISOString()}. Turn it back on in Project Settings.`
+    })
+    setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
+    return
+  }
+  db().prepare('update tasks set not_before = ?, updated_at = ? where id = ?').run(resumeAt, Date.now(), task.id)
+  setStatus(
+    task.id,
+    'paused_quota',
+    holdReason ? { assignee: null, holdReason, holdUntil: resumeAt } : undefined
+  )
+}
+
+/**
  * Wrap up before the window closes.
  *
  * ⛔ The task goes to `paused_quota`, **not** cancelled: it carries `not_before = resets_at` and
@@ -3335,6 +3396,7 @@ async function preempt(
     stopWaiting()
     clearTimeout(timer)
     const handedOff = run ? activePreemptions.get(run.id)?.handoffAt !== undefined : false
+    const restedAtTurnEnd = run ? turnEndedForQuota.delete(run.id) : false
     if (run) activePreemptions.delete(run.id)
     // ⛔ A destination named when the operator chose "hand off & reassign" but gone by the time
     // the wrap-up lands (deleted, disabled) is not silently dropped: `destination` stays
@@ -3372,6 +3434,9 @@ async function preempt(
               detail: 'The run ended on its own before a compaction boundary arrived, so this compaction request remains recorded as unlanded and the session was not compacted by it.'
             })
           }
+          // The turn that ended the run already rested the task for the quota; what is still owed
+          // is the session, which stayed open to read the compaction boundary back.
+          if (restedAtTurnEnd) closeSession(session.id)
           return
         }
         if (action === 'compact' && !landed) {
@@ -3387,10 +3452,12 @@ async function preempt(
         }
         if (run) finishRun(run.id, 'preempted', because)
         if (!reassigningNow) {
-          db()
-            .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
-            .run(because === 'runaway' ? null : resumeAt, Date.now(), task.id)
-          setStatus(task.id, because === 'runaway' ? 'awaiting_human' : 'paused_quota')
+          if (because === 'runaway') {
+            db().prepare('update tasks set not_before = null, updated_at = ? where id = ?').run(Date.now(), task.id)
+            setStatus(task.id, 'awaiting_human')
+          } else {
+            restForQuota(task, resumeAt)
+          }
         }
         closeSession(session.id)
         if (run) {
@@ -4443,7 +4510,22 @@ export async function endConversationTurn(
         holdReason: `waiting on ${pending.length} delegated piece${pending.length === 1 ? '' : 's'} (${listed})`
       })
     } else {
-      setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
+      // ⛔ **A turn that a quota preemption ended is not the conversation's reply.** `/compact` (or
+      // the agent's last word after a `handoff`) answered the wrap-up, and the transcript tailer
+      // reads the boundary back *after* this result, so `preempt`'s park finds this run already
+      // closed and does nothing. The task used to rest at *your turn* with the window reopening and
+      // no timer left to bring it back (t849, 2026-10-01). Rest it for the quota here instead.
+      const preempted = quotaPreemptionAtTurnEnd(run.id)
+      if (preempted) {
+        turnEndedForQuota.add(run.id)
+        restForQuota(
+          task,
+          preempted.quotaResumeAt!,
+          'Quota preemption: this conversation was wrapped up before its account\'s window closed.'
+        )
+      } else {
+        setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
+      }
     }
   }
   // ⛔ `releaseFor`, never `releaseWorkspaceOf`. The run's own claims go back so nothing it took
@@ -4537,30 +4619,28 @@ export async function endUnfinishedRun(
         // first turn produces no metered turn and looks exactly like a lapsed account from here, and
         // benching a healthy worker over a window that will reopen on its own is the wrong answer to
         // both halves: the account is not broken, and the task has a time it can run again.
-        addMessage(task.id, 'system', `Parked on quota until ${clockTime(parkAt)}`, null, [], {
-          event: 'quota.parked',
-          detail:
-            `${interruptedForQuota !== null && quotaRefusalAt === null
-              ? `The session ended during quota preemption (${why});`
-              : `${why} That is this account's quota window, not a fault in the work;`} parked until it ` +
-            `resets, expected ${new Date(parkAt).toISOString()}, and the fleet puts this back in the ` +
-            'queue by itself then (sooner, if a reading shows the window has already come back).'
-        })
-        // ⛔ `not_before` before the status, and both before anything else can see the row: a task at
-        // `paused_quota` with no reset time is one `resumeQuotaPaused` releases immediately, straight
-        // back into the account that just refused it.
-        db()
-          .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
-          .run(parkAt, Date.now(), task.id)
-        setStatus(task.id, 'paused_quota', {
-          assignee: null,
-          // This is the vendor's refusal, not the scheduler's percentage watermark. Keep it on
-          // the held row so a later renderer does not invent an overridable reason for the park.
-          holdReason: interruptedForQuota !== null && quotaRefusalAt === null
+        // ⚠️ With the project's auto-resume off, `restForQuota` says so itself and this sentence
+        // would promise a restart nothing will make.
+        if (quotaAutoResumeOn(task)) {
+          addMessage(task.id, 'system', `Parked on quota until ${clockTime(parkAt)}`, null, [], {
+            event: 'quota.parked',
+            detail:
+              `${interruptedForQuota !== null && quotaRefusalAt === null
+                ? `The session ended during quota preemption (${why});`
+                : `${why} That is this account's quota window, not a fault in the work;`} parked until it ` +
+              `resets, expected ${new Date(parkAt).toISOString()}, and the fleet puts this back in the ` +
+              'queue by itself then (sooner, if a reading shows the window has already come back).'
+          })
+        }
+        // This is the vendor's refusal, not the scheduler's percentage watermark. The reason stays on
+        // the held row so a later renderer does not invent an overridable reason for the park.
+        restForQuota(
+          task,
+          parkAt,
+          interruptedForQuota !== null && quotaRefusalAt === null
             ? `Session ended during quota preemption: ${why}`
-            : `Vendor refused this turn: ${why}`,
-          holdUntil: parkAt
-        })
+            : `Vendor refused this turn: ${why}`
+        )
         // ⭐ The same nudge preemption sends. The poller schedules its next look from
         // `quotaParkedTasks`, and a reading taken now is what lets this come back early if the vendor
         // was quoting a limit that has since rolled over.

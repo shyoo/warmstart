@@ -502,6 +502,14 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
     if (patch.prepare !== undefined) {
       config.prepare = patch.prepare.map((c) => c.trim()).filter(Boolean)
     }
+    if (patch.quotaAutoResume !== undefined) {
+      if (typeof patch.quotaAutoResume !== 'boolean') {
+        throw new Error(`not a boolean: ${String(patch.quotaAutoResume)}`)
+      }
+      if (patch.quotaAutoResume) delete config.quota?.autoResume
+      else config.quota = { ...config.quota, autoResume: false }
+      if (config.quota && Object.keys(config.quota).length === 0) delete config.quota
+    }
     if (patch.promptOrientation !== undefined) {
       if (!['auto', 'off'].includes(patch.promptOrientation)) {
         throw new Error(`not an orientation choice: ${String(patch.promptOrientation)}`)
@@ -584,6 +592,8 @@ export interface ProjectPolicy {
   prepare: string[]
   check: string[]
   postLanding: string[]
+  /** See `ProjectConfig.quota`. */
+  quotaAutoResume: boolean
   /**
    * ⚠️ The pre-2026-08-28 project field, and only a **fallback**. The resolved finish policy
    * chooses the strategy now (`strategyFor`); this is consulted only for `custom`, where the tool is
@@ -646,6 +656,7 @@ export function policyFor(project: Project): ProjectPolicy {
     prepare: c.prepare ?? [],
     check: c.check ?? [],
     postLanding: c.postLanding ?? [],
+    quotaAutoResume: c.quota?.autoResume !== false,
     landingStrategy: c.landing?.strategy ?? DEFAULTS.landingStrategy,
     landingTarget: c.landing?.target ?? DEFAULTS.landingTarget,
     allowRules: c.permission?.allow ?? [],

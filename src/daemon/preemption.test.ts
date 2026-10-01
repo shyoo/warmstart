@@ -820,6 +820,62 @@ describe('the switches that gate all of this', () => {
     expect(tasks.requireTask(task.id).status).toBe('ready')
   })
 
+  /**
+   * ⛔ t849 (2026-10-01): a conversation preempted for quota compacted, then rested at *your turn*.
+   * `/compact` is answered with an ordinary `result`, which closes a conversation's run before the
+   * boundary is read back, so `preempt`'s park found no open run and parked nothing.
+   */
+  async function preemptedConversation(projectId: string | null = null) {
+    const { task, run, sessionId } = seedRunawayTask(0, 'claude-code')
+    db.db()
+      .prepare("update tasks set kind = 'conversation', finish_policy = 'inherit', project_id = ? where id = ?")
+      .run(projectId, task.id)
+    const reset = Date.now() + 3_600_000
+    db.db()
+      .prepare(
+        `insert into quota_samples (worker_id, window_id, label, percent, resets_at, source, sampled_at)
+         values (?,?,?,?,?,?,?)`
+      )
+      .run(run.workerId, '5h', 'Claude 5h', 96, reset, 'probe', Date.now())
+    await scheduler.tick()
+    await vi.advanceTimersByTimeAsync(scheduler.QUOTA_PREEMPT_WARNING_MS)
+    await scheduler.tick()
+    expect(wrapUpsOn(task.id)).toBe(1)
+    // The compaction's own turn ends, cleanly, before any boundary has been read back.
+    await turnend.onStreamResult(sessions.getSession(sessionId)!, {
+      isError: false,
+      text: null,
+      terminalReason: 'completed'
+    })
+    return { task, run, reset }
+  }
+
+  it('rests a conversation at paused_quota when its compaction turn ends, and brings it back (t849)', async () => {
+    const { task, reset } = await preemptedConversation()
+
+    expect(tasks.requireTask(task.id).status).toBe('paused_quota')
+    expect(tasks.requireTask(task.id).notBefore).toBe(reset)
+    // The compaction never lands here; the deadline still closes the session and changes nothing else.
+    await vi.advanceTimersByTimeAsync(310_000)
+    expect(tasks.requireTask(task.id).status).toBe('paused_quota')
+
+    db.db().prepare('update tasks set not_before = ? where id = ?').run(Date.now() - 1, task.id)
+    expect(tasks.resumeQuotaPaused()).toBe(1)
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+  })
+
+  it('leaves the conversation with its person when the project turned auto-resume off (t849)', async () => {
+    const projectId = 'p-no-auto-resume'
+    db.db()
+      .prepare('insert into projects (id, name, root, vcs, config_json, created_at) values (?,?,?,?,?,?)')
+      .run(projectId, 'quota', dir, 'none', JSON.stringify({ schema_version: 1, quota: { autoResume: false } }), Date.now())
+    const { task } = await preemptedConversation(projectId)
+
+    expect(tasks.requireTask(task.id).status).toBe('awaiting_human')
+    expect(tasks.requireTask(task.id).notBefore).toBeNull()
+    expect(tasks.resumeQuotaPaused()).toBe(0)
+  })
+
   it('warns when the weekly window reaches its gate mid-run, and parks against the weekly reset (t778)', async () => {
     // ⭐ t778: MuseFirst's 7d read 94% at dispatch, 97% eleven minutes later and 99% six after that,
     // and the run died on a failed stream with no warning — only the 5h window was ever read here.

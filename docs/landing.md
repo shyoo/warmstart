@@ -1065,6 +1065,10 @@ it to a person with the commits listed, which is the right outcome for evidence 
   the thread with the output and the landing stands: un-landing a merged, retired branch is not
   a thing the tool can do. Same runner shape as the checks (`spawnEnv` plus the project's
   `env`, thirty minutes per command). Edit them in Project → Settings, beside the checks.
+- `quota.autoResume` — default `true`, written as *no key*; only `false` is stored. Whether a task
+  that ran out of quota waits at `paused_quota` and restarts when the window reopens, or rests at
+  `awaiting_human` for a person. Project → Settings → Policy, *Auto-resume after quota comes back*.
+  Read by `restForQuota` (`scheduler.ts`), the one writer of every quota rest.
 
 ⚠️ **`landing.strategy` is the old spelling** and is still read, so an existing file keeps working:
 `auto-land` → `commit-and-push`, `leave-branch` → `await-human`, `pull-request` unchanged. Write

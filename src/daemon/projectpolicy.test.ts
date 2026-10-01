@@ -185,6 +185,23 @@ describe('post-landing commands', () => {
   })
 })
 
+describe('auto-resume after quota comes back', () => {
+  it('is on unless the project says otherwise', () => {
+    expect(projects.policyFor(makeProject()).quotaAutoResume).toBe(true)
+  })
+
+  it('writes false as a key and true as no key, and policyFor reads both back', () => {
+    const project = makeProject()
+    const off = projects.setProjectPolicy(project.id, { quotaAutoResume: false })
+    expect(configOnDisk(off).quota).toEqual({ autoResume: false })
+    expect(projects.policyFor(off).quotaAutoResume).toBe(false)
+
+    const on = projects.setProjectPolicy(project.id, { quotaAutoResume: true })
+    expect(configOnDisk(on).quota).toBeUndefined()
+    expect(projects.policyFor(on).quotaAutoResume).toBe(true)
+  })
+})
+
 /**
  * ⛔ The cached row is not the config. `projects.config_json` is a copy of a file in the *user's own
  * repo*, and everything the landing gate turns on is read out of it — so the question is not whether

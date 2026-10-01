@@ -50,6 +50,12 @@ export interface ProjectConfig {
    */
   postLanding?: string[]
   /**
+   * `autoResume: false` makes a task that ran out of quota rest at `awaiting_human` for a person,
+   * instead of at `paused_quota` where the fleet restarts it when the window reopens. ⚠️ Absent
+   * means `true`, which is what every project did before the switch existed.
+   */
+  quota?: { autoResume?: boolean }
+  /**
    * ⚠️ `strategy` is the pre-2026-08-28 spelling and is still read, so an existing project.json keeps
    * working. It is migrated to `finish` on load; write `finish` in new files.
    */
@@ -118,6 +124,8 @@ export interface ProjectPolicyPatch {
   /** See `ProjectConfig.workspaces.mode`. */
   workspaceMode?: WorkspaceMode
   prepare?: string[]
+  /** See `ProjectConfig.quota`. `true` is written as no key, like the other derived defaults. */
+  quotaAutoResume?: boolean
   /**
    * Where this project's pooled worktrees go.
    *
