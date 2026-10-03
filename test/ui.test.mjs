@@ -1074,7 +1074,16 @@ try {
   // so the conversation column is given the height a hundred-message thread has; what is being
   // measured is the scroll response, not the fixture's length.
   const peekAt = async (scrollTop) => {
-    await evaluate(`document.querySelector('.content')?.scrollTo(0, ${scrollTop})`)
+    // ⚠️ The thread pins a reader at the bottom after every render until a `scroll` event shows
+    // them leaving it, and a hidden window is not handed that event (t890, 2026-10-02: a held task's
+    // Decide card made the fixture page scrollable, so it opened pinned and `scrollTo(0)` never
+    // released it). Dispatch it by hand, as a visible window would; the peek below is still drawn
+    // from the page's own render.
+    await evaluate(`(() => {
+      const c = document.querySelector('.content')
+      c?.scrollTo(0, ${scrollTop})
+      c?.dispatchEvent(new Event('scroll'))
+    })()`)
     // ⚠️ A hidden window is not reliably handed its scroll events at all (measured 2026-09-16: a
     // synthetic `scroll` dispatched by hand drew the peek where the real `scrollTo` had not), so
     // what this waits for is the page's once-a-second render, which re-measures on its own.
