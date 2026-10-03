@@ -64,6 +64,7 @@ import {
   holdLine,
   isWorking,
   routerPicksModel,
+  routerChoosesModel,
   autoModelLabel,
   statusLabel,
   STOPPABLE,
@@ -858,7 +859,7 @@ function TaskDetail({
                 <SettingButtonSelect
                   value={
                     task.constraints.model ??
-                    (task.constraints.modelPolicy === 'auto'
+                    (routerChoosesModel(task.constraints)
                       ? task.constraints.modelClass
                         ? `__auto__:${task.constraints.modelClass}`
                         : '__auto__'
@@ -901,7 +902,7 @@ function TaskDetail({
                   displayLabel={
                     task.constraints.model && !offered.some((m) => m.id === task.constraints.model)
                       ? `Invalid model: ${modelLabel(task.constraints.model) ?? task.constraints.model}`
-                      : task.constraints.modelPolicy === 'auto'
+                      : routerChoosesModel(task.constraints)
                       ? task.constraints.modelClass
                         ? `Auto Model (${task.constraints.modelClass})`
                         : 'Auto Model'
@@ -929,7 +930,9 @@ function TaskDetail({
                     }).then(refresh)
                   }}
                 />
-              {taskEfforts.length > 0 && (
+              {/* ⛔ Not under Auto Model: the level belongs to the model the router picks, and this
+                  list is the account default's — the composer hides it for the same reason (t636). */}
+              {taskEfforts.length > 0 && !routerChoosesModel(task.constraints) && (
                 <SettingButtonSelect
                   value={task.constraints.effort ?? ''}
                   options={[

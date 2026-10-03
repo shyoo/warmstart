@@ -575,6 +575,14 @@ headline still says what the next dispatch would ask for. The old shape — a pi
 X* under it, a headline with *(Current)* and a `next` pill after it — read as one control, and the
 UI suite reads both shapes back: `cur worker` appears once a run is seeded, and never before.
 
+⛔ **The `next model` picker reads Auto from `routerChoosesModel`, not from `modelPolicy === 'auto'`
+(t896).** The composer never stores `modelPolicy: 'auto'` — Auto is an absent policy, and a tier is
+filed as `{ modelClass }` alone (`filedModelChoice`); only `'inherit'` means the account's default.
+The picker looked for `'auto'`, so a task filed as *Auto Model (high)* that ran on Opus 5.5 showed
+*Next model: Sonnet 5.5* (the account default) — a promise the router does not keep.
+`initialSelectedModel` (Reassign, Decide) follows the same rule, and the thread's Effort picker is
+hidden under Auto as the composer's is (the level belongs to the model the router picks).
+
 ⛔ **A draft's thread can delete it.** The banner's *Delete draft* asks with the same confirmation the
 Tasks row action uses and then leaves for the list, because a deleted task's thread can re-fetch
 itself into nothing but *that task is no longer here*. Filing was previously the only way out of a

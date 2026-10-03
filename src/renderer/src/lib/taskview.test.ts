@@ -40,6 +40,7 @@ import {
   pieceSettings,
   plannedAssignment,
   routeForTask,
+  routerChoosesModel,
   workerCellLabel,
   statusToneFor,
   reassignmentModel,
@@ -910,6 +911,17 @@ describe('the model under the account, in the Worker column', () => {
       }
     })
     expect(headline.text).toBe('Auto Model (high)')
+  })
+
+  it('a class tier filed without a policy is still the router’s choice, not the account default', () => {
+    // What the composer files for Auto Model (high): `filedModelChoice` never stores `'auto'`.
+    expect(routerChoosesModel({ modelClass: 'high' })).toBe(true)
+    expect(routerChoosesModel({ modelPolicy: 'auto' })).toBe(true)
+    expect(routerChoosesModel({ modelPolicy: 'auto', modelClass: 'med' })).toBe(true)
+    // A pin, an explicit inherit and an unconstrained task are not.
+    expect(routerChoosesModel({ model: 'claude-opus-5-5', modelClass: 'high' })).toBe(false)
+    expect(routerChoosesModel({ modelPolicy: 'inherit', modelClass: 'high' })).toBe(false)
+    expect(routerChoosesModel({})).toBe(false)
   })
 
   it('still names a model when the adapter options have not arrived yet', () => {

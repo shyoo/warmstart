@@ -26,6 +26,9 @@ export function initialSelectedModel(
   if (modelPolicy === 'auto') {
     return modelClass ? `__auto__:${modelClass}` : '__auto__'
   }
+  // ⛔ A class tier is filed without a policy (the composer never stores `'auto'`), and it is still
+  // Auto — not the account's default.
+  if (modelClass && modelPolicy !== 'inherit') return `__auto__:${modelClass}`
   return ''
 }
 

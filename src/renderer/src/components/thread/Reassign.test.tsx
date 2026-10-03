@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { PillOptions } from '../Pill'
-import { availableAutoClasses, pillLabels } from './Reassign'
+import { availableAutoClasses, initialSelectedModel, pillLabels } from './Reassign'
 
 const base = {
   workerId: '',
@@ -186,6 +186,17 @@ describe('worker dropdown menu selection (t763)', () => {
     // ClaudeThird must NOT be marked selected
     expect(html).toMatch(/data-value="w3"[^>]*aria-selected="false"/)
     expect(html).not.toMatch(/data-value="w3"[^>]*pill-option--on/)
+  })
+})
+
+describe('initialSelectedModel', () => {
+  it('reads a class tier filed without a policy as Auto, not the account default (t896)', () => {
+    expect(initialSelectedModel(undefined, undefined, 'high')).toBe('__auto__:high')
+    expect(initialSelectedModel(undefined, 'auto', 'med')).toBe('__auto__:med')
+    expect(initialSelectedModel(undefined, 'auto')).toBe('__auto__')
+    expect(initialSelectedModel(undefined, 'inherit', 'high')).toBe('')
+    expect(initialSelectedModel('claude-opus-5-5', undefined, 'high')).toBe('claude-opus-5-5')
+    expect(initialSelectedModel()).toBe('')
   })
 })
 

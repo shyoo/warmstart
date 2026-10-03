@@ -104,7 +104,11 @@ export function TaskDetailScreen({ id, refreshKey }: { id: string; refreshKey: n
   const nextWorker = workerLabel(nextWorkerId)
   const curModel = liveSession?.model ?? task.ranModel ?? runs[0]?.model ?? null
   const nextModel =
-    task.constraints.model ?? (task.constraints.modelPolicy === 'auto' ? 'Automatic' : 'Worker default')
+    task.constraints.model ??
+    (task.constraints.modelPolicy === 'auto' ||
+    (task.constraints.modelClass && task.constraints.modelPolicy !== 'inherit')
+      ? 'Automatic'
+      : 'Worker default')
   const spentTokens = runs.reduce(
     (sum, run) => sum + run.inputTokens + run.outputTokens + run.cacheReadTokens + run.cacheWriteTokens,
     0

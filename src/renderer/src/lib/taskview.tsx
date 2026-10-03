@@ -454,6 +454,23 @@ export function autoModelLabel(constraints: Pick<Task['constraints'], 'modelPoli
 }
 
 /**
+ * Whether a task's own constraints leave the model to the router — the answer the composer's
+ * *Auto Model (high/med/low)* files.
+ *
+ * ⛔ **The composer never stores `modelPolicy: 'auto'`** (`filedModelChoice`): Auto is what an absent
+ * policy means, and a class tier is filed as `{ modelClass }` alone. The scheduler routes that task
+ * (`chooseTarget` reads only `'inherit'` as the account's default), so a picker that looked for
+ * `'auto'` showed the account's default model beside a run the router had put on another one —
+ * *Next model: Sonnet 5.5* under *Opus 5.5* for a task filed as Auto Model (high).
+ */
+export function routerChoosesModel(
+  constraints: Pick<Task['constraints'], 'model' | 'modelPolicy' | 'modelClass'>
+): boolean {
+  if (constraints.model || constraints.modelPolicy === 'inherit') return false
+  return constraints.modelPolicy === 'auto' || Boolean(constraints.modelClass)
+}
+
+/**
  * The Tasks list's account cell: who ran it, else who it is going to, else what was filed.
  *
  * ⚠️ `assigneeLabel` answers only the first two and draws `—` for the rest; an Auto-worker task that
