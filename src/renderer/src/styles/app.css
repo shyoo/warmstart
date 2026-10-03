@@ -8852,3 +8852,29 @@ select:focus-visible,
   gap: var(--sp-2);
   max-width: 520px;
 }
+
+/* Propose upstream (t903): what would be sent, read before anything is. */
+.propose-upstream-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.propose-upstream-body label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.propose-upstream-commits {
+  margin: 0;
+  padding-left: var(--sp-4);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.propose-upstream-files {
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}
+.propose-upstream-sent {
+  display: block;
+  overflow-wrap: anywhere;
+}

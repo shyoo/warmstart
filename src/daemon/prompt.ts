@@ -1,10 +1,10 @@
-import type { Attachment, DebateVerdict, MessageEvent, Task, TaskMessage } from '@shared/tasks.js'
+import type { Attachment, DebateVerdict, MessageEvent, Project, Task, TaskMessage } from '@shared/tasks.js'
 import type { ThreadCommandId } from '@shared/commands.js'
 import { isOpenConversation, isPlanExecute, policyVerifies, resolveWorkspaceMode } from '@shared/tasks.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { describeAttachment, grantedDirsFor } from './attachments.js'
 import { adapter } from './adapters/index.js'
-import { getProject, landingTargetFor } from './projects.js'
+import { getProject, landingTargetFor, policyFor } from './projects.js'
 import { coldStartBlock } from './orientation.js'
 import { isIntegrationParent, markDelivered, messagesFor, runsFor } from './tasks.js'
 import { delegateCommandPrompt, delegationClause, delegationRefusal } from './delegation.js'
@@ -964,7 +964,7 @@ export function promptFor(
   // rewriting the target itself. `trunkArrivalNotice` says where it is; this says how to finish there.
   const inTrunk = project !== null && resolveWorkspaceMode(task, project).mode === 'trunk'
   const trunkTarget = inTrunk ? landingTargetFor(task, project) : null
-  const commitHygiene = inTrunk
+  const commitHygiene = (inTrunk
     ? reportsOnly
       ? 'This task reports on its thread and changes nothing: do not commit, and leave the trunk exactly as you found it.'
       : `You are committing directly on \`${trunkTarget}\` in the trunk. If the checkout is on another ` +
@@ -977,6 +977,7 @@ export function promptFor(
     : 'When committing, if two or more commits ahead of this task branch’s landing target all belong ' +
       'to this task, squash them into one coherent commit where safe. Do not rewrite commits already ' +
       'on the landing target, force-push, or use a destructive reset.'
+  ) + (reportsOnly ? '' : upstreamClause(project))
 
   // ⛔ **Only where there is a branch and a target to be behind**, which is `vcs: 'git'` and nothing
   // else. A non-git project is a pool of one over its own directory (`policyFor`), so there is no
@@ -1193,6 +1194,32 @@ export function promptFor(
     }
   }
   return { text: parts.join('\n\n'), attachments }
+}
+
+/**
+ * What an agent is told about the repository its project contributes to (t903).
+ *
+ * ⛔ The tool can refuse its *own* pull request on somebody else's repository; it cannot stop an
+ * agent running `gh pr create` or `git push upstream` in its shell. So the agent is told, in the
+ * same sentence as the rest of how to commit. Empty on a project that is simply the operator's own.
+ */
+export function upstreamClause(project: Project | null): string {
+  if (!project || project.vcs !== 'git') return ''
+  const policy = policyFor(project)
+  if (policy.upstreamRemote) {
+    return (
+      ` Never push to the \`${policy.upstreamRemote}\` remote or open a pull request on it yourself ` +
+      '(no `gh pr create`): it is somebody else’s repository, and a person sends work there from ' +
+      'Warmstart after seeing what goes.'
+    )
+  }
+  if (policy.pushRemote) {
+    return (
+      ' Never push to origin or open a pull request yourself (no `gh pr create`): origin is the ' +
+      'repository this project contributes to, and what reaches it is a person’s decision.'
+    )
+  }
+  return ''
 }
 
 /**

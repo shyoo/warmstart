@@ -285,7 +285,8 @@ export function NewProject({
         policy: {
           finish: draft.finish,
           landingTarget: draft.landingTarget.trim(),
-          ...(draft.pushRemote.trim() ? { pushRemote: draft.pushRemote.trim() } : {}),
+          ...(draft.pushRemote.trim() && !draft.upstreamRemote.trim() ? { pushRemote: draft.pushRemote.trim() } : {}),
+          ...(draft.upstreamRemote.trim() ? { upstreamRemote: draft.upstreamRemote.trim() } : {}),
           sessionShare: draft.sessionShare,
           completion: draft.completion,
           poolSize: draft.poolSize,
@@ -585,10 +586,10 @@ function DirectoryStep({
             />
           </div>
           <Checkbox
-            label="Fork it to my GitHub account and open pull requests from the fork"
+            label="Fork it to my GitHub account and work in the fork"
             hint={
               readiness?.forkBlocked ??
-              'Runs gh repo fork, adds your fork as the “fork” remote, and sets this project to finish as a pull request on the original. Task branches are named warmstart/t<n>, with nothing from your prompt.'
+              'Runs gh repo fork and makes your fork origin, with the original as “upstream”. Tasks land into your fork; nothing is opened on the original unless you press Propose upstream on a task. A fork of a public repository is public. Task branches are named warmstart/t<n>, with nothing from your prompt.'
             }
             checked={draft.fork && !readiness?.forkBlocked}
             disabled={busy || !awaitingClone || readiness === null || readiness.forkBlocked !== null}
@@ -626,7 +627,18 @@ function DirectoryStep({
         <p className="note">
           Cloned into <span className="mono">{cloned.root}</span>
           {cloned.defaultBranch && <> on <span className="mono">{cloned.defaultBranch}</span></>}
-          {cloned.fork && <>, forked as <span className="mono">{cloned.fork}</span> (remote <span className="mono">{cloned.pushRemote}</span>)</>}.
+          {cloned.fork && (
+            <>
+              , forked as <span className="mono">{cloned.fork}</span>
+              {cloned.upstreamRemote && (
+                <>
+                  {' '}— now <span className="mono">origin</span>, with the original as{' '}
+                  <span className="mono">{cloned.upstreamRemote}</span>
+                </>
+              )}
+            </>
+          )}
+          .
         </p>
       )}
 
@@ -852,7 +864,14 @@ function SetupStep({
               />
             }
           />
-          {repo && (
+          {repo && draft.upstreamRemote.trim() && (
+            <SettingRow
+              title="Upstream"
+              description={`Your fork is origin and the original is ${draft.upstreamRemote.trim()}. Tasks land into your fork; a pull request on the original opens only when you press Propose upstream on a task.`}
+              control={<span className="mono">{draft.upstreamRemote.trim()}</span>}
+            />
+          )}
+          {repo && !draft.upstreamRemote.trim() && (
             <SettingRow
               title="Push remote"
               description={

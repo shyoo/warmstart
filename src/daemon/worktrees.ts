@@ -555,9 +555,12 @@ export function branchNameFor(seq: number, title: string, unit = 1): string {
  * and the slug is the first forty characters of a prompt written for this operator alone — t847
  * stopped the PR title and body quoting it, and the branch name was the same leak one field over.
  * `warmstart/t<seq>` still carries the one thing every reader of a branch name needs, the task.
+ * ⚠️ And when the fork is home (`landing.upstreamRemote`, t903): origin *is* the public fork then.
  */
 export function branchTitleFor(project: Project | null | undefined, title: string): string {
-  return project && policyFor(project).pushRemote ? '' : title
+  if (!project) return title
+  const policy = policyFor(project)
+  return policy.pushRemote || policy.upstreamRemote ? '' : title
 }
 
 export interface SwitchResult {

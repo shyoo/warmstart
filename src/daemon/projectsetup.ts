@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import type {
+  ForkHomeResult,
   Project,
   ProjectCloneReadiness,
   ProjectCloneRequest,
@@ -14,9 +15,9 @@ import type {
   WorkspaceRootReport,
   WorkspaceRootState
 } from '@shared/tasks.js'
-import { PROJECT_DOC_NAMES } from '@shared/tasks.js'
+import { PROJECT_DOC_NAMES, projectFinishChoice } from '@shared/tasks.js'
 import { canonicalPath, samePath, withinPath } from './fspath.js'
-import { git, tryGit } from './git.js'
+import { git, remoteUrl, tryGit } from './git.js'
 import { launchArgs, spawnEnv, which } from './which.js'
 import * as spawn from './spawn.js'
 import { cloneSourceFor, gitHubSlug, parseGitHubRepo } from '@shared/github.js'
@@ -32,6 +33,7 @@ import {
   readProjectConfig,
   relativeWorkspaceRoot,
   reloadProject,
+  requireProject,
   setProjectChecks,
   setProjectPolicy,
   writeStarterConfig
@@ -512,8 +514,14 @@ export async function excludeLocally(project: Project, warnings: string[]): Prom
 
 // --------------------------------------------------------------------- cloning
 
-/** What the fork is called among this checkout's remotes. ⛔ origin stays the repository cloned. */
+/**
+ * What `gh repo fork` names the fork when it adds it — t897's layout, and the moment before
+ * `swapToForkHome` makes it `origin`.
+ */
 export const FORK_REMOTE = 'fork'
+
+/** What the repository a fork was made from is called once the fork is home (t903). */
+export const UPSTREAM_REMOTE = 'upstream'
 
 /**
  * Why this machine cannot fork from here, or null when it can.
@@ -563,9 +571,12 @@ export async function cloneReadiness(): Promise<ProjectCloneReadiness> {
  * exists, a fork that did not happen is a warning: the operator has a working checkout and can add
  * the remote later, which beats a clone the wizard pretends did not happen.
  *
- * ⚠️ **origin is the repository cloned, and the fork is `fork`** — the reverse of what
- * `gh repo fork --clone` does, on purpose. Landing is measured against `origin/<target>` everywhere,
- * and with origin as the upstream that measurement stays true; only the pull request's push moves.
+ * ⛔ **A fork is made home: `origin` is the fork, `upstream` the repository cloned** (t903, the
+ * operator's decision of 2026-10-03, reversing t897). t897 kept origin as the upstream so that
+ * landing measured against it — and that is exactly what made t902 open a pull request on somebody
+ * else's repository: every policy that reaches a remote reached *theirs*. With the fork as origin,
+ * every finish policy means what it means on a repository the operator owns, and the upstream is
+ * reached only by **Propose upstream…**, on a click.
  */
 export async function cloneProject(request: ProjectCloneRequest): Promise<ProjectCloneResult> {
   const source = request.source.trim()
@@ -597,15 +608,16 @@ export async function cloneProject(request: ProjectCloneRequest): Promise<Projec
   const head = await tryGit(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
   const defaultBranch = head?.replace(/^origin\//, '') || (await tryGit(root, ['branch', '--show-current'])) || null
 
-  let pushRemote: string | null = null
+  let upstreamRemote: string | null = null
   let fork: string | null = null
   if (request.fork) {
     try {
       const gh = which('gh')
       if (!gh) throw new Error('gh vanished between the check and the call')
       // ⚠️ Run inside the clone with no repository argument, so gh forks what origin points at and
-      // adds the fork under our name without renaming origin — `--remote-name origin` is what makes
-      // gh move the upstream aside, and that is exactly the layout this avoids.
+      // adds the fork under a name of ours. ⛔ Not `--remote-name origin`, although that is the
+      // layout this ends in: gh's own rename has not been measured here, and `swapToForkHome` is
+      // the same two renames `makeForkHome` does to an existing checkout.
       const call = launchArgs(gh, ['repo', 'fork', '--remote', '--remote-name', FORK_REMOTE])
       await spawn.run(call.command, call.args, {
         cwd: root,
@@ -613,28 +625,137 @@ export async function cloneProject(request: ProjectCloneRequest): Promise<Projec
         maxBuffer: 4 * 1024 * 1024,
         timeout: 180_000
       })
-      const url = await tryGit(root, ['remote', 'get-url', FORK_REMOTE])
+      const url = await remoteUrl(root, FORK_REMOTE)
       const parsed = url ? parseGitHubRepo(url) : null
       if (!parsed) throw new Error(`gh reported success but added no \`${FORK_REMOTE}\` remote on github.com`)
-      pushRemote = FORK_REMOTE
       fork = gitHubSlug(parsed)
       log.info(`forked ${source} as ${fork} (remote ${FORK_REMOTE})`)
     } catch (err) {
       warnings.push(
-        `cloned, but the fork did not happen: ${errorMessage(err)}. Pull requests will push to origin ` +
-          `until a \`${FORK_REMOTE}\` remote exists and Push remote is set in Project settings.`
+        `cloned, but the fork did not happen: ${errorMessage(err)}. origin is still ${source}, which ` +
+          'Warmstart will not push to or open a pull request on by itself.'
       )
+    }
+    if (fork) {
+      try {
+        // ⚠️ A fork GitHub has only just created can answer a fetch with nothing for a few
+        // seconds; `swapToForkHome` retries, then says so as a warning rather than failing.
+        warnings.push(...(await swapToForkHome(root, FORK_REMOTE, defaultBranch, 5)).warnings)
+        upstreamRemote = UPSTREAM_REMOTE
+      } catch (err) {
+        warnings.push(
+          `forked as ${fork}, but could not make the fork home: ${errorMessage(err)}. Use Make my fork ` +
+            'home in Project settings once this is fixed.'
+        )
+      }
     }
   }
 
   return {
     root,
     defaultBranch,
-    pushRemote,
+    upstreamRemote,
     upstream: upstream ? gitHubSlug(upstream) : null,
     fork,
     warnings
   }
+}
+
+const pause = (ms: number): Promise<void> => new Promise((done) => setTimeout(done, ms))
+
+/**
+ * Make the fork `origin` and the repository it was forked from `upstream`, in a checkout that has
+ * them the other way round (t903).
+ *
+ * ⛔ **Renames, and nothing else that could lose anything.** `git remote rename` moves the
+ * remote-tracking refs and re-points every `branch.<name>.remote` with them; no local branch, commit
+ * or worktree is touched. Then each local branch that tracked the upstream is pointed at the fork's
+ * branch of the same name when the fork has one, and said when it has not — a branch left tracking
+ * `upstream` is how a bare `git push` would send work to the wrong repository.
+ *
+ * ⚠️ Refuses before renaming anything when either side is not on github.com or `upstream` already
+ * exists, so a refusal leaves the checkout exactly as it was.
+ */
+export async function swapToForkHome(
+  root: string,
+  forkRemote: string,
+  trunk: string | null,
+  fetchAttempts = 1
+): Promise<{ fork: string; upstream: string; warnings: string[] }> {
+  const forkUrl = await remoteUrl(root, forkRemote)
+  const originUrl = await remoteUrl(root, 'origin')
+  if (!forkUrl) throw new Error(`this checkout has no \`${forkRemote}\` remote`)
+  if (!originUrl) throw new Error('this checkout has no origin remote')
+  const fork = parseGitHubRepo(forkUrl)
+  const upstream = parseGitHubRepo(originUrl)
+  if (!fork || !upstream) {
+    throw new Error(`both remotes must be on github.com (origin: ${originUrl}; ${forkRemote}: ${forkUrl})`)
+  }
+  if ((await remoteUrl(root, UPSTREAM_REMOTE)) !== null) {
+    throw new Error(`this checkout already has an \`${UPSTREAM_REMOTE}\` remote; rename or remove it first`)
+  }
+
+  await git(root, ['remote', 'rename', 'origin', UPSTREAM_REMOTE])
+  await git(root, ['remote', 'rename', forkRemote, 'origin'])
+  log.info(`${root}: origin is now the fork ${gitHubSlug(fork)}; ${UPSTREAM_REMOTE} is ${gitHubSlug(upstream)}`)
+
+  const warnings: string[] = []
+  let fetched = false
+  for (let attempt = 1; attempt <= fetchAttempts && !fetched; attempt += 1) {
+    try {
+      await git(root, ['fetch', 'origin', '--prune'])
+      fetched = true
+    } catch (err) {
+      if (attempt === fetchAttempts) {
+        warnings.push(`could not fetch your fork yet (${errorMessage(err)}); the next landing fetches it again.`)
+      } else {
+        await pause(2000)
+      }
+    }
+  }
+  if (trunk && (await tryGit(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${trunk}`]))) {
+    await tryGit(root, ['remote', 'set-head', 'origin', trunk])
+  }
+
+  const tracking =
+    (await tryGit(root, [
+      'for-each-ref',
+      '--format=%(refname:short)%09%(upstream:remotename)%09%(upstream:remoteref)',
+      'refs/heads'
+    ])) ?? ''
+  for (const line of tracking.split('\n')) {
+    const [branch, remote, ref] = line.trim().split('\t')
+    if (!branch || remote !== UPSTREAM_REMOTE || !ref) continue
+    const name = ref.replace(/^refs\/heads\//, '')
+    if (await tryGit(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${name}`])) {
+      await git(root, ['branch', `--set-upstream-to=origin/${name}`, branch])
+    } else {
+      warnings.push(`\`${branch}\` still tracks \`${UPSTREAM_REMOTE}/${name}\`: your fork has no \`${name}\` yet.`)
+    }
+  }
+  return { fork: gitHubSlug(fork), upstream: gitHubSlug(upstream), warnings }
+}
+
+/**
+ * **Make my fork home** — convert a t897-layout project, whose origin is the upstream and whose
+ * fork is `landing.pushRemote`, into the t903 layout. See `swapToForkHome`.
+ *
+ * ⚠️ `pull-request` becomes `commit-and-push`, because under the new layout a pull request would be
+ * opened on the operator's own fork. Any other finish policy is the operator's and stays.
+ */
+export async function makeForkHome(projectId: string): Promise<ForkHomeResult> {
+  const project = requireProject(projectId)
+  if (project.vcs !== 'git') throw new Error('only a git project has remotes')
+  const policy = policyFor(project)
+  if (policy.upstreamRemote) throw new Error(`the fork is already home: the upstream is \`${policy.upstreamRemote}\``)
+  const forkRemote = policy.pushRemote ?? FORK_REMOTE
+  const swapped = await swapToForkHome(project.root, forkRemote, policy.landingTarget)
+  const updated = setProjectPolicy(projectId, {
+    pushRemote: null,
+    upstreamRemote: UPSTREAM_REMOTE,
+    ...(projectFinishChoice(project) === 'pull-request' ? { finish: 'commit-and-push' as const } : {})
+  })
+  return { project: updated, ...swapped }
 }
 
 /**

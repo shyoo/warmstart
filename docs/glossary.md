@@ -551,6 +551,18 @@ a task branch carrying nothing the trunk does not already have, where only the n
 repository-wide rather than off a pooled workspace, because a branch at rest is what a finished task
 leaves and no workspace has it checked out. Listed on Overview.
 
+**Upstream** (*fork home*) — the repository a project's fork was made from, named by
+`landing.upstreamRemote` (conventionally the `upstream` remote) while **`origin` is the operator's
+fork** (t903). Everything lands into the fork; the upstream is reached only by **Propose upstream…**,
+a person's click on a preview of exactly what goes, carrying only that task's commits. ⛔ Not the
+same word as *landing target*, which is a branch; and not *origin*, which here is the fork.
+`landing.md` § *Configuring a project*.
+
+**Own / external repository** — whose a GitHub repository is, read from `gh`'s `viewerPermission`
+(`repotrust.ts`): ADMIN or MAINTAIN is **own**, anything else **external**, and a reading that
+cannot be had is **unknown** — treated as external for a pull request. ⛔ Warmstart opens no pull
+request on, and pushes no trunk to, an external repository on its own (t903).
+
 ---
 
 **Quality review** — *a second agent grading the first agent's diff against a published rubric.*

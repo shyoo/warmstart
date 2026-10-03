@@ -66,7 +66,7 @@ export interface NewProjectDraft {
   source: ProjectSource
   /** What to clone: `owner/repo`, a GitHub URL, or any `git clone` source. */
   cloneSource: string
-  /** Fork it on GitHub and open pull requests from the fork. */
+  /** Fork it on GitHub and make the fork home — `origin` — with the original as `upstream`. */
   fork: boolean
   /** Where the clone landed, once it has. ⛔ Set only by a clone that happened. */
   clonedRoot: string | null
@@ -74,6 +74,11 @@ export interface NewProjectDraft {
    * The remote a pull request pushes to, blank for origin. See `ProjectConfig.landing.pushRemote`.
    */
   pushRemote: string
+  /**
+   * The remote naming the repository a fork was made from, blank when nothing was forked. See
+   * `ProjectConfig.landing.upstreamRemote`. ⛔ Set only by a fork that happened.
+   */
+  upstreamRemote: string
   root: string
   name: string
   createDirectory: boolean
@@ -104,6 +109,7 @@ export const EMPTY_DRAFT: NewProjectDraft = {
   fork: false,
   clonedRoot: null,
   pushRemote: '',
+  upstreamRemote: '',
   root: '',
   name: '',
   createDirectory: false,
@@ -148,18 +154,23 @@ export function cloneDestination(parent: string | null, source: string): string 
  *
  * ⛔ **A repository you cloned is somebody else's until shown otherwise**, so the config is kept to
  * this checkout (`local`) whether or not it was forked: the trunk tracks their repository, and a
- * commit of Warmstart's scaffolding onto it would ride along in every pull request. ⚠️ A fork also
- * means the work arrives as pull requests, so the finish policy moves to `pull-request`; without one
- * the operator may well have push rights, and the finish is left as it was.
+ * commit of Warmstart's scaffolding onto it would ride along in every pull request.
+ *
+ * ⛔ **A fork is home, and lands like a repository the operator owns** (t903). The finish moves to
+ * `commit-and-push` — merged and pushed to the fork — and never to `pull-request`: t902's wizard set
+ * that, and the first finished task opened a pull request on the original with nobody asked. The
+ * original is reached only by **Propose upstream…**, on a click. Without a fork the finish is left
+ * as it was, and the landing refuses to push to or open a PR on a repository that is not yours.
  */
 export function applyClone(draft: NewProjectDraft, result: ProjectCloneResult): Partial<NewProjectDraft> {
   return {
     root: result.root,
     clonedRoot: result.root,
     landingTarget: result.defaultBranch ?? draft.landingTarget,
-    pushRemote: result.pushRemote ?? '',
+    pushRemote: '',
+    upstreamRemote: result.upstreamRemote ?? '',
     scaffoldingGit: 'local',
-    ...(result.pushRemote ? { finish: 'pull-request' as const } : {})
+    ...(result.upstreamRemote ? { finish: 'commit-and-push' as const } : {})
   }
 }
 
@@ -284,8 +295,14 @@ export function creationPlan(
   const docs = draft.scaffoldingGit === 'local' ? [] : draft.docs.filter((d) => d.include).map((d) => d.name)
   if (docs.length > 0) plan.push(`Write ${docs.join(', ')} into the project directory.`)
 
+  const upstreamRemote = draft.upstreamRemote.trim()
+  if (upstreamRemote && willHaveRepo(inspection, draft)) {
+    plan.push(
+      `Land into your fork (origin); open nothing on ${upstreamRemote} unless you press Propose upstream on a task. Name task branches warmstart/t<n>, with nothing from the prompt.`
+    )
+  }
   const pushRemote = draft.pushRemote.trim()
-  if (pushRemote && pushRemote !== 'origin' && willHaveRepo(inspection, draft)) {
+  if (!upstreamRemote && pushRemote && pushRemote !== 'origin' && willHaveRepo(inspection, draft)) {
     plan.push(
       `Push pull-request branches to ${pushRemote} and open them on origin; name task branches warmstart/t<n>, with nothing from the prompt.`
     )

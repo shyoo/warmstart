@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FinishPolicy, LandingResult, Project } from '@shared/tasks.js'
 import { messageBody } from './threadline.js'
 
@@ -31,6 +31,7 @@ let resources: typeof import('./resources.js')
 let deliveries: typeof import('./deliveries.js')
 let events: typeof import('./events.js')
 let worktrees: typeof import('./worktrees.js')
+let repotrust: typeof import('./repotrust.js')
 /** `landing.landQueue` and its shipped values, bound after the dynamic import. */
 let landingQueue: { waitMs: number; pollMs: number }
 let queueDefaults: { waitMs: number; pollMs: number }
@@ -89,6 +90,7 @@ beforeAll(async () => {
   deliveries = await import('./deliveries.js')
   events = await import('./events.js')
   worktrees = await import('./worktrees.js')
+  repotrust = await import('./repotrust.js')
   landingQueue = landing.landQueue
   queueDefaults = { ...landingQueue }
   db.openDb(join(dir, 'landing.db'))
@@ -414,6 +416,11 @@ describe('landing without a remote', () => {
     expect(result.reason).toContain('nothing was verified')
     expect(git(root, 'rev-parse', 'main')).toBe(before)
     expect(git(root, 'branch', '--list', branch)).toContain(branch)
+    // ⛔ t903: t902's thread read *"Landed as `undefined` onto `general`"* here. Nothing moved, so
+    // nothing may say it landed — and not under the event salvage and the push reconciler read.
+    const said = tasks.messagesFor(taskId).at(-1)!
+    expect(said.text).toBe(`Committed on \`${branch}\`; nothing verified and nothing landed`)
+    expect(said.event).toBe('landing.kept')
   })
 
   it('reports a failing check instead of calling the task done', async () => {
@@ -1646,6 +1653,16 @@ describe('pull-request landing strategy', () => {
   afterEach(() => {
     vi.restoreAllMocks()
   })
+  // ⚠️ These fixtures' origins are local bare repositories, which `gh` cannot read a permission
+  // for; each test says whose repository it is standing in for. Mine, unless it says otherwise.
+  beforeEach(() => {
+    vi.spyOn(repotrust, 'remoteTrust').mockResolvedValue({
+      slug: 'me/thing',
+      trust: 'own',
+      permission: 'ADMIN',
+      readAt: Date.now()
+    })
+  })
 
   function isGhCall(cmd: unknown, args: unknown): boolean {
     if (cmd === 'git') return false
@@ -1750,6 +1767,83 @@ describe('pull-request landing strategy', () => {
     expect(at('--head')).toBe(`me:${branch}`)
     expect(at('--base')).toBe('main')
     expect(landing.landedMessage(result, 'main', null).detail).toContain('Pushed to `fork/warmstart/t897`.')
+  })
+
+  /**
+   * ⛔ t903: t902 opened PR #116 on `Optiscaler-Client/Optiscaler-Client`, a repository its operator
+   * does not maintain, because its finish policy said `pull-request` and nothing knew whose it was.
+   */
+  it('never opens a pull request on a repository you do not maintain, and never calls gh pr create', async () => {
+    const branch = 'warmstart/t903-external'
+    const { project, task, ws } = seedRepoWithRemote(branch)
+    vi.spyOn(repotrust, 'remoteTrust').mockResolvedValue({
+      slug: 'Upstream-Org/thing',
+      trust: 'external',
+      permission: 'READ',
+      readAt: Date.now()
+    })
+    const spawn = await import('./spawn.js')
+    const ghCalls: unknown[] = []
+    const realRun = spawn.run
+    vi.spyOn(spawn, 'run').mockImplementation((async (cmd: unknown, ...rest: unknown[]) => {
+      if (isGhCall(cmd, rest[0])) {
+        ghCalls.push(rest[0])
+        return { stdout: 'https://github.com/Upstream-Org/thing/pull/1\n', stderr: '' }
+      }
+      return (realRun as (...args: unknown[]) => unknown)(cmd, ...rest)
+    }) as never)
+    const ctx = { project, task, workspacePath: ws, branch, policy: 'pull-request' as const }
+
+    const verdict = await landing.pullRequest.canLand(ctx)
+    expect(verdict.ok).toBe(false)
+    expect(verdict.reason).toMatch(/maintained by somebody else — your permission there is READ/)
+    expect(verdict.reason).toMatch(/Propose upstream/)
+    // ⛔ And the strategy itself refuses, whoever calls it without asking first.
+    const result = await landing.pullRequest.land(ctx)
+    expect(result.ok).toBe(false)
+    expect(ghCalls).toEqual([])
+    expect(deliveries.deliveriesForTask(task.id)).toEqual([])
+  })
+
+  it('treats a repository whose owner cannot be read as somebody else’s for a pull request', async () => {
+    const branch = 'warmstart/t903-unknown'
+    const { project, task, ws } = seedRepoWithRemote(branch)
+    vi.spyOn(repotrust, 'remoteTrust').mockResolvedValue({
+      slug: null,
+      trust: 'unknown',
+      permission: null,
+      readAt: Date.now(),
+      reason: 'gh is not signed in'
+    })
+    const verdict = await landing.pullRequest.canLand({ project, task, workspacePath: ws, branch, policy: 'pull-request' })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.reason).toMatch(/could not tell whose/)
+  })
+
+  it('refuses to push the trunk to a repository GitHub says is not yours, and still pushes one it cannot read', async () => {
+    const branch = 'warmstart/t903-push'
+    const { project, task, ws } = seedRepoWithRemote(branch)
+    const ctx = { project, task, workspacePath: ws, branch, policy: 'commit-and-push' as const }
+    vi.spyOn(repotrust, 'remoteTrust').mockResolvedValue({
+      slug: 'Upstream-Org/thing',
+      trust: 'external',
+      permission: 'WRITE',
+      readAt: Date.now()
+    })
+    const refused = await landing.autoLand.canLand(ctx)
+    expect(refused.ok).toBe(false)
+    expect(refused.reason).toMatch(/never pushes to a repository you do not maintain/)
+
+    // ⚠️ Not on github.com, or no gh: what commit-and-push has always done, and git refuses a push
+    // the account may not make by itself.
+    vi.spyOn(repotrust, 'remoteTrust').mockResolvedValue({
+      slug: null,
+      trust: 'unknown',
+      permission: null,
+      readAt: Date.now(),
+      reason: 'not on github.com'
+    })
+    expect(await landing.autoLand.canLand(ctx)).toEqual({ ok: true })
   })
 
   it('refuses a fork project whose push remote is missing, naming how to add it', async () => {

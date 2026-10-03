@@ -417,19 +417,65 @@ function PolicyPanel({
           description={`New task branches start from ${project.config.landing?.target ?? 'main'}; existing branches do not move.`}
         />
 
-        <TextPolicyRow
-          title="Push remote"
-          value={project.config.landing?.pushRemote ?? ''}
-          placeholder="origin"
-          disabled={busy}
-          ariaLabel="Pull request push remote"
-          onSave={(val) => apply({ pushRemote: val })}
-          description={
-            project.config.landing?.pushRemote
-              ? `Pull requests push to ${project.config.landing.pushRemote} and open on origin; task branches are named warmstart/t<n>, with nothing from the prompt.`
-              : 'Pull requests push to origin. Name a fork’s remote to push there and open the pull request on origin instead.'
-          }
-        />
+        {/* ⛔ t903: with the fork home, origin is the operator's own and the original is reached
+            only by Propose upstream on a task — so there is no push remote left to choose. */}
+        {project.config.landing?.upstreamRemote ? (
+          <SettingRow
+            title="Upstream"
+            description={`Your fork is origin and the original is ${project.config.landing.upstreamRemote}. Tasks land into your fork; a pull request on the original opens only when you press Propose upstream on a task, after you have seen what it sends.`}
+            control={<span className="mono">{project.config.landing.upstreamRemote}</span>}
+          />
+        ) : (
+          <TextPolicyRow
+            title="Push remote"
+            value={project.config.landing?.pushRemote ?? ''}
+            placeholder="origin"
+            disabled={busy}
+            ariaLabel="Pull request push remote"
+            onSave={(val) => apply({ pushRemote: val })}
+            description={
+              project.config.landing?.pushRemote
+                ? `Pull requests push to ${project.config.landing.pushRemote} and open on origin; task branches are named warmstart/t<n>, with nothing from the prompt. Warmstart opens none on a repository you do not maintain.`
+                : 'Pull requests push to origin. Name a fork’s remote to push there and open the pull request on origin instead.'
+            }
+          />
+        )}
+        {project.vcs === 'git' && !project.config.landing?.upstreamRemote && project.config.landing?.pushRemote && (
+          <SettingRow
+            title="Make my fork home"
+            description={`Rename the remotes so ${project.config.landing.pushRemote} becomes origin and today’s origin becomes upstream. Tasks then land into your fork, and the original is reached only by Propose upstream on a task. Remote renames only — no branch or commit is touched.`}
+            control={
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                onClick={() => {
+                  if (
+                    !confirm(
+                      `Make ${project.config.landing?.pushRemote ?? 'the fork'} this project’s origin, and today’s origin its upstream?`
+                    )
+                  ) {
+                    return
+                  }
+                  setBusy(true)
+                  setNote(null)
+                  void rpc('project.makeForkHome', { id: project.id })
+                    .then(async (result) => {
+                      setNote(
+                        `origin is now ${result.fork}; upstream is ${result.upstream}.` +
+                          (result.warnings.length > 0 ? ` ${result.warnings.join(' ')}` : '')
+                      )
+                      await refreshProjects()
+                    })
+                    .catch((err: unknown) => setNote(errorMessage(err)))
+                    .finally(() => setBusy(false))
+                }}
+              >
+                Make my fork home
+              </button>
+            }
+          />
+        )}
 
         {resolvedFinish.policy === 'custom' && (
           <TextPolicyRow

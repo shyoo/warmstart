@@ -239,7 +239,7 @@ describe('cloning a repository somebody else owns (t897)', () => {
   const cloned = {
     root: 'C:/dev/Optiscaler-Client',
     defaultBranch: 'main',
-    pushRemote: 'fork',
+    upstreamRemote: 'upstream',
     upstream: 'Optiscaler-Client/Optiscaler-Client',
     fork: 'me/Optiscaler-Client',
     warnings: []
@@ -255,17 +255,22 @@ describe('cloning a repository somebody else owns (t897)', () => {
     expect(stepBlockers('directory', { ...base, cloneSource: 'a/b', root: 'C:/dev/b', clonedRoot: 'C:/dev/b' }, inspection())).toEqual([])
   })
 
-  it('keeps the config to the checkout, lands on the default branch, and finishes as a pull request from a fork', () => {
+  /**
+   * ⛔ t903: a fork is home and lands into the fork — never `pull-request`, which is what t902's
+   * wizard set and what opened a pull request on somebody else's repository unasked.
+   */
+  it('keeps the config to the checkout, lands on the default branch, and pushes to a fork made home', () => {
     expect(applyClone(draft({ finish: 'inherit' }), cloned)).toEqual({
       root: cloned.root,
       clonedRoot: cloned.root,
       landingTarget: 'main',
-      pushRemote: 'fork',
+      pushRemote: '',
+      upstreamRemote: 'upstream',
       scaffoldingGit: 'local',
-      finish: 'pull-request'
+      finish: 'commit-and-push'
     })
     // ⚠️ No fork: the operator may have push rights, so the finish they chose is theirs.
-    const unforked = applyClone(draft({ finish: 'commit-and-merge' }), { ...cloned, pushRemote: null, fork: null, defaultBranch: 'dev' })
+    const unforked = applyClone(draft({ finish: 'commit-and-merge' }), { ...cloned, upstreamRemote: null, fork: null, defaultBranch: 'dev' })
     expect(unforked.finish).toBeUndefined()
     expect(unforked.landingTarget).toBe('dev')
     expect(unforked.scaffoldingGit).toBe('local')
@@ -287,5 +292,11 @@ describe('cloning a repository somebody else owns (t897)', () => {
     expect(plan.join('\n')).toContain('.git/info/exclude')
     expect(plan.join('\n')).not.toMatch(/Commit the scaffolding|Write AGENTS\.md/)
     expect(plan.join('\n')).toContain('Push pull-request branches to fork')
+  })
+
+  it('says a fork made home lands into the fork and opens nothing upstream unasked', () => {
+    const plan = creationPlan(draft({ scaffoldingGit: 'local', upstreamRemote: 'upstream' }), inspection()).join('\n')
+    expect(plan).toContain('Land into your fork (origin); open nothing on upstream unless you press Propose upstream')
+    expect(plan).not.toContain('Push pull-request branches')
   })
 })

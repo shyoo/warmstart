@@ -45,3 +45,15 @@ export async function tryGit(cwd: string, args: string[]): Promise<string | null
     return null
   }
 }
+
+/**
+ * A remote's URL **as configured** — before any `url.<base>.insteadOf` rewrite — or null when there
+ * is no such remote.
+ *
+ * ⚠️ Not `git remote get-url`, which applies `insteadOf` and so answers with wherever the bytes go
+ * rather than which repository the operator named. Whose repository a remote is (`repotrust.ts`) is
+ * a question about the name.
+ */
+export async function remoteUrl(cwd: string, remote: string): Promise<string | null> {
+  return tryGit(cwd, ['config', '--get', `remote.${remote}.url`])
+}

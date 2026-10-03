@@ -39,6 +39,7 @@ import { emit } from './events.js'
 import { beginLanding, endLanding, isTaskLanding } from './landingstate.js'
 import { pullRequestUrlIn, recordPullRequestDelivery } from './deliveries.js'
 import { requestPullRequestSummary } from './controller.js'
+import * as repotrust from './repotrust.js'
 
 // ⛔ Re-exported, not redefined: every existing caller keeps one import site and one answer.
 export { landingBaseFor }
@@ -1425,6 +1426,33 @@ async function awaitLandTurn(
   return { lock: null, queuedBehind: holder, gaveUp: 'timeout' }
 }
 
+/**
+ * Why the tool may not reach `origin`'s repository on its own, or null when it may (t903).
+ *
+ * ⛔ **A person's explicit yes before anything is opened on a repository they do not maintain.**
+ * t902's project was a clone of `Optiscaler-Client/Optiscaler-Client` with a fork beside it; its
+ * finish policy was `pull-request`, and the landing opened PR #116 on the upstream with nobody
+ * asked. The pull request is refused unless `origin` reads `own` — `unknown` included, because a
+ * pull request is the one landing whose whole purpose is to reach other people.
+ *
+ * ⚠️ A push is gated only where GitHub *says* the repository is somebody else's. Pushing the trunk
+ * of a repository this machine cannot read the permission of (not on github.com, no `gh`) is what
+ * `commit-and-push` has always done, and git refuses a push the account may not make by itself.
+ */
+async function originRefusal(ctx: LandingContext, action: 'push' | 'pull-request'): Promise<string | null> {
+  if ((await tryGit(ctx.workspacePath, ['remote', 'get-url', 'origin'])) === null) return null
+  const reading = await repotrust.remoteTrust(ctx.workspacePath, 'origin')
+  if (reading.trust === 'own') return null
+  if (action === 'push' && reading.trust === 'unknown') return null
+  return (
+    `${repotrust.describeTrust(reading)}. Warmstart never ` +
+    (action === 'push' ? 'pushes to' : 'opens a pull request on') +
+    ' a repository you do not maintain on its own. The branch is kept. To contribute it, make your ' +
+    'fork home (Project settings) and use Propose upstream… on the task: it shows exactly what ' +
+    'would be sent, and sends nothing until you click'
+  )
+}
+
 export const autoLand: LandingStrategy = {
   id: 'auto-land',
 
@@ -1440,6 +1468,8 @@ export const autoLand: LandingStrategy = {
       return { ok: false, reason: UNCOMMITTED_REASON }
     }
     if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
+    const refused = await originRefusal(ctx, 'push')
+    if (refused) return { ok: false, reason: refused }
     return { ok: true }
   },
 
@@ -1730,6 +1760,8 @@ export const pullRequest: LandingStrategy = {
           "project's landing strategy to `leave-branch`."
       }
     }
+    const refused = await originRefusal(ctx, 'pull-request')
+    if (refused) return { ok: false, reason: refused }
     return { ok: true }
   },
 
@@ -1752,6 +1784,10 @@ export const pullRequest: LandingStrategy = {
       // ⛔ **A fork moves the push and the head, never the base** (t897). `origin` is the repository
       // the work is for, so the PR is opened *on it* (`--repo`) from `<fork owner>:<branch>`; the
       // branch itself goes to the fork, which is the only remote a contributor can write to.
+      // ⛔ Again here, not only in `canLand`: this is the call that reaches other people, and the
+      // authority to make it must not depend on every caller having asked first.
+      const refused = await originRefusal(ctx, 'pull-request')
+      if (refused) return { strategy: 'pull-request', ok: false, branch: ctx.branch, reason: refused }
       const fork = await forkHead(ctx)
       const remote = fork?.remote ?? 'origin'
       try {
@@ -2251,7 +2287,11 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
         ? { headline: said.headline, detail: `${said.detail}\n\n${post.headline}\n${post.detail}` }
         : said
     } else {
-      say(said.headline, said.detail, 'landing.landed')
+      say(
+        said.headline,
+        said.detail,
+        result.strategy === 'verify-only' || result.strategy === 'leave-branch' ? 'landing.kept' : 'landing.landed'
+      )
       if (post) say(post.headline, post.detail)
     }
   }
@@ -2305,6 +2345,30 @@ export function landedMessage(
   target: string,
   behind: { seq: number } | null
 ): LandedMessage {
+  // ⛔ **A strategy that moves nothing never says it landed** (t903). t902 finished under
+  // `commit-and-verify` and its thread read *"Landed as `undefined` onto `general`"*: `verify-only`
+  // succeeds with no `commit`, and this function had one sentence for every success. ⚠️ Not
+  // starting with *Landed as* is also load-bearing — `salvageLandedCommits` parses that prefix.
+  if (result.strategy === 'verify-only' || result.strategy === 'leave-branch') {
+    const on = result.branch ? ` on \`${result.branch}\`` : ''
+    const headline =
+      result.strategy === 'leave-branch'
+        ? `Kept${on}; nothing landed`
+        : result.checksPassed === 0
+          ? `Committed${on}; nothing verified and nothing landed`
+          : `Verified${on}; nothing landed`
+    const parts: string[] = []
+    if (result.checksPassed !== undefined) {
+      parts.push(
+        result.checksPassed === 0
+          ? '⚠️ **Nothing was verified** — this project declares no check commands. Add them in ' +
+            'Project settings.'
+          : `${result.checksPassed} project check${result.checksPassed === 1 ? '' : 's'} passed on the branch as committed.`
+      )
+    }
+    parts.push(`\`${target}\` was not touched; the work stays on the branch, as this finish policy asks.`)
+    return { headline, detail: parts.join(' ') }
+  }
   if (result.strategy === 'pull-request') {
     const prPart = result.prUrl ? `: ${result.prUrl}` : ''
     const headline = `Pull request opened for \`${result.commit?.slice(0, 8)}\` into \`${target}\`${prPart}`

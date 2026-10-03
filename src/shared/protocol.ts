@@ -40,6 +40,9 @@ import type {
   ProjectCloneRequest,
   ProjectCloneResult,
   ProjectCreateResult,
+  ForkHomeResult,
+  UpstreamProposal,
+  UpstreamProposeRequest,
   ProjectDocDraft,
   ProjectInspection,
   ProjectPolicyPatch,
@@ -1933,6 +1936,11 @@ export interface RpcMap {
    * ⚠️ Fails only if nothing was cloned; a fork that did not happen is a warning. See `cloneProject`.
    */
   'project.clone': { params: ProjectCloneRequest; result: ProjectCloneResult }
+  /**
+   * **Make my fork home** (t903): a t897-layout project's fork becomes `origin` and the repository
+   * it was forked from becomes `upstream`. Remote renames only; see `makeForkHome`.
+   */
+  'project.makeForkHome': { params: { id: string }; result: ForkHomeResult }
   'project.reload': { params: { id: string }; result: Project }
   /**
    * ⛔ Refused while the project holds a task that can still dispatch, run or land
@@ -2065,6 +2073,8 @@ export interface RpcMap {
       inheritedCompletion?: ResolvedCompletionMode
       /** Where the project puts a task left on `inherit`. */
       inheritedWorkspaceMode?: WorkspaceMode
+      /** The project's `landing.upstreamRemote`, when its fork is home — what offers Propose upstream. */
+      upstreamRemote?: string | null
       inheritedAutoCompact?: ResolvedAutoCompact
       /** Whether the adapter this task would run on declares `manualCompact`. See the daemon note. */
       compactionCapable?: boolean
@@ -2592,6 +2602,17 @@ export interface RpcMap {
   }
   /** Land a branch whose task already finished. The loose-ends list and the task pane both use it. */
   'task.land': { params: { id: string }; result: { task: Task; landed: boolean; reason?: string } }
+  /**
+   * What **Propose upstream…** would send — repository, base, the task's own commits and the files
+   * they touch (t903). ⛔ Reads and fetches; sends nothing.
+   */
+  'task.upstreamPreview': { params: { id: string }; result: UpstreamProposal }
+  /**
+   * Open the pull request the person was shown, on the upstream, from the fork. ⛔ The only path that
+   * opens a pull request on a repository the operator forked from, and it refuses if the base or the
+   * commits moved since the preview. See `upstream.ts`.
+   */
+  'task.proposeUpstream': { params: UpstreamProposeRequest; result: { url: string } }
   /**
    * Hand a failed landing back to an agent to rebase and resolve.
    *

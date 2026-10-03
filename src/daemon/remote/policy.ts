@@ -43,6 +43,7 @@ export const REMOTE_METHODS = {
   'project.create': 'deny',
   'project.cloneReadiness': 'deny',
   'project.clone': 'deny',
+  'project.makeForkHome': 'deny',
   'project.reload': 'deny',
   'project.reorder': 'deny',
   'project.archive': 'deny',
@@ -136,6 +137,9 @@ export const REMOTE_METHODS = {
   'task.setWorkspaceMode': 'deny',
   'task.setObjective': 'write',
   'task.land': 'write',
+  // ⛔ Reaches somebody else's repository. A desktop click, never a phone's (t903).
+  'task.upstreamPreview': 'deny',
+  'task.proposeUpstream': 'deny',
   'task.resolveConflict': 'write',
   'task.resolveRetry': 'write',
   'task.resolveChecks': 'write',

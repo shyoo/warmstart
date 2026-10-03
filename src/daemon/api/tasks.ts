@@ -39,6 +39,7 @@ import { dismissLooseEnd, resolveFinishPolicy, scanLooseEnds } from '../finish.j
 import { withLanding } from '../landingstate.js'
 import { resolveSessionSharing } from '../sharing.js'
 import type { Api, ApiContext } from './support.js'
+import { previewUpstreamProposal, proposeUpstream } from '../upstream.js'
 import { checkConstraints, dependenciesFor } from './support.js'
 
 type TaskMethod =
@@ -47,7 +48,7 @@ type TaskMethod =
   | 'task.diffSummary' | 'task.diffFile' | 'task.commitDiff' | 'task.commitFile'
   | 'task.commitConversation' | 'task.landConversation' | 'task.setSessionSharing'
   | 'task.setCompletionMode' | 'task.setWorkspaceMode' | 'task.setAutoCompact' | 'task.setStatsExcluded' | 'task.setObjective'
-  | 'task.setModel' | 'task.setWorker' | 'task.setPriority' | 'task.land' | 'task.resolveConflict'
+  | 'task.setModel' | 'task.setWorker' | 'task.setPriority' | 'task.land' | 'task.upstreamPreview' | 'task.proposeUpstream' | 'task.resolveConflict'
   | 'task.resolveRetry' | 'task.resolveChecks' | 'task.resolveCommit' | 'task.message' | 'task.cancel'
   | 'task.resume' | 'task.overrideQuota' | 'task.resolve' | 'task.deleteCheck' | 'task.delete'
   | 'task.restore' | 'task.promote' | 'task.startNow' | 'task.addDependency' | 'task.removeDependency' | 'approval.list'
@@ -192,6 +193,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         inheritedSharing: resolveSessionSharing(null, project),
         inheritedCompletion: resolveCompletionMode(null, project, settings().completionMode),
         inheritedWorkspaceMode: resolveWorkspaceMode(null, project).mode,
+        upstreamRemote: project ? policyFor(project).upstreamRemote : null,
         inheritedAutoCompact: resolveAutoCompact(null, settings().autoCompact),
         /**
          * ⛔ **Whether compaction is a thing this task's agent can be asked for at all**, which is a
@@ -482,6 +484,8 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       })
     },
     'task.setPriority': (p) => updateTask(p.id, { priority: p.priority }),
+    'task.upstreamPreview': (p) => previewUpstreamProposal(p.id),
+    'task.proposeUpstream': (p) => proposeUpstream(p),
     'task.land': async (p) => {
       const result = await relandTask(p.id)
       return { task: requireTask(p.id), landed: result.ok, ...(result.reason ? { reason: result.reason } : {}) }

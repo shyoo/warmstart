@@ -78,6 +78,7 @@ import { stripAnsi } from '@shared/ansi'
 import { commandForEvent, commandMatches, leadingCommand, type ThreadCommand } from '@shared/commands'
 import { useAction } from '../lib/useAction'
 import { TaskSettingPicker } from './TaskSettingPicker'
+import { ProposeUpstream } from './thread/ProposeUpstream'
 import { CacheCost, Fact, ModelFact, SessionFact } from './thread/Facts'
 import { completeTitle, Decide, QuotaDecide, QuotaOverride, usePendingWork, type PendingWorkState } from './thread/Decide'
 import { AssignPills, useReassignChoice, type ReassignChoice } from './thread/Reassign'
@@ -132,6 +133,8 @@ export interface TaskDetailData {
   parent?: Task | null
   /** The pieces this task filed, for a planner. Ordered as filed, failures included. */
   children?: Task[]
+  /** The project's upstream remote when its fork is home (t903) — what offers Propose upstream. */
+  upstreamRemote?: string | null
   resolvedFinish?: ResolvedFinishPolicy
   resolvedSharing?: ResolvedSessionSharing
   inheritedFinish?: ResolvedFinishPolicy
@@ -1286,6 +1289,13 @@ function TaskDetail({
             {task.branch && (
               <Fact label="branch" className="fact--branch">
                 <span className="mono">{task.branch}</span>
+              </Fact>
+            )}
+            {/* t903: offered on every task of a project whose fork is home; the preview says when
+                there is nothing of this task's to send. */}
+            {detail.upstreamRemote && (
+              <Fact label="upstream" className="fact--upstream">
+                <ProposeUpstream task={task} upstreamRemote={detail.upstreamRemote} onDone={() => void refresh()} />
               </Fact>
             )}
             <Fact label="mandate" className="fact--mandate">

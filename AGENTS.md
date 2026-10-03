@@ -119,10 +119,10 @@ measurement behind it, in [`docs/architecture.md`](docs/architecture.md) §4. Th
   alike. Two copies drifted once and cost tokens in the one loop that spends them.
 - **Landing is measured against `origin/<target>`** by `landedRef()` in
   [`src/daemon/worktrees.ts`](src/daemon/worktrees.ts), and a landing that landed nothing must not
-  say it landed — a branch carries only what *only* it holds (`commitsOnlyOn`, t731). A clean
-  workspace is not evidence the work was done. The tool never writes a commit and never destroys
-  work on its own; what it declines to land surfaces under **Loose ends**, where **Delete it** is the
-  one exception — a branch with real commits, discarded only on an explicit, confirmed operator click.
+  say it landed — a branch carries only what *only* it holds (`commitsOnlyOn`, t731). The tool never
+  writes a commit or destroys work on its own; declined work surfaces under **Loose ends**, whose
+  **Delete it** discards real commits only on a confirmed click. ⛔ Nothing is pushed to or opened on
+  a repository you do not maintain without your click (`originRefusal`, **Propose upstream**, t903).
 - **A quality review never grades its own author, and no path writes a score that could not name its
   reviewer.** Excluded by *adapter*, not by account — one Claude grading another Claude is Claude
   grading Claude. No eligible peer means no review; there is no self-graded variant. ⛔ The score

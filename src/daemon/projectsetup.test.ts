@@ -599,7 +599,7 @@ describe('cloning a project (t897)', () => {
 
     expect(existsSync(join(root, 'Thing.csproj'))).toBe(true)
     expect(result.defaultBranch).toBe('main')
-    expect(result.pushRemote).toBeNull()
+    expect(result.upstreamRemote).toBeNull()
     expect(result.fork).toBeNull()
     expect(result.warnings).toEqual([])
     expect(execFileSync('git', ['remote'], { cwd: root, encoding: 'utf8' }).trim()).toBe('origin')

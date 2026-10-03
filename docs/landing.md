@@ -1053,8 +1053,26 @@ it to a person with the commits listed, which is the right outcome for evidence 
   project that quoted them. Under every other level the tool composes the sentence itself and says
   plainly whether to push.
 - `landing.target` — the branch to land on. Defaults to `main`.
-- `landing.pushRemote` — the remote a `pull-request` finish pushes to, when it is not `origin`
-  (t897). This is how you contribute through a fork: `origin` stays the repository the work is
+- `landing.upstreamRemote` — **the fork is home** (t903). Set by the add wizard's fork checkbox
+  and by **Make my fork home**: `origin` is your fork and this remote (`upstream`) is the
+  repository it was forked from. Every finish policy lands into the fork, exactly as on a repository
+  you own, and `landedRef` measures against `origin/<target>` — your fork's. The upstream is reached
+  only from a task's **Propose upstream…** (`upstream.ts`), on a click: the dialog shows the
+  repository, the base and every commit and file it would send; the request carries that base sha
+  and commit list, and the daemon re-reads both and refuses on any difference. ⛔ Only the task's
+  own commits are sent — cut from `upstream/<target>` and cherry-picked in a scratch worktree into
+  `warmstart/up-t<seq>` on the fork — so your fork-only commits (an `AGENTS.md`, a `HANDOFF.md`)
+  never ride along. A commit that does not apply stops it before anything is pushed. The thread
+  line is *Proposed upstream, on your click: <url>* — deliberately not *Pull request opened for*,
+  which `deliveries.ts` reconciles as this project's own. ⚠️ The wizard's fork finishes as
+  `commit-and-push`; agents are told never to push to or open a PR on `upstream` themselves
+  (`upstreamClause`, `prompt.ts`). Task branches drop the prompt slug, as under `pushRemote`.
+  **Make my fork home** (Project settings, `makeForkHome`) converts a t897 project: two `git remote
+  rename`s, a fetch, local branches that tracked the upstream re-pointed at the fork's same-named
+  branch (or named in a warning), and `pull-request` → `commit-and-push`; any other finish stays.
+  It refuses before renaming anything when either remote is off github.com or `upstream` exists.
+- `landing.pushRemote` — ⚠️ *t897's layout, superseded by `upstreamRemote`.* The remote a
+  `pull-request` finish pushes to, when it is not `origin`: `origin` stays the repository the work is
   *for*, so the trunk tracks it and every landing is still measured against `origin/<target>`. Only
   the push and the PR's head change. The branch goes to this remote, and `gh pr create --repo
   <origin's owner/repo> --head <fork owner>:<branch>` opens the PR on origin. Both slugs are read from
@@ -1066,6 +1084,33 @@ it to a person with the commits listed, which is the right outcome for evidence 
   not flown:* the `gh pr view <owner>:<branch> --repo …` fallback, used only when `gh pr create` reports
   an existing PR without a URL. `gh` 2.98's help documents `<user>:<branch>` for `create --head` but
   not for `view`. The L1 test covers the create path against a pushInsteadOf-rewritten fork.
+
+### Never on somebody else's repository unasked (t903)
+
+⛔ **Warmstart opens no pull request on a repository you do not maintain, and pushes no trunk to
+one, on its own.** t902 (2026-10-03) was a clone of `Optiscaler-Client/Optiscaler-Client` with the
+fork as `pushRemote` and `finish: pull-request`; its first finish pushed to the fork and opened
+PR #116 on the upstream with nobody asked. Whose a repository is comes from `gh repo view <slug>
+--json viewerPermission` (`repotrust.ts`), read off the remote's **configured** URL (`remoteUrl`,
+`git.ts` — `git remote get-url` applies `insteadOf`). **ADMIN or MAINTAIN is yours; anything else is
+somebody else's** — WRITE included, the operator's answer for a collaborator on another person's
+project. Measured 2026-10-03: `READ` on that upstream, `ADMIN` on `shyoo/Optiscaler-Client` and on
+`shyoo/warmstart`. A reading is cached for an hour; `unknown` is never cached.
+
+- `pull-request` (`originRefusal`, `landing.ts`): refused unless `origin` reads `own`. `unknown`
+  (no `gh`, signed out, not on github.com) is refused too — this is the one landing whose purpose is
+  to reach other people. Checked in `canLand` **and** again inside `land`, before the push.
+- `commit-and-push` (`autoLand.canLand`): refused only where GitHub *says* the repository is not
+  yours. An `unknown` origin is pushed as it always was; git refuses a push the account may not make.
+- The refusal names the permission and points at **Propose upstream…**, which is the consent.
+
+### When nothing moved, nothing says it landed
+
+`commit-and-verify` (`verify-only`) and `leave-branch` succeed without moving the target. Until
+t903 their success went through the same sentence as a merge, and t902's thread read *"Landed as
+`undefined` onto `general`"*. They now say *Verified on `<branch>`; nothing landed* (or
+*Committed … nothing verified and nothing landed*, *Kept …*) under the event `landing.kept`, never
+`landing.landed`, and never with the *Landed as* prefix `salvageLandedCommits` parses.
 - `check` — the commands every verifying level runs. ⛔ An **empty list verifies nothing**, which
   is every project on day one; the tool says so on the task rather than reporting a clean result.
   Edit them in Project → Settings, or file a task to work them out.

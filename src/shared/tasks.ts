@@ -73,8 +73,22 @@ export interface ProjectConfig {
      * this remote and the pull request is opened on origin's repository from `<fork owner>:<branch>`.
      * ⚠️ Set, the project's task branches are named `warmstart/t<seq>` with no slug, because a fork
      * is public and the slug is the first words of a private prompt. Absent means `origin`.
+     *
+     * ⚠️ t897's layout, kept so its files still work. A fork made since t903 is the other way round
+     * — see `upstreamRemote` — and **Make my fork home** converts this one into that.
      */
     pushRemote?: string
+    /**
+     * The remote naming the repository this project contributes *to*, when `origin` is the
+     * operator's own fork of it (t903). Conventionally `upstream`.
+     *
+     * ⛔ **Nothing lands there.** Every finish policy lands into `origin` — the fork — exactly as it
+     * would on a repository the operator owns, and `landedRef` measures against `origin/<target>`.
+     * A pull request onto this remote's repository is opened only by a person's click on
+     * **Propose upstream…**, carrying only that task's commits replayed onto it (`upstream.ts`).
+     * ⚠️ Set, task branches are named `warmstart/t<seq>` with no slug, as under `pushRemote`.
+     */
+    upstreamRemote?: string
   }
   session?: {
     share?: SessionSharingChoice
@@ -129,6 +143,8 @@ export interface ProjectPolicyPatch {
   landingTarget?: string
   /** See `ProjectConfig.landing.pushRemote`. Empty, null or `origin` is written as no key. */
   pushRemote?: string | null
+  /** See `ProjectConfig.landing.upstreamRemote`. Empty or null is written as no key. */
+  upstreamRemote?: string | null
   finishInstruction?: string | null
   sessionShare?: SessionSharingChoice
   completion?: CompletionModeChoice
@@ -359,8 +375,9 @@ export interface ProjectCloneRequest {
   /** Where the clone goes. Must not exist yet, or be an empty directory. */
   root: string
   /**
-   * Fork it on GitHub under the signed-in `gh` account and add the fork as the `fork` remote.
-   * ⛔ `origin` stays the repository cloned — see `ProjectConfig.landing.pushRemote`.
+   * Fork it on GitHub under the signed-in `gh` account and make the fork home: the fork becomes
+   * `origin` and the repository cloned becomes `upstream` (t903). See
+   * `ProjectConfig.landing.upstreamRemote`.
    */
   fork: boolean
 }
@@ -370,9 +387,12 @@ export interface ProjectCloneResult {
   root: string
   /** origin's default branch, or null when git could not say. */
   defaultBranch: string | null
-  /** The remote pull requests are pushed to, or null when nothing was forked. */
-  pushRemote: string | null
-  /** `owner/repo` of origin, when it is on GitHub. */
+  /**
+   * The remote that now names the repository cloned — `upstream` — or null when nothing was forked
+   * and `origin` still does.
+   */
+  upstreamRemote: string | null
+  /** `owner/repo` of the repository cloned, when it is on GitHub. */
   upstream: string | null
   /** `owner/repo` of the fork, when one was made. */
   fork: string | null
@@ -387,6 +407,78 @@ export interface ProjectCloneReadiness {
   forkBlocked: string | null
   /** The directory most existing projects live in, offered as the clone's parent. */
   suggestedParent: string | null
+}
+
+/**
+ * Whose repository a remote is, as `gh repo view --json viewerPermission` reports it (t903).
+ *
+ * ⛔ `own` is ADMIN or MAINTAIN and nothing else — the operator's answer, 2026-10-03. WRITE is a
+ * collaborator on somebody else's project and reads `external`. `unknown` (no `gh`, not on
+ * github.com, the call failed) is a verdict of its own, and every gate treats it as `external`.
+ */
+export type RepoTrust = 'own' | 'external' | 'unknown'
+
+export interface RepoTrustReading {
+  /** `owner/repo`, or null when the remote is not on github.com. */
+  slug: string | null
+  trust: RepoTrust
+  /** gh's word for it — `ADMIN`, `READ`, … — or null when it could not be read. */
+  permission: string | null
+  /** When it was read. ⚠️ Cached, so a reading carries its age. */
+  readAt: number
+  /** Why it is `unknown`. */
+  reason?: string
+}
+
+/** One commit a proposal would send, with the files it touches, so the preview shows what leaves. */
+export interface UpstreamProposalCommit {
+  sha: string
+  subject: string
+  files: string[]
+}
+
+/**
+ * Exactly what **Propose upstream…** would send, read before anything is sent (t903).
+ *
+ * ⛔ `baseSha` and the commit list are the consent: `task.proposeUpstream` re-reads both and refuses
+ * if either moved since the person looked, rather than sending something they did not see.
+ */
+export interface UpstreamProposal {
+  /** `owner/repo` the pull request would be opened on. */
+  upstream: string
+  /** The branch on it the pull request targets. */
+  base: string
+  /** `upstream/<base>` as it stood when this was read. */
+  baseSha: string
+  /** The branch on the fork that would carry the replayed commits. */
+  branch: string
+  /** gh's `--head`: `<fork owner>:<branch>`. */
+  head: string
+  /** Oldest first — the order they are replayed in. */
+  commits: UpstreamProposalCommit[]
+  /** A suggested title and body; the person may edit both. ⛔ Never the raw task prompt. */
+  title: string
+  body: string
+  trust: RepoTrustReading
+}
+
+export interface UpstreamProposeRequest {
+  id: string
+  /** From the preview the person saw. */
+  baseSha: string
+  commits: string[]
+  title: string
+  body: string
+}
+
+/** What converting a t897-layout project to fork-home did. See `makeForkHome`. */
+export interface ForkHomeResult {
+  project: Project
+  /** `owner/repo` now on `origin` and on `upstream`. */
+  fork: string
+  upstream: string
+  /** ⛔ What did not happen — a fetch, a re-pointed branch — said rather than thrown. */
+  warnings: string[]
 }
 
 export interface ProjectCreateResult {
@@ -965,6 +1057,11 @@ export type MessageEvent =
   | 'landing.started'
   /** *Landed as `sha` onto `target`* — the headline `salvageLandedCommits` reads back. */
   | 'landing.landed'
+  /**
+   * A finish policy that moves nothing finished — verified, or kept, on the branch (t903). ⛔ Never
+   * `landing.landed`: that event and its *Landed as* line mean the target moved.
+   */
+  | 'landing.kept'
   /** A later fetch proved a local-only landing has subsequently reached its remote target. */
   | 'landing.pushed-later'
   /**

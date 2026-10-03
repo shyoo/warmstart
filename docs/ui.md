@@ -126,11 +126,26 @@ to clone. That shows a repository field, a destination (`cloneDestination` deriv
 types their own) and a fork box. When `gh` is missing or not signed in, the box is disabled and
 shows `forkBlocked` as its hint. **Clone** calls `project.clone`; its button says so, and Cancel
 keeps the clone afterwards. `applyClone` then sets the landing target to the default branch,
-`scaffoldingGit` to `local` and, after a fork, `pushRemote: fork` with `finish: pull-request`. It
+`scaffoldingGit` to `local` and, after a fork, `upstreamRemote: upstream` with
+`finish: commit-and-push` — the fork is home (t903; t897 set `pushRemote: fork` with
+`finish: pull-request`, and that is what opened t902's PR upstream). Step two then shows a read-only
+**Upstream** row in place of *Push remote*, and the cloned line says the fork is now `origin`. It
 also bumps an inspection nonce, because the clone usually lands at the exact path already in the
 box. The review step's *This checkout only* hides the starter docs and sends none. The **Name** field
 sits below the Clone button, so until the clone lands it is disabled and empty (t900): the name is
 seeded from the finished clone, and an editable field under the button read as part of the same step.
+
+⛔ **The upstream is reached on a click, and only after the click has seen what goes** (t903).
+A project whose fork is home shows **Upstream** in Project settings › Policy instead of *Push
+remote*; a t897 project (a `pushRemote`, no `upstreamRemote`) gets **Make my fork home** there,
+behind a confirm, which calls `project.makeForkHome`. Every task in a fork-home project has an
+**upstream** row in its ledger with **Propose upstream…** (`thread/ProposeUpstream.tsx`). The
+dialog loads `task.upstreamPreview` and shows the repository, base and sha, the fork head, whose
+repository it is (`viewerPermission`, red when it is somebody else's) and every commit with its
+files, with an editable title and description (suggested from the commits, never the prompt). Only
+**Open pull request on …** calls `task.proposeUpstream`, with the preview's base sha and commit list.
+All three methods are `deny` remotely. ⚠️ *Not driven in the app* — L1 covers the daemon side
+against real repositories; no L3 check opens this dialog or the settings button.
 
 ⚠️ **A starter template is regenerated when what it quotes changes, and never over text somebody
 typed.** The three docs name the project, the landing target and the check list, so going Back and

@@ -25,10 +25,14 @@ to make a fork with the GitHub CLI. This requires `gh` to be installed and signe
 explains why when it is greyed out. **Clone** is the only step that writes before **Create**, and the
 clone is kept if you cancel. After a clone:
 
-- `origin` points at the original repository and the fork is the `fork` remote, so task branches
-  start from the project's latest work.
-- The landing target is the repository's default branch. With a fork, the finish policy is
-  **pull-request**: branches are pushed to `fork` and the pull request is opened on the original.
+- With a fork, **your fork is home**: it becomes `origin`, and the original becomes `upstream`.
+  Tasks land into your fork (the finish policy is set to **commit, verify, merge and push**), so the
+  fork can carry files of your own. A fork of a public repository is public.
+- ⛔ Warmstart never opens a pull request on the original by itself. To send a task's work there,
+  press **Propose upstream…** in the task's ledger: it shows the repository, the base and every
+  commit and file that would go, replays only that task's commits onto the original's branch, and
+  opens the pull request only when you press the button.
+- The landing target is the repository's default branch.
 - Warmstart's config is set to **This checkout only**. `.warmstart/` goes in `.git/info/exclude`,
   nothing is committed, no tracked file changes, and no starter docs are written. Put your own
   instructions in **Project settings › Cold start › Seeding prompt**. If the repository has a
@@ -36,7 +40,9 @@ clone is kept if you cancel. After a clone:
 - Task branches are named `warmstart/t<n>`, with no words from your prompt, because a fork is public.
 
 For an existing clone you added as a folder, choose **This checkout only** on the review step. If it
-should push to a fork, set **Push remote** in Project settings.
+should push to a fork, set **Push remote** in Project settings, then press **Make my fork home** there
+to make the fork `origin` and the original `upstream`. Warmstart refuses to push to, or open a pull
+request on, a repository you do not maintain (anything below ADMIN or MAINTAIN on GitHub).
 
 ## 3. File a task
 

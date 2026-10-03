@@ -494,6 +494,17 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
       if (remote && remote !== 'origin') config.landing.pushRemote = remote
       else delete config.landing.pushRemote
     }
+    if (patch.upstreamRemote !== undefined) {
+      const remote = patch.upstreamRemote?.trim()
+      // ⛔ Never `origin`: under this key origin is the operator's fork, and naming it as the
+      // upstream too would make every landing a contribution to somebody else's repository.
+      if (remote && (!/^[A-Za-z0-9_.-]+$/.test(remote) || remote === 'origin')) {
+        throw new Error(`not an upstream remote name: ${remote}`)
+      }
+      config.landing = { ...config.landing }
+      if (remote) config.landing.upstreamRemote = remote
+      else delete config.landing.upstreamRemote
+    }
     if (patch.finishInstruction !== undefined) {
       const instruction = patch.finishInstruction?.trim()
       config.landing = { ...config.landing }
@@ -660,6 +671,8 @@ export interface ProjectPolicy {
   landingTarget: string
   /** See `ProjectConfig.landing.pushRemote`. Null means `origin`. */
   pushRemote: string | null
+  /** See `ProjectConfig.landing.upstreamRemote`. Null means `origin` is the repository itself. */
+  upstreamRemote: string | null
   allowRules: string[]
   denyRules: string[]
   env: Record<string, string | number>
@@ -719,6 +732,10 @@ export function policyFor(project: Project): ProjectPolicy {
     landingStrategy: c.landing?.strategy ?? DEFAULTS.landingStrategy,
     landingTarget: c.landing?.target ?? DEFAULTS.landingTarget,
     pushRemote: c.landing?.pushRemote?.trim() && c.landing.pushRemote.trim() !== 'origin' ? c.landing.pushRemote.trim() : null,
+    upstreamRemote:
+      c.landing?.upstreamRemote?.trim() && c.landing.upstreamRemote.trim() !== 'origin'
+        ? c.landing.upstreamRemote.trim()
+        : null,
     allowRules: c.permission?.allow ?? [],
     denyRules: c.permission?.deny ?? [],
     env: c.env ?? {}

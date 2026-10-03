@@ -456,6 +456,13 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   happen; `mandate.allowed ⊇ 'land'` says what *may*. The mandate is inherited down a lineage so an
   agent-spawned subtask cannot grant itself more than its parent had — so nothing settable in a UI may
   touch it. A dropdown that could would be a privilege escalation with a nice label.
+- ⛔ **Somebody else's repository is reached only on a person's click** (t903). No finish policy
+  opens a pull request on, or pushes a trunk to, a repository the operator does not maintain
+  (`viewerPermission` below ADMIN/MAINTAIN, `repotrust.ts`; `originRefusal` in `landing.ts`, checked
+  in `canLand` and again in `land`). The one path that does is **Propose upstream**, and its request
+  carries the base sha and commit list the person was shown; the daemon re-reads both and refuses on
+  any difference. Measured motive: t902 opened PR #116 on `Optiscaler-Client/Optiscaler-Client`
+  unattended, 2026-10-03. [`landing.md`](landing.md) § *Never on somebody else's repository unasked*.
 - ⛔ **A sandbox is widened only by what the operator or the workspace actually needs, and a
   widening inherits the same direction a mandate does.** `adapters/grants.ts` derives the two the
   *workspace* forces — a worktree's git metadata, and whatever a link inside it points out at — and
