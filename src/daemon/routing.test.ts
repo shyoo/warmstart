@@ -2580,7 +2580,7 @@ describe('model-aware routing', () => {
   })
 
   it('treats unpriceable model constraint as a standing refusal (t868)', () => {
-    const w = workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexForStanding', enabled: true })
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeForStanding', enabled: true })
     const task = tasks.createTask({
       title: 'unpriceable model task',
       constraints: { workerId: w.id, model: 'sol-6' }
@@ -2592,7 +2592,7 @@ describe('model-aware routing', () => {
   })
 
   it('treats suspect quarantine on a pinned worker as a standing refusal (t868)', () => {
-    const w = workers.createWorker({ adapterId: 'openai-compatible', label: 'CodexSuspect', enabled: true })
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeSuspect', enabled: true })
     workers.recordDispatchFailure(w.id, 'CLI failed 400', null)
     const task = tasks.createTask({
       title: 'pinned to suspect worker',

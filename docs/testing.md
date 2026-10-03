@@ -198,6 +198,16 @@ never reaches on its own. Inject the height rather than trusting the empty state
 injected child `flex-shrink: 0`: an empty flex item shrinks back to nothing and measures a container
 that never overflowed.
 
+### A hidden window gets no `scroll` event, so a scroll-pinned page cannot be scrolled away from
+
+⛔ **`scrollTo(0, 0)` from a script moves the page but does not tell the page's own scroll listener**
+in the hidden test window, so anything that remembers *the reader is at the bottom* keeps pinning.
+The thread does (`stickToBottom`, `TaskThread.tsx`): the ledger-peek check read `scrollTop: 3540`
+after asking for 0 (t890, 2026-10-02). It had passed for weeks only because the fixture page did not
+overflow at load, so the pin was never set; a held task's Decide card (t868) added 74px and set it.
+Dispatch `new Event('scroll')` after the scroll, as `peekAt` does. A new card on a fixture thread
+can move any such check — read the failure's `scrollTop` before suspecting the product.
+
 ### A suite that never reaches your change
 
 ⛔ **`test/ui.test.mjs` never opens a project.** Every task it files has `projectId: null`, so it
