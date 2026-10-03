@@ -109,6 +109,7 @@ import {
 } from './resources.js'
 import {
   branchNameFor,
+  branchTitleFor,
   claimTrunk,
   claimWorkspace,
   surveyTrunk,
@@ -1755,7 +1756,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
       }
     }
 
-    branch = project.vcs === 'git' ? (task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)) : null
+    branch = project.vcs === 'git' ? (task.branch ?? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit)) : null
     // ⛔ The task goes through, so a split child is cut from its **plan branch** rather than the
     //    project's trunk. Without it child 2 would be branched off `main`, would not contain child 1's
     //    work, and a `depends_on` edge between them would order the runs and deliver nothing.
@@ -2254,7 +2255,7 @@ async function dispatchIntoWarmSession(
   // exact failure phase 2's switch-and-tell exists to prevent.
   const branch = trunkMode
     ? null
-    : (task.branch ?? (project && project.vcs === 'git' ? branchNameFor(task.seq, task.title, task.branchUnit) : null))
+    : (task.branch ?? (project && project.vcs === 'git' ? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit) : null))
 
   // Whose conversation this was, read **before** the switch moves the tree off their branch.
   const previousOccupant = session.currentBranch ? taskOnBranch(session.currentBranch) : null

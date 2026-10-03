@@ -44,7 +44,7 @@ import { bumpPricingEpoch, priceForRun, priceForTask, subscriptionOf } from './p
 import { emit } from './events.js'
 import { log } from './log.js'
 import { getProject } from './projects.js'
-import { branchNameFor } from './worktrees.js'
+import { branchNameFor, branchTitleFor } from './worktrees.js'
 import { consumeRunActivity, markThreadMessage } from './activity.js'
 
 /**
@@ -722,12 +722,12 @@ export function isSplitWork(task: Task): boolean {
 
 export function plannerBranchFor(project: Project, task: Task): string | null {
   if (isIntegrationParent(task)) {
-    return task.branch ?? (project.vcs === 'git' ? branchNameFor(task.seq, task.title, task.branchUnit) : null)
+    return task.branch ?? (project.vcs === 'git' ? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit) : null)
   }
   if (task.parentTaskId) {
     const parent = getTask(task.parentTaskId)
     if (isIntegrationParent(parent) && parent) {
-      return parent.branch ?? (project.vcs === 'git' ? branchNameFor(parent.seq, parent.title, parent.branchUnit) : null)
+      return parent.branch ?? (project.vcs === 'git' ? branchNameFor(parent.seq, branchTitleFor(project, parent.title), parent.branchUnit) : null)
     }
   }
   return null
@@ -795,7 +795,7 @@ export function createTask(input: CreateTaskInput): Task {
   const effectiveLandingTarget =
     input.landingTarget ??
     (parent && integratesChildren(parent)
-      ? (parent.branch ?? (project && project.vcs === 'git' ? branchNameFor(parent.seq, parent.title, parent.branchUnit) : null))
+      ? (parent.branch ?? (project && project.vcs === 'git' ? branchNameFor(parent.seq, branchTitleFor(project, parent.title), parent.branchUnit) : null))
       : null)
 
   // ⛔ **`task_split` is an MCP tool, and a plan task has no other route to file its pieces.**

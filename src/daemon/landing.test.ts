@@ -1709,6 +1709,58 @@ describe('pull-request landing strategy', () => {
     ])
   })
 
+  /**
+   * ⛔ t897: a contribution's origin is somebody else's repository. The branch has to go to the
+   * fork, and the PR has to be opened *on origin's repository* from `<fork owner>:<branch>` — a bare
+   * `--head <branch>` names a branch on the base repository, which does not exist there.
+   *
+   * ⚠️ Both remotes read as github.com (that is where the slugs come from) while the push is
+   * rewritten to a local bare repository by `pushInsteadOf`, so nothing here touches a network.
+   */
+  it('pushes to the fork and opens the pull request on origin from the fork owner', async () => {
+    const branch = 'warmstart/t897'
+    const { project, task, root, ws } = seedRepoWithRemote(branch)
+    const forkBare = join(dir, `pr-fork${seq}.git`)
+    git(dir, 'init', '--bare', forkBare)
+    git(root, 'remote', 'set-url', 'origin', 'https://github.com/Upstream-Org/thing.git')
+    git(root, 'remote', 'add', 'fork', 'https://github.com/me/thing.git')
+    git(root, 'config', `url.${forkBare}.pushInsteadOf`, 'https://github.com/me/thing.git')
+    const forked = projects.setProjectPolicy(project.id, { pushRemote: 'fork' })
+
+    const spawn = await import('./spawn.js')
+    const realRun = spawn.run
+    let ghArgs: string[] = []
+    vi.spyOn(spawn, 'run').mockImplementation((async (cmd: unknown, ...rest: unknown[]) => {
+      if (isGhCall(cmd, rest[0])) {
+        ghArgs = rest[0] as string[]
+        return { stdout: 'https://github.com/Upstream-Org/thing/pull/9\n', stderr: '' }
+      }
+      return (realRun as (...args: unknown[]) => unknown)(cmd, ...rest)
+    }) as never)
+
+    expect(await landing.pullRequest.canLand({ project: forked, task, workspacePath: ws, branch, policy: 'pull-request' }))
+      .toEqual({ ok: true })
+    const result = await landing.pullRequest.land({ project: forked, task, workspacePath: ws, branch, policy: 'pull-request' })
+
+    expect(result.ok).toBe(true)
+    expect(result.pushRemote).toBe('fork')
+    expect(git(forkBare, 'rev-parse', branch)).toBe(result.commit)
+    const at = (flag: string): string | undefined => ghArgs[ghArgs.indexOf(flag) + 1]
+    expect(at('--repo')).toBe('Upstream-Org/thing')
+    expect(at('--head')).toBe(`me:${branch}`)
+    expect(at('--base')).toBe('main')
+    expect(landing.landedMessage(result, 'main', null).detail).toContain('Pushed to `fork/warmstart/t897`.')
+  })
+
+  it('refuses a fork project whose push remote is missing, naming how to add it', async () => {
+    const branch = 'warmstart/t898'
+    const { project, task, ws } = seedRepoWithRemote(branch)
+    const forked = projects.setProjectPolicy(project.id, { pushRemote: 'fork' })
+    const verdict = await landing.pullRequest.canLand({ project: forked, task, workspacePath: ws, branch, policy: 'pull-request' })
+    expect(verdict.ok).toBe(false)
+    expect(verdict.reason).toMatch(/no remote by that name/)
+  })
+
   it('uses explicit prTitle and prBody without leaking raw task.title', async () => {
     const branch = 'warmstart/t847-explicit-pr'
     const { project, task, ws } = seedRepoWithRemote(branch)

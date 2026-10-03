@@ -124,6 +124,15 @@ describe('what a directory suggests running', () => {
     expect(proposeChecks(root)).toEqual(['npm run test', 'pytest -q'])
   })
 
+  it('proposes dotnet build only where a bare one would run', () => {
+    // ⛔ MSB1011: a bare `dotnet build` refuses a directory holding two project or solution files.
+    expect(proposeChecks(plainDir({ 'App.csproj': '<Project />' }))).toEqual(['dotnet build'])
+    expect(proposeChecks(plainDir({ 'App.csproj': '<Project />', 'App.sln': '' }))).toEqual(['dotnet build "App.sln"'])
+    const many = plainDir({ 'A.sln': '', 'B.sln': '' })
+    expect(detectStack(many)).toEqual(['dotnet'])
+    expect(proposeChecks(many)).toEqual([])
+  })
+
   it('says nothing about a directory it cannot read a manifest in', () => {
     const root = plainDir({})
     expect(detectStack(root)).toEqual([])
@@ -519,5 +528,141 @@ describe('the starter templates', () => {
     expect(agents?.content).toContain('Update [`HANDOFF.md`](HANDOFF.md) in the same commit')
     expect(handoff?.content).toContain('Nothing has been worked on through it yet')
     expect(handoff?.content).toContain('python')
+  })
+})
+
+describe('a project kept to this checkout (t897)', () => {
+  function commitAll(root: string, message: string): void {
+    execFileSync('git', ['add', '-A'], { cwd: root, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-q', '-m', message], { cwd: root, stdio: 'ignore' })
+  }
+  function head(root: string): string {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+  }
+
+  it('writes the config, excludes it through info/exclude, and commits and edits nothing tracked', async () => {
+    // ⛔ Somebody else's repository: a commit here would ride along in every pull request, and a
+    // `.gitignore` edit is a tracked change. The exclude file is the one place git keeps per-checkout.
+    const root = repoDir({ 'README.md': '# theirs\n' })
+    commitAll(root, 'upstream')
+    const before = head(root)
+    const docs = setup.proposeProjectDocs({ root, name: 'Theirs' })
+    expect(docs.length).toBeGreaterThan(0)
+
+    const result = await setup.createProject({ root, name: 'Theirs', docs, scaffoldingGit: 'local' })
+
+    expect(existsSync(join(root, '.warmstart', 'project.json'))).toBe(true)
+    expect(readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8')).toContain('.warmstart/')
+    expect(existsSync(join(root, '.gitignore'))).toBe(false)
+    expect(head(root)).toBe(before)
+    expect(result.docsWritten).toEqual([])
+    expect(existsSync(join(root, 'AGENTS.md'))).toBe(false)
+    expect(result.warnings.join('\n')).toMatch(/starter docs are not written/)
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' })).toBe('')
+  })
+
+  it('stays quiet and writes the entry once when the exclude already covers it', async () => {
+    const root = repoDir()
+    writeFileSync(join(root, '.git', 'info', 'exclude'), '# mine\n/.warmstart\n')
+    const result = await setup.createProject({ root, name: 'Covered', scaffoldingGit: 'local' })
+    expect(result.warnings).toEqual([])
+    expect(readFileSync(join(root, '.git', 'info', 'exclude'), 'utf8')).toBe('# mine\n/.warmstart\n')
+  })
+
+  it('says so when the repository already tracks a .warmstart directory', async () => {
+    const root = repoDir({ '.warmstart/project.json': '{"schema_version":1}\n' })
+    commitAll(root, 'ships a config')
+    const result = await setup.createProject({ root, name: 'Ships', scaffoldingGit: 'local' })
+    expect(result.warnings.join('\n')).toMatch(/already tracks files under \.warmstart/)
+  })
+
+  it('names the contributing guide wherever GitHub would find it', () => {
+    const root = repoDir({ '.github/CONTRIBUTING.md': 'be nice\n' })
+    expect(setup.inspectProjectDirectory({ root }).contributing).toBe('.github/CONTRIBUTING.md')
+    expect(setup.inspectProjectDirectory({ root: repoDir() }).contributing).toBeNull()
+  })
+})
+
+describe('cloning a project (t897)', () => {
+  function upstream(): string {
+    const root = repoDir({ 'Thing.csproj': '<Project />\n' })
+    execFileSync('git', ['add', '-A'], { cwd: root, stdio: 'ignore' })
+    execFileSync('git', ['commit', '-q', '-m', 'first'], { cwd: root, stdio: 'ignore' })
+    return root
+  }
+
+  it('clones into a new directory with origin as the source, and reads its default branch', async () => {
+    const source = upstream()
+    seq += 1
+    const root = join(dir, 'clones', `clone${seq}`)
+    const result = await setup.cloneProject({ source, root, fork: false })
+
+    expect(existsSync(join(root, 'Thing.csproj'))).toBe(true)
+    expect(result.defaultBranch).toBe('main')
+    expect(result.pushRemote).toBeNull()
+    expect(result.fork).toBeNull()
+    expect(result.warnings).toEqual([])
+    expect(execFileSync('git', ['remote'], { cwd: root, encoding: 'utf8' }).trim()).toBe('origin')
+    // ⚠️ The stack is read off the clone, which is why the clone comes before the wizard's setup step.
+    expect(setup.inspectProjectDirectory({ root }).proposedChecks).toEqual(['dotnet build'])
+  })
+
+  it('clones into an empty directory that already exists', async () => {
+    const source = upstream()
+    const root = plainDir()
+    const result = await setup.cloneProject({ source, root, fork: false })
+    expect(result.defaultBranch).toBe('main')
+  })
+
+  it('refuses a destination with something in it, before fetching anything', async () => {
+    const root = plainDir({ 'keep.txt': 'mine\n' })
+    await expect(setup.cloneProject({ source: upstream(), root, fork: false })).rejects.toThrow(/not empty/)
+    expect(existsSync(join(root, '.git'))).toBe(false)
+  })
+
+  it('refuses to fork a source that is not on GitHub, before cloning it', async () => {
+    seq += 1
+    const root = join(dir, 'clones', `nofork${seq}`)
+    await expect(setup.cloneProject({ source: upstream(), root, fork: true })).rejects.toThrow(/github\.com/)
+    expect(existsSync(root)).toBe(false)
+  })
+
+  it('refuses a destination that is already a project', async () => {
+    const root = plainDir()
+    projects.addProject({ root })
+    await expect(setup.cloneProject({ source: upstream(), root, fork: false })).rejects.toThrow(/already the project/)
+  })
+})
+
+describe('a project that pushes to a fork (t897)', () => {
+  it('stores the push remote, and writes origin or blank as no key', () => {
+    const root = repoDir()
+    const project = projects.addProject({ root })
+    const forked = projects.setProjectPolicy(project.id, { pushRemote: ' fork ' })
+    expect(forked.config.landing?.pushRemote).toBe('fork')
+    expect(projects.policyFor(forked).pushRemote).toBe('fork')
+
+    const origin = projects.setProjectPolicy(project.id, { pushRemote: 'origin' })
+    expect(origin.config.landing && 'pushRemote' in origin.config.landing).toBe(false)
+    expect(projects.policyFor(origin).pushRemote).toBeNull()
+    expect(() => projects.setProjectPolicy(project.id, { pushRemote: 'a b' })).toThrow(/not a remote name/)
+  })
+
+  it('names its branches warmstart/t<seq> with nothing from the prompt, and they still parse', async () => {
+    // ⛔ A fork is public; the slug is the first forty characters of a private prompt.
+    const worktrees = await import('./worktrees.js')
+    const finish = await import('./finish.js')
+    const root = repoDir()
+    const plain = projects.addProject({ root })
+    const title = 'PRIVATE: fix the thing my manager mentioned'
+    expect(worktrees.branchNameFor(7, worktrees.branchTitleFor(plain, title))).toBe('warmstart/t7-private-fix-the-thing-my-manager-mention')
+
+    const forked = projects.setProjectPolicy(plain.id, { pushRemote: 'fork' })
+    const branch = worktrees.branchNameFor(7, worktrees.branchTitleFor(forked, title))
+    expect(branch).toBe('warmstart/t7')
+    expect(worktrees.branchNameFor(7, worktrees.branchTitleFor(forked, title), 2)).toBe('warmstart/t7.2')
+    expect(finish.taskSeqFromBranch(branch)).toBe(7)
+    expect(finish.taskSeqFromBranch('warmstart/t7.2')).toBe(7)
+    expect(finish.taskSeqFromBranch('warmstart/t7x')).toBeNull()
   })
 })

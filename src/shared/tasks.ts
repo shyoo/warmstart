@@ -65,6 +65,16 @@ export interface ProjectConfig {
     finish?: FinishPolicyChoice
     /** What a `custom` finish tells the agent to do. Defaults to `DEFAULT_FINISH_INSTRUCTION`. */
     finishInstruction?: string
+    /**
+     * The remote a `pull-request` finish pushes task branches to, when it is not `origin` — a fork.
+     *
+     * ⛔ `origin` stays the repository the work is *for*: the trunk tracks it and every landing is
+     * still measured against `origin/<target>`. Only the push and the PR's head move: branches go to
+     * this remote and the pull request is opened on origin's repository from `<fork owner>:<branch>`.
+     * ⚠️ Set, the project's task branches are named `warmstart/t<seq>` with no slug, because a fork
+     * is public and the slug is the first words of a private prompt. Absent means `origin`.
+     */
+    pushRemote?: string
   }
   session?: {
     share?: SessionSharingChoice
@@ -117,6 +127,8 @@ export const ORIENTATION_LABELS: Record<OrientationChoice, string> = {
 export interface ProjectPolicyPatch {
   finish?: FinishPolicyChoice
   landingTarget?: string
+  /** See `ProjectConfig.landing.pushRemote`. Empty, null or `origin` is written as no key. */
+  pushRemote?: string | null
   finishInstruction?: string | null
   sessionShare?: SessionSharingChoice
   completion?: CompletionModeChoice
@@ -202,6 +214,8 @@ export interface ProjectInspection {
   config: ProjectConfig | null
   /** Which of the three orientation docs are already there. */
   docs: Record<ProjectDocName, boolean>
+  /** The contributing guide, relative to the root, when there is one. See `CONTRIBUTING_GUIDE_PATHS`. */
+  contributing: string | null
   /** What this project appears to be built with, in the order the detectors ran. */
   stack: string[]
   proposedChecks: string[]
@@ -270,6 +284,15 @@ export const ORIENTATION_READING_ORDER: ProjectDocName[] = [
 ]
 
 /**
+ * Where a repository keeps its contributing guide, in the order GitHub looks (t897).
+ *
+ * ⚠️ Read, never scaffolded. A project somebody else owns says how it takes contributions here, and
+ * a cold agent working on a fork of it should read that before it commits anything; the wizard
+ * writing one would be inventing another project's rules.
+ */
+export const CONTRIBUTING_GUIDE_PATHS = ['.github/CONTRIBUTING.md', 'CONTRIBUTING.md', 'docs/CONTRIBUTING.md']
+
+/**
  * A starter file, as proposed and as the operator edited it.
  *
  * ⛔ The content travels with the request. The template is generated in the daemon, shown in an
@@ -297,7 +320,7 @@ export interface ProjectDocDraft {
  * made the trunk dirty-looking work Warmstart's own doing. Absent keeps the old answer
  * (`commit`); the wizard always sends an explicit value, so nothing here is silent either way.
  */
-export type ScaffoldingGitChoice = 'commit' | 'ignore'
+export type ScaffoldingGitChoice = 'commit' | 'ignore' | 'local'
 
 export interface ProjectCreateRequest {
   root: string
@@ -309,7 +332,9 @@ export interface ProjectCreateRequest {
   /**
    * `commit` stages the scaffolding beside the starter docs; `ignore` appends
    * `.warmstart/project.json` to the root `.gitignore` and commits that instead, leaving the
-   * config untracked. Either way the trunk the wizard hands back is clean.
+   * config untracked. `local` commits nothing and edits no tracked file: `.warmstart/` goes into
+   * `.git/info/exclude`, which git never shares, and no starter doc is written — the shape for a
+   * repository somebody else owns. Every way, the trunk the wizard hands back is clean.
    */
   scaffoldingGit?: ScaffoldingGitChoice
   /** Empty or absent keeps the derived `<root>_workspaces`. */
@@ -319,6 +344,49 @@ export interface ProjectCreateRequest {
   /** ⚠️ Absent leaves whatever the repo already declared; `[]` is an operator clearing the list. */
   checks?: string[]
   docs?: ProjectDocDraft[]
+}
+
+/**
+ * Clone a repository to become a project, and optionally fork it to contribute back.
+ *
+ * ⛔ **Its own step, before the add wizard's directory is chosen,** because everything the wizard
+ * reads — stack, proposed checks, default branch — is only on disk once the clone is. The clone is
+ * the one write that happens before *Create*, and the wizard says so on the button.
+ */
+export interface ProjectCloneRequest {
+  /** `owner/repo`, a GitHub URL, or any other `git clone` source. */
+  source: string
+  /** Where the clone goes. Must not exist yet, or be an empty directory. */
+  root: string
+  /**
+   * Fork it on GitHub under the signed-in `gh` account and add the fork as the `fork` remote.
+   * ⛔ `origin` stays the repository cloned — see `ProjectConfig.landing.pushRemote`.
+   */
+  fork: boolean
+}
+
+export interface ProjectCloneResult {
+  /** Canonical, the spelling the project will be stored under. */
+  root: string
+  /** origin's default branch, or null when git could not say. */
+  defaultBranch: string | null
+  /** The remote pull requests are pushed to, or null when nothing was forked. */
+  pushRemote: string | null
+  /** `owner/repo` of origin, when it is on GitHub. */
+  upstream: string | null
+  /** `owner/repo` of the fork, when one was made. */
+  fork: string | null
+  /** ⛔ The clone happened; what did not is said here, never thrown. */
+  warnings: string[]
+}
+
+/** Whether this machine can clone and fork, said before anybody presses the button. */
+export interface ProjectCloneReadiness {
+  git: boolean
+  /** Null when `gh` can fork; otherwise the sentence saying why it cannot. */
+  forkBlocked: string | null
+  /** The directory most existing projects live in, offered as the clone's parent. */
+  suggestedParent: string | null
 }
 
 export interface ProjectCreateResult {
@@ -3040,6 +3108,8 @@ export interface LandingResult {
   base?: string
   branch?: string
   prUrl?: string
+  /** The remote a pull request's branch was pushed to, when it was not `origin` — a fork. */
+  pushRemote?: string
   /** Why it fell back or refused. Always populated when `ok` is false. */
   reason?: string
   checkOutput?: string

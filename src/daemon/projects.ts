@@ -437,6 +437,15 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
       if (!target) throw new Error('landing target cannot be empty')
       config.landing = { ...config.landing, target }
     }
+    if (patch.pushRemote !== undefined) {
+      const remote = patch.pushRemote?.trim()
+      // ⚠️ `origin` is written as no key: it is what an absent key already means, and a file that
+      // spelled it out would read as a fork that is not there.
+      if (remote && !/^[A-Za-z0-9_.-]+$/.test(remote)) throw new Error(`not a remote name: ${remote}`)
+      config.landing = { ...config.landing }
+      if (remote && remote !== 'origin') config.landing.pushRemote = remote
+      else delete config.landing.pushRemote
+    }
     if (patch.finishInstruction !== undefined) {
       const instruction = patch.finishInstruction?.trim()
       config.landing = { ...config.landing }
@@ -601,6 +610,8 @@ export interface ProjectPolicy {
    */
   landingStrategy: LandingStrategyId
   landingTarget: string
+  /** See `ProjectConfig.landing.pushRemote`. Null means `origin`. */
+  pushRemote: string | null
   allowRules: string[]
   denyRules: string[]
   env: Record<string, string | number>
@@ -659,6 +670,7 @@ export function policyFor(project: Project): ProjectPolicy {
     quotaAutoResume: c.quota?.autoResume !== false,
     landingStrategy: c.landing?.strategy ?? DEFAULTS.landingStrategy,
     landingTarget: c.landing?.target ?? DEFAULTS.landingTarget,
+    pushRemote: c.landing?.pushRemote?.trim() && c.landing.pushRemote.trim() !== 'origin' ? c.landing.pushRemote.trim() : null,
     allowRules: c.permission?.allow ?? [],
     denyRules: c.permission?.deny ?? [],
     env: c.env ?? {}

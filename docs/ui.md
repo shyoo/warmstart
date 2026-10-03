@@ -120,6 +120,16 @@ repeats the sentence rather than re-deriving it, and prints it in the footer bes
 disables. ⛔ The directory fields use `window.agentyard.pickFolders()`, the same bridge the composer's
 *Add folder* uses, and typing a path still works.
 
+⚠️ **Clone from GitHub is the one write before Create** (t897). Step one's source picker can be set
+to clone. That shows a repository field, a destination (`cloneDestination` derives it from
+`project.cloneReadiness`'s `suggestedParent`, the folder most projects share, until the operator
+types their own) and a fork box. When `gh` is missing or not signed in, the box is disabled and
+shows `forkBlocked` as its hint. **Clone** calls `project.clone`; its button says so, and Cancel
+keeps the clone afterwards. `applyClone` then sets the landing target to the default branch,
+`scaffoldingGit` to `local` and, after a fork, `pushRemote: fork` with `finish: pull-request`. It
+also bumps an inspection nonce, because the clone usually lands at the exact path already in the
+box. The review step's *This checkout only* hides the starter docs and sends none.
+
 ⚠️ **A starter template is regenerated when what it quotes changes, and never over text somebody
 typed.** The three docs name the project, the landing target and the check list, so going Back and
 changing any of them has to leave them agreeing with it — but `DocDraftState.edited` freezes a doc the
@@ -937,7 +947,7 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 | `sidebyside.ts` | `splitPatch(patch)` — a unified patch as two-column rows. ⚠️ The pairing is **positional**: a removed run and an added run are zipped top-to-top and the surplus stands alone, so a line that moved across a large edit can sit opposite an unrelated one — which is what the single-column view beside the toggle is for |
 | `notify.ts` | `notifiableTransition(before, task)` — when a task's movement is worth an OS notification. ⛔ A *transition*, never a state: first sight is always silent |
 | `menuposition.ts` | where a pill's portalled menu goes: flip above, clamp to the window, never clip |
-| `newproject.ts` | the add-project wizard's step blockers, its creation plan, and the template signature |
+| `newproject.ts` | the add-project wizard's step blockers, its creation plan, the template signature, and what a finished clone decides (`applyClone`) |
 | `prefs.ts` | saved views, fleet collapse and density, page size, **which page of the list you were reading**, and which diff layout you read patches in (localStorage) |
 | `uisettings.ts` `zoom.ts` | tray/Enter behaviour, colour theme, **keep-awake** and zoom, mirrored from main's `ui-settings.json` |
 | `pasteimages.tsx` | paste-to-attach; downscales to 1568px and uploads one image per call |

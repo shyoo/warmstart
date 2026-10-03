@@ -6,7 +6,7 @@ Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling,
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-09-28, **Windows 11**, t832): typecheck, lint and build pass; L1 **4,230 passed, 3 skipped** (246 files). L3 **497 checks** (4 skipped) is t733's, L2 **204 checks** (7 skipped) t727's and packaged app **19 checks** t723's, not re-run here. The L3 add-project wizard assertion checks the managed default and portable config introduced at t714, using the host path separator on Linux and Windows.
+Baseline (2026-10-03, **Windows 11**, t897): typecheck, lint and build pass; L1 **4,279 passed, 3 skipped** (246 files). L3 **501 checks**, 4 skipped. ⚠️ One check fails, *no ledger peek while the ledger itself is on screen* (`scrollTop` 3540). It fails the same way on unmodified `main` `b484f0d2`, so this change did not cause it; it is not yet fixed. Earlier L3 figure: 497 (t733). L2 **204 checks** (7 skipped) t727's and packaged app **19 checks** t723's, not re-run here. The L3 add-project wizard assertion checks the managed default and portable config introduced at t714, using the host path separator on Linux and Windows.
 ⚠️ The `%TEMP%` figure is t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI and the Release workflow are enabled.
 
 **`v0.3.3` is `latest`** (t682, 2026-09-24), promoted onto `v0.3.3-rc.1`'s commit `8cf5d301`.
@@ -16,6 +16,8 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 **Routing Model v1.2 preserves expiry urgency (t552); dispatches explain the pick (t691).**
 `prepaid` is field-normalized $/h to reset (same $3.68 scores 1/24 at 24h, 1 at 1h); the winner's
 `reason` names pin, comparison, or override, and a compared Auto field records `score`. `docs/routing.md` §§3.3a, 4.9.
+
+**Contributing to someone else's repo (t897).** The add wizard can **Clone from GitHub**, with an optional `gh repo fork`. In that layout `origin` is upstream and the fork is the `fork` remote. The new **This checkout only** option uses `.git/info/exclude`, so nothing is committed. `landing.pushRemote` opens fork PRs with `--repo`/`--head owner:branch`, and branches drop the prompt slug. `docs/landing.md` § *Configuring a project*.
 
 **Plan & Execute dispatches carry the full instruction (t691).** The planner's brief is what the executor receives; see below (t693) for what the operator sees before it runs.
 
@@ -144,6 +146,7 @@ Phase 3/4 (write-up, landing page, channels) remains off-repo.
 Each needs a real signed-in account, a macOS machine, release credentials, or a human product
 judgement. Do not replace the missing evidence with a unit test.
 
+0. **Fly the clone-and-fork wizard for real (t897).** Clone `Optiscaler-Client/Optiscaler-Client` into the empty `c:\Dev\Optiscaler-Client` with the fork box ticked. Confirm the `fork` remote, a `dotnet build` check, and a clean `git status`. Then land one small task and confirm the PR opens on upstream from `<you>:warmstart/t<n>`. L1 and L3 used a local clone and a `pushInsteadOf` fork; the real `gh repo fork` and the `gh pr view <owner>:<branch>` fallback were not run.
 1. **Fly a real delegation (t704).** In a conversation, send `/delegate` for a small change and check the chip, the pieces filed with no card, the `delegation.settled` wake, the agent merging the piece branch, and `land_work` refusing before that merge. Then let an agent delegate unprompted and confirm the card. Drive the Delegate pill and the `/` menu in the packaged app — `test/ui.test.mjs` opens no thread composer.
 2. **Run a real trunk task beside worktree tasks.** File a trunk task that pulls `main` and resolves a conflict while a worktree task finishes under `commit-and-merge`; confirm the worktree task sits at `landing_queued` and lands by itself when the trunk frees, and drive the Flow trunk row, composer pill and Project Settings row in the packaged app. None of the UI is covered by `test/ui.test.mjs`.
 3. **Run one more live Plan & Split, and the first live Plan & Execute.** Exercise a `merge-branch` landing while a sibling is genuinely mid-run, and an organizer resolution turn where some pieces fail. Then file the same job as a Plan & Execute with a cheaper executor: confirm the planner's card completes at the handoff, the executor lands on the project's target, and record both tasks' total run cost side by side — the one measurement t456's design rests on and does not have.

@@ -30,6 +30,7 @@ import { launchArgs, spawnEnv, which } from './which.js'
 import { log } from './log.js'
 import { git, tryGit } from './git.js'
 import { errorMessage } from '@shared/errors.js'
+import { gitHubSlug, parseGitHubRepo } from '@shared/github.js'
 import { oneLine } from './threadline.js'
 import { NO_COMMITS_HOLD, noCommitsReason } from './finish.js'
 import * as spawn from './spawn.js'
@@ -1670,6 +1671,29 @@ export async function resolvePullRequestDetails(
   }
 }
 
+/**
+ * Where a fork-based pull request comes from, or null when the project pushes to `origin`.
+ *
+ * ⛔ Both slugs are read off the remotes, never typed into config: `gh` needs `owner/repo` for the
+ * base and the fork's owner for the head, and a remote URL is the one place both already are. A
+ * remote that is not on github.com throws — guessing would open the PR somewhere nobody meant.
+ */
+async function forkHead(ctx: LandingContext): Promise<{ remote: string; owner: string; base: string } | null> {
+  const remote = policyFor(ctx.project).pushRemote
+  if (!remote) return null
+  const forkUrl = await git(ctx.workspacePath, ['remote', 'get-url', remote])
+  const baseUrl = await git(ctx.workspacePath, ['remote', 'get-url', 'origin'])
+  const fork = parseGitHubRepo(forkUrl)
+  const base = parseGitHubRepo(baseUrl)
+  if (!fork || !base) {
+    throw new Error(
+      `a pull request from \`${remote}\` needs both it and origin on github.com ` +
+        `(${remote}: ${forkUrl}; origin: ${baseUrl})`
+    )
+  }
+  return { remote, owner: fork.owner, base: gitHubSlug(base) }
+}
+
 export const pullRequest: LandingStrategy = {
   id: 'pull-request',
 
@@ -1686,6 +1710,16 @@ export const pullRequest: LandingStrategy = {
     if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
     if (!(await hasRemote(ctx.workspacePath))) {
       return { ok: false, reason: 'no origin remote, so there is nowhere to open a pull request' }
+    }
+    const pushRemote = policyFor(ctx.project).pushRemote
+    if (pushRemote && (await tryGit(ctx.workspacePath, ['remote', 'get-url', pushRemote])) === null) {
+      return {
+        ok: false,
+        reason:
+          `this project pushes pull requests to the \`${pushRemote}\` remote, and this repository has ` +
+          `no remote by that name. Add it (\`git remote add ${pushRemote} <your fork's URL>\`), or ` +
+          'clear Push remote in Project settings to push to origin.'
+      }
     }
     if (!which('gh')) {
       return {
@@ -1714,12 +1748,21 @@ export const pullRequest: LandingStrategy = {
       // tool owns. `--force-with-lease` (no expected value) still refuses if the remote moved for a
       // reason other than this task's own earlier push - the same compare-and-swap safety a plain
       // force-push does not have.
+      //
+      // ⛔ **A fork moves the push and the head, never the base** (t897). `origin` is the repository
+      // the work is for, so the PR is opened *on it* (`--repo`) from `<fork owner>:<branch>`; the
+      // branch itself goes to the fork, which is the only remote a contributor can write to.
+      const fork = await forkHead(ctx)
+      const remote = fork?.remote ?? 'origin'
       try {
-        await git(ctx.workspacePath, ['push', '--set-upstream', 'origin', ctx.branch])
+        await git(ctx.workspacePath, ['push', '--set-upstream', remote, ctx.branch])
       } catch (err) {
         if (!/rejected|non-fast-forward|fetch first/i.test(errorMessage(err))) throw err
-        await git(ctx.workspacePath, ['push', '--force-with-lease', '--set-upstream', 'origin', ctx.branch])
+        await git(ctx.workspacePath, ['push', '--force-with-lease', '--set-upstream', remote, ctx.branch])
       }
+      // ⚠️ How gh names this PR's head: the bare branch on origin, `<owner>:<branch>` from a fork.
+      const head = fork ? `${fork.owner}:${ctx.branch}` : ctx.branch
+      const repoArgs = fork ? ['--repo', fork.base] : []
 
       const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
       // ⚠️ A merge base rather than the target's tip: this strategy does not rebase, so the target
@@ -1733,10 +1776,11 @@ export const pullRequest: LandingStrategy = {
       const call = launchArgs(resolved, [
         'pr',
         'create',
+        ...repoArgs,
         '--base',
         landingTargetFor(ctx.task, ctx.project),
         '--head',
-        ctx.branch,
+        head,
         '--title',
         title,
         '--body',
@@ -1765,7 +1809,8 @@ export const pullRequest: LandingStrategy = {
               const viewCall = launchArgs(resolved, [
                 'pr',
                 'view',
-                ctx.branch,
+                head,
+                ...repoArgs,
                 '--json',
                 'url',
                 '--jq',
@@ -1792,7 +1837,7 @@ export const pullRequest: LandingStrategy = {
       // allowed to finish; the zero-token reconciler owns the days between opening and merge.
       if (!prUrl) {
         const viewCall = launchArgs(resolved, [
-          'pr', 'view', ctx.branch, '--json', 'url', '--jq', '.url'
+          'pr', 'view', head, ...repoArgs, '--json', 'url', '--jq', '.url'
         ])
         const { stdout: viewOut } = await spawn.run(viewCall.command, viewCall.args, {
           cwd: ctx.workspacePath,
@@ -1819,7 +1864,8 @@ export const pullRequest: LandingStrategy = {
         ...(baseSha ? { base: baseSha } : {}),
         branch: ctx.branch,
         pushed: true,
-        ...(prUrl ? { prUrl } : {})
+        ...(prUrl ? { prUrl } : {}),
+        ...(fork ? { pushRemote: fork.remote } : {})
       }
     } catch (err) {
       // ⚠️ The branch is pushed by now in most failure paths, which is deliberate. Say so, rather
@@ -2269,7 +2315,7 @@ export function landedMessage(
     }
 
     if (result.branch) {
-      parts.push(`Pushed to \`origin/${result.branch}\`.`)
+      parts.push(`Pushed to \`${result.pushRemote ?? 'origin'}/${result.branch}\`.`)
     }
 
     if (result.prUrl && !headline.includes(result.prUrl)) {

@@ -41,6 +41,8 @@ export const REMOTE_METHODS = {
   'project.workspaceRoot': 'deny',
   'project.docTemplates': 'deny',
   'project.create': 'deny',
+  'project.cloneReadiness': 'deny',
+  'project.clone': 'deny',
   'project.reload': 'deny',
   'project.reorder': 'deny',
   'project.archive': 'deny',

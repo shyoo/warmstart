@@ -118,6 +118,24 @@ const DETECTORS: Detector[] = [
     }
   },
   {
+    id: 'dotnet',
+    detect: (root) => {
+      let entries: string[]
+      try {
+        entries = readdirSync(root).filter((name) => /\.(slnx?|csproj|fsproj|vbproj)$/i.test(name))
+      } catch {
+        return null
+      }
+      if (entries.length === 0) return null
+      // ⛔ A bare `dotnet build` refuses a directory holding more than one project or solution file
+      // (MSB1011), so it is proposed only where it would run; otherwise the one solution is named,
+      // and with several solutions nothing is proposed rather than a check that fails every landing.
+      if (entries.length === 1) return ['dotnet build']
+      const solutions = entries.filter((name) => /\.slnx?$/i.test(name))
+      return solutions.length === 1 ? [`dotnet build "${solutions[0]}"`] : []
+    }
+  },
+  {
     id: 'make',
     detect: (root) => {
       const makefile = read(root, 'Makefile') ?? read(root, 'makefile')

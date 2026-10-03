@@ -44,6 +44,8 @@ let projectRoot = null
 // ⚠️ A second real directory: the add-project wizard is driven end to end against one, and it writes
 // a committed config and three starter files into whatever it is pointed at. Cleaned up beside the rest.
 let wizardRoot = null
+// ⚠️ Where the clone wizard's clone goes (t897). Cleaned up beside the rest.
+let cloneParent = null
 // ⚠️ Runs in about two minutes on this machine; ten is the ceiling, not the expectation.
 const budget = startDeadline(10 * 60 * 1000, 'ui', () => killTree(app?.pid, 'electron'))
 let socket = null
@@ -4547,6 +4549,78 @@ try {
     await evaluate(`document.querySelector('.nav-item--active')?.innerText.trim() ?? '(none)'`)
   )
 
+  section('cloning a repository somebody else owns')
+  // ⛔ t897: the clone is the one write before Create, and the project it makes must leave the
+  // repository exactly as cloned — no scaffolding commit, no tracked file, a clean status. The
+  // source is a repository with no Warmstart config of its own (one that shipped `.warmstart/` would
+  // rightly hold the wizard open on a warning), cloned by path, so nothing here reaches a network.
+  cloneParent = mkdtempSync(join(tmpdir(), 'agentyard-ui-clone-'))
+  const cloneSource = join(cloneParent, 'upstream')
+  mkdirSync(cloneSource)
+  execFileSync('git', ['init', '--initial-branch=main'], { cwd: cloneSource, stdio: 'ignore' })
+  execFileSync('git', ['config', 'user.email', 'test@example.invalid'], { cwd: cloneSource, stdio: 'ignore' })
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: cloneSource, stdio: 'ignore' })
+  writeFileSync(join(cloneSource, 'README.md'), '# upstream\n')
+  execFileSync('git', ['add', '-A'], { cwd: cloneSource, stdio: 'ignore' })
+  execFileSync('git', ['commit', '-m', 'upstream'], { cwd: cloneSource, stdio: 'ignore' })
+  const cloneRoot = join(cloneParent, 'cloned')
+  const setField = (selector, value) => evaluate(`(() => {
+    const input = document.querySelector(${JSON.stringify(selector)});
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(input, ${JSON.stringify(value)});
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`)
+  await evaluate(`document.querySelector('.nav-add')?.click()`)
+  await waitFor(async () => await evaluate(`!!document.querySelector('.wizard')`), 'the add-project wizard to open again')
+  await evaluate(`document.querySelector('.wizard-body button[aria-label="Project source"]')?.click()`)
+  await evaluate(
+    `[...document.querySelectorAll('.setting-btn-select-menu[aria-label="Project source"] [role="option"]')].find(o => o.innerText.includes('Clone'))?.click()`
+  )
+  await waitFor(async () => await evaluate(`!!document.querySelector('#new-project-clone')`), 'the clone fields to show')
+  await setField('#new-project-clone', cloneSource)
+  await setField('.wizard-path input', cloneRoot)
+  check(
+    'before the clone, the step says it is waiting for one',
+    await until(async () => /Clone the repository to go on/.test(await evaluate(`document.querySelector('.wizard-blockers')?.innerText ?? ''`))),
+    await evaluate(`document.querySelector('.wizard-blockers')?.innerText ?? ''`)
+  )
+  await waitFor(
+    async () => await evaluate(`[...document.querySelectorAll('.wizard-body button')].some(b => b.innerText.trim() === 'Clone' && !b.disabled)`),
+    'the Clone button to be ready'
+  )
+  await evaluate(`[...document.querySelectorAll('.wizard-body button')].find(b => b.innerText.trim() === 'Clone')?.click()`)
+  await waitFor(
+    async () => /Cloned into/.test(await evaluate(`document.querySelector('.wizard-body').innerText`)),
+    'the clone to finish'
+  )
+  check('the clone is on disk with its history', existsSync(join(cloneRoot, '.git')) && existsSync(join(cloneRoot, 'README.md')), cloneRoot)
+  const clonedHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: cloneRoot, encoding: 'utf8' }).trim()
+  for (let i = 0; i < 2; i++) {
+    await waitFor(
+      async () => await evaluate(`!([...document.querySelectorAll('.wizard-foot button')].find(b => b.innerText.trim() === 'Next')?.disabled)`),
+      'Next to be available after the clone'
+    )
+    await evaluate(`[...document.querySelectorAll('.wizard-foot button')].find(b => b.innerText.trim() === 'Next')?.click()`)
+  }
+  await waitFor(async () => await evaluate(`!!document.querySelector('.wizard-plan')`), 'the review step after a clone')
+  const clonePlan = await evaluate(`document.querySelector('.wizard-plan').innerText`)
+  check(
+    'the review keeps the config to this checkout and commits nothing',
+    /\.git\/info\/exclude/.test(clonePlan) && !/Commit the scaffolding/.test(clonePlan),
+    clonePlan.replace(/\n+/g, ' | ')
+  )
+  await evaluate(`[...document.querySelectorAll('.wizard-foot button')].find(b => b.innerText.trim() === 'Create project')?.click()`)
+  await waitFor(async () => await evaluate(`!document.querySelector('.wizard')`), 'the clone wizard to create the project and close')
+  const cloneStatus = execFileSync('git', ['status', '--porcelain'], { cwd: cloneRoot, encoding: 'utf8' })
+  check(
+    'and the cloned repository is exactly as cloned: same HEAD, clean status, config excluded',
+    existsSync(join(cloneRoot, '.warmstart', 'project.json')) &&
+      execFileSync('git', ['rev-parse', 'HEAD'], { cwd: cloneRoot, encoding: 'utf8' }).trim() === clonedHead &&
+      cloneStatus === '' &&
+      readFileSync(join(cloneRoot, '.git', 'info', 'exclude'), 'utf8').includes('.warmstart/'),
+    JSON.stringify(cloneStatus)
+  )
+
   section('project settings')
   // ⛔ The one tab in this app that writes into somebody's **repository**. Its policy tier — finish,
   // sharing, completion — resolved through the project since M2 and could only be *set* by hand-
@@ -6270,6 +6344,7 @@ try {
     rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     if (projectRoot) rmSync(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     if (wizardRoot) rmSync(wizardRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    if (cloneParent) rmSync(cloneParent, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   } catch {
     // A locked profile directory is not worth failing a passing test over.
   }

@@ -11,6 +11,8 @@ import {
   type CompletionModeChoice,
   type FinishPolicyChoice,
   type Project,
+  type ProjectCloneReadiness,
+  type ProjectCloneResult,
   type ProjectInspection,
   type ScaffoldingGitChoice,
   type SessionSharingChoice
@@ -20,7 +22,9 @@ import { rpc } from '../lib/daemon'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { SettingRow } from './SettingRow'
 import {
+  applyClone,
   checksFromText,
+  cloneDestination,
   creationPlan,
   docSignature,
   EMPTY_DRAFT,
@@ -69,6 +73,11 @@ export function NewProject({
   const [warnings, setWarnings] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
   const dialogRef = useRef<HTMLDivElement>(null)
+  const [readiness, setReadiness] = useState<ProjectCloneReadiness | null>(null)
+  const [cloned, setCloned] = useState<ProjectCloneResult | null>(null)
+  // ⚠️ Bumped after a clone, because the clone usually lands at exactly the path already in the box
+  // — and an inspection keyed on the path alone would keep the answer from before it existed.
+  const [inspectNonce, setInspectNonce] = useState(0)
 
   const patch = useCallback((next: Partial<NewProjectDraft>) => {
     setDraft((current) => ({ ...current, ...next }))
@@ -99,6 +108,45 @@ export function NewProject({
   useEffect(() => {
     dialogRef.current?.focus()
   }, [])
+
+  // ⚠️ Asked once, when cloning is first chosen: whether `gh` can fork is a sentence beside the
+  // checkbox, and where most projects live is the clone's suggested parent.
+  useEffect(() => {
+    if (draft.source !== 'clone' || readiness) return
+    void rpc('project.cloneReadiness')
+      .then(setReadiness)
+      .catch((err: unknown) =>
+        setReadiness({ git: true, forkBlocked: `Could not ask whether gh can fork: ${errorMessage(err)}`, suggestedParent: null })
+      )
+  }, [draft.source, readiness])
+
+  /**
+   * The one write before Create: `git clone`, and `gh repo fork` if asked.
+   *
+   * ⛔ Said on the button and kept if the wizard is cancelled — a clone is somebody's download, and a
+   * wizard that deleted it on Cancel would be destroying work it was asked to fetch.
+   */
+  const clone = async (): Promise<void> => {
+    setBusy(true)
+    setError(null)
+    setWarnings([])
+    try {
+      const result = await rpc('project.clone', {
+        source: draft.cloneSource.trim(),
+        root: draft.root.trim(),
+        fork: draft.fork
+      })
+      setCloned(result)
+      seededFor.current = null
+      setDraft((current) => ({ ...current, ...applyClone(current, result) }))
+      setInspectNonce((n) => n + 1)
+      if (result.warnings.length > 0) setWarnings(result.warnings)
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   /**
    * Ask the daemon what is in there.
@@ -131,7 +179,7 @@ export function NewProject({
         })
     }, 200)
     return () => clearTimeout(timer)
-  }, [draft.root, draft.workspaceRoot, draft.workspaceLocation])
+  }, [draft.root, draft.workspaceRoot, draft.workspaceLocation, inspectNonce])
 
   /**
    * Fill in the answers the directory itself gives, once, when a new directory is inspected.
@@ -237,6 +285,7 @@ export function NewProject({
         policy: {
           finish: draft.finish,
           landingTarget: draft.landingTarget.trim(),
+          ...(draft.pushRemote.trim() ? { pushRemote: draft.pushRemote.trim() } : {}),
           sessionShare: draft.sessionShare,
           completion: draft.completion,
           poolSize: draft.poolSize,
@@ -246,9 +295,12 @@ export function NewProject({
           ...(draft.poolSize === 0 ? { workspaceMode: 'trunk' as const } : {})
         },
         checks: checksFromText(draft.checksText),
-        docs: draft.docs
-          .filter((d) => d.include)
-          .map((d) => ({ name: d.name, content: d.content })),
+        // ⚠️ None for a checkout-only project — see `createProject`, which would refuse them anyway.
+        docs: draft.scaffoldingGit === 'local'
+          ? []
+          : draft.docs
+            .filter((d) => d.include)
+            .map((d) => ({ name: d.name, content: d.content })),
         scaffoldingGit: draft.scaffoldingGit
       })
       if (result.warnings.length > 0) {
@@ -310,6 +362,10 @@ export function NewProject({
               patch={patch}
               inspection={inspection}
               inspectError={inspectError}
+              readiness={readiness}
+              cloned={cloned}
+              busy={busy}
+              onClone={() => void clone()}
             />
           )}
           {step === 'setup' && (
@@ -430,16 +486,18 @@ function Checkbox({
   label,
   hint,
   checked,
+  disabled,
   onChange
 }: {
   label: string
   hint?: string
   checked: boolean
+  disabled?: boolean
   onChange: (checked: boolean) => void
 }): React.JSX.Element {
   return (
     <label className="wizard-check">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
       <span>
         <span className="wizard-check-label">{label}</span>
         {hint && <span className="wizard-check-hint">{hint}</span>}
@@ -459,31 +517,122 @@ function DirectoryStep({
   draft,
   patch,
   inspection,
-  inspectError
+  inspectError,
+  readiness,
+  cloned,
+  busy,
+  onClone
 }: {
   draft: NewProjectDraft
   patch: (next: Partial<NewProjectDraft>) => void
   inspection: ProjectInspection | null
   inspectError: string | null
+  readiness: ProjectCloneReadiness | null
+  cloned: ProjectCloneResult | null
+  busy: boolean
+  onClone: () => void
 }): React.JSX.Element {
   const missingDocs = inspection
     ? Object.entries(inspection.docs)
         .filter(([, present]) => !present)
         .map(([name]) => name)
     : []
+  const cloning = draft.source === 'clone'
+  const awaitingClone = cloning && !draft.clonedRoot
+  // ⚠️ The destination follows the repository name until somebody types their own — then it is
+  // theirs. Compared against what it would have suggested, so no extra flag has to be kept in step.
+  const suggestedFor = (source: string): string | null => cloneDestination(readiness?.suggestedParent ?? null, source)
+  const setCloneSource = (cloneSource: string): void => {
+    const auto = !draft.root.trim() || draft.root === suggestedFor(draft.cloneSource)
+    const next = suggestedFor(cloneSource)
+    patch({ cloneSource, ...(auto && next ? { root: next } : {}) })
+  }
+  const destinationBlocked = awaitingClone && inspection !== null && inspection.exists && (!inspection.isDirectory || !inspection.empty)
 
   return (
     <div className="stack">
+      <SettingButtonSelect
+        value={draft.source}
+        options={[
+          { value: 'folder', label: 'A folder on this computer' },
+          { value: 'clone', label: 'Clone from GitHub' }
+        ]}
+        disabled={busy || draft.clonedRoot !== null}
+        ariaLabel="Project source"
+        onChange={(val) => patch({ source: val as NewProjectDraft['source'] })}
+      />
+
+      {cloning && (
+        <div className="wizard-section">
+          <p className="wizard-sub">
+            Clone somebody else&rsquo;s repository to contribute to it. <span className="mono">origin</span> stays
+            their repository, so task branches start from their latest work; Warmstart&rsquo;s own
+            config is kept to this checkout and never committed.
+          </p>
+          <div className="wizard-field">
+            <label className="wizard-label" htmlFor="new-project-clone">
+              Repository
+            </label>
+            <input
+              id="new-project-clone"
+              className="text-input mono"
+              value={draft.cloneSource}
+              placeholder="owner/repo or https://github.com/owner/repo"
+              spellCheck={false}
+              disabled={busy || !awaitingClone}
+              aria-label="Repository to clone"
+              onChange={(e) => setCloneSource(e.target.value)}
+            />
+          </div>
+          <Checkbox
+            label="Fork it to my GitHub account and open pull requests from the fork"
+            hint={
+              readiness?.forkBlocked ??
+              'Runs gh repo fork, adds your fork as the “fork” remote, and sets this project to finish as a pull request on the original. Task branches are named warmstart/t<n>, with nothing from your prompt.'
+            }
+            checked={draft.fork && !readiness?.forkBlocked}
+            disabled={busy || !awaitingClone || readiness === null || readiness.forkBlocked !== null}
+            onChange={(fork) => patch({ fork })}
+          />
+        </div>
+      )}
+
       <PathField
-        label="Project directory"
+        label={cloning ? 'Clone into' : 'Project directory'}
         value={draft.root}
-        placeholder="Path to project root directory"
+        placeholder={cloning ? 'A new or empty directory' : 'Path to project root directory'}
+        disabled={busy || (cloning && !awaitingClone)}
         onChange={(root) => patch({ root })}
       />
 
+      {awaitingClone && (
+        <div className="confirm-actions">
+          {destinationBlocked && (
+            <p className="warn">That directory is not empty. Clone into a new or empty one.</p>
+          )}
+          {readiness && !readiness.git && <p className="warn">git is not installed, so nothing can be cloned.</p>}
+          <button
+            className="btn btn--primary"
+            disabled={busy || !draft.cloneSource.trim() || !draft.root.trim() || destinationBlocked || readiness?.git === false}
+            title="Downloads the repository now, before Create. Cancelling the wizard afterwards keeps the clone."
+            onClick={onClone}
+          >
+            {busy ? (draft.fork ? 'Cloning and forking…' : 'Cloning…') : draft.fork ? 'Clone and fork' : 'Clone'}
+          </button>
+        </div>
+      )}
+
+      {cloned && (
+        <p className="note">
+          Cloned into <span className="mono">{cloned.root}</span>
+          {cloned.defaultBranch && <> on <span className="mono">{cloned.defaultBranch}</span></>}
+          {cloned.fork && <>, forked as <span className="mono">{cloned.fork}</span> (remote <span className="mono">{cloned.pushRemote}</span>)</>}.
+        </p>
+      )}
+
       {inspectError && <div className="alert">{inspectError}</div>}
 
-      {inspection && (
+      {inspection && !awaitingClone && (
         <div className="wizard-findings">
           <h4>Directory inspection</h4>
           <dl className="wizard-facts">
@@ -533,6 +682,12 @@ function DirectoryStep({
                   : `missing ${missingDocs.join(', ')}`}
               </dd>
             </div>
+            {inspection.contributing && (
+              <div>
+                <dt>Contributing</dt>
+                <dd className="mono">{inspection.contributing}</dd>
+              </div>
+            )}
           </dl>
 
           {inspection.alreadyAdded && (
@@ -694,6 +849,25 @@ function SetupStep({
               />
             }
           />
+          {repo && (
+            <SettingRow
+              title="Push remote"
+              description={
+                draft.pushRemote.trim() && draft.pushRemote.trim() !== 'origin'
+                  ? `Pull requests push to ${draft.pushRemote.trim()} and open on origin; task branches are named warmstart/t<n>, with nothing from the prompt.`
+                  : 'Pull requests push to origin. Name a fork’s remote to push there and open the pull request on origin instead.'
+              }
+              control={
+                <input
+                  className="text-input"
+                  value={draft.pushRemote}
+                  placeholder="origin"
+                  aria-label="Pull request push remote"
+                  onChange={(e) => patch({ pushRemote: e.target.value })}
+                />
+              }
+            />
+          )}
           <SettingRow
             title="Session sharing"
             description="Allow tasks to reuse existing conversation sessions in this project to save tokens."
@@ -838,7 +1012,13 @@ function ReviewStep({
     <div className="stack">
       <div className="wizard-section">
         <h4>Starter files</h4>
-        {draft.docs.length === 0 ? (
+        {draft.scaffoldingGit === 'local' ? (
+          <p className="dim">
+            None — a project kept to this checkout leaves the repository&rsquo;s own files alone. Agents
+            are pointed at the docs it already has; put your own instructions in Project settings ›
+            Cold start.
+          </p>
+        ) : draft.docs.length === 0 ? (
           <p className="dim">
             Standard documentation files (README.md, AGENTS.md, HANDOFF.md) already exist and will not be overwritten.
           </p>
@@ -881,20 +1061,22 @@ function ReviewStep({
       <div className="wizard-section">
         <h4>project.json in git</h4>
         <p className="wizard-sub">
-          Committed policy travels to every clone; an ignored config stays local to this checkout.
-          Either way the trunk starts clean — nothing here happens silently.
+          Committed policy travels to every clone; an ignored config stays local behind a committed
+          .gitignore entry; <em>This checkout only</em> commits nothing at all — the choice for a
+          repository you do not own. Every way the trunk starts clean.
         </p>
         <div className="setting-list">
           <SettingRow
             title="project.json"
-            description="Commit it with the scaffolding, or leave it untracked behind a committed .gitignore entry."
+            description="Commit it with the scaffolding, leave it untracked behind a committed .gitignore entry, or keep it to this checkout through .git/info/exclude."
             control={
               <SettingButtonSelect
                 className="setting-row-control-select"
                 value={draft.scaffoldingGit}
                 options={[
                   { value: 'commit', label: 'Commit' },
-                  { value: 'ignore', label: 'Ignore' }
+                  { value: 'ignore', label: 'Ignore' },
+                  { value: 'local', label: 'This checkout only' }
                 ]}
                 ariaLabel="project.json in git"
                 onChange={(val) => patch({ scaffoldingGit: val as ScaffoldingGitChoice })}

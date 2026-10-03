@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import {
+  CONTRIBUTING_GUIDE_PATHS,
   ORIENTATION_READING_ORDER,
   type Project,
   type ProjectDocName
@@ -55,21 +56,45 @@ export function orientationDocs(root: string): ProjectDocName[] {
   })
 }
 
+/** The repository's contributing guide, relative to its root, or null. First match wins. */
+export function contributingGuide(root: string): string | null {
+  for (const path of CONTRIBUTING_GUIDE_PATHS) {
+    try {
+      if (existsSync(join(root, path))) return path
+    } catch {
+      // ⚠️ Unreadable is absent, the same as for the orientation docs above.
+    }
+  }
+  return null
+}
+
 /** The sentence naming the docs, or null when this project has none of them (or has said `off`). */
 export function orientationSentence(project: Project): string | null {
   if (projectOrientationChoice(project) === 'off') return null
   const docs = orientationDocs(project.root)
-  if (docs.length === 0) return null
-  const named = docs.map((name) => `\`${name}\` (${WHAT_IT_HOLDS[name]})`)
-  const list =
-    named.length === 1
-      ? named[0]
-      : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`
-  return (
-    `Start by reading ${list}, at the root of this project. ` +
-    'They are the orientation this project keeps for agents, so they are the cheapest place to ' +
-    'find out how work is done here before you change anything.'
-  )
+  const guide = contributingGuide(project.root)
+  const parts: string[] = []
+  if (docs.length > 0) {
+    const named = docs.map((name) => `\`${name}\` (${WHAT_IT_HOLDS[name]})`)
+    const list =
+      named.length === 1
+        ? named[0]
+        : `${named.slice(0, -1).join(', ')} and ${named[named.length - 1]}`
+    parts.push(
+      `Start by reading ${list}, at the root of this project. ` +
+        'They are the orientation this project keeps for agents, so they are the cheapest place to ' +
+        'find out how work is done here before you change anything.'
+    )
+  }
+  // ⚠️ Its own sentence, after the docs: the guide is how the project *takes* work — branch, commit
+  // and test conventions a pull request is judged by — which is a different question from how to
+  // find your way around it, and on a fork it is the one the maintainers will hold the work to.
+  if (guide) {
+    parts.push(
+      `\`${guide}\` says how this project accepts contributions; follow it for anything you commit.`
+    )
+  }
+  return parts.length > 0 ? parts.join(' ') : null
 }
 
 /**

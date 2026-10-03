@@ -1,8 +1,11 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { basename, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import type {
   Project,
+  ProjectCloneReadiness,
+  ProjectCloneRequest,
+  ProjectCloneResult,
   ProjectCreateRequest,
   ProjectCreateResult,
   ProjectDocDraft,
@@ -13,7 +16,10 @@ import type {
 } from '@shared/tasks.js'
 import { PROJECT_DOC_NAMES } from '@shared/tasks.js'
 import { canonicalPath, samePath, withinPath } from './fspath.js'
-import { git } from './git.js'
+import { git, tryGit } from './git.js'
+import { launchArgs, spawnEnv, which } from './which.js'
+import * as spawn from './spawn.js'
+import { cloneSourceFor, gitHubSlug, parseGitHubRepo } from '@shared/github.js'
 import { log } from './log.js'
 import {
   addProject,
@@ -32,6 +38,7 @@ import {
 } from './projects.js'
 import { isEmptyProjectDir, proposeChecks, proposeDocs, suggestProjectName, detectStack } from './projectstack.js'
 import { errorMessage } from '@shared/errors.js'
+import { contributingGuide } from './orientation.js'
 
 /**
  * Adding a project, as a setup step rather than a text box.
@@ -179,6 +186,7 @@ export function inspectProjectDirectory(input: {
     // default as a decision somebody made.
     config: path !== null ? config : null,
     docs,
+    contributing: directory ? contributingGuide(root) : null,
     stack: directory ? detectStack(root) : [],
     proposedChecks: directory ? proposeChecks(root) : [],
     workspace: workspaceRootReport(root, input.workspaceRoot, registered?.id,
@@ -281,6 +289,12 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
 
   const project = addProject({ root, name: request.name })
 
+  // ⛔ **Excluded before anything is written**, so there is no moment at which the config is an
+  // untracked file in somebody else's repository. `local` is for a checkout of a repo the operator
+  // does not own (t897): nothing is committed and no tracked file — not even `.gitignore` — changes.
+  const local = request.scaffoldingGit === 'local'
+  if (local && project.vcs === 'git') await excludeLocally(project, warnings)
+
   let configPath: string | null = null
   let configFreshlyWritten = false
   try {
@@ -305,7 +319,13 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
     warnings.push(`could not write the project policy: ${errorMessage(err)}`)
   }
 
-  const docsWritten = writeProjectDocs(project, request.docs ?? [], warnings)
+  // ⚠️ No starter docs in a checkout-only project. A doc written here would be an untracked file in
+  // the root that no pooled worktree has, and the cold prompt would name it to agents that cannot
+  // open it. A project's own docs are what it committed; the operator's own words go in the seed.
+  if (local && (request.docs ?? []).some((d) => d.content.trim())) {
+    warnings.push('starter docs are not written into a project kept to this checkout — put your own instructions in Project settings › Cold start instead')
+  }
+  const docsWritten = local ? [] : writeProjectDocs(project, request.docs ?? [], warnings)
 
   // ⛔ **A file this wizard just wrote is never left to dirty the trunk.** `.warmstart/project.json`
   // is documented as a *committed* file (data-model.md, glossary.md) so every clone and every landing
@@ -315,7 +335,9 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
   // never touched. ⚠️ Since t554 the operator chooses the config's git fate in the wizard: `commit`
   // stages it beside the starter docs, `ignore` leaves it untracked behind a committed `.gitignore`
   // entry instead. Either way the trunk handed back is clean.
-  if (project.vcs === 'git') {
+  if (local) {
+    // Nothing to commit, by definition — `excludeLocally` already made the config invisible to git.
+  } else if (project.vcs === 'git') {
     if (request.scaffoldingGit === 'ignore') {
       await ignoreScaffolding(project, docsWritten, warnings)
     } else {
@@ -439,6 +461,179 @@ async function ignoreScaffolding(project: Project, docsWritten: string[], warnin
     )
   } catch (err) {
     warnings.push(`could not record .warmstart/project.json in .gitignore: ${errorMessage(err)}`)
+  }
+}
+
+/** `.warmstart/` in exclude spelling: the whole directory, since all of it is this machine's. */
+const LOCAL_EXCLUDE_ENTRY = '.warmstart/'
+
+/**
+ * Keep `.warmstart/` out of git for this checkout only, via the repository's `info/exclude`.
+ *
+ * ⛔ **`info/exclude`, never `.gitignore`.** The exclude file lives inside the git directory, is
+ * never committed or pushed, and is honoured by `git status` — so the trunk stays clean, nothing
+ * lands in a pull request, and the upstream repository is not asked to know Warmstart exists.
+ * ⚠️ Located with `rev-parse --git-path`, not by joining `.git/info`, because `.git` is a file in a
+ * linked worktree or a submodule and the exclude file is wherever git says it is.
+ *
+ * @returns whether the file was written.
+ */
+export async function excludeLocally(project: Project, warnings: string[]): Promise<boolean> {
+  try {
+    const relative = await git(project.root, ['rev-parse', '--git-path', 'info/exclude'])
+    const file = resolve(project.root, relative)
+    const existing = existsSync(file) ? readFileSync(file, 'utf8') : ''
+    const covered = existing
+      .split(/\r?\n/)
+      .map((line) => line.trim().replace(/^\/+/, ''))
+      .some((entry) => entry === LOCAL_EXCLUDE_ENTRY || entry === '.warmstart')
+    let wrote = false
+    if (!covered) {
+      mkdirSync(dirname(file), { recursive: true })
+      const prefix = existing === '' || existing.endsWith('\n') ? '' : '\n'
+      writeFileSync(file, `${existing}${prefix}# Warmstart's project config, kept to this checkout\n${LOCAL_EXCLUDE_ENTRY}\n`)
+      log.info(`${project.name}: excluded ${LOCAL_EXCLUDE_ENTRY} in ${file}`)
+      wrote = true
+    }
+    // ⚠️ Exclusion does not untrack, the same as `.gitignore` — say so rather than let a config the
+    // repository already ships be edited into a dirty trunk without a word.
+    if (await tryGit(project.root, ['ls-files', '--', '.warmstart'])) {
+      warnings.push(
+        'this repository already tracks files under .warmstart/, so excluding it does not hide them — ' +
+          'a change Warmstart makes to them will show in git status.'
+      )
+    }
+    return wrote
+  } catch (err) {
+    warnings.push(`could not keep .warmstart/ out of git for this checkout: ${errorMessage(err)}`)
+    return false
+  }
+}
+
+// --------------------------------------------------------------------- cloning
+
+/** What the fork is called among this checkout's remotes. ⛔ origin stays the repository cloned. */
+export const FORK_REMOTE = 'fork'
+
+/**
+ * Why this machine cannot fork from here, or null when it can.
+ *
+ * ⛔ Asked of `gh` itself, never assumed: a clean profile has no `gh`, and one that has it may not be
+ * signed in. Both are sentences the wizard shows beside a disabled checkbox.
+ */
+export async function forkBlocked(): Promise<string | null> {
+  const gh = which('gh')
+  if (!gh) {
+    return 'The GitHub CLI (gh) is not installed. Install it and run `gh auth login` to fork from here.'
+  }
+  try {
+    const call = launchArgs(gh, ['auth', 'status', '--hostname', 'github.com'])
+    await spawn.run(call.command, call.args, { env: spawnEnv(), timeout: 15_000 })
+    return null
+  } catch {
+    return 'The GitHub CLI (gh) is not signed in to github.com. Run `gh auth login`, then try again.'
+  }
+}
+
+/** The directory most projects already live in — where a clone most likely belongs. */
+export function suggestedCloneParent(): string | null {
+  const counts: Array<{ parent: string; count: number }> = []
+  for (const project of listProjects(true)) {
+    const parent = dirname(project.root)
+    if (samePath(parent, project.root)) continue
+    const seen = counts.find((c) => samePath(c.parent, parent))
+    if (seen) seen.count += 1
+    else counts.push({ parent, count: 1 })
+  }
+  let best: { parent: string; count: number } | null = null
+  for (const entry of counts) if (!best || entry.count > best.count) best = entry
+  return best?.parent ?? null
+}
+
+export async function cloneReadiness(): Promise<ProjectCloneReadiness> {
+  return { git: which('git') !== null, forkBlocked: await forkBlocked(), suggestedParent: suggestedCloneParent() }
+}
+
+/**
+ * Clone a repository to become a project, and fork it on GitHub when asked.
+ *
+ * ⛔ **Refuses before cloning, warns after.** Everything that would make the clone wrong — a
+ * destination with something in it, a root that is already a project, a fork asked of a source that
+ * is not on GitHub or of a machine that cannot fork — throws before a byte is fetched. Once the clone
+ * exists, a fork that did not happen is a warning: the operator has a working checkout and can add
+ * the remote later, which beats a clone the wizard pretends did not happen.
+ *
+ * ⚠️ **origin is the repository cloned, and the fork is `fork`** — the reverse of what
+ * `gh repo fork --clone` does, on purpose. Landing is measured against `origin/<target>` everywhere,
+ * and with origin as the upstream that measurement stays true; only the pull request's push moves.
+ */
+export async function cloneProject(request: ProjectCloneRequest): Promise<ProjectCloneResult> {
+  const source = request.source.trim()
+  if (!source) throw new Error('name a repository to clone')
+  const root = canonicalPath(request.root)
+
+  if (existsSync(root)) {
+    if (!isDirectory(root)) throw new Error(`not a directory: ${root}`)
+    if (safeEntries(root).length > 0) {
+      throw new Error(`${root} is not empty. Clone into a new or empty directory.`)
+    }
+  }
+  const registered = listProjects(true).find((p) => samePath(p.root, root))
+  if (registered) throw new Error(`${root} is already the project "${registered.name}"`)
+
+  const upstream = parseGitHubRepo(source)
+  if (request.fork) {
+    if (!upstream) throw new Error('only a repository on github.com can be forked from here')
+    const blocked = await forkBlocked()
+    if (blocked) throw new Error(blocked)
+  }
+
+  const parent = dirname(root)
+  mkdirSync(parent, { recursive: true })
+  await git(parent, ['clone', '--', cloneSourceFor(source), root])
+  log.info(`cloned ${source} into ${root}`)
+
+  const warnings: string[] = []
+  const head = await tryGit(root, ['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
+  const defaultBranch = head?.replace(/^origin\//, '') || (await tryGit(root, ['branch', '--show-current'])) || null
+
+  let pushRemote: string | null = null
+  let fork: string | null = null
+  if (request.fork) {
+    try {
+      const gh = which('gh')
+      if (!gh) throw new Error('gh vanished between the check and the call')
+      // ⚠️ Run inside the clone with no repository argument, so gh forks what origin points at and
+      // adds the fork under our name without renaming origin — `--remote-name origin` is what makes
+      // gh move the upstream aside, and that is exactly the layout this avoids.
+      const call = launchArgs(gh, ['repo', 'fork', '--remote', '--remote-name', FORK_REMOTE])
+      await spawn.run(call.command, call.args, {
+        cwd: root,
+        env: spawnEnv(),
+        maxBuffer: 4 * 1024 * 1024,
+        timeout: 180_000
+      })
+      const url = await tryGit(root, ['remote', 'get-url', FORK_REMOTE])
+      const parsed = url ? parseGitHubRepo(url) : null
+      if (!parsed) throw new Error(`gh reported success but added no \`${FORK_REMOTE}\` remote on github.com`)
+      pushRemote = FORK_REMOTE
+      fork = gitHubSlug(parsed)
+      log.info(`forked ${source} as ${fork} (remote ${FORK_REMOTE})`)
+    } catch (err) {
+      warnings.push(
+        `cloned, but the fork did not happen: ${errorMessage(err)}. Pull requests will push to origin ` +
+          `until a \`${FORK_REMOTE}\` remote exists and Push remote is set in Project settings.`
+      )
+    }
+  }
+
+  return {
+    root,
+    defaultBranch,
+    pushRemote,
+    upstream: upstream ? gitHubSlug(upstream) : null,
+    fork,
+    warnings
   }
 }
 

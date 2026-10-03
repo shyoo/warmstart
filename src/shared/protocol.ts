@@ -36,6 +36,9 @@ import type {
   Priority,
   Project,
   ProjectCreateRequest,
+  ProjectCloneReadiness,
+  ProjectCloneRequest,
+  ProjectCloneResult,
   ProjectCreateResult,
   ProjectDocDraft,
   ProjectInspection,
@@ -1923,6 +1926,13 @@ export interface RpcMap {
    * `createProject`.
    */
   'project.create': { params: ProjectCreateRequest; result: ProjectCreateResult }
+  /** Can this machine clone, and fork with `gh`? Read when the wizard's clone source is chosen. */
+  'project.cloneReadiness': { params: void; result: ProjectCloneReadiness }
+  /**
+   * `git clone`, then optionally `gh repo fork` — the one write the add wizard makes before Create.
+   * ⚠️ Fails only if nothing was cloned; a fork that did not happen is a warning. See `cloneProject`.
+   */
+  'project.clone': { params: ProjectCloneRequest; result: ProjectCloneResult }
   'project.reload': { params: { id: string }; result: Project }
   'project.archive': { params: { id: string }; result: Project }
   'project.writeConfig': { params: { id: string }; result: { path: string } }

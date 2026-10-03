@@ -18,7 +18,6 @@ import {
   type FinishPolicyChoice,
   type OrientationChoice,
   type Project as ProjectRecord,
-  type ProjectDocName,
   type ProjectPolicyPatch,
   type ResourceAvailability,
   type SessionSharingChoice,
@@ -389,6 +388,20 @@ function PolicyPanel({
           description={`New task branches start from ${project.config.landing?.target ?? 'main'}; existing branches do not move.`}
         />
 
+        <TextPolicyRow
+          title="Push remote"
+          value={project.config.landing?.pushRemote ?? ''}
+          placeholder="origin"
+          disabled={busy}
+          ariaLabel="Pull request push remote"
+          onSave={(val) => apply({ pushRemote: val })}
+          description={
+            project.config.landing?.pushRemote
+              ? `Pull requests push to ${project.config.landing.pushRemote} and open on origin; task branches are named warmstart/t<n>, with nothing from the prompt.`
+              : 'Pull requests push to origin. Name a fork’s remote to push there and open the pull request on origin instead.'
+          }
+        />
+
         {resolvedFinish.policy === 'custom' && (
           <TextPolicyRow
             title="Custom finish instruction"
@@ -656,13 +669,14 @@ function ColdStartPanel({
   project: ProjectRecord
   setPolicy: (patch: ProjectPolicyPatch) => Promise<void>
 }): React.JSX.Element {
-  const [docs, setDocs] = useState<ProjectDocName[] | null>(null)
+  // ⚠️ The orientation docs, then the contributing guide wherever it lives — the prompt's order.
+  const [docs, setDocs] = useState<string[] | null>(null)
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     setDocs(null)
     void rpc('project.inspect', { root: project.root })
-      .then((r) => setDocs(ORIENTATION_READING_ORDER.filter((name) => r.docs[name])))
+      .then((r) => setDocs([...ORIENTATION_READING_ORDER.filter((name) => r.docs[name]), ...(r.contributing ? [r.contributing] : [])]))
       .catch(() => setDocs([]))
   }, [project.root])
 
@@ -685,7 +699,7 @@ function ColdStartPanel({
         ? 'A cold prompt says nothing about this project’s docs.'
         : found.length > 0
           ? `A cold prompt tells the agent to read ${found.join(', ')} first.`
-          : 'None of AGENTS.md, HANDOFF.md or README.md are at the project root, so nothing is named.'
+          : 'None of AGENTS.md, HANDOFF.md, README.md or a CONTRIBUTING.md are in the project, so nothing is named.'
 
   return (
     <div className="panel">

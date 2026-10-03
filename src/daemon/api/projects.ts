@@ -1,7 +1,7 @@
 /** Projects: registration, configuration, checks and the flow view. */
 import { addProject, archiveProject, listProjects, relocateProject, reloadProject, reorderProjects, requireProject, setProjectChecks, setProjectPolicy, setProjectPostLanding, writeStarterConfig } from '../projects.js'
 import { proposeChecks } from '../projectstack.js'
-import { createProject, inspectProjectDirectory, proposeProjectDocs, workspaceRootReport } from '../projectsetup.js'
+import { cloneProject, cloneReadiness, createProject, inspectProjectDirectory, proposeProjectDocs, workspaceRootReport } from '../projectsetup.js'
 import { flowWorkspaces } from '../flow.js'
 import { ensurePool, prunePoolWorktrees } from '../worktrees.js'
 import { log } from '../log.js'
@@ -9,7 +9,7 @@ import type { Api, ApiContext } from './support.js'
 
 type ProjectMethod =
   | 'project.list' | 'project.add' | 'project.relocate' | 'project.inspect' | 'project.workspaceRoot' | 'project.docTemplates'
-  | 'project.create' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.writeConfig' | 'project.flow'
+  | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.writeConfig' | 'project.flow'
   | 'project.proposeChecks' | 'project.setChecks' | 'project.setPostLanding' | 'project.setPolicy' | 'project.pruneWorktrees'
 
 export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
@@ -21,6 +21,8 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
     'project.workspaceRoot': (p) => workspaceRootReport(p.root, p.workspaceRoot, undefined, p.workspaceLocation),
     'project.docTemplates': (p) => ({ docs: proposeProjectDocs(p) }),
     'project.create': (p) => createProject(p),
+    'project.cloneReadiness': () => cloneReadiness(),
+    'project.clone': (p) => cloneProject(p),
     'project.reload': (p) => reloadProject(p.id),
     'project.reorder': (p) => reorderProjects(p.ids),
     'project.archive': async (p) => {

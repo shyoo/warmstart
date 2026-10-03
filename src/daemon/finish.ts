@@ -681,7 +681,8 @@ function landOrResolve(
  * matched nothing and left every such branch attributed to no task at all.
  */
 export function taskSeqFromBranch(branch: string | null): number | null {
-  const match = branch?.match(/\/t(\d+)(?:\.\d+)?-/)
+  // ⚠️ The slug is optional: a fork's branches are `warmstart/t<seq>` (`branchTitleFor`).
+  const match = branch?.match(/\/t(\d+)(?:\.\d+)?(?:-|$)/)
   return match?.[1] ? Number.parseInt(match[1], 10) : null
 }
 

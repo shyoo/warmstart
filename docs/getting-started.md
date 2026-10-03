@@ -17,6 +17,27 @@ For a new project, **Automatic (Warmstart)** keeps one worktree pool per project
 
 ![New project](images/new-project.png)
 
+### Contributing to someone else's repository
+
+Choose **Clone from GitHub** at the top of the wizard and enter `owner/repo` or a GitHub URL. The
+destination defaults to the folder most of your projects are in. Tick **Fork it to my GitHub account**
+to make a fork with the GitHub CLI. This requires `gh` to be installed and signed in, and the box
+explains why when it is greyed out. **Clone** is the only step that writes before **Create**, and the
+clone is kept if you cancel. After a clone:
+
+- `origin` points at the original repository and the fork is the `fork` remote, so task branches
+  start from the project's latest work.
+- The landing target is the repository's default branch. With a fork, the finish policy is
+  **pull-request**: branches are pushed to `fork` and the pull request is opened on the original.
+- Warmstart's config is set to **This checkout only**. `.warmstart/` goes in `.git/info/exclude`,
+  nothing is committed, no tracked file changes, and no starter docs are written. Put your own
+  instructions in **Project settings › Cold start › Seeding prompt**. If the repository has a
+  `CONTRIBUTING.md`, cold agents are told to follow it.
+- Task branches are named `warmstart/t<n>`, with no words from your prompt, because a fork is public.
+
+For an existing clone you added as a folder, choose **This checkout only** on the review step. If it
+should push to a fork, set **Push remote** in Project settings.
+
 ## 3. File a task
 
 Use **New task** in the title bar. Its prompt, priority, dependencies, workspace, conversation reuse and finish policy are all visible in the composer.

@@ -1,11 +1,13 @@
 import type {
   CompletionModeChoice,
   FinishPolicyChoice,
+  ProjectCloneResult,
   ProjectDocName,
   ProjectInspection,
   ScaffoldingGitChoice,
   SessionSharingChoice
 } from '@shared/tasks'
+import { cloneDirectoryName } from '@shared/github'
 
 /**
  * The add-project wizard's rules, as a pure function.
@@ -54,7 +56,24 @@ export function docSignature(
   return [draft.name.trim(), draft.landingTarget.trim(), checksFromText(draft.checksText).join('\n')].join('\u0000')
 }
 
+/**
+ * Where the project comes from: a directory already on this computer, or a clone made here (t897).
+ * ⚠️ A clone is still a directory by the time the wizard leaves step one — `root` is where it went.
+ */
+export type ProjectSource = 'folder' | 'clone'
+
 export interface NewProjectDraft {
+  source: ProjectSource
+  /** What to clone: `owner/repo`, a GitHub URL, or any `git clone` source. */
+  cloneSource: string
+  /** Fork it on GitHub and open pull requests from the fork. */
+  fork: boolean
+  /** Where the clone landed, once it has. ⛔ Set only by a clone that happened. */
+  clonedRoot: string | null
+  /**
+   * The remote a pull request pushes to, blank for origin. See `ProjectConfig.landing.pushRemote`.
+   */
+  pushRemote: string
   root: string
   name: string
   createDirectory: boolean
@@ -80,6 +99,11 @@ export interface NewProjectDraft {
 }
 
 export const EMPTY_DRAFT: NewProjectDraft = {
+  source: 'folder',
+  cloneSource: '',
+  fork: false,
+  clonedRoot: null,
+  pushRemote: '',
   root: '',
   name: '',
   createDirectory: false,
@@ -104,6 +128,39 @@ export function checksFromText(text: string): string[] {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
+}
+
+/**
+ * Where a clone of `source` would go under `parent`, in `parent`'s own separator — or null.
+ *
+ * ⚠️ The separator is read off the parent rather than off this computer, because on a remote fleet
+ * the path is the other machine's.
+ */
+export function cloneDestination(parent: string | null, source: string): string | null {
+  const name = cloneDirectoryName(source)
+  if (!parent || !name) return null
+  const sep = parent.includes('\\') ? '\\' : '/'
+  return `${parent.replace(/[\\/]+$/, '')}${sep}${name}`
+}
+
+/**
+ * What a finished clone decides about the rest of the wizard.
+ *
+ * ⛔ **A repository you cloned is somebody else's until shown otherwise**, so the config is kept to
+ * this checkout (`local`) whether or not it was forked: the trunk tracks their repository, and a
+ * commit of Warmstart's scaffolding onto it would ride along in every pull request. ⚠️ A fork also
+ * means the work arrives as pull requests, so the finish policy moves to `pull-request`; without one
+ * the operator may well have push rights, and the finish is left as it was.
+ */
+export function applyClone(draft: NewProjectDraft, result: ProjectCloneResult): Partial<NewProjectDraft> {
+  return {
+    root: result.root,
+    clonedRoot: result.root,
+    landingTarget: result.defaultBranch ?? draft.landingTarget,
+    pushRemote: result.pushRemote ?? '',
+    scaffoldingGit: 'local',
+    ...(result.pushRemote ? { finish: 'pull-request' as const } : {})
+  }
 }
 
 /**
@@ -135,6 +192,11 @@ export function stepBlockers(
   const blockers: string[] = []
 
   if (step === 'directory') {
+    if (draft.source === 'clone' && !draft.clonedRoot) {
+      if (!draft.cloneSource.trim()) return ['Name the repository to clone.']
+      if (!draft.root.trim()) return ['Choose where the clone goes.']
+      return ['Clone the repository to go on.']
+    }
     if (!draft.root.trim()) return ['Choose the directory this project lives in.']
     if (!inspection) return ['Checking that directory…']
     if (inspection.alreadyAdded) {
@@ -189,7 +251,13 @@ export function creationPlan(
     plan.push(`Run git init -b ${draft.landingTarget.trim() || 'main'} in ${root}.`)
   }
   plan.push(`Add “${draft.name.trim()}” as a project.`)
-  if (draft.scaffoldingGit === 'ignore') {
+  if (draft.scaffoldingGit === 'local') {
+    plan.push(
+      willHaveRepo(inspection, draft)
+        ? 'Write .warmstart/project.json with these policies and list .warmstart/ in .git/info/exclude — kept to this checkout, nothing committed, no tracked file changed.'
+        : 'Write .warmstart/project.json with these policies.'
+    )
+  } else if (draft.scaffoldingGit === 'ignore') {
     plan.push(
       inspection?.hasConfig
         ? 'Leave the existing .warmstart/project.json in place and add it to .gitignore.'
@@ -213,8 +281,15 @@ export function creationPlan(
       : 'Record no check commands — verifying finish policies would verify nothing.'
   )
 
-  const docs = draft.docs.filter((d) => d.include).map((d) => d.name)
+  const docs = draft.scaffoldingGit === 'local' ? [] : draft.docs.filter((d) => d.include).map((d) => d.name)
   if (docs.length > 0) plan.push(`Write ${docs.join(', ')} into the project directory.`)
+
+  const pushRemote = draft.pushRemote.trim()
+  if (pushRemote && pushRemote !== 'origin' && willHaveRepo(inspection, draft)) {
+    plan.push(
+      `Push pull-request branches to ${pushRemote} and open them on origin; name task branches warmstart/t<n>, with nothing from the prompt.`
+    )
+  }
 
   if (willHaveRepo(inspection, draft)) {
     plan.push(

@@ -9,6 +9,7 @@ import { sessionOf } from './scheduler.js'
 import {
   branchExists,
   branchNameFor,
+  branchTitleFor,
   claimWorkspace,
   gitIn as git,
   parkWorkspace,
@@ -186,7 +187,7 @@ export async function landConversationWork(
     return { ok: true, landedSha: result.commit, target }
   }
 
-  const branch = task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)
+  const branch = task.branch ?? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
 
   const level = levelFor(task, project, opts.finishPolicy)
@@ -290,7 +291,7 @@ async function landIn(
   // where the target now stands, in the workspace the conversation is still sitting in, so the next
   // thing the agent commits is on top of what just landed.
   const nextUnit = task.branchUnit + 1
-  const nextBranch = branchNameFor(task.seq, task.title, nextUnit)
+  const nextBranch = branchNameFor(task.seq, branchTitleFor(project, task.title), nextUnit)
   const base = landingBaseFor(project, level, await hasRemote(project.root), task)
   try {
     await git(state.path, ['switch', '-c', nextBranch, base])

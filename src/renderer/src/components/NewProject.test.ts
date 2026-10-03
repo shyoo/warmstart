@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { ProjectInspection } from '@shared/tasks'
 import {
+  applyClone,
   checksFromText,
+  cloneDestination,
   creationPlan,
   docSignature,
   EMPTY_DRAFT,
@@ -31,6 +33,7 @@ function inspection(over: Partial<ProjectInspection> = {}): ProjectInspection {
     hasConfig: false,
     config: null,
     docs: { 'README.md': true, 'AGENTS.md': false, 'HANDOFF.md': false },
+    contributing: null,
     stack: ['node'],
     proposedChecks: ['npm run test'],
     workspace: {
@@ -229,5 +232,60 @@ describe('the check list and the template signature', () => {
     expect(docSignature(base)).toBe(docSignature(draft({ checksText: '  npm test  \n' })))
     expect(docSignature(base)).not.toBe(docSignature(draft({ ...base, landingTarget: 'trunk' })))
     expect(docSignature(base)).not.toBe(docSignature(draft({ ...base, name: 'other' })))
+  })
+})
+
+describe('cloning a repository somebody else owns (t897)', () => {
+  const cloned = {
+    root: 'C:/dev/Optiscaler-Client',
+    defaultBranch: 'main',
+    pushRemote: 'fork',
+    upstream: 'Optiscaler-Client/Optiscaler-Client',
+    fork: 'me/Optiscaler-Client',
+    warnings: []
+  }
+
+  it('says what is missing before the clone, and holds the step until it has happened', () => {
+    const base = draft({ source: 'clone', root: '' })
+    expect(stepBlockers('directory', base, null)).toEqual(['Name the repository to clone.'])
+    expect(stepBlockers('directory', { ...base, cloneSource: 'a/b' }, null)).toEqual(['Choose where the clone goes.'])
+    expect(stepBlockers('directory', { ...base, cloneSource: 'a/b', root: 'C:/dev/b' }, inspection())).toEqual([
+      'Clone the repository to go on.'
+    ])
+    expect(stepBlockers('directory', { ...base, cloneSource: 'a/b', root: 'C:/dev/b', clonedRoot: 'C:/dev/b' }, inspection())).toEqual([])
+  })
+
+  it('keeps the config to the checkout, lands on the default branch, and finishes as a pull request from a fork', () => {
+    expect(applyClone(draft({ finish: 'inherit' }), cloned)).toEqual({
+      root: cloned.root,
+      clonedRoot: cloned.root,
+      landingTarget: 'main',
+      pushRemote: 'fork',
+      scaffoldingGit: 'local',
+      finish: 'pull-request'
+    })
+    // ⚠️ No fork: the operator may have push rights, so the finish they chose is theirs.
+    const unforked = applyClone(draft({ finish: 'commit-and-merge' }), { ...cloned, pushRemote: null, fork: null, defaultBranch: 'dev' })
+    expect(unforked.finish).toBeUndefined()
+    expect(unforked.landingTarget).toBe('dev')
+    expect(unforked.scaffoldingGit).toBe('local')
+  })
+
+  it('suggests the destination beside the other projects, in their own separator', () => {
+    expect(cloneDestination('C:\\Dev', 'https://github.com/a/Thing.git')).toBe('C:\\Dev\\Thing')
+    expect(cloneDestination('/home/me/src/', 'a/thing')).toBe('/home/me/src/thing')
+    expect(cloneDestination(null, 'a/thing')).toBeNull()
+  })
+
+  it('lists no commit and no starter docs for a checkout-only project, and says where pull requests go', () => {
+    const d = draft({
+      scaffoldingGit: 'local',
+      pushRemote: 'fork',
+      docs: [{ name: 'AGENTS.md', include: true, content: 'x', edited: false }]
+    })
+    const plan = creationPlan(d, inspection())
+    expect(plan.join('\n')).toContain('.git/info/exclude')
+    expect(plan.join('\n')).not.toMatch(/Commit the scaffolding|Write AGENTS\.md/)
+    expect(plan.join('\n')).toContain('Push pull-request branches to fork')
   })
 })

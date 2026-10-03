@@ -137,6 +137,31 @@ describe('the orientation sentence', () => {
     expect(orientation.orientationSentence(project)).toBeNull()
   })
 
+  /**
+   * ⭐ t897: a repository somebody else owns says how it takes work in its contributing guide, and a
+   * cold agent on a fork of it should read that before it commits anything. GitHub's three places.
+   */
+  it('names the contributing guide after the docs, wherever GitHub would look for it', () => {
+    const project = makeProject(['README.md', 'CONTRIBUTING.md'])
+    const sentence = orientation.orientationSentence(project) ?? ''
+    expect(sentence).toContain('Start by reading `README.md`')
+    expect(sentence.indexOf('`CONTRIBUTING.md` says how this project accepts contributions')).toBeGreaterThan(
+      sentence.indexOf('`README.md`')
+    )
+
+    const nested = makeProject([])
+    mkdirSync(join(nested.root, '.github'), { recursive: true })
+    writeFileSync(join(nested.root, '.github', 'CONTRIBUTING.md'), '# How\n')
+    expect(orientation.orientationSentence(nested)).toBe(
+      '`.github/CONTRIBUTING.md` says how this project accepts contributions; follow it for anything you commit.'
+    )
+  })
+
+  it('says nothing about the contributing guide when the project has said off', () => {
+    const project = makeProject(['CONTRIBUTING.md'], { prompt: { orientation: 'off' } })
+    expect(orientation.orientationSentence(project)).toBeNull()
+  })
+
   /** ⚠️ Absent is `auto`: a project that has never been asked still gets the line. */
   it('is present for a project that has never been asked', () => {
     const project = makeProject(['AGENTS.md'], { check: ['npm test'] })

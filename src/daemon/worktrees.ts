@@ -548,6 +548,18 @@ export function branchNameFor(seq: number, title: string, unit = 1): string {
   return `warmstart/t${seq}${unit > 1 ? `.${unit}` : ''}${slug ? `-${slug}` : ''}`
 }
 
+/**
+ * The title a project's branch names are slugged from: the task's own, or nothing.
+ *
+ * ⛔ **Nothing when the project pushes to a fork** (`landing.pushRemote`, t897). A fork is public,
+ * and the slug is the first forty characters of a prompt written for this operator alone — t847
+ * stopped the PR title and body quoting it, and the branch name was the same leak one field over.
+ * `warmstart/t<seq>` still carries the one thing every reader of a branch name needs, the task.
+ */
+export function branchTitleFor(project: Project | null | undefined, title: string): string {
+  return project && policyFor(project).pushRemote ? '' : title
+}
+
 export interface SwitchResult {
   ok: boolean
   /** What the tree was on before, so a borrower knows what to put back. */
@@ -1655,7 +1667,8 @@ export async function taskBranches(project: Project, target: string): Promise<Ta
  * every stretch of a landing conversation's work out of the loose-ends scan.
  */
 function seqFromBranch(branch: string): number | null {
-  const match = /\/t(\d+)(?:\.\d+)?-/.exec(branch)
+  // ⚠️ The slug is optional: a fork's branches are `warmstart/t<seq>` (`branchTitleFor`).
+  const match = /\/t(\d+)(?:\.\d+)?(?:-|$)/.exec(branch)
   return match?.[1] ? Number.parseInt(match[1], 10) : null
 }
 

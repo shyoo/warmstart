@@ -7,6 +7,7 @@ import { landingBaseFor, hasRemote, landTask, localBaseNote, trunkNotReady, trun
 import {
   branchExists,
   branchNameFor,
+  branchTitleFor,
   claimWorkspace,
   parkWorkspace,
   prepareWorkspace,
@@ -144,7 +145,7 @@ export async function resolveChecksOnTask(
   if (!task) return { ok: false, reason: 'no such task' }
   const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
   if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
-  const branch = task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)
+  const branch = task.branch ?? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
   if (task.status === 'running' || task.status === 'assigned') {
     return { ok: false, reason: 'this task is already running; it will be asked when it reports' }
@@ -192,7 +193,7 @@ export async function resolveCommitOnTask(
   if (!task) return { ok: false, reason: 'no such task' }
   const project = task.projectId ? getProject(task.projectId) : null
   if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
-  const branch = task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)
+  const branch = task.branch ?? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
   if (task.status === 'running' || task.status === 'assigned') {
     return { ok: false, reason: 'this task is already running; it will be asked when it reports' }
@@ -478,7 +479,7 @@ export async function commitConversation(
   const trunk = resolveWorkspaceMode(task, project).mode === 'trunk' ? landingTargetFor(task, project) : null
   const conflict = trunk && policyLands(policy) ? trunkPolicyConflict(policy) : null
   if (conflict) return { ok: false, reason: `this conversation works in the trunk: ${conflict}` }
-  const branch = trunk ?? task.branch ?? branchNameFor(task.seq, task.title, task.branchUnit)
+  const branch = trunk ?? task.branch ?? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
   // ⛔ **A press that would re-ask for a commit already made is the loop this button had** (t581).
   // t578's agent committed, replied *"the commit is ready to land"*, and the card went on offering

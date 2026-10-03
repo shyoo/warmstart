@@ -14,7 +14,7 @@ import {
 } from '../debate.js'
 import { cancelTask } from '../cancel.js'
 import { getProject } from '../projects.js'
-import { branchNameFor } from '../worktrees.js'
+import { branchNameFor, branchTitleFor } from '../worktrees.js'
 import { requestDirectory } from '../dirgrants.js'
 import { completeTask, continueTask, endPlannerForSplit, noteHandoffRecorded, parkForHuman } from '../scheduler.js'
 import { updateTask } from '../tasks.js'
@@ -147,7 +147,7 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
         const branch =
           parent.branch ??
           (project && project.vcs === 'git'
-            ? branchNameFor(parent.seq, parent.title, parent.branchUnit)
+            ? branchNameFor(parent.seq, branchTitleFor(project, parent.title), parent.branchUnit)
             : null)
         if (!branch) {
           return {

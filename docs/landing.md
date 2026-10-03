@@ -1053,6 +1053,19 @@ it to a person with the commits listed, which is the right outcome for evidence 
   project that quoted them. Under every other level the tool composes the sentence itself and says
   plainly whether to push.
 - `landing.target` — the branch to land on. Defaults to `main`.
+- `landing.pushRemote` — the remote a `pull-request` finish pushes to, when it is not `origin`
+  (t897). This is how you contribute through a fork: `origin` stays the repository the work is
+  *for*, so the trunk tracks it and every landing is still measured against `origin/<target>`. Only
+  the push and the PR's head change. The branch goes to this remote, and `gh pr create --repo
+  <origin's owner/repo> --head <fork owner>:<branch>` opens the PR on origin. Both slugs are read from
+  the remote URLs, so both remotes must be on github.com, and `canLand` refuses a project whose push
+  remote does not exist. ⛔ When it is set, task branches are named `warmstart/t<seq>` with no slug,
+  because a fork is public and the slug is the first forty characters of a private prompt
+  (`branchTitleFor`, `worktrees.ts`). `origin` or blank is stored as no key. The merged-PR reconciler
+  is unchanged: `gh pr view <url>` and `fetch origin <target>` already name the upstream. ⚠️ *Inferred,
+  not flown:* the `gh pr view <owner>:<branch> --repo …` fallback, used only when `gh pr create` reports
+  an existing PR without a URL. `gh` 2.98's help documents `<user>:<branch>` for `create --head` but
+  not for `view`. The L1 test covers the create path against a pushInsteadOf-rewritten fork.
 - `check` — the commands every verifying level runs. ⛔ An **empty list verifies nothing**, which
   is every project on day one; the tool says so on the task rather than reporting a clean result.
   Edit them in Project → Settings, or file a task to work them out.
