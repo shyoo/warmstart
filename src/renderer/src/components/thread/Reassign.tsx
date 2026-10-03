@@ -58,7 +58,20 @@ function invalidAutoClass(model: string): ModelClass | null {
   return MODEL_CLASSES.includes(value as ModelClass) ? (value as ModelClass) : null
 }
 
-function unavailableAutoClass(model: string, available: ModelClass[]): ModelClass | null {
+/**
+ * The Auto tier `model` asks for that the selected account cannot honour, or null.
+ *
+ * ⛔ **No account selected is not an account with no routes (t899).** On an Auto-worker task the
+ * scheduler picks the account, so there is no table to test the tier against; the empty list
+ * `availableAutoClasses(null, …)` returns made *Auto Model (med)* read as unrunnable on a task that
+ * was filed with it and had run on Sonnet 5.5 High, a *med* row.
+ */
+export function unavailableAutoClass(
+  model: string,
+  available: ModelClass[],
+  workerSelected: boolean
+): ModelClass | null {
+  if (!workerSelected) return null
   const requested = model.startsWith('__auto__:') ? (model.slice('__auto__:'.length) as ModelClass) : null
   return requested && MODEL_CLASSES.includes(requested) && !available.includes(requested) ? requested : null
 }
@@ -202,7 +215,7 @@ export function useReassignChoice(
   const canSetEffort = adapter?.selectableEffort ?? false
   const inheritedModel = resolveModelChoice(null, worker, canSetEffort, entry?.quota).model
   const autoClasses = availableAutoClasses(worker, inheritedModel)
-  const unavailableClass = invalidAutoClass(model) ?? unavailableAutoClass(model, autoClasses)
+  const unavailableClass = invalidAutoClass(model) ?? unavailableAutoClass(model, autoClasses, !!worker)
   const isInvalidConcreteModel = Boolean(
     model &&
     !model.startsWith('__auto__') &&

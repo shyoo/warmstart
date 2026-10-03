@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { PillOptions } from '../Pill'
-import { availableAutoClasses, initialSelectedModel, pillLabels } from './Reassign'
+import { availableAutoClasses, initialSelectedModel, pillLabels, unavailableAutoClass } from './Reassign'
 
 const base = {
   workerId: '',
@@ -217,5 +217,18 @@ describe('availableAutoClasses (t764)', () => {
 
   it('uses the inherited model’s class when this account has no Auto table', () => {
     expect(availableAutoClasses({ modelRoutes: [] }, 'gemini-3.8-flash')).toEqual(['med'])
+  })
+})
+
+describe('unavailableAutoClass (t899)', () => {
+  it('does not refuse an Auto tier when the scheduler still picks the account', () => {
+    // No account selected: availableAutoClasses(null, …) is [], which is not "this account has no route".
+    expect(availableAutoClasses(null, null)).toEqual([])
+    expect(unavailableAutoClass('__auto__:med', [], false)).toBeNull()
+  })
+
+  it('still refuses a tier the selected account has no route for', () => {
+    expect(unavailableAutoClass('__auto__:high', ['med'], true)).toBe('high')
+    expect(unavailableAutoClass('__auto__:med', ['med'], true)).toBeNull()
   })
 })

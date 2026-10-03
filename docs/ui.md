@@ -639,7 +639,9 @@ typed:
   Auto pair on the selected account. If changing accounts makes the previously selected tier
   impossible, it says *Choose another model* and names the reason; it cannot turn into an invisible
   fallback. The daemon enforces the same rule at `checkConstraints`, so a stale window or another
-  client cannot queue a task that no candidate can ever satisfy.
+  client cannot queue a task that no candidate can ever satisfy. ⛔ That rule needs an account: with
+  the worker left on Auto the scheduler picks one, so no tier is refused (`unavailableAutoClass`,
+  t899 — *Auto Model (med)* on an Auto-worker task read "This account cannot run…").
 - **A Delegate toggle at the end of that row** (`thread/DelegatePill.tsx`, t704; one-click
   button since t706 — a menu for a boolean was a click too many), on work tasks and
   conversations. ⛔ Unlike the pills beside it, it is **authority applied at once**, not a next-run
