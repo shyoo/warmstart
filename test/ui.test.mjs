@@ -4593,6 +4593,10 @@ try {
     await until(async () => /Clone the repository to go on/.test(await evaluate(`document.querySelector('.wizard-blockers')?.innerText ?? ''`))),
     await evaluate(`document.querySelector('.wizard-blockers')?.innerText ?? ''`)
   )
+  check(
+    'before the clone, the Name field is disabled and empty (t900)',
+    await evaluate(`(() => { const n = document.querySelector('#new-project-name'); return !!n && n.disabled && n.value === '' })()`)
+  )
   await waitFor(
     async () => await evaluate(`[...document.querySelectorAll('.wizard-body button')].some(b => b.innerText.trim() === 'Clone' && !b.disabled)`),
     'the Clone button to be ready'
@@ -4603,6 +4607,10 @@ try {
     'the clone to finish'
   )
   check('the clone is on disk with its history', existsSync(join(cloneRoot, '.git')) && existsSync(join(cloneRoot, 'README.md')), cloneRoot)
+  check(
+    'after the clone, the Name field is enabled and filled in (t900)',
+    await until(async () => await evaluate(`(() => { const n = document.querySelector('#new-project-name'); return !!n && !n.disabled && n.value !== '' })()`))
+  )
   const clonedHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: cloneRoot, encoding: 'utf8' }).trim()
   for (let i = 0; i < 2; i++) {
     await waitFor(

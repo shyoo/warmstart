@@ -128,7 +128,9 @@ shows `forkBlocked` as its hint. **Clone** calls `project.clone`; its button say
 keeps the clone afterwards. `applyClone` then sets the landing target to the default branch,
 `scaffoldingGit` to `local` and, after a fork, `pushRemote: fork` with `finish: pull-request`. It
 also bumps an inspection nonce, because the clone usually lands at the exact path already in the
-box. The review step's *This checkout only* hides the starter docs and sends none.
+box. The review step's *This checkout only* hides the starter docs and sends none. The **Name** field
+sits below the Clone button, so until the clone lands it is disabled and empty (t900): the name is
+seeded from the finished clone, and an editable field under the button read as part of the same step.
 
 ⚠️ **A starter template is regenerated when what it quotes changes, and never over text somebody
 typed.** The three docs name the project, the landing target and the check list, so going Back and

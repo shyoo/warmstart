@@ -723,9 +723,12 @@ function DirectoryStep({
         <input
           id="new-project-name"
           className="text-input"
-          value={draft.name}
-          placeholder="Project display name"
+          value={awaitingClone ? '' : draft.name}
+          placeholder={awaitingClone ? 'Available once the repository is cloned' : 'Project display name'}
           aria-label="Project name"
+          // ⛔ Nothing to name until the clone has landed: the suggested name comes from the clone,
+          // and a field under the Clone button read as part of the same step (t900).
+          disabled={awaitingClone}
           onChange={(e) => patch({ name: e.target.value })}
         />
       </div>
