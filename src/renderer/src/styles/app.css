@@ -337,7 +337,8 @@ body {
   gap: var(--sp-2);
 }
 
-.nav-add {
+.nav-add,
+.nav-filter {
   flex: none;
   width: 20px;
   height: 20px;
@@ -354,7 +355,8 @@ body {
   cursor: pointer;
 }
 
-.nav-add:hover {
+.nav-add:hover,
+.nav-filter:hover {
   background: var(--color-surface-2);
   border-color: var(--color-border);
   color: var(--color-text);
@@ -1474,21 +1476,65 @@ body {
   margin-left: 0;
 }
 
-/* One row per conversation, indented under its project and a step smaller, so the list reads as
-   the project's contents rather than as more projects. No icon (t671): the indent alone says it, and
-   a glyph competed with the project's status dot. The title starts one step past the project name,
-   which itself starts after padding + the 6px dot + the row gap. */
-.nav-item--conversation {
+/* One row per unfinished task, indented under its project and a step smaller, so the list reads as
+   the project's contents rather than as more projects. The row starts one step past the project
+   name, which itself starts after padding + the 6px dot + the row gap. t671 dropped a 💬 emoji here
+   because it ignored the theme and competed with the status dot; the type pictogram that replaced
+   it (t901, operator's request) is drawn in the faint text colour, so it sits below the dot. */
+.nav-item--task {
   padding-left: calc(var(--sp-2) + 6px + var(--sp-2) + var(--sp-3));
   font-size: var(--text-dense);
 }
 
-.nav-conversation-title {
+.nav-task-title {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ⛔ No colour of its own: `currentColor` in the SVG, and the colour here comes from the tokens,
+   so dark, light and a live switch all follow. */
+.task-type-icon {
+  flex: none;
+  color: var(--color-text-faint);
+}
+
+.nav-item--active .task-type-icon,
+.nav-item--task:hover .task-type-icon {
+  color: inherit;
+}
+
+.nav-item--more {
+  color: var(--color-text-faint);
+}
+
+.nav-item--archived {
+  color: var(--color-text-faint);
+}
+
+.nav-item--archived .nav-project-name {
+  font-style: italic;
+}
+
+.nav-group-head h2 {
+  flex: 1;
+}
+
+.nav-filter {
+  margin-right: 0;
+}
+
+/* Lit while the list is filtered, so a sidebar missing projects says why. */
+.nav-filter--on {
+  color: var(--color-accent);
+}
+
+.project-menu-error {
+  padding: 4px 8px;
+  white-space: normal;
+  color: var(--state-danger);
 }
 
 /* ---- panels ------------------------------------------------------------ */

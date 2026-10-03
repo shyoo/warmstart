@@ -6,7 +6,7 @@ import { proposeChecks } from './projectstack.js'
 import { execFileSync } from 'node:child_process'
 import type { LandingStrategyId, Project, ProjectConfig, Task, Vcs } from '@shared/tasks.js'
 import type { ProjectPolicyPatch } from '@shared/tasks.js'
-import { readFinishPolicy, trunkPolicyConflict } from '@shared/tasks.js'
+import { PROJECT_IDLE_STATUSES, readFinishPolicy, trunkPolicyConflict } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
@@ -147,7 +147,12 @@ export function addProject(input: { root: string; name?: string }): Project {
   if (!existsSync(root)) throw new Error(`directory does not exist: ${root}`)
 
   const existing = row<ProjectRow>(db().prepare('select * from projects where root = ?').get(root))
-  if (existing) return reloadProject(existing.id)
+  if (existing) {
+    // ⚠️ Adding the folder again is the obvious way to bring back an archived project (t901). Before,
+    // it reloaded the row and left it archived, so the project stayed hidden however often it was added.
+    if (existing.archived_at !== null) return unarchiveProject(existing.id)
+    return reloadProject(existing.id)
+  }
 
   const { config, path } = readProjectConfig(root)
   const vcs = config.vcs ?? detectVcs(root)
@@ -270,11 +275,54 @@ export function reloadProjectIfPresent(id: string): Project | null {
   return getProject(id) ? reloadProject(id) : null
 }
 
+/** Archived projects only, in their stored order. `project.list` never returns these. */
+export function listArchivedProjects(): Project[] {
+  return listProjects(true).filter((project) => project.archivedAt !== null)
+}
+
+/**
+ * Why this project may not be archived now, or null when it may.
+ *
+ * ⛔ **Checked before anything is pruned, and again by `archiveProject`.** A project that still holds
+ * a task able to dispatch, run or land is refused (`holdsProjectOpen`, t901). Archiving hides the
+ * project, and a hidden project must not spend tokens.
+ */
+export function archiveRefusal(id: string): string | null {
+  const project = requireProject(id)
+  if (project.archivedAt !== null) return null
+  const idle = PROJECT_IDLE_STATUSES.map(() => '?').join(', ')
+  const open = row<{ n: number }>(
+    db()
+      .prepare(`select count(*) as n from tasks where project_id = ? and deleted_at is null and status not in (${idle})`)
+      .get(id, ...PROJECT_IDLE_STATUSES)
+  )?.n ?? 0
+  if (open === 0) return null
+  return `${project.name} has ${open} unfinished ${open === 1 ? 'task' : 'tasks'}; finish or cancel ${open === 1 ? 'it' : 'them'} before archiving`
+}
+
 export function archiveProject(id: string): Project {
+  const refusal = archiveRefusal(id)
+  if (refusal) throw new Error(refusal)
+  const current = requireProject(id)
+  if (current.archivedAt !== null) return current
   db().prepare('update projects set archived_at = ? where id = ?').run(Date.now(), id)
   const project = requireProject(id)
   emit({ type: 'project.changed', project })
   return project
+}
+
+/** Back into the active list, at the end of the order. */
+export function unarchiveProject(id: string): Project {
+  const current = requireProject(id)
+  if (current.archivedAt === null) return current
+  db()
+    .prepare(
+      `update projects set archived_at = null,
+         sort_order = coalesce((select max(sort_order) + 1 from projects where archived_at is null), 0)
+       where id = ?`
+    )
+    .run(id)
+  return reloadProject(id)
 }
 
 /**

@@ -1,5 +1,5 @@
 /** Projects: registration, configuration, checks and the flow view. */
-import { addProject, archiveProject, listProjects, relocateProject, reloadProject, reorderProjects, requireProject, setProjectChecks, setProjectPolicy, setProjectPostLanding, writeStarterConfig } from '../projects.js'
+import { addProject, archiveProject, archiveRefusal, listArchivedProjects, listProjects, relocateProject, reloadProject, reorderProjects, requireProject, setProjectChecks, setProjectPolicy, setProjectPostLanding, unarchiveProject, writeStarterConfig } from '../projects.js'
 import { proposeChecks } from '../projectstack.js'
 import { cloneProject, cloneReadiness, createProject, inspectProjectDirectory, proposeProjectDocs, workspaceRootReport } from '../projectsetup.js'
 import { flowWorkspaces } from '../flow.js'
@@ -9,7 +9,7 @@ import type { Api, ApiContext } from './support.js'
 
 type ProjectMethod =
   | 'project.list' | 'project.add' | 'project.relocate' | 'project.inspect' | 'project.workspaceRoot' | 'project.docTemplates'
-  | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.writeConfig' | 'project.flow'
+  | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.unarchive' | 'project.listArchived' | 'project.writeConfig' | 'project.flow'
   | 'project.proposeChecks' | 'project.setChecks' | 'project.setPostLanding' | 'project.setPolicy' | 'project.pruneWorktrees'
 
 export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
@@ -25,8 +25,12 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
     'project.clone': (p) => cloneProject(p),
     'project.reload': (p) => reloadProject(p.id),
     'project.reorder': (p) => reorderProjects(p.ids),
+    'project.listArchived': () => listArchivedProjects(),
     'project.archive': async (p) => {
       const project = requireProject(p.id)
+      // ⛔ Before the prune: a refused archive must not have already taken the pool apart.
+      const refusal = archiveRefusal(p.id)
+      if (refusal) throw new Error(refusal)
       if (project.config.workspaces?.location === 'managed' && project.vcs === 'git') {
         try {
           const result = await prunePoolWorktrees(project)
@@ -37,6 +41,7 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
       }
       return archiveProject(p.id)
     },
+    'project.unarchive': (p) => unarchiveProject(p.id),
     'project.writeConfig': (p) => ({ path: writeStarterConfig(p.id) }),
     // ⛔ Resolved here, never in the renderer — see the method's note in protocol.ts.
     'project.flow': (p) => flowWorkspaces(p.projectId),

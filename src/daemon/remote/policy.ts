@@ -46,6 +46,8 @@ export const REMOTE_METHODS = {
   'project.reload': 'deny',
   'project.reorder': 'deny',
   'project.archive': 'deny',
+  'project.unarchive': 'deny',
+  'project.listArchived': 'deny',
   'project.writeConfig': 'deny',
   'project.flow': 'deny',
   'task.list': 'read',

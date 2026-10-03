@@ -88,6 +88,8 @@ export function Project({
         <span className="tag">{project.vcs}</span>
       </header>
 
+      {project.archivedAt !== null && <ArchivedBanner project={project} refreshProjects={refreshProjects} />}
+
       {!project.rootExists && (
         <RelocateBanner project={project} refreshProjects={refreshProjects} />
       )}
@@ -159,6 +161,34 @@ export function Project({
           refreshProjects={refreshProjects}
         />
       )}
+    </div>
+  )
+}
+
+/**
+ * An archived project still opens, for its history (t901). Said at the top of every tab, because
+ * nothing else on the page would tell you that its pickers no longer offer it.
+ */
+function ArchivedBanner({
+  project,
+  refreshProjects
+}: {
+  project: ProjectRecord
+  refreshProjects: () => Promise<void>
+}): React.JSX.Element {
+  const unarchive = useAction(async (id: string) => rpc('project.unarchive', { id }), { onSuccess: refreshProjects })
+  return (
+    <div className="notice project-archived">
+      <p>
+        <strong>This project is archived.</strong> It is listed only under the sidebar&rsquo;s Archived
+        filter and is not offered when filing a task. Its tasks and history are kept.
+      </p>
+      <div className="form-actions">
+        <button className="btn" disabled={unarchive.busy} onClick={() => void unarchive.run(project.id)}>
+          {unarchive.busy ? 'Unarchiving…' : 'Unarchive'}
+        </button>
+      </div>
+      {unarchive.note && <div className="notice">{unarchive.note}</div>}
     </div>
   )
 }

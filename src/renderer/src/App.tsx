@@ -57,11 +57,18 @@ import {
   Working
 } from './lib/taskview'
 import {
-  openConversations,
+  openTasks,
   projectSidebarActive,
-  readCollapsedConversations,
-  writeCollapsedConversations
-} from './lib/sidebarconversations'
+  readCollapsedProjects,
+  readProjectFilter,
+  sidebarProjects,
+  writeCollapsedProjects,
+  writeProjectFilter,
+  type ProjectFilter
+} from './lib/sidebartasks'
+import { TaskTypeIcon } from './components/TaskTypeIcon'
+import { ProjectFilterButton, ProjectRowMenu } from './components/ProjectMenus'
+import { holdsProjectOpen } from '@shared/tasks'
 import { useUiSettings } from './lib/uisettings'
 import { useTarget } from './lib/target'
 import { MachinePicker } from './components/MachinePicker'
@@ -189,6 +196,13 @@ export function App({
   const [openSession, setOpenSession] = useState<string | null>(null)
   const [keyboard, setKeyboard] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
+  /**
+   * ⚠️ Only the sidebar and the project route read these (t901). Every picker reads `projects`, the
+   * active list, so nothing new is filed into an archived project from this window.
+   */
+  const [archivedProjects, setArchivedProjects] = useState<Project[]>([])
+  const [projectFilter, setProjectFilter] = useState<ProjectFilter>(readProjectFilter)
+  const [projectMenu, setProjectMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null)
   const [projectDrop, setProjectDrop] = useState<{ id: string; after: boolean } | null>(null)
   const [resources, setResources] = useState<ResourceAvailability[]>([])
@@ -197,18 +211,16 @@ export function App({
   const [pendingDeliveries, setPendingDeliveries] = useState<PullRequestDelivery[]>([])
   const [activePrBadgeProjectId, setActivePrBadgeProjectId] = useState<string | null>(null)
   /**
-   * Projects whose conversation list is folded away (t479). ⚠️ Read once; written on every toggle.
+   * Projects whose task list is folded away (t479, t901). ⚠️ Read once; written on every toggle.
    * The set holds the *collapsed* ones so a project seen for the first time is open.
    */
-  const [collapsedConversations, setCollapsedConversations] = useState<Set<string>>(() =>
-    readCollapsedConversations()
-  )
-  const toggleConversations = useCallback((projectId: string) => {
-    setCollapsedConversations((cur) => {
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => readCollapsedProjects())
+  const toggleProjectTasks = useCallback((projectId: string) => {
+    setCollapsedProjects((cur) => {
       const next = new Set(cur)
       if (next.has(projectId)) next.delete(projectId)
       else next.add(projectId)
-      writeCollapsedConversations(next)
+      writeCollapsedProjects(next)
       return next
     })
   }, [])
@@ -247,6 +259,7 @@ export function App({
   const refreshProjects = useCallback(async () => {
     if (!connected) return
     setProjects(await rpc('project.list'))
+    setArchivedProjects(await rpc('project.listArchived'))
     setResources(await rpc('resource.list'))
     const all = await rpc('task.list', {})
     setTasks(all)
@@ -274,10 +287,15 @@ export function App({
     void refreshProjects()
   }, [refreshProjects])
 
-  const openNewTask = useCallback((projectId?: string) => {
-    setNewTaskProjectId(projectId)
-    setAddingTask(true)
-  }, [])
+  const openNewTask = useCallback(
+    (projectId?: string) => {
+      // ⚠️ An archived project is not offered for new work (t901), so its own Tasks tab opens the
+      // composer unscoped rather than preset to a project the picker does not list.
+      setNewTaskProjectId(projectId && projects.some((p) => p.id === projectId) ? projectId : undefined)
+      setAddingTask(true)
+    },
+    [projects]
+  )
 
   /**
    * Opening a task from outside its project — the Attention bar's Answer…/View…,
@@ -401,10 +419,24 @@ export function App({
   const liveSessions = fleet.flatMap((f) =>
     f.sessions.filter((s) => !sessionEnded(s.state))
   )
+  const listedProjects = sidebarProjects(projects, archivedProjects, projectFilter)
+  const menuProject = projectMenu
+    ? [...projects, ...archivedProjects].find((p) => p.id === projectMenu.id) ?? null
+    : null
 
   return (
     <DiffPaneContext.Provider value={diffPane}>
     <div className={`shell${sidebarHidden ? ' shell--sidebar-hidden' : ''}${diffRequest ? ' shell--diffpane' : ''}`}>
+      {menuProject && projectMenu && (
+        <ProjectRowMenu
+          key={`${projectMenu.id}:${projectMenu.x}:${projectMenu.y}`}
+          project={menuProject}
+          at={projectMenu}
+          openTasks={tasks.filter((t) => t.projectId === menuProject.id && holdsProjectOpen(t)).length}
+          onClose={() => setProjectMenu(null)}
+          onDone={refreshProjects}
+        />
+      )}
       {/*
         The window's caption area, which this app draws itself.
 
@@ -492,6 +524,13 @@ export function App({
               on a fleet-settings page made it a setting, which it is not. */}
           <div className="nav-group-head">
             <h2>Projects</h2>
+            <ProjectFilterButton
+              filter={projectFilter}
+              onChange={(next) => {
+                setProjectFilter(next)
+                writeProjectFilter(next)
+              }}
+            />
             <button
               className="nav-add"
               title="Add a project"
@@ -501,24 +540,33 @@ export function App({
               +
             </button>
           </div>
-          {projects.length === 0 ? (
-            // ⛔ Not a bare heading. A stranger's first launch has no projects, and a group label
-            // with nothing under it reads as something that failed to load.
-            <button className="nav-item nav-item--ghost" onClick={() => setAddingProject(true)}>
-              No projects yet — add one
-            </button>
+          {listedProjects.length === 0 ? (
+            projectFilter === 'archived' ? (
+              <div className="nav-empty">No archived projects</div>
+            ) : (
+              // ⛔ Not a bare heading. A stranger's first launch has no projects, and a group label
+              // with nothing under it reads as something that failed to load.
+              <button className="nav-item nav-item--ghost" onClick={() => setAddingProject(true)}>
+                No projects yet — add one
+              </button>
+            )
           ) : (
-            projects.map((project) => {
+            listedProjects.map((project) => {
+              const archived = project.archivedAt !== null
               const projectTasks = tasks.filter((t) => t.projectId === project.id)
               const projectPendingPrs = pendingDeliveries.filter((d) => d.projectId === project.id)
               const hasPendingPr = projectPendingPrs.length > 0
               const state = projectWorkState(projectTasks, hasPendingPr)
               const counts = projectTaskCounts(projectTasks)
-              // ⛔ The conversations this project is in the middle of, listed under it so switching
-              // between two of them is one click here rather than a trip through the Tasks board
-              // (t479). Which ones qualify is `openConversations`' rule, not this file's.
-              const conversations = openConversations(projectTasks, project.id)
-              const folded = collapsedConversations.has(project.id)
+              // ⛔ The tasks this project is in the middle of, listed under it so switching between
+              // them is one click here rather than a trip through the Tasks board (t479 for
+              // conversations, t901 for every kind). Which ones qualify, and how many fit, is the
+              // rule in `openTasks`, not this file's. An archived project holds none that can run.
+              const { shown: listed, hidden } = archived
+                ? { shown: [], hidden: 0 }
+                : openTasks(projectTasks, project.id)
+              const listedCount = listed.length + hidden
+              const folded = collapsedProjects.has(project.id)
               const openThreadId =
                 route.kind === 'project' && route.id === project.id && route.tab === 'thread'
                   ? route.taskId ?? null
@@ -528,7 +576,8 @@ export function App({
                   key={project.id}
                   className={`nav-item-project-wrapper${projectDrop?.id === project.id ? ` nav-item-project-wrapper--drop-${projectDrop.after ? 'after' : 'before'}` : ''}`}
                   onDragOver={(event) => {
-                    if (!draggedProjectId || draggedProjectId === project.id) return
+                    // ⚠️ An archived row is not in the order `project.reorder` takes, so it is no target.
+                    if (!draggedProjectId || draggedProjectId === project.id || archived) return
                     event.preventDefault()
                     event.dataTransfer.dropEffect = 'move'
                     const row = event.currentTarget.querySelector(':scope > .nav-item')
@@ -536,6 +585,7 @@ export function App({
                     setProjectDrop({ id: project.id, after: event.clientY >= rect.top + rect.height / 2 })
                   }}
                   onDrop={(event) => {
+                    if (archived) return
                     event.preventDefault()
                     const movedId = draggedProjectId ?? event.dataTransfer.getData('text/plain')
                     const current = projects.map((item) => item.id)
@@ -551,12 +601,18 @@ export function App({
                     void rpc('project.reorder', { ids: next }).then(setProjects).catch(() => void refreshProjects())
                   }}
                 >
-                  {/* A visible conversation owns the selection when its thread is open. Other
-                      project tabs and threads retain the project scope cue. */}
+                  {/* A listed task owns the selection when its thread is open. Other project tabs and
+                      threads retain the project scope cue. */}
                   <NavItem
-                    active={projectSidebarActive(route, project.id, conversations)}
+                    active={projectSidebarActive(route, project.id, listed)}
                     onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'tasks' })}
-                    draggable
+                    className={archived ? 'nav-item--archived' : undefined}
+                    title={archived ? `${project.name} (archived)` : undefined}
+                    onContextMenu={(event) => {
+                      event.preventDefault()
+                      setProjectMenu({ id: project.id, x: event.clientX, y: event.clientY })
+                    }}
+                    draggable={!archived}
                     onDragStart={(event) => {
                       setDraggedProjectId(project.id)
                       event.dataTransfer.effectAllowed = 'move'
@@ -581,25 +637,25 @@ export function App({
                     <span className="nav-project-name">{project.name}</span>
                     <ProjectTaskCount counts={counts} />
                     {/* ⚠️ Only where there is something to fold. A toggle on a project with no open
-                        conversation would be a control that does nothing. A `span` with a role, not
-                        a nested button: the row itself is already a button. */}
-                    {conversations.length > 0 && (
+                        task would be a control that does nothing. A `span` with a role, not a
+                        nested button: the row itself is already a button. */}
+                    {listedCount > 0 && (
                       <span
                         role="button"
                         tabIndex={0}
                         className="nav-fold"
-                        aria-label={`${folded ? 'Show' : 'Hide'} ${conversations.length} open ${conversations.length === 1 ? 'conversation' : 'conversations'}`}
+                        aria-label={`${folded ? 'Show' : 'Hide'} ${listedCount} open ${listedCount === 1 ? 'task' : 'tasks'}`}
                         aria-expanded={!folded}
-                        title={folded ? 'Show open conversations' : 'Hide open conversations'}
+                        title={folded ? 'Show open tasks' : 'Hide open tasks'}
                         onClick={(e) => {
                           e.stopPropagation()
-                          toggleConversations(project.id)
+                          toggleProjectTasks(project.id)
                         }}
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' || e.key === ' ') {
                             e.preventDefault()
                             e.stopPropagation()
-                            toggleConversations(project.id)
+                            toggleProjectTasks(project.id)
                           }
                         }}
                       >
@@ -610,20 +666,30 @@ export function App({
                     )}
                   </NavItem>
                   {!folded &&
-                    conversations.map((conversation) => (
+                    listed.map((task) => (
                       <button
-                        key={conversation.id}
+                        key={task.id}
                         type="button"
-                        className={`nav-item nav-item--conversation${openThreadId === conversation.id ? ' nav-item--active' : ''}`}
-                        title={`t${conversation.seq} · ${conversation.title}`}
-                        onClick={() =>
-                          setRoute({ kind: 'project', id: project.id, tab: 'thread', taskId: conversation.id })
-                        }
+                        className={`nav-item nav-item--task${openThreadId === task.id ? ' nav-item--active' : ''}`}
+                        data-kind={task.kind}
+                        title={`t${task.seq} · ${task.title}`}
+                        onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'thread', taskId: task.id })}
                       >
-                        <span className="nav-conversation-title">{taskLabelShort(conversation, 48)}</span>
-                        {isWorking(conversation) && <Working />}
+                        <TaskTypeIcon task={task} />
+                        <span className="nav-task-title">{taskLabelShort(task, 48)}</span>
+                        {isWorking(task) && <Working />}
                       </button>
                     ))}
+                  {!folded && hidden > 0 && (
+                    <button
+                      type="button"
+                      className="nav-item nav-item--task nav-item--more"
+                      title={`${hidden} more unfinished ${hidden === 1 ? 'task' : 'tasks'} on the Tasks board`}
+                      onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'tasks' })}
+                    >
+                      <span className="nav-task-title">{hidden} more…</span>
+                    </button>
+                  )}
                   {activePrBadgeProjectId === project.id && hasPendingPr && (
                     <div
                       className="project-pr-badge"
@@ -870,6 +936,7 @@ export function App({
               route={route}
               setRoute={setRoute}
               projects={projects}
+              archivedProjects={archivedProjects}
               resources={resources}
               refreshProjects={refreshProjects}
               pendingDeliveries={pendingDeliveries}
@@ -1026,7 +1093,10 @@ function NavItem({
   children,
   draggable,
   onDragStart,
-  onDragEnd
+  onDragEnd,
+  onContextMenu,
+  className,
+  title
 }: {
   active: boolean
   onClick: () => void
@@ -1034,11 +1104,16 @@ function NavItem({
   draggable?: boolean
   onDragStart?: (event: React.DragEvent<HTMLButtonElement>) => void
   onDragEnd?: () => void
+  onContextMenu?: (event: React.MouseEvent<HTMLButtonElement>) => void
+  className?: string
+  title?: string
 }): React.JSX.Element {
   return (
     <button
-      className={`nav-item${active ? ' nav-item--active' : ''}`}
+      className={`nav-item${active ? ' nav-item--active' : ''}${className ? ` ${className}` : ''}`}
+      title={title}
       onClick={onClick}
+      onContextMenu={onContextMenu}
       draggable={draggable}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
@@ -1106,6 +1181,7 @@ function ProjectRoute({
   route,
   setRoute,
   projects,
+  archivedProjects,
   resources,
   refreshProjects,
   pendingDeliveries,
@@ -1118,6 +1194,7 @@ function ProjectRoute({
   route: { kind: 'project'; id: string; tab: ProjectTab; taskId?: string }
   setRoute: (route: Route) => void
   projects: Project[]
+  archivedProjects: Project[]
   resources: ResourceAvailability[]
   refreshProjects: () => Promise<void>
   pendingDeliveries?: PullRequestDelivery[]
@@ -1127,7 +1204,9 @@ function ProjectRoute({
   openSession: string | null
   setOpenSession: (id: string | null) => void
 }): React.JSX.Element {
-  const project = projects.find((p) => p.id === route.id)
+  // An archived project still opens, from the sidebar's Archived view, so its history and its
+  // Unarchive are one click away (t901).
+  const project = projects.find((p) => p.id === route.id) ?? archivedProjects.find((p) => p.id === route.id)
 
   if (!project) {
     return (

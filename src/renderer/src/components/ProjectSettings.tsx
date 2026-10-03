@@ -31,6 +31,7 @@ import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { SettingRow, SettingSwitch } from './SettingRow'
+import { toggleArchive } from './ProjectMenus'
 import { errorMessage } from '@shared/errors.js'
 
 /**
@@ -141,6 +142,21 @@ function ProjectIdentity({
   const [busy, setBusy] = useState(false)
   const pool = resources.find((r) => r.resource.id === `workspace:${project.id}`)
   const landing = resolveFinishPolicy(null, project, fleetFinish)
+  const [archiveNote, setArchiveNote] = useState<string | null>(null)
+
+  // ⛔ The same handler the sidebar's right-click menu calls, so the two cannot ask different
+  // questions. The daemon refuses while a task can still run, and that refusal is shown here as is.
+  const archive = async (): Promise<void> => {
+    setBusy(true)
+    setArchiveNote(null)
+    try {
+      if (await toggleArchive(project)) await refreshProjects()
+    } catch (err) {
+      setArchiveNote(errorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const act = async (call: () => Promise<unknown>): Promise<void> => {
     setBusy(true)
@@ -181,8 +197,21 @@ function ProjectIdentity({
               Write config
             </button>
           )}
+          <button
+            className="btn btn--ghost"
+            disabled={busy}
+            title={
+              project.archivedAt !== null
+                ? 'List this project as active again.'
+                : 'Hide this project from the active list. Refused while a task can still run.'
+            }
+            onClick={() => void archive()}
+          >
+            {project.archivedAt !== null ? 'Unarchive' : 'Archive…'}
+          </button>
         </div>
       </header>
+      {archiveNote && <div className="alert">{archiveNote}</div>}
 
       <table className="tbl">
         <thead>

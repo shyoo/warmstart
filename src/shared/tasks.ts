@@ -478,10 +478,28 @@ export function isPlanExecute(
 
 /** The task type shown in the composer, thread, and task list. */
 export function taskTypeLabel(task: Pick<Task, 'kind' | 'mandate' | 'childDefaults'>): string {
-  if (task.kind === 'plan') return isPlanExecute(task) ? 'Plan & Execute' : 'Plan & Split'
-  if (task.kind === 'conversation') return 'Conversation'
-  if (task.kind === 'debate') return 'Debate'
-  return 'Single Task'
+  return TASK_TYPE_LABELS[taskTypeKey(task)]
+}
+
+/**
+ * The five types a person picks between, as a closed key: what `TaskTypeIcon` draws (t901). ⚠️ One
+ * function decides a plan's shape, so the label and the icon cannot disagree about it.
+ */
+export type TaskTypeKey = 'single' | 'plan-split' | 'plan-execute' | 'conversation' | 'debate'
+
+export const TASK_TYPE_LABELS: Readonly<Record<TaskTypeKey, string>> = {
+  single: 'Single Task',
+  'plan-split': 'Plan & Split',
+  'plan-execute': 'Plan & Execute',
+  conversation: 'Conversation',
+  debate: 'Debate'
+}
+
+export function taskTypeKey(task: Pick<Task, 'kind' | 'mandate' | 'childDefaults'>): TaskTypeKey {
+  if (task.kind === 'plan') return isPlanExecute(task) ? 'plan-execute' : 'plan-split'
+  if (task.kind === 'conversation') return 'conversation'
+  if (task.kind === 'debate') return 'debate'
+  return 'single'
 }
 
 /**
@@ -716,6 +734,18 @@ export type TaskStatus =
   | 'failed'
 
 export const TERMINAL_STATUSES: ReadonlySet<TaskStatus> = new Set<TaskStatus>(['completed', 'cancelled', 'failed'])
+
+/**
+ * The statuses in which a task can still dispatch, run or land on its own: everything but terminal
+ * and `draft`. While a project holds one, it may not be archived (t901, operator's decision), so no
+ * work spends tokens in a project the sidebar has hidden. A failed task does not hold it, because
+ * nothing moves it without a person.
+ */
+export const PROJECT_IDLE_STATUSES: readonly TaskStatus[] = [...TERMINAL_STATUSES, 'draft']
+
+export function holdsProjectOpen(task: Pick<Task, 'status' | 'deletedAt'>): boolean {
+  return task.deletedAt === null && !PROJECT_IDLE_STATUSES.includes(task.status)
+}
 
 /**
  * The buckets the task list can be filtered by.

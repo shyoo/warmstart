@@ -1934,7 +1934,15 @@ export interface RpcMap {
    */
   'project.clone': { params: ProjectCloneRequest; result: ProjectCloneResult }
   'project.reload': { params: { id: string }; result: Project }
+  /**
+   * ⛔ Refused while the project holds a task that can still dispatch, run or land
+   * (`holdsProjectOpen`, t901). Prunes the managed pool only after that check passes.
+   */
   'project.archive': { params: { id: string }; result: Project }
+  /** Back into `project.list`, at the end of the order. Adding the same root again does this too. */
+  'project.unarchive': { params: { id: string }; result: Project }
+  /** The archived projects that `project.list` leaves out, for the sidebar's Archived and All views. */
+  'project.listArchived': { params: void; result: Project[] }
   'project.writeConfig': { params: { id: string }; result: { path: string } }
   /**
    * Which ticket is in which workspace, on which account — the Flow board's middle column.

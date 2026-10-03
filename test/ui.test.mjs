@@ -46,6 +46,8 @@ let projectRoot = null
 let wizardRoot = null
 // ⚠️ Where the clone wizard's clone goes (t897). Cleaned up beside the rest.
 let cloneParent = null
+// ⚠️ The project the archive checks archive (t901). Cleaned up beside the rest.
+let archiveRoot = null
 // ⚠️ Runs in about two minutes on this machine; ten is the ceiling, not the expectation.
 const budget = startDeadline(10 * 60 * 1000, 'ui', () => killTree(app?.pid, 'electron'))
 let socket = null
@@ -4889,7 +4891,7 @@ try {
   const sidebarRows = async () =>
     JSON.parse(
       await evaluate(`
-        JSON.stringify([...document.querySelectorAll('.nav-item--conversation')].map(b => ({
+        JSON.stringify([...document.querySelectorAll('.nav-item--task[data-kind="conversation"]')].map(b => ({
           text: b.innerText.replace(/\\s+/g, ' ').trim(),
           title: b.getAttribute('title') ?? '',
           active: b.classList.contains('nav-item--active')
@@ -4911,7 +4913,7 @@ try {
   const sideIndent = JSON.parse(
     await evaluate(`
       (() => {
-        const row = document.querySelector('.nav-item--conversation .nav-conversation-title')
+        const row = document.querySelector('.nav-item--task[data-kind="conversation"] .nav-task-title')
         const name = document.querySelector('.nav-project-name')
         return JSON.stringify({ row: row?.getBoundingClientRect().left ?? null, project: name?.getBoundingClientRect().left ?? null })
       })()
@@ -4928,7 +4930,7 @@ try {
   )
   // ⚠️ Half the claim: the row has to be there for the click to prove anything.
   await evaluate(
-    `[...document.querySelectorAll('.nav-item--conversation')].find(b => b.innerText.includes('why the tests hang'))?.click()`
+    `[...document.querySelectorAll('.nav-item--task[data-kind="conversation"]')].find(b => b.innerText.includes('why the tests hang'))?.click()`
   )
   await wait(1200)
   const convoHeading = await evaluate(`document.querySelector('.detail-head h3')?.innerText ?? ''`)
@@ -5010,6 +5012,151 @@ try {
     `the finished conversation to leave the sidebar (resolve said: ${resolved})`
   )
   check('a conversation leaves the sidebar once it is finished', (await sidebarRows()).length === 0, resolved)
+
+  section('every unfinished task in the sidebar, its type icon, and archiving a project (t901)')
+  // ⛔ t901 widened the list from conversations to every unfinished kind, each row drawn with a type
+  // pictogram in `currentColor`. A project of its own, so the archive checks own every task in it.
+  // ⚠️ Filed through the RPC: with no credentials the task is held unfinished, which lists it.
+  archiveRoot = mkdtempSync(join(tmpdir(), 'agentyard-ui-archive-'))
+  const t901 = JSON.parse(
+    await evaluate(`
+      (async () => {
+        const r = window.agentyard.rpc;
+        const project = await r('project.add', { root: ${JSON.stringify(archiveRoot)}, name: 'archive me' });
+        const t = await r('task.create', { title: 'a single task to list', projectId: project.id, prompt: 'list me' });
+        return JSON.stringify({ projectId: project.id, taskId: t.id, status: t.status });
+      })()
+    `)
+  )
+  const workRow = async () =>
+    JSON.parse(
+      await evaluate(`
+        (() => {
+          const b = [...document.querySelectorAll('.nav-item--task[data-kind="work"]')].find(b => b.innerText.includes('a single task to list'));
+          const svg = b?.querySelector('svg.task-type-icon');
+          if (!svg) return 'null';
+          const cs = getComputedStyle(svg);
+          return JSON.stringify({ type: svg.getAttribute('data-type'), stroke: cs.stroke, color: cs.color });
+        })()
+      `)
+    )
+  await waitFor(async () => (await workRow()) !== null, 'the single task to be listed under its project')
+  const iconAt = async (theme) => {
+    await evaluate(`document.documentElement.setAttribute('data-theme', ${JSON.stringify(theme)})`)
+    await wait(150)
+    return workRow()
+  }
+  const themeWas = await evaluate(`document.documentElement.getAttribute('data-theme') ?? ''`)
+  const darkIcon = await iconAt('dark')
+  const lightIcon = await iconAt('light')
+  await evaluate(
+    themeWas
+      ? `document.documentElement.setAttribute('data-theme', ${JSON.stringify(themeWas)})`
+      : `document.documentElement.removeAttribute('data-theme')`
+  )
+  check(
+    '⛔ a Single Task is listed under its project, not only a conversation',
+    darkIcon?.type === 'single',
+    JSON.stringify({ t901, darkIcon })
+  )
+  check(
+    'and its pictogram is stroked in the text colour, which follows the theme with no second asset',
+    darkIcon?.stroke === darkIcon?.color && lightIcon?.stroke === lightIcon?.color && darkIcon?.color !== lightIcon?.color,
+    JSON.stringify({ darkIcon, lightIcon })
+  )
+
+  const openProjectMenu = `(() => {
+    const b = [...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('archive me'));
+    const r = b.getBoundingClientRect();
+    b.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 8, clientY: r.top + 4 }));
+  })()`
+  const menuItem = async () =>
+    JSON.parse(
+      await evaluate(`
+        (() => {
+          const m = document.querySelector('.pill-menu [role="menuitem"]');
+          return JSON.stringify(m ? { text: m.innerText.replace(/\\s+/g, ' ').trim(), disabled: m.disabled } : null);
+        })()
+      `)
+    )
+  await evaluate(openProjectMenu)
+  await wait(300)
+  const heldItem = await menuItem()
+  check(
+    '⛔ right-click offers Archive, held off with the reason while a task can still run',
+    heldItem?.disabled === true && /Archive project/.test(heldItem.text) && /1 unfinished task/.test(heldItem.text),
+    JSON.stringify(heldItem)
+  )
+  await evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
+  const refusedArchive = await evaluate(
+    `window.agentyard.rpc('project.archive', { id: ${JSON.stringify(t901.projectId)} }).then(() => 'archived', e => e.message)`
+  )
+  check('and the daemon refuses it too, saying why', /unfinished task/.test(refusedArchive), refusedArchive)
+
+  // Finishing the task frees the project. ⚠️ `confirm` is answered here: the dialog is the operator's
+  // safeguard, and this suite is not a person.
+  await evaluate(`window.agentyard.rpc('task.resolve', { id: ${JSON.stringify(t901.taskId)} })`)
+  await waitFor(async () => (await workRow()) === null, 'the finished task to leave the sidebar')
+  await evaluate(`window.confirm = () => true`)
+  await evaluate(openProjectMenu)
+  await wait(300)
+  const freeItem = await menuItem()
+  check('once nothing can run, Archive is offered', freeItem?.disabled === false, JSON.stringify(freeItem))
+  await evaluate(`document.querySelector('.pill-menu [role="menuitem"]')?.click()`)
+  const sidebarNames = async () =>
+    JSON.parse(
+      await evaluate(
+        `JSON.stringify([...document.querySelectorAll('.nav-item-project-wrapper > .nav-item:not(.nav-item--task)')].map(b => ({ name: b.querySelector('.nav-project-name')?.innerText ?? '', archived: b.classList.contains('nav-item--archived') })))`
+      )
+    )
+  await waitFor(async () => !(await sidebarNames()).some((p) => p.name === 'archive me'), 'the archived project to leave the Active list')
+  const archivedRecord = await evaluate(
+    `window.agentyard.rpc('project.listArchived').then(ps => JSON.stringify(ps.map(p => p.name)))`
+  )
+  check('archiving takes it off the Active list and into the archived one', JSON.parse(archivedRecord).includes('archive me'), archivedRecord)
+
+  // The funnel: Archived, then All, then back to Active.
+  const pickFilter = async (label) => {
+    await evaluate(`document.querySelector('.nav-filter')?.click()`)
+    await wait(250)
+    await evaluate(`[...document.querySelectorAll('.pill-menu [role="option"]')].find(o => o.innerText.trim() === ${JSON.stringify(label)})?.click()`)
+    await wait(400)
+    return sidebarNames()
+  }
+  const archivedView = await pickFilter('Archived')
+  check(
+    '⛔ the funnel’s Archived view lists the archived project, dimmed, and nothing active',
+    archivedView.length > 0 && archivedView.every((p) => p.archived) && archivedView.some((p) => p.name === 'archive me'),
+    JSON.stringify(archivedView)
+  )
+  check(
+    'and the funnel is lit while the list is filtered',
+    await evaluate(`document.querySelector('.nav-filter')?.classList.contains('nav-filter--on') ?? false`)
+  )
+  const allView = await pickFilter('All')
+  check(
+    'All lists active projects first, then archived ones',
+    allView.some((p) => p.name === 'ui project' && !p.archived) && allView.at(-1)?.name === 'archive me',
+    JSON.stringify(allView)
+  )
+  await evaluate(openProjectMenu)
+  await wait(300)
+  const unarchiveItem = await menuItem()
+  check('an archived row’s right-click offers Unarchive', unarchiveItem?.text === 'Unarchive project', JSON.stringify(unarchiveItem))
+  await evaluate(`document.querySelector('.pill-menu [role="menuitem"]')?.click()`)
+  await waitFor(
+    async () => (await sidebarNames()).some((p) => p.name === 'archive me' && !p.archived),
+    'the project to come back as active'
+  )
+  const activeView = await pickFilter('Active')
+  check(
+    'and Unarchive brings it back to the Active list',
+    activeView.some((p) => p.name === 'archive me') && activeView.every((p) => !p.archived),
+    JSON.stringify(activeView)
+  )
+  // Leave the suite where it found it: one project fewer to reason about in every later section.
+  await evaluate(`window.agentyard.rpc('project.archive', { id: ${JSON.stringify(t901.projectId)} })`)
+  await evaluate(`delete window.confirm`)
 
   section('global settings')
   await evaluate(
@@ -6362,6 +6509,7 @@ try {
     if (projectRoot) rmSync(projectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     if (wizardRoot) rmSync(wizardRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     if (cloneParent) rmSync(cloneParent, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    if (archiveRoot) rmSync(archiveRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
   } catch {
     // A locked profile directory is not worth failing a passing test over.
   }
