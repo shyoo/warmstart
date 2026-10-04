@@ -91,6 +91,7 @@ export function QuotaDecide({
   }, [task.constraints.workerId, task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass, task.constraints.effort])
 
   const warning = task.status === 'running' ? task.quotaPreemptWarning : null
+  const [needDestination, setNeedDestination] = useState(false)
   const [preemptReassignWorkerId, setPreemptReassignWorkerId] = useState<string | null>(
     warning?.reassignWorkerId === undefined ? null : warning.reassignWorkerId ?? ''
   )
@@ -318,7 +319,8 @@ export function QuotaDecide({
               {warning.canCompact && (
                 <div className="decide-option">
                   <button type="button" className={warning.action === 'compact' ? 'btn btn--primary' : 'btn'}
-                    disabled={busy || warning.action === 'compact'} onClick={() => void handlePreemptionAction('compact')}>
+                    aria-pressed={warning.action === 'compact'} disabled={busy}
+                    onClick={() => { if (warning.action !== 'compact') void handlePreemptionAction('compact') }}>
                     Compact & pause
                   </button>
                   <span className="decide-what">Preserves context for its next run after quota resets.</span>
@@ -326,18 +328,18 @@ export function QuotaDecide({
               )}
               <div className="decide-option">
                 <button type="button" className={handoffPauseActive ? 'btn btn--primary' : 'btn'}
-                  disabled={busy || handoffPauseActive} onClick={() => void handlePreemptionAction('handoff')}>
+                  aria-pressed={handoffPauseActive} disabled={busy}
+                  onClick={() => { if (!handoffPauseActive) void handlePreemptionAction('handoff') }}>
                   Hand off & pause
                 </button>
                 <span className="decide-what">Commits safe work, writes a handoff brief, and waits for this account's quota to reset.</span>
               </div>
               <div className="decide-option">
                 <button type="button" className={handoffReassignActive ? 'btn btn--primary' : 'btn'}
-                  disabled={busy || preemptReassignWorkerId === null || reassignMatchesSelection}
+                  aria-pressed={reassignMatchesSelection} disabled={busy}
                   onClick={() => {
-                    if (preemptReassignWorkerId !== null) {
-                      void handlePreemptionAction('handoff', preemptReassignWorkerId || null)
-                    }
+                    if (preemptReassignWorkerId === null) setNeedDestination(true)
+                    else if (!reassignMatchesSelection) void handlePreemptionAction('handoff', preemptReassignWorkerId || null)
                   }}>
                   Hand off & reassign
                 </button>
@@ -371,6 +373,7 @@ export function QuotaDecide({
                         onChange={setPreemptEffort} />
                     )}
                   </div>
+                  {needDestination && preemptReassignWorkerId === null && <span role="alert">Choose a destination first.</span>}
                   {handoffReassignActive && !reassignMatchesSelection && <span>Press Hand off & reassign to save this destination.</span>}
                 </div>
               </div>
@@ -1100,15 +1103,17 @@ export function QuotaOverride({
                 <>
                   <button
                     className={warning.action === 'compact' ? 'btn btn--active' : 'btn'}
-                    disabled={busy || warning.action === 'compact'}
-                    onClick={() => void choose('compact')}
+                    aria-pressed={warning.action === 'compact'}
+                    disabled={busy}
+                    onClick={() => { if (warning.action !== 'compact') void choose('compact') }}
                   >
                     Compact & pause
                   </button>{' '}
                   <button
                     className={warning.action === 'handoff' ? 'btn btn--active' : 'btn'}
-                    disabled={busy || warning.action === 'handoff'}
-                    onClick={() => void choose('handoff')}
+                    aria-pressed={warning.action === 'handoff'}
+                    disabled={busy}
+                    onClick={() => { if (warning.action !== 'handoff') void choose('handoff') }}
                   >
                     Hand off & pause
                   </button>{' '}

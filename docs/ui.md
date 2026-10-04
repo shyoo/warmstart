@@ -714,7 +714,9 @@ along undelivered into the next run of a task still `ready` behind the gate); wi
 take effect when the countdown expires, each button beside its own explanation. Immediate actions
 sit below a separate heading. `Hand off & reassign` offers destination worker, model and effort;
   the worker list excludes the preempted account. The operator must choose a destination explicitly,
-  including if that destination is Auto; the button is disabled while it reads *Choose destination…*.
+  including if that destination is Auto; pressing the button while it reads *Choose destination…* sends nothing and
+  says so. ⛔ The standing choice (and the saved destination) is drawn pressed (`aria-pressed`), never `disabled`
+  — t918: Hand off & pause, the default, and Hand off & reassign both read as dead controls.
   The model and effort are
 saved with the timed choice and applied atomically when the handoff finishes.
 If the vendor refuses the turn on quota during the warning or wrap-up, the reassignment applies

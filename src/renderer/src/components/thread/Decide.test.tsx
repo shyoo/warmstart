@@ -31,22 +31,37 @@ describe('quota handoff destination', () => {
       onRefresh={async () => {}} />
   )
 
-  it('requires an explicit destination before Hand off & reassign can be pressed', () => {
+  const pauseButton = (markup: string): string =>
+    markup.match(/<button[^>]*>Hand off &amp; pause<\/button>/)?.[0] ?? ''
+
+  it('asks for a destination without drawing Hand off & reassign as a dead button', () => {
     const markup = render()
     expect(markup).toContain('Choose destination…')
-    expect(handoffButton(markup)).toContain('disabled')
+    expect(handoffButton(markup)).not.toContain('disabled')
+    expect(handoffButton(markup)).toContain('aria-pressed="false"')
+  })
+
+  it('marks the saved choice as pressed instead of disabling it', () => {
+    // No redirect saved: pause is the standing choice, reassign is not.
+    const paused = render()
+    expect(pauseButton(paused)).toContain('aria-pressed="true"')
+    expect(pauseButton(paused)).not.toContain('disabled')
   })
 
   it('distinguishes a saved Auto redirect from an unset destination', () => {
     const markup = render(null)
     expect(markup).toContain('Auto (scheduler decides)')
     expect(markup).not.toContain('Choose destination…')
-    expect(handoffButton(markup)).toContain('disabled')
+    expect(handoffButton(markup)).toContain('aria-pressed="true"')
+    expect(handoffButton(markup)).not.toContain('disabled')
+    expect(pauseButton(markup)).toContain('aria-pressed="false"')
+    expect(pauseButton(markup)).not.toContain('disabled')
   })
 
   it('shows the named worker when a redirect was saved', () => {
     const markup = render('first')
     expect(markup).toContain('ClaudeFirst (claude-code)')
-    expect(handoffButton(markup)).toContain('disabled')
+    expect(handoffButton(markup)).toContain('aria-pressed="true"')
+    expect(handoffButton(markup)).not.toContain('disabled')
   })
 })
