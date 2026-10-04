@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import type { Worker } from '@shared/protocol'
 import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
-import { cacheRemaining, countdown, money, quotaGap, quotaWindowDeltas, spendDeltas, timeRange, when, whenParts } from './format'
+import { claudeBilling, codexBilling } from '@shared/billing'
+import { billingLine, cacheRemaining, countdown, money, quotaGap, quotaWindowDeltas, spendDeltas, timeRange, when, whenParts } from './format'
 
 describe('countdown', () => {
   const NOW = Date.UTC(2026, 8, 2, 12, 0, 0)
@@ -474,5 +475,25 @@ describe('money', () => {
     expect(money(0.23)).toBe('$0.23')
     expect(money(12.5)).toBe('$12.50')
     expect(money(4.5996)).toBe('$4.60')
+  })
+})
+
+describe('billingLine (t906)', () => {
+  const CLAUDE = { billingType: 'stripe_subscription', subscriptionCreatedAt: '2026-06-21T12:17:45.681833Z' }
+  const CODEX = {
+    chatgpt_subscription_active_until: '2026-10-02T03:22:22+00:00',
+    chatgpt_subscription_last_checked: '2026-10-01T02:08:49.998435+00:00'
+  }
+
+  it('says inferred in the text, and passed for a published date behind us', () => {
+    const now = Date.UTC(2026, 9, 3)
+    expect(billingLine(claudeBilling(CLAUDE), now)?.text).toMatch(/^Next billing ~.* · inferred$/)
+    const codex = billingLine(codexBilling(CODEX), now)
+    expect(codex?.text).toMatch(/^Paid through .* · passed$/)
+    expect(codex?.passed).toBe(true)
+    expect(codex?.title).toContain('last confirmed the subscription')
+    expect(billingLine(codexBilling(CODEX), Date.UTC(2026, 8, 20))?.text).not.toContain('passed')
+    // Unknown is no line at all, never an empty date.
+    expect(billingLine(null, now)).toBeNull()
   })
 })

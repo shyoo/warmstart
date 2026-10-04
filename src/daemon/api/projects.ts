@@ -1,5 +1,6 @@
 /** Projects: registration, configuration, checks and the flow view. */
-import { addProject, archiveProject, archiveRefusal, listArchivedProjects, listProjects, relocateProject, reloadProject, reorderProjects, requireProject, setProjectChecks, setProjectPolicy, setProjectPostLanding, unarchiveProject, writeStarterConfig } from '../projects.js'
+import type { Project } from '@shared/tasks.js'
+import { addProject, archiveProject, archiveRefusal, deleteProject, deleteRefusal, listArchivedProjects, listProjects, relocateProject, reloadProject, renameProject, reorderProjects, requireProject, setProjectChecks, setProjectPolicy, setProjectPostLanding, unarchiveProject, writeStarterConfig } from '../projects.js'
 import { proposeChecks } from '../projectstack.js'
 import { cloneProject, cloneReadiness, createProject, inspectProjectDirectory, makeForkHome, proposeProjectDocs, workspaceRootReport } from '../projectsetup.js'
 import { flowWorkspaces } from '../flow.js'
@@ -9,8 +10,19 @@ import type { Api, ApiContext } from './support.js'
 
 type ProjectMethod =
   | 'project.list' | 'project.add' | 'project.relocate' | 'project.inspect' | 'project.workspaceRoot' | 'project.docTemplates'
-  | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.makeForkHome' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.unarchive' | 'project.listArchived' | 'project.writeConfig' | 'project.flow'
+  | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.makeForkHome' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.unarchive' | 'project.rename' | 'project.delete' | 'project.listArchived' | 'project.writeConfig' | 'project.flow'
   | 'project.proposeChecks' | 'project.setChecks' | 'project.setPostLanding' | 'project.setPolicy' | 'project.pruneWorktrees'
+
+/** Idle managed worktrees go with an archived or deleted project; one with work in it is kept. */
+async function pruneManagedPool(project: Project, why: 'archive' | 'delete'): Promise<void> {
+  if (project.config.workspaces?.location !== 'managed' || project.vcs !== 'git') return
+  try {
+    const result = await prunePoolWorktrees(project)
+    if (result.kept.length > 0) log.info(`${project.name}: kept ${result.kept.length} worktree(s) during ${why}`)
+  } catch (err) {
+    log.warn(`${project.name}: could not clean managed worktrees during ${why}:`, err)
+  }
+}
 
 export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
   return {
@@ -32,15 +44,18 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
       // ⛔ Before the prune: a refused archive must not have already taken the pool apart.
       const refusal = archiveRefusal(p.id)
       if (refusal) throw new Error(refusal)
-      if (project.config.workspaces?.location === 'managed' && project.vcs === 'git') {
-        try {
-          const result = await prunePoolWorktrees(project)
-          if (result.kept.length > 0) log.info(`${project.name}: kept ${result.kept.length} worktree(s) during archive`)
-        } catch (err) {
-          log.warn(`${project.name}: could not clean managed worktrees during archive:`, err)
-        }
-      }
+      await pruneManagedPool(project, 'archive')
       return archiveProject(p.id)
+    },
+    'project.rename': (p) => renameProject(p.id, p.name),
+    // ⛔ The same order as archive: refuse, then prune, then hide. Nothing in the repository is touched.
+    'project.delete': async (p) => {
+      const project = requireProject(p.id)
+      const refusal = deleteRefusal(p.id)
+      if (refusal) throw new Error(refusal)
+      await pruneManagedPool(project, 'delete')
+      deleteProject(p.id)
+      return { ok: true as const }
     },
     'project.unarchive': (p) => unarchiveProject(p.id),
     'project.writeConfig': (p) => ({ path: writeStarterConfig(p.id) }),

@@ -81,6 +81,7 @@ any of them — it runs the identical bar and hands the same reason back, verbat
 | Tool | Does |
 |---|---|
 | `task_read` | read this task — its task record, whole thread, and prior runs — or, with `task` (a `t<seq>`, a bare seq, or an id), one sibling in the **same project**. Without the argument the daemon derives the task from the caller's live session, so it stays a route to recover a past reference, not a way to inspect the board: a task on another project, or a reference that names nothing, is refused |
+| `project_settings` | read how **this task's** project lands work (t906): the finish policy and its source, the level a landing actually runs at (`landingLevel`), what Warmstart does after the agent reports, the target, the checks, which remote is home and which is upstream (URLs with credentials stripped), the workspace and completion modes, and the task's mandate — plus `observations` (a verifying level with no checks, a mandate without `land`, a t897 push remote) and `howToChange`, where a *person* changes each. ⛔ Read-only: preference never widens authority, so the agent recommends and the operator changes. Named in the first prompt beside `task_read`. t905's agent had asked the operator to confirm a policy it could not see |
 | `approve` | the permission prompt tool. Called by the CLI in place of showing a card |
 | `task_complete` | ⛔ **the only signal that a task succeeded.** A process exiting cleanly says nothing. Accepts `summary`, plus optional `pr_title` and `pr_body` for public-safe PR generation under `pull-request` landing (t847) |
 | `await_human` | ⛔ **the other terminal contract:** the agent has gone as far as it can and the rest is a person's. Ends the run `blocked`, rests the task at `awaiting_human`, claims nothing and lands nothing |
@@ -94,9 +95,9 @@ any of them — it runs the identical bar and hands the same reason back, verbat
 | `debate_round` | ⛔ **a debate organizer's only move, called once per round.** Either `continue` with one brief per seat — the seats are re-queued and the organizer is stopped until they answer — or `converged` with the agreement, the dissent, the confidence and what is unresolved, which raises the five-verdict card and **blocks until a person answers**. ⛔ An empty dissent is refused |
 | `land_work` | ⛔ **conversations only.** Rebase, check and land what this conversation has committed, because the person asked. Refuses anything else, and refuses while a delegated piece is unsettled or a completed one's branch is not in HEAD — `set_aside` names the pieces reviewed and deliberately not merged. Optional `pr_title` and `pr_body` specify public-safe PR details when landing under `pull-request` (t847). Ends nothing — the reply names the branch to keep working on |
 
-⚠️ `task_read` changes every worker session's tool-definition prefix. Existing sessions retain their
-frozen MCP config until they end; fresh ones pay the new prefix so a worker can recover its own
-recorded context without database access.
+⚠️ `task_read` and `project_settings` each changed every worker session's tool-definition prefix.
+Existing sessions retain their frozen MCP config until they end; fresh ones pay the new prefix so a
+worker can recover its own recorded context, and its project's landing setup, without database access.
 
 ⛔ **`task_complete` and `await_human` are the only two ways a run can end, and an agent that calls
 neither leaves the task reading `running` for ever.** An ordinary run stays open until completion is

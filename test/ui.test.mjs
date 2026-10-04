@@ -5085,15 +5085,18 @@ try {
     const r = b.getBoundingClientRect();
     b.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 8, clientY: r.top + 4 }));
   })()`
-  const menuItem = async () =>
+  // ⚠️ By label, not position: t906 put Rename above Archive and Delete below it.
+  const menuItem = async (label = 'archive') =>
     JSON.parse(
       await evaluate(`
         (() => {
-          const m = document.querySelector('.pill-menu [role="menuitem"]');
+          const m = [...document.querySelectorAll('.pill-menu [role="menuitem"]')].find(b => b.innerText.toLowerCase().includes(${JSON.stringify(label)}));
           return JSON.stringify(m ? { text: m.innerText.replace(/\\s+/g, ' ').trim(), disabled: m.disabled } : null);
         })()
       `)
     )
+  const clickMenuItem = (label) =>
+    evaluate(`[...document.querySelectorAll('.pill-menu [role="menuitem"]')].find(b => b.innerText.toLowerCase().includes(${JSON.stringify(label)}))?.click()`)
   await evaluate(openProjectMenu)
   await wait(300)
   const heldItem = await menuItem()
@@ -5117,7 +5120,7 @@ try {
   await wait(300)
   const freeItem = await menuItem()
   check('once nothing can run, Archive is offered', freeItem?.disabled === false, JSON.stringify(freeItem))
-  await evaluate(`document.querySelector('.pill-menu [role="menuitem"]')?.click()`)
+  await clickMenuItem('archive project')
   const sidebarNames = async () =>
     JSON.parse(
       await evaluate(
@@ -5158,7 +5161,7 @@ try {
   await wait(300)
   const unarchiveItem = await menuItem()
   check('an archived row’s right-click offers Unarchive', unarchiveItem?.text === 'Unarchive project', JSON.stringify(unarchiveItem))
-  await evaluate(`document.querySelector('.pill-menu [role="menuitem"]')?.click()`)
+  await clickMenuItem('unarchive project')
   await waitFor(
     async () => (await sidebarNames()).some((p) => p.name === 'archive me' && !p.archived),
     'the project to come back as active'
@@ -5169,8 +5172,102 @@ try {
     activeView.some((p) => p.name === 'archive me') && activeView.every((p) => !p.archived),
     JSON.stringify(activeView)
   )
+  section('renaming and deleting from the sidebar (t906)')
+  // ⚠️ A React-controlled box ignores a bare `.value =`; the native setter plus an input event is what
+  // a keystroke amounts to.
+  const typeInto = (selector, value) =>
+    evaluate(`(() => {
+      const i = document.querySelector(${JSON.stringify(selector)});
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(i, ${JSON.stringify(value)});
+      i.dispatchEvent(new Event('input', { bubbles: true }));
+      return !!i;
+    })()`)
+  await evaluate(openProjectMenu)
+  await wait(300)
+  const menuShape = JSON.parse(
+    await evaluate(`
+      (() => {
+        const items = [...document.querySelectorAll('.pill-menu [role="menuitem"]')];
+        const del = items.find(b => b.innerText.includes('Delete project'));
+        return JSON.stringify({
+          labels: items.map(b => b.querySelector('.pill-option-label')?.innerText ?? ''),
+          deleteColor: del ? getComputedStyle(del).color : null,
+          renameColor: items[0] ? getComputedStyle(items[0]).color : null,
+          danger: getComputedStyle(document.documentElement).getPropertyValue('--state-danger').trim()
+        });
+      })()
+    `)
+  )
+  check(
+    '⛔ a project row’s right-click offers Rename, Archive and Delete, in that order',
+    JSON.stringify(menuShape.labels) === JSON.stringify(['Rename project…', 'Archive project…', 'Delete project…']),
+    JSON.stringify(menuShape)
+  )
+  check(
+    'and Delete is drawn in the danger colour, unlike the entries above it',
+    menuShape.deleteColor !== null && menuShape.deleteColor !== menuShape.renameColor,
+    JSON.stringify(menuShape)
+  )
+  await clickMenuItem('rename project')
+  await wait(200)
+  await typeInto('.menu-rename-input', 'archive me renamed')
+  await evaluate(`document.querySelector('.menu-rename button[type="submit"]')?.click()`)
+  await waitFor(
+    async () => (await sidebarNames()).some((p) => p.name === 'archive me renamed'),
+    'the renamed project to show its new name in the sidebar'
+  )
+  check('Rename… renames the project in place', true)
+
+  const t906 = JSON.parse(
+    await evaluate(`
+      window.agentyard.rpc('task.create', { title: 'a task to rename', projectId: ${JSON.stringify(t901.projectId)}, prompt: 'rename me' })
+        .then(t => JSON.stringify({ id: t.id }))
+    `)
+  )
+  const taskRowTitles = async () =>
+    JSON.parse(await evaluate(`JSON.stringify([...document.querySelectorAll('.nav-item--task .nav-task-title')].map(t => t.innerText.trim()))`))
+  await waitFor(async () => (await taskRowTitles()).some((t) => t.includes('a task to rename')), 'the new task to be listed')
+  await evaluate(`(() => {
+    const b = [...document.querySelectorAll('.nav-item--task')].find(b => b.innerText.includes('a task to rename'));
+    const r = b.getBoundingClientRect();
+    b.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 8, clientY: r.top + 4 }));
+  })()`)
+  await wait(300)
+  const taskMenu = await menuItem('rename task')
+  check('⛔ a task row’s right-click offers Rename task…', taskMenu?.text === 'Rename task…', JSON.stringify(taskMenu))
+  await clickMenuItem('rename task')
+  await wait(200)
+  await typeInto('.menu-rename-input', 'a task renamed from the sidebar')
+  await evaluate(`document.querySelector('.menu-rename button[type="submit"]')?.click()`)
+  await waitFor(
+    async () => (await taskRowTitles()).some((t) => t.includes('a task renamed from the sidebar')),
+    'the renamed task to show its new title in the sidebar'
+  )
+  const renamedTitle = await evaluate(`window.agentyard.rpc('task.get', { id: ${JSON.stringify(t906.id)} }).then(r => r.task?.title ?? r.title)`)
+  check('and the title is the task’s own, not just the row’s', renamedTitle === 'a task renamed from the sidebar', renamedTitle)
+
+  // Delete is held while that task can run, then allowed once it is finished.
+  await evaluate(openProjectMenu)
+  await wait(300)
+  const heldDelete = await menuItem('delete project')
+  check('Delete is held off, with the reason, while a task can still run', heldDelete?.disabled === true && /1 unfinished task/.test(heldDelete.text), JSON.stringify(heldDelete))
+  await evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))`)
+  await evaluate(`window.agentyard.rpc('task.resolve', { id: ${JSON.stringify(t906.id)} })`)
+  await waitFor(async () => !(await taskRowTitles()).some((t) => t.includes('renamed from the sidebar')), 'the finished task to leave the sidebar')
+  await evaluate(openProjectMenu)
+  await wait(300)
+  await clickMenuItem('delete project')
+  await waitFor(async () => !(await sidebarNames()).some((p) => p.name === 'archive me renamed'), 'the deleted project to leave the sidebar')
+  const afterDelete = JSON.parse(
+    await evaluate(`Promise.all([window.agentyard.rpc('project.list'), window.agentyard.rpc('project.listArchived')]).then(([a, b]) => JSON.stringify([...a, ...b].map(p => p.id)))`)
+  )
+  check('⛔ a deleted project is in neither the active nor the archived list', !afterDelete.includes(t901.projectId), JSON.stringify(afterDelete))
+  check('and its folder is still on disk', existsSync(archiveRoot), archiveRoot)
+
   // Leave the suite where it found it: one project fewer to reason about in every later section.
-  await evaluate(`window.agentyard.rpc('project.archive', { id: ${JSON.stringify(t901.projectId)} })`)
+  // ⚠️ Already gone from every list; archiving a deleted row is a no-op, kept so a red check above
+  // still leaves nothing active behind.
+  await evaluate(`window.agentyard.rpc('project.archive', { id: ${JSON.stringify(t901.projectId)} }).catch(() => null)`)
   await evaluate(`delete window.confirm`)
 
   section('global settings')

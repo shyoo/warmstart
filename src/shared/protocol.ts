@@ -2,6 +2,7 @@ import type { ManualReview, QualityReview } from './review.js'
 import type { ModelClass } from './modelclass.js'
 import type { ThreadCommandId } from './commands.js'
 import type { ModelRoute } from './modelroutes.js'
+import type { WorkerBilling } from './billing.js'
 export type { ModelRoute } from './modelroutes.js'
 
 export type { ModelClass } from './modelclass.js'
@@ -628,6 +629,12 @@ export interface WorkerIdentity {
   subscriptionType?: string | null
   /** Has the CLI's config or probe identified that the subscription is expired / inactive? */
   subscriptionExpired?: boolean | null
+  /**
+   * When this account is next billed — published by the vendor, or inferred and labelled so (t906).
+   * `null` or absent is *unknown*, which is what every adapter without a local source reports. See
+   * `shared/billing.ts`. ⛔ Shown, never gated on.
+   */
+  billing?: WorkerBilling | null
   /**
    * The models the endpoint said it serves, as Warmstart names them (`local-llm:<served id>`), or
    * null where the adapter has no such list (every cloud CLI). ⭐ This is the model picker for a
@@ -1949,6 +1956,13 @@ export interface RpcMap {
   'project.archive': { params: { id: string }; result: Project }
   /** Back into `project.list`, at the end of the order. Adding the same root again does this too. */
   'project.unarchive': { params: { id: string }; result: Project }
+  /** A new display name, on this install only — `project.json` is not touched (t906). */
+  'project.rename': { params: { id: string; name: string }; result: Project }
+  /**
+   * Remove a project from Warmstart (t906). ⛔ Soft and refused like archive while a task can still
+   * run; nothing on disk is deleted, history stays, and adding the folder again restores it.
+   */
+  'project.delete': { params: { id: string }; result: { ok: true } }
   /** The archived projects that `project.list` leaves out, for the sidebar's Archived and All views. */
   'project.listArchived': { params: void; result: Project[] }
   'project.writeConfig': { params: { id: string }; result: { path: string } }
@@ -2873,6 +2887,18 @@ export interface RpcMap {
     params: { sessionId: string; task?: string }
     result: { task: Task; messages: TaskMessage[]; runs: Run[] } | null
   }
+  /**
+   * How this task's project lands work, and what that means for the agent (t906).
+   *
+   * ⛔ **Read-only, and scoped to the caller's own task.** t905's agent could not see its project's
+   * finish policy and asked the operator to confirm it; this is that answer, resolved exactly as the
+   * landing will resolve it. Preference never widens authority: nothing here changes a setting, and
+   * the reply says where a *person* changes each one so the agent can recommend rather than act.
+   */
+  'agent.projectSettings': {
+    params: { sessionId: string }
+    result: AgentProjectSettings | null
+  }
   /** ⛔ The only signal that a task succeeded. A process exiting says nothing about the work. */
   'agent.complete': {
     params: { sessionId: string; summary: string; prTitle?: string; prBody?: string }
@@ -3130,6 +3156,40 @@ export interface TaskCreateParams {
   estTokens?: number | null
   /** Attachments already uploaded through `attachment.create`, bound to the task's first message. */
   attachmentIds?: string[]
+}
+
+/** What `project_settings` tells an agent about the project its task runs in. See `projectbrief.ts`. */
+export interface AgentProjectSettings {
+  project: { name: string; vcs: 'git' | 'none'; root: string; config: string | null }
+  task: { seq: number; kind: string }
+  landing: {
+    /** What `task_complete` does with this task's work, task → project → fleet. */
+    finish: { policy: FinishPolicy; label: string; source: 'task' | 'project' | 'fleet'; instruction: string | null }
+    /** The level a landing actually runs at — `land_work` on a conversation, the finish otherwise. */
+    landsWith: FinishPolicy
+    target: string
+    /** The checks the tool runs before landing at `landsWith`; empty when that level verifies nothing. */
+    checks: string[]
+    postLanding: string[]
+    /** The remote task branches are pushed to when it is not `origin` (t897 layout), else null. */
+    pushRemote: string | null
+    /** The repository this project contributes *to* when `origin` is a fork (t903), else null. */
+    upstreamRemote: string | null
+    /** One paragraph: what happens after the agent reports, in the order it happens. */
+    whatHappens: string
+  }
+  workspace: { mode: 'worktree' | 'trunk'; source: string }
+  completion: { mode: string; source: 'task' | 'project' | 'fleet' }
+  sessionSharing: { sharing: string; source: 'task' | 'project' | 'fleet' }
+  quotaAutoResume: boolean
+  /** The authority half: what this task may do, whatever the policy prefers. */
+  mandate: { allowed: string[]; mayLand: boolean; mayPush: boolean }
+  /** `git remote`, credentials stripped, each with what it is *for* in this project. */
+  remotes: Array<{ name: string; url: string; role: string }>
+  /** Things worth saying about this combination of settings, each with what a person could change. */
+  observations: string[]
+  /** Where a person changes each setting. The agent recommends; it cannot change any of them. */
+  howToChange: string
 }
 
 export interface TaskUpdateParams {

@@ -1537,6 +1537,51 @@ body {
   color: var(--state-danger);
 }
 
+/* The one destructive entry in a sidebar menu (t906): red, and last. ⚠️ Two classes: `.pill-option`
+   sets `color` further down this file, and at equal specificity the later rule wins (L3 caught it). */
+.pill-option.pill-option--danger,
+.pill-option.pill-option--danger:hover,
+.pill-option.pill-option--danger:focus-visible {
+  color: var(--state-danger);
+}
+
+[role="menu"] > .pill-option:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+/* Rename in place inside a sidebar menu: the box, then Save, then any refusal under both. */
+.menu-rename {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 4px;
+  min-width: 260px;
+}
+
+.menu-rename-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.menu-rename .project-menu-error {
+  flex-basis: 100%;
+}
+
+/* Project Settings' rename row, under the header that opened it (t906). */
+.project-rename {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+
+.project-rename input {
+  flex: 0 1 360px;
+  min-width: 0;
+}
+
 /* ---- panels ------------------------------------------------------------ */
 
 .panel {
@@ -3179,6 +3224,7 @@ body {
 .tbl-workers .worker-identity-info { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-1); }
 .tbl-workers .worker-account { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); min-width: 0; }
 .tbl-workers .worker-account-plan { font-size: var(--text-meta); }
+.tbl-workers .worker-account-billing { flex-basis: 100%; font-size: var(--text-meta); }
 .tbl-workers .worker-credits { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
 .tbl-workers .worker-credits label { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .tbl-workers .worker-credits--disabled label { opacity: 0.48; }

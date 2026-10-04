@@ -330,6 +330,20 @@ than silently opting out. (Operator's call, 2026-09-07; the first draft stood do
 the task thread — once per run per kind, and only at the moment a guard would actually have fired. A
 run carrying on at 100% of its window is otherwise indistinguishable from one the scheduler forgot.
 
+### Billing dates (2026-10-03, t906)
+
+Measured on this install's six workers, reading only date and plan fields. **Codex publishes it**: the
+`id_token` in `<isolationRoot>/auth.json` carries `https://api.openai.com/auth` →
+`chatgpt_subscription_active_start` / `_active_until` and `chatgpt_subscription_last_checked`
+(CodexFirst: plan `free`, until 2026-10-02T03:22:22Z, checked 2026-10-01). **Claude does not**:
+`.claude.json` → `oauthAccount` has `subscriptionCreatedAt` and `billingType: stripe_subscription`, and
+neither it nor `cachedUsageUtilization` has a renewal date (the 2026-09-07 finding above still holds),
+so the next charge is the monthly anniversary — *inferred*, and wrong for an annual plan. **Muse and
+Antigravity carry nothing** (tokens and identity claims only), so theirs is *unknown*. `probeIdentity`
+stores the reading on `WorkerIdentity.billing` (`shared/billing.ts`); an inferred one is stored as its
+anchor and rolled forward when read, because identity is re-read only on a probe or sign-in. Shown on
+Settings › Workers, never gated on. `creditsResetAt` uses the same anniversary function.
+
 ### The start of a run is a guard too (2026-09-07, t282)
 
 ⛔ **The switch was wired into three mid-run guards and none of the two that decide whether work

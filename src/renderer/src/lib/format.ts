@@ -1,5 +1,6 @@
 import type { Session, Worker } from '@shared/protocol'
 import { isWorkerSubscriptionExpired, type RunQuota } from '@shared/tasks'
+import { billingDate, type WorkerBilling } from '@shared/billing'
 /**
  * Formatting for numbers that update in place.
  *
@@ -362,4 +363,31 @@ export function quotaGap(
     }
   }
   return null
+}
+
+/**
+ * The Workers page's billing line (t906): the date, whether the vendor said it, and where it came from.
+ *
+ * ⛔ *Inferred* is in the text, not only in the hover — a Claude date is an anniversary guess and an
+ * annual plan would make it wrong by months. A published date already behind us says *passed*
+ * rather than pretending to be the next charge: the token is only as new as the last sign-in
+ * refresh, and the next probe will say what replaced it. Null where nothing is known.
+ */
+export function billingLine(
+  billing: WorkerBilling | null | undefined,
+  now: number
+): { text: string; title: string; passed: boolean } | null {
+  const at = billingDate(billing, now)
+  if (!billing || at === null) return null
+  const date = new Date(at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+  const passed = at <= now
+  const text =
+    billing.basis === 'inferred'
+      ? `Next billing ~${date} · inferred`
+      : passed
+        ? `Paid through ${date} · passed`
+        : `Paid through ${date}`
+  const checked =
+    billing.vendorCheckedAt !== null ? ` The vendor last confirmed the subscription ${age(now - billing.vendorCheckedAt)}.` : ''
+  return { text, title: billing.source + checked, passed }
 }

@@ -847,6 +847,8 @@ export async function refreshIdentity(id: string, lift = false): Promise<Worker>
     // Recorded, never gated on. See WorkerIdentity.subscriptionType.
     subscriptionType: probe.subscriptionType ?? null,
     subscriptionExpired: probe.subscriptionExpired ?? null,
+    // Shown beside the plan, never gated on. See WorkerIdentity.billing.
+    billing: probe.billing ?? null,
     // What a local endpoint serves, and how wide its window is - the only source either can come
     // from, so null everywhere a CLI answered instead.
     servedModels: probe.servedModels ?? null,

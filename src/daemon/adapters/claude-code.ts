@@ -29,6 +29,7 @@ import { launchArgs, launchable, spawnEnv, which } from '../which.js'
 import { APPROVE_TOOL } from '../mcpconfig.js'
 import { paths } from '../paths.js'
 import { errorMessage } from '@shared/errors.js'
+import { claudeBilling, nextMonthlyAnniversary, type WorkerBilling } from '@shared/billing.js'
 
 const run = promisify(execFile)
 
@@ -347,29 +348,7 @@ export function creditsResetAt(subscriptionCreatedAt: string | null | undefined,
   if (!subscriptionCreatedAt) return null
   const start = Date.parse(subscriptionCreatedAt)
   if (!Number.isFinite(start)) return null
-  // ⚠️ UTC throughout: a billing anniversary is a calendar date, and local DST must not move it.
-  const anchor = new Date(start)
-  const day = anchor.getUTCDate()
-  const time = [anchor.getUTCHours(), anchor.getUTCMinutes(), anchor.getUTCSeconds(), anchor.getUTCMilliseconds()]
-  const at = (y: number, m: number): number => {
-    const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate()
-    return Date.UTC(y, m, Math.min(day, last), time[0], time[1], time[2], time[3])
-  }
-  const nowDate = new Date(now)
-  let y = nowDate.getUTCFullYear()
-  let m = nowDate.getUTCMonth()
-  let candidate = at(y, m)
-  // A refresh later today is still ahead; one already past rolls to next month. Twelve steps is
-  // more than enough and bounds the loop absolutely.
-  for (let i = 0; i < 12 && candidate <= now; i++) {
-    m += 1
-    if (m > 11) {
-      m = 0
-      y += 1
-    }
-    candidate = at(y, m)
-  }
-  return candidate > now ? candidate : null
+  return nextMonthlyAnniversary(start, now)
 }
 
 function creditStatus(parsed: ClaudeConfigShape, now: number = Date.now()): CreditStatus | null {
@@ -867,14 +846,16 @@ export const claudeCode: AgentAdapter = {
     }
     const file = join(isolationRoot, '.claude.json')
     let isExpired = false
+    let billing: WorkerBilling | null = null
     if (existsSync(file)) {
       try {
         const cj = JSON.parse(readFileSafe(file)) as {
-          oauthAccount?: { billingType?: string | null }
+          oauthAccount?: { billingType?: string | null; subscriptionCreatedAt?: string | null }
         }
         if (cj.oauthAccount && cj.oauthAccount.billingType === 'none') {
           isExpired = true
         }
+        billing = claudeBilling(cj.oauthAccount)
       } catch {
         // .claude.json unreadable or malformed
       }
@@ -893,6 +874,7 @@ export const claudeCode: AgentAdapter = {
         setupComplete: isExpired ? null : firstRunComplete(isolationRoot),
         subscriptionType: isExpired ? 'expired' : (parsed.subscriptionType ?? null),
         subscriptionExpired: isExpired,
+        billing,
         raw: stdout.trim()
       }
     } catch {
@@ -900,6 +882,7 @@ export const claudeCode: AgentAdapter = {
         loggedIn: null,
         setupComplete: isExpired ? null : firstRunComplete(isolationRoot),
         subscriptionExpired: isExpired,
+        billing,
         raw: stdout.slice(0, 400)
       }
     }

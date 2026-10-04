@@ -17,6 +17,7 @@ import { asRecord, num, toolLine, type DecodeContext, type StreamEvent, type Str
 import { log } from '../log.js'
 import { formatCmdInvocation, launchArgs, launchable, spawnEnv, which } from '../which.js'
 import { errorMessage } from '@shared/errors.js'
+import { codexBilling, type WorkerBilling } from '@shared/billing.js'
 
 /**
  * Codex CLI — the OpenAI-compatible adapter.
@@ -875,6 +876,7 @@ export async function refreshTokensIfExpired(isolationRoot: string): Promise<boo
 export function readCodexAuthIdentity(isolationRoot: string): {
   account?: string
   subscriptionType?: string
+  billing?: WorkerBilling | null
   loggedIn: boolean
 } | null {
   const authPath = join(isolationRoot, 'auth.json')
@@ -901,11 +903,13 @@ export function readCodexAuthIdentity(isolationRoot: string): {
       undefined
 
     const subscriptionType = formatPlan(rawPlan) ?? undefined
+    const billing = codexBilling(authClaim)
 
     return {
       loggedIn: true,
       ...(email ? { account: email } : {}),
-      ...(subscriptionType ? { subscriptionType } : {})
+      ...(subscriptionType ? { subscriptionType } : {}),
+      ...(billing ? { billing } : {})
     }
   } catch (err) {
     log.debug('codex auth.json identity parse error:', err)
@@ -1297,6 +1301,7 @@ export const openaiCompatible: AgentAdapter = {
         loggedIn: authIdent.loggedIn,
         ...(authIdent.account ? { account: authIdent.account } : {}),
         ...(authIdent.subscriptionType ? { subscriptionType: authIdent.subscriptionType } : {}),
+        billing: authIdent.billing ?? null,
         ...(cliVersion ? { cliVersion } : {}),
         raw: JSON.stringify({
           loggedIn: authIdent.loggedIn,

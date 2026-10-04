@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { errorMessage } from '@shared/errors.js'
-import type { Project } from '@shared/tasks'
+import type { Project, Task } from '@shared/tasks'
 import { rpc } from '../lib/daemon'
 import { menuPosition, type MenuPlacement, type Rect } from '../lib/menuposition'
 import { PROJECT_FILTERS, type ProjectFilter } from '../lib/sidebartasks'
@@ -149,63 +149,246 @@ export async function toggleArchive(project: Pick<Project, 'id' | 'name' | 'arch
   return rpc('project.archive', { id: project.id })
 }
 
+/** What a person is agreeing to when they delete. Both entry points ask this, word for word. */
+export function confirmDelete(project: Pick<Project, 'name' | 'root'>): boolean {
+  return confirm(
+    `Delete ${project.name} from Warmstart? It leaves every list, archived included, and its idle pool ` +
+      `worktrees are removed. Nothing in ${project.root} is deleted — not a file, branch or stash — and ` +
+      'its tasks and history are kept. Adding the folder again brings it back.'
+  )
+}
+
+/** Delete, asking first. False when declined; throws the daemon's refusal. */
+export async function deleteProject(project: Pick<Project, 'id' | 'name' | 'root'>): Promise<boolean> {
+  if (!confirmDelete(project)) return false
+  await rpc('project.delete', { id: project.id })
+  return true
+}
+
 /**
- * The right-click menu on a project row.
+ * One line of text, renamed in place: Enter saves, Esc abandons (t906).
  *
- * ⛔ Archive is drawn disabled, with the reason, while the project holds a task that can still run
- * (`holdsProjectOpen`). The daemon refuses it anyway; this only saves the round trip.
+ * ⚠️ Inside the menu rather than a `prompt()`: Electron does not implement `window.prompt`, and a
+ * modal for one word would be heavier than the thing it edits.
+ */
+function RenameField({
+  label,
+  initial,
+  maxLength,
+  onSave,
+  onCancel
+}: {
+  label: string
+  initial: string
+  maxLength: number
+  onSave: (next: string) => Promise<void>
+  onCancel: () => void
+}): React.JSX.Element {
+  const [draft, setDraft] = useState(initial)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const input = useRef<HTMLInputElement>(null)
+  useEffect(() => input.current?.select(), [])
+  const save = async (): Promise<void> => {
+    const next = draft.trim()
+    if (!next || next === initial) return onCancel()
+    setBusy(true)
+    setError(null)
+    try {
+      await onSave(next)
+    } catch (err) {
+      setError(errorMessage(err))
+      setBusy(false)
+    }
+  }
+  return (
+    <form
+      className="menu-rename"
+      onSubmit={(e) => {
+        e.preventDefault()
+        void save()
+      }}
+    >
+      <input
+        ref={input}
+        className="menu-rename-input"
+        aria-label={label}
+        value={draft}
+        maxLength={maxLength}
+        disabled={busy}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          // ⚠️ Stopped here so the menu's own Escape handler does not close the menu as well.
+          if (e.key === 'Escape') {
+            e.preventDefault()
+            e.stopPropagation()
+            onCancel()
+          }
+        }}
+      />
+      <button type="submit" className="btn btn--primary" disabled={busy}>
+        {busy ? 'Saving…' : 'Save'}
+      </button>
+      {error && <div className="pill-option-hint project-menu-error">{error}</div>}
+    </form>
+  )
+}
+
+function MenuItem({
+  label,
+  hint,
+  danger,
+  disabled,
+  autoFocus,
+  onClick
+}: {
+  label: string
+  hint?: string | null
+  danger?: boolean
+  disabled?: boolean
+  autoFocus?: boolean
+  onClick: () => void
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      className={`pill-option${danger ? ' pill-option--danger' : ''}`}
+      disabled={disabled}
+      autoFocus={autoFocus}
+      onClick={onClick}
+    >
+      <span className="pill-option-text">
+        <span className="pill-option-label">{label}</span>
+        {hint && <span className="pill-option-hint">{hint}</span>}
+      </span>
+    </button>
+  )
+}
+
+/**
+ * The right-click menu on a project row: Rename, Archive and Delete (t901, t906).
+ *
+ * ⛔ Archive and Delete are drawn disabled, with the reason, while the project holds a task that can
+ * still run (`holdsProjectOpen`). The daemon refuses both anyway; this only saves the round trip.
+ * ⚠️ Delete is red and last, and asks first: it is the one entry that removes the project from view.
  */
 export function ProjectRowMenu({
   project,
   at,
   openTasks,
   onClose,
-  onDone
+  onDone,
+  onDeleted
 }: {
-  project: Pick<Project, 'id' | 'name' | 'archivedAt'>
+  project: Pick<Project, 'id' | 'name' | 'root' | 'archivedAt'>
   at: { x: number; y: number }
   openTasks: number
   onClose: () => void
   onDone: () => Promise<void> | void
+  onDeleted?: () => void
 }): React.JSX.Element {
   const [anchor] = useState<Rect>(() => ({ left: at.x, top: at.y, width: 0, height: 0 }))
   const [busy, setBusy] = useState(false)
+  const [renaming, setRenaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const archived = project.archivedAt !== null
-  const blocked = !archived && openTasks > 0
+  const blocked = openTasks > 0
+  const blockedHint = blocked
+    ? `${openTasks} unfinished ${openTasks === 1 ? 'task' : 'tasks'}: finish or cancel first`
+    : null
+  const run = (action: () => Promise<unknown>, after?: () => void): void => {
+    setBusy(true)
+    setError(null)
+    void action()
+      .then(async (done) => {
+        if (done) {
+          await onDone()
+          after?.()
+        }
+        onClose()
+      })
+      .catch((err: unknown) => {
+        setError(errorMessage(err))
+        setBusy(false)
+      })
+  }
   return (
     <FloatingMenu anchor={anchor} onClose={onClose}>
       <div className="pill-options" role="menu" aria-label={`${project.name} actions`}>
-        <button
-          type="button"
-          role="menuitem"
-          className="pill-option"
-          disabled={busy || blocked}
-          autoFocus
-          onClick={() => {
-            setBusy(true)
-            setError(null)
-            void toggleArchive(project)
-              .then(async (done) => {
-                if (done) await onDone()
-                onClose()
-              })
-              .catch((err: unknown) => {
-                setError(errorMessage(err))
-                setBusy(false)
-              })
-          }}
-        >
-          <span className="pill-option-text">
-            <span className="pill-option-label">{archived ? 'Unarchive project' : 'Archive project…'}</span>
-            {blocked && (
-              <span className="pill-option-hint">
-                {openTasks} unfinished {openTasks === 1 ? 'task' : 'tasks'}: finish or cancel first
-              </span>
-            )}
-          </span>
-        </button>
+        {renaming ? (
+          <RenameField
+            label="Project name"
+            initial={project.name}
+            maxLength={200}
+            onCancel={() => setRenaming(false)}
+            onSave={async (name) => {
+              await rpc('project.rename', { id: project.id, name })
+              await onDone()
+              onClose()
+            }}
+          />
+        ) : (
+          <>
+            <MenuItem label="Rename project…" disabled={busy} autoFocus onClick={() => setRenaming(true)} />
+            <MenuItem
+              label={archived ? 'Unarchive project' : 'Archive project…'}
+              hint={archived ? null : blockedHint}
+              disabled={busy || (!archived && blocked)}
+              onClick={() => run(() => toggleArchive(project))}
+            />
+            <MenuItem
+              label="Delete project…"
+              hint={blockedHint}
+              danger
+              disabled={busy || blocked}
+              onClick={() => run(() => deleteProject(project), onDeleted)}
+            />
+          </>
+        )}
         {error && <div className="pill-option-hint project-menu-error">{error}</div>}
+      </div>
+    </FloatingMenu>
+  )
+}
+
+/**
+ * The right-click menu on a sidebar task row (t906): rename the task without opening it.
+ *
+ * ⚠️ Through `task.update { title }`, the call `TitleEditor` makes, so the two cannot disagree: it
+ * trims, clears the controller's summary, and never re-dispatches a held or finished task.
+ */
+export function TaskRowMenu({
+  task,
+  at,
+  onClose,
+  onDone
+}: {
+  task: Pick<Task, 'id' | 'seq' | 'title'>
+  at: { x: number; y: number }
+  onClose: () => void
+  onDone: () => Promise<void> | void
+}): React.JSX.Element {
+  const [anchor] = useState<Rect>(() => ({ left: at.x, top: at.y, width: 0, height: 0 }))
+  const [renaming, setRenaming] = useState(false)
+  return (
+    <FloatingMenu anchor={anchor} onClose={onClose}>
+      <div className="pill-options" role="menu" aria-label={`t${task.seq} actions`}>
+        {renaming ? (
+          <RenameField
+            label="Task title"
+            initial={task.title}
+            maxLength={500}
+            onCancel={() => setRenaming(false)}
+            onSave={async (title) => {
+              await rpc('task.update', { id: task.id, title })
+              await onDone()
+              onClose()
+            }}
+          />
+        ) : (
+          <MenuItem label="Rename task…" autoFocus onClick={() => setRenaming(true)} />
+        )}
       </div>
     </FloatingMenu>
   )

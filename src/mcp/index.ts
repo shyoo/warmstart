@@ -259,6 +259,41 @@ server.registerTool(
 )
 
 /**
+ * How this task's project lands work (t906). t905's agent asked the operator to confirm a finish
+ * policy it had no way to see; this is that answer, resolved the way the landing will resolve it.
+ * ⛔ Read-only: an agent recommends a change, a person makes it.
+ */
+server.registerTool(
+  'project_settings',
+  {
+    title: 'Read how this project lands work',
+    description:
+      "Read this task's project settings: the finish policy and what Warmstart will do with your " +
+      'work after you report (rebase, checks, merge, push or pull request), the landing target, which ' +
+      'remote is home and which is upstream, the checks, the workspace mode and your mandate. Call it ' +
+      'before landing, pushing or opening a pull request by hand, or when you are unsure how the work ' +
+      'will be finished — rather than asking the operator. Read-only: if a setting looks wrong for ' +
+      'this work, recommend the change to the operator; `howToChange` says where they make it.',
+    inputSchema: {}
+  },
+  async () => {
+    const sessionId = appEnv('SESSION_ID') ?? ''
+    try {
+      const result = await rpc('agent.projectSettings', { sessionId })
+      if (!result) {
+        return {
+          content: [{ type: 'text' as const, text: 'This session is not working on a task in a project.' }],
+          isError: true
+        }
+      }
+      return text(result)
+    } catch (err) {
+      return failed(err)
+    }
+  }
+)
+
+/**
  * The worker tier's way to ask a person something, rather than guessing and being wrong expensively.
  *
  * ⛔ **This replaced `request_human`, which could not carry an answer.** That tool routed through

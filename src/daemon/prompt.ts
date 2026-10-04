@@ -1023,7 +1023,12 @@ export function promptFor(
       parts.push(
         'Warmstart gives you the MCP tool `task_read` to read this task’s recorded thread and prior ' +
         'runs. Use it when an earlier task reference or result matters; pass `task` with a t-number ' +
-        'to read another task in the same project.'
+        'to read another task in the same project.' +
+        // ⭐ t906: t905's agent asked the operator to confirm a finish policy it could have read.
+        (project
+          ? ' Call `project_settings` to see how this project lands work — its finish policy, remotes ' +
+            'and checks — instead of asking, and recommend a change there if one would serve better.'
+          : '')
       )
     }
     // ⛔ The completion mode changes what "finished" means, so it belongs in the same sentence

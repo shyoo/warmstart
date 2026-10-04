@@ -16,6 +16,7 @@ import { cancelTask } from '../cancel.js'
 import { getProject } from '../projects.js'
 import { branchNameFor, branchTitleFor } from '../worktrees.js'
 import { requestDirectory } from '../dirgrants.js'
+import { readProjectBrief } from '../projectbrief.js'
 import { completeTask, continueTask, endPlannerForSplit, noteHandoffRecorded, parkForHuman } from '../scheduler.js'
 import { updateTask } from '../tasks.js'
 import {
@@ -31,7 +32,7 @@ import type { Api, ApiContext } from './support.js'
 import { admitAgentTask } from './support.js'
 
 type AgentMethod =
-  | 'agent.taskRead' | 'agent.complete' | 'agent.awaitHuman' | 'agent.createTask' | 'agent.split' | 'agent.depend'
+  | 'agent.taskRead' | 'agent.projectSettings' | 'agent.complete' | 'agent.awaitHuman' | 'agent.createTask' | 'agent.split' | 'agent.depend'
   | 'agent.handoff' | 'agent.land' | 'agent.debateRound' | 'agent.requestDirectory'
 
 /**
@@ -104,6 +105,8 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
       }
       return { task: other, messages: messagesFor(other.id), runs: runsFor(other.id) }
     },
+    /** Read-only, and only the caller's own task's project. See `projectbrief.ts`. */
+    'agent.projectSettings': (p) => readProjectBrief(p.sessionId),
     'agent.complete': async (p) => {
       await completeTask(p.sessionId, p.summary, undefined, {
         ...(p.prTitle ? { prTitle: p.prTitle } : {}),

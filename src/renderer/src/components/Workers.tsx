@@ -11,7 +11,7 @@ import type {
 } from '@shared/protocol'
 import { rpc, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
 import { isWorkerSubscriptionExpired, QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
-import { age, percent, quotaGap } from '../lib/format'
+import { age, billingLine, percent, quotaGap } from '../lib/format'
 import { creditsMismatchKind, creditsMismatchNote } from '@shared/credits'
 import { SettingButtonSelect } from './SettingButtonSelect'
 import { TerminalPane } from './Terminal'
@@ -705,6 +705,17 @@ export function Workers({
                         {worker.identity?.subscriptionType && (
                           <span className="dim worker-account-plan">{worker.identity.subscriptionType}</span>
                         )}
+                        {/* ⚠️ Inside the same grid item, on a line of its own (t906): the date is a
+                            fact about the plan beside it. Read on a probe — *published* for Codex,
+                            an *inferred* anniversary for Claude, and absent where nothing local says. */}
+                        {(() => {
+                          const line = billingLine(worker.identity?.billing, now)
+                          return line ? (
+                            <span className={`worker-account-billing ${line.passed ? 'warn' : 'dim'}`} title={line.title}>
+                              {line.text}
+                            </span>
+                          ) : null
+                        })()}
                       </div>
                       {/* ⛔ The labels are gone from here, deliberately. `setup unfinished · held
                           out of dispatch` was printed in this cell and then again, word for word,

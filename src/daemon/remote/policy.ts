@@ -48,6 +48,8 @@ export const REMOTE_METHODS = {
   'project.reorder': 'deny',
   'project.archive': 'deny',
   'project.unarchive': 'deny',
+  'project.rename': 'deny',
+  'project.delete': 'deny',
   'project.listArchived': 'deny',
   'project.writeConfig': 'deny',
   'project.flow': 'deny',
@@ -173,6 +175,7 @@ export const REMOTE_METHODS = {
   // Worker MCP identity comes from the daemon-written session config. A paired phone must never
   // impersonate that identity, even to read a task.
   'agent.taskRead': 'deny',
+  'agent.projectSettings': 'deny',
   'agent.complete': 'deny',
   'agent.createTask': 'deny',
   'agent.handoff': 'deny',

@@ -67,7 +67,7 @@ import {
   type ProjectFilter
 } from './lib/sidebartasks'
 import { TaskTypeIcon } from './components/TaskTypeIcon'
-import { ProjectFilterButton, ProjectRowMenu } from './components/ProjectMenus'
+import { ProjectFilterButton, ProjectRowMenu, TaskRowMenu } from './components/ProjectMenus'
 import { holdsProjectOpen } from '@shared/tasks'
 import { useUiSettings } from './lib/uisettings'
 import { useTarget } from './lib/target'
@@ -203,6 +203,7 @@ export function App({
   const [archivedProjects, setArchivedProjects] = useState<Project[]>([])
   const [projectFilter, setProjectFilter] = useState<ProjectFilter>(readProjectFilter)
   const [projectMenu, setProjectMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [taskMenu, setTaskMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null)
   const [projectDrop, setProjectDrop] = useState<{ id: string; after: boolean } | null>(null)
   const [resources, setResources] = useState<ResourceAvailability[]>([])
@@ -423,6 +424,7 @@ export function App({
   const menuProject = projectMenu
     ? [...projects, ...archivedProjects].find((p) => p.id === projectMenu.id) ?? null
     : null
+  const menuTask = taskMenu ? tasks.find((t) => t.id === taskMenu.id) ?? null : null
 
   return (
     <DiffPaneContext.Provider value={diffPane}>
@@ -434,6 +436,19 @@ export function App({
           at={projectMenu}
           openTasks={tasks.filter((t) => t.projectId === menuProject.id && holdsProjectOpen(t)).length}
           onClose={() => setProjectMenu(null)}
+          onDone={refreshProjects}
+          onDeleted={() => {
+            // A deleted project's page has nothing left to show; go where the fleet is.
+            if (route.kind === 'project' && route.id === menuProject.id) setRoute({ kind: 'overview', page: 'dashboard' })
+          }}
+        />
+      )}
+      {menuTask && taskMenu && (
+        <TaskRowMenu
+          key={`${taskMenu.id}:${taskMenu.x}:${taskMenu.y}`}
+          task={menuTask}
+          at={taskMenu}
+          onClose={() => setTaskMenu(null)}
           onDone={refreshProjects}
         />
       )}
@@ -674,6 +689,11 @@ export function App({
                         data-kind={task.kind}
                         title={`t${task.seq} · ${task.title}`}
                         onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'thread', taskId: task.id })}
+                        onContextMenu={(event) => {
+                          // Rename without opening the thread (t906).
+                          event.preventDefault()
+                          setTaskMenu({ id: task.id, x: event.clientX, y: event.clientY })
+                        }}
                       >
                         <TaskTypeIcon task={task} />
                         <span className="nav-task-title">{taskLabelShort(task, 48)}</span>

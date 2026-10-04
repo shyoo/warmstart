@@ -74,6 +74,8 @@ interface ProjectRow {
   config_path: string | null
   created_at: number
   archived_at: number | null
+  /** Migration 86 (t906). A deleted project is in no list; `getProject` still answers for its history. */
+  deleted_at: number | null
   sort_order: number
 }
 
@@ -93,8 +95,8 @@ function toProject(r: ProjectRow): Project {
 
 export function listProjects(includeArchived = false): Project[] {
   const sql = includeArchived
-    ? 'select * from projects order by sort_order, created_at, id'
-    : 'select * from projects where archived_at is null order by sort_order, created_at, id'
+    ? 'select * from projects where deleted_at is null order by sort_order, created_at, id'
+    : 'select * from projects where archived_at is null and deleted_at is null order by sort_order, created_at, id'
   return rows<ProjectRow>(db().prepare(sql).all()).map(toProject)
 }
 
@@ -150,7 +152,14 @@ export function addProject(input: { root: string; name?: string }): Project {
   if (existing) {
     // ⚠️ Adding the folder again is the obvious way to bring back an archived project (t901). Before,
     // it reloaded the row and left it archived, so the project stayed hidden however often it was added.
-    if (existing.archived_at !== null) return unarchiveProject(existing.id)
+    // ⛔ A deleted one comes back the same way (t906): `root` is unique, so the alternative would be
+    // a second row fighting the first for the folder, and the history would stay out of reach.
+    if (existing.deleted_at !== null) {
+      db().prepare('update projects set deleted_at = null where id = ?').run(existing.id)
+      if (input.name?.trim()) renameProject(existing.id, input.name)
+      log.info(`restored deleted project ${existing.name} at ${root}`)
+    }
+    if (existing.archived_at !== null || existing.deleted_at !== null) return unarchiveProject(existing.id)
     return reloadProject(existing.id)
   }
 
@@ -288,8 +297,11 @@ export function listArchivedProjects(): Project[] {
  * project, and a hidden project must not spend tokens.
  */
 export function archiveRefusal(id: string): string | null {
+  return requireProject(id).archivedAt !== null ? null : openTasksRefusal(id, 'archiving')
+}
+
+function openTasksRefusal(id: string, verb: string): string | null {
   const project = requireProject(id)
-  if (project.archivedAt !== null) return null
   const idle = PROJECT_IDLE_STATUSES.map(() => '?').join(', ')
   const open = row<{ n: number }>(
     db()
@@ -297,7 +309,7 @@ export function archiveRefusal(id: string): string | null {
       .get(id, ...PROJECT_IDLE_STATUSES)
   )?.n ?? 0
   if (open === 0) return null
-  return `${project.name} has ${open} unfinished ${open === 1 ? 'task' : 'tasks'}; finish or cancel ${open === 1 ? 'it' : 'them'} before archiving`
+  return `${project.name} has ${open} unfinished ${open === 1 ? 'task' : 'tasks'}; finish or cancel ${open === 1 ? 'it' : 'them'} before ${verb}`
 }
 
 export function archiveProject(id: string): Project {
@@ -307,6 +319,60 @@ export function archiveProject(id: string): Project {
   if (current.archivedAt !== null) return current
   db().prepare('update projects set archived_at = ? where id = ?').run(Date.now(), id)
   const project = requireProject(id)
+  emit({ type: 'project.changed', project })
+  return project
+}
+
+/**
+ * Give a project a new display name (t906).
+ *
+ * ⚠️ The name lives on the row, on this install. `project.json`'s `name` only seeds it when the
+ * project is first added, so a rename never edits a committed file somebody else pulls.
+ */
+export function renameProject(id: string, name: string): Project {
+  const current = requireProject(id)
+  const next = name.trim()
+  if (!next) throw new Error('a project needs a name')
+  if (next.length > 200) throw new Error('a project name is at most 200 characters')
+  if (next === current.name) return current
+  db().prepare('update projects set name = ? where id = ?').run(next, id)
+  log.info(`renamed project ${current.name} to ${next}`)
+  const project = requireProject(id)
+  emit({ type: 'project.changed', project })
+  return project
+}
+
+/**
+ * Why this project may not be deleted now, or null when it may.
+ *
+ * ⛔ The same rule as archiving: a project holding a task that can still dispatch, run or land is
+ * refused, because deleting hides it and a hidden project must not spend tokens or land work.
+ */
+export function deleteRefusal(id: string): string | null {
+  // ⚠️ Archived or not: a reply to a finished task can still re-run it in an archived project.
+  return openTasksRefusal(id, 'deleting')
+}
+
+/**
+ * Remove a project from Warmstart (t906).
+ *
+ * ⛔ **Soft, and nothing on disk.** Delete is human-only and soft by default, and never removes runs.
+ * The repository, its branches and stashes are untouched; tasks, runs and landings keep naming the
+ * row, so `getProject` still answers for them. The project leaves every list — active, archived and
+ * all — and adding its folder again restores it. The caller prunes a managed pool first, exactly as
+ * archiving does, and only after the refusal has been checked.
+ */
+export function deleteProject(id: string): Project {
+  const refusal = deleteRefusal(id)
+  if (refusal) throw new Error(refusal)
+  const already = row<{ deleted_at: number | null }>(db().prepare('select deleted_at from projects where id = ?').get(id))
+  if (already?.deleted_at != null) return requireProject(id)
+  const now = Date.now()
+  db()
+    .prepare('update projects set deleted_at = ?, archived_at = coalesce(archived_at, ?) where id = ?')
+    .run(now, now, id)
+  const project = requireProject(id)
+  log.info(`deleted project ${project.name} (soft; ${project.root} is untouched)`)
   emit({ type: 'project.changed', project })
   return project
 }

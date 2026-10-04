@@ -2329,7 +2329,16 @@ const MIGRATIONS: Migration[] = [
     reason text not null,
     disowned_at integer not null,
     primary key (task_id, sha)
-  );`
+  );`,
+  // 86 - a project can be deleted from the sidebar or Project Settings (t906). ⛔ Soft: the row
+  // stays, because tasks, runs and landings name it and `getProject` must still answer for them.
+  // A deleted project is in no list; adding its folder again restores it, history and all.
+  // ⚠️ Guarded by `hasColumn`: `versionBefore` rewinds `user_version` and replays.
+  (conn) => {
+    if (!hasColumn(conn, 'projects', 'deleted_at')) {
+      conn.exec(`alter table projects add column deleted_at integer`)
+    }
+  }
 ]
 
 /**

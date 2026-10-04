@@ -31,7 +31,7 @@ import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { SettingRow, SettingSwitch } from './SettingRow'
-import { toggleArchive } from './ProjectMenus'
+import { deleteProject, toggleArchive } from './ProjectMenus'
 import { errorMessage } from '@shared/errors.js'
 
 /**
@@ -168,6 +168,38 @@ function ProjectIdentity({
     }
   }
 
+  // ⛔ The sidebar's menu asks the same question through the same helper (t906), so the two entry
+  // points cannot describe a delete differently. After it the route has no project and says so.
+  const remove = async (): Promise<void> => {
+    setBusy(true)
+    setArchiveNote(null)
+    try {
+      if (await deleteProject(project)) await refreshProjects()
+    } catch (err) {
+      setArchiveNote(errorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const [renaming, setRenaming] = useState(false)
+  const [nameDraft, setNameDraft] = useState(project.name)
+  const rename = async (): Promise<void> => {
+    const next = nameDraft.trim()
+    if (!next || next === project.name) return setRenaming(false)
+    setBusy(true)
+    setArchiveNote(null)
+    try {
+      await rpc('project.rename', { id: project.id, name: next })
+      await refreshProjects()
+      setRenaming(false)
+    } catch (err) {
+      setArchiveNote(errorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <div className="panel">
       <header className="panel-head">
@@ -209,8 +241,57 @@ function ProjectIdentity({
           >
             {project.archivedAt !== null ? 'Unarchive' : 'Archive…'}
           </button>
+          <button
+            className="btn btn--ghost"
+            disabled={busy}
+            title="Change the name this install shows. project.json is not touched."
+            onClick={() => {
+              setNameDraft(project.name)
+              setRenaming(true)
+            }}
+          >
+            Rename…
+          </button>
+          <button
+            className="btn btn--ghost btn--danger"
+            disabled={busy}
+            title="Remove this project from Warmstart. Nothing on disk is deleted and its history is kept; adding the folder again brings it back. Refused while a task can still run."
+            onClick={() => void remove()}
+          >
+            Delete…
+          </button>
         </div>
       </header>
+      {renaming && (
+        <form
+          className="project-rename"
+          onSubmit={(e) => {
+            e.preventDefault()
+            void rename()
+          }}
+        >
+          <input
+            aria-label="Project name"
+            value={nameDraft}
+            maxLength={200}
+            disabled={busy}
+            autoFocus
+            onChange={(e) => setNameDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape') {
+                e.preventDefault()
+                setRenaming(false)
+              }
+            }}
+          />
+          <button type="submit" className="btn btn--primary" disabled={busy}>
+            Save
+          </button>
+          <button type="button" className="btn btn--ghost" disabled={busy} onClick={() => setRenaming(false)}>
+            Cancel
+          </button>
+        </form>
+      )}
       {archiveNote && <div className="alert">{archiveNote}</div>}
 
       <table className="tbl">
