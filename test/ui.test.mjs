@@ -4928,6 +4928,21 @@ try {
       sideIndent.row > sideIndent.project,
     JSON.stringify({ sideRows, sideIndent })
   )
+  // t904: the pictogram starts where the project name starts, not a step past it.
+  const sideIcon = JSON.parse(
+    await evaluate(`
+      (() => {
+        const icon = document.querySelector('.nav-item--task[data-kind="conversation"] .task-type-icon')
+        const name = document.querySelector('.nav-project-name')
+        return JSON.stringify({ icon: icon?.getBoundingClientRect().left ?? null, project: name?.getBoundingClientRect().left ?? null })
+      })()
+    `)
+  )
+  check(
+    'a task row’s pictogram lines up with its project name',
+    sideIcon.icon !== null && sideIcon.project !== null && Math.abs(sideIcon.icon - sideIcon.project) < 1,
+    JSON.stringify(sideIcon)
+  )
   // ⚠️ Half the claim: the row has to be there for the click to prove anything.
   await evaluate(
     `[...document.querySelectorAll('.nav-item--task[data-kind="conversation"]')].find(b => b.innerText.includes('why the tests hang'))?.click()`

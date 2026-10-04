@@ -1476,13 +1476,13 @@ body {
   margin-left: 0;
 }
 
-/* One row per unfinished task, indented under its project and a step smaller, so the list reads as
-   the project's contents rather than as more projects. The row starts one step past the project
-   name, which itself starts after padding + the 6px dot + the row gap. t671 dropped a 💬 emoji here
+/* One row per unfinished task, under its project and a step smaller, so the list reads as the
+   project's contents rather than as more projects. The pictogram starts exactly where the project
+   name does (padding + the 6px dot + the row gap), not a step past it (t904). t671 dropped a 💬 emoji here
    because it ignored the theme and competed with the status dot; the type pictogram that replaced
    it (t901, operator's request) is drawn in the faint text colour, so it sits below the dot. */
 .nav-item--task {
-  padding-left: calc(var(--sp-2) + 6px + var(--sp-2) + var(--sp-3));
+  padding-left: calc(var(--sp-2) + 6px + var(--sp-2));
   font-size: var(--text-dense);
 }
 
