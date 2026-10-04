@@ -1480,6 +1480,29 @@ export function quotaOverridden(task: Task, now = Date.now()): boolean {
   return task.quotaOverrideUntil !== null && task.quotaOverrideUntil > now
 }
 
+/**
+ * Does a person's quota override still mean anything once the task's constraints change to `next`?
+ *
+ * ⛔ **An override is a decision about one account's window, so it leaves with the account** (t910,
+ * 2026-10-03). t909 was overridden at the water mark, then reassigned to ClaudeFirst, which had
+ * quota to spare; the override stayed on the row, so the thread kept drawing *Quota gate —
+ * overridden* beside a run whose account was not gated by anything. It also would have quietly
+ * exempted the new account from the 92% gate and the mid-run preempt, which nobody had agreed to.
+ * Every reassignment — Reassign, the retry/resolve paths, the preemption hand-off — writes through
+ * `updateTask`, so this is the one place that has to know.
+ *
+ * ⚠️ Only the *pin* is compared. A model or effort change keeps the same window. An Auto task pinned
+ * to the account it is already on (the composer's pills offer exactly that) keeps its override too,
+ * because the window it overruled is the one it is still on.
+ */
+function quotaOverrideSurvives(current: Task, next: Task['constraints']): boolean {
+  if (current.quotaOverrideUntil === null) return true
+  const was = current.constraints.workerId ?? null
+  const now = next.workerId ?? null
+  if (was === now) return true
+  return was === null && now !== null && (current.assignee === now || current.ranOn === now)
+}
+
 export function updateTask(
   id: string,
   patch: Partial<
@@ -1522,6 +1545,7 @@ export function updateTask(
       : nextTitle === current.title
         ? current.titleSummary
         : null
+  const nextConstraints = patch.constraints ?? current.constraints
   db()
     .prepare(
       `update tasks set title = ?, title_summary = ?, priority = ?, project_id = ?,
@@ -1529,7 +1553,7 @@ export function updateTask(
                         assignee_hint = ?, verification = ?, finish_policy = ?,
                         session_sharing = ?, completion_mode = ?, objective_json = ?,
                         auto_compact = ?, preemptible = ?,
-                        est_tokens = ?, constraints_json = ?, updated_at = ?
+                        est_tokens = ?, constraints_json = ?, quota_override_until = ?, updated_at = ?
         where id = ?`
     )
     .run(
@@ -1554,7 +1578,8 @@ export function updateTask(
       patch.autoCompact ?? current.autoCompact,
       (patch.preemptible ?? current.preemptible) ? 1 : 0,
       patch.estTokens !== undefined ? patch.estTokens : current.estTokens,
-      JSON.stringify(patch.constraints ?? current.constraints),
+      JSON.stringify(nextConstraints),
+      quotaOverrideSurvives(current, nextConstraints) ? current.quotaOverrideUntil : null,
       Date.now(),
       id
     )

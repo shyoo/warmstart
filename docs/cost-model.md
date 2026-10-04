@@ -1036,7 +1036,11 @@ fleet whose hard cut and soft preference disagree about that is worse than eithe
 served. It is also a cliff with nothing on the far side, and a task **pinned** to one account cannot
 route around it by definition: t71 waited 2h29m at exactly 92% for a gate its operator did not agree
 with. `task.overrideQuota` lets a person say *"8% is more than this needs"*, dated from the reset of
-the window it overrules so the permission expires with its reason.
+the window it overrules so the permission expires with its reason. ⛔ It also ends when the task's
+**pin changes** (`quotaOverrideSurvives`, `tasks.ts`, applied by `updateTask` — every reassignment
+path writes through it): the decision was about one account's window, and t909 kept drawing *Quota
+gate — overridden* after being moved to an account with quota to spare (t910). Only the pin counts;
+model/effort changes and pinning an Auto task to the account it is already on keep it.
 
 | lifted | untouched |
 |---|---|

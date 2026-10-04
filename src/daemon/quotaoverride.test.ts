@@ -461,6 +461,140 @@ describe('task.overrideQuota', () => {
   })
 })
 
+/**
+ * t910 ← t909 (2026-10-03). The operator overrode the water mark on one account, then reassigned the
+ * task to ClaudeFirst, which had quota to spare. The override stayed on the row, so the thread kept
+ * drawing *Quota gate — overridden* beside a run that no gate was holding. ⛔ An override is a
+ * decision about one account's window; changing the account ends it.
+ */
+describe('reassigning a task ends the quota override granted on its old account', () => {
+  const handlers = () => api.buildApi({ version: '0.0.0', startedAt: Date.now(), port: 0 })
+
+  /** A task pinned to a gated account with the override live, as t909 was. */
+  function overriddenTask() {
+    const gated = seedWorker('ClaudeSecond')
+    const spare = seedWorker('ClaudeFirst')
+    seedQuota(gated.id, HELD_PERCENT)
+    seedQuota(spare.id, 10)
+    const task = pinnedTask(gated.id, ADAPTER)
+    tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
+    expect(tasks.quotaOverridden(tasks.requireTask(task.id))).toBe(true)
+    return { gated, spare, task }
+  }
+
+  it('drops the override when the task is pinned to another worker', async () => {
+    const { spare, task } = overriddenTask()
+    const moved = await handlers()['task.setWorker']({ id: task.id, workerId: spare.id })
+    expect(moved.constraints.workerId).toBe(spare.id)
+    expect(moved.quotaOverrideUntil).toBeNull()
+    expect(tasks.requireTask(task.id).quotaOverrideUntil).toBeNull()
+  })
+
+  it('drops the override when the task goes back to Auto worker', async () => {
+    const { task } = overriddenTask()
+    const moved = await handlers()['task.setWorker']({ id: task.id, workerId: null })
+    expect(moved.constraints.workerId).toBeUndefined()
+    expect(moved.quotaOverrideUntil).toBeNull()
+  })
+
+  it('drops the override on a running task as well as a resting one', async () => {
+    const { gated, spare, task } = overriddenTask()
+    tasks.setStatus(task.id, 'running', { assignee: gated.id })
+    const moved = await handlers()['task.setWorker']({ id: task.id, workerId: spare.id })
+    expect(moved.quotaOverrideUntil).toBeNull()
+  })
+
+  it('drops the override when a paused_quota task is reassigned', async () => {
+    const { gated, spare, task } = overriddenTask()
+    tasks.setStatus(task.id, 'paused_quota', { assignee: gated.id })
+    const moved = await handlers()['task.setWorker']({ id: task.id, workerId: spare.id })
+    expect(moved.quotaOverrideUntil).toBeNull()
+  })
+
+  it('drops the override on the preemption hand-off path, which writes constraints directly', () => {
+    const { spare, task } = overriddenTask()
+    // What `redirectHandoff` and `reassignForResolveRetry` write: a new pin through `updateTask`.
+    const updated = tasks.updateTask(task.id, {
+      constraints: { ...task.constraints, workerId: spare.id, adapterId: ADAPTER },
+      assigneeHint: spare.id
+    })
+    expect(updated.quotaOverrideUntil).toBeNull()
+  })
+
+  it('does not carry the old override over to the new account’s own gate', async () => {
+    const { gated, task } = overriddenTask()
+    const other = seedWorker('ClaudeThird')
+    seedQuota(other.id, HELD_PERCENT)
+    // Overridden on `gated`: dispatchable there.
+    expect(scoring.chooseTarget(tasks.requireTask(task.id)).worker?.id).toBe(gated.id)
+    // Reassigned to a second account that is itself at the mark: the gate applies, nobody agreed otherwise.
+    await handlers()['task.setWorker']({ id: task.id, workerId: other.id })
+    expect(scoring.chooseTarget(tasks.requireTask(task.id)).worker).toBeNull()
+  })
+
+  it('keeps the override when only the model or effort changes', async () => {
+    const { gated, task } = overriddenTask()
+    const before = tasks.requireTask(task.id).quotaOverrideUntil
+    const moved = await handlers()['task.setWorker']({
+      id: task.id, workerId: gated.id, model: 'claude-opus-5-5'
+    })
+    expect(moved.constraints.model).toBe('claude-opus-5-5')
+    expect(moved.quotaOverrideUntil).toBe(before)
+    const retitled = tasks.updateTask(task.id, { title: 'renamed' })
+    expect(retitled.quotaOverrideUntil).toBe(before)
+  })
+
+  it('keeps the override when the same worker is picked again', async () => {
+    const { gated, task } = overriddenTask()
+    const before = tasks.requireTask(task.id).quotaOverrideUntil
+    const same = await handlers()['task.setWorker']({ id: task.id, workerId: gated.id })
+    expect(same.quotaOverrideUntil).toBe(before)
+  })
+
+  it('keeps the override when an Auto task is pinned to the account it is already on', async () => {
+    const gated = seedWorker('ClaudeSecond')
+    seedQuota(gated.id, HELD_PERCENT)
+    const task = tasks.createTask({ title: 'auto task', createdBy: { kind: 'human' }, constraints: {} })
+    tasks.setStatus(task.id, 'running', { assignee: gated.id })
+    tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
+    const before = tasks.requireTask(task.id).quotaOverrideUntil
+
+    const pinned = await handlers()['task.setWorker']({ id: task.id, workerId: gated.id })
+    expect(pinned.constraints.workerId).toBe(gated.id)
+    expect(pinned.quotaOverrideUntil).toBe(before)
+  })
+
+  it('drops the override when an Auto task is pinned to a different account than the one it is on', async () => {
+    const gated = seedWorker('ClaudeSecond')
+    const spare = seedWorker('ClaudeFirst')
+    const task = tasks.createTask({ title: 'auto task', createdBy: { kind: 'human' }, constraints: {} })
+    tasks.setStatus(task.id, 'running', { assignee: gated.id })
+    tasks.setQuotaOverride(task.id, Date.now() + RESET_IN_MS)
+
+    const moved = await handlers()['task.setWorker']({ id: task.id, workerId: spare.id })
+    expect(moved.quotaOverrideUntil).toBeNull()
+  })
+
+  it('leaves a task with no override alone', async () => {
+    const gated = seedWorker('ClaudeSecond')
+    const spare = seedWorker('ClaudeFirst')
+    const task = pinnedTask(gated.id, ADAPTER)
+    const moved = await handlers()['task.setWorker']({ id: task.id, workerId: spare.id })
+    expect(moved.quotaOverrideUntil).toBeNull()
+    expect(moved.constraints.workerId).toBe(spare.id)
+  })
+
+  it('can still be granted again on the new account, and then applies to it', async () => {
+    const { spare, task } = overriddenTask()
+    seedQuota(spare.id, HELD_PERCENT)
+    await handlers()['task.setWorker']({ id: task.id, workerId: spare.id })
+    expect(scoring.chooseTarget(tasks.requireTask(task.id)).worker).toBeNull()
+    const granted = await handlers()['task.overrideQuota']({ id: task.id })
+    expect(granted.task.quotaOverrideUntil).not.toBeNull()
+    expect(scoring.chooseTarget(tasks.requireTask(task.id)).worker?.id).toBe(spare.id)
+  })
+})
+
 describe('a queue that cannot move is not a queue about to move', () => {
   const NOW = 1_700_000_000_000
 
