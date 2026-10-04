@@ -21,8 +21,9 @@
  * branch on a block kind to decide what a run did — that is what the transcript and the typed
  * events are for.
  *
- * ⚠️ **Deliberately not CommonMark.** No nested block structure, no reference links, no tables, no
- * setext headings, no HTML entities. Those are a parser's worth of edge cases in exchange for
+ * ⚠️ **Deliberately not CommonMark.** No nested block structure, no reference links, no setext
+ * headings, no HTML entities. Pipe tables are the one GitHub extension kept (t908: t905's agent
+ * wrote a nine-row table and the thread printed the pipes). Those are a parser's worth of edge cases in exchange for
  * constructs that do not appear in the output this exists to render; what is here is what an agent
  * CLI actually emits. A construct this does not know is left as the literal characters the agent
  * wrote, which is the same thing the whole thread did before and is never wrong, only plain.
@@ -47,7 +48,11 @@ export type Block =
   | { kind: 'code'; lang: string | null; text: string }
   | { kind: 'list'; ordered: boolean; start: number; items: Array<{ spans: Inline[]; depth: number }> }
   | { kind: 'quote'; spans: Inline[] }
+  /** ⚠️ Every row has exactly `header.length` cells, padded or cut, so a renderer never counts. */
+  | { kind: 'table'; align: TableAlign[]; header: Inline[][]; rows: Inline[][][] }
   | { kind: 'rule' }
+
+export type TableAlign = 'left' | 'center' | 'right' | null
 
 /** ⛔ The whole of what a link may point at. Everything else stays literal text. */
 const SAFE_SCHEME = /^(https?:|mailto:)/i
@@ -130,6 +135,51 @@ const BULLET = /^(\s*)[-*+]\s+(.*)$/
 const NUMBERED = /^(\s*)(\d{1,9})[.)]\s+(.*)$/
 const QUOTE = /^\s*>\s?(.*)$/
 
+/**
+ * Split one table row into its cells. A leading and a trailing pipe are decoration, and `\|` is a
+ * literal pipe inside a cell (GitHub's rule — it splits even inside backticks, so an agent that
+ * wants a pipe in a code span has to escape it, and does).
+ */
+function tableCells(line: string): string[] {
+  let body = line.trim()
+  if (body.startsWith('|')) body = body.slice(1)
+  if (body.endsWith('|') && !body.endsWith('\\|')) body = body.slice(0, -1)
+  const cells: string[] = []
+  let cell = ''
+  for (let i = 0; i < body.length; i += 1) {
+    const ch = body[i] as string
+    if (ch === '\\' && body[i + 1] === '|') {
+      cell += '|'
+      i += 1
+    } else if (ch === '|') {
+      cells.push(cell.trim())
+      cell = ''
+    } else {
+      cell += ch
+    }
+  }
+  cells.push(cell.trim())
+  return cells
+}
+
+const TABLE_DELIMITER_CELL = /^:?-+:?$/
+
+/**
+ * The delimiter row's alignments, or null when the line is not one.
+ *
+ * ⚠️ It must hold a pipe, or `---` — a rule — would open a table under any line above it.
+ */
+function tableAlignments(line: string): TableAlign[] | null {
+  if (!line.includes('|')) return null
+  const cells = tableCells(line)
+  if (!cells.every((cell) => TABLE_DELIMITER_CELL.test(cell))) return null
+  return cells.map((cell) => {
+    const left = cell.startsWith(':')
+    const right = cell.endsWith(':')
+    return left && right ? 'center' : right ? 'right' : left ? 'left' : null
+  })
+}
+
 /** How far a list item may be indented before the indentation stops meaning anything. */
 const MAX_DEPTH = 3
 
@@ -197,6 +247,27 @@ export function markdownBlocks(text: string): Block[] {
       continue
     }
     flushQuote()
+
+    // ⛔ A table is a header line *and* a delimiter row under it with the same number of cells.
+    // A line with a pipe in it and nothing beneath is prose, which is what it was before.
+    // ⚠️ Rows run until a blank line or one with no pipe, and a table may interrupt a paragraph.
+    if (line.includes('|') && i + 1 < lines.length) {
+      const align = tableAlignments(lines[i + 1] as string)
+      const header = tableCells(line)
+      if (align && align.length === header.length) {
+        flush()
+        const rows: Inline[][][] = []
+        i += 2
+        while (i < lines.length && (lines[i] as string).trim() !== '' && (lines[i] as string).includes('|')) {
+          const cells = tableCells(lines[i] as string)
+          rows.push(header.map((_, c) => inlineSpans(cells[c] ?? '')))
+          i += 1
+        }
+        i -= 1
+        blocks.push({ kind: 'table', align, header: header.map((cell) => inlineSpans(cell)), rows })
+        continue
+      }
+    }
 
     // ⚠️ Ahead of the bullet, because `---` matches `[-*+]\s+` the moment somebody writes `- - -`
     // and a rule set as a one-item list is the wrong reading of an unambiguous line.

@@ -1506,6 +1506,15 @@ body {
   color: inherit;
 }
 
+/* Who the task waits on, in the pictogram (t908) — the same tokens as the status pill and the
+   folded project's counts (t668): blue = agent working, amber = waiting on you, grey = parked.
+   Written after the hover/active rule and one class more specific, so the colour survives both. */
+.nav-item--task[data-attention='agent'] .task-type-icon { color: var(--state-running); }
+.nav-item--task[data-attention='human'] .task-type-icon { color: var(--state-warn); }
+.nav-item--task[data-attention='waiting'] .task-type-icon { color: var(--state-idle); }
+.nav-item--task[data-attention='error'] .task-type-icon { color: var(--state-danger); }
+.nav-item--task[data-attention='done'] .task-type-icon { color: var(--state-ok); }
+
 .nav-item--more {
   color: var(--color-text-faint);
 }
@@ -6112,6 +6121,37 @@ select:focus-visible,
   font-size: var(--text-meta);
   color: var(--color-text-faint);
 }
+
+/* Tables (t908). The wrapper scrolls, the table does not widen the bubble. Cells keep a line break
+   the author wrote, like paragraphs do. Borders use `--color-border-strong` for the reason the quote
+   gives: the bubble's own surface is within a couple of values of `--color-border`. */
+.md-table-wrap {
+  overflow-x: auto;
+  max-width: 100%;
+}
+
+.md-table {
+  border-collapse: collapse;
+  font-size: 0.95em;
+  line-height: 1.4;
+}
+
+.md-table th,
+.md-table td {
+  padding: 3px var(--sp-2);
+  border: 1px solid var(--color-border-strong);
+  text-align: left;
+  vertical-align: top;
+  min-width: 3em;
+}
+
+.md-table th {
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.md-table .md-cell-center { text-align: center; }
+.md-table .md-cell-right { text-align: right; }
 
 .md-rule {
   /* A rule is a *separator*, so it needs more air than the step between two paragraphs — drawn on

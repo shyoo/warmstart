@@ -48,6 +48,8 @@ import { Statistics, type StatisticsTab } from './components/Statistics'
 import { QualityReview } from './components/QualityReview'
 import {
   isWorking,
+  statusAttention,
+  statusLabel,
   ProjectDot,
   ProjectTaskCount,
   projectTaskCounts,
@@ -650,7 +652,10 @@ export function App({
                       }
                     />
                     <span className="nav-project-name">{project.name}</span>
-                    <ProjectTaskCount counts={counts} />
+                    {/* ⚠️ Only while the tasks are out of sight (t908): unfolded, each row's coloured
+                        pictogram already says the same thing. A project with nothing listed has no
+                        rows to say it, so it keeps its numbers. */}
+                    {(folded || listedCount === 0) && <ProjectTaskCount counts={counts} />}
                     {/* ⚠️ Only where there is something to fold. A toggle on a project with no open
                         task would be a control that does nothing. A `span` with a role, not a
                         nested button: the row itself is already a button. */}
@@ -687,7 +692,8 @@ export function App({
                         type="button"
                         className={`nav-item nav-item--task${openThreadId === task.id ? ' nav-item--active' : ''}`}
                         data-kind={task.kind}
-                        title={`t${task.seq} · ${task.title}`}
+                        data-attention={statusAttention(task) ?? undefined}
+                        title={`t${task.seq} · ${task.title} — ${statusLabel(task)}`}
                         onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'thread', taskId: task.id })}
                         onContextMenu={(event) => {
                           // Rename without opening the thread (t906).

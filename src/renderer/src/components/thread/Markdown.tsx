@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react'
 import { stripAnsi } from '@shared/ansi'
 import { foldAt } from '../../lib/collapse'
-import { markdownBlocks, type Block, type Inline } from '../../lib/markdown'
+import { markdownBlocks, type Block, type Inline, type TableAlign } from '../../lib/markdown'
 
 /**
  * A thread message set as the markdown its author wrote.
@@ -84,6 +84,35 @@ function MarkdownBlock({ block }: { block: Block }): React.JSX.Element {
           <Spans spans={block.spans} />
         </blockquote>
       )
+    case 'table':
+      // ⚠️ Scrolls sideways inside its own wrapper: a nine-column table in a chat bubble would
+      // otherwise widen the whole thread pane. Alignment is a class, never an inline style.
+      return (
+        <div className="md-table-wrap">
+          <table className="md-table">
+            <thead>
+              <tr>
+                {block.header.map((cell, c) => (
+                  <th key={c} className={alignClass(block.align[c])}>
+                    <Spans spans={cell} />
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {block.rows.map((row, r) => (
+                <tr key={r}>
+                  {row.map((cell, c) => (
+                    <td key={c} className={alignClass(block.align[c])}>
+                      <Spans spans={cell} />
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )
     case 'list': {
       const Tag = block.ordered ? 'ol' : 'ul'
       return (
@@ -103,6 +132,10 @@ function MarkdownBlock({ block }: { block: Block }): React.JSX.Element {
         </p>
       )
   }
+}
+
+function alignClass(align: TableAlign | undefined): string | undefined {
+  return align ? `md-cell-${align}` : undefined
 }
 
 function Spans({ spans }: { spans: Inline[] }): React.JSX.Element {

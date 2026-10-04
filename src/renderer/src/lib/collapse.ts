@@ -46,9 +46,25 @@ export function foldAt(
   // ⚠️ An unclosed fence runs to the end, exactly as the markdown reader treats it.
   if (open !== -1) blocks.push({ from: open, to: lines.length - 1 })
 
+  // ⛔ Nor inside a table (t908): a head holding half a table and a rest with no header row would
+  // draw the second half as pipes. A table is a run of two or more consecutive lines holding a pipe,
+  // outside any fence.
+  let run = -1
+  for (let i = 0; i <= lines.length; i += 1) {
+    const piped = i < lines.length && (lines[i] as string).includes('|') && !blocks.some((b) => i >= b.from && i <= b.to)
+    if (piped && run === -1) run = i
+    if (!piped && run !== -1) {
+      if (i - run >= 2) blocks.push({ from: run, to: i - 1 })
+      run = -1
+    }
+  }
+
   let cut = head
-  const inside = blocks.find((b) => cut > b.from && cut <= b.to)
-  if (inside) cut = inside.from > 0 ? inside.from : inside.to + 1
+  for (let moves = 0; moves <= blocks.length; moves += 1) {
+    const inside = blocks.find((b) => cut > b.from && cut <= b.to)
+    if (!inside) break
+    cut = inside.from > 0 ? inside.from : inside.to + 1
+  }
   // Folding off fewer than a handful of lines hides nothing worth a press.
   if (cut <= 0 || lines.length - cut < 5) return null
 

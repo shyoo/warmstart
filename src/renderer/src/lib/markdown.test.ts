@@ -151,3 +151,62 @@ describe('blocks', () => {
     expect(inlineSpans('')).toEqual([])
   })
 })
+
+describe('tables (t908)', () => {
+  const table = [
+    '| Time | Who | What |',
+    '|---|:-:|--:|',
+    '| 18:03 | you | **Proposal** |',
+    '| 19:19 | them | `ok` |'
+  ].join('\n')
+
+  it('reads a header, a delimiter row and its rows as one table', () => {
+    const blocks = markdownBlocks(`before\n\n${table}\n\nafter`)
+    expect(blocks.map((b) => b.kind)).toEqual(['paragraph', 'table', 'paragraph'])
+    const t = blocks[1]
+    if (t?.kind !== 'table') throw new Error('not a table')
+    expect(t.align).toEqual([null, 'center', 'right'])
+    expect(t.header.map((c) => c[0]?.text)).toEqual(['Time', 'Who', 'What'])
+    expect(t.rows).toHaveLength(2)
+    expect(t.rows[0]?.[2]).toEqual([{ kind: 'strong', text: 'Proposal' }])
+    expect(t.rows[1]?.[2]).toEqual([{ kind: 'code', text: 'ok' }])
+  })
+
+  it('needs no blank line before the table and ends at the first line with no pipe', () => {
+    const blocks = markdownBlocks(`The comment history:\n${table}\nThe answer you remember.`)
+    expect(blocks.map((b) => b.kind)).toEqual(['paragraph', 'table', 'paragraph'])
+  })
+
+  it('pads a short row and cuts a long one to the header width', () => {
+    const t = markdownBlocks('| a | b |\n|---|---|\n| 1 |\n| 1 | 2 | 3 |')[0]
+    if (t?.kind !== 'table') throw new Error('not a table')
+    expect(t.rows.map((r) => r.length)).toEqual([2, 2])
+    expect(t.rows[0]?.[1]).toEqual([])
+  })
+
+  it('takes an escaped pipe as text and splits on a bare one', () => {
+    const t = markdownBlocks('| a | b |\n|---|---|\n| x \\| y | z |')[0]
+    if (t?.kind !== 'table') throw new Error('not a table')
+    expect(t.rows[0]?.[0]).toEqual([{ kind: 'text', text: 'x | y' }])
+    expect(t.rows[0]?.[1]).toEqual([{ kind: 'text', text: 'z' }])
+  })
+
+  it('works without the outer pipes', () => {
+    expect(markdownBlocks('a | b\n--|--\n1 | 2')[0]?.kind).toBe('table')
+  })
+
+  it('leaves a line with a pipe, or a mismatched delimiter, as the prose it was', () => {
+    expect(markdownBlocks('a | b').map((b) => b.kind)).toEqual(['paragraph'])
+    expect(markdownBlocks('a | b | c\n|---|---|').map((b) => b.kind)).toEqual(['paragraph'])
+    // ⚠️ `---` carries no pipe, so it is still a rule and never a delimiter row.
+    expect(markdownBlocks('a | b\n---').map((b) => b.kind)).toEqual(['paragraph', 'rule'])
+  })
+
+  it('never reads a table inside a code fence', () => {
+    expect(markdownBlocks('```\n' + table + '\n```').map((b) => b.kind)).toEqual(['code'])
+  })
+
+  it('makes hasMarkdown true', () => {
+    expect(hasMarkdown(table)).toBe(true)
+  })
+})

@@ -42,4 +42,12 @@ describe('folding a long agent reply', () => {
     const folded = foldAt(text)
     expect(folded?.head).toBe(lines(28).join('\n'))
   })
+
+  it('never cuts through a table (t908)', () => {
+    const rows = Array.from({ length: 12 }, (_, i) => `| r${i} | v${i} |`)
+    const text = [...lines(25), '| k | v |', '|---|---|', ...rows, ...lines(20, 'after')].join('\n')
+    const folded = foldAt(text)
+    expect(folded?.head).toBe(lines(25).join('\n'))
+    expect(folded?.rest.startsWith('| k | v |\n|---|---|')).toBe(true)
+  })
 })
