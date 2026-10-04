@@ -135,6 +135,8 @@ export interface TaskDetailData {
   children?: Task[]
   /** The project's upstream remote when its fork is home (t903) — what offers Propose upstream. */
   upstreamRemote?: string | null
+  /** The branch this task lands onto, which the Commit and Land labels name (t907). */
+  landingTarget?: string | null
   resolvedFinish?: ResolvedFinishPolicy
   resolvedSharing?: ResolvedSessionSharing
   inheritedFinish?: ResolvedFinishPolicy
@@ -642,6 +644,7 @@ function TaskDetail({
               choice={choice}
               inheritedFinish={detail.inheritedFinish}
               inheritedWorkspaceMode={detail.inheritedWorkspaceMode}
+              landingTarget={detail.landingTarget ?? null}
               onRefresh={refresh}
             />
           )}

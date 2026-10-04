@@ -18,7 +18,7 @@
  */
 import {
   COMPLETION_LABELS,
-  FINISH_LABELS,
+  finishLabel,
   SHARING_LABELS,
   policyLands,
   policyVerifies,
@@ -34,6 +34,7 @@ import { landingTargetFor, policyFor, reloadProjectIfPresent } from './projects.
 import { resolveSessionSharing } from './sharing.js'
 import { settings } from './settings.js'
 import { tryGit } from './git.js'
+import { landingTargetFound } from './worktrees.js'
 import { getTask, runForSession } from './tasks.js'
 
 export interface RemoteEntry {
@@ -106,7 +107,13 @@ function whatHappens(
 }
 
 /** The pure half. `remotes` is `git remote -v` already parsed; empty for a non-git project. */
-export function projectBrief(task: Task, project: Project, remotes: RemoteEntry[]): AgentProjectSettings {
+export function projectBrief(
+  task: Task,
+  project: Project,
+  remotes: RemoteEntry[],
+  /** Whether the target names a branch here or on origin; null when nobody looked. */
+  targetFound: boolean | null = null
+): AgentProjectSettings {
   const policy = policyFor(project)
   const finish = resolveFinishPolicy(task, project)
   const level = landingLevel(task, project)
@@ -161,6 +168,14 @@ export function projectBrief(task: Task, project: Project, remotes: RemoteEntry[
   if (policy.upstreamRemote && !remotes.some((r) => r.name === policy.upstreamRemote) && remotes.length > 0) {
     observations.push(`project.json names \`${policy.upstreamRemote}\` as upstream, but no remote by that name exists.`)
   }
+  // ⭐ t907: `fork` was read as *my fork* by the operator and as fine by the agent asked to check it.
+  if (targetFound === false && !inTrunk) {
+    observations.push(
+      `The landing target \`${target}\` names no branch in this repository or on origin, so new task ` +
+        'branches start from whatever the trunk checkout has checked out, and a landing onto it will be ' +
+        'refused. It is a branch name, not a role: a person sets it under Project Settings › Landing target.'
+    )
+  }
   if (project.vcs === 'git' && remotes.length > 0 && !remotes.some((r) => r.name === 'origin')) {
     observations.push('There is no `origin` remote, so landings are measured against the local target only.')
   }
@@ -178,7 +193,7 @@ export function projectBrief(task: Task, project: Project, remotes: RemoteEntry[
     project: { name: project.name, vcs: project.vcs, root: project.root, config: project.configPath },
     task: { seq: task.seq, kind: task.kind },
     landing: {
-      finish: { policy: finish.policy, label: FINISH_LABELS[finish.policy], source: finish.source, instruction: finish.instruction },
+      finish: { policy: finish.policy, label: finishLabel(finish.policy, target), source: finish.source, instruction: finish.instruction },
       landsWith: level,
       target,
       checks,
@@ -212,5 +227,6 @@ export async function readProjectBrief(sessionId: string): Promise<AgentProjectS
   const project = reloadProjectIfPresent(task.projectId)
   if (!project) return null
   const remotes = project.vcs === 'git' ? parseRemotes(await tryGit(project.root, ['remote', '-v'])) : []
-  return projectBrief(task, project, remotes)
+  const targetFound = project.vcs === 'git' ? await landingTargetFound(project.root, landingTargetFor(task, project)) : null
+  return projectBrief(task, project, remotes, targetFound)
 }

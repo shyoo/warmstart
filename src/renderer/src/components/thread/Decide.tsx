@@ -9,7 +9,7 @@
 import { canWork } from '@shared/protocol'
 import { useCallback, useEffect, useState } from 'react'
 import {
-  FINISH_LABELS,
+  finishLabel,
   FINISH_SHORT,
   type FinishPolicy,
   resolveModelChoice,
@@ -746,6 +746,7 @@ export function Decide({
   choice,
   inheritedFinish,
   inheritedWorkspaceMode,
+  landingTarget,
   onRefresh
 }: {
   task: Task
@@ -767,6 +768,8 @@ export function Decide({
    * pull-request levels are not offered (t583).
    */
   inheritedWorkspaceMode?: WorkspaceMode
+  /** The branch this task lands onto, so each level's label names it rather than a generic trunk. */
+  landingTarget?: string | null
   onRefresh: () => Promise<void>
 }): React.JSX.Element | null {
   const [busy, setBusy] = useState(false)
@@ -890,7 +893,7 @@ export function Decide({
   const commitTitle =
     'Asks this conversation’s agent — in the same session, so it still has the context — to commit ' +
     (uncommittedNow ? `the ${uncommittedShort} on ${branchName}` : `whatever is uncommitted on ${branchName}`) +
-    ` and then land it: ${FINISH_LABELS[commitLevel]} (${commitLevelWhere}). ` +
+    ` and then land it: ${finishLabel(commitLevel, landingTarget)} (${commitLevelWhere}). ` +
     'With the land_work MCP tool the agent lands it itself; on an adapter without MCP it says the ' +
     'commit is ready and the tool lands it when the turn ends. “Commit only” asks for the commit ' +
     'and no landing. ' +
@@ -902,7 +905,7 @@ export function Decide({
     (unreadNotes ? ` ⚠️ ${unreadNotes.tooltip}` : '')
   const landCommon =
     `Lands ${pending?.unlandedCommits === 1 ? '1 commit' : `${pending?.unlandedCommits ?? 0} commits`} ` +
-    `sitting on ${branchName} without spending a turn: ${FINISH_LABELS[landLevel]} (${landLevelWhere}). ` +
+    `sitting on ${branchName} without spending a turn: ${finishLabel(landLevel, landingTarget)} (${landLevelWhere}). ` +
     'The tool rebases onto the landing target, runs the project’s checks where the level asks for ' +
     'them, and merges or pushes as the level says; a refusal leaves the branch exactly where it is. '
   const landTitle = conversation
@@ -954,7 +957,7 @@ export function Decide({
               menuAriaLabel="Landing strategy for this commit"
               options={commitOffered.map((level) => ({
                 value: level,
-                label: `${FINISH_SHORT[level]} — ${FINISH_LABELS[level]}`
+                label: `${FINISH_SHORT[level]} — ${finishLabel(level, landingTarget)}`
               }))}
               onAct={(level) => void handleCommit(level as FinishPolicy)}
             />
@@ -974,7 +977,7 @@ export function Decide({
               menuAriaLabel="Landing strategy for this branch"
               options={landOffered.map((level) => ({
                 value: level,
-                label: `${FINISH_SHORT[level]} — ${FINISH_LABELS[level]}`
+                label: `${FINISH_SHORT[level]} — ${finishLabel(level, landingTarget)}`
               }))}
               onAct={(level) => void handleLand(level as FinishPolicy)}
             />

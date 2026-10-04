@@ -4,7 +4,7 @@ import { addProject, archiveProject, archiveRefusal, deleteProject, deleteRefusa
 import { proposeChecks } from '../projectstack.js'
 import { cloneProject, cloneReadiness, createProject, inspectProjectDirectory, makeForkHome, proposeProjectDocs, workspaceRootReport } from '../projectsetup.js'
 import { flowWorkspaces } from '../flow.js'
-import { ensurePool, prunePoolWorktrees } from '../worktrees.js'
+import { ensurePool, landingTargetRefusal, prunePoolWorktrees } from '../worktrees.js'
 import { log } from '../log.js'
 import type { Api, ApiContext } from './support.js'
 
@@ -88,6 +88,13 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
      * claim already held on a member that is no longer one stays valid until its run ends.
      */
     'project.setPolicy': async ({ id, ...patch }) => {
+      // ⛔ Here rather than in `setProjectPolicy`, which is synchronous: asking git is not. A target
+      // that names no branch is refused before anything is written (t907).
+      const before = requireProject(id)
+      if (patch.landingTarget !== undefined && patch.landingTarget.trim() && before.vcs === 'git') {
+        const refusal = await landingTargetRefusal(before.root, patch.landingTarget.trim())
+        if (refusal) throw new Error(refusal)
+      }
       const project = setProjectPolicy(id, patch)
       if (patch.poolSize !== undefined) {
         try {

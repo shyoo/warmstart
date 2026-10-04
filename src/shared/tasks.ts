@@ -2696,11 +2696,32 @@ export const FINISH_LABELS: Record<FinishPolicy, string> = {
   'await-human': 'await human',
   'commit-only': 'commit only',
   'commit-and-verify': 'commit, then verify',
-  'commit-and-merge': 'commit, verify and merge into main',
+  'commit-and-merge': 'commit, verify and merge',
   'commit-and-push': 'commit, verify, merge and push',
   'pull-request': 'open a pull request',
   'custom': 'this project’s own policy',
   'report-only': 'report on the thread; expect no commits'
+}
+
+/**
+ * The label, naming the branch the work goes onto wherever that is known.
+ *
+ * ⭐ **t907.** The long label said *"merge into main"* on every project, including a fork whose
+ * target is `general`, and the operator read the line as asking whether it should say *fork*. A
+ * label that names a branch has to name the real one; one that cannot know it names none
+ * (`FINISH_LABELS`, for the fleet's own picker).
+ */
+/** A project's own landing target, for a renderer that has the project and not the daemon's resolver. */
+export function projectLandingTarget(project: Pick<Project, 'config'>): string {
+  return project.config.landing?.target?.trim() || 'main'
+}
+
+export function finishLabel(policy: FinishPolicy, target?: string | null): string {
+  if (!target) return FINISH_LABELS[policy]
+  if (policy === 'commit-and-merge') return `commit, verify and merge into ${target}`
+  if (policy === 'commit-and-push') return `commit, verify, merge into ${target} and push`
+  if (policy === 'pull-request') return `open a pull request into ${target}`
+  return FINISH_LABELS[policy]
 }
 
 /**

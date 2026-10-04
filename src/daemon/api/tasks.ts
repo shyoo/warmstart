@@ -12,7 +12,7 @@ import { attachmentBytes, createAttachment, createFolderAttachment, requireAttac
 import { getWorker, listWorkers, requireWorker } from '../workers.js'
 import { lastQuota, windowExpired } from '../quota.js'
 import { getSession } from '../sessions.js'
-import { getProject, policyFor, requireProject } from '../projects.js'
+import { getProject, landingTargetFor, policyFor, requireProject } from '../projects.js'
 import { deleteUnlandedBranch, retireStrandedBranch } from '../worktrees.js'
 import { cleanUpMergedBranch, pendingDeliveries, reconcilePullRequestDeliveries } from '../deliveries.js'
 import { addMessage, attachDependency, blockedDependentsOf, createTask, dependentsOf, detachDependency, getTask, listTasks, messagesFor, pageTasks, projectActivity, promoteDraft, requireTask, startScheduledNow, setHoldReason, setQuotaOverride, setQuotaPreemptWarning, runsFor, setStatus, setTaskStatsExcluded, setWorkspaceMode, updateTask } from '../tasks.js'
@@ -194,6 +194,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         inheritedCompletion: resolveCompletionMode(null, project, settings().completionMode),
         inheritedWorkspaceMode: resolveWorkspaceMode(null, project).mode,
         upstreamRemote: project ? policyFor(project).upstreamRemote : null,
+        landingTarget: project ? landingTargetFor(task, project) : null,
         inheritedAutoCompact: resolveAutoCompact(null, settings().autoCompact),
         /**
          * ⛔ **Whether compaction is a thing this task's agent can be asked for at all**, which is a

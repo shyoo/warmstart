@@ -1,5 +1,5 @@
 import type { FinishPolicy, PendingWork, ResolveRetryCause } from '@shared/tasks.js'
-import { FINISH_LABELS, isOpenConversation, policyLands, policyVerifies, resolveRetryCauses, resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
+import { FINISH_LABELS, finishLabel, isOpenConversation, policyLands, policyVerifies, resolveRetryCauses, resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
 import type { Project, Task } from '@shared/tasks.js'
 import { getProject, landingTargetFor, policyFor, reloadProjectIfPresent } from './projects.js'
 import { decideFinish, landingLevel, resolveFinishPolicy } from './finish.js'
@@ -510,7 +510,8 @@ export async function commitConversation(
     branch,
     checks: policyVerifies(policy) ? (project.config.check ?? []) : [],
     canLand,
-    inTrunk: trunk !== null
+    inTrunk: trunk !== null,
+    target: landingTargetFor(task, project)
   })
 
   // ⛔ **Recorded before the turn is asked for, so a daemon restart between the two does not drop
@@ -618,9 +619,12 @@ export function commitConversationInstruction({
   branch,
   checks,
   canLand,
-  inTrunk = false
+  inTrunk = false,
+  target = null
 }: {
   policy: FinishPolicy
+  /** Where the work lands, so the level's label names the branch (t907). Null names none. */
+  target?: string | null
   /** The task's branch — or, for a trunk conversation, the landing target it commits straight onto. */
   branch: string
   checks: string[]
@@ -674,7 +678,7 @@ export function commitConversationInstruction({
           'yourself. '
 
   return (
-    `Please commit this conversation's work now: ${FINISH_LABELS[policy]}.\n\n` +
+    `Please commit this conversation's work now: ${finishLabel(policy, target)}.\n\n` +
     commitStep +
     checkStep +
     after +
@@ -742,12 +746,13 @@ function agentCanLand(taskId: string): boolean {
 function announceLandingStarted(
   task: { id: string; seq: number; branch: string | null },
   policy: FinishPolicy,
-  what = 'Landing'
+  what = 'Landing',
+  target: string | null = null
 ): void {
   addMessage(
     task.id,
     'system',
-    `${what} ${task.branch ? `\`${task.branch}\`` : 'this branch'} — ${FINISH_LABELS[policy]}…`,
+    `${what} ${task.branch ? `\`${task.branch}\`` : 'this branch'} — ${finishLabel(policy, target)}…`,
     null,
     [],
     {
@@ -778,7 +783,8 @@ export async function landConversation(
     return { ok: false, reason: 'this task is already running; wait for the turn to end' }
   }
   log.info(`t${task.seq}: landing this conversation as ${policy} at the operator's request`)
-  announceLandingStarted(task, policy)
+  const landingProject = task.projectId ? getProject(task.projectId) : null
+  announceLandingStarted(task, policy, 'Landing', landingProject ? landingTargetFor(task, landingProject) : null)
   const result = await landConversationWork(task.id, { finishPolicy: policy })
   if (!result.ok) {
     // ⚠️ Kept on the task as well as returned, for the reason `relandTask` gives: the renderer
@@ -850,7 +856,7 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
   // ⚠️ Here rather than at the top of the function: the checks above refuse in milliseconds and
   // write their own line, and two rows for one press that never reached git would read as a landing
   // that started and vanished. From this point on the work is genuinely slow.
-  announceLandingStarted(task, resolveFinishPolicy(task, project).policy, 'Retrying the landing of')
+  announceLandingStarted(task, resolveFinishPolicy(task, project).policy, 'Retrying the landing of', landingTargetFor(task, project))
 
   try {
     const prepared = await prepareWorkspace(project, workspace, task.branch, task)
@@ -921,7 +927,7 @@ async function relandTrunkTask(
   }
   const occupied = trunkOccupiedBy(project, task.id)
   if (occupied) return didNotLand(`${occupied}; try again when it has finished`)
-  announceLandingStarted(task, policy, 'Retrying the landing of')
+  announceLandingStarted(task, policy, 'Retrying the landing of', landingTargetFor(task, project))
   const base = runsFor(task.id).filter((r) => r.kind === 'work').at(-1)?.trunkShaBefore ?? null
   const result = await landTask({
     project,

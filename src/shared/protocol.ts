@@ -2089,6 +2089,8 @@ export interface RpcMap {
       inheritedWorkspaceMode?: WorkspaceMode
       /** The project's `landing.upstreamRemote`, when its fork is home — what offers Propose upstream. */
       upstreamRemote?: string | null
+      /** The branch this task's work lands onto (`landingTargetFor`), so a label can name it. */
+      landingTarget?: string | null
       inheritedAutoCompact?: ResolvedAutoCompact
       /** Whether the adapter this task would run on declares `manualCompact`. See the daemon note. */
       compactionCapable?: boolean

@@ -117,3 +117,55 @@ describe('project_settings (t906)', () => {
     expect(result.observations.join('\n')).toContain('Project Settings › Finish policy')
   })
 })
+
+/** A repo whose only local branch is `main`, with origin's `general` and origin/HEAD pointing at it. */
+function forkRepo(name: string, target: string): string {
+  const root = repo(name, { landing: { finish: 'commit-and-merge', target, upstreamRemote: 'upstream' } }, {
+    origin: 'https://github.com/shyoo/Optiscaler-Client.git',
+    upstream: 'https://github.com/Optiscaler-Client/Optiscaler-Client.git'
+  })
+  const g = (...args: string[]): string => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8' }).trim()
+  g('-c', 'user.name=t', '-c', 'user.email=t@example.com', 'commit', '-q', '--allow-empty', '-m', 'first')
+  g('branch', '-M', 'main')
+  g('update-ref', 'refs/remotes/origin/general', g('rev-parse', 'HEAD'))
+  g('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/general')
+  return root
+}
+
+describe('a landing target is a branch that exists (t907)', () => {
+  it('refuses to save a target that names no branch, and names origin’s default instead', async () => {
+    // t905's project after the operator typed `fork`, meaning *my fork*: no branch had that name.
+    const project = projects.addProject({ root: forkRepo('target-refused', 'general') })
+    const handlers = api.buildApi({ version: '1.0.0', port: 1234, startedAt: Date.now() })
+
+    await expect(handlers['project.setPolicy']({ id: project.id, landingTarget: 'fork' })).rejects.toThrow(
+      /no branch `fork` in this repository or on origin.*origin's default branch is `general`/
+    )
+    expect(projects.requireProject(project.id).config.landing?.target).toBe('general')
+    await expect(handlers['project.setPolicy']({ id: project.id, landingTarget: 'a..b' })).rejects.toThrow(/not a branch name/)
+
+    // On origin only is enough — the fork's branch need not be checked out here — and so is local only.
+    expect((await handlers['project.setPolicy']({ id: project.id, landingTarget: 'general' })).config.landing?.target).toBe('general')
+    expect((await handlers['project.setPolicy']({ id: project.id, landingTarget: 'main' })).config.landing?.target).toBe('main')
+  })
+
+  it('tells the agent a target that resolves nowhere, and nothing about one that does', async () => {
+    const root = forkRepo('target-brief', 'fork')
+    const project = projects.addProject({ root })
+    const task = tasks.createTask({ title: 'z', status: 'ready', projectId: project.id })
+    const worktrees = await import('./worktrees.js')
+
+    expect(await worktrees.landingTargetFound(root, 'fork')).toBe(false)
+    expect(await worktrees.landingTargetFound(root, 'general')).toBe(true)
+    const said = brief.projectBrief(task, project, [], false).observations.join('\n')
+    expect(said).toContain('`fork` names no branch in this repository or on origin')
+    expect(brief.projectBrief(task, project, [], true).observations.join('\n')).not.toContain('names no branch')
+    // The label names the real target, not a generic `main`.
+    expect(brief.projectBrief(task, project, [], false).landing.finish.label).toBe('commit, verify and merge into fork')
+
+    // ⚠️ A repository with no commit has no branch at all: nothing to find, so nothing is claimed.
+    const empty = repo('target-empty', { landing: { target: 'main' } }, {})
+    expect(await worktrees.landingTargetFound(empty, 'main')).toBeNull()
+    expect(await worktrees.landingTargetRefusal(empty, 'main')).toBeNull()
+  })
+})

@@ -5,12 +5,13 @@ import {
   DEFAULT_FLEET_COMPLETION,
   DEFAULT_FLEET_FINISH,
   DEFAULT_FLEET_SHARING,
-  FINISH_LABELS,
   FINISH_ORDER,
+  finishLabel,
   ORIENTATION_LABELS,
   ORIENTATION_READING_ORDER,
   projectCompletionChoice,
   projectFinishChoice,
+  projectLandingTarget,
   projectSharingChoice,
   SHARING_LABELS,
   verificationWarning,
@@ -329,8 +330,7 @@ function ProjectIdentity({
               )}
             </td>
             <td className="dim">
-              {FINISH_LABELS[landing.policy]} →{' '}
-              <span className="mono">{project.config.landing?.target ?? 'main'}</span>
+              {finishLabel(landing.policy, projectLandingTarget(project))}
               {landing.source !== 'project' && (
                 <div className="tbl-path">inherited from the {landing.source}</div>
               )}
@@ -454,9 +454,10 @@ function PolicyPanel({
   const completionChoice = projectCompletionChoice(project)
   const resolvedCompletion = resolveCompletionMode(null, project, DEFAULT_FLEET_COMPLETION)
 
+  const target = projectLandingTarget(project)
   const finishOptions: SettingOption[] = [
-    { value: 'inherit', label: `inherit (${FINISH_LABELS[fleetFinish]})` },
-    ...FINISH_ORDER.map((p) => ({ value: p, label: FINISH_LABELS[p] }))
+    { value: 'inherit', label: `inherit (${finishLabel(fleetFinish, target)})` },
+    ...FINISH_ORDER.map((p) => ({ value: p, label: finishLabel(p, target) }))
   ]
 
   return (
@@ -474,7 +475,7 @@ function PolicyPanel({
       <div className="setting-list">
         <SettingRow
           title="Finish policy"
-          description={`${FINISH_LABELS[resolvedFinish.policy]} — from the ${resolvedFinish.source}. Work that cannot land stays in Loose ends.`}
+          description={`${finishLabel(resolvedFinish.policy, target)} — from the ${resolvedFinish.source}. Work that cannot land stays in Loose ends.`}
           control={
             <SettingButtonSelect
               className="finish-picker setting-row-control-select"
@@ -490,12 +491,12 @@ function PolicyPanel({
 
         <TextPolicyRow
           title="Landing target"
-          value={project.config.landing?.target ?? 'main'}
+          value={target}
           placeholder="main"
           disabled={busy}
           ariaLabel="Landing target branch"
           onSave={(val) => apply({ landingTarget: val })}
-          description={`New task branches start from ${project.config.landing?.target ?? 'main'}; existing branches do not move.`}
+          description={`The branch new tasks start from and land onto, as git names it${project.config.landing?.upstreamRemote ? ` — your fork’s branch, which is also the base a Propose upstream pull request targets on ${project.config.landing.upstreamRemote}` : ''}. It must exist here or on origin; existing branches do not move.`}
         />
 
         {/* ⛔ t903: with the fork home, origin is the operator's own and the original is reached
@@ -639,7 +640,7 @@ function PolicyPanel({
               projectWorkspaceModeChoice(project) === 'trunk' ? (
                 <>
                   New tasks work <strong>in the project checkout itself</strong> and commit straight
-                  onto <code>{project.config.landing?.target ?? 'main'}</code>. One trunk task runs at a
+                  onto <code>{projectLandingTarget(project)}</code>. One trunk task runs at a
                   time; worktree landings into the trunk queue until it is free. A task can still be
                   filed into a worktree.
                 </>

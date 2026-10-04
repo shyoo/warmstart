@@ -106,6 +106,37 @@ export async function trunkBaseRef(
 }
 
 /**
+ * Does the landing target name a branch here or on origin?
+ *
+ * ⭐ **t907.** An operator set an optiscaler project's target to `fork`, meaning *my fork*. No branch
+ * of that name existed anywhere, and `trunkBaseRef` above answered `HEAD` without a word: new task
+ * branches would have started from the trunk checkout's stale `main`, every merge been refused, and
+ * Propose upstream looked for `upstream/fork`. The agent asked to check the setup read it as fine.
+ */
+export async function landingTargetFound(root: string, target: string): Promise<boolean | null> {
+  // ⚠️ Null, not false: a repository with no commit yet has no branch at all, so there is nothing to
+  // find — the same case `trunkBaseRef`'s `HEAD` fallback exists for.
+  if (!(await gitOk(root, ['rev-parse', '--verify', '--quiet', 'HEAD']))) return null
+  return (
+    (await gitOk(root, ['rev-parse', '--verify', '--quiet', `refs/heads/${target}`])) ||
+    (await gitOk(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${target}`]))
+  )
+}
+
+/** Why `target` cannot be this repository's landing target, or null when it can. */
+export async function landingTargetRefusal(root: string, target: string): Promise<string | null> {
+  if (!(await gitOk(root, ['check-ref-format', '--branch', target]))) return `\`${target}\` is not a branch name`
+  if ((await landingTargetFound(root, target)) !== false) return null
+  const originHead = (await tryGit(root, ['symbolic-ref', '--quiet', '--short', 'refs/remotes/origin/HEAD']))?.trim()
+  const suggestion = originHead?.startsWith('origin/') ? ` origin's default branch is \`${originHead.slice('origin/'.length)}\`.` : ''
+  return (
+    `there is no branch \`${target}\` in this repository or on origin. The landing target is the ` +
+    `branch new tasks start from and land onto, named as git names it.${suggestion} If the branch ` +
+    'is new on origin, fetch it first.'
+  )
+}
+
+/**
  * Where this task's branch begins: the ref its landing strategy will rebase onto. Split work carries
  * the planner branch in `task.landingTarget`; ordinary work resolves to the project's trunk.
  */

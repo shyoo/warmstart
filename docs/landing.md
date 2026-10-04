@@ -1052,7 +1052,15 @@ it to a person with the commits listed, which is the right outcome for evidence 
   still names a skill the receiving CLI may not have, and a skill's steps can be renumbered under a
   project that quoted them. Under every other level the tool composes the sentence itself and says
   plainly whether to push.
-- `landing.target` — the branch to land on. Defaults to `main`.
+- `landing.target` — the branch to land on. Defaults to `main`. ⛔ A **branch name**, never a role:
+  under `upstreamRemote` it is the fork's branch *and* the base a Propose upstream pull request
+  targets, so on a fork of a repository whose maintainers take PRs on `general` it is `general`.
+  `project.setPolicy` refuses a target that is neither a local branch nor on `origin`
+  (`landingTargetRefusal`, `worktrees.ts`), naming origin's default; a repository with no commit is
+  not checked. A target that stops resolving later is an `observation` in `project_settings`. ⭐ t907:
+  an operator typed `fork` meaning *my fork*; `trunkBaseRef` answered `HEAD` without a word, so new
+  branches would have started from the checkout's stale `main`. Labels that know the target name it
+  (`finishLabel`); the bare `FINISH_LABELS` name no branch.
 - `landing.upstreamRemote` — **the fork is home** (t903). Set by the add wizard's fork checkbox
   and by **Make my fork home**: `origin` is your fork and this remote (`upstream`) is the
   repository it was forked from. Every finish policy lands into the fork, exactly as on a repository

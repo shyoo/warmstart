@@ -10,6 +10,7 @@ import type {
 import {
   FINISH_LABELS,
   FINISH_ORDER,
+  finishLabel,
   FINISH_SHORT,
   MAX_DEBATE_ROUNDS,
   MAX_DEBATE_SEATS,
@@ -18,6 +19,7 @@ import {
   SHARING_LABELS,
   SHARING_SHORT,
   WORKSPACE_MODE_LABELS,
+  projectLandingTarget,
   projectTrunkOnly,
   projectWorkspaceModeChoice,
   resolveModelChoice,
@@ -604,8 +606,10 @@ export function NewTask({
   const inheritedFinishShort = inheritedFinish.policy
     ? (FINISH_SHORT[inheritedFinish.policy] ?? inheritedFinish.policy)
     : 'Await human'
+  // ⚠️ Named for the project picked here; a split's pieces land onto their planner, so their menus stay generic.
+  const selectedTarget = selectedProject ? projectLandingTarget(selectedProject) : null
   const inheritedFinishLong = inheritedFinish.policy
-    ? (FINISH_LABELS[inheritedFinish.policy] ?? inheritedFinish.policy)
+    ? finishLabel(inheritedFinish.policy, selectedTarget)
     : 'agent lands it'
   const inheritedSharingShort = SHARING_SHORT[inheritedSharing.sharing] ?? inheritedSharing.sharing
   const inheritedSharingLong = SHARING_LABELS[inheritedSharing.sharing] ?? inheritedSharing.sharing
@@ -1384,7 +1388,7 @@ export function NewTask({
                         label: `Inherit — ${inheritedFinishLong}`,
                         hint: `Inherited from ${inheritedFinish.source}`
                       },
-                      ...FINISH_ORDER.map((p) => ({ value: p, label: FINISH_LABELS[p] }))
+                      ...FINISH_ORDER.map((p) => ({ value: p, label: finishLabel(p, selectedTarget) }))
                     ]}
                     onChange={(v) => setPrefs({ ...prefs, finishPolicy: v as FinishPolicyChoice })}
                   />
@@ -1610,7 +1614,7 @@ export function NewTask({
                   },
                   // ⛔ From FINISH_ORDER, never a hand-written copy. Three dropdowns each carried their
                   // own list of these and all three still offered `agent-lands` after the rename.
-                  ...FINISH_ORDER.map((p) => ({ value: p, label: FINISH_LABELS[p] }))
+                  ...FINISH_ORDER.map((p) => ({ value: p, label: finishLabel(p, selectedTarget) }))
                 ]}
                 onChange={(v) => setPrefs({ ...prefs, finishPolicy: v as FinishPolicyChoice })}
               />

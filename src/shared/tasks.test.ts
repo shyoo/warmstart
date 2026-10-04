@@ -7,6 +7,7 @@ import {
   FINISH_LABELS,
   FINISH_ORDER,
   FINISH_SHORT,
+  finishLabel,
   conversationLandingResultText,
   MAX_DEBATE_SEATS,
   MIN_DEBATE_SEATS,
@@ -48,6 +49,18 @@ describe('the pill-sized names for the two policies a task carries', () => {
       // wrap. Anything longer than this belongs in the menu, where the long label already lives.
       expect(short.length).toBeLessThanOrEqual(FINISH_LABELS[policy].length + 4)
       expect(short.length).toBeLessThanOrEqual(26)
+    }
+  })
+
+  // ⭐ t907: *"merge into main"* on a fork whose target is `general` read as a question about forks.
+  it('names the real target where it is known, and no branch where it is not', () => {
+    expect(finishLabel('commit-and-merge', 'general')).toBe('commit, verify and merge into general')
+    expect(finishLabel('commit-and-push', 'general')).toBe('commit, verify, merge into general and push')
+    expect(finishLabel('pull-request', 'general')).toBe('open a pull request into general')
+    expect(finishLabel('commit-only', 'general')).toBe(FINISH_LABELS['commit-only'])
+    for (const policy of FINISH_ORDER) {
+      expect(finishLabel(policy)).toBe(FINISH_LABELS[policy])
+      expect(FINISH_LABELS[policy]).not.toMatch(/\bmain\b/)
     }
   })
 
