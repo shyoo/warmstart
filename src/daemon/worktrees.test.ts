@@ -25,6 +25,7 @@ let db: typeof import('./db.js')
 let projects: typeof import('./projects.js')
 let worktrees: typeof import('./worktrees.js')
 let resources: typeof import('./resources.js')
+let scheduler: typeof import('./scheduler.js')
 
 /** ⚠️ core.autocrlf rewrites what git checks out on Windows; the bytes are not the point here. */
 const text = (path: string): string => readFileSync(path, 'utf8').split('\r\n').join('\n')
@@ -66,6 +67,7 @@ beforeAll(async () => {
   projects = await import('./projects.js')
   worktrees = await import('./worktrees.js')
   resources = await import('./resources.js')
+  scheduler = await import('./scheduler.js')
   db.openDb(join(dir, 'worktrees.db'))
 })
 
@@ -1076,5 +1078,75 @@ describe('workspace pool dynamic resizing and stale lock cleanup', () => {
     expect(git(ws2!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD')
 
     worktrees.releaseWorkspace(ws1!.claimId)
+  })
+
+  it('priorWorkspacePathFor prefers workspace currently on the task branch when no past sessions exist', async () => {
+    const project = makeProject(2)
+    const ws1 = await worktrees.claimWorkspace(project, 'holder-branch-1')
+    const ws2 = await worktrees.claimWorkspace(project, 'holder-branch-2')
+
+    // Switch ws2 to task's branch
+    const branch = 'warmstart/t714-for-workspaces-should-we-use-more-app-sp'
+    git(ws2!.path, 'switch', '-c', branch, 'main')
+
+    const taskMock = {
+      id: 'task-714',
+      seq: 714,
+      title: 'for workspaces should we use more app sp',
+      branchUnit: 1,
+      branch,
+      constraints: {}
+    } as never
+
+    const preferred = await scheduler.priorWorkspacePathFor(taskMock, 'worker-1', project)
+    expect(preferred).toBe(ws2!.path)
+
+    worktrees.releaseWorkspace(ws1!.claimId)
+    worktrees.releaseWorkspace(ws2!.claimId)
+  })
+
+  it('retains the same workspace slot and uncommitted changes across worker reassignments', async () => {
+    const project = makeProject(2)
+    const ws1 = await worktrees.claimWorkspace(project, 'task-reassign-ws')
+    expect(ws1).not.toBeNull()
+
+    // Task starts branch on ws1 and writes uncommitted local file
+    const branch = 'warmstart/t911-reassign-slot'
+    git(ws1!.path, 'switch', '-c', branch, 'main')
+    writeFileSync(join(ws1!.path, 'stale-local-change.txt'), 'uncommitted content before reassignment\n')
+
+    const taskMock = {
+      id: 'task-reassign-ws',
+      seq: 911,
+      title: 'reassign slot',
+      branchUnit: 1,
+      branch,
+      constraints: {}
+    } as never
+
+    // The claim is held by task.id
+    const held = worktrees.workspaceHeldBy(project, 'task-reassign-ws')
+    expect(held).not.toBeNull()
+    expect(held?.path).toBe(ws1!.path)
+
+    // Reassigned to worker B: preferPath is priorWorkspacePathFor
+    const preferPath = await scheduler.priorWorkspacePathFor(taskMock, 'worker-b', project)
+    expect(preferPath).toBe(ws1!.path)
+
+    // A dispatch to worker B claims or re-uses the held workspace
+    let wsNext = worktrees.workspaceHeldBy(project, 'task-reassign-ws')
+    wsNext ??= await worktrees.claimWorkspace(project, 'task-reassign-ws', preferPath)
+
+    // Crucially: it claimed ws1 (the exact same slot), NOT ws2!
+    expect(wsNext!.path).toBe(ws1!.path)
+
+    // Prepare workspace on the same slot:
+    const prep = await worktrees.prepareWorkspace(project, wsNext!, branch, taskMock)
+    expect(prep.ok).toBe(true)
+
+    // Stale local change was not destroyed or lost
+    expect(existsSync(join(wsNext!.path, 'stale-local-change.txt'))).toBe(true)
+
+    worktrees.releaseWorkspace(wsNext!.claimId)
   })
 })

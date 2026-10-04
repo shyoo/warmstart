@@ -22,6 +22,10 @@ let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
 let residency: typeof import('./residency.js')
 let scoring: typeof import('./scoring.js')
+let resources: typeof import('./resources.js')
+let worktrees: typeof import('./worktrees.js')
+let sessions: typeof import('./sessions.js')
+let apiTasksMod: typeof import('./api/tasks.js')
 
 let origClaudeInstalled: () => boolean
 
@@ -34,6 +38,10 @@ beforeAll(async () => {
   scheduler = await import('./scheduler.js')
   residency = await import('./residency.js')
   scoring = await import('./scoring.js')
+  resources = await import('./resources.js')
+  worktrees = await import('./worktrees.js')
+  sessions = await import('./sessions.js')
+  apiTasksMod = await import('./api/tasks.js')
   const { claudeCode } = await import('./adapters/claude-code.js')
   origClaudeInstalled = claudeCode.isInstalled
   claudeCode.isInstalled = () => true
@@ -642,5 +650,161 @@ describe('the worker line a run writes to the thread', () => {
       event: 'worker.assigned',
       detail: 'Controller: lower cost.\nConversation: cold start.'
     })
+  })
+
+  it('priorWorkspacePathFor retains task workspace affinity across worker reassignment', async () => {
+    const workerA = createReadyWorker('WorkerAffinityA', 1)
+    const workerB = createReadyWorker('WorkerAffinityB', 1)
+
+    const task = tasks.createTask({ title: 'Workspace affinity test' })
+
+    // No past sessions and no lent conversations
+    expect(await scheduler.priorWorkspacePathFor(task, workerA.id, null)).toBeUndefined()
+
+    // Add session for workerA in ws1
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, started_at)
+         values (?, ?, ?, 'stream', ?, ?, ?)`
+      )
+      .run('sess-aff-1', workerA.id, 'claude-code', 'C:\\worktrees\\ws1', 'idle', Date.now())
+
+    tasks.startRun({
+      taskId: task.id,
+      workerId: workerA.id,
+      sessionId: 'sess-aff-1',
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+
+    // Same worker prefers its past session cwd
+    expect(await scheduler.priorWorkspacePathFor(task, workerA.id, null)).toBe('C:\\worktrees\\ws1')
+
+    // Different worker (reassigned to workerB) still prefers this task's past workspace
+    expect(await scheduler.priorWorkspacePathFor(task, workerB.id, null)).toBe('C:\\worktrees\\ws1')
+  })
+
+  it('task.setWorker transfers workspace claim to task.id and closes old idle session on reassignment', async () => {
+    const workerA = createReadyWorker('WorkerReassignA', 1)
+    const workerB = createReadyWorker('WorkerReassignB', 1)
+
+    const poolId = 'workspace:proj-reassign-1'
+    resources.upsertResource({
+      id: poolId,
+      projectId: null,
+      kind: 'counted',
+      label: 'test pool',
+      capacity: 2,
+      members: ['C:\\ws\\ws1', 'C:\\ws\\ws2']
+    })
+
+    const task = tasks.createTask({ title: 'Task to reassign' })
+    const sessId = 'sess-reassign-1'
+
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, started_at)
+         values (?, ?, ?, 'stream', ?, ?, ?)`
+      )
+      .run(sessId, workerA.id, 'claude-code', 'C:\\ws\\ws1', 'idle', Date.now())
+
+    const run = tasks.startRun({
+      taskId: task.id,
+      workerId: workerA.id,
+      sessionId: sessId,
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+
+    const claim = resources.claim(poolId, sessId, 1, 'C:\\ws\\ws1')
+    expect(claim).not.toBeNull()
+    expect(claim?.member).toBe('C:\\ws\\ws1')
+    expect(claim?.holder).toBe(sessId)
+
+    // Run finishes and task rests at awaiting_human
+    tasks.finishRun(run.id, 'blocked', 'awaiting human feedback')
+    tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+
+    const api = apiTasksMod.apiTasks({} as never)
+
+    // Reassign task to workerB
+    await api['task.setWorker']({ id: task.id, workerId: workerB.id })
+
+    // Allow async releaseWorkspaceOf and closeAndWait to resolve
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    // Claim should now be held by task.id for C:\ws\ws1, keeping the workspace slot intact
+    const open = resources.openClaims(poolId)
+    const taskClaim = open.find((c) => c.holder === task.id)
+    expect(taskClaim).toBeDefined()
+    expect(taskClaim?.member).toBe('C:\\ws\\ws1')
+
+    // Old session should no longer hold the claim
+    const sessionClaim = open.find((c) => c.holder === sessId)
+    expect(sessionClaim).toBeUndefined()
+
+    // Old session state should be closed
+    const sessRow = sessions.getSession(sessId)
+    expect(sessRow?.state).toBe('closed')
+
+    // workspaceHeldBy confirms task retains the exact workspace
+    const projectMock = { id: 'proj-reassign-1', root: 'C:\\ws' } as never
+    const held = worktrees.workspaceHeldBy(projectMock, task.id)
+    expect(held).not.toBeNull()
+    expect(held?.path).toBe('C:\\ws\\ws1')
+  })
+
+  it('task.setWorker to Auto also transfers workspace claim to task.id and closes old idle session', async () => {
+    const workerA = createReadyWorker('WorkerAutoA', 1)
+
+    const poolId = 'workspace:proj-reassign-auto'
+    resources.upsertResource({
+      id: poolId,
+      projectId: null,
+      kind: 'counted',
+      label: 'test pool auto',
+      capacity: 2,
+      members: ['C:\\ws\\ws1', 'C:\\ws\\ws2']
+    })
+
+    const task = tasks.createTask({ title: 'Task to reassign to auto' })
+    const sessId = 'sess-reassign-auto-1'
+
+    db.db()
+      .prepare(
+        `insert into sessions (id, worker_id, adapter_id, transport, cwd, state, started_at)
+         values (?, ?, ?, 'stream', ?, ?, ?)`
+      )
+      .run(sessId, workerA.id, 'claude-code', 'C:\\ws\\ws1', 'idle', Date.now())
+
+    const run = tasks.startRun({
+      taskId: task.id,
+      workerId: workerA.id,
+      sessionId: sessId,
+      projectId: null,
+      quotaUnverified: false,
+      costModelId: null
+    })
+
+    resources.claim(poolId, sessId, 1, 'C:\\ws\\ws1')
+    tasks.finishRun(run.id, 'blocked', 'awaiting human feedback')
+    tasks.setStatus(task.id, 'awaiting_human', { assignee: 'human' })
+
+    const api = apiTasksMod.apiTasks({} as never)
+
+    // Reassign task to Auto (workerId: null)
+    await api['task.setWorker']({ id: task.id, workerId: null })
+
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    const open = resources.openClaims(poolId)
+    const taskClaim = open.find((c) => c.holder === task.id)
+    expect(taskClaim).toBeDefined()
+    expect(taskClaim?.member).toBe('C:\\ws\\ws1')
+
+    const sessRow = sessions.getSession(sessId)
+    expect(sessRow?.state).toBe('closed')
   })
 })

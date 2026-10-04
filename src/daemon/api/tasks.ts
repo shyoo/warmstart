@@ -11,7 +11,7 @@ import { manualReviewsForTask, reviewsForTask } from '../review.js'
 import { attachmentBytes, createAttachment, createFolderAttachment, requireAttachment } from '../attachments.js'
 import { getWorker, listWorkers, requireWorker } from '../workers.js'
 import { lastQuota, windowExpired } from '../quota.js'
-import { getSession } from '../sessions.js'
+import { closeAndWait, getSession, hasOpenRun } from '../sessions.js'
 import { getProject, landingTargetFor, policyFor, requireProject } from '../projects.js'
 import { deleteUnlandedBranch, retireStrandedBranch } from '../worktrees.js'
 import { cleanUpMergedBranch, pendingDeliveries, reconcilePullRequestDeliveries } from '../deliveries.js'
@@ -24,7 +24,7 @@ import { answerQuestion, askQuestion, openQuestions, questionsForTask, voidQuest
 import { childrenOf as splitChildrenOf } from '../split.js'
 import { allAvailability } from '../resources.js'
 import { activityFor } from '../activity.js'
-import { continueTask, deliverToLiveSession, QUOTA_HIGH_WATER, QUOTA_OVERRIDE_FALLBACK_MS, resolveTask } from '../scheduler.js'
+import { continueTask, deliverToLiveSession, liveSessionsOfTask, QUOTA_HIGH_WATER, QUOTA_OVERRIDE_FALLBACK_MS, releaseWorkspaceOf, resolveTask } from '../scheduler.js'
 import { commandPromptFor, promptFor } from '../prompt.js'
 import { commitConversation, landConversation, pendingWorkFor, relandTask, resolveChecksOnTask, resolveCommitOnTask, resolveConflictOnTask, resolveRetryOnTask } from '../resolutions.js'
 import { windowResetsAt } from '../quota.js'
@@ -69,6 +69,14 @@ function reassignForResolveRetry(
   }
 ): void {
   const task = requireTask(id)
+  for (const s of liveSessionsOfTask(task.id)) {
+    if (!hasOpenRun(s.id) && (!choice.workerId || s.workerId !== choice.workerId)) {
+      void (async () => {
+        await releaseWorkspaceOf(s.id, task.id)
+        await closeAndWait(s.id)
+      })()
+    }
+  }
   if (!choice.workerId) {
     const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...constraints } = task.constraints
     voidQuestionsForTask(task.id, 'task reassigned')
@@ -423,6 +431,14 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         voidQuestionsForTask(task.id, 'task reassigned')
         if (isResting) {
           setHoldReason(task.id, null)
+          for (const s of liveSessionsOfTask(task.id)) {
+            if (!hasOpenRun(s.id)) {
+              void (async () => {
+                await releaseWorkspaceOf(s.id, task.id)
+                await closeAndWait(s.id)
+              })()
+            }
+          }
           setStatus(task.id, task.status, { assignee: null })
         }
         return updateTask(p.id, {
@@ -478,7 +494,17 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       if (!constraints.modelClass) delete constraints.modelClass
       delete constraints.workerIds
       const isResting = !['running', 'assigned'].includes(task.status)
-      if (isResting) setHoldReason(task.id, null)
+      if (isResting) {
+        setHoldReason(task.id, null)
+        for (const s of liveSessionsOfTask(task.id)) {
+          if (!hasOpenRun(s.id) && s.workerId !== worker.id) {
+            void (async () => {
+              await releaseWorkspaceOf(s.id, task.id)
+              await closeAndWait(s.id)
+            })()
+          }
+        }
+      }
       return updateTask(p.id, {
         constraints,
         ...(isResting ? { assigneeHint: worker.id } : {})

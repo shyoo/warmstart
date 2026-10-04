@@ -123,6 +123,7 @@ import {
   trunkCommitsSince,
   trunkTargetSha,
   workspaceHeldBy,
+  workspaceOnBranch,
   workspaceState,
   type Rescue,
   type Workspace
@@ -1343,6 +1344,38 @@ function pastSessionsFor(task: Task): Session[] {
 }
 
 /**
+ * Determine the preferred workspace directory for a task dispatch.
+ *
+ * 1. A session from the same worker that already ran for this task (for conversation resumption).
+ * 2. This task's most recent workspace across ANY worker (retaining workspace affinity across reassignments).
+ * 3. Any pooled workspace that already has this task's branch checked out.
+ * 4. A lendable conversation from another task on the target worker.
+ */
+export async function priorWorkspacePathFor(
+  task: Task,
+  workerId: string,
+  project: Project | null
+): Promise<string | undefined> {
+  const past = pastSessionsFor(task)
+  const sameWorker = past.find((s) => s.workerId === workerId)?.cwd
+  if (sameWorker) return sameWorker
+
+  const taskLast = past.find((s) => s.cwd)?.cwd
+  if (taskLast) return taskLast
+
+  if (project && project.vcs === 'git') {
+    const branch = task.branch ?? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit)
+    const onBranch = await workspaceOnBranch(project, branch, landingTargetFor(task, project))
+    if (onBranch?.path) return onBranch.path
+  }
+
+  const lent = lendableConversations(task, workerId)
+  if (lent[0]?.cwd) return lent[0].cwd
+
+  return undefined
+}
+
+/**
  * The conversation this task was already having on this account, closed but reopenable.
  *
  * ⭐ **The half of "a session already holds this task" that a one-shot CLI can ever have.**
@@ -1689,7 +1722,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // from the tree it was had in — and a lent conversation is therefore also a *preference about
   // which worktree to claim*. Offered second: this task's own tree always outranks somebody else's.
   const lent = lendableConversations(task, worker.id)
-  const priorCwd = past.find((s) => s.workerId === worker.id)?.cwd ?? lent[0]?.cwd
+  const priorCwd = await priorWorkspacePathFor(task, worker.id, project)
 
   // ⭐ Where this task works, decided once. A trunk task takes the project's single trunk lease and
   // runs in the checkout itself; everything below that prepares a pooled worktree is skipped for it.
@@ -1697,8 +1730,14 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   let trunkSurvey: TrunkSurvey | null = null
 
   if (project && trunkMode) {
+    for (const s of liveSessionsOfTask(task.id)) {
+      if (s.workerId !== worker.id && !hasOpenRun(s.id)) {
+        await releaseWorkspaceOf(s.id, task.id)
+        await closeAndWait(s.id)
+      }
+    }
     for (const s of past) {
-      if (sessionEnded(s.state)) await releaseWorkspaceOf(s.id)
+      if (sessionEnded(s.state)) await releaseWorkspaceOf(s.id, task.id)
     }
     // ⛔ Refused before anything is claimed: this combination can only arrive by a project's policy
     // changing under a task, and guessing a different finish would be worse than saying so.
@@ -1721,14 +1760,24 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     }
     trunkSurvey = await surveyTrunk(project)
   } else if (project) {
+    for (const s of liveSessionsOfTask(task.id)) {
+      if (s.workerId !== worker.id && !hasOpenRun(s.id)) {
+        await releaseWorkspaceOf(s.id, task.id)
+        await closeAndWait(s.id)
+      }
+    }
     // ⛔ A task cannot occupy two independent workspaces. If an ended session of this task still holds
-    // a workspace claim, release it before claiming so the slot is free and can be reused.
+    // a workspace claim, reassign it to the task so the slot is retained and can be reused.
     for (const s of past) {
       if (sessionEnded(s.state)) {
-        await releaseWorkspaceOf(s.id)
+        await releaseWorkspaceOf(s.id, task.id)
       }
     }
     workspace ??= workspaceHeldBy(project, task.id)
+    if (workspace && workspace.kind === 'trunk') {
+      releaseWorkspace(workspace.claimId)
+      workspace = null
+    }
 
     // ⚠️ Claimed under the **task's** name, and moved to the session's below. The session's working
     // directory is the workspace, so there is no session to claim on behalf of until there is a
@@ -1898,7 +1947,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     log.info(`t${task.seq}: closing prior idle session ${s.id.slice(0, 8)} before dispatching new session`)
     void (async () => {
       if (await closeAndWait(s.id)) {
-        await releaseWorkspaceOf(s.id)
+        await releaseWorkspaceOf(s.id, task.id)
       }
     })()
   }
