@@ -20,11 +20,13 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Project, Task, UpstreamProposal, UpstreamProposalCommit, UpstreamProposeRequest } from '@shared/tasks.js'
+import type { Project, Task, UpstreamProposal, UpstreamProposalCommit, UpstreamProposeRequest, UpstreamSyncResult } from '@shared/tasks.js'
 import { gitHubSlug, parseGitHubRepo } from '@shared/github.js'
 import { errorMessage } from '@shared/errors.js'
 import { git, remoteUrl, tryGit } from './git.js'
 import { landingTargetFor, policyFor, requireProject } from './projects.js'
+import { resolveFinishPolicy } from './finish.js'
+import { trunkNotReady, trunkOccupiedBy } from './landing.js'
 import { addMessage, requireTask } from './tasks.js'
 import { taskCommitShas } from './taskcommits.js'
 import { pullRequestUrlIn } from './deliveries.js'
@@ -40,6 +42,13 @@ interface Context {
   upstream: string
   forkOwner: string
   target: string
+  /** `landing.forkOnly` as pathspecs; empty replays every file, as before t907. */
+  forkOnly: string[]
+}
+
+/** `landing.forkOnly` as git pathspecs. ⚠️ `:(glob)`, so `*` stops at a `/` and `**` crosses it. */
+export function forkOnlyPathspecs(paths: string[]): string[] {
+  return paths.map((path) => `:(glob)${path}`)
 }
 
 async function contextFor(taskId: string): Promise<Context> {
@@ -63,7 +72,15 @@ async function contextFor(taskId: string): Promise<Context> {
         `origin: ${originUrl ?? 'missing'})`
     )
   }
-  return { task, project, remote, upstream: gitHubSlug(upstream), forkOwner: fork.owner, target: landingTargetFor(task, project) }
+  return {
+    task,
+    project,
+    remote,
+    upstream: gitHubSlug(upstream),
+    forkOwner: fork.owner,
+    target: landingTargetFor(task, project),
+    forkOnly: forkOnlyPathspecs(policyFor(project).forkOnly)
+  }
 }
 
 /**
@@ -104,10 +121,46 @@ async function ownCommits(ctx: Context, baseSha: string): Promise<string[]> {
   return out
 }
 
-async function describe(root: string, sha: string): Promise<UpstreamProposalCommit> {
+async function describe(root: string, sha: string, forkOnly: string[]): Promise<UpstreamProposalCommit> {
   const subject = (await git(root, ['log', '-1', '--format=%s', sha])).trim()
-  const files = (await git(root, ['show', '--name-only', '--format=', sha])).split('\n').map((l) => l.trim()).filter(Boolean)
-  return { sha, subject, files }
+  const names = async (specs: string[]): Promise<string[]> =>
+    (await git(root, ['show', '--name-only', '--format=', sha, '--', ...specs])).split('\n').map((l) => l.trim()).filter(Boolean)
+  const files = await names([])
+  // ⚠️ Asked of git with the pathspecs the replay uses, so the preview cannot disagree with it.
+  return { sha, subject, files, forkOnly: forkOnly.length > 0 ? await names(forkOnly) : [] }
+}
+
+/** Does anything of this commit leave once the fork's own files are taken out? */
+function sendsAnything(commit: UpstreamProposalCommit): boolean {
+  return commit.files.length === 0 || commit.files.some((file) => !commit.forkOnly.includes(file))
+}
+
+/**
+ * Replay one commit onto the scratch tree without the fork's own files (t907).
+ *
+ * ⛔ A fork-only file goes back to the base's state — removed when the upstream has none. That is
+ * also how the conflict a mixed commit used to stop on is resolved: `modify/delete`, because the
+ * upstream never had the `HANDOFF.md` the commit edits (measured 2026-10-03). Any *other* conflict
+ * still stops the whole proposal, as before. A commit with nothing left is not replayed.
+ */
+async function replayWithout(scratch: string, sha: string, forkOnly: string[]): Promise<void> {
+  await tryGit(scratch, ['cherry-pick', '--no-commit', sha])
+  const touched = (await git(scratch, ['ls-files', '--', ...forkOnly])).split('\n').map((l) => l.trim()).filter(Boolean)
+  for (const path of new Set(touched)) {
+    // `cat-file -e` prints nothing, so its yes is `''` — compare with null, not truthiness.
+    if ((await tryGit(scratch, ['cat-file', '-e', `HEAD:${path}`])) !== null) {
+      await git(scratch, ['checkout', 'HEAD', '--', path])
+    } else {
+      await git(scratch, ['rm', '-q', '-f', '--cached', '--', path])
+      // ⚠️ Off the disk too: left untracked, it would stop the next commit's cherry-pick.
+      rmSync(join(scratch, path), { force: true })
+    }
+  }
+  const unmerged = (await git(scratch, ['diff', '--name-only', '--diff-filter=U'])).split('\n').map((l) => l.trim()).filter(Boolean)
+  if (unmerged.length > 0) throw new Error(`conflicts in ${unmerged.join(', ')}`)
+  // `diff --quiet` exits 1 when there is a difference, which `tryGit` reads as null.
+  if ((await tryGit(scratch, ['diff', '--cached', '--quiet'])) === null) await git(scratch, ['commit', '-q', '-C', sha])
+  await tryGit(scratch, ['cherry-pick', '--quit'])
 }
 
 /** ⛔ Never the task's own title or prompt — those were written for this operator alone (t847). */
@@ -125,7 +178,13 @@ async function readProposal(ctx: Context): Promise<UpstreamProposal> {
   if (!baseSha) throw new Error(`\`${ctx.remote}/${ctx.target}\` does not exist, so there is nothing to propose onto`)
   const shas = await ownCommits(ctx, baseSha.trim())
   if (shas.length === 0) throw new Error(`t${ctx.task.seq} has no commits that \`${ctx.remote}/${ctx.target}\` does not already have`)
-  const commits = await Promise.all(shas.map((sha) => describe(root, sha)))
+  const commits = await Promise.all(shas.map((sha) => describe(root, sha, ctx.forkOnly)))
+  if (!commits.some(sendsAnything)) {
+    throw new Error(
+      `every file t${ctx.task.seq} changed is one of this fork's own (Project settings › Fork-only paths), ` +
+        'so there is nothing to propose upstream'
+    )
+  }
   const branch = `warmstart/up-t${ctx.task.seq}`
   return {
     upstream: ctx.upstream,
@@ -172,7 +231,8 @@ export async function proposeUpstream(request: UpstreamProposeRequest): Promise<
     added = true
     for (const sha of request.commits) {
       try {
-        await git(scratch, ['cherry-pick', '--allow-empty', sha])
+        if (ctx.forkOnly.length > 0) await replayWithout(scratch, sha, ctx.forkOnly)
+        else await git(scratch, ['cherry-pick', '--allow-empty', sha])
       } catch (err) {
         await tryGit(scratch, ['cherry-pick', '--abort'])
         throw new Error(
@@ -220,11 +280,95 @@ export async function proposeUpstream(request: UpstreamProposeRequest): Promise<
   log.info(`t${ctx.task.seq}: proposed upstream on the operator's click: ${url}`)
   // ⛔ Deliberately not *Pull request opened for …* and not `landing.landed`: nothing landed on this
   // project's target, and `deliveries.ts` reconciles PRs by that prefix as this project's own.
+  const leftOut = [...new Set(now.commits.flatMap((c) => c.forkOnly))]
   addMessage(ctx.task.id, 'system', `Proposed upstream, on your click: ${url}`, null, [], {
     detail:
+      (leftOut.length > 0 ? `Left out as this fork's own: ${leftOut.join(', ')}. ` : '') +
       `${request.commits.length} commit${request.commits.length === 1 ? '' : 's'} replayed onto ` +
       `\`${ctx.remote}/${ctx.target}\` (${now.baseSha.slice(0, 8)}) and pushed to your fork as ` +
       `\`${now.branch}\`; the pull request is on ${ctx.upstream} from \`${now.head}\`.`
   })
   return { url }
+}
+
+/**
+ * **Sync from upstream** — bring the original's new commits into the fork's home branch (t907).
+ *
+ * ⛔ **Merge, never rebase.** The fork's own commits (an `AGENTS.md`, a `HANDOFF.md`) are already on
+ * `origin`, and rebasing them would rewrite published history. The merge happens in the trunk
+ * checkout, which must be on the target and clean, exactly as `merge-local` asks (`trunkNotReady`),
+ * and is refused while a trunk task holds it.
+ *
+ * ⛔ **Nothing is resolved for you.** A conflict aborts the merge, which leaves the checkout as it
+ * was, and the refusal names the files. Nothing is verified either: the project's checks are about
+ * work this project wrote, and a red build the upstream brought in is a thing to read, not to block on.
+ *
+ * ⚠️ Pushed to `origin` only when the project's finish policy pushes (`commit-and-push`), so a sync
+ * reaches the fork exactly as far as a landing would — and never where GitHub says the fork is not
+ * the operator's (`repotrust`).
+ */
+export async function syncFromUpstream(projectId: string): Promise<UpstreamSyncResult> {
+  const project = requireProject(projectId)
+  const policy = policyFor(project)
+  const remote = policy.upstreamRemote
+  if (project.vcs !== 'git' || !remote) {
+    throw new Error('this project names no upstream. Sync works once your fork is home — Project settings → Make my fork home.')
+  }
+  const root = project.root
+  const target = policy.landingTarget
+  const from = `${remote}/${target}`
+  const occupied = trunkOccupiedBy(project, `sync:${project.id}`)
+  if (occupied) throw new Error(`${occupied}; sync when it has finished`)
+  await git(root, ['fetch', remote, '--prune'])
+  await tryGit(root, ['fetch', 'origin', '--prune'])
+  if ((await tryGit(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/${from}`])) === null) {
+    throw new Error(`\`${from}\` does not exist, so there is nothing to sync from`)
+  }
+  const notReady = await trunkNotReady(root, target)
+  if (notReady) throw new Error(`${notReady}. Nothing was merged`)
+  // ⚠️ A merge on top of a local branch behind its own fork would push as a non-fast-forward, or bury
+  // the fork's newer commits under one more merge. Bringing the fork in first is a person's call.
+  const behindFork = (await tryGit(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/origin/${target}`])) !== null
+    ? Number((await git(root, ['rev-list', '--count', `${target}..origin/${target}`])).trim())
+    : 0
+  if (behindFork > 0) {
+    throw new Error(
+      `\`${target}\` is ${behindFork} commit${behindFork === 1 ? '' : 's'} behind \`origin/${target}\` — your fork has ` +
+        `work this checkout does not. Pull it first (\`git pull --ff-only\` in ${root}). Nothing was merged`
+    )
+  }
+  const incoming = Number((await git(root, ['rev-list', '--count', `${target}..${from}`])).trim())
+  if (incoming === 0) {
+    return { from, into: target, incoming: 0, head: (await git(root, ['rev-parse', 'HEAD'])).trim(), fastForward: false, pushed: false }
+  }
+  const before = (await git(root, ['rev-parse', 'HEAD'])).trim()
+  try {
+    await git(root, ['merge', '--no-edit', '-m', `Merge ${from} into ${target}`, `refs/remotes/${from}`])
+  } catch (err) {
+    const unmerged = ((await tryGit(root, ['diff', '--name-only', '--diff-filter=U'])) ?? '').split('\n').map((l) => l.trim()).filter(Boolean)
+    await tryGit(root, ['merge', '--abort'])
+    throw new Error(
+      unmerged.length > 0
+        ? `merging \`${from}\` conflicts in ${unmerged.join(', ')}. The merge was aborted and \`${target}\` is as it was; ` +
+            'file a task to merge it and resolve those by hand'
+        : `merging \`${from}\` failed (${errorMessage(err)}); \`${target}\` is as it was`,
+      { cause: err }
+    )
+  }
+  const head = (await git(root, ['rev-parse', 'HEAD'])).trim()
+  const fastForward = (await tryGit(root, ['merge-base', '--is-ancestor', before, `refs/remotes/${from}`])) !== null &&
+    head === (await git(root, ['rev-parse', `refs/remotes/${from}`])).trim()
+
+  let pushed = false
+  if (resolveFinishPolicy(null, project).policy === 'commit-and-push') {
+    const trust = await repotrust.remoteTrust(root, 'origin')
+    if (trust.trust === 'external') {
+      log.warn(`${project.name}: synced ${from} locally; not pushed — ${repotrust.describeTrust(trust)}`)
+    } else {
+      await git(root, ['push', 'origin', `refs/heads/${target}:refs/heads/${target}`])
+      pushed = true
+    }
+  }
+  log.info(`${project.name}: synced ${incoming} commit(s) from ${from} into ${target} (${head.slice(0, 8)})${pushed ? ', pushed' : ''}`)
+  return { from, into: target, incoming, head, fastForward, pushed }
 }

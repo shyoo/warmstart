@@ -273,7 +273,7 @@ describe('Propose upstream (t903)', () => {
       trust: { trust: 'external', permission: 'READ' }
     })
     // ⛔ The fork-only AGENTS.md commit is on origin/main and is not this task's; it is not offered.
-    expect(preview.commits).toEqual([{ sha: own, subject: 'fix: the change upstream wants', files: ['work.txt'] }])
+    expect(preview.commits).toEqual([{ sha: own, subject: 'fix: the change upstream wants', files: ['work.txt'], forkOnly: [] }])
     expect(JSON.stringify(preview)).not.toContain('PRIVATE')
     expect(calls.filter((c) => c[0] === 'pr')).toEqual([])
   })
@@ -337,5 +337,153 @@ describe('Propose upstream (t903)', () => {
     const project = projects.addProject({ root })
     const task = tasks.createTask({ title: 'x', projectId: project.id, createdBy: { kind: 'human' } })
     await expect(upstream.previewUpstreamProposal(task.id)).rejects.toThrow(/Make my fork home/)
+  })
+})
+
+/** One more commit on the upstream itself, as its maintainers would push it. */
+function upstreamCommit(upBare: string, name: string, content: string, message: string): string {
+  seq += 1
+  const work = join(dir, `upwork${seq}`)
+  git(dir, 'clone', '-q', upBare, work)
+  git(work, 'config', 'user.email', 'maintainer@example.invalid')
+  git(work, 'config', 'user.name', 'Maintainer')
+  const sha = commitFile(work, name, content, message)
+  git(work, 'push', '-q', 'origin', 'HEAD:main')
+  return sha
+}
+
+describe('fork-only paths stay in the fork (t907)', () => {
+  it('leaves them out of a proposal, file by file, and drops a commit that carries nothing else', async () => {
+    const s = seed('home')
+    const project = projects.setProjectPolicy(projects.addProject({ root: s.root }).id, {
+      upstreamRemote: 'upstream',
+      landingTarget: 'main',
+      forkOnly: ['AGENTS.md', 'fork/**']
+    })
+    const task = tasks.createTask({ title: 'x', projectId: project.id, createdBy: { kind: 'human' } })
+    const branch = `warmstart/t${task.seq}`
+    git(s.root, 'checkout', '-q', '-b', branch, 'main')
+    // ⭐ The commit that did not apply before: it edits an AGENTS.md the upstream never had
+    // (`modify/delete`) beside the change the upstream wants.
+    mkdirSync(join(s.root, 'fork'), { recursive: true })
+    writeFileSync(join(s.root, 'AGENTS.md'), 'my own notes, updated\n')
+    writeFileSync(join(s.root, 'fork', 'plan.md'), 'the plan\n')
+    const mixed = commitFile(s.root, 'work.txt', 'the change\n', 'feat: the change, and my notes')
+    const notesOnly = commitFile(s.root, join('fork', 'plan.md'), 'the plan, revised\n', 'fork: revise the plan')
+    git(s.root, 'checkout', '-q', 'main')
+    tasks.setTaskBranch(task.id, branch, 1)
+    fakeGh('READ')
+
+    const preview = await upstream.previewUpstreamProposal(task.id)
+    expect(preview.commits.map((c) => c.sha)).toEqual([mixed, notesOnly])
+    expect(preview.commits[0]!.forkOnly.sort()).toEqual(['AGENTS.md', 'fork/plan.md'])
+    expect(preview.commits[1]!.forkOnly).toEqual(['fork/plan.md'])
+
+    await upstream.proposeUpstream({ id: task.id, baseSha: preview.baseSha, commits: preview.commits.map((c) => c.sha), title: 't', body: '' })
+
+    const pushed = `warmstart/up-t${task.seq}`
+    expect(git(s.forkBare, 'ls-tree', '-r', '--name-only', pushed).split('\n').sort()).toEqual(['README.md', 'work.txt'])
+    expect(git(s.forkBare, 'rev-list', '--count', `${s.base}..${pushed}`)).toBe('1')
+    expect(git(s.forkBare, 'log', '-1', '--format=%s', pushed)).toBe('feat: the change, and my notes')
+    expect(tasks.messagesFor(task.id).at(-1)!.detail).toContain("Left out as this fork's own: ")
+  })
+
+  it('refuses a proposal with nothing in it but the fork’s own files, and sends nothing', async () => {
+    const s = seed('home')
+    const project = projects.setProjectPolicy(projects.addProject({ root: s.root }).id, {
+      upstreamRemote: 'upstream',
+      landingTarget: 'main',
+      forkOnly: ['HANDOFF.md']
+    })
+    const task = tasks.createTask({ title: 'x', projectId: project.id, createdBy: { kind: 'human' } })
+    const branch = `warmstart/t${task.seq}`
+    git(s.root, 'checkout', '-q', '-b', branch, 'main')
+    commitFile(s.root, 'HANDOFF.md', 'state\n', 'docs: handoff')
+    git(s.root, 'checkout', '-q', 'main')
+    tasks.setTaskBranch(task.id, branch, 1)
+    const calls = fakeGh('READ')
+
+    await expect(upstream.previewUpstreamProposal(task.id)).rejects.toThrow(/nothing to propose upstream/)
+    expect(calls.filter((c) => c[0] === 'pr')).toEqual([])
+  })
+
+  it('keeps only paths inside the repository, as git spells them, and tells the agent which they are', async () => {
+    const { upstreamClause } = await import('./prompt.js')
+    const s = seed('home')
+    const id = projects.addProject({ root: s.root }).id
+    const backslash = String.fromCharCode(92)
+    expect(() => projects.setProjectPolicy(id, { forkOnly: ['AGENTS.md', '../outside'] })).toThrow(/not a path inside the repository: \.\.\/outside/)
+    expect(() => projects.setProjectPolicy(id, { forkOnly: [':(top)x'] })).toThrow(/not a path inside/)
+    const project = projects.setProjectPolicy(id, { upstreamRemote: 'upstream', forkOnly: [' AGENTS.md ', `fork${backslash}**`, 'AGENTS.md', ''] })
+    expect(project.config.landing?.forkOnly).toEqual(['AGENTS.md', 'fork/**'])
+    expect(upstreamClause(project)).toContain('left out of what goes: `AGENTS.md`, `fork/**`')
+    expect(projects.setProjectPolicy(id, { forkOnly: null }).config.landing?.forkOnly).toBeUndefined()
+  })
+})
+
+describe('Sync from upstream (t907)', () => {
+  function home(finish: 'commit-and-merge' | 'commit-and-push') {
+    const s = seed('home')
+    const project = projects.setProjectPolicy(projects.addProject({ root: s.root }).id, {
+      upstreamRemote: 'upstream',
+      landingTarget: 'main',
+      finish
+    })
+    return { ...s, project }
+  }
+
+  it('merges the upstream’s new commits under the fork’s own, never rewriting them, and does not push unless the policy does', async () => {
+    const s = home('commit-and-merge')
+    const theirs = upstreamCommit(s.upBare, 'NEWS.md', 'news\n', 'upstream: news')
+
+    const result = await upstream.syncFromUpstream(s.project.id)
+
+    expect(result).toMatchObject({ from: 'upstream/main', into: 'main', incoming: 1, fastForward: false, pushed: false })
+    expect(git(s.root, 'rev-parse', 'HEAD')).toBe(result.head)
+    // ⛔ A merge: both parents kept, the fork's own AGENTS.md commit still where it was published.
+    expect(git(s.root, 'rev-list', '--parents', '-n', '1', 'HEAD').split(' ').slice(1)).toEqual([s.forkOnly, theirs])
+    expect(git(s.forkBare, 'rev-parse', 'main')).toBe(s.forkOnly)
+    // And a second press has nothing to do.
+    expect((await upstream.syncFromUpstream(s.project.id)).incoming).toBe(0)
+  })
+
+  it('pushes to the fork when the finish policy pushes', async () => {
+    const s = home('commit-and-push')
+    upstreamCommit(s.upBare, 'NEWS.md', 'news\n', 'upstream: news')
+    fakeGh('ADMIN')
+
+    const result = await upstream.syncFromUpstream(s.project.id)
+
+    expect(result.pushed).toBe(true)
+    expect(git(s.forkBare, 'rev-parse', 'main')).toBe(result.head)
+  })
+
+  it('aborts a conflict, names the files and leaves the checkout as it was', async () => {
+    const s = home('commit-and-merge')
+    commitFile(s.root, 'README.md', 'ours\n', 'fork: our readme')
+    const before = git(s.root, 'rev-parse', 'HEAD')
+    upstreamCommit(s.upBare, 'README.md', 'theirs\n', 'upstream: their readme')
+
+    await expect(upstream.syncFromUpstream(s.project.id)).rejects.toThrow(/conflicts in README\.md\. The merge was aborted/)
+    expect(git(s.root, 'rev-parse', 'HEAD')).toBe(before)
+    expect(git(s.root, 'status', '--porcelain')).toBe('')
+  })
+
+  it('refuses while the checkout is behind its own fork, or on another branch', async () => {
+    const s = home('commit-and-merge')
+    upstreamCommit(s.upBare, 'NEWS.md', 'news\n', 'upstream: news')
+    seq += 1
+    const elsewhere = join(dir, `forkwork${seq}`)
+    git(dir, 'clone', '-q', s.forkBare, elsewhere)
+    git(elsewhere, 'config', 'user.email', 'me@example.invalid')
+    git(elsewhere, 'config', 'user.name', 'Me')
+    commitFile(elsewhere, 'MINE.md', 'from my laptop\n', 'fork: from another machine')
+    git(elsewhere, 'push', '-q', 'origin', 'HEAD:main')
+    const before = git(s.root, 'rev-parse', 'HEAD')
+
+    await expect(upstream.syncFromUpstream(s.project.id)).rejects.toThrow(/1 commit behind `origin\/main`/)
+    git(s.root, 'checkout', '-q', '-b', 'side')
+    await expect(upstream.syncFromUpstream(s.project.id)).rejects.toThrow(/checked out rather than `main`/)
+    expect(git(s.root, 'rev-parse', 'main')).toBe(before)
   })
 })

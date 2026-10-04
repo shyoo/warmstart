@@ -142,10 +142,14 @@ behind a confirm, which calls `project.makeForkHome`. Every task in a fork-home 
 **upstream** row in its ledger with **Propose upstream…** (`thread/ProposeUpstream.tsx`). The
 dialog loads `task.upstreamPreview` and shows the repository, base and sha, the fork head, whose
 repository it is (`viewerPermission`, red when it is somebody else's) and every commit with its
-files, with an editable title and description (suggested from the commits, never the prompt). Only
+files — each commit's `landing.forkOnly` files under *Kept in your fork*, and *nothing — not sent* when
+that is all of it (t907) — with an editable title and description (suggested from the commits, never the prompt). Only
 **Open pull request on …** calls `task.proposeUpstream`, with the preview's base sha and commit list.
-All three methods are `deny` remotely. ⚠️ *Not driven in the app* — L1 covers the daemon side
-against real repositories; no L3 check opens this dialog or the settings button.
+A fork-home project's Policy panel also has **Fork-only paths** (one per line, `forkOnly` on
+`project.setPolicy`) and **Sync from upstream** (`project.syncUpstream`), whose row says whether the
+merge will be pushed under this project's finish policy (t907). All four methods are `deny`
+remotely. ⚠️ *Not driven in the app* — L1 covers the daemon side against real repositories; no L3
+check opens this dialog or these settings rows.
 
 ⚠️ **A starter template is regenerated when what it quotes changes, and never over text somebody
 typed.** The three docs name the project, the landing target and the check list, so going Back and

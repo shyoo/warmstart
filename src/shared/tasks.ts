@@ -89,6 +89,17 @@ export interface ProjectConfig {
      * ⚠️ Set, task branches are named `warmstart/t<seq>` with no slug, as under `pushRemote`.
      */
     upstreamRemote?: string
+    /**
+     * Paths that are this fork's own and never go upstream (t907) — git glob pathspecs relative to the
+     * root, so `AGENTS.md` is the root file only and `fork/**` a whole directory.
+     *
+     * ⛔ **Left out of what Propose upstream sends**, file by file: a commit touching `app.cs` and
+     * `HANDOFF.md` is replayed with `app.cs` alone, and one touching only these is not replayed.
+     * Measured 2026-10-03: before this, that mixed commit did not apply at all (`modify/delete`,
+     * because the upstream has no `HANDOFF.md`). ⚠️ Whole files only — a fork-local block inside a
+     * shared file such as `.gitignore` cannot be told apart from the rest of it.
+     */
+    forkOnly?: string[]
   }
   session?: {
     share?: SessionSharingChoice
@@ -145,6 +156,8 @@ export interface ProjectPolicyPatch {
   pushRemote?: string | null
   /** See `ProjectConfig.landing.upstreamRemote`. Empty or null is written as no key. */
   upstreamRemote?: string | null
+  /** See `ProjectConfig.landing.forkOnly`. Empty or null is written as no key. */
+  forkOnly?: string[] | null
   finishInstruction?: string | null
   sessionShare?: SessionSharingChoice
   completion?: CompletionModeChoice
@@ -435,6 +448,8 @@ export interface UpstreamProposalCommit {
   sha: string
   subject: string
   files: string[]
+  /** Of `files`, the ones `landing.forkOnly` keeps out of the replay. All of them: not replayed. */
+  forkOnly: string[]
 }
 
 /**
@@ -469,6 +484,21 @@ export interface UpstreamProposeRequest {
   commits: string[]
   title: string
   body: string
+}
+
+/** What **Sync from upstream** did (t907). See `syncFromUpstream`. */
+export interface UpstreamSyncResult {
+  /** `<upstream remote>/<target>`, the ref that was merged. */
+  from: string
+  /** The local branch it was merged into. */
+  into: string
+  /** Commits the upstream had that the target did not. Zero: nothing was done. */
+  incoming: number
+  /** The target's tip afterwards. */
+  head: string
+  fastForward: boolean
+  /** Whether the fork on origin was updated too — only when the finish policy pushes. */
+  pushed: boolean
 }
 
 /** What converting a t897-layout project to fork-home did. See `makeForkHome`. */

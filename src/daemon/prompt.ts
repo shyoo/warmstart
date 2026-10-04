@@ -1215,7 +1215,12 @@ export function upstreamClause(project: Project | null): string {
     return (
       ` Never push to the \`${policy.upstreamRemote}\` remote or open a pull request on it yourself ` +
       '(no `gh pr create`): it is somebody else’s repository, and a person sends work there from ' +
-      'Warmstart after seeing what goes.'
+      'Warmstart after seeing what goes.' +
+      // ⚠️ Named so an agent does not try to keep them out of upstream by hand — or put them in a
+      // file the upstream shares, where they would travel (t907).
+      (policy.forkOnly.length > 0
+        ? ` These paths are this fork’s own and are left out of what goes: ${policy.forkOnly.map((p) => `\`${p}\``).join(', ')}.`
+        : '')
     )
   }
   if (policy.pushRemote) {

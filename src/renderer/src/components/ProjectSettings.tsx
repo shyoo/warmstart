@@ -522,6 +522,50 @@ function PolicyPanel({
             }
           />
         )}
+        {/* ⛔ t907: what is the fork's own, and the way upstream's new commits reach the fork's home. */}
+        {project.vcs === 'git' && project.config.landing?.upstreamRemote && (
+          <>
+            <TextPolicyRow
+              title="Fork-only paths"
+              value={(project.config.landing.forkOnly ?? []).join('\n')}
+              placeholder={'AGENTS.md\nHANDOFF.md\nfork/**'}
+              multiline
+              disabled={busy}
+              ariaLabel="Fork-only paths"
+              onSave={(val) => apply({ forkOnly: val.split(/[\n,]/).map((p) => p.trim()).filter(Boolean) })}
+              description={`One per line, relative to the repository root; * stays within a folder and ** crosses folders. Propose upstream leaves these files out of what it sends to ${project.config.landing.upstreamRemote} — a commit touching only these is not sent at all. Whole files only: a fork-local block inside a shared file such as .gitignore still travels.`}
+            />
+            <SettingRow
+              title="Sync from upstream"
+              description={`Merge ${project.config.landing.upstreamRemote}/${target} into ${target} in this checkout — never a rebase, so your fork’s own commits stay as published. The checkout must be on ${target} and clean; a conflict aborts and changes nothing. ${resolvedFinish.policy === 'commit-and-push' ? `Pushed to origin afterwards, as this project’s finish policy pushes.` : 'Not pushed: this project’s finish policy does not push, so push it yourself when you want the fork updated.'}`}
+              control={
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={busy}
+                  onClick={() => {
+                    setBusy(true)
+                    setNote(null)
+                    void rpc('project.syncUpstream', { id: project.id })
+                      .then((result) =>
+                        setNote(
+                          result.incoming === 0
+                            ? `${result.into} already has everything on ${result.from}.`
+                            : `Merged ${result.incoming} commit${result.incoming === 1 ? '' : 's'} from ${result.from} into ${result.into}` +
+                                `${result.fastForward ? ' (fast-forward)' : ''}, now ${result.head.slice(0, 8)}` +
+                                (result.pushed ? ', and pushed to origin.' : ' — local only, not pushed.')
+                        )
+                      )
+                      .catch((err: unknown) => setNote(errorMessage(err)))
+                      .finally(() => setBusy(false))
+                  }}
+                >
+                  Sync from upstream
+                </button>
+              }
+            />
+          </>
+        )}
         {project.vcs === 'git' && !project.config.landing?.upstreamRemote && project.config.landing?.pushRemote && (
           <SettingRow
             title="Make my fork home"

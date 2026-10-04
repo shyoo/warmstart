@@ -1079,6 +1079,20 @@ it to a person with the commits listed, which is the right outcome for evidence 
   rename`s, a fetch, local branches that tracked the upstream re-pointed at the fork's same-named
   branch (or named in a warning), and `pull-request` → `commit-and-push`; any other finish stays.
   It refuses before renaming anything when either remote is off github.com or `upstream` exists.
+- `landing.forkOnly` — **paths that are the fork's own** (t907), git glob pathspecs from the root
+  (`AGENTS.md` is the root file; `fork/**` a directory). Propose upstream replays each commit with
+  `cherry-pick --no-commit`, puts these paths back to the base's state (removed when the upstream has
+  none), and commits the rest with the original message; a commit with nothing left is not
+  replayed, and a proposal with nothing left is refused at the preview. ⭐ Measured 2026-10-03: before
+  this, a commit touching `app` *and* `HANDOFF.md` did not apply at all (`modify/delete`). The preview
+  lists each commit's kept files, asked of git with the same pathspecs. ⚠️ Whole files only: a
+  fork-local block inside `.gitignore` still travels. Agents are told the list (`upstreamClause`).
+  **Sync from upstream** (`project.syncUpstream`, `syncFromUpstream`) merges `upstream/<target>`
+  into the local target in the trunk checkout — ⛔ merge, never rebase, because the fork's own
+  commits are published. Refused while a trunk task holds the checkout, when it is off the target
+  or dirty (`trunkNotReady`), or behind `origin/<target>`; a conflict aborts and names the files.
+  Not verified. Pushed to `origin` only under `commit-and-push`, and never where GitHub says the
+  fork is not yours.
 - `landing.pushRemote` — ⚠️ *t897's layout, superseded by `upstreamRemote`.* The remote a
   `pull-request` finish pushes to, when it is not `origin`: `origin` stays the repository the work is
   *for*, so the trunk tracks it and every landing is still measured against `origin/<target>`. Only

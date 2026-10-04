@@ -200,6 +200,7 @@ export function projectBrief(
       postLanding: policy.postLanding,
       pushRemote: policy.pushRemote,
       upstreamRemote: policy.upstreamRemote,
+      forkOnly: policy.forkOnly,
       whatHappens: whatHappens(level, target, checks, policy.pushRemote, policy.upstreamRemote, inTrunk, finish.instruction)
     },
     workspace: { mode: workspace.mode, source: workspace.source },

@@ -42,6 +42,7 @@ import type {
   ProjectCloneResult,
   ProjectCreateResult,
   ForkHomeResult,
+  UpstreamSyncResult,
   UpstreamProposal,
   UpstreamProposeRequest,
   ProjectDocDraft,
@@ -1948,6 +1949,8 @@ export interface RpcMap {
    * it was forked from becomes `upstream`. Remote renames only; see `makeForkHome`.
    */
   'project.makeForkHome': { params: { id: string }; result: ForkHomeResult }
+  /** **Sync from upstream** (t907): merge `upstream/<target>` into the fork's home. See `syncFromUpstream`. */
+  'project.syncUpstream': { params: { id: string }; result: UpstreamSyncResult }
   'project.reload': { params: { id: string }; result: Project }
   /**
    * ⛔ Refused while the project holds a task that can still dispatch, run or land
@@ -3177,6 +3180,8 @@ export interface AgentProjectSettings {
     pushRemote: string | null
     /** The repository this project contributes *to* when `origin` is a fork (t903), else null. */
     upstreamRemote: string | null
+    /** `landing.forkOnly`: this fork's own paths, which Propose upstream leaves out (t907). */
+    forkOnly: string[]
     /** One paragraph: what happens after the agent reports, in the order it happens. */
     whatHappens: string
   }

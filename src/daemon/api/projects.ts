@@ -6,11 +6,12 @@ import { cloneProject, cloneReadiness, createProject, inspectProjectDirectory, m
 import { flowWorkspaces } from '../flow.js'
 import { ensurePool, landingTargetRefusal, prunePoolWorktrees } from '../worktrees.js'
 import { log } from '../log.js'
+import { syncFromUpstream } from '../upstream.js'
 import type { Api, ApiContext } from './support.js'
 
 type ProjectMethod =
   | 'project.list' | 'project.add' | 'project.relocate' | 'project.inspect' | 'project.workspaceRoot' | 'project.docTemplates'
-  | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.makeForkHome' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.unarchive' | 'project.rename' | 'project.delete' | 'project.listArchived' | 'project.writeConfig' | 'project.flow'
+  | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.makeForkHome' | 'project.syncUpstream' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.unarchive' | 'project.rename' | 'project.delete' | 'project.listArchived' | 'project.writeConfig' | 'project.flow'
   | 'project.proposeChecks' | 'project.setChecks' | 'project.setPostLanding' | 'project.setPolicy' | 'project.pruneWorktrees'
 
 /** Idle managed worktrees go with an archived or deleted project; one with work in it is kept. */
@@ -36,6 +37,7 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
     'project.cloneReadiness': () => cloneReadiness(),
     'project.clone': (p) => cloneProject(p),
     'project.makeForkHome': (p) => makeForkHome(p.id),
+    'project.syncUpstream': (p) => syncFromUpstream(p.id),
     'project.reload': (p) => reloadProject(p.id),
     'project.reorder': (p) => reorderProjects(p.ids),
     'project.listArchived': () => listArchivedProjects(),

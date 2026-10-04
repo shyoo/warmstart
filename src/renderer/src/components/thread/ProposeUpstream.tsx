@@ -134,12 +134,24 @@ export function ProposeUpstream({
                 </p>
                 <p className={preview.trust.trust === 'own' ? 'dim' : 'alert'}>{trustLine(preview)}</p>
                 <ol className="propose-upstream-commits">
-                  {preview.commits.map((c) => (
-                    <li key={c.sha}>
-                      <span className="mono">{c.sha.slice(0, 8)}</span> {c.subject}
-                      <div className="dim mono propose-upstream-files">{c.files.join(', ') || 'no files'}</div>
-                    </li>
-                  ))}
+                  {preview.commits.map((c) => {
+                    // ⚠️ t907: what stays behind as the fork's own, said per commit — the person
+                    // consents to what leaves, so what does not leave is part of the picture.
+                    const sent = c.files.filter((f) => !c.forkOnly.includes(f))
+                    return (
+                      <li key={c.sha}>
+                        <span className="mono">{c.sha.slice(0, 8)}</span> {c.subject}
+                        <div className="dim mono propose-upstream-files">
+                          {c.files.length === 0 ? 'no files' : sent.length > 0 ? sent.join(', ') : 'nothing — not sent'}
+                        </div>
+                        {c.forkOnly.length > 0 && (
+                          <div className="dim propose-upstream-kept">
+                            Kept in your fork: <span className="mono">{c.forkOnly.join(', ')}</span>
+                          </div>
+                        )}
+                      </li>
+                    )
+                  })}
                 </ol>
                 <label className="dim">
                   Title

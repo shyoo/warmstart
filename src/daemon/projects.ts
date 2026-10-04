@@ -571,6 +571,14 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
       if (remote) config.landing.upstreamRemote = remote
       else delete config.landing.upstreamRemote
     }
+    if (patch.forkOnly !== undefined) {
+      const paths = readForkOnly(patch.forkOnly ?? [])
+      const bad = (patch.forkOnly ?? []).map((p) => p.trim()).filter((p) => p && !paths.includes(p.replace(/\\/g, '/')))
+      if (bad.length > 0) throw new Error(`not a path inside the repository: ${bad.join(', ')}`)
+      config.landing = { ...config.landing }
+      if (paths.length > 0) config.landing.forkOnly = paths
+      else delete config.landing.forkOnly
+    }
     if (patch.finishInstruction !== undefined) {
       const instruction = patch.finishInstruction?.trim()
       config.landing = { ...config.landing }
@@ -739,6 +747,8 @@ export interface ProjectPolicy {
   pushRemote: string | null
   /** See `ProjectConfig.landing.upstreamRemote`. Null means `origin` is the repository itself. */
   upstreamRemote: string | null
+  /** See `ProjectConfig.landing.forkOnly`. Empty when none are named. */
+  forkOnly: string[]
   allowRules: string[]
   denyRules: string[]
   env: Record<string, string | number>
@@ -773,6 +783,24 @@ export function landingTargetFor(
   return own && own.length > 0 ? own : policyFor(project).landingTarget
 }
 
+/**
+ * `landing.forkOnly` as git will read it: forward slashes, no duplicates, and nothing that could
+ * reach outside the repository or turn into pathspec magic — each becomes `:(glob)<path>`
+ * (`forkOnlyPathspecs`, `upstream.ts`), so a leading `:` or `/`, a drive or a `..` is dropped.
+ */
+export function readForkOnly(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const item of raw) {
+    if (typeof item !== 'string') continue
+    const path = item.trim().replace(/\\/g, '/')
+    if (!path || path.startsWith(':') || path.startsWith('/') || /^[A-Za-z]:/.test(path)) continue
+    if (path.split('/').includes('..')) continue
+    if (!out.includes(path)) out.push(path)
+  }
+  return out
+}
+
 export function policyFor(project: Project): ProjectPolicy {
   const c = project.config
   return {
@@ -802,6 +830,7 @@ export function policyFor(project: Project): ProjectPolicy {
       c.landing?.upstreamRemote?.trim() && c.landing.upstreamRemote.trim() !== 'origin'
         ? c.landing.upstreamRemote.trim()
         : null,
+    forkOnly: readForkOnly(c.landing?.forkOnly),
     allowRules: c.permission?.allow ?? [],
     denyRules: c.permission?.deny ?? [],
     env: c.env ?? {}
