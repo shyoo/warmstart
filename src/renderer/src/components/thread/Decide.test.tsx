@@ -3,6 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import type { Task } from '@shared/tasks'
 import type { FleetEntry } from '../../lib/daemon'
 import { QuotaDecide } from './Decide'
+import type { ReassignChoice } from './Reassign'
 
 const fleet = [
   { worker: { id: 'second', label: 'ClaudeSecond', adapterId: 'claude-code', enabled: true, role: 'worker' } },
@@ -21,6 +22,8 @@ function task(reassignWorkerId?: string | null): Task {
   } as Task
 }
 
+const choice = (changed = false): ReassignChoice => ({ changed } as ReassignChoice)
+
 function handoffButton(markup: string): string {
   return markup.match(/<button[^>]*>Hand off &amp; reassign<\/button>/)?.[0] ?? ''
 }
@@ -28,7 +31,7 @@ function handoffButton(markup: string): string {
 describe('quota handoff destination', () => {
   const render = (destination?: string | null) => renderToStaticMarkup(
     <QuotaDecide task={task(destination)} fleet={fleet} modelOptions={[]} now={Date.now()}
-      onRefresh={async () => {}} />
+      choice={choice()} onRefresh={async () => {}} />
   )
 
   const pauseButton = (markup: string): string =>
@@ -63,5 +66,37 @@ describe('quota handoff destination', () => {
     expect(markup).toContain('ClaudeFirst (claude-code)')
     expect(handoffButton(markup)).toContain('aria-pressed="true"')
     expect(handoffButton(markup)).not.toContain('disabled')
+  })
+})
+
+describe('quota hold: reassigning is the composer job', () => {
+  const held = (status: Task['status'], holdReason: string | null): Task => ({
+    id: 'task', status, assignee: 'second', constraints: { workerId: 'second' },
+    quotaOverrideUntil: null, holdReason, quotaPreemptWarning: null
+  } as Task)
+  const gate = 'ClaudeSecond at 93% of its Claude 5h window (read 16m ago)'
+  const render = (t: Task, changed = false) => renderToStaticMarkup(
+    <QuotaDecide task={t} fleet={fleet} modelOptions={[]} now={Date.now()}
+      choice={choice(changed)} onRefresh={async () => {}} />
+  )
+
+  it.each([['held', held('ready', gate)], ['preempted', held('paused_quota', null)]])(
+    'a %s task draws no second message box or reassign pickers', (_name, t) => {
+      const markup = render(t)
+      expect(markup).not.toContain('<textarea')
+      expect(markup).not.toContain('aria-label="Reassign worker"')
+      expect(markup).toContain('pills below the box')
+      expect(markup).not.toContain('data-armed')
+    }
+  )
+
+  it('keeps the gate override beside the pointer', () => {
+    expect(render(held('ready', gate))).toContain('Run now anyway')
+  })
+
+  it('says Reassign is ready once the composer pills differ from the pin', () => {
+    const markup = render(held('ready', gate), true)
+    expect(markup).toContain('data-armed="true"')
+    expect(markup).toContain('Reassign is ready')
   })
 })

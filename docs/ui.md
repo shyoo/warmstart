@@ -707,10 +707,7 @@ The Tasks table hides Type along with From and Quality below an 850px table cont
 the title the width those fixed columns would otherwise consume.
 
 `QuotaDecide` keeps preemption, quota holds, and general task holds (t868) in a framed card above the
-composer, with the older button-beside-paragraph rows and its own *Reassign* option and `ReassignNote`
-box (held `ready` tasks surface their hold reason, offer one-click **Probe** for held-out accounts, display *Invalid model: <model>* in model pickers, and permit reassigning to valid models). With a note, `task.message` is the resume (it requeues a `paused_quota` task itself, and rides
-along undelivered into the next run of a task still `ready` behind the gate); without one,
-`task.resume`. During a quota preemption warning, a titled group shows the three choices that
+composer, with the older button-beside-paragraph rows (held `ready` tasks surface their hold reason, offer one-click **Probe** for held-out accounts, and the gate override). ⛔ **It has no Reassign of its own (t938).** It had a second worker/model/effort picker and a *Message to send with the reassignment* box, beside a composer that already had both. Reassigning is the composer's: the pills under the box choose the next run, a changed pick turns Send into **Reassign**, and what is typed goes with it as `task.message` (`Continue.` if empty), which requeues a `paused_quota` task itself and rides along undelivered into a `ready` one behind the gate. The card only points there, and its line turns accent-coloured (`data-armed`) once the pills differ from the pin, as the pills do (`ReassignChoice.changed`, passed in as `choice`). During a quota preemption warning, a titled group shows the three choices that
 take effect when the countdown expires, each button beside its own explanation. Immediate actions
 sit below a separate heading. `Hand off & reassign` offers destination worker, model and effort;
   the worker list excludes the preempted account. The operator must choose a destination explicitly,

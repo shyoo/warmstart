@@ -611,6 +611,7 @@ function TaskDetail({
               fleet={fleet}
               modelOptions={modelOptions}
               now={now}
+              choice={choice}
               onStop={cancel}
               onRefresh={refresh}
             />

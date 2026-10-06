@@ -43,14 +43,13 @@ import {
   filedReassignEffort,
   holdLine,
   resolveRetryCauses,
-  type ResolveRetryCause,
-  reassignmentModel
+  type ResolveRetryCause
 } from '../../lib/taskview'
 import { Fact } from './Facts'
-import { initialSelectedModel, type ReassignChoice } from './Reassign'
+import type { ReassignChoice } from './Reassign'
 
 /**
- * Quota decision card with Override, Resume, and Reassign controls.
+ * Quota decision card with Override, Resume and Stop controls; reassigning is the composer's (t938).
  *
  * ⛔ Displayed around the composer / prompt area (matching `Decide`), because quota preemption
  * or gate holds require an operator decision: override the gate, wait for reset, or reassign.
@@ -60,6 +59,7 @@ export function QuotaDecide({
   fleet,
   modelOptions,
   now,
+  choice,
   onStop,
   onRefresh
 }: {
@@ -67,28 +67,12 @@ export function QuotaDecide({
   fleet: FleetEntry[]
   modelOptions: ModelOptions[]
   now: number
+  /** The composer's own pick for the next run: reassigning is done there, not in this card. */
+  choice: ReassignChoice
   onStop?: () => Promise<void>
   onRefresh: () => Promise<void>
 }): React.JSX.Element | null {
-  const [selectedWorkerId, setSelectedWorkerId] = useState<string>(task.constraints.workerId ?? '')
-  const [selectedModel, setSelectedModel] = useState<string>(
-    initialSelectedModel(task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass)
-  )
-  const [selectedEffort, setSelectedEffort] = useState<string>(task.constraints.effort ?? '')
-  // ⭐ What the operator wants said alongside the move, if anything. A reassignment used to be the
-  // move alone: the successor got the thread's outstanding turns and nothing about *why* it was
-  // being handed the work, so the operator had to reassign, wait for the run to open, and then
-  // type the instruction into it. One box, sent as the person's own message on the same press.
-  const [reassignNote, setReassignNote] = useState('')
   const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    setSelectedWorkerId(task.constraints.workerId ?? '')
-    setSelectedModel(
-      initialSelectedModel(task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass)
-    )
-    setSelectedEffort(task.constraints.effort ?? '')
-  }, [task.constraints.workerId, task.constraints.model, task.constraints.modelPolicy, task.constraints.modelClass, task.constraints.effort])
 
   const warning = task.status === 'running' ? task.quotaPreemptWarning : null
   const [needDestination, setNeedDestination] = useState(false)
@@ -115,16 +99,6 @@ export function QuotaDecide({
     : null
   const preemptEfforts = preemptOptions?.selectableEffort
     ? preemptModels.find((m) => m.id === effortLookupModel(preemptModel, preemptDefault))?.effortLevels ?? []
-    : []
-
-  const selectedWorker = fleet.find((e) => e.worker.id === selectedWorkerId)?.worker ?? null
-  const selectedEntry = fleet.find((e) => e.worker.id === selectedWorkerId) ?? null
-  const adapterOptions = modelOptions.find((o) => o.adapterId === selectedWorker?.adapterId)
-  const offeredModels = adapterOptions?.models ?? []
-  const canSetEffort = adapterOptions?.selectableEffort ?? false
-  const inheritedModel = resolveModelChoice(null, selectedWorker, canSetEffort, selectedEntry?.quota).model
-  const offeredEfforts = canSetEffort
-    ? (offeredModels.find((m) => m.id === effortLookupModel(selectedModel, inheritedModel))?.effortLevels ?? [])
     : []
 
   const isPaused = task.status === 'paused_quota'
@@ -220,50 +194,6 @@ export function QuotaDecide({
           } : {})
         } : {})
       })
-      await onRefresh()
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const isInvalidConcreteModel = Boolean(
-    selectedModel &&
-    !selectedModel.startsWith('__auto__') &&
-    selectedModel !== '__inherit__' &&
-    offeredModels.length > 0 &&
-    !offeredModels.some((m) => m.id === selectedModel)
-  )
-
-  const handleReassign = async () => {
-    if (isInvalidConcreteModel) throw new Error('choose another model before reassigning')
-    setBusy(true)
-    try {
-      const isAuto = selectedModel.startsWith('__auto__')
-      const modelPolicy =
-        isAuto ? 'auto' : !selectedModel || selectedModel === '__inherit__' ? 'inherit' : null
-      const modelClass =
-        isAuto && selectedModel.includes(':') ? (selectedModel.split(':')[1] as ModelClass) : null
-      const model = isAuto || selectedModel === '__inherit__' ? null : selectedModel || null
-      // ⛔ One write. The scheduler can dispatch after the worker write, so a following model write
-      // is too late — it was how an explicit Opus reassignment resumed on the account's Haiku default.
-      await rpc('task.setWorker', {
-        id: task.id,
-        workerId: selectedWorkerId || null,
-        ...(selectedWorkerId
-          ? { model, modelPolicy, modelClass, effort: filedReassignEffort(selectedModel, selectedEffort, offeredEfforts) }
-          : {})
-      })
-      const note = reassignNote.trim()
-      if (note) {
-        // ⛔ The note is the resume. `task.message` requeues a `paused_quota` task itself
-        // (`continueTask`) and, on a task still `ready` behind the gate, rides along undelivered
-        // into the run the new account opens — so a second `task.resume` after it would find
-        // nothing to resume and say so.
-        await rpc('task.message', { id: task.id, text: note })
-        setReassignNote('')
-      } else if (isPaused) {
-        await rpc('task.resume', { id: task.id })
-      }
       await onRefresh()
     } finally {
       setBusy(false)
@@ -470,188 +400,17 @@ export function QuotaDecide({
           )}
 
           {canReassign && (
-            <div className="decide-option">
-              <button
-                type="button"
-                className="btn btn--primary"
-                title="Reassigns this task to another worker or Auto and resumes it immediately."
-                disabled={busy || isInvalidConcreteModel}
-                onClick={() => void handleReassign()}
-              >
-                Reassign
-              </button>
-              <div className="decide-what">
-                <div style={{ marginBottom: 'var(--sp-1)' }}>
-                  <strong>Reassign to another agent.</strong> Switches worker or model{' '}
-                  {isPaused ? 'and resumes immediately' : 'to continue with available quota'}.
-                </div>
-                <div className="reassign-row">
-                  <SettingButtonSelect
-                    className="reassign-select"
-                    value={selectedWorkerId}
-                    disabled={busy}
-                    ariaLabel="Reassign worker"
-                    options={[
-                      { value: '', label: 'Auto (scheduler decides)' },
-                      ...fleet
-                        .filter((e) => (e.worker.enabled && canWork(e.worker.role)) || e.worker.id === selectedWorkerId)
-                        .map((e) => ({
-                          value: e.worker.id,
-                          label: `${e.worker.label} (${e.worker.adapterId})`
-                        }))
-                    ]}
-                    onChange={(nextWorkerId) => {
-                      setSelectedWorkerId(nextWorkerId)
-                      if (!nextWorkerId) {
-                        setSelectedModel('')
-                        setSelectedEffort('')
-                      } else {
-                        const w = fleet.find((entry) => entry.worker.id === nextWorkerId)?.worker
-                        const offered = modelOptions.find((o) => o.adapterId === w?.adapterId)?.models ?? []
-                        if (
-                          selectedModel &&
-                          selectedModel !== '__auto__' &&
-                          selectedModel !== '__inherit__' &&
-                          !offered.some((m) => m.id === selectedModel)
-                        ) {
-                          setSelectedModel(reassignmentModel(selectedModel, offered))
-                          setSelectedEffort('')
-                        }
-                      }
-                    }}
-                  />
-
-                  {offeredModels.length > 0 && (
-                    <SettingButtonSelect
-                      className="reassign-select"
-                      value={selectedModel}
-                      disabled={busy}
-                      ariaLabel="Reassign model"
-                      options={[
-                        ...(isInvalidConcreteModel
-                          ? [
-                              {
-                                value: selectedModel,
-                                label: `Invalid model: ${modelLabel(selectedModel) ?? selectedModel}`
-                              }
-                            ]
-                          : []),
-                        ...(offeredModels.length > 1
-                          ? [
-                              { value: '__auto__', label: 'Auto Model (scheduler decides)' },
-                              { value: '__auto__:high', label: 'Auto Model (high)' },
-                              { value: '__auto__:med', label: 'Auto Model (med)' },
-                              { value: '__auto__:low', label: 'Auto Model (low)' }
-                            ]
-                          : []),
-                        {
-                          value: '',
-                          label: inheritedModel
-                            ? `account default (${modelLabel(inheritedModel) ?? inheritedModel})`
-                            : 'CLI default model'
-                        },
-                        ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
-                      ]}
-                      displayLabel={
-                        isInvalidConcreteModel
-                          ? `Invalid model: ${modelLabel(selectedModel) ?? selectedModel}`
-                          : selectedModel === '__auto__'
-                            ? 'Auto Model'
-                            : selectedModel === '__auto__:high'
-                              ? 'Auto Model (high)'
-                              : selectedModel === '__auto__:med'
-                                ? 'Auto Model (med)'
-                                : selectedModel === '__auto__:low'
-                                  ? 'Auto Model (low)'
-                            : !selectedModel || selectedModel === '__inherit__'
-                              ? inheritedModel
-                                ? (modelLabel(inheritedModel) ?? inheritedModel)
-                                : 'CLI default model'
-                              : undefined
-                      }
-                      onChange={(val) => {
-                        setSelectedModel(val)
-                        setSelectedEffort('')
-                      }}
-                    />
-                  )}
-
-                  {offeredEfforts.length > 0 && (
-                    <SettingButtonSelect
-                      className="reassign-select"
-                      value={selectedEffort}
-                      disabled={busy}
-                      ariaLabel="Reassign effort"
-                      options={[
-                        {
-                          value: '',
-                          label: selectedWorker?.defaultEffort
-                            ? `Auto effort (${effortLabel(selectedWorker.defaultEffort)})`
-                            : 'Auto effort (CLI default)'
-                        },
-                        ...offeredEfforts.map((level) => ({
-                          value: level,
-                          label: effortLabel(level) ?? level
-                        }))
-                      ]}
-                      onChange={(val) => setSelectedEffort(val)}
-                    />
-                  )}
-                </div>
-                {isInvalidConcreteModel && (
-                  <div style={{ color: 'var(--tone-danger, #e06c75)', marginTop: 'var(--sp-1)', fontSize: 'var(--font-sm)' }}>
-                    This account cannot run model '{selectedModel}'. Choose another model.
-                  </div>
-                )}
-                <ReassignNote
-                  value={reassignNote}
-                  disabled={busy}
-                  onChange={setReassignNote}
-                  onSubmit={() => void handleReassign()}
-                />
-              </div>
-            </div>
+            <p className="decide-note" data-armed={choice.changed ? 'true' : undefined}>
+              {choice.changed ? (
+                <><strong>Reassign is ready.</strong> Press Reassign below to move this task{isPaused ? ' and resume it' : ''}; anything you type goes with it.</>
+              ) : (
+                <><strong>To move it to another agent,</strong> pick a worker, model or effort in the pills below the box and press Reassign. Anything you type goes with it.</>
+              )}
+            </p>
           )}
         </>
       )}
     </div>
-  )
-}
-
-/**
- * The optional message that goes with a reassignment, sent as the person's own turn.
- *
- * ⚠️ Kept out of `.reassign-row`: that row is the one-line contract the selectors share, and this
- * is a second line by design. Ctrl/⌘+Enter presses the button beside it, as the composer does.
- */
-function ReassignNote({
-  value,
-  disabled,
-  onChange,
-  onSubmit
-}: {
-  value: string
-  disabled: boolean
-  onChange: (value: string) => void
-  onSubmit: () => void
-}): React.JSX.Element {
-  return (
-    <textarea
-      className="compose-input reassign-note"
-      rows={1}
-      value={value}
-      disabled={disabled}
-      aria-label="Message to send with the reassignment"
-      placeholder="Optional: a message for the next agent, sent with Reassign…"
-      title="Sent as your message on the same press, so the next run opens with it. Leave it empty to reassign and continue as-is."
-      onChange={(e) => onChange(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-          e.preventDefault()
-          onSubmit()
-        }
-      }}
-    />
   )
 }
 

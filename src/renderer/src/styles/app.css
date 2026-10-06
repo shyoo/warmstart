@@ -5459,11 +5459,9 @@ select:focus-visible,
   right: 0;
 }
 
-/* The message that rides along with a reassignment: a second line under the selectors, full width. */
-.reassign-note {
-  display: block;
-  width: 100%;
-  margin-bottom: var(--sp-1);
+/* The quota card's pointer at the composer's pills: accent once a pick differs, as the pills are. */
+.decide--quota .decide-note[data-armed='true'] {
+  color: var(--color-accent);
 }
 
 /* Below the point where three shares stop being readable, a stack is the honest answer. */
