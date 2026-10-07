@@ -9,9 +9,11 @@ import {
   setStatus
 } from './tasks.js'
 import { log } from './log.js'
+import { recordVerdict } from './debate.js'
 import { delegationRefusal, recordDelegation } from './delegation.js'
 import { getProject } from './projects.js'
 import {
+  DEBATE_VERDICT_LABELS,
   PLAN_EXECUTE_CHILDREN,
   isPlanExecute,
   planModeOf,
@@ -770,6 +772,20 @@ export function applySplit(
     const reason = errorMessage(err)
     log.warn(`t${parent.seq} split could not be filed: ${reason}`)
     return { ok: false, reason }
+  }
+
+  // ⛔ **A debate that splits is past arbitration, whether or not a verdict was recorded.** The
+  //    phase is derived from `debate.verdict` (`debatePhaseOf`), and with none recorded the organizer
+  //    is woken, when its pieces settle, as if a round had just finished — t940 split after its
+  //    operator answered the verdict card in words, and was asked for a verdict again a day later
+  //    (t957). Filing pieces is the *Split the work* verdict; this records it where nothing else did.
+  if (parent.kind === 'debate' && parent.debate && !parent.debate.verdict) {
+    recordVerdict(parent.id, 'split')
+    addMessage(parent.id, 'system', `Verdict: ${DEBATE_VERDICT_LABELS.split}`, null, [], {
+      detail:
+        'Recorded when the pieces were filed: no verdict had been chosen on the card, and filing ' +
+        'pieces is this one. When they settle, the organizer reviews what came back.'
+    })
   }
 
   const listed = created.map((c) => `t${c.seq}`).join(', ')

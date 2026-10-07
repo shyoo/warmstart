@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs'
 import { isAbsolute, join, normalize } from 'node:path'
 import {
+  DEBATE_VERDICT_LABELS,
+  DEBATE_VERDICTS,
   MAX_DEBATE_ROUNDS,
   MAX_DEBATE_SEATS,
   MIN_DEBATE_ROUNDS,
@@ -107,14 +109,25 @@ export function validateDebate(input: DebateInput, cap = MAX_DEBATE_SEATS): Deba
   return { ok: true }
 }
 
-/** The seats of one debate, in the order they were filed. */
+/**
+ * The seats of one debate, in the order they were filed.
+ *
+ * ⛔ **The first `roster.length` children, never every child.** A verdict of *Split the work* files
+ * its pieces as children of this same task, waited on through the same `settled` edges, so "a child
+ * this task depends on" also describes every piece. Counting them as seats made t940's organizer,
+ * woken when its three pieces settled, arbitrate *six* positions and ask for a verdict again (t957).
+ * Seats are filed together by `openDebate`, before anything else can be, and `openDebate` refuses a
+ * second seating — so the oldest children are the seats and the rest are not.
+ */
 export function seatsOf(parentTaskId: string): Task[] {
   const parent = getTask(parentTaskId)
   if (!parent) return []
-  return parent.dependsOn
+  const children = parent.dependsOn
     .map((id) => getTask(id))
     .filter((t): t is Task => !!t && t.parentTaskId === parentTaskId)
     .sort((a, b) => a.seq - b.seq)
+  const roster = parent.debate?.seats.length ?? 0
+  return roster > 0 ? children.slice(0, roster) : children
 }
 
 // ---------------------------------------------------------------------------- opening
@@ -598,6 +611,30 @@ export function writeDebateState(taskId: string, state: DebateState): Task {
   const task = requireTask(taskId)
   emit({ type: 'task.changed', task })
   return task
+}
+
+/**
+ * The verdict an answer to the *what now?* card carries, or null where it carries none.
+ *
+ * ⭐ **A typed answer that names a verdict is that verdict.** The card offers five buttons and a text
+ * box, and t940's operator used the box: *"Execute as agreed, here are few clarifications…"*, with
+ * no button pressed. That was read as no answer at all, nothing was recorded, and the debate stayed
+ * in `arbitrating` through everything the organizer then did (t957). ⚠️ Only a reply that **begins**
+ * with one label exactly (any case) — a sentence that merely mentions *split* somewhere is not a
+ * choice, and guessing one is how the wrong work gets built.
+ */
+export function verdictFromAnswer(
+  answer: { optionIds?: string[] | null; text?: string | null } | null | undefined
+): DebateVerdict | null {
+  const picked = answer?.optionIds?.find((id): id is DebateVerdict => (DEBATE_VERDICTS as readonly string[]).includes(id))
+  if (picked) return picked
+  const text = answer?.text?.trim().toLowerCase() ?? ''
+  if (!text) return null
+  const named = DEBATE_VERDICTS.filter((v) => {
+    const label = DEBATE_VERDICT_LABELS[v].toLowerCase()
+    return text.startsWith(label) && !/[a-z0-9]/.test(text.charAt(label.length))
+  })
+  return named.length === 1 ? named[0]! : null
 }
 
 export function recordVerdict(taskId: string, verdict: DebateVerdict): Task {

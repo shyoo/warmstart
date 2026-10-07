@@ -8,6 +8,7 @@ import {
   becomeConversation,
   nextRound,
   recordVerdict,
+  verdictFromAnswer,
   renderAgreement,
   seatsOf,
   validateAgreement
@@ -25,7 +26,6 @@ import {
   DEBATE_VERDICTS,
   isPlanExecute
 } from '@shared/tasks.js'
-import type { DebateVerdict } from '@shared/tasks.js'
 import { verdictInstruction } from '../prompt.js'
 import { errorMessage } from '@shared/errors.js'
 import type { Api, ApiContext } from './support.js'
@@ -419,9 +419,20 @@ ${agreement}
         }))
       })
 
-      const chosen = resolution.answer?.optionIds?.find((id): id is DebateVerdict =>
-        (DEBATE_VERDICTS as readonly string[]).includes(id)
-      )
+      const chosen = resolution.status === 'answered' ? verdictFromAnswer(resolution.answer) : null
+      const words = resolution.answer?.text?.trim()
+      if (resolution.status === 'answered' && !chosen && words) {
+        // ⛔ Not "nobody answered": somebody did, in words, and an organizer told otherwise either
+        // stops dead or — as t940's did — acts on the words with no verdict recorded (t957).
+        return {
+          ok: false,
+          reply:
+            `The operator answered in words and picked none of the five: "${words}". No verdict is ` +
+            'recorded. If those words are a question, answer it. To act, call this again with ' +
+            '`converged` and the same agreement so the operator can pick one — the verdict is what ' +
+            'tells Warmstart this debate is past arbitration.'
+        }
+      }
       if (resolution.status !== 'answered' || !chosen) {
         return {
           ok: false,

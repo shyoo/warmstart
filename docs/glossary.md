@@ -143,13 +143,18 @@ authoritative.
 same question independently and blind; an **organizer** then reads all of them, may send each a brief
 for another round, and finally reports an agreement *with its dissent* and asks the operator which of
 five verdicts follows (execute · split · discuss · complete · stop). ⛔ **It is not a vote.**
+⛔ **The phase is read from the recorded verdict**, so a debate with none is still *arbitrating*
+whatever the organizer did next. A typed answer that begins with a verdict's label is that verdict
+(`verdictFromAnswer`), and filing pieces with none recorded records *split* (`applySplit`): t940's
+operator answered the card in words, its organizer split, and a day later it woke as an arbitrator
+over its pieces and asked again (t957).
 Published work finds a diverse roster dramatically outperforms a homogeneous one under a *judge* and
 gives **no** advantage under majority voting, so an organizer that counts throws away the only thing
 heterogeneity buys. See [`transient_docs/debate_mode_2026-09-12.md`](../transient_docs/debate_mode_2026-09-12.md)
 for the design of record and its citations.
 
 **Seat** — *one agent's chair at a debate: exactly one (account, model, effort).* Filed as a child
-`work` task, pinned through `constraints.workerId`/`model`/`effort`, `sessionSharing: 'off'`,
+`work` task — the first `roster.length` children, since a split's pieces are children too (`seatsOf`, t957) — pinned through `constraints.workerId`/`model`/`effort`, `sessionSharing: 'off'`,
 `nonGradable: true`, mandate `['read']` and finish policy `report-only`. ⛔ **A roster is not a
 candidate set.** `ChildDefaults.workerIds` is a closed list the scheduler may pick *from*; reusing it
 would let three seats land on one account and still be called a debate. ⛔ **`sessionSharing: 'off'`

@@ -369,6 +369,75 @@ describe('the phases', () => {
   })
 })
 
+describe('after a split, the debate is not arbitrating again (t957)', () => {
+  // t940, measured from the live store (read-only): three seats, three rounds, a verdict card the
+  // operator answered in WORDS — "Execute as agreed, here are few clarifications…" with no button
+  // pressed — so no verdict was recorded; the organizer then split into three pieces. When the last
+  // piece settled a day later, the organizer was woken as an arbitrator over "6 agents", called its
+  // pieces "Seats 4–6", and put the same card up again.
+  function splitDebate(): { parent: Task } {
+    const parent = organizer({ maxChildren: 5 })
+    debate.openDebate(parent.id, HUMAN)
+    for (const s of debate.seatsOf(parent.id)) answers(s, `position of t${s.seq}`)
+    // The branch a dispatched organizer has, which its pieces are cut from.
+    db.db().prepare('update tasks set branch = ? where id = ?').run(`warmstart/t${parent.seq}`, parent.id)
+    return { parent }
+  }
+
+  it('counts only the seats as seats, never the pieces a split filed beside them', async () => {
+    const split = await import('./split.js')
+    const { parent } = splitDebate()
+    const seats = debate.seatsOf(parent.id).map((t) => t.id)
+    expect(seats).toHaveLength(2)
+    const filed = split.applySplit(parent.id, [{ title: 'Phase A', dependsOn: [] }, { title: 'Phase B', dependsOn: [] }], HUMAN)
+    expect(filed.ok ? null : filed.reason).toBeNull()
+    expect(tasks.requireTask(parent.id).dependsOn).toHaveLength(4)
+    expect(debate.seatsOf(parent.id).map((t) => t.id)).toEqual(seats)
+  })
+
+  it('records Split the work when pieces are filed with no verdict, so the organizer wakes as executor', async () => {
+    const split = await import('./split.js')
+    const { parent } = splitDebate()
+    expect(debate.debatePhaseOf(tasks.requireTask(parent.id))).toBe('arbitrating')
+    const filed = split.applySplit(parent.id, [{ title: 'Phase A', dependsOn: [] }, { title: 'Phase B', dependsOn: [] }], HUMAN)
+    expect(filed.ok ? null : filed.reason).toBeNull()
+    const after = tasks.requireTask(parent.id)
+    expect(after.debate?.verdict).toBe('split')
+    expect(debate.debatePhaseOf(after)).toBe('executing')
+    expect(tasks.messagesFor(parent.id).some((m) => m.role === 'system' && m.text === 'Verdict: Split the work')).toBe(true)
+  })
+
+  it('leaves a verdict the operator did choose alone', async () => {
+    const split = await import('./split.js')
+    const { parent } = splitDebate()
+    debate.recordVerdict(parent.id, 'execute')
+    split.applySplit(parent.id, [{ title: 'Phase A', dependsOn: [] }], HUMAN)
+    expect(tasks.requireTask(parent.id).debate?.verdict).toBe('execute')
+  })
+})
+
+describe('reading a verdict from an answer (t957)', () => {
+  it('takes a pressed button first', () => {
+    expect(debate.verdictFromAnswer({ optionIds: ['split'], text: 'Execute as agreed' })).toBe('split')
+  })
+
+  it('takes a typed reply that begins with a label, as t940’s operator wrote it', () => {
+    expect(
+      debate.verdictFromAnswer({ optionIds: [], text: 'Execute as agreed, here are few clarifications. my daughter…' })
+    ).toBe('execute')
+    expect(debate.verdictFromAnswer({ text: '  split the work.' })).toBe('split')
+    expect(debate.verdictFromAnswer({ text: 'Mark completed' })).toBe('complete')
+  })
+
+  it('does not guess from a reply that only mentions a verdict, or runs on into another word', () => {
+    expect(debate.verdictFromAnswer({ text: 'Please split the work into pieces' })).toBeNull()
+    expect(debate.verdictFromAnswer({ text: 'Stop the workers first' })).toBeNull()
+    expect(debate.verdictFromAnswer({ text: '' })).toBeNull()
+    expect(debate.verdictFromAnswer(null)).toBeNull()
+    expect(debate.verdictFromAnswer({ optionIds: ['opt1'] })).toBeNull()
+  })
+})
+
 describe('the kind transition', () => {
   /**
    * ⛔ **One way, one moment, one caller.** A mutation reachable from `task.update` would be a kind

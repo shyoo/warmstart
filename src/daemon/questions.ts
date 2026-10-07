@@ -7,12 +7,7 @@ import type {
   QuestionOrigin,
   QuestionResolution
 } from '@shared/tasks.js'
-import {
-  DEBATE_VERDICTS,
-  DEBATE_VERDICT_DETAILS,
-  DEBATE_VERDICT_LABELS,
-  type DebateVerdict
-} from '@shared/tasks.js'
+import { DEBATE_VERDICT_DETAILS, DEBATE_VERDICT_LABELS } from '@shared/tasks.js'
 import { normaliseAsk } from '@shared/policy.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
@@ -34,7 +29,7 @@ import {
   updateTask
 } from './tasks.js'
 import { getAttachment } from './attachments.js'
-import { becomeConversation, recordVerdict } from './debate.js'
+import { becomeConversation, recordVerdict, verdictFromAnswer } from './debate.js'
 import { cancelTask } from './cancel.js'
 
 /**
@@ -448,9 +443,8 @@ export function answerQuestion(id: string, answer: QuestionAnswer, by: 'human' =
         setStatus(answered.taskId, 'running', { assignee: 'agent', holdReason: null })
       }
     } else if (answered.origin === 'debate') {
-      const chosen = answered.answer?.optionIds?.find((optId): optId is DebateVerdict =>
-        (DEBATE_VERDICTS as readonly string[]).includes(optId)
-      )
+      // ⭐ A typed reply that begins with a verdict's label is that verdict (t957, `verdictFromAnswer`).
+      const chosen = verdictFromAnswer(answered.answer)
       if (chosen) {
         recordVerdict(answered.taskId, chosen)
         const note = answered.answer?.text?.trim()
