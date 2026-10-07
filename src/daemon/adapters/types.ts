@@ -286,6 +286,13 @@ export interface AgentAdapter {
   overloaded?: (reason: string) => boolean
 
   /**
+   * Where a person checks whether this vendor's service is down, named in the note that hands an
+   * overloaded task back to them. Absent where none is known: the note then says "the provider's
+   * status page" rather than point at the wrong vendor.
+   */
+  statusPage?: string
+
+  /**
    * Read a quota reading out of what the `/usage` panel rendered.
    *
    * ⛔ Required by, and only by, an adapter declaring `usageRefresh.answer === 'screen'`. This is

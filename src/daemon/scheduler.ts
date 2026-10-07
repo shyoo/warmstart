@@ -4773,11 +4773,9 @@ export async function endUnfinishedRun(
         }
       }
     } else if (isOverload) {
-      const statusPage =
-        session.adapterId === 'openai-compatible' ? 'https://status.openai.com' : 'https://status.claude.com'
       const msg =
         `The provider remains overloaded after ${MAX_OVERLOAD_ATTEMPTS} attempts (${why}). ` +
-        `Paused for human intervention — if it persists, check ${statusPage}.`
+        `Paused for human intervention — if it persists, check ${ad.statusPage ?? "the provider's status page"}.`
       addMessage(task.id, 'system', `Provider still overloaded after ${MAX_OVERLOAD_ATTEMPTS} attempts — over to you`, null, [], {
         event: 'provider.overloaded',
         detail: msg

@@ -966,7 +966,7 @@ describe('a result that is not an error', () => {
   })
 
   it('on an adapter without MCP completes the task', async () => {
-    const { run, task, session } = seedRunningTask({ adapterId: 'antigravity-cli' })
+    const { run, task, session, worker } = seedRunningTask({ adapterId: 'antigravity-cli' })
     await turnend.onStreamResult(session, {
       isError: false,
       text: 'here is the completed answer',
@@ -975,6 +975,8 @@ describe('a result that is not an error', () => {
     expect(tasks.requireRun(run.id).endedAt).not.toBeNull()
     expect(tasks.getTask(task.id)?.status).toBe('completed')
     expect(tasks.messagesFor(task.id).some((m) => m.text === 'here is the completed answer')).toBe(true)
+    // Antigravity holds one account on this machine; free the slot for the tests after this one.
+    workers.retireWorker(worker.id)
   })
 
   it('honours an MCP-less completion contract even when Antigravity reports ERROR afterwards', async () => {
@@ -1778,6 +1780,46 @@ describe('a turn failed because the remote provider is overloaded (529)', () => 
     expect(tasks.requireTask(seeded.task.id).status).toBe('scheduled')
     expect(workers.requireWorker(seeded.worker.id).health).toBeNull()
   })
+
+  // ⛔ t947 ← t936, 2026-10-06: four consecutive Antigravity runs each ended on this exact sentence
+  // and each one went to a person. The text is verbatim from the daemon log.
+  const AGY_503 =
+    'The agent reported a failure (ERROR): API error (attempt 1): UNAVAILABLE (code 503): The service is currently unavailable.'
+
+  // One test, one worker: Antigravity allows a single account per machine, so two tests cannot each
+  // commission one.
+  it('⭐ retries an Antigravity 503 instead of handing it to a person (t936), then says so honestly', async () => {
+    const first = await refuse(AGY_503, { adapterId: 'antigravity-cli', metered: 0 })
+    const task = tasks.requireTask(first.task.id)
+    expect(task.status).toBe('scheduled')
+    expect(task.holdReason).toMatch(/Provider overloaded \(attempt 1\/3\)/)
+    expect(workers.requireWorker(first.worker.id).health?.state).toBeUndefined()
+
+    // An outage that outlasts the retries goes to a person without naming the wrong vendor's page.
+    for (let attempt = 2; attempt <= 4; attempt++) {
+      db.db().prepare('update tasks set not_before = ? where id = ?').run(Date.now() - 1000, task.id)
+      tasks.admitScheduled()
+      await refuse(AGY_503, { adapterId: 'antigravity-cli', existingTask: task, worker: first.worker })
+    }
+    const final = tasks.requireTask(task.id)
+    expect(final.status).toBe('awaiting_human')
+    expect(final.holdReason).toMatch(/remains overloaded after 3 attempts/)
+    expect(final.holdReason).not.toMatch(/status\.claude\.com/)
+    expect(final.holdReason).toMatch(/provider's status page/)
+    workers.retireWorker(first.worker.id)
+  })
+
+  it('⛔ does not read an outage into the other things `API error` is prefixed to', async () => {
+    const { antigravityCli } = await import('./adapters/antigravity-cli.js')
+    for (const text of [
+      'API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Individual quota reached.',
+      'API error (attempt 1): UNAUTHENTICATED (code 401): Request had invalid authentication credentials.',
+      'API error (attempt 1): INVALID_ARGUMENT (code 400): bad request'
+    ]) {
+      expect(antigravityCli.overloaded?.(text), text).toBe(false)
+    }
+  })
+
 })
 
 describe('resolveTask when a person marks a task as complete', () => {

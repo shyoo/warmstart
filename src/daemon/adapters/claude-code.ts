@@ -754,6 +754,7 @@ export const claudeCode: AgentAdapter = {
       said.includes('status.claude.com')
     )
   },
+  statusPage: 'https://status.claude.com',
 
   isInstalled(): boolean {
     return which(info.command) !== null

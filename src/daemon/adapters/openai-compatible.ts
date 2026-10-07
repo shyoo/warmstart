@@ -1187,6 +1187,7 @@ export const openaiCompatible: AgentAdapter = {
    *
    * ⚠️ Measured: ChatGPT backend returning HTTP 404 from backend-api/codex/responses or HTTP 5xx/529.
    */
+  statusPage: 'https://status.openai.com',
   overloaded: (reason: string): boolean => {
     const said = reason.toLowerCase()
     return (

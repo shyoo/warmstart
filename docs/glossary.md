@@ -513,6 +513,9 @@ https://status.claude.com.`, measured 2026-09-03, t153). The adapter recognises 
 (`overloaded`), the run ends `preempted` (so the work prompt is not blamed), and the task is scheduled
 (`scheduled` with `not_before`) for an automatic retry with exponential backoff (1m, 2m, 4m; up to 3
 attempts), avoiding bogus worker quarantine and falling back to `awaiting_human` only if the outage persists.
+Antigravity's wording is `API error (attempt 1): UNAVAILABLE (code 503): The service is currently
+unavailable.` (t936, 2026-10-06); only that gRPC status is recognised, not `API error` as a prefix. The
+hand-back names the adapter's `statusPage`, or says *the provider's status page* where none is known.
 ⚠️ The same protocol also serves a **runaway stop** (`settings.autoRunawayStop`, default off), which
 ends differently: no window is closing, so there is nothing to resume after and the task rests at
 `awaiting_human` with no `not_before`. Preemption pauses; a runaway stop hands back.

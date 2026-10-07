@@ -991,6 +991,25 @@ export const antigravityCli: AgentAdapter = {
   },
 
   /**
+   * Is Google's side simply down for a moment?
+   *
+   * ⚠️ Measured, not imagined: verbatim from t936, 2026-10-06, on four consecutive runs spread over
+   * twelve minutes, each ended 15s–3min after dispatch — `API error (attempt 1): UNAVAILABLE (code
+   * 503): The service is currently unavailable.` Before this, every one of them rested the task at
+   * *your turn* and none was retried.
+   *
+   * ⛔ Anchored on the gRPC status and the vendor's own sentence, never on `ERROR`, `API error` or
+   * `503` alone: `API error` also prefixes `RESOURCE_EXHAUSTED` and `UNAUTHENTICATED`, which are an
+   * account's quota and credential, not an outage, and a tool call that met a 503 is a bad turn.
+   * Only the one wording is measured; other 5xx statuses (`INTERNAL`, `DEADLINE_EXCEEDED`) are
+   * deliberately not guessed at.
+   */
+  overloaded: (reason: string): boolean => {
+    const said = reason.toLowerCase()
+    return said.includes('unavailable (code 503)') || said.includes('the service is currently unavailable')
+  },
+
+  /**
    * ⚠️ Measured, not imagined: verbatim from t610, 2026-09-22 — `UNAUTHENTICATED (code 401): Request
    * had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other
    * valid authentication credential.` — on a run that had already produced 28k output tokens over
