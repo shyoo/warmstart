@@ -394,6 +394,19 @@ describe('decodeStream', () => {
     })
   })
 
+  /** ⛔ t954: a failed run's `text` is `""`, and the reason beside it is the only sentence there is. */
+  it('reads the reason when a failed terminal record carries empty text', () => {
+    const reason =
+      'API error 402 [request_id=57344155-99f8-46df-a1c7-99dc2da7cfda]: Billing verification failed. ' +
+      'Please check your payment method. (billing_error)'
+    expect(
+      decode({
+        payload_type: 'run.terminal.failed',
+        payload: { kind: 'run_terminal', terminal: 'failed', text: '', reason }
+      })
+    ).toEqual({ kind: 'result', text: reason, costUsd: null, isError: true, terminalReason: 'failed' })
+  })
+
   /** ⛔ Keyed on `payload_type`, never on `type` — a Claude-shaped reader sees nothing here. */
   it('ignores a record with no payload_type', () => {
     expect(decode({ type: 'assistant', message: { content: [] } })).toBeNull()
@@ -1176,6 +1189,23 @@ describe('failure classifiers', () => {
     expect(museCode.overloaded?.('HTTP 529 Overloaded')).toBe(true)
     expect(museCode.overloaded?.('503 service unavailable')).toBe(true)
     expect(museCode.overloaded?.('file not found')).toBe(false)
+  })
+
+  /** ⛔ t954: a status code inside a request id is not the response's status code. */
+  it('does not read a request id as an outage', () => {
+    expect(museCode.overloaded?.('API error 402 [request_id=1a503b29-529c-4fc3-a931-694087b5ce53]: x')).toBe(false)
+  })
+
+  /** ⛔ t954, measured verbatim 2026-10-06: the login is valid and the vendor will not bill it. */
+  it('recognises a billing refusal as an inactive subscription, not a sign-in or a quota', () => {
+    const said =
+      'API error 402 [request_id=8710dfa8-5dc2-4fc3-a931-694087b5ce53]: Billing verification failed. ' +
+      'Please check your payment method. (billing_error)'
+    expect(museCode.subscriptionExpired?.(said)).toBe(true)
+    expect(museCode.needsReauth?.(said)).toBe(false)
+    expect(museCode.outOfQuota?.(said)).toBe(false)
+    expect(museCode.overloaded?.(said)).toBe(false)
+    expect(museCode.subscriptionExpired?.('the agent failed')).toBe(false)
   })
 
   it('recognises a credential that has to be signed in again', () => {

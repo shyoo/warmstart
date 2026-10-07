@@ -667,7 +667,10 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | null {
     const text = typeof payload.text === 'string' ? payload.text : null
     return {
       kind: 'result',
-      text: text ?? reason,
+      // ⛔ **An empty `text` is not an answer** (t954). A failed run carries `"text":""` beside the
+      // `reason` — measured 2026-10-06 on a 402 — and `??` kept the empty string, so the vendor's
+      // sentence never reached the run note, the classifiers, or the operator.
+      text: text?.trim() ? text : reason,
       costUsd: null,
       isError: terminal !== 'completed',
       terminalReason: terminal
@@ -923,14 +926,34 @@ export const museCode: AgentAdapter = {
     )
   },
 
-  /** ⚠️ A provider having a bad afternoon spares the account: the run retries, the worker is untouched. */
+  /**
+   * ⛔ **An account the vendor will not bill is held for a person, not re-probed** (t954). Measured
+   * 2026-10-06 on `muse exec --json`: every model call answered `API error 402 [request_id=…]:
+   * Billing verification failed. Please check your payment method. (billing_error)` while `auth
+   * status` and the login stayed valid, so only the payment method on the Meta account can fix it.
+   * Reported as an inactive subscription so the worker stops being offered work and probed.
+   */
+  subscriptionExpired: (reason: string): boolean => {
+    const said = reason.toLowerCase()
+    return (
+      said.includes('billing_error') ||
+      said.includes('billing verification failed') ||
+      said.includes('check your payment method')
+    )
+  },
+
+  /**
+   * ⚠️ A provider having a bad afternoon spares the account: the run retries, the worker is untouched.
+   *
+   * ⛔ The status codes as whole words: a reason carries `request_id=<uuid>`, and a hex id holds
+   * `503` or `529` by chance often enough to retry a billing refusal as an outage.
+   */
   overloaded: (reason: string): boolean => {
     const said = reason.toLowerCase()
     return (
-      said.includes('529') ||
+      /\b(?:503|529)\b/.test(said) ||
       said.includes('overloaded') ||
       said.includes('service unavailable') ||
-      said.includes('503') ||
       said.includes('temporarily unavailable')
     )
   },
