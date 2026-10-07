@@ -70,6 +70,32 @@ export function looksStuck(
 }
 
 /**
+ * Is a session whose turn ended still being kept busy by something under it?
+ *
+ * ⛔ **Compared against what the tree had burned when the turn ended, never against nothing.** The
+ * idle-turn watchdog used to treat "no earlier sample" as progress, so the first check after the
+ * grace window always deferred and only the second could hand the task over. Measured on t946's
+ * three idle turns (daemon log, 2026-10-06/07): each logged *idle turn deferred* at ~3m and was
+ * handed to a person at ~6m with no CPU progress in between — three minutes of *running* after the
+ * agent's *Turn finished*, for nothing. The baseline is now taken at turn end, so the one check at
+ * the end of the window is already a real difference.
+ *
+ * - `handoff`: nothing under the session but the agent itself, or the tree did not burn
+ *   `MIN_PROGRESS_CPU_SECONDS` since the baseline (a drop is a child finishing, not progress).
+ * - `defer`: children, and the tree has worked since the turn ended — a background job is running.
+ * - `baseline`: children, but no reading was ever taken at turn end (the sampler failed then).
+ *   The only case that still costs a second look, because one reading proves nothing about a trend.
+ */
+export function idleTreeVerdict(
+  sample: TreeSample,
+  baselineCpuSeconds: number | undefined
+): 'handoff' | 'defer' | 'baseline' {
+  if (sample.processes.length <= 1) return 'handoff'
+  if (baselineCpuSeconds === undefined) return 'baseline'
+  return sample.cpuSeconds > baselineCpuSeconds + MIN_PROGRESS_CPU_SECONDS ? 'defer' : 'handoff'
+}
+
+/**
  * How long after a reported stall the second reading is taken.
  *
  * ⚠️ A whole stall window, not the 60s `MIN_SAMPLE_GAP_MS` the first verdict needs. The two readings

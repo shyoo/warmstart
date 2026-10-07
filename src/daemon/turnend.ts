@@ -21,6 +21,9 @@ import {
   sessionDiagnostics
 } from './sessions.js'
 import { stripAnsi, stripFrames } from './stream.js'
+import { sampleProcessTree } from './stall.js'
+import { clearIdleForSession, markTaskIdle, onIdleCleared } from './idlestate.js'
+import { emit } from './events.js'
 import { log } from './log.js'
 import {
   completeTask,
@@ -98,7 +101,43 @@ export const IDLE_TURN_AFTER_MS = 3 * 60 * 1000
 
 /** Record that this run's turn ended and nothing terminal was said. Exported for its test. */
 export function noteIdleTurn(session: Session, run: Run, said: string | null): void {
-  idleTurns.set(session.id, { runId: run.id, at: Date.now(), said: (said ?? '').trim() || null })
+  const at = Date.now()
+  idleTurns.set(session.id, { runId: run.id, at, said: (said ?? '').trim() || null })
+  // ⛔ **The pane is told, because it was the one thing still saying *working* (t950 ← t946).** The
+  // status stays `running` — the run is open until `task_complete` — but the turn is over, and the
+  // session's own stream has already said so. See `idlestate.ts`.
+  markTaskIdle(run.taskId, session.id, at)
+  broadcastTask(run.taskId)
+  void baselineIdleTree(session, run.id)
+}
+
+/** Re-send a task whose in-memory flags just changed, so every open pane redraws it. */
+function broadcastTask(taskId: string): void {
+  const task = getTask(taskId)
+  if (task) emit({ type: 'task.changed', task })
+}
+
+// ⚠️ The session said something or was told something: not idle any more, and the panes hear it.
+onIdleCleared(broadcastTask)
+
+/**
+ * Read what the session's process tree has burned *now*, at the end of the turn.
+ *
+ * ⛔ **So the check at the end of the grace window compares against something.** Without a baseline
+ * the watchdog could only record one on its first look and decide on its second, which kept t946 at
+ * *running* for twice the grace period after every turn (measured: deferred at 3m, handed over at
+ * 6m, three times, no CPU progress in between). See `idleTreeVerdict`.
+ *
+ * ⚠️ Fire and forget, and written only if the note it was taken for is still the current one: the
+ * sample can take seconds on Windows and the session may have been re-prompted, or exited, by then.
+ * A failed sample leaves no baseline, and the watchdog falls back to taking one itself.
+ */
+async function baselineIdleTree(session: Session, runId: string): Promise<void> {
+  if (!session.pid) return
+  const sample = await sampleProcessTree(session.pid)
+  if (!sample) return
+  const note = idleTurns.get(session.id)
+  if (note && note.runId === runId && note.lastCpuSeconds === undefined) note.lastCpuSeconds = sample.cpuSeconds
 }
 
 /** What a session's last unreported turn ending was, if it has one. Exported for its test. */
@@ -119,6 +158,8 @@ export function deferIdleTurn(sessionId: string, cpuSeconds?: number): void {
 
 export function forgetIdleTurn(sessionId: string): void {
   idleTurns.delete(sessionId)
+  // ⚠️ Silent: both callers (the hand-over and `onSessionExit`) change the task's status next.
+  clearIdleForSession(sessionId, false)
 }
 
 /**

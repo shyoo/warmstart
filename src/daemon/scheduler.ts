@@ -164,7 +164,7 @@ import {
   quietSince,
   sampleProcessTree,
   stallConfirmed,
-  MIN_PROGRESS_CPU_SECONDS,
+  idleTreeVerdict,
   MIN_SAMPLE_GAP_MS,
   STALL_CONFIRM_AFTER_MS,
   type TreeSample
@@ -2828,14 +2828,14 @@ async function runWatchdogs(): Promise<void> {
         if (session.pid) {
           const sample = await sampleProcessTree(session.pid)
           if (sample) {
-            const hasChildren = sample.processes.length > 1
-            const lastCpu = idle.lastCpuSeconds
-            const progress = lastCpu === undefined || sample.cpuSeconds > lastCpu + MIN_PROGRESS_CPU_SECONDS
-            if (hasChildren && progress) {
+            // ⛔ Against the reading taken when the turn ended (`noteIdleTurn`), so this one check is
+            // already a real difference. See `idleTreeVerdict` for the t946 measurement.
+            const verdict = idleTreeVerdict(sample, idle.lastCpuSeconds)
+            if (verdict !== 'handoff') {
               deferIdleTurn(session.id, sample.cpuSeconds)
               log.info(
-                `t${task.seq} idle turn deferred: ${sample.processes.length} processes active under session ` +
-                  `(${sample.cpuSeconds.toFixed(1)}s CPU)`
+                `t${task.seq} idle turn deferred (${verdict}): ${sample.processes.length} processes active under ` +
+                  `session (${sample.cpuSeconds.toFixed(1)}s CPU)`
               )
               continue
             }

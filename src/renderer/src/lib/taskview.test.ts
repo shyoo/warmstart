@@ -51,6 +51,7 @@ import {
   STATUS_TONE,
   statusHintFor,
   statusLabel,
+  turnEnded,
   STOPPABLE,
   CANCELLABLE,
   taskLabel,
@@ -1680,5 +1681,41 @@ describe('filedReassignEffort (t811)', () => {
     expect(filedReassignEffort('__inherit__', 'xhigh', [])).toBe('xhigh')
     expect(filedReassignEffort('', 'low', [])).toBe('low')
     expect(filedReassignEffort('__auto__:med', '', [])).toBeNull()
+  })
+})
+
+// ⛔ t950 ← t946: the session's stream said *Turn finished* while the pane animated *working* for the
+// whole grace window before the hand-over, because the daemon never said the turn had ended. It now
+// does (`Task.idleSince`), and the pane must stop claiming work that is not happening.
+describe('a running task whose turn has ended', () => {
+  const base = { status: 'running' as TaskStatus, holdReason: null, gradingWorkerId: null, landing: false }
+  const idle = { ...base, idleSince: 1_700_000_000_000 }
+
+  it('⭐ is not drawn as working', () => {
+    expect(isWorking(base)).toBe(true) // the control: a running task with no idle flag is working
+    expect(isWorking(idle)).toBe(false)
+  })
+
+  it('says so in words, in the running colour, with a hint that names what happens next', () => {
+    expect(statusLabel(idle)).toBe('turn ended')
+    expect(statusToneFor(idle)).toBe('state-running')
+    expect(statusHintFor(idle)).toMatch(/finished its turn/i)
+    expect(statusHintFor(idle)).toMatch(/hands the task to you/i)
+    expect(statusHintFor(base)).toBe('Agent working — no action needed')
+  })
+
+  it('turnEnded is only for a running task', () => {
+    expect(turnEnded(idle)).toBe(true)
+    expect(turnEnded(base)).toBe(false)
+    for (const status of ['awaiting_human', 'paused_user', 'completed', 'ready'] as TaskStatus[]) {
+      expect(turnEnded({ ...idle, status }), status).toBe(false)
+    }
+  })
+
+  it('landing and grading still win: that is work the daemon is doing now', () => {
+    expect(isWorking({ ...idle, landing: true })).toBe(true)
+    expect(statusLabel({ ...idle, landing: true })).toBe('landing')
+    expect(isWorking({ ...idle, gradingWorkerId: 'w' })).toBe(true)
+    expect(statusLabel({ ...idle, gradingWorkerId: 'w' })).toBe('grading')
   })
 })

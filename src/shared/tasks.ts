@@ -1200,6 +1200,12 @@ export interface Task {
   status: TaskStatus
   /** True only while this task is rebasing, verifying or merging its branch. */
   landing?: boolean
+  /**
+   * When this running task's turn ended with nothing terminal said, while the daemon waits to see
+   * whether anything resumes before handing it to a person. In memory (`daemon/idlestate.ts`): the
+   * status is still `running`, and the pane must not draw *working* for a turn that is over (t950).
+   */
+  idleSince?: number
   priority: Priority
   createdBy: Principal
   parentTaskId: string | null

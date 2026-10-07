@@ -809,6 +809,13 @@ merging, the daemon sets `landing` on every task it sends (`landingstate.ts`, ap
 it in the table, the thread and the phone. ⛔ It is never written to the row: a landing belongs to one
 process, and a stored `landing` would outlive a daemon that died mid-merge.
 
+⭐ **`idleSince` is the same kind of fact for a turn that ended** (t950 ← t946). A running task whose
+turn ended without `task_complete`/`await_human`/`ask_human` stays `running` for the idle-turn grace
+window, while the session's own stream already says *Turn finished*; the pane used to animate *working*
+throughout. `daemon/idlestate.ts` sets `idleSince` (same `withTransient` path as `landing`), a prompt or
+a mid-turn stream record clears it, and `statusLabel` reads **turn ended**, `isWorking` is false and the
+thread's live tail drops its animation (`turnEnded`, `taskview.tsx`). Landing and grading still win.
+
 ⛔ **The title column takes the slack at every width.** `.tbl--tasks` has a fixed column budget:
 ID, type, worker, active time, price, status and actions keep compact widths, and title receives what
 remains. Type uses the thread's label and sorts by it. At 1050px the history dates yield; at 850px

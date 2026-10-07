@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -296,40 +297,93 @@ describe('the turn that ended without reporting', () => {
     expect(tasks.getTask(task.id)?.status).toBe('running')
   })
 
-  it('defers parking when child processes are actively running under the session', async () => {
-    const { run, task, session } = seedRunningTask()
-    db.db().prepare('update sessions set pid = 54321 where id = ?').run(session.id)
-    const activeSession = sessions.getSession(session.id) as Session
-    const spy = vi.spyOn(stall, 'sampleProcessTree').mockResolvedValue({
-      at: Date.now(),
-      cpuSeconds: 15,
-      processes: [
-        { pid: 54321, ppid: 1, name: 'claude', command: 'claude', cpuSeconds: 2 },
-        { pid: 54322, ppid: 54321, name: 'vitest', command: 'vitest run test:all', cpuSeconds: 13 }
-      ]
-    })
+  /**
+   * A tree like t946's: the agent, plus the MCP servers every session carries. `cpu` is the whole
+   * tree's total, which is what `sampleProcessTree` reports.
+   */
+  const tree = (cpu: number, extraChildren = 1) => ({
+    at: Date.now(),
+    cpuSeconds: cpu,
+    processes: [
+      { pid: 54321, ppid: 1, name: 'claude', command: 'claude', cpuSeconds: 2 },
+      ...Array.from({ length: extraChildren }, (_, i) => ({
+        pid: 54322 + i, ppid: 54321, name: 'node', command: 'node mcp.js', cpuSeconds: cpu - 2
+      }))
+    ]
+  })
 
-    await endTurn(activeSession, 'Still waiting for the test:all run to complete.')
+  /** A running task whose session has a pid, so the watchdog has a tree to read. */
+  function seedWithTree() {
+    const seeded = seedRunningTask()
+    db.db().prepare('update sessions set pid = 54321 where id = ?').run(seeded.session.id)
+    return { ...seeded, session: sessions.getSession(seeded.session.id) as Session }
+  }
+
+  it('⭐ hands over at the end of the grace window when the tree has not worked since the turn ended (t946)', async () => {
+    // The measured case, three times over: children present (the MCP servers), CPU flat. The first
+    // check used to defer for lack of a baseline and only the second handed over — six minutes of
+    // *running* after *Turn finished*.
+    const { run, task, session } = seedWithTree()
+    const spy = vi.spyOn(stall, 'sampleProcessTree').mockResolvedValue(tree(112.3))
+
+    await endTurn(session, 'Everything is committed.')
     await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
     await scheduler.tick()
 
-    // Active child processes: task stays running, not parked at awaiting_human
+    expect(spy).toHaveBeenCalledWith(54321)
+    expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+    expect(tasks.requireRun(run.id).outcome).toBe('blocked')
+    spy.mockRestore()
+  })
+
+  it('defers while a background job is really working under the session, then hands over once it stops', async () => {
+    const { run, task, session } = seedWithTree()
+    const spy = vi.spyOn(stall, 'sampleProcessTree').mockResolvedValue(tree(15))
+
+    await endTurn(session, 'Still waiting for the test:all run to complete.')
+    // The job burns CPU after the turn ended.
+    spy.mockResolvedValue(tree(40))
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
+    await scheduler.tick()
+
     expect(tasks.requireRun(run.id).endedAt).toBeNull()
     expect(tasks.getTask(task.id)?.status).toBe('running')
-    expect(spy).toHaveBeenCalledWith(54321)
 
-    // Flat CPU on a subsequent sample allows parking
-    spy.mockResolvedValue({
-      at: Date.now(),
-      cpuSeconds: 15,
-      processes: [
-        { pid: 54321, ppid: 1, name: 'claude', command: 'claude', cpuSeconds: 2 },
-        { pid: 54322, ppid: 54321, name: 'vitest', command: 'vitest run test:all', cpuSeconds: 13 }
-      ]
-    })
+    // A whole window later it has done nothing more.
+    spy.mockResolvedValue(tree(40.2))
     await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
     await scheduler.tick()
     expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+    spy.mockRestore()
+  })
+
+  it('without a reading from the turn end, takes one and looks again rather than guessing', async () => {
+    const { task, session } = seedWithTree()
+    const spy = vi.spyOn(stall, 'sampleProcessTree').mockResolvedValue(null) // the sampler failed at turn end
+
+    await endTurn(session)
+    spy.mockResolvedValue(tree(30))
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
+    await scheduler.tick()
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
+    await scheduler.tick()
+    expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+    spy.mockRestore()
+  })
+
+  it('a baseline taken for an earlier turn is not reused by the next one', async () => {
+    const { task, session } = seedWithTree()
+    const spy = vi.spyOn(stall, 'sampleProcessTree').mockResolvedValue(tree(500))
+    await endTurn(session)
+    expect(turnend.idleTurnFor(session.id)?.lastCpuSeconds).toBe(500)
+
+    turnend.forgetIdleTurn(session.id)
+    spy.mockResolvedValue(tree(520))
+    await endTurn(session)
+    expect(turnend.idleTurnFor(session.id)?.lastCpuSeconds).toBe(520)
+    expect(tasks.getTask(task.id)?.status).toBe('running')
     spy.mockRestore()
   })
 
@@ -700,5 +754,91 @@ describe('a task that reads running with no run open', () => {
     await vi.advanceTimersByTimeAsync(scheduler.RUNLESS_AFTER_MS + 10_000)
     await scheduler.tick()
     expect(tasks.getTask(task.id)?.status).toBe('running')
+  })
+})
+
+describe('the pane is told the turn ended (t950 ← t946)', () => {
+  let idlestate: typeof import('./idlestate.js')
+  let events: typeof import('./events.js')
+  const sent: import('@shared/protocol.js').DaemonEvent[] = []
+
+  beforeAll(async () => {
+    idlestate = await import('./idlestate.js')
+    events = await import('./events.js')
+  })
+  beforeEach(() => {
+    sent.length = 0
+    events.setEventSink((e) => sent.push(e))
+  })
+  afterEach(() => {
+    events.setEventSink(() => {})
+  })
+
+  const lastTask = (taskId: string) =>
+    [...sent].reverse().find((e) => e.type === 'task.changed' && e.task.id === taskId)
+
+  it('⭐ a running task whose turn ended reads idleSince, on the event and on a read', async () => {
+    const { task, session } = seedRunningTask()
+    await endTurn(session)
+
+    const event = lastTask(task.id)
+    expect(event?.type === 'task.changed' && event.task.idleSince).toEqual(expect.any(Number))
+    expect(tasks.getTask(task.id)?.status).toBe('running') // the status is not changed: the run is open
+    expect(idlestate.withTransient(tasks.requireTask(task.id)).idleSince).toEqual(expect.any(Number))
+  })
+
+  it('a task that has not ended a turn carries no flag', () => {
+    const { task } = seedRunningTask()
+    expect(idlestate.withTransient(tasks.requireTask(task.id)).idleSince).toBeUndefined()
+  })
+
+  it('⛔ a prompt written into the session clears it, and says so', async () => {
+    const { task, session } = seedRunningTask()
+    await endTurn(session)
+    sent.length = 0
+
+    idlestate.clearIdleForSession(session.id) // what sendPrompt and a mid-turn stream record call
+    const event = lastTask(task.id)
+    expect(event?.type === 'task.changed' && event.task.idleSince).toBeUndefined()
+    expect(idlestate.idleSinceOf(task.id)).toBeNull()
+  })
+
+  it('any status but running wins over a stale mark', async () => {
+    const { task, session } = seedRunningTask()
+    await endTurn(session)
+    tasks.setStatus(task.id, 'awaiting_human')
+    expect(idlestate.withTransient(tasks.requireTask(task.id)).idleSince).toBeUndefined()
+  })
+
+  it('the hand-over clears it without a frame of working in between', async () => {
+    const { task, session } = seedRunningTask()
+    await endTurn(session)
+    sent.length = 0
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
+    await scheduler.tick()
+
+    const changes = sent.filter((e) => e.type === 'task.changed' && e.task.id === task.id)
+    expect(changes.length).toBeGreaterThan(0)
+    // Every broadcast after the hand-over started is already awaiting_human: none says running again.
+    expect(changes.every((e) => e.type === 'task.changed' && e.task.status !== 'running')).toBe(true)
+    expect(idlestate.idleSinceOf(task.id)).toBeNull()
+  })
+
+  it('⛔ both things that start a turn clear it: a prompt written in, and a mid-turn stream record', () => {
+    // L1 has no live PTY, so the two call sites are pinned at source level (see useAction.test.ts).
+    const source = readFileSync(fileURLToPath(new URL('./sessions.ts', import.meta.url)), 'utf8')
+    const clears = source.split('clearIdleForSession(id)').length - 1
+    expect(clears).toBe(2)
+    const evidence = source.indexOf('if (isRequestEvidence(event.kind)) {')
+    expect(source.indexOf('clearIdleForSession(id)', evidence)).toBeLessThan(source.indexOf('renderForHuman(event, entry.asked)', evidence))
+    const prompted = source.indexOf('entry.promptedAt = Date.now()')
+    expect(source.slice(prompted, prompted + 120)).toContain('clearIdleForSession(id)')
+  })
+
+  it('a session that exits does not leave the mark behind', async () => {
+    const { task, session } = seedRunningTask()
+    await endTurn(session)
+    await turnend.onSessionExit(session, 0)
+    expect(idlestate.idleSinceOf(task.id)).toBeNull()
   })
 })

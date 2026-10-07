@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   describeTree,
   descendantsOf,
+  idleTreeVerdict,
   looksStuck,
   quietSince,
   parsePosixCpuTime,
@@ -463,5 +464,37 @@ describe('where the stall clock starts', () => {
         lastActivityAt: now - 50 * 60_000
       })
     ).toBe(lastRequest)
+  })
+})
+
+describe('idleTreeVerdict', () => {
+  const sample = (cpu: number, count: number) => ({
+    at: 0,
+    cpuSeconds: cpu,
+    processes: Array.from({ length: count }, (_, i) => ({
+      pid: i + 1, ppid: i === 0 ? 0 : 1, name: 'p', command: null, cpuSeconds: cpu / count
+    }))
+  })
+
+  it('hands over a tree that is only the agent, whatever the baseline', () => {
+    expect(idleTreeVerdict(sample(500, 1), undefined)).toBe('handoff')
+    expect(idleTreeVerdict(sample(500, 1), 0)).toBe('handoff')
+  })
+
+  it('⭐ hands over on the first check when the tree has burned nothing since the turn ended (t946: 3 processes, 112s)', () => {
+    expect(idleTreeVerdict(sample(112.3, 3), 112.3)).toBe('handoff')
+    expect(idleTreeVerdict(sample(112.9, 3), 112.3)).toBe('handoff') // under MIN_PROGRESS_CPU_SECONDS
+  })
+
+  it('defers a tree that burned at least the minimum since the turn ended', () => {
+    expect(idleTreeVerdict(sample(114, 3), 112.3)).toBe('defer')
+  })
+
+  it('a falling total is a child finishing, not progress', () => {
+    expect(idleTreeVerdict(sample(40, 2), 90)).toBe('handoff')
+  })
+
+  it('asks for a baseline only where there was none and children exist', () => {
+    expect(idleTreeVerdict(sample(53.3, 21), undefined)).toBe('baseline')
   })
 })

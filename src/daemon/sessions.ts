@@ -29,6 +29,7 @@ import { ensureDir, paths } from './paths.js'
 import { removeMcpConfig, writeMcpConfig } from './mcpconfig.js'
 import { StreamParser, describeStream, renderForHuman, stripAnsi, type SpawnAsked, type StreamEvent } from './stream.js'
 import { settings } from './settings.js'
+import { clearIdleForSession } from './idlestate.js'
 import { formatCmdInvocation, unwrapForPty } from './which.js'
 import { terminalAnswerer } from './termquery.js'
 import { appEnv } from '@shared/env.js'
@@ -1154,7 +1155,11 @@ export function spawnSession(opts: SpawnOptions): Session {
       // ⛔ Stamped **before** the event is handed on, so `creditStreamTurn` — which runs inside the
       // `usage` callback below — reads the last *mid-turn* record rather than the terminal one it is
       // itself processing. See `lastActivityAt` for why the terminal pair is excluded.
-      if (isRequestEvidence(event.kind)) entry.lastActivityAt = Date.now()
+      if (isRequestEvidence(event.kind)) {
+        entry.lastActivityAt = Date.now()
+        // ⛔ A session that is talking again is not idle, whatever its last `result` said (t950).
+        clearIdleForSession(id)
+      }
       const rendered = renderForHuman(event, entry.asked)
       if (rendered) {
         text += rendered
@@ -1548,6 +1553,7 @@ export function sendPrompt(
   // session asked for a second prompt throws - and a refused prompt started no turn, so stamping it
   // would roll a cache clock forward over a request that never happened.
   entry.promptedAt = Date.now()
+  clearIdleForSession(id)
 }
 /**
  * Type into a session, as a person at a keyboard.

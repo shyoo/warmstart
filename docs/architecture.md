@@ -572,9 +572,12 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   when an unrelated daemon restart reconciled it. So the `result` record now writes down *that the
   turn ended without a terminal signal* (`idleTurns`), and `runWatchdogs` acts on the note once
   `quietSince` proves nothing has happened for `IDLE_TURN_AFTER_MS` (3m) — checking the session's
-  process tree so active child processes (e.g. background tests) or advancing CPU defer parking — the
+  process tree so active child processes (e.g. background tests) with CPU burned *since the turn ended*
+  defer parking (`idleTreeVerdict`; the baseline is read at turn end, so one check decides — measured on
+  t946, 2026-10-07: without it every idle turn read *running* for 6m, twice the grace) — the
   grace exists because everything the daemon does to an idle session (wrap-up, `/compact`, a reply)
-  starts a request and clears the note. ⚠️ The action is `parkForHuman`, i.e. the `await_human` verdict
+  starts a request and clears the note. The pane is told meanwhile: `idleSince` (`idlestate.ts`) makes it
+  read *turn ended*, not *working* (t950). ⚠️ The action is `parkForHuman`, i.e. the `await_human` verdict
   the agent should have reached itself: run `blocked`, task at `awaiting_human` carrying the agent's
   complete final message, session kept warm, **nothing landed, committed, graded or discarded**. It reads no
   completion out of prose — not even a literal `TASK COMPLETE:` line, which is a contract given to

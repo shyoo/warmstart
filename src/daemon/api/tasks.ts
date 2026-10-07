@@ -36,7 +36,7 @@ import { log } from '../log.js'
 import { emit } from '../events.js'
 import { clockTime } from '../threadline.js'
 import { dismissLooseEnd, resolveFinishPolicy, scanLooseEnds } from '../finish.js'
-import { withLanding } from '../landingstate.js'
+import { withTransient } from '../idlestate.js'
 import { resolveSessionSharing } from '../sharing.js'
 import type { Api, ApiContext } from './support.js'
 import { previewUpstreamProposal, proposeUpstream } from '../upstream.js'
@@ -135,11 +135,11 @@ function setWorkspaceModeChecked(id: string, mode: WorkspaceModeChoice): Task {
 
 export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
   return {
-    'task.list': (p) => listTasks(p ?? {}).map(withLanding),
+    'task.list': (p) => listTasks(p ?? {}).map(withTransient),
     'project.activity': (p) => projectActivity(p.projectId, p.limit),
     'task.page': (p) => {
       const page = pageTasks(p ?? {})
-      return { ...page, tasks: page.tasks.map(withLanding) }
+      return { ...page, tasks: page.tasks.map(withTransient) }
     },
     'task.get': (p) => {
       const task = getTask(p.id)
@@ -175,7 +175,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         .map((id) => getTask(id))
         .filter((t): t is typeof task => !!t && t.deletedAt === null)
       return {
-        task: withLanding(task),
+        task: withTransient(task),
         messages: messagesFor(p.id),
         runs,
         sessions,

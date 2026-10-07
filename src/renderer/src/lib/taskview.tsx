@@ -113,10 +113,11 @@ export const STATUS_LABEL: Record<string, string> = { assigned: 'dispatching', l
  * see `landingstate.ts` for why a landing must not be written to the row.
  */
 export function statusLabel(
-  task: Pick<Task, 'status' | 'holdReason' | 'gradingWorkerId' | 'landing'>
+  task: Pick<Task, 'status' | 'holdReason' | 'gradingWorkerId' | 'landing' | 'idleSince'>
 ): string {
   if (task.landing) return 'landing'
   if (task.gradingWorkerId) return 'grading'
+  if (turnEnded(task)) return 'turn ended'
   if (task.status === 'ready' && task.holdReason) return 'queued'
   return STATUS_LABEL[task.status] ?? task.status
 }
@@ -135,7 +136,10 @@ export function statusToneFor(task: Pick<Task, 'status' | 'gradingWorkerId' | 'l
 }
 
 /** The hover text beside `statusLabel`. */
-export function statusHintFor(task: Pick<Task, 'status' | 'gradingWorkerId' | 'landing'>): string | undefined {
+export function statusHintFor(
+  task: Pick<Task, 'status' | 'gradingWorkerId' | 'landing' | 'idleSince'>
+): string | undefined {
+  if (turnEnded(task)) return TURN_ENDED_HINT
   const attention = statusAttention(task)
   return attention ? ATTENTION_HINT[attention] : undefined
 }
@@ -171,7 +175,29 @@ export function holdLine(
 /** Statuses where an agent is actively executing work. */
 export const WORKING_STATUSES = new Set(['running'])
 
-export function isWorking(task: Pick<Task, 'status' | 'gradingWorkerId' | 'landing'>): boolean {
+/**
+ * Has this running task's turn ended, with the run still open?
+ *
+ * ⛔ **Not working, and not yet yours.** The agent stopped without `task_complete`, `await_human` or
+ * `ask_human`; the daemon waits a few minutes in case something resumes it, then hands the task to a
+ * person (`idleSince`, `daemon/idlestate.ts`). Until then the pane used to animate *working* beside a
+ * stream that said *Turn finished* (t950 ← t946). Landing and grading still win: those are work the
+ * daemon is doing right now whatever the agent is.
+ */
+export function turnEnded(task: Pick<Task, 'status' | 'gradingWorkerId' | 'landing' | 'idleSince'>): boolean {
+  return (
+    task.status === 'running' &&
+    task.idleSince !== undefined &&
+    !task.gradingWorkerId &&
+    !task.landing
+  )
+}
+
+export const TURN_ENDED_HINT =
+  'The agent finished its turn without reporting. Nothing is running; Warmstart is waiting a few minutes to see whether it resumes, then hands the task to you'
+
+export function isWorking(task: Pick<Task, 'status' | 'gradingWorkerId' | 'landing' | 'idleSince'>): boolean {
+  if (turnEnded(task)) return false
   return task.status === 'running' || Boolean(task.gradingWorkerId) || Boolean(task.landing)
 }
 

@@ -63,6 +63,7 @@ import {
   hasQuotaGate,
   holdLine,
   isWorking,
+  turnEnded,
   routerPicksModel,
   routerChoosesModel,
   autoModelLabel,
@@ -594,7 +595,7 @@ function TaskDetail({
               parsed as the closed markdown subset; nothing here renders raw HTML. */}
           <DebateBoard task={task} />
 
-          <Thread messages={messages} runs={runs} activity={activity} live={live} landing={Boolean(task.landing)} />
+          <Thread messages={messages} runs={runs} activity={activity} live={live} landing={Boolean(task.landing)} working={!turnEnded(task)} />
 
           {/* ⛔ Between the conversation and the box for replying, because that is what it is: the
               agent's turn to speak ended with a question, and this is where the answer goes. In the
@@ -1492,13 +1493,16 @@ const Thread = memo(function Thread({
   runs,
   activity,
   live,
-  landing
+  landing,
+  working
 }: {
   messages: TaskMessage[]
   runs: Run[]
   activity: ActivityLine[]
   live: boolean
   landing: boolean
+  /** False once the turn has ended with the run still open: the tail is kept, its animation is not (t950). */
+  working: boolean
 }): React.JSX.Element {
   /**
    * ⛔ **`live` alone.** This was `live || activity.length > 0`, and the tail is not cleared when a
@@ -1613,7 +1617,7 @@ const Thread = memo(function Thread({
                       </span>
                     ))
                   )}
-                  {item.isLiveTail && <Working />}
+                  {item.isLiveTail && working && <Working />}
                 </span>
               </div>
               {item.isLiveTail ? (
