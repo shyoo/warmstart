@@ -19,6 +19,8 @@ import {
 } from '../lib/fleetcard'
 import { Working } from '../lib/taskview'
 import { AgentIcon } from './AgentIcon'
+import { WorkerStatusBadge } from './WorkerStatusBadge'
+import { workerStatus } from '@shared/workerstatus'
 import { cacheUrgency, countdown, money, percent, quotaUrgency, tokens, when } from '../lib/format'
 import { creditGaugeVisible, creditsMismatchNote } from '@shared/credits'
 
@@ -321,7 +323,7 @@ function WorkerCard({
   narrow: boolean
   onProbe: (workerId: string) => Promise<unknown>
 }): React.JSX.Element {
-  const { worker, quota, sessions } = entry
+  const { worker, quota, sessions, statusFacts } = entry
   /**
    * ⛔ Recomputed against the ticking clock, not read off the payload. `ageMs` and `stale` are
    * stamped on when the daemon *sends* a reading, so a card patched by a `quota.changed` event kept
@@ -363,24 +365,18 @@ function WorkerCard({
     void onProbe(worker.id).finally(() => setProbing(false))
   }
 
-  const isSubscriptionExpired = isWorkerSubscriptionExpired(worker)
-
   return (
     <div className={`wcard${worker.enabled ? '' : ' wcard--off'}${narrow ? ' wcard--narrow' : ''}`}>
       <div className="wcard-head">
         <AgentIcon adapterId={worker.adapterId} className="wcard-icon" />
+        {/* ⭐ The worker's status as a mark, not a word (t961): the strip asked for width back, and
+            the word, its age and its evidence are one hover away. It replaced the `expired` /
+            `sign in` / `no work` tag, which said less in more room — the glyph tells those three
+            apart too (`STATUS_GLYPH`), and the adapter still decides which, never a substring here. */}
+        <WorkerStatusBadge status={workerStatus(worker, quota, sessions, now, statusFacts)} now={now} compact />
         <span className="wcard-name">{worker.label}</span>
         {worker.humanOccupied && <span className="tag tag--human">human</span>}
         {!worker.enabled && <span className="tag">off</span>}
-        {/* ⛔ Two different states, and the difference is what the operator does next. `sign in`
-            means the account needs re-authenticating and the button that fixes it is one panel
-            away; `no work` means something else killed the run and the reason below says what.
-            ⚠️ The adapter decided which - never a substring match out here. */}
-        {suspect && (
-          <span className="tag tag--suspect" title={suspect.reason}>
-            {isSubscriptionExpired ? 'expired' : suspect.needsReauth ? 'sign in' : 'no work'}
-          </span>
-        )}
         {/* ⛔ The corner, and the only place on this card where a *transient* fact is allowed to
             appear. The head row is drawn whatever happens, so the age of a reading and the fact
             that a probe is in flight cost nothing to say here and cannot resize the card the way

@@ -3556,6 +3556,20 @@ try {
     )
   }
 
+  // ⭐ t961: Settings > Workers shows each worker's last inferred status — word and age, not only a
+  // mark — from the same derivation the strip draws, so the two cannot disagree.
+  const statusLines = await evaluate(`JSON.stringify([...document.querySelectorAll('.tbl-workers > tbody > tr:not(.tbl-row--note)')]
+    .map((tr) => tr.querySelector('.worker-status-line .wstatus')?.innerText.replace(/\\s+/g, ' ').trim() ?? null))`)
+  {
+    const seen = JSON.parse(statusLines)
+    check('every worker row states its status', seen.length > 0 && seen.every((t) => typeof t === 'string' && t.length > 1), statusLines)
+    check(
+      'and the expired account says so, with when',
+      seen.some((t) => /expired/.test(t) && /(just now|ago)/.test(t)),
+      statusLines
+    )
+  }
+
   // ⚠️ The point of all of the above: rows a person can scan. With the sentence set in the Account
   // cell and the buttons stacked in a column of no width, the tallest row on this seed measured
   // 174px — six lines, for one account. It is 72px now, and this holds that.
@@ -3637,6 +3651,28 @@ try {
     `${buttons} button(s) across ${cards} card(s)`
   )
 
+  // ⭐ t961: the worker's status, as a mark rather than a word — the strip asked for its width back.
+  // The word, its age and the evidence ride the tooltip; the glyph differs per status, so colour is
+  // never the only thing telling `ready` from `expired`.
+  const marks = await evaluate(`JSON.stringify([...document.querySelectorAll('.wcard')].map((c) => {
+    const m = c.querySelector('.wcard-head .wstatus--compact')
+    return m ? [m.innerText.trim(), m.getAttribute('title') ?? '', m.className] : null
+  }))`)
+  {
+    const seen = JSON.parse(marks)
+    check('every card carries its status in the head row', seen.length > 0 && seen.every(Boolean), marks)
+    check(
+      'as one glyph, with the word and its evidence on the tooltip',
+      seen.every((m) => m && [...m[0]].length === 1 && m[1].length > 10),
+      marks
+    )
+    check(
+      'and the expired account reads expired, in the danger tone',
+      seen.some((m) => m && m[2].includes('wstatus--expired') && m[2].includes('wstatus--bad') && /^expired/.test(m[1])),
+      marks
+    )
+  }
+
   // ⛔ The user asked for this specifically: the emoji it replaces (🔃) brings its own colour, and on
   // the dark surface it outshone the numbers the strip exists to show. A stroke icon takes the
   // corner's faint colour like the chevron below the strip does.
@@ -3669,7 +3705,7 @@ try {
   // already failed asks the same question of the same button and changes nothing else.
   const sameHeight = await evaluate(`
     (async () => {
-      const card = [...document.querySelectorAll('.wcard')].find((c) => c.querySelector('.tag--suspect'))
+      const card = [...document.querySelectorAll('.wcard')].find((c) => c.querySelector('.wstatus--bad'))
       if (!card) return JSON.stringify(['no suspect card in the strip', ''])
       const before = card.getBoundingClientRect().height
       card.querySelector('.wcard-refresh')?.click()

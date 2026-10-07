@@ -17,6 +17,7 @@ import { bumpPricingEpoch } from './price.js'
 import { probeSpendFor } from './spend.js'
 import { markRunOverage } from './tasks.js'
 import { accountRefusal } from './eligibility.js'
+import { checkAccount, expiredRecheckDue } from './accountcheck.js'
 
 /**
  * The quota poller.
@@ -343,6 +344,9 @@ export function autoWarmupRefusal(workerId: string): string | null {
   return null
 }
 
+/** The warm-up's account check came back refused: stop driving a panel that cannot fill. */
+class AccountRefused extends Error {}
+
 async function readUsage(workerId: string, opts: RefreshOptions = {}): Promise<DatedQuota> {
   const w = requireWorker(workerId)
   const refresh = adapter(w.adapterId).info.usageRefresh
@@ -383,7 +387,13 @@ async function readUsage(workerId: string, opts: RefreshOptions = {}): Promise<D
   let warmedUp = false
   // ⚠️ Why a turn was *not* spent where it could have been, so the operator is told what ended it.
   let notWarmed: string | null = null
+  // ⛔ The vendor's refusal of the warm-up's account check (t961): not a silent window at all.
+  let refused: string | null = null
+  // ⚠️ The vendor's own log said it gated this account on payment (t961) — see `paymentGateSince`.
+  let gate: string | null = null
   try {
+    // ⚠️ Stamped before the spawn: the vendor's own session log is found by time (`paymentGateSince`).
+    const probeStartedAt = Date.now()
     const session = spawnSession({
       workerId,
       purpose: 'probe',
@@ -424,29 +434,60 @@ async function readUsage(workerId: string, opts: RefreshOptions = {}): Promise<D
       // its slow TUI start, and a fresh spawn would pay that start twice for one turn.
       // ⭐ Asked or automatic (t723): a person's press spends unconditionally; anything else spends
       // only where `autoWarmupRefusal` allows, which is at most once per silent streak.
+      // ⭐ **Or where the vendor's own log says it gated the account on payment** (t961). A lapsed
+      // Muse account never draws its panel at all — measured 2026-10-07, every probe read *did not
+      // appear* — but writes `session.payment_gate.banner_shown` into the probe's session log. Only
+      // where the adapter has an `accountCheck`: the gate triggers the check, and the check's
+      // terminal record is the verdict. Same bound as a silent window.
+      const ad = adapter(w.adapterId)
+      const gated =
+        !driven.unavailable && ad.info.accountCheck ? (ad.paymentGateSince?.(w.isolationRoot, probeStartedAt) ?? null) : null
+      gate = gated
+      const quiet = driven.unavailable ?? gated
       const auto = !opts.warmUp
-      notWarmed = driven.unavailable && warmup && auto && opts.autoWarmUp ? autoWarmupRefusal(workerId) : null
-      if (driven.unavailable && warmup && (opts.warmUp || (opts.autoWarmUp && !notWarmed))) {
-        log.info(`warming up ${w.label} with one turn${auto ? ' (automatic)' : ''}: ${driven.unavailable}`)
+      notWarmed = quiet && warmup && auto && opts.autoWarmUp ? autoWarmupRefusal(workerId) : null
+      if (quiet && warmup && (opts.warmUp || (opts.autoWarmUp && !notWarmed))) {
+        log.info(`warming up ${w.label} with one turn${auto ? ' (automatic)' : ''}: ${quiet}`)
         warmedUp = true
         // ⛔ Recorded before the turn is sent, so a probe that throws half-way still counts it.
         if (auto) autoWarmups.set(workerId, Date.now())
-        // ⛔ The panel that just drew may still own the keyboard: a prompt typed into it never
-        // reaches the composer, no turn runs, and the re-drive reads unavailable again (t689).
-        // The adapter declares the key that closes its own view; nothing here names one.
-        if (warmup.dismissKey) {
-          await dismissScreenView(
-            warmup.dismissKey,
-            warmup.dismissSettleMs ?? 1500,
-            (data) => writeSession(session.id, data)
+        // ⭐ **Headless where the adapter can, and that is how an expired account is caught** (t961).
+        // A lapsed subscription draws the same "Currently unavailable" an untouched window does, so
+        // the warm-up is exactly where one lands — and a turn typed into a TUI can only be read off
+        // the screen, which may say nothing but a quota. The account check's terminal record says
+        // which it was. ⚠️ The same one turn on a live account; t689 measured an exec turn ending
+        // a streak where a typed one did not.
+        const accountCheck = adapter(w.adapterId).info.accountCheck
+        if (accountCheck) {
+          const checked = await checkAccount(
+            workerId,
+            gated ? `its probe was gated on payment: ${gated}` : `its usage panel reads unavailable: ${quiet}`
+          )
+          if (checked.verdict === 'expired' || checked.verdict === 'reauth') {
+            refused = checked.reason
+            warmedUp = false
+            unavailable = driven.unavailable
+            screen = driven.screen
+            throw new AccountRefused(checked.reason)
+          }
+        } else {
+          // ⛔ The panel that just drew may still own the keyboard: a prompt typed into it never
+          // reaches the composer, no turn runs, and the re-drive reads unavailable again (t689).
+          // The adapter declares the key that closes its own view; nothing here names one.
+          if (warmup.dismissKey) {
+            await dismissScreenView(
+              warmup.dismissKey,
+              warmup.dismissSettleMs ?? 1500,
+              (data) => writeSession(session.id, data)
+            )
+          }
+          await driveWarmupTurn(
+            warmup.prompt,
+            warmup.completeMs,
+            (data) => writeSession(session.id, data),
+            refresh.submitDelayMs ? { submitDelayMs: refresh.submitDelayMs } : {}
           )
         }
-        await driveWarmupTurn(
-          warmup.prompt,
-          warmup.completeMs,
-          (data) => writeSession(session.id, data),
-          refresh.submitDelayMs ? { submitDelayMs: refresh.submitDelayMs } : {}
-        )
         driven = await drive()
       }
       screen = driven.screen
@@ -464,7 +505,8 @@ async function readUsage(workerId: string, opts: RefreshOptions = {}): Promise<D
   } catch (err) {
     // ⚠️ Never fatal. A refresh that fails leaves the previous reading exactly as it was, with its
     // age attached, which is the state everything downstream already knows how to distrust.
-    log.warn(`usage refresh failed on ${w.label}:`, err)
+    // ⚠️ A refused account check is not a failed refresh: the verdict is already on the worker.
+    if (!(err instanceof AccountRefused)) log.warn(`usage refresh failed on ${w.label}:`, err)
   } finally {
     // ⛔ By session id, which is how this app kills anything: `closeSession` stops only the pid it
     // recorded and only after checking the process is still the one it started.
@@ -494,7 +536,11 @@ async function readUsage(workerId: string, opts: RefreshOptions = {}): Promise<D
         : notWarmed
           ? ` No warm-up turn was sent: ${notWarmed}.`
           : ''
-      const why = stated
+      const why = refused
+        ? `${w.label}: the vendor refused a turn on this account, so its usage panel cannot fill — ${refused}`
+        : gate
+        ? `${w.label}: ${gate}${spent || ' No account check was spent.'}`
+        : stated
         ? `${w.label}: ${stated}${spent}`
         : `\`${refresh.command}\` was typed into ${w.label} but its usage panel did not appear. ` +
           (screen === null
@@ -515,7 +561,8 @@ async function readUsage(workerId: string, opts: RefreshOptions = {}): Promise<D
         // ⛔ Only when the adapter's own words explained it — the generic "did not appear" branch
         // above (`stated` falsy) means we do not actually know why, and inferring a fresh window from
         // that would tell scoring the account is quota-rich on nothing but a shrug.
-        ...(stated ? { vendorSilent: true } : {})
+        // ⛔ Nor where the vendor refused the turn: a lapsed account is not a fresh window.
+        ...(stated && !refused && !gate ? { vendorSilent: true } : {})
       }
       storeAndPublish(failed)
       return decorate(failed)
@@ -1496,6 +1543,14 @@ export class QuotaPoller {
       // better part of thirty seconds, and a held-out account must not delay the sweep of every
       // account behind it in the list.
       if (w.health?.state === 'suspect') {
+        // ⭐ t961: an account held as expired is asked again every six hours where its adapter has
+        // a check — free while the vendor still refuses, so a renewal is noticed without a person.
+        // ⚠️ Not awaited, for the reason `ensureFreshQuota` is not.
+        if (expiredRecheckDue(w.id)) {
+          void checkAccount(w.id, 'its expired hold is due a re-check').catch((err: unknown) =>
+            log.warn(`account check failed for ${w.label}:`, err)
+          )
+        }
         ensureFreshQuota(w.id)
         continue
       }

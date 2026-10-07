@@ -3,6 +3,7 @@ import type { ModelClass } from './modelclass.js'
 import type { ThreadCommandId } from './commands.js'
 import type { ModelRoute } from './modelroutes.js'
 import type { WorkerBilling } from './billing.js'
+import type { WorkerStatusFacts } from './workerstatus.js'
 export type { ModelRoute } from './modelroutes.js'
 
 export type { ModelClass } from './modelclass.js'
@@ -492,6 +493,8 @@ export interface Worker {
   creditsIntent: CreditsIntent | null
   /** What the last run on this account proved about it. `null` means nothing is known against it. */
   health: WorkerHealth | null
+  /** The provider failing this account's last turn, until a turn or a reading proves otherwise. */
+  outage?: WorkerOutage | null
   /**
    * Where this worker sits in the fleet strip, lowest first.
    *
@@ -544,6 +547,26 @@ export interface WorkerHealth {
    * and presenting it as `re-sign-in required` sends an operator on a loop.
    */
   subscriptionExpired?: boolean
+  /**
+   * When the vendor was last asked and still refused (t961). `since` is when the hold began; this is
+   * when it was last *confirmed* — by an `accountCheck` turn, which an expired account answers for
+   * free. Absent where nothing has re-asked since the hold began.
+   */
+  checkedAt?: number
+}
+
+/**
+ * The provider's own servers failing on this account's last turn — overloaded, 503 (t961).
+ *
+ * ⛔ **Never a dispatch gate.** A provider having a bad afternoon spares the account: the run retries
+ * on its own ladder (`overloaded` in adapters/types.ts) and nothing here holds it out. This exists so
+ * the worker's status can say *unavailable since 14:02* rather than *ready* while every turn bounces.
+ * Cleared by the evidence that ends it — a metered turn, or a probe that read real windows.
+ */
+export interface WorkerOutage {
+  at: number
+  /** The vendor's own sentence, one line. */
+  reason: string
 }
 
 export type WorkerRole = 'worker' | 'controller' | 'both' | 'none'
@@ -1459,6 +1482,11 @@ export interface AdapterInfo {
   usageRefresh: UsageRefresh | null
   /** `null` means signing in is all this CLI needs before a terminal is usable. */
   firstRun: AdapterFirstRun | null
+  /**
+   * The headless turn that tells an expired subscription from a live one, where nothing free can
+   * (t961). Absent means this adapter has none, and its holds lift the way they always have.
+   */
+  accountCheck?: AccountCheck
 }
 
 /**
@@ -1614,6 +1642,29 @@ export interface UsageWarmup {
   note: string
 }
 
+/**
+ * One headless turn that asks the vendor *will you run a turn on this account?* (t961).
+ *
+ * ⛔ **The machine channel, never the screen.** An identity probe reads a credential file and a
+ * `/usage` panel reads a rendered TUI; neither can see a subscription the vendor has stopped billing,
+ * because the login stays valid and the panel reads the same "Currently unavailable" an untouched
+ * window does. Only a model call answers it, and this one is made with `transport: 'stream'` so the
+ * vendor's terminal record — and the adapter's own `subscriptionExpired` / `needsReauth` /
+ * `overloaded` classifiers — decide what it means.
+ *
+ * ⚠️ It costs one turn when the account works, the same turn `UsageWarmup` already spends, and
+ * nothing when the vendor refuses it. Measured 2026-10-07 on MuseFirst: `muse exec --json` failed
+ * in 2.0 s, exit 1, with `run.terminal.failed` → `API error 402 … (billing_error)`.
+ */
+export interface AccountCheck {
+  /** As small as a turn can be — a question about the model, touching no files. */
+  prompt: string
+  /** How long the vendor is given to answer before the check reads as inconclusive. */
+  timeoutMs: number
+  /** The cheapest effort the CLI takes, where it takes one. */
+  effort?: string
+}
+
 export interface AdapterDetection {
   adapterId: string
   found: boolean
@@ -1755,6 +1806,11 @@ export interface RpcMap {
        * counting them there keeps the card's `1 / 2` in step with the rows drawn under it.
        */
       reservedSlots: number
+      /**
+       * What this worker's adapter declares that changes what its status means (t961) — read off
+       * `capabilities` and `login`, never off the adapter's name. See `workerStatus`.
+       */
+      statusFacts?: WorkerStatusFacts
     }>
   }
   'worker.create': {

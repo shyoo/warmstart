@@ -11,6 +11,7 @@ import type {
   Worker
 } from '@shared/protocol'
 import { errorMessage } from '@shared/errors.js'
+import type { WorkerStatusFacts } from '@shared/workerstatus'
 import { currentTargetId } from './target'
 
 /**
@@ -43,6 +44,8 @@ export interface FleetEntry {
   atCapacity?: boolean
   /** Slots held by a task with no live process. Daemon-computed; optional for the same reason. */
   reservedSlots?: number
+  /** What the adapter declares that changes what the status means (t961). See `workerStatus`. */
+  statusFacts?: WorkerStatusFacts
 }
 
 /** A worker event already carries its new row. Only these changes invalidate fleet.list's

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, extname, join, win32 } from 'node:path'
 import { homedir } from 'node:os'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot, QuotaWindow } from '@shared/protocol.js'
@@ -216,6 +216,17 @@ const info: AdapterInfo = {
       'swallows anything typed at it until it is answered, and until then the `/usage` probe reads ' +
       'nothing while scheduled work carries on unaffected.'
   },
+  // ⛔ **The only way to see a lapsed Meta subscription** (t961). `auth.json` stays valid and the
+  // `/usage` panel reads "Currently unavailable" exactly as it does on a freshly reset window, so
+  // neither free probe can tell. Measured 2026-10-07 on MuseFirst's own credential: this turn over
+  // `exec --json` failed in 2.0 s, exit 1, `run.terminal.failed` → `API error 402 [request_id=…]:
+  // Billing verification failed. Please check your payment method. (billing_error)`. Free while the
+  // vendor refuses; one small turn on a live account, which is the warm-up it replaces.
+  accountCheck: {
+    prompt: 'What model are you? Answer in one short sentence and do nothing else.',
+    timeoutMs: 90_000,
+    effort: 'low'
+  },
   verification: {
     level: 'measured',
     asOf: '2026-09-19',
@@ -340,6 +351,35 @@ function dataHome(isolationRoot: string): string {
 function authFile(isolationRoot: string): string {
   return join(configHome(isolationRoot), 'muse', 'auth.json')
 }
+/**
+ * Session logs whose directory changed at or after `since`, newest first — today's and yesterday's
+ * local-date directories only, which is all a probe that just ran can have written (t961).
+ */
+function sessionLogsSince(isolationRoot: string, since: number): string[] {
+  const root = join(dataHome(isolationRoot), 'muse', 'sessions')
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  const found: Array<{ file: string; at: number }> = []
+  for (const day of [new Date(), new Date(Date.now() - 86_400_000)]) {
+    const dir = join(root, String(day.getFullYear()), pad(day.getMonth() + 1), pad(day.getDate()))
+    let names: string[]
+    try {
+      names = readdirSync(dir)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      const file = join(dir, name, 'session.jsonl')
+      try {
+        const at = statSync(file).mtimeMs
+        if (at >= since) found.push({ file, at })
+      } catch {
+        // Not a session directory, or not written yet.
+      }
+    }
+  }
+  return found.sort((a, b) => b.at - a.at).map((f) => f.file)
+}
+
 function trustFile(isolationRoot: string): string {
   return join(configHome(isolationRoot), 'muse', 'trust.json')
 }
@@ -940,6 +980,40 @@ export const museCode: AgentAdapter = {
       said.includes('billing verification failed') ||
       said.includes('check your payment method')
     )
+  },
+
+  /**
+   * ⭐ **The machine record of a billing gate** (t961). Measured 2026-10-07 on MuseFirst: every TUI
+   * probe after Meta stopped billing the account wrote `session.payment_gate.banner_shown`
+   * (`payment_tier: subscription`, `has_action_url: true`) into its own `session.jsonl`, eighth
+   * record in, while the `/usage` panel never drew — so the probe logged *the panel did not appear*
+   * and never reached the warm-up. The TUI mints its own session id, so the directory is found by
+   * time, not by name.
+   */
+  paymentGateSince: (isolationRoot: string, since: number): string | null => {
+    for (const file of sessionLogsSince(isolationRoot, since)) {
+      let text: string
+      try {
+        text = readFileSync(file, 'utf8')
+      } catch {
+        continue
+      }
+      for (const line of text.split('\n')) {
+        if (!line.includes('session.payment_gate.')) continue
+        try {
+          const record = JSON.parse(line) as { payload_type?: unknown; payload?: { record?: { payment_tier?: unknown } } }
+          if (typeof record.payload_type !== 'string' || !record.payload_type.startsWith('session.payment_gate.')) continue
+          const tier = record.payload?.record?.payment_tier
+          return (
+            `Muse Code gated this account on payment (\`${record.payload_type}\`` +
+            `${typeof tier === 'string' ? `, ${tier} tier` : ''}): Meta is asking for the payment method.`
+          )
+        } catch {
+          // A torn last line is the session still writing; the next probe reads it whole.
+        }
+      }
+    }
+    return null
   },
 
   /**

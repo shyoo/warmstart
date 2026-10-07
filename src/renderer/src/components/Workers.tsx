@@ -18,6 +18,8 @@ import { TerminalPane } from './Terminal'
 import { useTarget } from '../lib/target'
 import { errorMessage } from '@shared/errors.js'
 import { ModelTable, MODEL_TABLE_HELP } from './ModelTable'
+import { WorkerStatusBadge } from './WorkerStatusBadge'
+import { workerStatus } from '@shared/workerstatus'
 
 /**
  * The (i) beside a column heading whose number needs a sentence.
@@ -455,7 +457,7 @@ export function Workers({
             </tr>
           </thead>
           <tbody>
-            {fleet.map(({ worker, quota, sessions }, index) => {
+            {fleet.map(({ worker, quota, sessions, statusFacts }, index) => {
               // ⛔ The stored field, not a substring of `raw`. This is the same mistake the
               // scheduler's dispatch gate made and had fixed: grepping the probe's raw output for
               // `"loggedIn": true` depends on one adapter's exact JSON spacing, so a worker that
@@ -543,9 +545,14 @@ export function Workers({
                     key: 'suspect',
                     tone: 'danger',
                     label: 'Subscription Expired',
+                    // ⭐ t961: an adapter with an account check is re-asked on its own — free while
+                    // the vendor still refuses — so the sentence says so only where that is true.
                     text:
                       `${suspect.reason} — background usage polling paused while held out. ` +
-                      'Renew subscription to restore access; use Recheck to verify after renewal.'
+                      (adapters.find((a) => a.id === worker.adapterId)?.accountCheck
+                        ? 'Renew the subscription; Warmstart re-asks the vendor every six hours ' +
+                          '(free while it still refuses), or use Recheck to verify at once.'
+                        : 'Renew subscription to restore access; use Recheck to verify after renewal.')
                   })
                 } else {
                   notes.push({
@@ -647,6 +654,14 @@ export function Workers({
                               <span className="tag tag--running">{liveCount} live</span>
                             ) : null
                           })()}
+                          {/* ⭐ The last inferred state and when it began (t961), from the same
+                              `workerStatus` the fleet strip draws — so the two cannot disagree. */}
+                          <span className="worker-status-line">
+                            <WorkerStatusBadge
+                              status={workerStatus(worker, quota, sessions, now, statusFacts)}
+                              now={now}
+                            />
+                          </span>
                         </div>
                       </div>
                     </td>

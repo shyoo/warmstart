@@ -1214,3 +1214,41 @@ describe('failure classifiers', () => {
     expect(museCode.needsReauth?.('529 overloaded')).toBe(false)
   })
 })
+
+/**
+ * ⛔ t961, measured 2026-10-07 on MuseFirst: a lapsed account's TUI never draws `/usage`, so the
+ * probe read *did not appear* — while its own session log carried the gate, eighth record in.
+ */
+describe('paymentGateSince', () => {
+  const banner = JSON.stringify({
+    schema_version: 1,
+    record_type: 'event',
+    payload_type: 'session.payment_gate.banner_shown',
+    payload: {
+      kind: 'payment_banner_shown',
+      record: { model: 'muse-spark-1.3-contributor', payment_tier: 'subscription', has_action_url: true }
+    }
+  })
+
+  function sessionLog(lines: string[]): string {
+    const root = mkdtempSync(join(tmpdir(), 'muse-gate-'))
+    const d = new Date()
+    const pad = (n: number): string => String(n).padStart(2, '0')
+    const dir = join(root, 'data', 'muse', 'sessions', String(d.getFullYear()), pad(d.getMonth() + 1), pad(d.getDate()), '01a116c8-97be')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'session.jsonl'), `${lines.join('\n')}\n`)
+    return root
+  }
+
+  it('finds the gate in a probe session written since the probe began', () => {
+    const root = sessionLog(['{"payload_type":"session.started"}', banner])
+    const said = museCode.paymentGateSince?.(root, Date.now() - 60_000)
+    expect(said).toContain('session.payment_gate.banner_shown')
+    expect(said).toContain('subscription tier')
+  })
+
+  it('ignores a session older than the probe, and one with no gate', () => {
+    expect(museCode.paymentGateSince?.(sessionLog([banner]), Date.now() + 60_000)).toBeNull()
+    expect(museCode.paymentGateSince?.(sessionLog(['{"payload_type":"session.started"}']), Date.now() - 60_000)).toBeNull()
+  })
+})

@@ -2338,6 +2338,14 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'projects', 'deleted_at')) {
       conn.exec(`alter table projects add column deleted_at integer`)
     }
+  },
+  // 87 - the provider failing an account's last turn (t961), so a worker's status can say
+  // *unavailable since* instead of *ready* while every turn bounces. ⛔ Not health: health is a
+  // dispatch gate and an outage never is. ⚠️ Guarded by `hasColumn`: `versionBefore` replays.
+  (conn) => {
+    if (!hasColumn(conn, 'workers', 'outage_json')) {
+      conn.exec(`alter table workers add column outage_json text`)
+    }
   }
 ]
 

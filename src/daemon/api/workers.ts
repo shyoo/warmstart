@@ -1,10 +1,12 @@
 /** Accounts, adapters, sessions and the daemon's own housekeeping. */
 import type { AdapterInfo, DoctorReport, ModelOptions, Settings } from '@shared/protocol.js'
+import type { WorkerStatusFacts } from '@shared/workerstatus.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from '../adapters/index.js'
 import { createWorker, knownModelIds, listWorkers, creditsDiscrepancy, noteCreditsDiscrepancyReported, setWorkerCreditsIntent, refreshIdentity, reorderWorkers, requireWorker, retireWorker, updateWorker } from '../workers.js'
 import { accountUnavailability } from '../eligibility.js'
 import { lastQuota, lastQuotaReading, probeWorker, refreshNow } from '../quota.js'
+import { checkAccount } from '../accountcheck.js'
 import { emit } from '../events.js'
 import { attachTerminal, backscroll, closeSession, listSessions, resizeSession, sessionsForWorker, sessionsAndWarmConversationsForWorker, spawnSession, streamLog, writeSession } from '../sessions.js'
 import { costModel, costModels } from '../costmodel.js'
@@ -41,6 +43,17 @@ type WorkerMethod =
   | 'settings.get' | 'settings.set' | 'log.tail'
   | 'log.files'
 
+/** What the adapter declares that changes what a worker's status means (t961). Never its name. */
+function statusFactsFor(adapterId: string): WorkerStatusFacts | undefined {
+  try {
+    const info = adapter(adapterId).info
+    return { quotaProbe: info.capabilities.quotaProbe, loginKind: info.login.kind, accountCheck: Boolean(info.accountCheck) }
+  } catch {
+    // An adapter that is not loaded answers nothing; the status reads what the worker row says.
+    return undefined
+  }
+}
+
 export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
   const uptime = (): number => Date.now() - ctx.startedAt
 
@@ -64,7 +77,8 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
           // notes in protocol.ts: together these are what "ready" means everywhere in the daemon.
           unavailable: accountUnavailability(worker),
           atCapacity: atCapacity(liveSessions, worker.maxConcurrent, null, reservedSlots),
-          reservedSlots
+          reservedSlots,
+          statusFacts: statusFactsFor(worker.adapterId)
         }
       }),
     'worker.create': async (p) => {
@@ -107,6 +121,13 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
       // The background sweep re-reads identity too and deliberately does not, because an expired
       // subscription answers `auth status` exactly as a live one does.
       await refreshIdentity(p.id, true)
+      // ⛔ t961: an expired hold is asked about, not lifted on a credential file that still reads
+      // valid — `refreshIdentity` leaves it standing where the adapter has a check, and the check
+      // lifts it only if the vendor actually runs a turn. Free while the vendor still refuses.
+      const held = requireWorker(p.id)
+      if (held.health?.subscriptionExpired && adapter(held.adapterId).info.accountCheck) {
+        await checkAccount(p.id, 'a person pressed Probe')
+      }
       // ⛔ Claim the same refresh ledger as the dispatch gate and poller. Calling `refreshUsage`
       // directly left this manual TUI invisible: the next scheduler tick started a second probe,
       // and `spawnSession` correctly rejected it as already refreshing. The resulting failed

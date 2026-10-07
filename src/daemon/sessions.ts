@@ -1039,8 +1039,13 @@ export function spawnSession(opts: SpawnOptions): Session {
 
   // One probe at a time per worker. Two TUIs racing to rewrite the same usage cache would answer a
   // question nobody asked twice, and the second reading is not fresher than the first.
+  // ⚠️ Per transport (t961): the account check is a headless turn, not a TUI, and the warm-up spends
+  // it while the `/usage` panel it is meant to fill is still open.
   if (purpose === 'probe') {
-    const inFlight = sessionsForWorker(worker.id).filter((s) => s.purpose === 'probe').length
+    const transport = opts.transport ?? 'pty'
+    const inFlight = sessionsForWorker(worker.id).filter(
+      (s) => s.purpose === 'probe' && s.transport === transport
+    ).length
     if (inFlight > 0) throw new Error(`worker '${worker.label}' is already refreshing its usage`)
   }
 

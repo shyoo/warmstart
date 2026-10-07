@@ -251,6 +251,17 @@ export interface AgentAdapter {
   subscriptionExpired?: (reason: string) => boolean
 
   /**
+   * Did the vendor gate this account on payment in a session that started at or after `since`?
+   * Returns its own sentence, or null (t961).
+   *
+   * ⛔ **Read from the vendor's own session log, never the screen**, and **a trigger, never a
+   * verdict.** It is what tells the usage probe that a panel which "did not appear" was a billing gate
+   * rather than a slow start, so the probe spends the adapter's `accountCheck` — whose terminal record
+   * is the verdict. A gate alone writes nothing onto the worker.
+   */
+  paymentGateSince?: (isolationRoot: string, since: number) => string | null
+
+  /**
    * Does this failure mean *the account is out of quota for now*, rather than broken?
    *
    * ⛔ **The distinction t108 turned on** (2026-09-02). A run whose CLI answered

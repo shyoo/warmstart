@@ -11,6 +11,7 @@ import type {
   Worker,
   WorkerHealth,
   WorkerIdentity,
+  WorkerOutage,
   WorkerRole
 } from '@shared/protocol.js'
 import { resolveModelChoice } from '@shared/tasks.js'
@@ -48,6 +49,7 @@ interface WorkerRow {
   credits_json: string | null
   credits_intent_json: string | null
   health_json: string | null
+  outage_json?: string | null
   sort_order: number
   created_at: number
   retired_at: number | null
@@ -104,6 +106,7 @@ function toWorker(r: WorkerRow): Worker {
       }
       return hlth
     })(),
+    outage: r.outage_json ? (JSON.parse(r.outage_json) as WorkerOutage) : null,
     sortOrder: r.sort_order,
     createdAt: r.created_at,
     retiredAt: r.retired_at
@@ -775,7 +778,8 @@ export function recordDispatchFailure(id: string, reason: string, runId: string 
     // its failures says `false`, which is the safe answer: the worker is still held out, the
     // operator is still shown the reason, and nobody is sent to re-authenticate on a guess.
     needsReauth: ad.needsReauth?.(reason) ?? false,
-    subscriptionExpired: isExpired
+    subscriptionExpired: isExpired,
+    checkedAt: Date.now()
   }
   db().prepare('update workers set health_json = ? where id = ?').run(JSON.stringify(health), id)
   if (health.state === 'suspect') {
@@ -785,13 +789,68 @@ export function recordDispatchFailure(id: string, reason: string, runId: string 
 }
 
 /**
+ * The vendor refused a turn on this account in words its adapter reads as the *account's* fault —
+ * an expired subscription, a rejected credential (t961).
+ *
+ * ⛔ **Every turn that fails this way says so, not only a dispatched one.** t954's 402 reached the
+ * worker row only from a work run; the same refusal on a quality review (2026-10-07, MuseFirst) was
+ * written on the review and nowhere else, and the account went on reading as healthy.
+ *
+ * ⚠️ A hold that already says the same thing is *re-confirmed*, not re-struck: `since` keeps the
+ * moment it began and `checkedAt` moves, which is what the status line's age is read from. Returns
+ * null where the adapter does not read the sentence as the account's fault at all.
+ */
+export function noteAccountFault(id: string, reason: string, runId: string | null): Worker | null {
+  const w = getWorker(id)
+  if (!w) return null
+  const ad = adapter(w.adapterId)
+  const expired = ad.subscriptionExpired?.(reason) ?? false
+  const reauth = ad.needsReauth?.(reason) ?? false
+  if (!expired && !reauth) return null
+  const held = w.health
+  if (held?.state === 'suspect' && (held.subscriptionExpired === true) === expired && (held.needsReauth === true) === reauth) {
+    const health: WorkerHealth = { ...held, reason, checkedAt: Date.now() }
+    db().prepare('update workers set health_json = ? where id = ?').run(JSON.stringify(health), id)
+    return announce(requireWorker(id))
+  }
+  return recordDispatchFailure(id, reason, runId)
+}
+
+/**
+ * The provider's servers failed this account's turn (t961). ⛔ Recorded for the status line only —
+ * see `WorkerOutage`: nothing gates on it, and the run's own retry ladder is untouched.
+ */
+export function recordOutage(id: string, reason: string): void {
+  const w = getWorker(id)
+  if (!w) return
+  const outage: WorkerOutage = { at: Date.now(), reason: reason.replace(/\s+/g, ' ').trim().slice(0, 300) }
+  db().prepare('update workers set outage_json = ? where id = ?').run(JSON.stringify(outage), id)
+  if (!w.outage) log.info(`${w.label}: the provider is failing turns here: ${outage.reason}`)
+  announce(requireWorker(id))
+}
+
+/** A turn or a reading got through, so whatever outage was recorded is over. */
+function clearOutage(id: string, label: string): boolean {
+  const had = row<{ outage_json: string | null }>(db().prepare('select outage_json from workers where id = ?').get(id))
+  if (!had?.outage_json) return false
+  db().prepare('update workers set outage_json = null where id = ?').run(id)
+  log.info(`${label}: the provider answered again; clearing the outage`)
+  return true
+}
+
+/**
  * This worker just proved it works. ⛔ Called on the first metered turn of a run, not on a clean
  * exit - a process can exit 0 having done nothing, which is the exact failure this whole mechanism
  * exists to catch.
  */
 export function clearDispatchFailure(id: string): void {
   const w = getWorker(id)
-  if (!w?.health) return
+  if (!w) return
+  const clearedOutage = clearOutage(id, w.label)
+  if (!w.health) {
+    if (clearedOutage) announce(requireWorker(id))
+    return
+  }
   db().prepare('update workers set health_json = null where id = ?').run(id)
   log.info(`${w.label} produced a turn; clearing '${w.health.reason}'`)
   announce(requireWorker(id))
@@ -817,7 +876,13 @@ export function clearDispatchFailure(id: string): void {
  */
 export function clearQuarantineByProbe(id: string): void {
   const w = getWorker(id)
-  if (w?.health?.state !== 'suspect') return
+  if (!w) return
+  // ⚠️ Published windows are the provider answering, so an outage ends here whatever the hold says.
+  const clearedOutage = clearOutage(id, w.label)
+  if (w.health?.state !== 'suspect') {
+    if (clearedOutage) announce(requireWorker(id))
+    return
+  }
   db().prepare('update workers set health_json = null where id = ?').run(id)
   log.info(`${w.label} published usage windows; clearing '${w.health.reason}'`)
   announce(requireWorker(id))
@@ -869,6 +934,11 @@ export async function refreshIdentity(id: string, lift = false): Promise<Worker>
     const health = getWorker(id)!.health
     if (probe.subscriptionExpired) {
       log.info(`${w.label} was re-probed by hand; subscription is still expired`)
+    } else if (health?.subscriptionExpired && adapter(w.adapterId).info.accountCheck) {
+      // ⛔ t961: a credential file that still reads valid says nothing about billing — MuseFirst's
+      // did for a day after Meta stopped billing it, and every Probe press lifted the hold. Where
+      // the adapter has a turn that can actually tell, that turn decides (`checkAccount`).
+      log.info(`${w.label} was re-probed by hand; its account check decides whether the hold lifts`)
     } else {
       if (health?.runId) {
         const failedRun = row<{ session_id: string; started_warm: number | null }>(

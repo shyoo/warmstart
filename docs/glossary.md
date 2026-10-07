@@ -36,7 +36,17 @@ does **not** stop the background usage probe, and that asymmetry is deliberate (
 PTY, a dispatch is a workspace claim and a process and somebody's task appearing to fail, so the
 fleet keeps the cheap way of asking. Lifted by a usage reading that publishes real windows, by one
 real turn, or by re-probing it by hand. ⛔ An account whose failed run measured the **subscription as
-expired** is refused the probe too, because there retrying is the thing that cannot help.
+expired** is refused the probe too, because there retrying is the thing that cannot help — and where
+its adapter declares an `accountCheck`, only that check's turn lifts it (t961; see
+[`adapters.md`](adapters.md) § *The turn that can see billing*).
+
+**Worker status** — one word for a worker's state, *derived* by `workerStatus`
+(`src/shared/workerstatus.ts`) and never stored or gated on (t961): `off`, `expired`, `sign in`,
+`held`, `setup`, `unavailable` (provider outage, or an endpoint that did not answer), `working`,
+`ready` (published windows, however old — the age is always shown), `unmetered` (signed in and
+well, but the vendor publishes no usage until a turn runs in the window — Muse after a reset), and
+`unknown` (never probed, or the newest check failed). Each carries a `since` and its evidence; the
+fleet strip draws only its glyph, Settings > Workers its word and age as well.
 
 ---
 

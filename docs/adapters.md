@@ -347,6 +347,42 @@ The rules it is bound by, each of which is an invariant rather than a preference
 - ⚠️ The prompt asks the model about *itself* — no file, no tool — so it cannot fail on an untrusted
   folder, and it cannot touch a repository.
 
+### The turn that can see billing: `accountCheck` (t961)
+
+⛔ **Nothing free can tell a lapsed subscription from a live one.** MuseFirst's lapsed on 2026-10-06:
+`auth.json` stayed valid, the `/usage` panel read the same *Currently unavailable* an untouched window
+does, and the worker read healthy for a day. An adapter may declare `info.accountCheck` — a prompt,
+a timeout, an effort — and `checkAccount` (`src/daemon/accountcheck.ts`) spends it as **one headless
+`stream` turn**, so the verdict is the vendor's terminal record read by the adapter's own
+`subscriptionExpired` / `needsReauth` / `overloaded`, never the screen. Measured 2026-10-07 on
+MuseFirst: `muse exec --json` failed in 2.0 s, exit 1, `run.terminal.failed` → `402 … (billing_error)`;
+through `checkAccount` itself, `expired` in 4.3 s (2.5 s of it the prompt delay). Muse Code is the only
+adapter that declares one.
+
+- ⭐ **Where an adapter declares it, the warm-up *is* the check**, so the turn that warm-up already
+  spends goes over `exec` instead of being typed into the TUI — t689 measured an exec turn ending a
+  streak where a typed one did not. A refusal stops the probe and is stored without `vendorSilent`: a
+  lapsed account is not a fresh window.
+- ⛔ **A lapsed Muse account never reaches *Currently unavailable*.** Its TUI draws no panel at all —
+  every probe on 2026-10-07 logged *the panel did not appear* — but writes
+  `session.payment_gate.banner_shown` into the probe session's own `session.jsonl`. The adapter's
+  `paymentGateSince` reads that log (by time: the TUI mints its own id) and the probe treats a gate
+  like a silent window — same once-per-streak bound, and only where an `accountCheck` exists. ⚠️ A
+  trigger, never a verdict: the check's terminal record decides. Measured through `refreshUsage`
+  itself on a copy of MuseFirst's credential: gate → check → `expired` in 37.8 s.
+- ⛔ **Probe does not lift an expired hold on a credential file.** `refreshIdentity(lift)` leaves it
+  standing where the adapter has a check, and `worker.probe` runs the check first; only `ok` (the
+  vendor ran a turn) clears it.
+- ⭐ **An expired hold is re-asked every six hours** by the sweep (`RECHECK_EXPIRED_MS`, the
+  operator's choice) — free while the vendor still refuses, one small turn on the sweep that finds it
+  renewed. Each refusal moves `health.checkedAt`, not `since`.
+- ⛔ **Every failed turn reports on its account**, not only a dispatched one: `noteTurnFailure` on the
+  stream hook in `index.ts` records an account fault from a review, chat or consult (work keeps the
+  scheduler's own handling) and an **outage** from any purpose. An outage (`workers.outage_json`,
+  migration 87) is shown, never gated on, and ends with a metered turn or a published reading.
+- ⚠️ A probe `stream` session may run beside the probe TUI: the one-probe guard in `spawnSession` is
+  per transport.
+
 **4. The TUI asks its terminal a question, and a probe PTY has nobody to answer it.** ⭐ Measured
 2026-09-13 on macOS against Muse Code 1.2.1 (t1, t3): every probe on a signed-in, folder-trusted
 worker read *"the probe session did not start"*, and the daemon log showed why — `session … exited

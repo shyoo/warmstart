@@ -380,6 +380,58 @@ body {
   min-height: 0;
 }
 
+/*
+ * A worker's status (t961): a coloured glyph, then its word and age where there is room.
+ *
+ * ⚠️ The glyph carries the state in shape as well as colour (`STATUS_GLYPH`), so the tones reuse the
+ * `--state-*` palette the dots already use rather than inventing one. ⛔ `working` pulses and nothing
+ * else does: movement is reserved for the one state that is itself happening.
+ */
+.wstatus {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-shrink: 0;
+  font-size: var(--text-meta);
+  color: var(--color-text-dim);
+  white-space: nowrap;
+}
+
+.wstatus-glyph {
+  display: inline-block;
+  min-width: 1em;
+  text-align: center;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.wstatus-age {
+  color: var(--color-text-faint);
+}
+
+.wstatus--muted .wstatus-glyph { color: var(--state-idle); }
+.wstatus--bad .wstatus-glyph,
+.wstatus--bad .wstatus-label { color: var(--state-danger); }
+.wstatus--warn .wstatus-glyph,
+.wstatus--warn .wstatus-label { color: var(--state-warn); }
+.wstatus--live .wstatus-glyph { color: var(--state-running); animation: wstatus-pulse 1.6s ease-in-out infinite; }
+.wstatus--ok .wstatus-glyph { color: var(--state-ok); }
+.wstatus--info .wstatus-glyph { color: var(--color-accent); }
+
+@keyframes wstatus-pulse {
+  50% { opacity: 0.35; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wstatus--live .wstatus-glyph { animation: none; }
+}
+
+/* On a card the glyph is the whole badge, so it sits on the head row's centre line like the icon. */
+.wstatus--compact {
+  align-items: center;
+  cursor: default;
+}
+
 /* ---- fleet strip ------------------------------------------------------- */
 
 .fleet-wrap {
@@ -3231,6 +3283,8 @@ body {
 .tbl-workers .worker-mcp > span { justify-self: start; }
 .tbl-workers .worker-identity { display: flex; align-items: center; gap: var(--sp-2); }
 .tbl-workers .worker-identity-info { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-1); }
+/* Its own line under the name: the status is read down the column, worker by worker. */
+.tbl-workers .worker-status-line { flex-basis: 100%; }
 .tbl-workers .worker-account { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2); min-width: 0; }
 .tbl-workers .worker-account-plan { font-size: var(--text-meta); }
 .tbl-workers .worker-account-billing { flex-basis: 100%; font-size: var(--text-meta); }

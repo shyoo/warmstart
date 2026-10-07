@@ -52,6 +52,7 @@ import { onSettingChange } from './settings.js'
 import { paths } from './paths.js'
 import { reconcilePullRequestDeliveries } from './deliveries.js'
 import { augmentPath } from './which.js'
+import { noteTurnFailure } from './accountcheck.js'
 import { APP_VERSION } from '@shared/version.js'
 
 // On macOS/Linux GUI launches, process.env.PATH is minimal (/usr/bin:/bin:...).
@@ -207,6 +208,9 @@ async function main(): Promise<void> {
         // A worker that left the model to its server learns here what answered (local-llm).
         noteModelChosen(session.id, event.model)
       }
+      // ⛔ A failed turn is evidence about the *account* whatever asked for it (t961) — see
+      // `noteTurnFailure`, which lets the adapter read its own CLI's words.
+      if (event.kind === 'result') noteTurnFailure(session, event)
       // The one quota signal that is both live and free: it rides a turn already being paid for.
       if (event.kind === 'rate_limit') {
         recordRateLimit(session.workerId, session.id, event.info)
