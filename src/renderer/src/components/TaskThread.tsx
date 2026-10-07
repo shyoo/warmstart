@@ -1,5 +1,5 @@
 import { sessionEnded } from '@shared/protocol'
-import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   resolveModelChoice,
   SHARING_LABELS,
@@ -77,6 +77,7 @@ import { errorMessage } from '@shared/errors.js'
 import { stripAnsi } from '@shared/ansi'
 import { commandForEvent, commandMatches, leadingCommand, type ThreadCommand } from '@shared/commands'
 import { useAction } from '../lib/useAction'
+import { TaskDetailStore, viewFor } from '../lib/threaddetail'
 import { TaskSettingPicker } from './TaskSettingPicker'
 import { ProposeUpstream } from './thread/ProposeUpstream'
 import { CacheCost, Fact, ModelFact, SessionFact } from './thread/Facts'
@@ -180,28 +181,32 @@ export function TaskThread({
   backLabel?: string
   onOpenTask?: (taskId: string) => void
 }): React.JSX.Element {
-  const [detail, setDetail] = useState<TaskDetailData | null>(null)
-  const [missing, setMissing] = useState(false)
   const { activity, seed } = useActivity()
   const now = useNow(1000)
 
-  const refresh = useCallback(async () => {
-    const got = await rpc('task.get', { id: taskId })
-    if (!got) {
-      setMissing(true)
-      return
-    }
-    setDetail(got)
-    // Seed the tail once from whatever the daemon is holding, so opening a task that is already
-    // running does not start from a blank pane. Events take over from here.
-    seed(got.task.id, got.activity)
-  }, [taskId, seed])
+  // ⛔ A detail is held only for the task the route names (`lib/threaddetail.ts`). This used to be a
+  // bare `useState` that took whichever `task.get` answered last, so a slow read of the task you had
+  // just left put its thread — and its composer — back under the new route (t936's question was
+  // delivered to t948 twice).
+  const [store] = useState(
+    () =>
+      new TaskDetailStore<TaskDetailData>(async (id) => {
+        const got = await rpc('task.get', { id })
+        // Seed the tail once from whatever the daemon is holding, so opening a task that is already
+        // running does not start from a blank pane. Events take over from here.
+        if (got) seed(got.task.id, got.activity)
+        return got
+      }, taskId)
+  ) // ⚠️ `seed` is a stable callback (`useActivity`), so the first one is the only one needed.
+  const state = useSyncExternalStore(store.subscribe, store.getSnapshot)
+  const { detail, missing } = viewFor(state, taskId)
+
+  const refresh = useCallback(() => store.refresh(), [store])
 
   useEffect(() => {
-    setDetail(null)
-    setMissing(false)
-    void refresh()
-  }, [refresh])
+    store.open(taskId)
+    void store.refresh()
+  }, [store, taskId])
 
   useDaemonEvents((event) => {
     // ⚠️ Narrowed to this task. The pane used to re-fetch on every `task.changed` the fleet emitted,
@@ -237,6 +242,8 @@ export function TaskThread({
 
   return (
     <TaskDetail
+      // ⛔ Keyed by the task: the composer's draft, its pending send and every pill belong to one task.
+      key={detail.task.id}
       detail={detail}
       activity={activity[detail.task.id] ?? EMPTY_ACTIVITY}
       fleet={fleet}
