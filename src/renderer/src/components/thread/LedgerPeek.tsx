@@ -16,9 +16,12 @@ import type { Run, Task } from '@shared/tasks'
 import type { Session } from '@shared/protocol'
 import type { FleetEntry } from '../../lib/daemon'
 import { timeRange } from '../../lib/format'
-import { holdLine, isWorking, statusHintFor, statusLabel, statusToneFor, Working } from '../../lib/taskview'
+import { holdGlance, isWorking, statusHintFor, statusLabel, statusToneFor, Working } from '../../lib/taskview'
 import { outcomeClass } from '../../lib/threadview'
 import { QuotaDelta } from './RunRow'
+
+/** The peek floats over the thread, so its *wants* row is a clause, not a paragraph (t958). */
+const PEEK_HOLD_CHARS = 140
 
 export function LedgerPeek({
   task,
@@ -38,7 +41,7 @@ export function LedgerPeek({
   onJumpToLedger: () => void
   onJumpToRun: () => void
 }): React.JSX.Element {
-  const hold = holdLine(task, now)
+  const hold = holdGlance(task, now, PEEK_HOLD_CHARS)
   const run = latest?.run ?? null
   const session = run ? sessions.find((s) => s.id === run.sessionId) : undefined
   const worker = run ? fleet.find((f) => f.worker.id === run.workerId)?.worker.label : undefined
@@ -67,7 +70,9 @@ export function LedgerPeek({
         {hold && (
           <span className="ledger-peek-row">
             <span className="ledger-peek-key">{task.status === 'awaiting_human' ? 'wants' : 'waiting on'}</span>
-            <span className="ledger-peek-val">{hold}</span>
+            <span className="ledger-peek-val ledger-peek-val--hold" title={hold.full}>
+              {hold.text}
+            </span>
           </span>
         )}
       </button>

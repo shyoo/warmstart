@@ -15,7 +15,9 @@ import {
   SHARING_LABELS,
   SHARING_SHORT,
   PLAN_EXECUTE_CHILDREN,
+  HOLD_GLANCE_CHARS,
   adapterSpread,
+  clipAtWord,
   isPlanExecute,
   planChildCap,
   planModeOf,
@@ -289,5 +291,26 @@ describe('planModeOf', () => {
     expect(planModeOf({ ...plan(1, 1), kind: 'debate' })).toBe('split')
     expect(planModeOf({ ...plan(1, 1), kind: 'work' })).toBe('split')
     expect(planModeOf(null)).toBe('split')
+  })
+})
+
+describe('clipAtWord', () => {
+  it('leaves text that fits alone, trimmed', () => {
+    expect(clipAtWord('  all of it  ', 50)).toBe('all of it')
+  })
+
+  it('cuts at a word boundary inside the limit and marks what was dropped', () => {
+    const out = clipAtWord('one two three four five six', 15)
+    expect(out).toBe('one two three…')
+    expect(out.length).toBeLessThanOrEqual(15)
+  })
+
+  it('cuts a single unbroken token where it is rather than returning only the ellipsis', () => {
+    const out = clipAtWord('x'.repeat(100), 20)
+    expect(out).toBe(`${'x'.repeat(19)}…`)
+  })
+
+  it('bounds a wall of text to the hold glance', () => {
+    expect(clipAtWord('word '.repeat(2000), HOLD_GLANCE_CHARS).length).toBeLessThanOrEqual(HOLD_GLANCE_CHARS)
   })
 })

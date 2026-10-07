@@ -3849,3 +3849,24 @@ export function resolveRetryCauses(task: { holdReason: string | null }): Resolve
   if (/trunk moved.*branch is empty/i.test(reason)) out.push('trunkMoved')
   return out
 }
+
+/**
+ * How much of a hold reason a one-glance surface may carry (t958 ← t946).
+ *
+ * ⛔ **`holdReason` is a status, not a transcript.** An agent that ended its turn without reporting
+ * was handed over with its *entire* last message appended, so the ledger's *wants* row printed a
+ * 3,000-character wall beside a thread that already shows the same text in full (t946). The full
+ * words belong in the thread message and the run's outcome note; the row that names what the task is
+ * waiting on gets a sentence or two.
+ */
+export const HOLD_GLANCE_CHARS = 280
+
+/** `text` cut at the last word boundary that fits `max`, with `…` where something was dropped. */
+export function clipAtWord(text: string, max: number): string {
+  const flat = text.trim()
+  if (flat.length <= max) return flat
+  const room = flat.slice(0, Math.max(0, max - 1))
+  const space = room.search(/\s\S*$/)
+  // ⚠️ A single unbroken token (a path, a URL) has no boundary to fall back to; cut it where it is.
+  return `${(space > max / 2 ? room.slice(0, space) : room).trimEnd()}…`
+}

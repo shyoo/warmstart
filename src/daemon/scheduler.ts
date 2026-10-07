@@ -18,7 +18,9 @@ import {
   isWeeklyWindow,
   windowHighWater,
   resolveModelChoice,
-  TERMINAL_STATUSES
+  TERMINAL_STATUSES,
+  HOLD_GLANCE_CHARS,
+  clipAtWord
 } from '@shared/tasks.js'
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
@@ -2854,18 +2856,27 @@ async function runWatchdogs(): Promise<void> {
         // this same session that stops for a different reason must not inherit it.
         const waiting = blockedOn.get(session.id)
         blockedOn.delete(session.id)
+        const lead =
+          'The agent finished its turn without calling `task_complete`, `await_human` or ' +
+          `\`ask_human\`, and has done nothing for ${minutes} minutes since. Nothing has been ` +
+          'landed, committed or discarded — the work is exactly as the agent left it.'
+        const asked = waiting ? `It stopped to ask you something: "${waiting.slice(0, 400)}"` : null
         await parkForHuman(
           session.id,
-          'The agent finished its turn without calling `task_complete`, `await_human` or ' +
-            `\`ask_human\`, and has done nothing for ${minutes} minutes since. Nothing has been ` +
-            'landed, committed or discarded — the work is exactly as the agent left it. ' +
-            (waiting
-              ? `It stopped to ask you something: "${waiting.slice(0, 400)}"`
+          lead +
+            ' ' +
+            (asked
+              ? asked
               : idle.said
                 // Unlike a `needs_action` prompt, this is the only durable thread record of the
                 // agent's final turn. Do not turn a useful hand-off into an irrecoverable excerpt.
                 ? `The last thing it said was: "${idle.said}"`
-                : 'It said nothing on the way out.')
+                : 'It said nothing on the way out.'),
+          undefined,
+          // ⛔ The status is the CLI's own question where there is one (short, and the thing the person
+          // has to answer), else the lead alone. The agent's last message is in the thread, in full;
+          // repeating it in `holdReason` is what filled the ledger's *wants* row (t958 ← t946).
+          asked ?? lead
         )
         continue
       }
@@ -3901,7 +3912,9 @@ export async function completeTask(
 export async function parkForHuman(
   sessionId: string,
   reason: string,
-  state?: string
+  state?: string,
+  /** What the task reads as waiting on, where the reason is more than a glance (default: the start of it). */
+  hold?: string
 ): Promise<{ ok: boolean; reply: string }> {
   const run = runForSession(sessionId)
   if (!run?.taskId || run.outcome) {
@@ -3932,7 +3945,13 @@ export async function parkForHuman(
     addMessage(task.id, 'agent', `Where things stand:
 ${state.trim()}`, run.id)
   }
-  setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
+  // ⛔ The full reason is the thread message above and the run's outcome note below; `holdReason` is
+  //    the status line, read by every surface that says what a task waits on. An agent's reason has
+  //    no length limit, so bound it here (t958 ← t946).
+  setStatus(task.id, 'awaiting_human', {
+    assignee: 'human',
+    holdReason: clipAtWord(hold?.trim() || why, HOLD_GLANCE_CHARS)
+  })
   // ⛔ `blocked`, never `completed`. The run did work and metered turns and is one answer away from
   //    continuing; filing it as `failed` would say the opposite of what happened, and filing it as
   //    `completed` would feed the estimator a job that stopped half way through as if it were a

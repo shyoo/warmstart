@@ -4899,6 +4899,24 @@ select:focus-visible,
   overflow-wrap: anywhere;
 }
 
+/* The *wants* row is a status, not a document (t958). The text is already clamped in the component;
+   this is the backstop for a reason that is long in some other way (many short lines, one huge
+   token), so the ledger scrolls inside the row instead of growing the page or running off it. */
+.fact--waiting .fact-value {
+  max-height: 7.5em;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* The peek floats over the thread: three lines of its *wants* row, then the tooltip has the rest. */
+.ledger-peek-val--hold {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
 /* No prerequisite is a one-line fact; a real prerequisite keeps its add control below the list. */
 .fact--depends .fact-value { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); }
 .fact--depends .setting-btn-select-wrap { width: auto; }

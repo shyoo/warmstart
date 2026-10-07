@@ -209,7 +209,23 @@ describe('the turn that ended without reporting', () => {
     expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
     expect(tasks.getTask(task.id)?.assignee).toBe('human')
     expect(holdReasonOf(task.id)).toContain('task_complete')
-    expect(holdReasonOf(task.id)).toContain('The fix is minimal, focused.')
+    // ⛔ Not in the status line (t958 ← t946): the agent's last message is unbounded and the thread
+    // carries it in full, so repeating it in `holdReason` filled the ledger's *wants* row.
+    expect(holdReasonOf(task.id)).not.toContain('The fix is minimal, focused.')
+    expect(holdReasonOf(task.id).length).toBeLessThanOrEqual(280)
+    const handoff = tasks.messagesFor(task.id).find((m) => m.text.startsWith('Over to you:'))
+    expect(handoff?.text).toContain('The fix is minimal, focused.')
+  })
+
+  it('keeps a wall of a final message out of the status line (t946)', async () => {
+    const { task, session } = seedRunningTask()
+    const wall = `Decision card posted. ${'Nobody has answered it yet, so I stopped. '.repeat(70)}`
+    await endTurn(session, wall)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
+    await scheduler.tick()
+
+    expect(holdReasonOf(task.id).length).toBeLessThanOrEqual(280)
+    expect(holdReasonOf(task.id)).toContain('landed, committed or discarded')
   })
 
   it('says plainly that nothing was landed, committed or discarded', async () => {

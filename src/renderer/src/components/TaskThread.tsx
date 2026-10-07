@@ -61,7 +61,7 @@ import {
   statusToneFor,
   elapsed,
   hasQuotaGate,
-  holdLine,
+  holdGlance,
   isWorking,
   turnEnded,
   routerPicksModel,
@@ -412,6 +412,7 @@ function TaskDetail({
   // ⭐ One read of the workspace and one worker/model/effort pick, shared by the settle strip above
   // the composer and the composer's own buttons (t669).
   const resting = task.status === 'awaiting_human' || task.status === 'paused_user'
+  const hold = holdGlance(task, now)
   const work = usePendingWork(task, resting)
   const liveSession = sessions.find(
     (s) => s.id === runs[0]?.sessionId && !sessionEnded(s.state)
@@ -702,9 +703,11 @@ function TaskDetail({
                 )
               )}
             </Fact>
-            {holdLine(task, now) && (
+            {hold && (
               <Fact label={task.status === 'awaiting_human' ? 'wants' : 'waiting on'} className="fact--waiting">
-                {holdLine(task, now)}
+                {/* ⚠️ Clamped, and scrollable past that (`.fact--waiting`): the full reason is a thread
+                    message already, and this row is the status, not a second copy of it (t958). */}
+                <span title={hold.full}>{hold.text}</span>
               </Fact>
             )}
             {/* ⛔ Offered only where the hold is one this fleet invented. See `QuotaOverride`. */}

@@ -816,6 +816,8 @@ throughout. `daemon/idlestate.ts` sets `idleSince` (same `withTransient` path as
 a mid-turn stream record clears it, and `statusLabel` reads **turn ended**, `isWorking` is false and the
 thread's live tail drops its animation (`turnEnded`, `taskview.tsx`). Landing and grading still win.
 
+⛔ **The ledger's *wants* / *waiting on* row is a status, not a transcript** (t958 ← t946). `holdReason` once carried an agent's whole last message (t946: ~3,000 characters); the thread already shows those words. `parkForHuman` bounds what it stores to `HOLD_GLANCE_CHARS` and the idle-turn hand-over passes only its lead or the CLI's own question. The reader bounds too (`holdGlance`: 280 in the ledger, 140 in the peek, whole text in the tooltip), because stored rows predate the writer's limit; the row scrolls past 7.5em as a backstop. Draw `holdGlance`, never `holdLine`, on a surface that is not a table row.
+
 ⛔ **The title column takes the slack at every width.** `.tbl--tasks` has a fixed column budget:
 ID, type, worker, active time, price, status and actions keep compact widths, and title receives what
 remains. Type uses the thread's label and sorts by it. At 1050px the history dates yield; at 850px

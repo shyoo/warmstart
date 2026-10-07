@@ -25,6 +25,7 @@ import {
   filedReassignEffort,
   elapsed,
   hasQuotaGate,
+  holdGlance,
   holdLine,
   isChecksFailedTask,
   isConflictedTask,
@@ -239,6 +240,23 @@ describe('the clock beside the hold', () => {
         'agent stopped before completion'
       )
     }
+  })
+
+  it('cuts an agent-length reason to a glance and keeps the whole of it for the tooltip (t958)', () => {
+    // ⛔ t946's *wants* row held the agent's entire last message (~3,000 characters).
+    const wall = `The agent finished its turn. ${'It wrote up the debate and posted a card. '.repeat(80)}`
+    const glance = holdGlance(held({ status: 'awaiting_human', holdReason: wall }), NOW)
+    expect(glance?.full).toBe(wall)
+    expect(glance?.text.length).toBeLessThanOrEqual(280)
+    expect(glance?.text.endsWith('…')).toBe(true)
+    expect(wall.startsWith(glance?.text.slice(0, -1) ?? '!')).toBe(true)
+  })
+
+  it('leaves a short hold exactly as holdLine says it, and says nothing for no hold', () => {
+    expect(holdGlance(held({ holdUntil: NOW + 149 * 60 * 1000 }), NOW)?.text).toBe(
+      'ClaudeThird at 92% of its Claude 5h window — earliest retry in 2h 29m'
+    )
+    expect(holdGlance({ status: 'ready', holdReason: null, holdUntil: null }, NOW)).toBeNull()
   })
 })
 

@@ -150,6 +150,28 @@ describe('an agent handing its task back to a person', () => {
     expect(answer.reply).toContain('no open run')
   })
 
+  it('rests the task on a glance of a long reason and keeps the whole of it in the thread (t958)', async () => {
+    // ⛔ t946: an agent's last message, ~3,000 characters, was the task's `holdReason` and filled the
+    //    ledger's *wants* row beside a thread that already showed the same words.
+    const { task, runId, sessionId } = working()
+    const wall = `Decision card posted. ${'Nobody has answered it yet, so I stopped. '.repeat(70)}`
+    await scheduler.parkForHuman(sessionId, wall)
+    const hold = tasks.requireTask(task.id).holdReason ?? ''
+    expect(hold.length).toBeLessThanOrEqual(280)
+    expect(hold.startsWith('Decision card posted.')).toBe(true)
+    const said = tasks.messagesFor(task.id).filter((m) => m.role === 'agent' && m.runId === runId)
+    expect(said.some((m) => m.text.includes(wall.trim()))).toBe(true)
+    expect(tasks.requireRun(runId).note ?? '').toContain('Nobody has answered it yet')
+  })
+
+  it('takes the status from `hold` when the caller names one, and still threads the whole reason', async () => {
+    const { task, runId, sessionId } = working()
+    await scheduler.parkForHuman(sessionId, 'the short status. And then a long quotation of the agent.', undefined, 'the short status.')
+    expect(tasks.requireTask(task.id).holdReason).toBe('the short status.')
+    const said = tasks.messagesFor(task.id).filter((m) => m.role === 'agent' && m.runId === runId)
+    expect(said.some((m) => m.text.includes('long quotation'))).toBe(true)
+  })
+
   it('leaves an empty reason readable rather than resting the task on a blank sentence', async () => {
     const { task, sessionId } = working()
     await scheduler.parkForHuman(sessionId, '   ')

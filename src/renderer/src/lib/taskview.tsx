@@ -1,4 +1,6 @@
 import {
+  HOLD_GLANCE_CHARS,
+  clipAtWord,
   isPlanExecute,
   taskTypeLabel,
   isTrunkBlockedReason,
@@ -170,6 +172,22 @@ export function holdLine(
   const left = task.holdUntil ? task.holdUntil - now : 0
   if (left <= 0) return task.holdReason
   return `${task.holdReason} — earliest retry in ${duration(left)}`
+}
+
+/**
+ * `holdLine`, cut to what a one-glance row can carry; the whole line stays in `full` for a tooltip.
+ *
+ * ⛔ **For the ledger's *wants* row and the peek, never for a decision.** Rows written before t958
+ * carry an agent's entire last message in `holdReason` (t946 drew roughly 3,000 characters beside a
+ * thread that already shows them), and no writer is the only writer, so the reader bounds it too.
+ */
+export function holdGlance(
+  task: Pick<Task, 'status' | 'holdReason' | 'holdUntil'>,
+  now = Date.now(),
+  max = HOLD_GLANCE_CHARS
+): { text: string; full: string } | null {
+  const full = holdLine(task, now)
+  return full === null ? null : { text: clipAtWord(full, max), full }
 }
 
 /** Statuses where an agent is actively executing work. */
