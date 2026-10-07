@@ -486,7 +486,10 @@ Five kinds of work that exists and is going nowhere, listed on **Overview**:
 - **uncommitted** — files in a pooled workspace that no commit holds.
 - **not landed** — a branch carrying commits that neither `<target>` nor `origin/<target>` has, whose
   task has finished. ⚠️ This is the one that is easiest to lose: nothing is dirty, nothing looks wrong,
-  and the work is simply never mentioned again.
+  and the work is simply never mentioned again. SHA reachability is not the whole proof: content that
+  reached the trunk as a squash, rebase or cherry-pick (different SHAs), or that reached the origin
+  while this machine's refs stood still, reads here as stranded instead (t948) — the scan fetches
+  `origin/<target>` once when something reads unlanded, then proves content equivalence per branch.
 - **stashed** — work the tool moved out of the way to free a workspace for the next task. Recover it
   with `git stash list` and `git stash show -p` in the workspace.
 - **branch left behind** — a task branch carrying nothing the local or remote target does not
@@ -543,6 +546,10 @@ repository days later, both carrying zero commits, neither reported anywhere.
 `landedRef`. Measured 2026-09-12: debate seats t393–t395 each sat exactly on local `main` with no
 commit of their own, and each was listed as carrying 15 unlanded commits, because local `main` was 15
 ahead of `origin/main`. A finish verdict still asks `landedRef`; only this panel changed question.
+Since t948 the panel also asks whether the trunk holds the content under different SHAs
+(`branchContentLanded`: tip-tree match for squashes, `git cherry` for picks and rebases) and refreshes
+`origin/<target>` first when something reads unlanded (throttled, best-effort) — either proof downgrades
+the row to stranded, which **Retire it** accepts as its licence.
 
 ## Merging locally, and the trunk you are standing in
 

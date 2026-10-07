@@ -1150,3 +1150,146 @@ describe('workspace pool dynamic resizing and stale lock cleanup', () => {
     worktrees.releaseWorkspace(wsNext!.claimId)
   })
 })
+
+/**
+ * A branch whose content reached the trunk under different SHAs.
+ *
+ * ⛔ t948: Loose ends reported *not landed* for work that was merged — a panel of rows the
+ * operator's own investigation always disagreed with. SHA reachability (`commitsOnlyOn`) cannot
+ * see a squash merge (new commit), a cherry-pick or a rebase landing (new SHAs), nor work that
+ * reached the origin without passing through this machine's refs (no fetch since the merge).
+ *
+ * ⚠️ Real git throughout, in temporary repositories. Every defect here is in what git reports
+ * for a shape of history, so a stubbed git would pass against the broken version — which reads
+ * every one of these branches as `contentLanded: false`.
+ */
+describe('a branch whose content reached the trunk under different SHAs', () => {
+  const commitFile = (root: string, name: string, body: string, subject: string): void => {
+    writeFileSync(join(root, name), body)
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', subject)
+  }
+
+  it('recognises a squash merge by its tip tree, where git cherry sees only new commits', async () => {
+    // ⛔ Measured first: `git cherry` marks both squashed commits `+`, because no single
+    // upstream commit carries either individual diff. The tree match is what proves it.
+    const project = makeProject()
+    git(project.root, 'checkout', '-b', 'warmstart/t948-squashed')
+    commitFile(project.root, 'a.txt', 'first\n', 'first half of the work')
+    commitFile(project.root, 'b.txt', 'second\n', 'second half of the work')
+    git(project.root, 'checkout', 'main')
+    git(project.root, 'merge', '--squash', 'warmstart/t948-squashed')
+    git(project.root, 'commit', '-m', 'squash the whole branch')
+
+    const [found] = await worktrees.taskBranches(project, 'main')
+    expect(found?.branch).toBe('warmstart/t948-squashed')
+    // SHA reachability still counts both — that half did not move.
+    expect(found?.ahead).toBe(2)
+    expect(found?.contentLanded).toBe(true)
+  })
+
+  it('recognises cherry-picked commits as already upstream', async () => {
+    // ⛔ The trunk moved on with its own commit beside the pick, so no trunk tree matches the
+    // branch tip — only the per-commit patch equivalence proves it. (The squash case above
+    // proves the reverse: cherry blind, tree match seeing.)
+    const project = makeProject()
+    git(project.root, 'checkout', '-b', 'warmstart/t948-picked')
+    commitFile(project.root, 'picked.txt', 'ported work\n', 'work that will be picked')
+    git(project.root, 'checkout', 'main')
+    commitFile(project.root, 'other.txt', 'unrelated trunk work\n', 'the trunk moved on')
+    git(project.root, 'cherry-pick', 'warmstart/t948-picked')
+
+    const [found] = await worktrees.taskBranches(project, 'main')
+    expect(found?.ahead).toBe(1)
+    expect(found?.contentLanded).toBe(true)
+  })
+
+  it('still reports work the trunk has never seen', async () => {
+    // ⚠️ The half that must not move: widening what counts as landed is only safe if genuinely
+    // new work still reads unlanded.
+    const project = makeProject()
+    git(project.root, 'checkout', '-b', 'warmstart/t948-new')
+    commitFile(project.root, 'new.txt', 'never ported\n', 'work nobody has')
+
+    const [found] = await worktrees.taskBranches(project, 'main')
+    expect(found?.ahead).toBe(1)
+    expect(found?.contentLanded).toBe(false)
+  })
+
+  it('still reports a branch that mixes ported and new commits', async () => {
+    // ⛔ One new commit anywhere in the branch means deleting it loses something — partial
+    // equivalence is not equivalence.
+    // ⚠️ The trunk moves first: a pick onto the identical parent in the identical second is the
+    // identical commit, which would collapse the fixture to one commit, not two.
+    const project = makeProject()
+    git(project.root, 'checkout', '-b', 'warmstart/t948-mixed')
+    commitFile(project.root, 'ported.txt', 'ported work\n', 'this half will be picked')
+    git(project.root, 'checkout', 'main')
+    commitFile(project.root, 'other.txt', 'unrelated trunk work\n', 'the trunk moved on')
+    git(project.root, 'cherry-pick', 'warmstart/t948-mixed')
+    git(project.root, 'checkout', 'warmstart/t948-mixed')
+    commitFile(project.root, 'fresh.txt', 'brand new\n', 'this half is new')
+
+    const [found] = await worktrees.taskBranches(project, 'main')
+    expect(found?.ahead).toBe(2)
+    expect(found?.contentLanded).toBe(false)
+  })
+
+  it('retires a content-landed branch and refuses a genuinely new one', async () => {
+    const project = makeProject()
+    git(project.root, 'checkout', '-b', 'warmstart/t948-retire')
+    commitFile(project.root, 'r.txt', 'done\n', 'finished work')
+    git(project.root, 'checkout', 'main')
+    git(project.root, 'merge', '--squash', 'warmstart/t948-retire')
+    git(project.root, 'commit', '-m', 'squash it')
+    git(project.root, 'checkout', '-b', 'warmstart/t948-keep')
+    commitFile(project.root, 'k.txt', 'live\n', 'unlanded work')
+    // ⚠️ Neither branch may be checked out: a held branch refuses on the holder, which would
+    // prove the wrong refusal here.
+    git(project.root, 'checkout', 'main')
+
+    const retired = await worktrees.retireStrandedBranch(project, 'warmstart/t948-retire', 'main')
+    expect(retired).toEqual({ deleted: true })
+    expect(git(project.root, 'branch', '--list', 'warmstart/t948-retire')).toBe('')
+
+    const kept = await worktrees.retireStrandedBranch(project, 'warmstart/t948-keep', 'main')
+    expect(kept.deleted).toBe(false)
+    expect(kept.reason).toMatch(/does not have/)
+    expect(git(project.root, 'branch', '--list', 'warmstart/t948-keep')).toContain('warmstart/t948-keep')
+  })
+
+  it('refreshes a stale origin ref before calling work unlanded', async () => {
+    // ⛔ The other half of t948: the branch merged on the origin side (a GitHub merge, a push
+    // from another checkout) while this machine's refs stood still. Nothing here fetches except
+    // the call under test, so the first reading is the stale one the panel used to print.
+    const project = makeProjectWithRemote()
+    const remote = git(project.root, 'remote', 'get-url', 'origin')
+    git(project.root, 'checkout', '-b', 'warmstart/t948-remote')
+    commitFile(project.root, 'remote.txt', 'merged elsewhere\n', 'work merged off-machine')
+    git(project.root, 'push', 'origin', 'warmstart/t948-remote')
+    git(project.root, 'checkout', 'main')
+
+    const elsewhere = join(dir, 'elsewhere')
+    git(dir, 'clone', remote, 'elsewhere')
+    git(elsewhere, 'config', 'user.name', 'agentyard test')
+    git(elsewhere, 'config', 'user.email', 'test@example.invalid')
+    git(elsewhere, 'merge', 'origin/warmstart/t948-remote', '-m', 'merge the branch')
+    git(elsewhere, 'push', 'origin', 'main')
+
+    const stale = await worktrees.taskBranches(project, 'main')
+    expect(stale.find((b) => b.branch === 'warmstart/t948-remote')?.ahead).toBe(1)
+
+    expect(await worktrees.refreshTargetRef(project, 'main')).toBe(true)
+    const fresh = await worktrees.taskBranches(project, 'main')
+    expect(fresh.find((b) => b.branch === 'warmstart/t948-remote')?.ahead).toBe(0)
+
+    // ⚠️ Throttled: the second call inside five minutes does no network.
+    expect(await worktrees.refreshTargetRef(project, 'main')).toBe(false)
+  })
+
+  it('leaves the stale reading alone when there is nothing to fetch', async () => {
+    // ⚠️ A repo with no remote is ordinary, and an offline machine is not an error here.
+    const project = makeProject()
+    expect(await worktrees.refreshTargetRef(project, 'main')).toBe(false)
+  })
+})

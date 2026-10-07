@@ -491,6 +491,110 @@ describe('surfacing work that is going nowhere', () => {
   })
 })
 
+/**
+ * Which row a resting branch draws.
+ *
+ * ⛔ t948: the scan reported *not landed* for branches whose content had already reached the
+ * trunk under different SHAs (squash, rebase, cherry-pick) or whose refs had simply gone stale.
+ * The git work ends in `TaskBranch`; this pins the mapping from measurement to row, so a change
+ * here has to say which combination it meant to move.
+ */
+describe('the row a resting branch draws', () => {
+  const branch = (
+    over: Partial<{ branch: string; taskSeq: number | null; ahead: number; contentLanded: boolean; heldBy: string | null; head: string }> = {}
+  ) => ({
+    branch: 'warmstart/t924-some-work',
+    taskSeq: 924,
+    ahead: 0,
+    contentLanded: false,
+    heldBy: null,
+    head: 'abc123',
+    ...over
+  })
+  const input = (
+    over: Partial<Parameters<typeof finish.branchLooseEnd>[0]> = {}
+  ): Parameters<typeof finish.branchLooseEnd>[0] => ({
+    projectId: 'p1',
+    projectName: 'inkland',
+    workspacePath: 'C:/root',
+    branch: branch(),
+    merged: undefined,
+    openPr: null,
+    ...over
+  })
+
+  it('reads a recorded merge first, however many commits git still counts ahead', () => {
+    const end = finish.branchLooseEnd({
+      ...input({ branch: branch({ ahead: 3 }) }),
+      merged: {
+        id: 'd1',
+        taskId: 't1',
+        projectId: 'p1',
+        url: 'https://github.com/o/r/pull/7',
+        target: 'main',
+        branch: 'warmstart/t924-some-work',
+        headSha: 'abc123',
+        state: 'merged',
+        mergeSha: 'deadbeefcafe0001',
+        observedAt: null,
+        observationError: null,
+        reconciledAt: null,
+        retireBlocked: null
+      }
+    })
+    expect(end.kind).toBe('merged')
+    expect(end.id).toBe('merged:warmstart/t924-some-work')
+    expect(end.summary).toContain('deadbeef')
+  })
+
+  it('reads genuinely unlanded work as unlanded, with the open PR named where there is one', () => {
+    const plain = finish.branchLooseEnd(input({ branch: branch({ ahead: 2 }) }))
+    expect(plain.kind).toBe('unlanded')
+    expect(plain.id).toBe('unlanded:warmstart/t924-some-work')
+    expect(plain.count).toBe(2)
+    const withPr = finish.branchLooseEnd({
+      ...input({ branch: branch({ ahead: 1 }) }),
+      openPr: {
+        id: 'd2',
+        taskId: 't1',
+        projectId: 'p1',
+        url: 'https://github.com/o/r/pull/8',
+        target: 'main',
+        branch: 'warmstart/t924-some-work',
+        headSha: 'abc123',
+        state: 'open',
+        mergeSha: null,
+        observedAt: null,
+        observationError: null,
+        reconciledAt: null,
+        retireBlocked: null
+      }
+    })
+    expect(withPr.kind).toBe('unlanded')
+    expect(withPr.summary).toContain('https://github.com/o/r/pull/8 is open')
+  })
+
+  it('reads content-landed work as stranded, never offering Land it', () => {
+    // ⛔ The t948 row. Ahead by SHA, already upstream by content — retiring the name is safe,
+    // landing it again is not on offer.
+    const end = finish.branchLooseEnd(input({ branch: branch({ ahead: 8, contentLanded: true }) }))
+    expect(end.kind).toBe('stranded')
+    expect(end.id).toBe('stranded:warmstart/t924-some-work')
+    expect(end.summary).toContain('already upstream under different SHAs')
+  })
+
+  it('reads an empty branch as stranded with the old sentence', () => {
+    const end = finish.branchLooseEnd(input())
+    expect(end.kind).toBe('stranded')
+    expect(end.summary).toContain('only the name is left')
+  })
+
+  it('names the checkout holding a stranded branch', () => {
+    const end = finish.branchLooseEnd(input({ branch: branch({ heldBy: 'C:/ws2' }) }))
+    expect(end.summary).toContain('C:/ws2')
+  })
+})
+
 // ---------------------------------------------------------------- the trunk tripwire
 
 /**

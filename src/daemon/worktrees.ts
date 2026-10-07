@@ -1595,6 +1595,99 @@ export async function commitsOnlyOn(cwd: string, branch: string, target: string)
 }
 
 /**
+ * Whether the trunk already holds everything on `branch`, SHAs or not.
+ *
+ * ⛔ **SHA reachability is not the whole answer.** A squash merge lands the content under a new
+ * commit, a cherry-pick or rebase landing ports it commit by commit, and neither leaves the
+ * branch's own SHAs on the trunk — so `commitsOnlyOn` keeps counting them as unlanded work
+ * forever (t948: a panel of *not landed* rows for work that was merged). Two independent proofs,
+ * either of which suffices because each shows deleting the branch loses no content:
+ *
+ * 1. **Tip-tree match.** The squashed (or rebased, or picked-whole) result carries the branch's
+ *    cumulative content, so some trunk commit has exactly the branch tip's tree. Searched only
+ *    between the merge-base and the tip — anything older predates the branch — one `git log` of
+ *    tree hashes, no diffs. ⚠️ A match means the content *was* landed there; later trunk commits
+ *    having moved on is the trunk's business, not the branch's.
+ * 2. **Patch equivalence.** `git cherry` marks each `upstream..branch` commit `+` (new) or `-`
+ *    (already upstream). ⚠️ This catches cherry-picks and rebases but NOT squashes — measured:
+ *    a squash of two commits reads `+`/`+` because no single upstream commit carries either
+ *    individual diff — which is why the tree match comes first.
+ *
+ * Redundant against *either* ref counts: the local target and `origin/<target>` are two lines of
+ * the same trunk, and content in either survives deleting the branch. ⚠️ Conservative throughout:
+ * no resolving ref, no ahead commits, git failing anywhere, or anything left unproven all read
+ * false — the row stays *not landed*, exactly today's answer.
+ */
+export async function branchContentLanded(cwd: string, branch: string, target: string): Promise<boolean> {
+  const refs: string[] = []
+  for (const ref of [target, `origin/${target}`]) {
+    if (await gitOk(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) refs.push(ref)
+  }
+  if (refs.length === 0) return false
+  const ahead = await tryGit(cwd, ['rev-list', branch, '--not', ...refs])
+  const aheadShas = (ahead ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim().toLowerCase())
+    .filter(Boolean)
+  if (aheadShas.length === 0) return false
+  const tipTree = await tryGit(cwd, ['rev-parse', `${branch}^{tree}`])
+  if (tipTree) {
+    for (const ref of refs) {
+      const base = await tryGit(cwd, ['merge-base', ref, branch])
+      if (!base) continue
+      const trees = await tryGit(cwd, ['log', '--format=%T', `${base}..${ref}`])
+      if (!trees) continue
+      const tip = tipTree.trim().toLowerCase()
+      if (trees.split(/\r?\n/).some((line) => line.trim().toLowerCase() === tip)) return true
+    }
+  }
+  const redundant = new Set<string>()
+  for (const ref of refs) {
+    // ⚠️ One ref proving nothing does not sink the other: a stale local target and a fresh
+    // remote (or the reverse) is the normal shape of this fleet.
+    const marks = await tryGit(cwd, ['cherry', ref, branch])
+    if (!marks) continue
+    for (const line of marks.split(/\r?\n/)) {
+      const match = /^-\s+([0-9a-f]+)\b/i.exec(line.trim())
+      if (match?.[1]) redundant.add(match[1].toLowerCase())
+    }
+  }
+  // ⚠️ `git cherry` abbreviates; the ahead list does not. A prefix match is the comparison.
+  return aheadShas.every((sha) => [...redundant].some((prefix) => sha.startsWith(prefix)))
+}
+
+/**
+ * Bring `origin/<target>` up to date, at most once per project per five minutes.
+ *
+ * ⛔ **Stale remote-tracking refs are the other half of t948.** Work that reaches the origin
+ * without passing through this machine — a PR merged on GitHub, a push from another checkout —
+ * is invisible to every SHA comparison until something fetches, and the daemon otherwise fetches
+ * only while landing. So a GitHub-merged branch reads *not landed* until the heat death of the
+ * universe, and the operator's investigation (which fetches) always disagrees with the panel.
+ *
+ * ⚠️ Best-effort and throttled: a fetch moves no worktree and no local branch, but it is still
+ * network, so the scan calls it only when a first pass already found something that reads
+ * unlanded, and failures (offline, no remote) simply keep the stale reading. The throttle stamp
+ * is written before the attempt so an unreachable remote is not retried on every panel refresh.
+ * Never throws.
+ */
+const TARGET_REFRESH_MS = 5 * 60_000
+const lastTargetRefresh = new Map<string, number>()
+
+export async function refreshTargetRef(project: Project, target: string): Promise<boolean> {
+  if (project.vcs !== 'git') return false
+  const now = Date.now()
+  if (now - (lastTargetRefresh.get(project.id) ?? 0) < TARGET_REFRESH_MS) return false
+  lastTargetRefresh.set(project.id, now)
+  try {
+    await git(project.root, ['fetch', 'origin', target])
+  } catch {
+    return false
+  }
+  return true
+}
+
+/**
  * A task branch this repository still has a name for.
  *
  * ⛔ **Repository-wide, which is the whole point.** Everything else in the loose-ends scan reads a
@@ -1614,6 +1707,13 @@ export interface TaskBranch {
    * deleting it loses nothing — that is the same licence `retireBranch` runs on.
    */
   ahead: number
+  /**
+   * Whether the trunk already holds all of it under different SHAs — squash, rebase or
+   * cherry-pick landing (`branchContentLanded`). ⭐ The same licence as zero: deleting loses no
+   * content, so the scan reports it stranded and `retireStrandedBranch` may delete the name.
+   * False is the conservative answer; the row then reads exactly as it always has.
+   */
+  contentLanded: boolean
   /** The worktree holding it, if any. ⚠️ This is why `git branch -D` refuses, so it is read, not guessed. */
   heldBy: string | null
   /**
@@ -1682,10 +1782,15 @@ export async function taskBranches(project: Project, target: string): Promise<Ta
     } catch {
       ahead = -1
     }
+    // ⚠️ Only where there is something to disprove. A branch at zero (or unmeasurable) needs no
+    // second reading, and the extra git costs nothing in the common clean case.
+    const contentLanded =
+      ahead > 0 ? await branchContentLanded(project.root, branch, target).catch(() => false) : false
     found.push({
       branch,
       taskSeq: seqFromBranch(branch),
       ahead: Number.isFinite(ahead) ? ahead : -1,
+      contentLanded,
       heldBy: holders.get(branch) ?? null,
       head
     })
@@ -1783,7 +1888,9 @@ export async function retireStrandedBranch(
       return { deleted: false, reason: heldBranchReason(branch, state.heldBy, holder) }
     }
   }
-  if (state.ahead !== 0) {
+  // ⭐ Content-landed carries the same licence as zero: the trunk holds everything on it under
+  // different SHAs (squash, rebase, cherry-pick), so deleting the name loses no content.
+  if (state.ahead !== 0 && !state.contentLanded) {
     return {
       deleted: false,
       reason:
@@ -1794,7 +1901,12 @@ export async function retireStrandedBranch(
   }
   try {
     await git(project.root, ['branch', '-D', branch])
-    log.info(`retired ${branch}: every commit on it was already landed`)
+    log.info(
+      `retired ${branch}: ` +
+        (state.contentLanded
+          ? 'its content was already upstream under different SHAs'
+          : 'every commit on it was already landed')
+    )
     return { deleted: true }
   } catch (err) {
     return { deleted: false, reason: errorMessage(err) }

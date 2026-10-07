@@ -19,7 +19,8 @@ import { landingTargetFor, listProjects, policyFor } from './projects.js'
 import { listTasks, mandateAllows, runsFor } from './tasks.js'
 import { openClaims, trunkResourceId } from './resources.js'
 import type { MergeReading } from './landing.js'
-import { commitsOnlyOn, ensurePool, taskBranches, workspaceState } from './worktrees.js'
+import { commitsOnlyOn, ensurePool, refreshTargetRef, taskBranches, workspaceState } from './worktrees.js'
+import type { TaskBranch } from './worktrees.js'
 import { mergedDeliveryFor, openDeliveryFor, type PullRequestDelivery } from './deliveries.js'
 import type { WorkspaceState } from './worktrees.js'
 import { settings } from './settings.js'
@@ -764,6 +765,80 @@ async function trunkLooseEnd(project: Project, target: string): Promise<LooseEnd
   }
 }
 
+/**
+ * The row a resting branch draws, from measurements alone.
+ *
+ * ⛔ **Pure, so the mapping is pinned without a repository.** The scan's git work ends in
+ * `TaskBranch`; everything after that — which row, which buttons, which sentence — is this
+ * function, and `finish.test.ts` holds each combination. The precedence is the point: a recorded
+ * merge first, then real unlanded work, then a branch whose content already reached the trunk
+ * under different SHAs (t948 — stranded, offering **Retire it**, never **Land it**), and only
+ * then the empty name.
+ */
+export function branchLooseEnd(input: {
+  projectId: string
+  projectName: string
+  workspacePath: string
+  branch: TaskBranch
+  merged: PullRequestDelivery | undefined
+  openPr: PullRequestDelivery | null
+}): LooseEnd {
+  const { projectId, projectName, workspacePath, branch, merged: pr, openPr } = input
+  const base = {
+    projectId,
+    projectName,
+    workspacePath,
+    branch: branch.branch,
+    taskSeq: branch.taskSeq
+  }
+  if (pr) {
+    return {
+      ...base,
+      id: `merged:${branch.branch}`,
+      kind: 'merged',
+      count: branch.ahead,
+      url: pr.url,
+      summary:
+        `${pr.url} merged as \`${(pr.mergeSha ?? '').slice(0, 8)}\` — only the local branch ` +
+        `\`${branch.branch}\` is left` +
+        (pr.retireBlocked ? `. Kept because ${pr.retireBlocked}` : '')
+    }
+  }
+  if (branch.ahead > 0 && !branch.contentLanded) {
+    return {
+      ...base,
+      id: `unlanded:${branch.branch}`,
+      kind: 'unlanded',
+      count: branch.ahead,
+      ...(openPr ? { url: openPr.url } : {}),
+      summary: openPr
+        ? `Pull request ${openPr.url} is open — ${branch.ahead} commit(s) on \`${branch.branch}\` that the trunk does not have`
+        : `${branch.ahead} commit(s) on \`${branch.branch}\` that the trunk does not have`
+    }
+  }
+  if (branch.ahead > 0) {
+    return {
+      ...base,
+      id: `stranded:${branch.branch}`,
+      kind: 'stranded',
+      count: 0,
+      summary:
+        `\`${branch.branch}\` carries nothing the trunk does not already have` +
+        ` — its ${branch.ahead} commit(s) are already upstream under different SHAs` +
+        (branch.heldBy ? `; checked out in ${branch.heldBy}` : '')
+    }
+  }
+  return {
+    ...base,
+    id: `stranded:${branch.branch}`,
+    kind: 'stranded',
+    count: 0,
+    summary:
+      `\`${branch.branch}\` carries nothing the trunk does not already have` +
+      (branch.heldBy ? ` and is checked out in ${branch.heldBy}` : ' — only the name is left')
+  }
+}
+
 /** Scan every pool member of every project. ⚠️ Reads git only; it never writes and never cleans. */
 export async function scanLooseEnds(): Promise<LooseEnd[]> {
   const dismissed = new Set(
@@ -791,15 +866,38 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
         .filter((task) => task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled')
         .map((task) => task.seq)
     )
-    const branches = await taskBranches(project, policy.landingTarget)
+    let branches = await taskBranches(project, policy.landingTarget)
     // ⭐ **A branch GitHub merged, whose local name has not moved since.** A squash or rebase merge
     // leaves every commit on it "ahead" of the trunk forever, so without this t389 (2026-09-12) read
     // as *not landed* and was offered **Land it** after its PR had merged. Only an unchanged head
     // qualifies: a commit added after the merge is real work the pull request never carried.
-    const merged = new Map<string, PullRequestDelivery>()
-    for (const branch of branches) {
-      const delivery = mergedDeliveryFor(project.id, branch.branch)
-      if (delivery && delivery.headSha.toLowerCase() === branch.head) merged.set(branch.branch, delivery)
+    const mergedFor = (list: TaskBranch[]): Map<string, PullRequestDelivery> => {
+      const known = new Map<string, PullRequestDelivery>()
+      for (const branch of list) {
+        const delivery = mergedDeliveryFor(project.id, branch.branch)
+        if (delivery && delivery.headSha.toLowerCase() === branch.head) known.set(branch.branch, delivery)
+      }
+      return known
+    }
+    let merged = mergedFor(branches)
+    // ⭐ **Refs go stale, and the panel must not punish the branch for it** (t948). Work that
+    // reaches the origin without passing through this machine — a PR merged on GitHub, a push from
+    // another checkout — is invisible to every SHA comparison until something fetches, and the
+    // daemon otherwise fetches only while landing. So one best-effort, throttled fetch when the
+    // first pass already found something that reads unlanded, then re-measure; the clean case
+    // costs no network at all.
+    if (
+      branches.some(
+        (branch) =>
+          branch.ahead > 0 &&
+          branch.taskSeq !== null &&
+          closedTaskSeqs.has(branch.taskSeq) &&
+          !merged.has(branch.branch)
+      ) &&
+      (await refreshTargetRef(project, policy.landingTarget))
+    ) {
+      branches = await taskBranches(project, policy.landingTarget)
+      merged = mergedFor(branches)
     }
     for (const path of members) {
       const state = await workspaceState(path, policy.landingTarget)
@@ -831,13 +929,26 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
       // ⛔ A leftover is what deleting the branch would lose, so the count is `commitsOnlyOn`, the
       // same measure as the branch loop below — not `landedRef`, which counts a trunk that is ahead
       // of its remote as this task's work. A branch git cannot measure keeps the reading it had.
+      // ⚠️ Read from the branch listing, not measured a second time: it is the same repository, so
+      // the number is the same, and the listing also carries `contentLanded` — a second measure
+      // here would report a squash-merged checkout as unlanded while the branch loop called it
+      // stranded, and the two rows have different ids, so both would stand.
+      const known = state.branch ? branches.find((branch) => branch.branch === state.branch) : undefined
+      let ahead = known && known.ahead >= 0 ? known.ahead : -1
+      if (ahead < 0 && state.branch) {
+        try {
+          ahead = await commitsOnlyOn(path, state.branch, policy.landingTarget)
+        } catch {
+          ahead = state.unlandedCommits
+        }
+      }
+      const landedElsewhere = (known?.contentLanded ?? false) && ahead > 0
       const scopedState = {
         ...state,
         stashes: 0,
-        // ⚠️ A merged branch's commits are reported once, as merged, by the branch loop below.
-        unlandedCommits: !state.branch || merged.has(state.branch)
-          ? 0
-          : await commitsOnlyOn(path, state.branch, policy.landingTarget).catch(() => state.unlandedCommits)
+        // ⚠️ A merged branch's commits are reported once, as merged, by the branch loop below —
+        // and a content-landed branch's, once, as stranded.
+        unlandedCommits: !state.branch || merged.has(state.branch) || landedElsewhere ? 0 : Math.max(ahead, 0)
       }
       for (const end of looseEndsIn(project, scopedState)) {
         if (seen.has(end.id) || dismissed.has(end.id)) continue
@@ -855,44 +966,14 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
     for (const branch of branches) {
       // ⚠️ `-1` is "git could not measure it", not "nothing on it". Neither reported nor retired.
       if (branch.ahead < 0 || branch.taskSeq === null || !closedTaskSeqs.has(branch.taskSeq)) continue
-      const pr = merged.get(branch.branch)
-      const openPr = openDeliveryFor(project.id, branch.branch)
-      const end: LooseEnd = {
+      const end = branchLooseEnd({
         projectId: project.id,
         projectName: project.name,
         workspacePath: branch.heldBy ?? project.root,
-        branch: branch.branch,
-        taskSeq: branch.taskSeq,
-        ...(pr
-          ? {
-              id: `merged:${branch.branch}`,
-              kind: 'merged' as const,
-              count: branch.ahead,
-              url: pr.url,
-              summary:
-                `${pr.url} merged as \`${(pr.mergeSha ?? '').slice(0, 8)}\` — only the local branch ` +
-                `\`${branch.branch}\` is left` +
-                (pr.retireBlocked ? `. Kept because ${pr.retireBlocked}` : '')
-            }
-          : branch.ahead > 0
-          ? {
-              id: `unlanded:${branch.branch}`,
-              kind: 'unlanded' as const,
-              count: branch.ahead,
-              ...(openPr ? { url: openPr.url } : {}),
-              summary: openPr
-                ? `Pull request ${openPr.url} is open — ${branch.ahead} commit(s) on \`${branch.branch}\` that the trunk does not have`
-                : `${branch.ahead} commit(s) on \`${branch.branch}\` that the trunk does not have`
-            }
-          : {
-              id: `stranded:${branch.branch}`,
-              kind: 'stranded' as const,
-              count: 0,
-              summary:
-                `\`${branch.branch}\` carries nothing the trunk does not already have` +
-                (branch.heldBy ? ` and is checked out in ${branch.heldBy}` : ' — only the name is left')
-            })
-      }
+        branch,
+        merged: merged.get(branch.branch),
+        openPr: openDeliveryFor(project.id, branch.branch)
+      })
       if (seen.has(end.id) || dismissed.has(end.id)) continue
       seen.add(end.id)
       found.push(end)
