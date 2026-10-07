@@ -3681,6 +3681,19 @@ try {
     )
   }
 
+  // The glyph blinks, so it lives at the right, directly before the refresh button — not by the icon.
+  const placed = await evaluate(`JSON.stringify([...document.querySelectorAll('.wcard')].map((c) => {
+    const m = c.querySelector('.wcard-head .wstatus--compact')
+    const n = c.querySelector('.wcard-head .wcard-name')
+    const r = c.querySelector('.wcard-head .wcard-refresh')
+    return m && n && r ? [m.nextElementSibling === r, !!(n.compareDocumentPosition(m) & Node.DOCUMENT_POSITION_FOLLOWING)] : null
+  }))`)
+  check(
+    'the status glyph sits after the name, right beside the refresh button',
+    JSON.parse(placed).length > 0 && JSON.parse(placed).every((p) => p && p[0] && p[1]),
+    placed
+  )
+
   // ⛔ The user asked for this specifically: the emoji it replaces (🔃) brings its own colour, and on
   // the dark surface it outshone the numbers the strip exists to show. A stroke icon takes the
   // corner's faint colour like the chevron below the strip does.

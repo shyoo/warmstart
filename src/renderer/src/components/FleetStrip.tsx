@@ -369,11 +369,6 @@ function WorkerCard({
     <div className={`wcard${worker.enabled ? '' : ' wcard--off'}${narrow ? ' wcard--narrow' : ''}`}>
       <div className="wcard-head">
         <AgentIcon adapterId={worker.adapterId} className="wcard-icon" />
-        {/* ⭐ The worker's status as a mark, not a word (t961): the strip asked for width back, and
-            the word, its age and its evidence are one hover away. It replaced the `expired` /
-            `sign in` / `no work` tag, which said less in more room — the glyph tells those three
-            apart too (`STATUS_GLYPH`), and the adapter still decides which, never a substring here. */}
-        <WorkerStatusBadge status={workerStatus(worker, quota, sessions, now, statusFacts)} now={now} compact />
         <span className="wcard-name">{worker.label}</span>
         {worker.humanOccupied && <span className="tag tag--human">human</span>}
         {!worker.enabled && <span className="tag">off</span>}
@@ -398,6 +393,13 @@ function WorkerCard({
             )}
           </span>
         )}
+        {/* ⭐ The worker's status as a mark, not a word (t961): the strip asked for width back, and
+            the word, its age and its evidence are one hover away. It replaced the `expired` /
+            `sign in` / `no work` tag, which said less in more room — the glyph tells those three
+            apart too (`STATUS_GLYPH`), and the adapter still decides which, never a substring here.
+            ⚠️ In the right-hand cluster, beside the refresh button, not by the icon: it blinks, and a
+            blinking mark between the icon and the name pulls the eye off the name. */}
+        <WorkerStatusBadge status={workerStatus(worker, quota, sessions, now, statusFacts)} now={now} compact />
         {/* ⛔ Drawn whether or not there is a status beside it, and never conditionally mounted: a
             button that appeared only once a card went stale would add and remove itself from the
             head row on a fifteen-minute timer, which is the strip-moving bug the corner exists to
