@@ -495,7 +495,8 @@ Five kinds of work that exists and is going nowhere, listed on **Overview**:
 - **branch left behind** — a task branch carrying nothing the local or remote target does not
   already have.
   No work is at risk; the name is all that is left of a task that finished, or was cancelled before
-  it wrote anything.
+  it wrote anything. ⭐ **Usually retired before you see it** (t977): see
+  [*The sweep*](#the-sweep-that-retires-a-finished-tasks-empty-branch) below.
 - **merged, branch left** — a branch whose recorded pull request GitHub reports merged, and whose
   local tip is still the head it merged. A squash or rebase merge leaves every commit "ahead" of the
   trunk, so before 2026-09-12 this read as *not landed* (t389). The row says why the sweep kept it,
@@ -550,6 +551,32 @@ Since t948 the panel also asks whether the trunk holds the content under differe
 (`branchContentLanded`: tip-tree match for squashes, `git cherry` for picks and rebases) and refreshes
 `origin/<target>` first when something reads unlanded (throttled, best-effort) — either proof downgrades
 the row to stranded, which **Retire it** accepts as its licence.
+
+### The sweep that retires a finished task's empty branch
+
+⭐ **A *branch left behind* row asked a question with one answer** (t977). Measured 2026-10-07: t976,
+a reclaim that concluded nothing needed landing, was Completed and its empty branch stayed under Loose
+ends until somebody pressed **Retire it**. `retireSettledBranches` ([`branchsweep.ts`](../src/daemon/branchsweep.ts))
+now runs at startup and every five minutes, after the pull-request sweep, and retires a branch when
+all of these hold at the moment it acts:
+
+- its task is `completed` or `cancelled`, re-read just before deleting. ⛔ Not `paused_user` or
+  `draft`, which resume into the branch, and not `failed`, which a person may retry;
+- nothing on it is missing from the trunk — zero `commitsOnlyOn`, or `contentLanded`;
+- no stash was taken off it, and no pull request is recorded for it (the delivery sweep owns those);
+- `retireStrandedBranch` agrees, measuring again and stepping off only an idle, unclaimed, clean pool
+  member.
+
+The task's thread gets *"Deleted the empty branch"*; a branch kept is logged once per distinct
+reason. ⛔ A *not landed* row is never touched: real commits go only on **Delete it**.
+
+⛔ **Complete's own retirement lost a race, and that is why t976's branch survived it.**
+`onSessionExit` and Complete both call `releaseWorkspaceOf` for the same session. The first empties
+the session map and then parks, which takes seconds. The second used to find the map empty and return
+at once, so `retireEmptyBranch` ran against a slot still standing on the branch, mid-park, and kept it
+without a word. Measured: Complete at 23:30:36Z, and ws1's reflog shows the park leaving the branch
+at 23:30:43Z. Now a second caller awaits the release already in flight, and every refusal from
+`retireEmptyBranch` and `retireBranch` is logged as `kept <branch>: <why>`.
 
 ## Merging locally, and the trunk you are standing in
 

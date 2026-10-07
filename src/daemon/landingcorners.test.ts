@@ -662,3 +662,104 @@ describe('the branch a cancelled task leaves', () => {
     expect(git(root, 'branch', '--list', branch)).toContain(branch)
   })
 })
+
+/**
+ * The sweep that retires a finished task's empty branch without a click (t977).
+ *
+ * ⭐ t976 was a reclaim that found nothing to land; its empty branch then waited under Loose ends for
+ * a **Retire it** whose licence the daemon already had. ⛔ The sweep deletes names only: every case
+ * that could be work — a commit, a stash, a task that may resume — is pinned as kept.
+ */
+describe('the sweep that retires a finished task’s empty branch', () => {
+  let sweep: typeof import('./branchsweep.js')
+  beforeAll(async () => {
+    sweep = await import('./branchsweep.js')
+  })
+
+  /** A task in `status` whose branch is named for it, the trunk back on `main`. */
+  const finished = (status: 'completed' | 'cancelled' | 'paused_user' | 'failed') => {
+    const seeded = seed('warmstart/naming')
+    const branch = `warmstart/t${tasks.requireTask(seeded.taskId).seq}-sweep`
+    git(seeded.root, 'branch', '-m', branch)
+    git(seeded.root, 'switch', 'main')
+    tasks.setStatus(seeded.taskId, status, { branch })
+    return { ...seeded, branch }
+  }
+
+  it('retires the empty branch of a completed task and says so on its thread', async () => {
+    const { taskId, root, branch } = finished('completed')
+    expect((await sweep.retireSettledBranches()).retired).toContain(branch)
+    expect(git(root, 'branch', '--list', branch)).toBe('')
+    expect(said(taskId)).toContain(`Deleted the empty branch \`${branch}\``)
+  })
+
+  it('steps an idle pool member off the branch to retire it', async () => {
+    const { project, root, branch } = finished('completed')
+    git(root, 'branch', '-D', branch)
+    const poolRoot = projects.policyFor(project).workspaceRoot
+    mkdirSync(poolRoot, { recursive: true })
+    const member = join(poolRoot, 'ws1')
+    git(root, 'worktree', 'add', '-b', branch, member, 'main')
+
+    expect((await sweep.retireSettledBranches()).retired).toContain(branch)
+    expect(git(root, 'branch', '--list', branch)).toBe('')
+    expect(git(member, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD')
+  })
+
+  it('retires a branch whose commit the trunk already holds under another SHA', async () => {
+    const { root, branch } = finished('completed')
+    git(root, 'switch', branch)
+    writeFileSync(join(root, 'picked.txt'), 'landed by cherry-pick\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'picked')
+    git(root, 'switch', 'main')
+    git(root, 'cherry-pick', branch)
+
+    expect((await sweep.retireSettledBranches()).retired).toContain(branch)
+    expect(git(root, 'branch', '--list', branch)).toBe('')
+  })
+
+  it('⛔ keeps a branch carrying a commit the trunk does not have', async () => {
+    const { taskId, root, branch } = finished('completed')
+    git(root, 'switch', branch)
+    writeFileSync(join(root, 'work.txt'), 'real work\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'real work')
+    git(root, 'switch', 'main')
+
+    expect((await sweep.retireSettledBranches()).retired).not.toContain(branch)
+    expect(git(root, 'branch', '--list', branch)).toContain(branch)
+    expect(said(taskId)).not.toContain('Deleted the empty branch')
+  })
+
+  it('⛔ keeps an empty branch a stash was taken off', async () => {
+    const { root, branch } = finished('completed')
+    git(root, 'switch', branch)
+    writeFileSync(join(root, 'stashed.txt'), 'moved out of the way\n')
+    git(root, 'stash', 'push', '--include-untracked', '-m', 'rescued')
+    git(root, 'switch', 'main')
+
+    expect((await sweep.retireSettledBranches()).retired).not.toContain(branch)
+    expect(git(root, 'branch', '--list', branch)).toContain(branch)
+  })
+
+  it('⛔ keeps the branch of a task that may still resume into it', async () => {
+    const paused = finished('paused_user')
+    const failed = finished('failed')
+
+    const { retired } = await sweep.retireSettledBranches()
+    expect(retired).not.toContain(paused.branch)
+    expect(retired).not.toContain(failed.branch)
+    expect(git(paused.root, 'branch', '--list', paused.branch)).toContain(paused.branch)
+    expect(git(failed.root, 'branch', '--list', failed.branch)).toContain(failed.branch)
+  })
+
+  it('⛔ keeps a branch the project checkout itself is standing on', async () => {
+    const { root, branch } = finished('completed')
+    git(root, 'switch', branch)
+
+    expect((await sweep.retireSettledBranches()).retired).not.toContain(branch)
+    expect(git(root, 'branch', '--list', branch)).toContain(branch)
+    git(root, 'switch', 'main')
+  })
+})

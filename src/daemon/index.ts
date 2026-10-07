@@ -51,6 +51,7 @@ import { noteActivity, noteReplyBoundary, noteReplyText } from './activity.js'
 import { onSettingChange } from './settings.js'
 import { paths } from './paths.js'
 import { reconcilePullRequestDeliveries } from './deliveries.js'
+import { retireSettledBranches } from './branchsweep.js'
 import { augmentPath } from './which.js'
 import { noteTurnFailure } from './accountcheck.js'
 import { APP_VERSION } from '@shared/version.js'
@@ -115,14 +116,16 @@ async function main(): Promise<void> {
     void backupToday().catch((err) => log.warn(`could not back up database: ${String(err)}`))
   }, 60 * 60 * 1000)
   backupSweep.unref()
-  void reconcilePullRequestDeliveries().catch((err) =>
-    log.warn(`could not reconcile pull requests: ${String(err)}`)
-  )
-  const deliverySweep = setInterval(() => {
-    void reconcilePullRequestDeliveries().catch((err) =>
-      log.warn(`could not reconcile pull requests: ${String(err)}`)
-    )
-  }, 5 * 60 * 1000)
+  // ⭐ Then the finished tasks' empty branches (t977), after the deliveries so a merged pull
+  // request's branch is closed out — and said on its thread — by the sweep that knows about it.
+  const sweepBranches = (): void => {
+    void reconcilePullRequestDeliveries()
+      .catch((err) => log.warn(`could not reconcile pull requests: ${String(err)}`))
+      .then(() => retireSettledBranches())
+      .catch((err) => log.warn(`could not retire finished branches: ${String(err)}`))
+  }
+  sweepBranches()
+  const deliverySweep = setInterval(sweepBranches, 5 * 60 * 1000)
   deliverySweep.unref()
 
   const token = randomBytes(32).toString('hex')

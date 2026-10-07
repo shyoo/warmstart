@@ -17,6 +17,7 @@ let db: typeof import('./db.js')
 let projects: typeof import('./projects.js')
 let tasks: typeof import('./tasks.js')
 let scheduler: typeof import('./scheduler.js')
+let worktrees: typeof import('./worktrees.js')
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
@@ -66,6 +67,7 @@ beforeAll(async () => {
   projects = await import('./projects.js')
   tasks = await import('./tasks.js')
   scheduler = await import('./scheduler.js')
+  worktrees = await import('./worktrees.js')
   db.openDb(join(dir, 'completeempty.db'))
 })
 
@@ -100,5 +102,26 @@ describe('Complete on a task whose agent made no commits', () => {
     expect(done.status).toBe('completed')
     expect(branchExists(root, branch)).toBe(true)
     expect(tasks.messagesFor(taskId).some((m) => m.text.startsWith('Deleted the empty branch'))).toBe(false)
+  })
+})
+
+/**
+ * ⛔ Complete races the session's own exit for the workspace (t977). Both release the same session;
+ * the first to arrive starts the park, and the second used to return at once — so Complete's
+ * `retireEmptyBranch` ran against a slot still standing on the branch and kept t976's empty branch.
+ */
+describe('two callers releasing the same conversation’s workspace', () => {
+  it('the second waits for the first park rather than returning while the slot holds the branch', async () => {
+    const { taskId, branch } = heldTask()
+    const project = projects.getProject(tasks.requireTask(taskId).projectId!)!
+    const workspace = await worktrees.claimWorkspace(project, 'session-t977')
+    expect(workspace).not.toBeNull()
+    git(workspace!.path, 'switch', branch)
+    scheduler.workspaces.set('session-t977', { workspace: workspace!, projectId: project.id })
+
+    const first = scheduler.releaseWorkspaceOf('session-t977')
+    await scheduler.releaseWorkspaceOf('session-t977')
+    expect(git(workspace!.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('HEAD')
+    await first
   })
 })

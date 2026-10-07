@@ -4951,8 +4951,26 @@ export async function releaseFor(
  * ⚠️ Parking runs `rescueDirt`, which stashes anything the agent left behind rather than resetting
  * over it — so this must not run until the process is actually gone. Every caller waits for the exit
  * rather than for `closeSession` to return; see `closeAndWait`.
+ *
+ * ⛔ **Idempotent means a second caller waits for the first, not that it returns at once.** The exit
+ * handler (`onSessionExit`) and the operator's Complete both release the same session, and the first
+ * to arrive empties `workspaces` before its park's first `await`. The second used to find the map
+ * empty and return while the park was still running, so Complete's `retireEmptyBranch` met the slot
+ * still on the branch, mid-park, and silently kept it. t976 (2026-10-07): Complete at 23:30:36, ws1's
+ * reflog shows the park leaving the branch at 23:30:43, and no "Deleted the empty branch" (t977).
  */
-export async function releaseWorkspaceOf(sessionId: string, retainForTaskId: string | null = null): Promise<void> {
+export function releaseWorkspaceOf(sessionId: string, retainForTaskId: string | null = null): Promise<void> {
+  const inFlight = releasing.get(sessionId)
+  if (inFlight) return inFlight
+  const done = releaseWorkspaceNow(sessionId, retainForTaskId).finally(() => releasing.delete(sessionId))
+  releasing.set(sessionId, done)
+  return done
+}
+
+/** Releases under way, by session — what a second `releaseWorkspaceOf` caller waits on. */
+const releasing = new Map<string, Promise<void>>()
+
+async function releaseWorkspaceNow(sessionId: string, retainForTaskId: string | null): Promise<void> {
   const held = workspaces.get(sessionId)
   if (held) {
     workspaces.delete(sessionId)

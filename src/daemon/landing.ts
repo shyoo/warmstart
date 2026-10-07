@@ -220,7 +220,7 @@ async function tipIsRescue(cwd: string): Promise<boolean> {
  *
  * ⚠️ Never throws: a repository that cannot answer reports nothing rather than blocking a finish.
  */
-async function stashesFrom(cwd: string, branch: string): Promise<number> {
+export async function stashesFrom(cwd: string, branch: string): Promise<number> {
   try {
     return (await git(cwd, ['stash', 'list', '--format=%gs']))
       .split(/\r?\n/)
@@ -456,7 +456,9 @@ async function retireBranch(cwd: string, branch: string): Promise<boolean> {
     }
     await git(cwd, ['branch', '-D', branch])
     return true
-  } catch {
+  } catch (err) {
+    // ⚠️ Still untidy rather than a failure, but said: t976's refusal left no trace at all (t977).
+    log.info(`kept ${branch}: ${errorMessage(err)}`)
     return false
   }
 }
@@ -505,7 +507,8 @@ export async function finishWithoutLanding(
  * ⛔ **Only a branch that holds nothing**: no commit on neither the local target nor its remote
  * (`commitsOnlyOn`), no stash taken off it, and no uncommitted file in whichever pool member has it
  * checked out. Any one of those is work, and this deletes names, never work. A trunk task has no
- * branch of its own and is never asked. ⚠️ Never throws; a branch it cannot prove empty is kept.
+ * branch of its own and is never asked. ⚠️ Never throws; a branch it cannot prove empty is kept, and
+ * the log says which proof failed — a branch kept here is retired later by `retireSettledBranches`.
  */
 export async function retireEmptyBranch(
   project: Project,
@@ -513,17 +516,26 @@ export async function retireEmptyBranch(
   target: string
 ): Promise<boolean> {
   if (project.vcs !== 'git' || branch === target) return false
+  const kept = (why: string): false => {
+    log.info(`kept ${branch}: ${why}`)
+    return false
+  }
   try {
     if (!(await tryGit(project.root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]))) return false
-    if ((await commitsOnlyOn(project.root, branch, target)) !== 0) return false
-    if ((await stashesFrom(project.root, branch)) > 0) return false
+    const ahead = await commitsOnlyOn(project.root, branch, target)
+    if (ahead !== 0) return kept(`it carries ${ahead} commit(s) the trunk does not have`)
+    const stashes = await stashesFrom(project.root, branch)
+    if (stashes > 0) return kept(`${stashes} stash(es) were taken off it`)
     const holder = await workspaceOnBranch(project, branch, target)
     if (holder) {
-      if (holder.dirtyFiles.length > 0 || holder.untrackedFiles.length > 0) return false
+      const loose = holder.dirtyFiles.length + holder.untrackedFiles.length
+      if (loose > 0) return kept(`${holder.path} has it checked out with ${loose} uncommitted file(s)`)
       return await retireBranch(holder.path, branch)
     }
     // ⚠️ The operator's own checkout is never switched: a trunk sitting on a task branch is theirs.
-    if ((await tryGit(project.root, ['rev-parse', '--abbrev-ref', 'HEAD'])) === branch) return false
+    if ((await tryGit(project.root, ['rev-parse', '--abbrev-ref', 'HEAD'])) === branch) {
+      return kept('the project checkout itself has it checked out')
+    }
     await git(project.root, ['branch', '-D', branch])
     return true
   } catch (err) {
