@@ -2,7 +2,7 @@
 import type { RpcMethod, RpcParams, RpcResult, Worker } from '@shared/protocol.js'
 import { canWork } from '@shared/protocol.js'
 import { MODEL_CLASSES } from '@shared/modelclass.js'
-import { routeLabel, type ModelRoute } from '@shared/modelroutes.js'
+import { modelOffered, notOffered, routeLabel, type ModelRoute } from '@shared/modelroutes.js'
 import type { ChildDefaults, Task, TaskConstraints } from '@shared/tasks.js'
 import { windowsForPool } from '@shared/tasks.js'
 import { adapter } from '../adapters/index.js'
@@ -290,6 +290,7 @@ export function checkConstraints(c: TaskConstraints): TaskConstraints {
       if (!spec) {
         throw new Error(`'${model}' is not a model ${info.label} can be priced for`)
       }
+      if (!modelOffered(w, model)) throw new Error(notOffered(w, model))
     }
   }
 
@@ -356,6 +357,7 @@ export function checkConstraints(c: TaskConstraints): TaskConstraints {
       if (!spec) {
         throw new Error(`'${c.model}' is not a model ${info.label} can be priced for`)
       }
+      if (worker && !modelOffered(worker, c.model)) throw new Error(notOffered(worker, c.model))
       if (c.effort && !spec.effort_levels.includes(c.effort)) {
         throw new Error(`'${c.model}' has no effort level '${c.effort}'`)
       }

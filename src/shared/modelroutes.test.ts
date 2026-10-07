@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'vitest'
+import { resolveModelChoice } from './tasks.js'
 import {
   autoCandidates,
   autoModelCount,
+  autoRoutes,
   classBoundEffort,
   classOnWorker,
   isRoutableModel,
+  modelOffered,
+  notOffered,
   pairInClass,
   routeEffortFor,
   routesFromLegacy,
@@ -147,5 +151,56 @@ describe('classBoundEffort (t811)', () => {
   it("a model with no rows keeps the task's effort when the built-in class matches", () => {
     expect(classBoundEffort({ modelRoutes: [] }, 'claude-opus-5-5', 'xhigh', 'high')).toBe('xhigh')
     expect(classBoundEffort(null, 'claude-opus-5-5', 'xhigh', 'high')).toBe('xhigh')
+  })
+})
+
+describe('a plan that offers fewer models than the catalogue (t953)', () => {
+  // CodexFirst's free account, measured 2026-10-07: its models_cache.json lists three models, and the
+  // operator's table still ticked Sol for Auto-route.
+  const free = {
+    identity: { subscriptionType: 'Free', availableModels: ['gpt-6-luna', 'gpt-5.6-terra', 'gpt-5.6-luna'] },
+    defaultModel: 'gpt-6-sol',
+    modelRoutes: [
+      row('gpt-6-sol', 'high', true, 'high'),
+      row('gpt-6-sol', 'medium', true, 'med'),
+      row('gpt-5.6-terra', 'medium', true, 'low')
+    ]
+  }
+
+  it('offers everything where the account never said what it offers', () => {
+    expect(modelOffered(null, 'gpt-6-sol')).toBe(true)
+    expect(modelOffered({ identity: null }, 'gpt-6-sol')).toBe(true)
+    expect(modelOffered({ identity: { availableModels: null } }, 'gpt-6-sol')).toBe(true)
+    // ⛔ An empty list is unknown, not "nothing": it must not strand a worker with no model at all.
+    expect(modelOffered({ identity: { availableModels: [] } }, 'gpt-6-sol')).toBe(true)
+  })
+
+  it('offers only what the list names, and never a missing model', () => {
+    expect(modelOffered(free, 'gpt-6-luna')).toBe(true)
+    expect(modelOffered(free, 'gpt-6-sol')).toBe(false)
+    expect(modelOffered(free, null)).toBe(true)
+  })
+
+  it('⛔ Auto skips a ticked row the plan does not offer, but the stored row stays', () => {
+    expect(autoRoutes(free).map((r) => r.model)).toEqual(['gpt-5.6-terra'])
+    expect(autoCandidates(free).map((c) => c.model)).toEqual(['gpt-5.6-terra'])
+    expect(autoCandidates(free, 'high')).toEqual([])
+    expect(autoModelCount(free)).toBe(1)
+    expect(free.modelRoutes).toHaveLength(3)
+  })
+
+  it('names the plan and what it does list when it refuses', () => {
+    const why = notOffered({ label: 'CodexFirst', ...free }, 'gpt-6-sol')
+    expect(why).toContain("CodexFirst (Free plan) does not offer 'gpt-6-sol'")
+    expect(why).toContain('gpt-6-luna, gpt-5.6-terra, gpt-5.6-luna')
+  })
+
+  it('⛔ falls back to the CLI choice when the account default is a model the plan does not offer', () => {
+    const choice = resolveModelChoice(null, { ...free, defaultEffort: 'medium' }, true)
+    expect(choice.model).toBeNull()
+    expect(choice.modelSource).toBe('cli')
+    // Unchanged where the plan does offer the default.
+    const plus = { ...free, identity: { availableModels: ['gpt-6-sol'] } }
+    expect(resolveModelChoice(null, { ...plus, defaultEffort: 'medium' }, true).model).toBe('gpt-6-sol')
   })
 })

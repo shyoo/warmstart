@@ -197,11 +197,16 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
           })
           // The adapter-wide list (a task's model constraint reaches any worker), then - where the
           // models are a server's - one entry per worker naming what *its* endpoint reported.
-          const perWorker = cm.dynamicModelPrefix()
-            ? listWorkers()
-                .filter((w) => w.adapterId === a.info.id && !w.retiredAt)
-                .map((w) => options(knownModelIds(a.info.id, w.id), w.id))
-            : []
+          // ⭐ Also for a worker whose plan lists what it offers (Codex's models_cache.json): its table
+          // must not draw a model it would be refused (`WorkerIdentity.availableModels`).
+          const perWorker = listWorkers()
+            .filter(
+              (w) =>
+                w.adapterId === a.info.id &&
+                !w.retiredAt &&
+                (cm.dynamicModelPrefix() || (w.identity?.availableModels?.length ?? 0) > 0)
+            )
+            .map((w) => options(knownModelIds(a.info.id, w.id), w.id))
           return [options(knownModelIds(a.info.id)), ...perWorker]
         } catch (err) {
           // ⚠️ One adapter naming a cost model that will not load must not blank the picker for the

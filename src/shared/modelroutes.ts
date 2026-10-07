@@ -23,7 +23,25 @@ export interface ModelRoute {
   auto: boolean
 }
 
-type RoutesHolder = { modelRoutes?: ModelRoute[] | null } | null | undefined
+/**
+ * What an account's own plan offers, where its CLI said (`WorkerIdentity.availableModels`).
+ *
+ * ⛔ `null`/absent is *unknown*, never *none*: a worker whose CLI never listed its models offers
+ * everything the cost model can price, exactly as before this existed. A list is a **subset** of the
+ * adapter's catalogue — a model the cost model prices may still be one this plan cannot run (Codex on
+ * a free ChatGPT account answers `400 The 'gpt-6-sol' model is not supported when using Codex with a
+ * ChatGPT account`, measured t866).
+ */
+type OfferHolder = { identity?: { availableModels?: string[] | null } | null } | null | undefined
+
+type RoutesHolder = ({ modelRoutes?: ModelRoute[] | null } & OfferHolder) | null | undefined
+
+/** Does this worker's plan offer `model`? True wherever the account never said what it offers. */
+export function modelOffered(worker: OfferHolder, model: string | null | undefined): boolean {
+  const offered = worker?.identity?.availableModels
+  if (!model || !offered || offered.length === 0) return true
+  return offered.includes(model)
+}
 
 /** The same pairing, compared the way the table compares rows: model and effort, nothing else. */
 export function samePair(a: { model: string | null; effort: string | null }, b: { model: string | null; effort: string | null }): boolean {
@@ -105,9 +123,26 @@ export function classBoundEffort(
   return pairInClass(worker, model, effort, modelClass)?.effort ?? effort
 }
 
-/** Rows Auto Model may pick, in the operator's order. */
+/** Why a model is refused on an account whose plan does not list it — the daemon's one wording. */
+export function notOffered(
+  worker: { label: string; identity?: { subscriptionType?: string | null; availableModels?: string[] | null } | null },
+  model: string
+): string {
+  const plan = worker.identity?.subscriptionType
+  return (
+    `${worker.label}${plan ? ` (${plan} plan)` : ''} does not offer '${model}' — its CLI lists only ` +
+    `${(worker.identity?.availableModels ?? []).join(', ')}`
+  )
+}
+
+/**
+ * Rows Auto Model may pick, in the operator's order.
+ *
+ * ⛔ A ticked row for a model the account's plan does not offer is not routable: the tick is the
+ * operator's stored setting and stays, but the router skips it (`modelOffered`).
+ */
 export function autoRoutes(worker: RoutesHolder): ModelRoute[] {
-  return (worker?.modelRoutes ?? []).filter((r) => r.auto)
+  return (worker?.modelRoutes ?? []).filter((r) => r.auto && modelOffered(worker, r.model))
 }
 
 type RoutableHolder = {

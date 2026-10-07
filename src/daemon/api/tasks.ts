@@ -4,6 +4,7 @@ import { delegationOn, setDelegation } from '../delegation.js'
 import { resolveAutoCompact, resolveWorkspaceMode, trunkPolicyConflict, windowHighWater } from '@shared/tasks.js'
 import type { Task, WorkspaceModeChoice } from '@shared/tasks.js'
 import type { ModelClass } from '@shared/modelclass.js'
+import { modelOffered } from '@shared/modelroutes.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { adapter } from '../adapters/index.js'
 import { costModel } from '../costmodel.js'
@@ -95,7 +96,12 @@ function reassignForResolveRetry(
   const modelClass = choice.modelClass !== undefined ? (choice.modelClass ?? undefined) : (choice.model ? undefined : task.constraints.modelClass)
   const targetCm = costModel(adapter(worker.adapterId).info.policy.costModelId)
   const candidateModel = choice.model !== undefined ? (choice.model ?? undefined) : (adapterChanged ? undefined : task.constraints.model)
-  const model = candidateModel && targetCm.modelSpec(candidateModel) ? candidateModel : undefined
+  // ⛔ A model carried over from before (not one just chosen) is dropped when the new account's plan
+  // does not offer it; a model chosen now reaches `checkConstraints`, which says why it is refused.
+  const model =
+    candidateModel && targetCm.modelSpec(candidateModel) && (choice.model !== undefined || modelOffered(worker, candidateModel))
+      ? candidateModel
+      : undefined
   let effort = model
     ? (choice.effort !== undefined ? (choice.effort ?? undefined) : (adapterChanged ? undefined : task.constraints.effort))
     : undefined
@@ -457,7 +463,8 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       const adapterChanged = task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId
       const hasModelChoice = p.model !== undefined || p.modelPolicy !== undefined || p.effort !== undefined || p.modelClass !== undefined
       const targetCm = costModel(adapter(worker.adapterId).info.policy.costModelId)
-      const existingModel = !adapterChanged && task.constraints.model && targetCm.modelSpec(task.constraints.model)
+      const existingModel = !adapterChanged && task.constraints.model && targetCm.modelSpec(task.constraints.model) &&
+        modelOffered(worker, task.constraints.model)
         ? task.constraints.model
         : undefined
       const model = hasModelChoice ? (p.model ?? undefined) : existingModel

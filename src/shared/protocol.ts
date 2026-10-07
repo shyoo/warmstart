@@ -644,6 +644,15 @@ export interface WorkerIdentity {
    */
   servedModels?: string[] | null
   /**
+   * The models this account's *plan* offers, out of the adapter's catalogue, or null where the CLI
+   * does not say. ⚠️ Codex only: read from the `models_cache.json` the CLI wrote into this worker's
+   * isolation root (entries with `visibility: list`), which the server filters by plan — a free
+   * ChatGPT account lists `gpt-6-luna`, `gpt-5.6-terra` and `gpt-5.6-luna` and none of the Sol/Astra
+   * models (measured 2026-10-07, codex-cli 0.156.0). A belief with a `checkedAt`, not a catalogue:
+   * the cache is as fresh as the CLI's last run. Null means *unknown* and limits nothing.
+   */
+  availableModels?: string[] | null
+  /**
    * The context window the endpoint reported (llama.cpp's `/props` → `n_ctx`), or null where the
    * server does not say. ⚠️ A measurement where present; the cost model's figure is the fallback.
    */

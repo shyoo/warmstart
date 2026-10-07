@@ -134,6 +134,58 @@ describe('choosing a model', () => {
   })
 })
 
+describe('a plan that does not offer a priced model (t953)', () => {
+  // The t866 shape: CodexFirst is on the free ChatGPT plan, whose own CLI lists three models. The
+  // cost model prices more than that, so "priceable" was never the same as "this account can run it".
+  let free: Worker
+  beforeAll(() => {
+    free = workers.createWorker({ adapterId: 'openai-compatible', label: 'free-codex', enabled: false })
+    db.db()
+      .prepare('update workers set identity_json = ? where id = ?')
+      .run(
+        JSON.stringify({
+          loggedIn: true,
+          subscriptionType: 'Free',
+          availableModels: ['gpt-6-luna', 'gpt-5.6-terra', 'gpt-5.6-luna']
+        }),
+        free.id
+      )
+  })
+
+  it('prices the model the free plan lists, which the cost model once lacked', () => {
+    const cm = costmodel.costModel(adapters.adapter('openai-compatible').info.policy.costModelId)
+    expect(cm.modelSpec('gpt-6-luna')?.effort_levels).toContain('max')
+    expect(() => api.checkConstraints({ workerId: free.id, model: 'gpt-6-luna', effort: 'high' })).not.toThrow()
+  })
+
+  it('refuses a priced model the plan does not list, naming the plan', () => {
+    expect(() => api.checkConstraints({ workerId: free.id, model: 'gpt-6-sol' })).toThrow(
+      /free-codex \(Free plan\) does not offer 'gpt-6-sol'/
+    )
+    expect(() => api.checkConstraints({ modelsByWorker: { [free.id]: 'gpt-5.6-sol' } })).toThrow(/does not offer/)
+  })
+
+  it('narrows only that worker’s own picker; the adapter-wide list stays the union', () => {
+    expect(workers.knownModelIds('openai-compatible', free.id).sort()).toEqual(
+      ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-6-luna'].sort()
+    )
+    expect(workers.knownModelIds('openai-compatible')).toContain('gpt-6-sol')
+  })
+
+  it('serves a model-options entry for the worker, beside the adapter-wide one', async () => {
+    const workersApi = await import('./api/workers.js')
+    const options = await workersApi.apiWorkers({ version: '0', startedAt: Date.now(), port: 0 })['model.options']()
+    const own = options.find((o) => o.workerId === free.id)
+    expect(own?.models.map((m) => m.id).sort()).toEqual(['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-6-luna'])
+    expect(options.find((o) => o.adapterId === 'openai-compatible' && !o.workerId)?.models.map((m) => m.id)).toContain('gpt-6-sol')
+  })
+
+  it('leaves an account that never said what it offers unconstrained', () => {
+    const plain = workers.createWorker({ adapterId: 'openai-compatible', label: 'plain-codex', enabled: false })
+    expect(() => api.checkConstraints({ workerId: plain.id, model: 'gpt-6-sol' })).not.toThrow()
+  })
+})
+
 describe('choosing an effort level', () => {
   it('is refused for every adapter that cannot be told one', () => {
     // ⚠️ Today that is all of them, and this test is written to keep saying something useful when

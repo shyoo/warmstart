@@ -17,7 +17,7 @@
 
 import type { QuotaSnapshot, QuotaWindow, Worker } from './protocol.js'
 import type { ModelClass } from './modelclass.js'
-import { pairInClass, routeEffortFor, type ModelRoute } from './modelroutes.js'
+import { modelOffered, pairInClass, routeEffortFor, type ModelRoute } from './modelroutes.js'
 
 export type { ModelClass } from './modelclass.js'
 
@@ -3652,6 +3652,7 @@ export function resolveModelChoice(
         defaultEffort: string | null
         defaultModels?: Record<string, string | null> | null
         modelRoutes?: ModelRoute[] | null
+        identity?: { availableModels?: string[] | null } | null
       }
     | null
     | undefined,
@@ -3702,6 +3703,9 @@ export function resolveModelChoice(
   if (!workerModel) {
     workerModel = worker?.defaultModel ?? null
   }
+  // ⛔ A default the account's plan does not offer is not an answer: handing it to the CLI is a 400
+  // before any token is spent (t866). `null` is the CLI choosing, which a plan always accepts.
+  if (workerModel && !modelOffered(worker, workerModel)) workerModel = null
 
   const resolvedModel = model ?? workerModel
   const modelSource: ModelSource = model ? 'task' : workerModel ? 'worker' : 'cli'

@@ -68,6 +68,7 @@
     "min_cacheable_tokens": {
       "gpt-6-astra": 1024,
       "gpt-6-sol": 1024,
+      "gpt-6-luna": 1024,
       "gpt-5.6-sol": 1024,
       "gpt-5.6-terra": 1024,
       "gpt-5.6-luna": 1024,
@@ -125,6 +126,22 @@
         "xhigh",
         "max",
         "ultra"
+      ]
+    },
+    {
+      "id": "gpt-6-luna",
+      "$comment": "The one gpt-6 model a FREE ChatGPT account lists (CodexFirst's models_cache.json, 2026-10-07, priority 4, visibility list). context_window is that file's max_context_window (872000) - measured, where its siblings carry documented figures. Which models an account is offered is read per worker (WorkerIdentity.availableModels), not here.",
+      "context_window": 872000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "o200k",
+      "context_awareness": false,
+      "effort_levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
       ]
     },
     {

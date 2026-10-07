@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ModelOptions, RpcParams, Worker } from '@shared/protocol'
 import { MODEL_CLASS_LABELS, MODEL_CLASSES, type ModelClass } from '@shared/modelclass'
-import { routeClass, routeLabel, samePair } from '@shared/modelroutes'
+import { modelOffered, notOffered, routeClass, routeLabel, samePair } from '@shared/modelroutes'
 import { isLocalModelId, localModelLabel } from '@shared/localmodel'
 import { effortLabel, modelLabel } from '../lib/modelname'
 import {
@@ -143,13 +143,19 @@ export function ModelTable({
                 ...(isSummary ? { summarisingModel: null, summarisingEffort: null } : {})
               }
               const label = routeLabel(r)
+              // ⛔ A line the plan does not offer is drawn, so the setting stays visible and removable,
+              // but nothing new can be ticked on it: the router skips it and a run on it is a 400.
+              const unoffered = !modelOffered(worker, r.model)
+              const unofferedTitle = unoffered ? notOffered(worker, r.model) : undefined
               return (
                 <tr
                   key={`${r.model}:${r.effort ?? ''}`}
-                  className={`worker-models-row${r.stored || inUse ? '' : ' worker-models-row--idle'}`}
+                  className={`worker-models-row${r.stored || inUse ? '' : ' worker-models-row--idle'}${unoffered ? ' worker-models-row--unoffered' : ''}`}
+                  data-unoffered={unoffered ? 'true' : undefined}
                 >
-                  <td className="worker-models-name" title={r.model}>
+                  <td className="worker-models-name" title={unofferedTitle ?? r.model}>
                     {name(r.model)}
+                    {unoffered && <span className="worker-models-unoffered"> · not on this plan</span>}
                   </td>
                   <td>
                     {levels.length > 0 ? (
@@ -204,7 +210,7 @@ export function ModelTable({
                       type="radio"
                       name={`default:${worker.id}:${poolOf(options, r.model) ?? 'worker'}`}
                       checked={isDefault}
-                      disabled={busy}
+                      disabled={busy || (unoffered && !isDefault)}
                       aria-label={`Default: ${label} on ${worker.label}`}
                       title={
                         poolOf(options, r.model)
@@ -218,7 +224,8 @@ export function ModelTable({
                     <input
                       type="checkbox"
                       checked={r.auto}
-                      disabled={busy}
+                      disabled={busy || (unoffered && !r.auto)}
+                      title={unofferedTitle}
                       aria-label={`Auto-route: ${label} on ${worker.label}`}
                       onChange={() => write(withRow(index, { auto: !r.auto }))}
                     />
@@ -227,7 +234,7 @@ export function ModelTable({
                     <input
                       type="checkbox"
                       checked={isGrading}
-                      disabled={busy}
+                      disabled={busy || (unoffered && !isGrading)}
                       aria-label={`Grading: ${label} on ${worker.label}`}
                       onChange={() => toggleGrading(index)}
                     />
@@ -236,7 +243,7 @@ export function ModelTable({
                     <input
                       type="checkbox"
                       checked={isJudgment}
-                      disabled={busy}
+                      disabled={busy || (unoffered && !isJudgment)}
                       aria-label={`Judgment: ${label} on ${worker.label}`}
                       onChange={() => toggleJudgment(index)}
                     />
@@ -245,7 +252,7 @@ export function ModelTable({
                     <input
                       type="checkbox"
                       checked={isSummary}
-                      disabled={busy}
+                      disabled={busy || (unoffered && !isSummary)}
                       aria-label={`Summary: ${label} on ${worker.label}`}
                       title="The model this account uses for optional, asynchronous task-title summaries. Untick to leave this worker out."
                       onChange={() => toggleSummary(index)}

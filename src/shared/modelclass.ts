@@ -33,6 +33,7 @@ export const DEFAULT_MODEL_CLASSES: Record<string, ModelClass> = {
   // OpenAI Codex
   'gpt-6-astra': 'high',
   'gpt-6-sol': 'high',
+  'gpt-6-luna': 'low',
   'gpt-5.6-sol': 'high',
   'gpt-5.6-terra': 'med',
   'gpt-5.6-mini': 'low',

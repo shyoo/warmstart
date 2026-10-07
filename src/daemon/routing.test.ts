@@ -2591,6 +2591,29 @@ describe('model-aware routing', () => {
     expect(choice.reason).toMatch(/cannot be priced/i)
   })
 
+  it('treats a model the pinned account\'s plan does not offer as a standing refusal (t953)', () => {
+    // The mechanism is a worker's own `identity.availableModels`, not an adapter: any account whose CLI
+    // lists what it offers gets the same refusal, so the test needs no Codex on the machine.
+    const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeShortList', enabled: true })
+    db.db()
+      .prepare('update workers set identity_json = ? where id = ?')
+      .run(JSON.stringify({ loggedIn: true, subscriptionType: 'Free', availableModels: ['claude-haiku-4-5'] }), w.id)
+    const task = tasks.createTask({
+      title: 'model the plan lacks',
+      constraints: { workerId: w.id, model: 'claude-opus-5-5' }
+    })
+    const choice = scoring.chooseTarget(task)
+    expect(choice.worker).toBeNull()
+    expect(choice.standing).toBe(true)
+    expect(choice.reason).toMatch(/does not offer 'claude-opus-5-5'/)
+    // The model it does list is not refused for that reason.
+    const ok = tasks.createTask({
+      title: 'model the plan lists',
+      constraints: { workerId: w.id, model: 'claude-haiku-4-5' }
+    })
+    expect(scoring.chooseTarget(ok).reason ?? '').not.toMatch(/does not offer/)
+  })
+
   it('treats suspect quarantine on a pinned worker as a standing refusal (t868)', () => {
     const w = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeSuspect', enabled: true })
     workers.recordDispatchFailure(w.id, 'CLI failed 400', null)

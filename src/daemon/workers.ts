@@ -3,7 +3,7 @@ import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { canWork } from '@shared/protocol.js'
 import type { ModelClass } from '@shared/modelclass.js'
-import { autoCandidates, autoRoutes, classOnWorker, type ModelRoute } from '@shared/modelroutes.js'
+import { autoCandidates, autoRoutes, classOnWorker, modelOffered, type ModelRoute } from '@shared/modelroutes.js'
 import type {
   CreditStatus,
   CreditsIntent,
@@ -444,6 +444,10 @@ export function defaultSummarisingModel(adapterId: string): string | null {
 export function knownModelIds(adapterId: string, workerId?: string | null): string[] {
   const cm = costModel(adapter(adapterId).info.policy.costModelId)
   const ids = new Set(cm.modelIds())
+  // ⛔ One worker's own picker is narrowed to what its plan offers; the adapter-wide list stays the
+  // union a task's model constraint reads, and `checkConstraints` refuses the pairing that fails.
+  const offeredTo = workerId ? getWorker(workerId) : null
+  if (offeredTo) for (const id of ids) if (!modelOffered(offeredTo, id)) ids.delete(id)
   if (cm.dynamicModelPrefix()) {
     for (const w of listWorkers(true)) {
       if (w.adapterId !== adapterId || w.retiredAt) continue
@@ -852,6 +856,9 @@ export async function refreshIdentity(id: string, lift = false): Promise<Worker>
     // What a local endpoint serves, and how wide its window is - the only source either can come
     // from, so null everywhere a CLI answered instead.
     servedModels: probe.servedModels ?? null,
+    // What this plan offers out of the catalogue (Codex's models_cache.json) - a subset, null where
+    // the CLI never said. See WorkerIdentity.availableModels.
+    availableModels: probe.availableModels ?? null,
     contextWindow: probe.contextWindow ?? null,
     raw: probe.raw,
     checkedAt: Date.now()

@@ -3,7 +3,7 @@ import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import type { Objective, Project, Task } from '@shared/tasks.js'
 import { projectTrunkOnly, resolveWorkspaceMode, windowHighWater, WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { WEIGHT_SIGNS } from '@shared/routing.js'
-import { isRoutableModel, pairInClass } from '@shared/modelroutes.js'
+import { isRoutableModel, modelOffered, notOffered, pairInClass } from '@shared/modelroutes.js'
 import { adapter } from './adapters/index.js'
 import { paceFactors, paceFor, paceValue, type PaceFactors } from './pace.js'
 import {
@@ -410,6 +410,12 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
         )
         continue
       }
+      // ⛔ A model this plan does not list is a 400 on the first spawn, which quarantined the account
+      // (t866). Standing, like an unpriceable one: waiting does not make a plan offer it.
+      if (!modelOffered(worker, task.constraints.model)) {
+        refuse(worker, 'account', notOffered(worker, task.constraints.model), true)
+        continue
+      }
       if (task.constraints.effort) {
         if (!info.capabilities.selectableEffort) {
           refuse(
@@ -441,6 +447,10 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
           `${worker.label} cannot run model '${targetModel}': model cannot be priced for ${info.label}`,
           true
         )
+        continue
+      }
+      if (!modelOffered(worker, targetModel)) {
+        refuse(worker, 'account', notOffered(worker, targetModel), true)
         continue
       }
       candidateModels = [{

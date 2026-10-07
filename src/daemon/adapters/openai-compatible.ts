@@ -809,6 +809,38 @@ export function formatPlan(plan?: string | null): string | null {
   return plan.charAt(0).toUpperCase() + plan.slice(1)
 }
 
+/**
+ * The models this account's plan lists, from the `models_cache.json` the CLI keeps in `CODEX_HOME`.
+ *
+ * ⭐ **The server filters this list by plan, so the file is the plan's own answer.** Measured
+ * 2026-10-07 (codex-cli 0.156.0): the free account's cache (`workers/codexfirst`, fetched that day)
+ * lists `gpt-6-luna`, `gpt-5.6-terra`, `gpt-5.6-luna` as `visibility: list` and has no `gpt-6-sol`,
+ * `gpt-6-astra` or `gpt-5.6-sol`, while a Plus account's cache (`~/.codex`, 2026-09-27) lists all of
+ * them — and the free account's `gpt-6-sol` turn is the `400 … not supported when using Codex with a
+ * ChatGPT account` of t866. A file read, no process and no token.
+ *
+ * ⛔ `list` only: `hide` entries (`gpt-reserve`, `codex-auto-review`, and `gpt-5.5` on a free plan)
+ * are what the CLI's own picker withholds, so they are not offered either. ⚠️ `null` — unknown, never
+ * an empty offer — when the file is missing, unparseable or lists nothing: a worker that has not run
+ * yet must not lose every model.
+ */
+export function readCodexAvailableModels(isolationRoot: string): string[] | null {
+  const path = join(isolationRoot, 'models_cache.json')
+  if (!existsSync(path)) return null
+  try {
+    const cache = JSON.parse(readFileSync(path, 'utf8')) as {
+      models?: Array<{ slug?: unknown; visibility?: unknown }>
+    }
+    const slugs = (cache.models ?? [])
+      .filter((m) => m.visibility === 'list' && typeof m.slug === 'string' && m.slug !== '')
+      .map((m) => m.slug as string)
+    return slugs.length > 0 ? slugs : null
+  } catch (err) {
+    log.debug('codex models_cache.json unreadable:', err)
+    return null
+  }
+}
+
 export interface CodexAuthFile {
   auth_mode?: string
   OPENAI_API_KEY?: string
@@ -1298,8 +1330,10 @@ export const openaiCompatible: AgentAdapter = {
     }
 
     if (authIdent) {
+      const availableModels = readCodexAvailableModels(isolationRoot)
       return {
         loggedIn: authIdent.loggedIn,
+        ...(availableModels ? { availableModels } : {}),
         ...(authIdent.account ? { account: authIdent.account } : {}),
         ...(authIdent.subscriptionType ? { subscriptionType: authIdent.subscriptionType } : {}),
         billing: authIdent.billing ?? null,

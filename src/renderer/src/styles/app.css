@@ -3260,6 +3260,8 @@ body {
 .worker-models-name { white-space: nowrap; }
 /* A line drawn only so the model is on screen: present, readable, and visibly not a setting yet. */
 .worker-models-row--idle .worker-models-name { color: var(--color-text-dim); }
+.worker-models-row--unoffered .worker-models-name { color: var(--color-text-dim); }
+.worker-models-unoffered { font-size: var(--text-dense); color: var(--state-warn); }
 .worker-models-select {
   font-size: var(--text-dense); padding: 1px 4px; border-radius: var(--radius-sm);
   border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text);
