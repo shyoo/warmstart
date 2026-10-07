@@ -12,6 +12,7 @@ import {
   type SessionSharingChoice
 } from '@shared/tasks'
 import type { ModelClass } from '@shared/modelclass'
+import { canWork, type WorkerRole } from '@shared/protocol'
 import { appKey } from './storagekeys'
 
 /**
@@ -372,6 +373,30 @@ export function writeComposerPrefs(prefs: ComposerPrefs): void {
   } catch {
     // A preference that cannot be saved is not an error worth showing anybody.
   }
+}
+
+/**
+ * The accounts the Worker pill may pin: switched on and able to take work.
+ *
+ * ⛔ One list for the pill's menu **and** for deciding whether a remembered pin still stands. They
+ * were two tests once, and the second one was missing (t969 ← t986).
+ */
+export function pinnableOf<W extends { enabled: boolean; role: WorkerRole }>(workers: readonly W[]): W[] {
+  return workers.filter((w) => w.enabled && canWork(w.role))
+}
+
+/**
+ * The pin a task is filed with: the remembered account if it can still take work, else none.
+ *
+ * ⛔ **What is filed is what is drawn.** `prefs.workerId` outlives the account's state. Once that
+ * account is disabled the pill reads *Auto Worker* (its label comes from the pinnable list), so the
+ * stored id is a pin the operator cannot see — and filing it made t986 wait for a worker that was
+ * switched off. Every submit path and every per-account remembered choice reads this, never the
+ * raw preference. The stored id is left alone, so re-enabling the account restores the pin the pill
+ * will then show again.
+ */
+export function livePin(workerId: string, pinnable: ReadonlyArray<{ id: string }>): string {
+  return workerId && pinnable.some((w) => w.id === workerId) ? workerId : ''
 }
 
 /** What this account was last run with. Absent is no model, no effort, and the router's choice. */

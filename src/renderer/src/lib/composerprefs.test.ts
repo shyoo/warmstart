@@ -1,8 +1,13 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
+import type { WorkerRole } from '@shared/protocol'
 import {
   DEFAULT_COMPOSER_PREFS,
   filedModelChoice,
+  livePin,
   modelChoiceFor,
+  pinnableOf,
   readComposerPrefs,
   rememberModelChoice,
   showsEffortPicker,
@@ -400,5 +405,66 @@ describe('filedModelChoice (t811)', () => {
 
   it('files nothing for plain Auto with no effort, so `constraints` stays absent', () => {
     expect(filedModelChoice({ model: '', modelPolicy: 'auto', effort: '', efforts: OPUS_LEVELS })).toEqual({})
+  })
+})
+
+/**
+ * t969 ← t986: the composer remembered ClaudeThird, ClaudeThird was switched off, the Worker pill drew
+ * *Auto Worker* — and the task was filed pinned to ClaudeThird anyway, where it waited until a person
+ * read *Cannot start as filed*. ⛔ What is filed must be what is drawn.
+ */
+describe('a remembered worker pin that can no longer take work (t969)', () => {
+  const w = (id: string, enabled: boolean, role: WorkerRole = 'worker') => ({ id, enabled, role })
+  const fleet = [w('first', true), w('third', false), w('judge', true, 'controller'), w('both', true, 'both'), w('none', true, 'none')]
+
+  it('offers only accounts that are on and take work', () => {
+    expect(pinnableOf(fleet).map((x) => x.id)).toEqual(['first', 'both'])
+    expect(pinnableOf([])).toEqual([])
+  })
+
+  it('keeps a pin on an account that is on', () => {
+    expect(livePin('first', pinnableOf(fleet))).toBe('first')
+    expect(livePin('both', pinnableOf(fleet))).toBe('both')
+  })
+
+  it('files Auto Worker for a pin on every kind of account the pill would not offer', () => {
+    const pinnable = pinnableOf(fleet)
+    for (const id of ['third', 'judge', 'none', 'deleted-long-ago']) {
+      expect(livePin(id, pinnable), id).toBe('')
+    }
+  })
+
+  it('files Auto Worker when nothing is remembered, and while the fleet has not loaded', () => {
+    expect(livePin('', pinnableOf(fleet))).toBe('')
+    expect(livePin('first', [])).toBe('')
+  })
+
+  it('follows the account back on when it is re-enabled, because the stored id is not rewritten', () => {
+    const stored = 'third'
+    expect(livePin(stored, pinnableOf(fleet))).toBe('')
+    const back = fleet.map((x) => (x.id === 'third' ? { ...x, enabled: true } : x))
+    expect(livePin(stored, pinnableOf(back))).toBe('third')
+  })
+
+  describe('NewTask wiring', () => {
+    // React-bound with no hook host at L1, so pinned at source level (as threaddetail.test.ts does).
+    // Filing `prefs.workerId` on any path turns this red.
+    const source = readFileSync(
+      fileURLToPath(new URL('../components/NewTask.tsx', import.meta.url)),
+      'utf8'
+    )
+
+    it('reads the raw preference only to derive the live pin, and to write a newly chosen one', () => {
+      const uses = source.split(/\r?\n/).filter((line) => line.includes('prefs.workerId') && !line.trim().startsWith('//'))
+      expect(uses.map((l) => l.trim())).toEqual([
+        'const pinId = livePin(prefs.workerId, pinnable)'
+      ])
+    })
+
+    it('files the live pin on task.create, task.plan and task.debate, and offers the same list it checks', () => {
+      expect(source).toContain('const pinnable = pinnableOf(fleet.map((e) => e.worker))')
+      expect(source.match(/\.\.\.\(pinId \? \{ workerId: pinId \} : \{\}\)/g)).toHaveLength(3)
+      expect(source).toContain('organizerWorkerId: pinId || null')
+    })
   })
 })

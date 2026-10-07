@@ -241,7 +241,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       }
       return createTask({
         ...p,
-        ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {})
+        ...(p.constraints ? { constraints: checkConstraints(p.constraints, { switchedOn: true }) } : {})
       })
     },
     /**
@@ -271,7 +271,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
     'task.update': (p) => {
       const { id, workspaceMode, delegation, ...patch } = p
       if (patch.constraints) {
-        patch.constraints = checkConstraints(patch.constraints)
+        patch.constraints = checkConstraints(patch.constraints, { switchedOn: true })
       }
       if (workspaceMode !== undefined) setWorkspaceModeChecked(id, workspaceMode)
       // ⚠️ Authority, not a preference column: it writes the task's `spawn_tasks`. See `setDelegation`.

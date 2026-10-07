@@ -256,6 +256,23 @@ export function checkedChildAccounts(defaults: ChildDefaults): Partial<ChildDefa
 }
 
 /**
+ * The account a pin may name: one that exists and can take work — and, when `switchedOn`, is enabled.
+ *
+ * ⛔ `switchedOn` is asked of **filing** (create, plan, debate, update), not of every write. A pin on a disabled or retired account is a task nothing can start. The scheduler's eligibility
+ * list refuses it on every tick and, after the standing-hold grace, hands it to a person (t969 ←
+ * t986). Saying no here costs the filer one sentence; saying it there costs a task that sat unseen.
+ */
+function requirePinnableWorker(id: string, switchedOn: boolean): Worker {
+  const w = requireWorker(id)
+  if (!canWork(w.role)) {
+    throw new Error(`${w.label} has role '${w.role}' and cannot be assigned to work tasks`)
+  }
+  if (switchedOn && w.retiredAt) throw new Error(`${w.label} is retired and cannot be assigned work`)
+  if (switchedOn && !w.enabled) throw new Error(`${w.label} is disabled — enable it, or leave the worker on Auto`)
+  return w
+}
+
+/**
  * Reject a constraint that names something that does not exist, here, at the door.
  *
  * ⛔ Admission is the only cheap place to say no. A bad worker id makes a task that no candidate loop
@@ -268,16 +285,12 @@ export function checkedChildAccounts(defaults: ChildDefaults): Partial<ChildDefa
  * ⚠️ The adapter is derived from the pinned worker rather than taken on trust. Two fields that can
  * disagree about which CLI will run this are two fields that will eventually disagree.
  */
-export function checkConstraints(c: TaskConstraints): TaskConstraints {
+export function checkConstraints(c: TaskConstraints, opts: { switchedOn?: boolean } = {}): TaskConstraints {
+  const switchedOn = opts.switchedOn === true
   const checked: TaskConstraints = { ...c }
 
   if (c.workerIds) {
-    for (const id of c.workerIds) {
-      const w = requireWorker(id)
-      if (!canWork(w.role)) {
-        throw new Error(`${w.label} has role '${w.role}' and cannot be assigned to work tasks`)
-      }
-    }
+    for (const id of c.workerIds) requirePinnableWorker(id, switchedOn)
   }
 
   if (c.modelsByWorker) {
@@ -314,7 +327,7 @@ export function checkConstraints(c: TaskConstraints): TaskConstraints {
   }
 
   if (c.pieceConstraints) {
-    checked.pieceConstraints = checkConstraints(c.pieceConstraints)
+    checked.pieceConstraints = checkConstraints(c.pieceConstraints, opts)
   }
 
   if (c.modelClass && !MODEL_CLASSES.includes(c.modelClass)) {
@@ -323,10 +336,7 @@ export function checkConstraints(c: TaskConstraints): TaskConstraints {
 
   let worker: Worker | null = null
   if (c.workerId) {
-    worker = requireWorker(c.workerId)
-    if (!canWork(worker.role)) {
-      throw new Error(`${worker.label} has role '${worker.role}' and cannot be assigned to work tasks`)
-    }
+    worker = requirePinnableWorker(c.workerId, switchedOn)
     checked.adapterId = worker.adapterId
   }
 

@@ -599,6 +599,14 @@ the row says what was filed (t760).** An Auto-worker task has no account to reso
 list cell was empty and the thread's model row said *CLI default*. Both now read the composer's words
 from `autoModelLabel` — *Auto Model*, *Auto Model (high|med|low)*, or *account default* for inherit —
 and the list's account cell reads *Auto Worker* (or the pinned account) via `workerCellLabel`.
+⭐ **The composer files the pin it draws (t969 ← t986).** The remembered Worker pill can name an
+account switched off since; the pill then reads *Auto Worker* (its label comes from the pinnable
+list) but the old submit paths still filed the stored id, and the task waited for a disabled
+worker. `livePin` (`lib/composerprefs.ts`) is the one test — a remembered id counts only while the
+account is in `pinnableOf` (on, role can work) — and `NewTask` files and remembers model choices
+against `pinId`, never `prefs.workerId`. The stored id is kept, so re-enabling the account brings
+the pin back on screen. The daemon is the backstop: `checkConstraints(…, { switchedOn: true })` on
+`task.create`/`plan`/`debate`/`update` refuses a disabled or retired pin; reassigning is not asked.
 
 ⭐ **The ledger says what a task is on now and what it will be on next as two rows each, not one row
 with a caption (t564).** `cur worker` (the live session's account, else `ranOn`) sits over

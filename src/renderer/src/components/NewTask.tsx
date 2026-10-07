@@ -28,7 +28,6 @@ import type { DebateExchange, DebateSeat } from '@shared/tasks'
 import { resolveFinishPolicy, resolveSessionSharing } from '@shared/policy'
 import type { AdapterInfo, DebatePreview, ModelOptions, Settings } from '@shared/protocol'
 import type { ModelReportRow } from '@shared/routing'
-import { canWork } from '@shared/protocol'
 import { debateNotices } from '../lib/debatenotice'
 import { executorNotices } from '../lib/executornotice'
 import { plannerMcpNotice } from '../lib/plannernotice'
@@ -44,7 +43,9 @@ import {
   MIN_PIECES,
   PLAN_EXECUTE_PIECES,
   filedModelChoice,
+  livePin,
   modelChoiceFor,
+  pinnableOf,
   readComposerPrefs,
   rememberModelChoice,
   showsEffortPicker,
@@ -616,8 +617,10 @@ export function NewTask({
 
   // ⛔ Only accounts that could actually take work. Offering a switched-off worker or a controller-only
   // worker as a pin produces a task that waits forever on a candidate loop that will never match it.
-  const pinnable = fleet.filter((e) => e.worker.enabled && canWork(e.worker.role)).map((e) => e.worker)
-  const pinned = pinnable.find((w) => w.id === prefs.workerId) ?? null
+  const pinnable = pinnableOf(fleet.map((e) => e.worker))
+  // ⛔ `pinId`, never `prefs.workerId`, is what gets filed and remembered against: see `livePin`.
+  const pinId = livePin(prefs.workerId, pinnable)
+  const pinned = pinnable.find((w) => w.id === pinId) ?? null
   const forAdapter = pinned ? (options.find((o) => o.adapterId === pinned.adapterId) ?? null) : null
   const canSetEffort = forAdapter?.selectableEffort ?? false
 
@@ -629,7 +632,7 @@ export function NewTask({
    * an unrecognised id resolves to inherit and is never sent. It is left in storage rather than
    * cleared: the picker being momentarily empty is not evidence that a choice was wrong.
    */
-  const remembered = modelChoiceFor(prefs, prefs.workerId)
+  const remembered = modelChoiceFor(prefs, pinId)
   const model =
     forAdapter && forAdapter.models.some((m) => m.id === remembered.model) ? remembered.model : ''
   /**
@@ -766,7 +769,6 @@ export function NewTask({
    */
   const plannerNote = isPlan
     ? (() => {
-        const pinned = prefs.workerId ? (pinnable.find((w) => w.id === prefs.workerId) ?? null) : null
         return plannerMcpNotice(
           pinned
             ? {
@@ -832,7 +834,7 @@ export function NewTask({
       kind: 'debate',
       seats: filedSeats.map(({ workerId, model, effort }) => ({ workerId, model, effort })),
       rounds: debatePrefs.rounds,
-      organizerWorkerId: prefs.workerId || null,
+      organizerWorkerId: pinId || null,
       organizerModel: model || null
     })
       .then((p) => {
@@ -849,7 +851,7 @@ export function NewTask({
     // a request storm for a figure that would not change. And keyed without the lens: it prices
     // nothing, and its keystrokes would refetch the figure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDebate, rosterComplete, projectId, debatePrefs.rounds, pinsKey, prefs.workerId, model])
+  }, [isDebate, rosterComplete, projectId, debatePrefs.rounds, pinsKey, pinId, model])
 
   /**
    * The Worker pill's options, and on a debate the order they are in.
@@ -913,7 +915,7 @@ export function NewTask({
               ? 'low'
               : undefined
       setPrefs(
-        rememberModelChoice(prefs, prefs.workerId, {
+        rememberModelChoice(prefs, pinId, {
           model: '',
           effort,
           policy,
@@ -927,7 +929,7 @@ export function NewTask({
     // would send a level the CLI would refuse, or silently keep one the pill has stopped showing.
     const keptEffort = canSetEffort && levels.includes(effort) ? effort : ''
     setPrefs(
-      rememberModelChoice(prefs, prefs.workerId, {
+      rememberModelChoice(prefs, pinId, {
         model: next,
         effort: keptEffort,
         policy: modelPolicy,
@@ -937,7 +939,7 @@ export function NewTask({
   }
 
   const chooseEffort = (next: string): void => {
-    setPrefs(rememberModelChoice(prefs, prefs.workerId, { model, effort: next, policy: modelPolicy, modelClass }))
+    setPrefs(rememberModelChoice(prefs, pinId, { model, effort: next, policy: modelPolicy, modelClass }))
   }
 
   const submit = async (targetStatus: 'draft' | 'ready'): Promise<void> => {
@@ -1007,7 +1009,7 @@ export function NewTask({
             ...(pieceModelClass ? { modelClass: pieceModelClass } : {})
           },
           constraints: {
-            ...(prefs.workerId ? { workerId: prefs.workerId } : {}),
+            ...(pinId ? { workerId: pinId } : {}),
             ...filedModel,
             piecePriority,
             pieceLimit: filedLimit,
@@ -1046,8 +1048,8 @@ export function NewTask({
           exchange: debatePrefs.exchange,
           // ⚠️ The organizer's own pin: a debate task is its organizer, so this is the ordinary
           // Worker and Model answer rather than a second control saying the same thing.
-          ...(prefs.workerId || hasFiledModel
-            ? { constraints: { ...(prefs.workerId ? { workerId: prefs.workerId } : {}), ...filedModel } }
+          ...(pinId || hasFiledModel
+            ? { constraints: { ...(pinId ? { workerId: pinId } : {}), ...filedModel } }
             : {})
         })
         if (!filed.ok) {
@@ -1087,8 +1089,8 @@ export function NewTask({
           // nothing rather than three questions left to the scheduler.
           // ⚠️ `modelPolicy: 'inherit'` counts as a constraint on its own — it is the one answer on
           // that pill the daemon cannot infer from silence, since silence is what `auto` means.
-          ...(prefs.workerId || hasFiledModel
-            ? { constraints: { ...(prefs.workerId ? { workerId: prefs.workerId } : {}), ...filedModel } }
+          ...(pinId || hasFiledModel
+            ? { constraints: { ...(pinId ? { workerId: pinId } : {}), ...filedModel } }
             : {})
         })
       }
@@ -1399,8 +1401,8 @@ export function NewTask({
                       ariaLabel="Worker"
                       align="right"
                       title="Organizer worker for synthesizing debate arguments. Workers are ranked by fitness."
-                      muted={!prefs.workerId}
-                      value={prefs.workerId}
+                      muted={!pinId}
+                      value={pinId}
                       label={pinned?.label ?? 'Auto Worker'}
                       options={organizerOptions}
                       onChange={chooseWorker}
@@ -1627,8 +1629,8 @@ export function NewTask({
               title={
                 'Auto routes based on quota, cache warmth, and model capability. Selecting an account pins the task to that worker.'
               }
-              muted={!prefs.workerId}
-              value={prefs.workerId}
+              muted={!pinId}
+              value={pinId}
               label={pinned?.label ?? 'Auto Worker'}
               options={[
                 { value: '', label: 'Auto Worker', hint: 'the scheduler picks' },
@@ -1785,8 +1787,8 @@ export function NewTask({
                       <PillSelect
                         ariaLabel="Worker"
                         align="right"
-                        muted={!prefs.workerId}
-                        value={prefs.workerId}
+                        muted={!pinId}
+                        value={pinId}
                         label={pinned?.label ?? 'Auto Worker'}
                         options={[
                           { value: '', label: 'Auto Worker', hint: 'Routed by scheduler' },
@@ -2009,10 +2011,10 @@ export function NewTask({
             debateNotices(
               preview,
               debatePrefs.rounds,
-              prefs.workerId
+              pinned
                 ? {
-                    label: pinnable.find((w) => w.id === prefs.workerId)?.label ?? prefs.workerId,
-                    hasMcp: adapterMap.get(pinnable.find((w) => w.id === prefs.workerId)?.adapterId ?? '')?.capabilities.mcp ?? false
+                    label: pinned.label,
+                    hasMcp: adapterMap.get(pinned.adapterId)?.capabilities.mcp ?? false
                   }
                 : { label: 'Auto', hasMcp: null }
             ).map((notice) => (

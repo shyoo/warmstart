@@ -571,3 +571,105 @@ describe('task.setWorker RPC', () => {
     expect(tasks.requireTask(task.id).holdReason).toBeNull()
   })
 })
+
+/**
+ * Filing a task against a switched-off account (t969 ← t986).
+ *
+ * The composer remembers its Worker pill across sessions. When the remembered account was later
+ * disabled, the pill drew *Auto Worker* but the task was still filed pinned to it, and the scheduler
+ * held it until a person read *Cannot start as filed: ClaudeThird disabled*. ⛔ The daemon is the
+ * backstop: whatever a client sends, a task is not admitted pinned to an account nothing can start.
+ * Reassigning is a different door and is not asked this question here.
+ */
+describe('filing a task against a disabled or retired account (t969)', () => {
+  const handlersFor = (): ReturnType<typeof api.buildApi> =>
+    api.buildApi({ version: '1.0.0', startedAt: Date.now(), port: 8080 })
+
+  let off: Worker
+  let on: Worker
+  let gone: Worker
+  beforeAll(() => {
+    off = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeThird', enabled: false })
+    on = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeOn', enabled: true })
+    gone = workers.retireWorker(workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeGone' }).id)
+    // A scheduler tick must not hand the test's tasks to the account it just enabled.
+  })
+
+  const pins = (): Array<[string, Record<string, unknown>]> => [
+    ['workerId', { workerId: off.id }],
+    ['workerIds', { workerIds: [on.id, off.id] }],
+    ['pieceConstraints.workerId', { pieceConstraints: { workerId: off.id } }],
+    ['a retired workerId', { workerId: gone.id }]
+  ]
+
+  it('checkConstraints refuses a disabled or retired pin only when asked about filing', () => {
+    expect(() => api.checkConstraints({ workerId: off.id }, { switchedOn: true })).toThrow(/ClaudeThird is disabled/)
+    expect(() => api.checkConstraints({ workerId: gone.id }, { switchedOn: true })).toThrow(/ClaudeGone is retired/)
+    expect(() => api.checkConstraints({ workerIds: [off.id] }, { switchedOn: true })).toThrow(/disabled/)
+    expect(() => api.checkConstraints({ pieceConstraints: { workerId: off.id } }, { switchedOn: true })).toThrow(
+      /disabled/
+    )
+    // The account that is on, and a task pinned to nothing (Auto Worker), are admitted.
+    expect(api.checkConstraints({ workerId: on.id }, { switchedOn: true }).adapterId).toBe('claude-code')
+    expect(api.checkConstraints({ modelClass: 'med' }, { switchedOn: true })).toEqual({ modelClass: 'med' })
+    expect(api.checkConstraints({}, { switchedOn: true })).toEqual({})
+    // Without the flag nothing changes: reassignment and every other caller keep their old answer.
+    expect(api.checkConstraints({ workerId: off.id }).workerId).toBe(off.id)
+  })
+
+  it('task.create files nothing for any shape of pin on a disabled account', async () => {
+    const handlers = handlersFor()
+    const before = (await import('./tasks.js')).listTasks().length
+    for (const [name, constraints] of pins()) {
+      // ⚠️ A handler throws before it returns a promise, so the call is wrapped, not awaited.
+      expect(() => handlers['task.create']({ title: `pinned via ${name}`, constraints }), name).toThrow(
+        /disabled|retired/
+      )
+    }
+    expect((await import('./tasks.js')).listTasks().length).toBe(before)
+  })
+
+  it('task.create files the same task with Auto Worker, with the account on, and with a class', async () => {
+    const handlers = handlersFor()
+    const auto = await handlers['task.create']({ title: 'auto worker', constraints: { modelClass: 'med' } })
+    expect(auto.constraints.workerId).toBeUndefined()
+    const bare = await handlers['task.create']({ title: 'no constraints at all' })
+    expect(bare.constraints.workerId).toBeUndefined()
+    const pinned = await handlers['task.create']({ title: 'pinned on', constraints: { workerId: on.id } })
+    expect(pinned.constraints.workerId).toBe(on.id)
+  })
+
+  it('task.plan, task.debate and task.update are asked the same question', async () => {
+    const handlers = handlersFor()
+    const tasks = await import('./tasks.js')
+    expect(() => handlers['task.plan']({ title: 'plan', constraints: { workerId: off.id } })).toThrow(/disabled/)
+    expect(() =>
+      handlers['task.debate']({
+        title: 'debate',
+        status: 'draft',
+        seats: [
+          { workerId: on.id, model: null, effort: null },
+          { workerId: on.id, model: null, effort: null }
+        ],
+        rounds: 1,
+        exchange: 'full',
+        constraints: { workerId: off.id }
+      })
+    ).toThrow(/disabled/)
+
+    const draft = await handlers['task.create']({ title: 'a draft', status: 'draft' })
+    expect(() => handlers['task.update']({ id: draft.id, constraints: { workerId: off.id } })).toThrow(/disabled/)
+    expect(tasks.requireTask(draft.id).constraints.workerId).toBeUndefined()
+  })
+
+  it('a task pinned to an account that is switched off afterwards is left as it was filed', async () => {
+    // ⚠️ The check is on the way in. A task already in the queue is the scheduler's to hold and hand
+    // over (`handOverStandingHold`), not something an unrelated write may start refusing.
+    const handlers = handlersFor()
+    const flip = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeFlip', enabled: true })
+    const task = await handlers['task.create']({ title: 'filed while on', constraints: { workerId: flip.id } })
+    workers.updateWorker(flip.id, { enabled: false })
+    const renamed = await handlers['task.update']({ id: task.id, title: 'renamed' })
+    expect(renamed.constraints.workerId).toBe(flip.id)
+  })
+})

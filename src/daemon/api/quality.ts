@@ -153,7 +153,7 @@ export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
         ...(p.sessionSharing ? { sessionSharing: p.sessionSharing } : {}),
         ...(p.status ? { status: p.status } : {}),
         ...(p.notBefore ? { notBefore: p.notBefore } : {}),
-        ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {}),
+        ...(p.constraints ? { constraints: checkConstraints(p.constraints, { switchedOn: true }) } : {}),
         ...(p.dependsOn?.length ? { dependsOn: p.dependsOn } : {}),
         ...(p.attachmentIds?.length ? { attachmentIds: p.attachmentIds } : {}),
         // ⛔ **The fan-out the operator picked is written into the mandate**, which is what
@@ -214,7 +214,7 @@ export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
         ...(p.finishPolicy ? { finishPolicy: p.finishPolicy } : {}),
         ...(p.status ? { status: p.status } : {}),
         ...(p.notBefore ? { notBefore: p.notBefore } : {}),
-        ...(p.constraints ? { constraints: checkConstraints(p.constraints) } : {}),
+        ...(p.constraints ? { constraints: checkConstraints(p.constraints, { switchedOn: true }) } : {}),
         ...(p.dependsOn?.length ? { dependsOn: p.dependsOn } : {}),
         ...(p.attachmentIds?.length ? { attachmentIds: p.attachmentIds } : {}),
         mandate: { maxChildren: p.seats.length },
