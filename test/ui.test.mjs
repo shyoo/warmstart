@@ -3068,9 +3068,17 @@ try {
       )
     store.close()
   }
-  await evaluate(
-    `window.agentyard.rpc('worker.update', { id: ${JSON.stringify(suspectWorkerId)}, maxConcurrent: 1 })`
-  )
+  // ⚠️ There and back, never a same-value edit: the store was written behind the renderer's back, and
+  // only a field `fleet.list` computes from (`workerChangeNeedsFleetRefresh`) makes the strip re-read
+  // it. A same-value edit refetched only while the health row above happened to differ from what the
+  // renderer held, and the credits seeded for the other card rode on that. Inferred, not reproduced: the
+  // credits check was red on Linux CI alone (2026-10-07) and green on Windows.
+  for (const maxConcurrent of [2, 1]) {
+    await evaluate(
+      `window.agentyard.rpc('worker.update', { id: ${JSON.stringify(suspectWorkerId)}, maxConcurrent: ${maxConcurrent} })`
+    )
+    await wait(300)
+  }
   await wait(1500)
   const suspectCard = await evaluate(
     `[...document.querySelectorAll('.wcard')].find(c => c.innerText.includes('suspect worker'))?.innerText ?? ''`

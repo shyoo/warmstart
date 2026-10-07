@@ -686,12 +686,20 @@ try {
         cols: 80,
         rows: 24
       })
+    // ⛔ Filed unpinned and pinned through the store: `task.create` refuses a pin to a disabled worker
+    // (t969), and this one is closed to work on purpose — enabling it for the filing would let the
+    // scheduler dispatch these tasks onto it. The pin is what `agent.*` reads; the refusal is not
+    // what these checks are about.
     const pin = { workerId: probeWorker.id }
+    const createPinned = async (args) => {
+      const task = await daemon.rpc('task.create', args)
+      agentDb.prepare('update tasks set constraints_json = ? where id = ?').run(JSON.stringify(pin), task.id)
+      return task
+    }
 
-    const agentTask = await daemon.rpc('task.create', {
+    const agentTask = await createPinned({
       title: 'agent surface',
-      projectId: added.id,
-      constraints: pin
+      projectId: added.id
     })
     const agentSession = await spawnAgentSession()
     const agentRun = seedAgentRun(agentTask.id, probeWorker.id, agentSession.id)
@@ -772,11 +780,10 @@ try {
       splitNobody.ok === false && /not working on a task/.test(splitNobody.reply ?? ''),
       splitNobody.reply
     )
-    const planTask = await daemon.rpc('task.create', {
+    const planTask = await createPinned({
       title: 'agent plan',
       projectId: added.id,
-      kind: 'plan',
-      constraints: pin
+      kind: 'plan'
     })
     const planSession = await spawnAgentSession()
     const planRun = seedAgentRun(planTask.id, probeWorker.id, planSession.id)
@@ -913,10 +920,9 @@ try {
         stillParked.task.status
       )
     }
-    const finishTask = await daemon.rpc('task.create', {
+    const finishTask = await createPinned({
       title: 'agent finish',
-      projectId: added.id,
-      constraints: pin
+      projectId: added.id
     })
     const finishSession = await spawnAgentSession()
     const finishRun = seedAgentRun(finishTask.id, probeWorker.id, finishSession.id)
