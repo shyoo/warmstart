@@ -419,6 +419,80 @@ describe('the turn that ended without reporting', () => {
   })
 })
 
+describe('a turn that ended with jobs running in the background (t987 ← t962)', () => {
+  const job = [{ id: 'bj57m2xio', description: 'Evaluation run' }]
+
+  it('⭐ a work run is not handed to a person while the CLI lists a job, and the pane does not say the turn ended', async () => {
+    // The flat tree is the t946 shape that hands over at 3 minutes; the only difference is the list.
+    const { run, task, session } = seedRunningTask()
+    turnend.noteBackgroundChange(session, job)
+
+    await endTurn(session, 'The evaluation runs are going in the background.')
+    for (let i = 0; i < 4; i += 1) {
+      await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
+      await scheduler.tick()
+    }
+
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+    expect(tasks.requireRun(run.id).endedAt).toBeNull()
+    const idlestate = await import('./idlestate.js')
+    expect(idlestate.withTransient(tasks.requireTask(task.id)).idleSince).toBeUndefined()
+  })
+
+  it('and gets a fresh grace window when the last job ends, then is handed over as before', async () => {
+    const { task, session } = seedRunningTask()
+    turnend.noteBackgroundChange(session, job)
+    await endTurn(session)
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS * 3)
+    await scheduler.tick()
+
+    turnend.noteBackgroundChange(session, [])
+    // The pane is told now, and the wake gets its grace: a tick straight after hands nothing over.
+    const idlestate = await import('./idlestate.js')
+    expect(idlestate.withTransient(tasks.requireTask(task.id)).idleSince).toEqual(expect.any(Number))
+    await scheduler.tick()
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
+    await scheduler.tick()
+    expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+  })
+
+  it('⭐ a conversation stays running while it lists a job, and rests at your turn if no wake follows the last one', async () => {
+    const { run, task, session } = seedRunningTask({ kind: 'conversation' })
+    turnend.noteBackgroundChange(session, job)
+
+    await endTurn(session, 'The evaluation runs are going in the background.')
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+    expect(tasks.requireRun(run.id).endedAt).toBeNull()
+
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS * 2)
+    await scheduler.tick()
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+
+    turnend.noteBackgroundChange(session, [])
+    await scheduler.tick()
+    expect(tasks.getTask(task.id)?.status).toBe('running')
+    await vi.advanceTimersByTimeAsync(turnend.IDLE_TURN_AFTER_MS + 1000)
+    await scheduler.tick()
+
+    expect(tasks.getTask(task.id)?.status).toBe('awaiting_human')
+    expect(tasks.requireRun(run.id).endedAt).not.toBeNull()
+  })
+
+  it('a session that exits takes its jobs and its hold with it', async () => {
+    const { session } = seedRunningTask({ kind: 'conversation' })
+    turnend.noteBackgroundChange(session, job)
+    await endTurn(session)
+    const background = await import('./backgroundtasks.js')
+    expect(background.heldRunOf(session.id)).not.toBeNull()
+
+    await turnend.onSessionExit(session, 0)
+    expect(background.heldRunOf(session.id)).toBeNull()
+    expect(background.backgroundTasksOf(session.id)).toEqual([])
+  })
+})
+
 describe('what stands the check down', () => {
   it('a request started after the turn ended — the daemon prompted it again', async () => {
     const { run, task, session } = seedRunningTask()

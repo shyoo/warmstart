@@ -136,6 +136,19 @@ export type StreamEvent =
    */
   | { kind: 'turn_status'; category: string; detail: string | null; needsAction: string | null }
   | { kind: 'init'; sessionId: string | null; model: string | null; permissionMode: string | null }
+  /**
+   * What the session still has running in the background, as the CLI's own complete list (not a delta).
+   *
+   * ⛔ **The fact `result` cannot carry.** Measured 2026-10-07 on claude 2.1.294 (one Haiku turn that
+   * started `sleep 12` with `run_in_background`): `system/background_tasks_changed` with
+   * `tasks: [{task_id, task_type: "local_bash", description}]` arrived *before* the turn's `result`,
+   * and `tasks: []` arrived after the job ended, a moment after the CLI woke the session with a new
+   * turn. A turn that ends with its work still running is byte-for-byte the same `result` as one
+   * that is finished — this record is the only difference (t987 ← t962).
+   *
+   * ⚠️ Complete list each time, so a caller replaces what it held rather than adding.
+   */
+  | { kind: 'background_tasks'; tasks: { id: string; description: string | null }[] }
   | { kind: 'other'; type: string }
 
 /**
@@ -251,6 +264,7 @@ export function renderForHuman(event: StreamEvent, asked?: SpawnAsked): string {
         ? dim(`— waiting on you${event.needsAction ? `: ${event.needsAction}` : ''}`) + eol
         : ''
     // ⛔ Everything else is protocol. It goes to the scheduler and not to the screen.
+    case 'background_tasks':
     case 'other':
       return ''
   }
@@ -316,6 +330,7 @@ export function describeStream(
         ? { kind: 'note', text: 'Waiting on you', detail: event.needsAction, tone: 'warn' }
         : null
     case 'usage':
+    case 'background_tasks':
     case 'other':
       return null
   }

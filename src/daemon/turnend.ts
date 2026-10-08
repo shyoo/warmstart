@@ -22,6 +22,7 @@ import {
 } from './sessions.js'
 import { stripAnsi, stripFrames } from './stream.js'
 import { sampleProcessTree } from './stall.js'
+import { backgroundTasksOf, forgetBackground, noteBackgroundTasks } from './backgroundtasks.js'
 import { clearIdleForSession, markTaskIdle, onIdleCleared } from './idlestate.js'
 import { emit } from './events.js'
 import { log } from './log.js'
@@ -106,9 +107,36 @@ export function noteIdleTurn(session: Session, run: Run, said: string | null): v
   // ⛔ **The pane is told, because it was the one thing still saying *working* (t950 ← t946).** The
   // status stays `running` — the run is open until `task_complete` — but the turn is over, and the
   // session's own stream has already said so. See `idlestate.ts`.
-  markTaskIdle(run.taskId, session.id, at)
-  broadcastTask(run.taskId)
+  // ⚠️ Not while jobs are running in the background (t987): the turn ended and the agent did not.
+  // `noteBackgroundChange` marks it when the last one is gone and nothing has followed.
+  if (backgroundTasksOf(session.id).length === 0) {
+    markTaskIdle(run.taskId, session.id, at)
+    broadcastTask(run.taskId)
+  }
   void baselineIdleTree(session, run.id)
+}
+
+/**
+ * The session's list of background jobs changed (`StreamEvent.background_tasks`).
+ *
+ * ⛔ The one transition that matters here is *the last job ended*. A work run that ended its turn
+ * with jobs running was not handed to a person for it (`runWatchdogs`), so its idle clock describes
+ * a moment long ago; starting it over gives the CLI's wake-up the same grace a fresh turn end gets,
+ * and only then is the pane told the turn is over. A held conversation needs nothing here — its
+ * release reads `backgroundEmptiedAt`.
+ */
+export function noteBackgroundChange(
+  session: Session,
+  tasks: { id: string; description: string | null }[]
+): void {
+  const wasRunning = noteBackgroundTasks(session.id, tasks)
+  if (tasks.length > 0 || !wasRunning) return
+  const idle = idleTurns.get(session.id)
+  const run = idle ? runForSession(session.id) : null
+  if (!idle || !run?.taskId || idle.runId !== run.id) return
+  deferIdleTurn(session.id)
+  markTaskIdle(run.taskId, session.id, Date.now())
+  broadcastTask(run.taskId)
 }
 
 /** Re-send a task whose in-memory flags just changed, so every open pane redraws it. */
@@ -232,6 +260,8 @@ export async function onSessionExit(session: Session, exitCode: number | null): 
   // decide, not the idle-turn watchdog's. Leaving the note behind would let it fire against a run
   // that has already been wound up here.
   forgetIdleTurn(session.id)
+  // ⚠️ The jobs and the hold both belong to the process, which is gone (t987).
+  forgetBackground(session.id)
 
   // ⛔ A completion already owns this session's teardown - the run, the workspace and the
   // status - and it has not finished writing yet. Ending the run here would overwrite a reported

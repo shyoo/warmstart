@@ -635,6 +635,18 @@ function decodeStream(
     }
   }
 
+  // ⛔ The complete list of what the session still has running in the background. See
+  // `StreamEvent.background_tasks` for the measurement. An entry without an id is skipped rather than
+  // counted: the daemon keys nothing on it, but a malformed row is not evidence of a running job.
+  if (type === 'system' && record.subtype === 'background_tasks_changed' && Array.isArray(record.tasks)) {
+    const tasks = record.tasks.flatMap((raw: unknown) => {
+      const t = asRecord(raw)
+      if (!t || typeof t.task_id !== 'string') return []
+      return [{ id: t.task_id, description: typeof t.description === 'string' ? t.description : null }]
+    })
+    return { kind: 'background_tasks', tasks }
+  }
+
   if (type === 'system' && record.subtype === 'init') {
     return {
       kind: 'init',

@@ -582,6 +582,19 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   complete final message, session kept warm, **nothing landed, committed, graded or discarded**. It reads no
   completion out of prose — not even a literal `TASK COMPLETE:` line, which is a contract given to
   adapters that cannot call the tool. Pinned by `idleturn.test.ts`.
+- ⛔ **A turn that ended is not a task waiting on a person while the agent has jobs running** (t987 ←
+  t962). Claude's stream carries `system/background_tasks_changed` — the CLI's complete list of
+  background jobs, measured 2026-10-07 on 2.1.294 (one `sleep 12` with `run_in_background`): it arrives
+  *before* the `result` and `tasks: []` after the job ends, a moment before the CLI wakes the session
+  with a new turn. `backgroundtasks.ts` holds it per session (in memory). With a job listed, a **work
+  run** is not handed over by the idle-turn watchdog (and the pane does not read *turn ended*); a
+  **conversation** keeps its run open and the task `running` instead of resting at `awaiting_human`
+  (`endConversationTurn`; reply posted, one `conversation.background_hold` line). Owed landings, a
+  finish asked, delegated pieces and a quota wrap-up still win (`shouldHoldOnBackground`). Exits: the
+  wake (a second turn decides again), the list emptying with no wake for `BACKGROUND_WAKE_GRACE_MS` (3m,
+  *not measured*; `holdReleaseDue`), session exit — and while a job still runs the stall watchdog
+  (24 min flat CPU) is the only bound. ⚠️ Claude only: other adapters emit no such record.
+  Pinned by `backgroundhold.test.ts`, `backgroundtasks.test.ts`, `idleturn.test.ts`.
 - ⛔ **`awaiting_human` must say what it wants and offer somewhere to answer.** Every hand-off to a
   person writes its reason onto the task, and `resolveTask()` records the answer.
 - ⛔ **Cancel is not delete.** Cancel winds a run down through the preemption protocol into a resting

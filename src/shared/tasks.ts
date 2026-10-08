@@ -1078,6 +1078,11 @@ export type MessageEvent =
    */
   | 'conversation.resumed'
   /**
+   * A conversation's turn ended with jobs still running in the background, so it stays with the agent
+   * instead of resting at *your turn* (t987). See `endConversationTurn`.
+   */
+  | 'conversation.background_hold'
+  /**
    * A landing an operator asked for, said *before* it runs.
    *
    * ⚠️ It is the one event here that describes something still happening, and it is written to the

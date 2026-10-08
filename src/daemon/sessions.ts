@@ -142,7 +142,7 @@ const live = new Map<string, Live>()
  * Everything else — assistant prose, an item completing, a rate-limit record riding the turn — only
  * exists because a model answered, which means the prefix was read.
  */
-const NO_REQUEST_EVIDENCE = new Set<StreamEvent['kind']>(['init', 'result', 'usage'])
+const NO_REQUEST_EVIDENCE = new Set<StreamEvent['kind']>(['init', 'result', 'usage', 'background_tasks'])
 
 /** Does seeing this record prove a model request was under way? See `NO_REQUEST_EVIDENCE`. */
 export function isRequestEvidence(kind: StreamEvent['kind']): boolean {

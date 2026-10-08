@@ -182,6 +182,32 @@ describe('claude-code', () => {
     expect(event).toMatchObject({ kind: 'turn_status', category: 'something_new', needsAction: null })
   })
 
+  /**
+   * ⛔ The shape captured live on 2026-10-07 (claude 2.1.294, one Haiku turn running `sleep 12` with
+   * `run_in_background`; ids shortened). It came *before* the turn's `result`, and `tasks: []` came
+   * after the job ended — the only difference between a turn that finished and one that left work
+   * running (t987).
+   */
+  it('decodes the CLI’s list of background jobs, and an empty list', () => {
+    const [running] = parse('claude-code', [
+      '{"type":"system","subtype":"background_tasks_changed","tasks":[{"task_id":"bj57m2xio",' +
+        '"run_id":"0muz4seaj","task_type":"local_bash","description":"Sleep 12 seconds then echo done"}]}'
+    ])
+    expect(running).toEqual({
+      kind: 'background_tasks',
+      tasks: [{ id: 'bj57m2xio', description: 'Sleep 12 seconds then echo done' }]
+    })
+    const [none] = parse('claude-code', ['{"type":"system","subtype":"background_tasks_changed","tasks":[]}'])
+    expect(none).toEqual({ kind: 'background_tasks', tasks: [] })
+  })
+
+  it('does not count a malformed row as a running job', () => {
+    const [event] = parse('claude-code', [
+      '{"type":"system","subtype":"background_tasks_changed","tasks":[{"description":"no id"},7]}'
+    ])
+    expect(event).toEqual({ kind: 'background_tasks', tasks: [] })
+  })
+
   it('encodes stream prompts with the `type` user envelope', () => {
     const encoded = adapter('claude-code').encodeStreamPrompt?.('hello world')
     expect(encoded).toBeDefined()

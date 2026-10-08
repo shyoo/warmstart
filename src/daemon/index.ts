@@ -27,7 +27,7 @@ import {
   startScheduler,
   stopScheduler
 } from './scheduler.js'
-import { noteTurnStatus, onSessionExit, onStreamResult } from './turnend.js'
+import { noteBackgroundChange, noteTurnStatus, onSessionExit, onStreamResult } from './turnend.js'
 import { reconcileConsults, startController, stopController } from './controller.js'
 import { reconcileReviews } from './reviewer.js'
 import { sweepSettledTaskQuestions } from './questions.js'
@@ -296,6 +296,9 @@ async function main(): Promise<void> {
       // something the terminal record cannot say: that the turn stopped for a person. See
       // `noteTurnStatus`.
       if (event.kind === 'turn_status') noteTurnStatus(session.id, event)
+      // ⛔ Held for the same reason, and read by the turn-end handlers: a turn whose `result` arrives
+      // with jobs still listed here has ended, and its work has not (t987).
+      if (event.kind === 'background_tasks') noteBackgroundChange(session, event.tasks)
     },
     onExit(sessionId, exitCode) {
       const finished = getSession(sessionId)

@@ -248,6 +248,16 @@ import {
 } from './scoring.js'
 import { evictableResidents, leastValuableResident, sessionLeaseId } from './residency.js'
 import {
+  backgroundEmptiedAt,
+  backgroundTasksOf,
+  describeBackground,
+  heldRunOf,
+  holdReleaseDue,
+  holdRunOnBackground,
+  releaseBackgroundHold,
+  shouldHoldOnBackground
+} from './backgroundtasks.js'
+import {
   blockedOn,
   deadOnArrival,
   deferIdleTurn,
@@ -2814,8 +2824,34 @@ async function runWatchdogs(): Promise<void> {
     // ⚠️ Skipped while a completion is still landing, for the t56 reason: `completeTask` owns this
     // session's teardown and parking underneath it would overwrite a reported completion. If that
     // completion then throws and leaves the run open, this is what eventually notices.
+    // ⛔ **A conversation kept open for its background jobs (t987), and the wake that never came.**
+    // The CLI wakes the session itself when a job ends, so the common exit from the hold is a new
+    // turn and `endConversationTurn` deciding again. This is the other exit: every job is gone, the
+    // session has said nothing since, and so the task goes to the person as it would have the moment
+    // the turn ended. While a job is still running the stall watchdog below is the bound.
+    if (heldRunOf(session.id) === run.id && !compacting && !completing.has(session.id)) {
+      const open = backgroundTasksOf(session.id)
+      if (
+        holdReleaseDue({
+          backgroundOpen: open.length,
+          emptiedAt: backgroundEmptiedAt(session.id),
+          lastEvidenceAt: lastRequestEvidenceAt(session.id),
+          now: Date.now()
+        })
+      ) {
+        log.info(`t${task.seq} had no wake after its background jobs ended; resting at your turn`)
+        await endConversationTurn(session, run, task, null, { release: true })
+        continue
+      }
+    }
+
     const idle = idleTurnFor(session.id)
-    if (idle && idle.runId === run.id && !compacting && !completing.has(session.id)) {
+    // ⛔ Not while the session still has jobs running (t987): its turn ended, its work did not, and the
+    // CLI will wake it. `deferIdleTurn` rides along so the clock starts over when the list empties
+    // (`noteBackgroundChange` does the same), giving that wake its grace. The stall check still runs.
+    const backgroundOpen = backgroundTasksOf(session.id).length > 0
+    if (idle && idle.runId === run.id && backgroundOpen) deferIdleTurn(session.id)
+    if (idle && idle.runId === run.id && !backgroundOpen && !compacting && !completing.has(session.id)) {
       const quiet = quietSince({
         lastRequestStartedAt: session.lastRequestStartedAt,
         sessionStartedAt: session.startedAt,
@@ -4539,10 +4575,10 @@ export async function endConversationTurn(
   session: Session,
   run: Run,
   task: Task,
-  resultText?: string | null
+  resultText?: string | null,
+  opts: { release?: boolean } = {}
 ): Promise<void> {
   const why = 'your turn'
-  finishRun(run.id, 'completed', 'the turn ended; the conversation is still open')
 
   let effectiveAnswer = (resultText ?? '').trim()
   if (!effectiveAnswer) {
@@ -4554,11 +4590,41 @@ export async function endConversationTurn(
     }
   }
 
+  // ⛔ **Still the agent's, while it has jobs running (t987 ← t962).** `result` ends the turn, not the
+  // work: the CLI lists what it still has in the background (`StreamEvent.background_tasks`) and wakes
+  // the session itself when one finishes. Resting at *your turn* told the person to act on a task
+  // nobody was waiting on them for, then flipped back by itself a minute later. So the reply is
+  // posted — it is the answer, and is worth reading now — and the run, the status and the session stay
+  // as they are. ⚠️ `release` is the watchdog giving up on a wake that never came: the reply was
+  // posted when the hold began, so it is not posted twice.
+  const background = opts.release ? [] : backgroundTasksOf(session.id)
+  const holding = shouldHoldOnBackground({
+    backgroundOpen: background.length,
+    status: task.status,
+    pendingPieces: unmetPrerequisites(task).length,
+    quotaPreempted: quotaPreemptionAtTurnEnd(run.id) !== null,
+    landOwed: !!task.landAfterTurn,
+    finishAsked: task.finishAskedAt !== null
+  })
   const existing = messagesFor(task.id).filter((m) => m.runId === run.id && m.role === 'agent')
   const alreadyAdded = existing.some((m) => m.text.trim() === effectiveAnswer.trim())
-  if (!alreadyAdded) {
-    addMessage(task.id, 'agent', effectiveAnswer, run.id)
+  if (!opts.release && !alreadyAdded) addMessage(task.id, 'agent', effectiveAnswer, run.id)
+  if (holding) {
+    if (heldRunOf(session.id) !== run.id) {
+      holdRunOnBackground(session.id, run.id)
+      addMessage(task.id, 'system', 'The agent’s turn ended with work still running in the background', run.id, [], {
+        event: 'conversation.background_hold',
+        detail:
+          `${describeBackground(background)} — still running, so this stays with the agent rather than ` +
+          'coming back to you. It continues by itself when one finishes (the CLI wakes it), and returns ' +
+          'to you when its turn ends with nothing left running. You can still reply or Stop at any time.'
+      })
+      log.info(`t${task.seq} turn ended with ${describeBackground(background)}; keeping the run open`)
+    }
+    return
   }
+  releaseBackgroundHold(session.id)
+  finishRun(run.id, 'completed', 'the turn ended; the conversation is still open')
 
   // ⚠️ The run ends either way; the *reason* is only written over a task that was still working. A
   // conversation whose agent asked a question is already resting on that question, and replacing

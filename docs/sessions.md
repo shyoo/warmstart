@@ -181,6 +181,11 @@ ends its turn, and its own CLI hands it the result minutes later and re-invokes 
 message was dropped on the floor: no peephole, no thread line, no metering, and a task reading *your
 turn* with its agent mid-sentence.
 
+⭐ **Since t987 a Claude conversation does not rest in the first place while the CLI lists background
+jobs** (`StreamEvent.background_tasks`): the task stays `running` with its run open and the wake
+continues the same run. The paragraphs below remain true for the cases that list nothing — another
+adapter, a job the vendor does not report, or a hold released because no wake came.
+
 ⛔ **The answer is a run**, because that is what work is here: `resumeIdleConversation` in
 `scheduler.ts` opens one on the first assistant message, which puts the turn back on the path that
 already handles all of it — the peephole finds the run, the metering finds the run, and the ordinary
