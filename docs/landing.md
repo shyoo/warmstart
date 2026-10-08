@@ -259,7 +259,9 @@ the agent's reply above is then the whole outcome. The hold reason is the short 
 
 ⭐ The answer itself is on the thread: since t734 a completion posts the agent's **closing reply**
 whole under its one-line summary (`closingReply` / `completionMessage` in `activity.ts`; for an
-MCP-less adapter the final message minus its `TASK COMPLETE:` line, `replyBesideContract`).
+MCP-less adapter the final message minus its `TASK COMPLETE:` line, `replyBesideContract` — returning
+`undefined` when no contract line is present so the run falls back to `closingReply` instead of quoting
+a trailing vendor error, t986).
 
 ### When the trunk moved while the branch stayed empty
 

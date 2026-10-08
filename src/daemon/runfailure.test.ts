@@ -996,6 +996,25 @@ describe('a result that is not an error', () => {
     ).toBe(true)
   })
 
+  it('does not quote a terminal error into the completion message when contract was in backscroll (t985)', async () => {
+    // t985 streamed its completion summary and contract into the session, then agy emitted
+    // status: ERROR with a 503 UNAVAILABLE. The error must not be attached as the agent's reply.
+    const { run, task, session } = seedRunningTask({ adapterId: 'muse-code', metered: 500 })
+    vi.spyOn(sessions, 'backscroll').mockReturnValue(
+      'All checks passed cleanly.\nTASK COMPLETE: implemented First Pen ending'
+    )
+    await turnend.onStreamResult(session, {
+      isError: true,
+      text: 'API error (attempt 1): UNAVAILABLE (code 503): The service is currently unavailable.',
+      terminalReason: 'ERROR'
+    })
+    expect(tasks.requireRun(run.id).outcome).toBe('completed')
+    expect(tasks.getTask(task.id)?.status).toBe('completed')
+    const agentMsgs = tasks.messagesFor(task.id).filter((m) => m.role === 'agent')
+    expect(agentMsgs.some((m) => m.text.includes('503'))).toBe(false)
+    expect(agentMsgs.some((m) => m.text.includes('implemented First Pen ending'))).toBe(true)
+  })
+
   it('determines the last terminal contract from text when both or neither appear', () => {
     expect(turnend.lastTerminalContract(null)).toBeNull()
     expect(turnend.lastTerminalContract('Just some ordinary progress updates.')).toBeNull()

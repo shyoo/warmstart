@@ -579,6 +579,7 @@ export function needsDecisionIn(
  */
 export function replyBesideContract(text: string | null | undefined): string | undefined {
   if (!text?.trim()) return undefined
+  if (!taskCompletionIn(text)) return undefined
   return stripAnsi(text)
     .split(/\r?\n/)
     .filter((line) => !/^[ \t>*-]*TASK COMPLETE:/i.test(line))
