@@ -523,7 +523,9 @@ behaviour falls out of it:
     headless call with `--effort low` came back with `effort: "low"` on its transcript's assistant
     record, the field `transcript.ts` already parses. Set *and* observable. `claude-sonnet-5-5`
     was run on 2.1.284 (2026-09-28, t837) at `--effort low` and `max`, and both answered;
-    `modelUsage` reported `contextWindow: 1000000`.
+    `modelUsage` reported `contextWindow: 1000000`. ⚠️ `claude-haiku-5-5` **does** take effort,
+    unlike `claude-haiku-4-5` (none): run on 2.1.293 (2026-10-07, t984) at `low`, `xhigh` and `max`,
+    all answered, `contextWindow: 1000000`; an unknown level is ignored with a warning, not an error.
   - **`antigravity-cli`: true (promoted 2026-09-23, t645).** Antigravity CLI supports
     `--effort low|medium|high` on base models (`gemini-3.8-flash`, `gemini-3.7-flash`,
     `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`, `gpt-oss-120b`). The cost model

@@ -28,6 +28,7 @@ export const DEFAULT_MODEL_CLASSES: Record<string, ModelClass> = {
   'claude-sonnet-5-5': 'med',
   'claude-sonnet-5': 'med',
   'claude-sonnet-4-6': 'med',
+  'claude-haiku-5-5': 'low',
   'claude-haiku-4-5': 'low',
 
   // OpenAI Codex

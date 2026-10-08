@@ -21,6 +21,7 @@ describe('modelLabel', () => {
     expect(modelLabel('claude-sonnet-5-5')).toBe('Sonnet 5.5')
     expect(modelLabel('claude-sonnet-5')).toBe('Sonnet 5')
     // A version split across segments is one number, not two words.
+    expect(modelLabel('claude-haiku-5-5')).toBe('Haiku 5.5')
     expect(modelLabel('claude-haiku-4-5')).toBe('Haiku 4.5')
     // google.antigravity.2026-08
     expect(modelLabel('gemini-3.8-flash')).toBe('Gemini 3.8 Flash')

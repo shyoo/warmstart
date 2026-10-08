@@ -281,6 +281,13 @@ describe('a cost model may say it does not know', () => {
     expect(claude.modelIds()).toContain('claude-sonnet-5-5')
     expect(claude.modelSpec('claude-sonnet-5-5')?.effort_levels).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
     expect(claude.modelSpec('claude-sonnet-5-5')?.context_window).toBe(1000000)
+    expect(claude.modelIds()).toContain('claude-haiku-5-5')
+    expect(claude.modelSpec('claude-haiku-5-5')?.effort_levels).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
+    expect(claude.modelSpec('claude-haiku-5-5')?.context_window).toBe(1000000)
+    expect(claude.modelSpec('claude-haiku-5-5')?.input_per_mtok).toBe(0.1)
+    expect(claude.modelSpec('claude-haiku-5-5')?.output_per_mtok).toBe(0.5)
+    // The older Haiku still takes no effort at all.
+    expect(claude.modelSpec('claude-haiku-4-5')?.effort_levels).toEqual([])
   })
 
   it('anthropic and openai price a steerable cache; google does not', () => {
