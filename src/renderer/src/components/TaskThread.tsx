@@ -76,6 +76,8 @@ import {
 } from '../lib/taskview'
 import { errorMessage } from '@shared/errors.js'
 import { stripAnsi } from '@shared/ansi'
+import { clearReplyDraft, draftCommand, draftImages, readReplyDraft, writeReplyDraft } from '../lib/replydraft'
+import { scratchAttachments } from '../lib/composerscratch'
 import { commandForEvent, commandMatches, leadingCommand, type ThreadCommand } from '@shared/commands'
 import { useAction } from '../lib/useAction'
 import { TaskDetailStore, viewFor } from '../lib/threaddetail'
@@ -2248,10 +2250,13 @@ function Compose({
   /** The next-dispatch worker's adapter MCP capability, or null while unknown. */
   delegateHasMcp: boolean | null
 }): React.JSX.Element {
-  const [text, setText] = useState('')
+  // ⭐ Seeded from the draft this task's box was left holding (t979): the box unmounts with its
+  //    thread, and what was typed there is the person's until they send it or empty it themselves.
+  const [restored] = useState(() => readReplyDraft(task.id))
+  const [text, setText] = useState(restored.text)
   // ⭐ A slash command the person picked (t704), held as a chip at the head of the box and sent as
   //    its own field — never left in the text for anything to parse back out later.
-  const [command, setCommand] = useState<ThreadCommand | null>(null)
+  const [command, setCommand] = useState<ThreadCommand | null>(() => draftCommand(restored))
   const commandMenu = command ? [] : commandMatches(text)
   const [sending, setSending] = useState(false)
   const [stopping, setStopping] = useState(false)
@@ -2266,9 +2271,15 @@ function Compose({
   // never watches, so nothing ever cleared the message that answered a question already settled.
   const outcomeStatus = useRef<Task['status'] | null>(null)
   const { settings } = useUiSettings()
-  const paste = usePastedImages()
+  const paste = usePastedImages(useMemo(() => draftImages(restored), [restored]))
   const attachmentPickerRef = useRef<HTMLInputElement>(null)
   const remoteFleet = useIsRemote()
+  // ⛔ On every change rather than on unmount, for the reason `NewTask` gives: a cleanup does not run
+  //    when the window is closed, and "I typed a paragraph and it went" is the same complaint.
+  const commandId = command?.id ?? null
+  useEffect(() => {
+    writeReplyDraft(task.id, { text, commandId, attachments: scratchAttachments(paste.images) })
+  }, [task.id, text, commandId, paste.images])
   const running = task.status === 'running' || task.status === 'assigned'
   const stoppable = STOPPABLE.has(task.status)
   // ⭐ Stopped by you: the one state where Complete sits beside Send (t669). Stop and Complete are
@@ -2312,6 +2323,9 @@ function Compose({
       setText('')
       setCommand(null)
       paste.clear()
+      // ⚠️ Also by hand: the person may have opened another task while this send was in flight, and
+      //    an unmounted box writes nothing, so the draft of a message already sent would come back.
+      clearReplyDraft(task.id)
       setOutcome(result.outcome)
       outcomeStatus.current = task.status
       await refresh()

@@ -893,6 +893,10 @@ scratch exists — a remembered prompt behind a collapsed button is the same as 
 **Cancel** clears it, so what was typed is closable rather than immortal. The pill row is a different
 memory: `composerprefs` is how this operator files *every* task, the scratch is the one they are in
 the middle of.
+⛔ The **thread's reply box** has the same memory, per task (`replydraft.ts`, t979): text, the slash
+chip and attachment ids are written on every change under the task's id, restored when the thread
+opens again, and removed when the box is emptied or the message is sent. Nothing but those two ends
+it, and each task keeps its own, because a reply is a message to one agent.
 
 ⚠️ The first kind option is **Single Task**, not *Task*. Beside *Plan&Split*, which files several,
 plain “Task” read as the category rather than as one of five shapes.
@@ -994,6 +998,7 @@ list. Logic extracted into a pure function under `lib/` is provable at L1 instea
 | `uisettings.ts` `zoom.ts` | tray/Enter behaviour, colour theme, **keep-awake** and zoom, mirrored from main's `ui-settings.json` |
 | `pasteimages.tsx` | paste-to-attach; downscales to 1568px and uploads one image per call |
 | `composerprefs.ts` | what the composer was last set to — ⛔ **last-selected beats inherited**, and model/effort are keyed **per account** |
+| `replydraft.ts` | what is still half-written in a task thread's reply box, per task id (t979) — same rules as the scratch |
 | `composerscratch.ts` | what is still half-written in the composer — ⛔ a **scratch, not a draft**: no task row is filed |
 
 **Notifications are a window preference too**, for the same reason: `notifications` lives in
