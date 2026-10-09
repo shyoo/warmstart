@@ -44,6 +44,17 @@ export interface TreeSample {
 export const MIN_SAMPLE_GAP_MS = 60_000
 /** CPU seconds a whole tree must accumulate between samples to count as working. */
 export const MIN_PROGRESS_CPU_SECONDS = 1
+/**
+ * What an idle tree burns just by being alive, per minute of gap - the bar grows with the gap.
+ *
+ * ⛔ **Measured, 2026-10-09, from the daemon log.** t1007 (`agy`, a hung `tsx -e` under it) and t962
+ * (`claude`, 8 processes) were each reported stuck, and every second reading 12 minutes later found
+ * 1.5-2.0s of CPU against a flat 1s bar - *not parking it*, six times for t962 over 74+ minutes. A
+ * quiet agent and its helpers tick over at about 0.1-0.17 CPU-s a minute; a flat bar that ignores the
+ * length of the window is crossed by that alone, so "did nothing at all" was never reachable. This is
+ * roughly twice the idle rate. Real work (a build, a test run) burns many seconds a minute.
+ */
+export const IDLE_CPU_SECONDS_PER_MINUTE = 0.3
 
 /**
  * Has this tree done anything since the last look?
@@ -58,7 +69,6 @@ export function looksStuck(
   opts: { minGapMs?: number; minCpuSeconds?: number } = {}
 ): boolean {
   const minGapMs = opts.minGapMs ?? MIN_SAMPLE_GAP_MS
-  const minCpuSeconds = opts.minCpuSeconds ?? MIN_PROGRESS_CPU_SECONDS
 
   // ⛔ One sample is a reading, not a trend. The first look establishes the baseline and accuses
   //    nobody: a run that had been working hard for an hour has a large total and no history.
@@ -66,6 +76,9 @@ export function looksStuck(
   if (current.processes.length === 0) return false
   if (current.at - previous.at < minGapMs) return false
   if (current.cpuSeconds < previous.cpuSeconds) return false
+  const minCpuSeconds =
+    opts.minCpuSeconds ??
+    Math.max(MIN_PROGRESS_CPU_SECONDS, (IDLE_CPU_SECONDS_PER_MINUTE * (current.at - previous.at)) / 60_000)
   return current.cpuSeconds - previous.cpuSeconds < minCpuSeconds
 }
 
@@ -114,9 +127,10 @@ export const STALL_CONFIRM_AFTER_MS = 12 * 60 * 1000
  * baseline must be the *reported* sample rather than the newest one, or a run sampled every minute
  * would be compared against a minute of its own silence and confirmed far too early.
  *
- * ⭐ A tree that used even a second of CPU in that window is not confirmed, and the entry starts over
- * from the new sample: the bar is met by doing nothing at all, which is what t366's hung `agy` did
- * for thirty-two minutes and what a compiling test suite never does.
+ * ⭐ A tree that did real work in that window (more than `IDLE_CPU_SECONDS_PER_MINUTE` of it) is not
+ * confirmed, and the entry starts over from the new sample: the bar is met by doing nothing but idling,
+ * which is what t366's hung `agy` did for thirty-two minutes and what a compiling test suite never
+ * does. (It was once a flat second, which no live tree ever stayed under - see that constant.)
  */
 export function stallConfirmed(
   reported: TreeSample,
@@ -127,7 +141,8 @@ export function stallConfirmed(
   // fall all the way back to the 60s first-verdict gap, which is the one value this must not use.
   return looksStuck(reported, current, {
     minGapMs: opts.minGapMs ?? STALL_CONFIRM_AFTER_MS,
-    minCpuSeconds: opts.minCpuSeconds ?? MIN_PROGRESS_CPU_SECONDS
+    // Left undefined when not given, so `looksStuck` scales the bar to the window.
+    minCpuSeconds: opts.minCpuSeconds
   })
 }
 

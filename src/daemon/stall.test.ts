@@ -120,11 +120,20 @@ describe('confirming a stall that has already been reported', () => {
     expect(stallConfirmed(reported, sample(11 * 60_000, 0.08))).toBe(false)
   })
 
-  it('⚠️ clears a tree that moved at all since the report', () => {
-    // A second of CPU is all it takes. The bar is met by doing nothing whatsoever.
+  it('⚠️ clears a tree that did real work since the report', () => {
+    // The bar scales with the window (0.3 CPU-s a minute = 3.6s over twelve minutes), not a flat second.
     const reported = sample(0, 10)
-    expect(stallConfirmed(reported, sample(STALL_CONFIRM_AFTER_MS, 11.5))).toBe(false)
-    expect(stallConfirmed(reported, sample(STALL_CONFIRM_AFTER_MS, 10.5))).toBe(true)
+    expect(stallConfirmed(reported, sample(STALL_CONFIRM_AFTER_MS, 14))).toBe(false)
+    expect(stallConfirmed(reported, sample(STALL_CONFIRM_AFTER_MS, 13))).toBe(true)
+  })
+
+  it('⭐ confirms the idle tree t1007 and t962 were measured to be (1.5-2.0s of CPU in twelve minutes)', () => {
+    // 2026-10-09 daemon log: six "not parking it" readings for t962 and three for t1007, none of them
+    // work. Against the old flat 1s bar these were never confirmed, so the hand-over never came.
+    const reported = sample(0, 5)
+    for (const burned of [1.5, 1.6, 1.7, 1.8, 2.0]) {
+      expect(stallConfirmed(reported, sample(STALL_CONFIRM_AFTER_MS, 5 + burned))).toBe(true)
+    }
   })
 
   it('never confirms a tree that has gone, and takes its thresholds from the caller', () => {
@@ -134,11 +143,11 @@ describe('confirming a stall that has already been reported', () => {
     const flat = sample(STALL_CONFIRM_AFTER_MS, 5)
     expect(stallConfirmed(reported, flat)).toBe(true)
     expect(stallConfirmed(reported, flat, { minGapMs: 30 * 60_000 })).toBe(false)
-    // ⚠️ And the CPU bar is the caller's too: 3s of drift over twelve minutes counts as working by
-    //    default, and as flat where the caller asks for five.
-    const drifted = sample(STALL_CONFIRM_AFTER_MS, 8)
+    // ⚠️ And the CPU bar is the caller's too: 6s of drift over twelve minutes counts as working by
+    //    default, and as flat where the caller asks for seven.
+    const drifted = sample(STALL_CONFIRM_AFTER_MS, 11)
     expect(stallConfirmed(reported, drifted)).toBe(false)
-    expect(stallConfirmed(reported, drifted, { minCpuSeconds: 5 })).toBe(true)
+    expect(stallConfirmed(reported, drifted, { minCpuSeconds: 7 })).toBe(true)
   })
 })
 
