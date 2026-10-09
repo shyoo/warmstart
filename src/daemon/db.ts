@@ -2346,7 +2346,15 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'workers', 'outage_json')) {
       conn.exec(`alter table workers add column outage_json text`)
     }
-  }
+  },
+  // 88 - where a project's scratchpad lives, when it is not the private default (t994). `path` is
+  // relative to the project root; no row is `<data dir>/scratchpads/<id>.md`. ⛔ This install only:
+  // never `project.json`, which is committed. ⚠️ `if not exists`: `versionBefore` replays.
+  `create table if not exists scratchpads (
+    project_id text primary key references projects(id),
+    path text not null,
+    updated_at integer not null
+  );`
 ]
 
 /**

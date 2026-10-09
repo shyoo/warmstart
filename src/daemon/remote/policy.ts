@@ -106,6 +106,10 @@ export const REMOTE_METHODS = {
   'project.setPostLanding': 'deny',
   'project.setPolicy': 'deny',
   'project.pruneWorktrees': 'deny',
+  // A desktop-only page (t994); the phone has no scratchpad.
+  'scratchpad.get': 'deny',
+  'scratchpad.save': 'deny',
+  'scratchpad.setPath': 'deny',
   'approval.list': 'read',
   'approval.request': 'deny',
   'approval.answer': 'write',

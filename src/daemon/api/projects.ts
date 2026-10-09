@@ -7,12 +7,14 @@ import { flowWorkspaces } from '../flow.js'
 import { ensurePool, landingTargetRefusal, prunePoolWorktrees } from '../worktrees.js'
 import { log } from '../log.js'
 import { syncFromUpstream } from '../upstream.js'
+import { readScratchpad, saveScratchpad, setScratchpadPath } from '../scratchpad.js'
 import type { Api, ApiContext } from './support.js'
 
 type ProjectMethod =
   | 'project.list' | 'project.add' | 'project.relocate' | 'project.inspect' | 'project.workspaceRoot' | 'project.docTemplates'
   | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.makeForkHome' | 'project.syncUpstream' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.unarchive' | 'project.rename' | 'project.delete' | 'project.listArchived' | 'project.writeConfig' | 'project.flow'
   | 'project.proposeChecks' | 'project.setChecks' | 'project.setPostLanding' | 'project.setPolicy' | 'project.pruneWorktrees'
+  | 'scratchpad.get' | 'scratchpad.save' | 'scratchpad.setPath'
 
 /** Idle managed worktrees go with an archived or deleted project; one with work in it is kept. */
 async function pruneManagedPool(project: Project, why: 'archive' | 'delete'): Promise<void> {
@@ -111,5 +113,8 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
     // ⛔ Local only — see `project.setPolicy`'s note and `remote/policy.ts`. Removing worktrees
     // from disk is the confirmed destructive half of going trunk-only; a phone never does it.
     'project.pruneWorktrees': async (p) => prunePoolWorktrees(requireProject(p.id)),
+    'scratchpad.get': (p) => readScratchpad(p.projectId),
+    'scratchpad.save': (p) => saveScratchpad(p.projectId, p.text, p.baseVersion),
+    'scratchpad.setPath': (p) => setScratchpadPath(p.projectId, p.path),
   }
 }

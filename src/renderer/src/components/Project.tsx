@@ -12,8 +12,10 @@ import { TerminalPane } from './Terminal'
 import { SessionStream } from './SessionStream'
 import { Flow } from './Flow'
 import { PathField } from './NewProject'
+import { Scratchpad } from './Scratchpad'
+import type { ComposerSeed } from './NewTask'
 
-export type ProjectTab = 'flow' | 'tasks' | 'thread' | 'conversations' | 'sessionTui' | 'settings'
+export type ProjectTab = 'flow' | 'tasks' | 'scratchpad' | 'thread' | 'conversations' | 'sessionTui' | 'settings'
 
 /**
  * ⛔ **Thread**, not Conversation. A conversation in this app is the agent session you resume with
@@ -31,6 +33,7 @@ export type ProjectTab = 'flow' | 'tasks' | 'thread' | 'conversations' | 'sessio
 export const PROJECT_TABS: Array<{ id: ProjectTab; label: string }> = [
   { id: 'flow', label: 'Flow' },
   { id: 'tasks', label: 'Tasks' },
+  { id: 'scratchpad', label: 'Scratchpad' },
   { id: 'thread', label: 'Thread' },
   { id: 'conversations', label: 'Conversations' },
   { id: 'sessionTui', label: 'Session TUI' },
@@ -58,7 +61,8 @@ export function Project({
   keyboard,
   setKeyboard,
   openSession,
-  setOpenSession
+  setOpenSession,
+  composeFrom
 }: {
   project: ProjectRecord
   tab: ProjectTab
@@ -75,6 +79,8 @@ export function Project({
   setKeyboard: (v: boolean) => void
   openSession: string | null
   setOpenSession: (id: string | null) => void
+  /** Open the composer to file a scratchpad card. Owned by `App`, like every other composer. */
+  composeFrom: (seed: ComposerSeed) => void
 }): React.JSX.Element {
   return (
     <div className="stack">
@@ -118,6 +124,10 @@ export function Project({
           pendingDeliveries={pendingDeliveries}
           onRefreshProjects={refreshProjects}
         />
+      ) : tab === 'scratchpad' ? (
+        // ⚠️ Keyed by project: its save loop holds the file's version, and a switch must not carry
+        // one project's unsaved edit into another's file.
+        <Scratchpad key={project.id} project={project} composeFrom={composeFrom} onOpenTask={openTask} />
       ) : tab === 'thread' ? (
         taskId ? (
           <TaskThread

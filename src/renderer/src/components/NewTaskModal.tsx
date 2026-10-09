@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { Project } from '@shared/tasks'
 import type { FleetEntry } from '../lib/daemon'
-import { NewTask } from './NewTask'
+import { NewTask, type ComposerSeed } from './NewTask'
 
 /**
  * The one task composer surface. It belongs to shell chrome so every entry point opens the same
@@ -17,13 +17,15 @@ export function NewTaskModal({
   fleet,
   preselectedProjectId,
   onClose,
-  onDone
+  onDone,
+  seed
 }: {
   projects: Project[]
   fleet: FleetEntry[]
   preselectedProjectId?: string
   onClose: () => void
   onDone: () => void | Promise<void>
+  seed?: ComposerSeed
 }): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
 
@@ -60,6 +62,7 @@ export function NewTaskModal({
             onClose()
           }}
           onError={setError}
+          seed={seed}
         />
       </section>
     </div>

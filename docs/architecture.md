@@ -236,6 +236,7 @@ same function so both agree.
   adapters/*.json                  declarative adapters
   attachments/                     image bytes; metadata is a row
   scratch/                         where a session with no project runs
+  scratchpads/<project id>.md      a project's prompt scratchpad, unless re-pointed into the project
 ```
 
 ⛔ **`scratch/` is not the user's home and not a credential root.** A CLI asks whether it may trust

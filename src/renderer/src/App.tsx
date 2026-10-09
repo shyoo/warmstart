@@ -32,6 +32,7 @@ import { Attention } from './components/Attention'
 import { Projects } from './components/Projects'
 import { NewProject } from './components/NewProject'
 import { NewTaskModal } from './components/NewTaskModal'
+import type { ComposerSeed } from './components/NewTask'
 import { Tasks } from './components/Tasks'
 import { TaskThread } from './components/TaskThread'
 import { Overview } from './components/Overview'
@@ -238,6 +239,8 @@ export function App({
   const [addingTask, setAddingTask] = useState(false)
   const [showWelcome, setShowWelcome] = useState(welcomePending)
   const [newTaskProjectId, setNewTaskProjectId] = useState<string | undefined>()
+  /** A scratchpad card the composer was opened to file (t994); cleared by every other opening. */
+  const [newTaskSeed, setNewTaskSeed] = useState<ComposerSeed | undefined>()
   const [sidebarHidden, setSidebarHidden] = useState(false)
 
   /**
@@ -291,10 +294,11 @@ export function App({
   }, [refreshProjects])
 
   const openNewTask = useCallback(
-    (projectId?: string) => {
+    (projectId?: string, seed?: ComposerSeed) => {
       // ⚠️ An archived project is not offered for new work (t901), so its own Tasks tab opens the
       // composer unscoped rather than preset to a project the picker does not list.
       setNewTaskProjectId(projectId && projects.some((p) => p.id === projectId) ? projectId : undefined)
+      setNewTaskSeed(seed)
       setAddingTask(true)
     },
     [projects]
@@ -851,6 +855,7 @@ export function App({
           projects={projects}
           fleet={fleet}
           preselectedProjectId={newTaskProjectId}
+          seed={newTaskSeed}
           onClose={() => setAddingTask(false)}
           onDone={refreshProjects}
         />
@@ -971,6 +976,7 @@ export function App({
               setKeyboard={setKeyboard}
               openSession={openSession}
               setOpenSession={setOpenSession}
+              composeFrom={(seed) => openNewTask(route.id, seed)}
             />
           ) : null}
         </div>
@@ -1215,7 +1221,8 @@ function ProjectRoute({
   keyboard,
   setKeyboard,
   openSession,
-  setOpenSession
+  setOpenSession,
+  composeFrom
 }: {
   route: { kind: 'project'; id: string; tab: ProjectTab; taskId?: string }
   setRoute: (route: Route) => void
@@ -1229,6 +1236,7 @@ function ProjectRoute({
   setKeyboard: (v: boolean) => void
   openSession: string | null
   setOpenSession: (id: string | null) => void
+  composeFrom: (seed: ComposerSeed) => void
 }): React.JSX.Element {
   // An archived project still opens, from the sidebar's Archived view, so its history and its
   // Unarchive are one click away (t901).
@@ -1265,6 +1273,7 @@ function ProjectRoute({
       setKeyboard={setKeyboard}
       openSession={openSession}
       setOpenSession={setOpenSession}
+      composeFrom={composeFrom}
     />
   )
 }

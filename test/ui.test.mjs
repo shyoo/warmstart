@@ -4913,6 +4913,73 @@ try {
     globalHeads || '(no conversations on this install, so no header to read)'
   )
 
+  section('the project scratchpad (t994)')
+  // ⛔ A page that edits a file the operator also keeps open in VS Code: the checks are on the file
+  // the daemon wrote, not only on what the page drew, and on the one geometric rule the coloured
+  // editor lives by — the tint layer and the textarea over it are the same box.
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.click()`
+  )
+  await wait(800)
+  await evaluate(
+    `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Scratchpad')?.click()`
+  )
+  await waitFor(
+    async () => await evaluate(`/No prompts yet/.test(document.querySelector('.scratchpad')?.innerText ?? '')`),
+    'the scratchpad tab to answer'
+  )
+  const scratchEmpty = await evaluate(`document.querySelector('.scratchpad .empty-inline')?.innerText ?? ''`)
+  check('a project with no scratchpad says how one is written', /---/.test(scratchEmpty) && /\* New/.test(scratchEmpty), scratchEmpty)
+  await evaluate(`[...document.querySelectorAll('.scratchpad-bar button')].find(b => b.innerText.includes('New prompt'))?.click()`)
+  await waitFor(
+    async () => await evaluate(`document.activeElement?.classList.contains('hl-input') ?? false`),
+    'the new card to take the caret'
+  )
+  // React reads a value set through the native setter; a plain assignment would be swallowed.
+  await evaluate(`(() => {
+    const box = document.activeElement
+    const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set
+    set.call(box, box.value + 'Ship the **scratchpad** check.')
+    box.dispatchEvent(new Event('input', { bubbles: true }))
+  })()`)
+  await waitFor(
+    async () => await evaluate(`document.querySelector('.scratchpad-save')?.innerText.trim() === 'Saved'`),
+    'the scratchpad to save'
+  )
+  const scratchProject = await evaluate(
+    `window.agentyard.rpc('project.list').then(ps => ps.find(p => p.name === 'ui project')?.id)`
+  )
+  const saved = await evaluate(`window.agentyard.rpc('scratchpad.get', { projectId: ${JSON.stringify(scratchProject)} })`)
+  check(
+    'a new prompt is written to the file, marked New',
+    saved?.exists === true && saved.text.startsWith('* New') && saved.text.includes('Ship the **scratchpad** check.'),
+    JSON.stringify(saved?.text)
+  )
+  const layer = await evaluate(`(() => {
+    const ed = document.querySelector('.scratch-card .hl-editor')
+    const a = ed?.querySelector('.hl-layer')?.getBoundingClientRect()
+    const b = ed?.querySelector('.hl-input')?.getBoundingClientRect()
+    return a && b ? [a.width, a.height, b.width, b.height] : null
+  })()`)
+  check(
+    'the colour layer and the textarea over it are the same box',
+    Array.isArray(layer) && layer[0] > 0 && layer[1] > 0 && layer[0] === layer[2] && layer[1] === layer[3],
+    JSON.stringify(layer)
+  )
+  check(
+    'markdown in it is coloured, not rendered',
+    await evaluate(`!!document.querySelector('.scratch-card .hl-layer .hl-marker') && !!document.querySelector('.scratch-card .hl-layer .hl-strong')`)
+  )
+  await evaluate(`[...document.querySelectorAll('.scratch-card button')].find(b => b.innerText.includes('File as task'))?.click()`)
+  await waitFor(
+    async () => await evaluate(`!!document.querySelector('.task-composer-modal textarea[aria-label="Prompt"]')`),
+    'the composer to open from a card'
+  )
+  const seeded = await evaluate(`document.querySelector('.task-composer-modal textarea[aria-label="Prompt"]')?.value`)
+  check('File as task opens the composer with the prompt, without its marker', seeded === 'Ship the **scratchpad** check.', JSON.stringify(seeded))
+  await evaluate(`document.querySelector('button[aria-label="Close new task"]')?.click()`)
+  await wait(400)
+
   section('open conversations in the sidebar, and renaming from the convoHeading')
   // ⛔ Switching between two conversations meant Tasks board → find the row → open it, every time
   // (t479). A project now lists the conversations it is in the middle of under itself in the

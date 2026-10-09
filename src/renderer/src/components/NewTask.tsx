@@ -402,13 +402,26 @@ export function resizeRoster(seats: DebateSeat[], n: number): DebateSeat[] {
  * inheritance supplies the first value each control ever shows and nothing after that. See
  * `composerprefs.ts` for why that is the useful default and what it costs.
  */
+/**
+ * What a scratchpad card opens the composer with (t994): its prompt, optionally a kind (*New
+ * conversation…*), and who to tell which task it became so the card can say *Filed t###*.
+ *
+ * ⚠️ Told only on a filing the daemon accepted, and with the task it returned — never on a close.
+ */
+export interface ComposerSeed {
+  prompt: string
+  kind?: ComposerKind
+  onFiled: (task: Task) => void
+}
+
 export function NewTask({
   projects,
   preselectedProjectId,
   fleet,
   onClose,
   onDone,
-  onError
+  onError,
+  seed
 }: {
   projects: Project[]
   /** The project in view when the composer opened. It remains editable. */
@@ -419,6 +432,8 @@ export function NewTask({
   onClose: () => void
   onDone: () => void | Promise<void>
   onError: (message: string) => void
+  /** Opened to file a scratchpad card (t994). See `ComposerSeed`. */
+  seed?: ComposerSeed
 }): React.JSX.Element {
   /**
    * What was left half-written here last time.
@@ -429,7 +444,9 @@ export function NewTask({
    * `composerscratch.ts` for what is kept and what deliberately is not.
    */
   const scope = preselectedProjectId ?? ''
-  const [restored] = useState(() => readComposerScratch(scope))
+  // ⛔ A seeded composer neither reads nor writes the scratch: the card is the prompt's home, and the
+  // half-typed one waiting in the ordinary composer must survive a card being filed (t994).
+  const [restored] = useState(() => (seed ? { ...EMPTY_SCRATCH, prompt: seed.prompt } : readComposerScratch(scope)))
   const [prompt, setPrompt] = useState(restored.prompt)
   /**
    * ⚠️ The clock, read through a callback rather than inline. `Date.now()` in a body defined during
@@ -442,7 +459,12 @@ export function NewTask({
    * follows. Seeded from an effect, every pill would draw one frame of `inherit` and then flick to
    * what the operator actually left it on.
    */
-  const [prefs, setPrefsState] = useState<ComposerPrefs>(readComposerPrefs)
+  // ⚠️ A seeded kind is this form's starting answer, not a remembered one: it is written back only if
+  // the operator then changes a pill, like any other choice.
+  const [prefs, setPrefsState] = useState<ComposerPrefs>(() => {
+    const remembered = readComposerPrefs()
+    return seed?.kind ? { ...remembered, kind: seed.kind } : remembered
+  })
   const [projectId, setProjectId] = useState(preselectedProjectId ?? '')
   /**
    * ⛔ Not remembered, unlike everything on the pill row. A prerequisite is a fact about *this* piece
@@ -579,6 +601,7 @@ export function NewTask({
    * task, and these are the one they are in the middle of.
    */
   useEffect(() => {
+    if (seed) return
     writeComposerScratch(scope, {
       prompt,
       dependsOn,
@@ -586,7 +609,7 @@ export function NewTask({
       customTime,
       attachments: scratchAttachments(paste.images)
     })
-  }, [scope, prompt, dependsOn, scheduleOption, customTime, paste.images])
+  }, [seed, scope, prompt, dependsOn, scheduleOption, customTime, paste.images])
 
   /** One place writes the remembered state, so nothing can update the pill and forget the disk. */
   const setPrefs = (next: ComposerPrefs): void => {
@@ -945,6 +968,7 @@ export function NewTask({
   const submit = async (targetStatus: 'draft' | 'ready'): Promise<void> => {
     setSaving(targetStatus)
     try {
+      let filedTask: Task | undefined
       if (isPlan) {
         const notBefore = plannedStart(scheduleOption, customTime, readClock())
         if (notBefore === 'invalid') {
@@ -980,7 +1004,7 @@ export function NewTask({
          */
         const filedPlannerFinish = isExecute ? ('report-only' as const) : plannerFinishPolicy
 
-        await rpc('task.plan', {
+        filedTask = await rpc('task.plan', {
           title: prompt.trim(),
           projectId: projectId || null,
           ...(paste.ids.length > 0 ? { attachmentIds: paste.ids } : {}),
@@ -1057,6 +1081,7 @@ export function NewTask({
           setSaving(null)
           return
         }
+        filedTask = filed.task
       } else {
         const notBefore = plannedStart(scheduleOption, customTime, readClock())
         if (notBefore === 'invalid') {
@@ -1064,7 +1089,7 @@ export function NewTask({
           setSaving(null)
           return
         }
-        await rpc('task.create', {
+        filedTask = await rpc('task.create', {
           title: prompt.trim(),
           projectId: projectId || null,
           // ⚠️ Absent, not empty, like every other optional field on this call.
@@ -1104,7 +1129,8 @@ export function NewTask({
       paste.clear()
       // ⛔ Explicitly, and not only through the effect above. The task now owns those attachment
       // ids, and a scratch that outlived the send would re-attach them to the next one.
-      writeComposerScratch(scope, EMPTY_SCRATCH)
+      if (!seed) writeComposerScratch(scope, EMPTY_SCRATCH)
+      if (filedTask) seed?.onFiled(filedTask)
       await onDone()
     } catch (err) {
       onError(errorMessage(err))

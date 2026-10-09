@@ -262,6 +262,13 @@ different words: the UI tab is **Thread** and the Settings page is **Conversatio
 of them "conversation" would make *"which conversation is this task in?"* ambiguous on the one screen
 that answers it.
 
+**Scratchpad** — *a project's markdown file of prompts not filed yet* (t994), split into **cards** on
+its `---` lines. ⛔ **Not a draft and not the composer's scratch.** A draft is a task — a row with an
+id that the Tasks board lists; the composer's scratch is the half-typed text one form remembers. A
+scratchpad card is neither until it is *filed* (it becomes a task, and its `* New` line becomes
+`* Filed t###`) or *sent* (it goes into a conversation's thread, `* Sent t###`). The file is the
+record: nothing about a card lives anywhere but in its text.
+
 **Continuation** — *another run on a task that had stopped*, started by somebody replying to it. ⛔ A
 run, never a new task: same thread, same budget, same branch. Nothing routes it by hand — the session
 still holding its context scores highest, so the same worker, workspace and session are chosen because

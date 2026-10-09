@@ -24,7 +24,7 @@ Everything else in the daemon goes through those two, so swapping the driver is 
 ## 2. The migration contract
 
 `MIGRATIONS` in `db.ts` is a numbered, **append-only** array. `MIGRATION_COUNT` is its length and is
-the `user_version` a current database sits at — **82** as of 2026-09-23 (79 `model_classes_json`, 80 `model_efforts_json`, 81 `model_routes_json`, 82 Antigravity model effort unblending; measured off `MIGRATION_COUNT`, not counted by hand).
+the `user_version` a current database sits at — **88** as of 2026-10-08 (86 `projects.deleted_at`, 87 `workers.outage_json`, 88 `scratchpads`; measured off `MIGRATION_COUNT`, not counted by hand).
 
 - ⛔ **Never edit a migration that has shipped.** Add the next one.
 - ⛔ **Every migration must survive being replayed.** `sessionstate.test.ts` rewinds `user_version`
@@ -84,6 +84,7 @@ would leave the oldest installs — the ones with the most history to lose — p
 | `settings` | fleet settings as JSON under string keys | a boolean today can become a shape tomorrow without a migration |
 | `remote_config` | remote access as JSON under string keys, the same shape as `settings` | ⛔ **not** in `settings`: these are not scheduler preferences, and `remote.status` deliberately reads only `enabled`, `desktopsEnabled`, `bind` and `port` back out. The VAPID signing pair lives here too, under `vapidPublicKey`/`vapidPrivateKey`, written by `remote/push.ts` **without** firing the config-change listener — writing them through `setRemoteConfig` would restart the listener and drop every connected phone |
 | `remote_projects` | which projects a paired phone may reach | ⛔ machine-local on purpose. `.warmstart/project.json` is pulled by every clone, and whether *this* computer is exposed to a phone is not a fact about the repository |
+| `scratchpads` | where a project's prompt scratchpad is, when it is not the private default (migration 88, t994) | `path` is relative to the project root, and `setScratchpadPath` refuses one outside it. No row is `<dataDir>/scratchpads/<project id>.md`. ⛔ Machine-local like `remote_projects`, never `project.json`. The scratchpad's content is the file, not a row: the daemon reads and writes bytes and never parses it |
 | `remote_devices` | one paired phone or desktop | `kind` (`phone` / `desktop`, migration 71) decides which policy the token gets, and is set by the pairing code the host issued — never by the redeeming client. ⛔ `token_hash` only — the token is shown once, at pairing, and never stored. Revoking **deletes** the row (t353): a revoked phone could do nothing, so keeping it only cluttered Paired devices. ⚠️ `revoked_at` remains for rows tombstoned by older builds, and every query still filters on it |
 | `remote_push_subscriptions` | where to send a notification | keyed by `endpoint`, which is what the push service and the browser both treat as the subscription's identity. ⛔ `device_id` is what makes revocation complete: revoking a phone drops its subscriptions in the same call, or a lost handset keeps being told what the fleet is doing |
 | `meta` | key/value bookkeeping | `disown.ancestry.v1` = the one-time ancestry pass of `disownForeignCommits` has run |
