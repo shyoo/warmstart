@@ -4,6 +4,7 @@ import {
   insertAfter,
   mergeWithNext,
   moveItem,
+  openCount,
   parseScratch,
   promptOf,
   removeItem,
@@ -174,6 +175,16 @@ describe('what is drawn', () => {
     const filed = setTag(doc, 2, { kind: 'filed', ref: 't10' })
     expect(shape(scratchRows(filed, false, new Set()))).toEqual(['fold 0+5'])
     expect(shape(scratchRows(filed, false, new Set([fresh.key])))).toEqual(['fold 0+2', 'item 2', 'fold 3+2'])
+  })
+
+  it('counts the cards marked New, which is exactly the cards drawn by default', () => {
+    const doc = parseScratch(text)
+    expect(openCount(doc)).toBe(1)
+    expect(openCount(setTag(doc, 0, { kind: 'new' }))).toBe(2)
+    expect(openCount(setTag(doc, 2, { kind: 'filed', ref: 't10' }))).toBe(0)
+    expect(openCount(parseScratch(''))).toBe(0)
+    // The operator's real history shape: one New in every 97 prompts.
+    expect(openCount(parseScratch(historyText(400)))).toBe(4)
   })
 })
 

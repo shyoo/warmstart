@@ -4234,6 +4234,13 @@ select:focus-visible,
   color: var(--color-text);
 }
 
+/* Prompts waiting to be filed: amber, the app's "waiting on you" colour (t668), kept on the active tab. */
+.tab-count {
+  color: var(--state-warn);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .statusbar-spacer {
   flex: 1;
 }

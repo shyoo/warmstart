@@ -8,6 +8,7 @@ import {
   insertAfter,
   mergeWithNext,
   moveItem,
+  openCount,
   parseScratch,
   promptOf,
   removeItem,
@@ -52,11 +53,14 @@ const NEW_CARD = '* New\n\n'
 export function Scratchpad({
   project,
   composeFrom,
-  onOpenTask
+  onOpenTask,
+  onOpenCount
 }: {
   project: Project
   composeFrom: (seed: ComposerSeed) => void
   onOpenTask: (taskId: string) => void
+  /** Tells the tab label how many cards are open, as edits land. */
+  onOpenCount?: (count: number) => void
 }): React.JSX.Element {
   const projectId = project.id
   const [meta, setMeta] = useState<ScratchpadDoc | null>(null)
@@ -190,6 +194,10 @@ export function Scratchpad({
     },
     [flush]
   )
+
+  useEffect(() => {
+    if (doc) onOpenCount?.(openCount(doc))
+  }, [doc, onOpenCount])
 
   // Open at the bottom, where the newest prompts are — once, on the first load.
   const landed = useRef(false)

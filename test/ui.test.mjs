@@ -4955,6 +4955,15 @@ try {
     saved?.exists === true && saved.text.startsWith('* New') && saved.text.includes('Ship the **scratchpad** check.'),
     JSON.stringify(saved?.text)
   )
+  const tabCount = await evaluate(`(() => {
+    const el = [...document.querySelectorAll('.tab')].find(b => b.innerText.includes('Scratchpad'))?.querySelector('.tab-count')
+    return el ? { text: el.innerText.trim(), color: getComputedStyle(el).color, base: getComputedStyle(el.parentElement).color } : null
+  })()`)
+  check(
+    'the Scratchpad tab counts the open prompts, in a colour of its own',
+    tabCount?.text === '(1)' && tabCount.color !== tabCount.base,
+    JSON.stringify(tabCount)
+  )
   const layer = await evaluate(`(() => {
     const ed = document.querySelector('.scratch-card .hl-editor')
     const a = ed?.querySelector('.hl-layer')?.getBoundingClientRect()

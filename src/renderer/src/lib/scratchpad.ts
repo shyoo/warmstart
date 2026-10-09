@@ -249,6 +249,11 @@ export function markerFor(tag: ScratchTag): string {
   return tag.kind === 'new' ? '* New' : `* ${tag.kind === 'filed' ? 'Filed' : 'Sent'} ${tag.ref}`
 }
 
+/** How many cards are open: marked `* New`, the ones the page shows by default. */
+export function openCount(doc: ScratchDoc): number {
+  return doc.items.filter((item) => tagOf(item.body)?.kind === 'new').length
+}
+
 /** The body with its marker line (and the blank lines after it) taken off. */
 function withoutMarker(body: string): string {
   if (!tagOf(body)) return body

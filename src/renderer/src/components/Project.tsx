@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { sessionEnded } from '@shared/protocol'
 import type { Project as ProjectRecord, PullRequestDelivery, ResourceAvailability } from '@shared/tasks'
 import type { FleetEntry } from '../lib/daemon'
@@ -14,6 +14,7 @@ import { Flow } from './Flow'
 import { PathField } from './NewProject'
 import { Scratchpad } from './Scratchpad'
 import type { ComposerSeed } from './NewTask'
+import { openCount, parseScratch } from '../lib/scratchpad'
 
 export type ProjectTab = 'flow' | 'tasks' | 'scratchpad' | 'thread' | 'conversations' | 'sessionTui' | 'settings'
 
@@ -39,6 +40,46 @@ export const PROJECT_TABS: Array<{ id: ProjectTab; label: string }> = [
   { id: 'sessionTui', label: 'Session TUI' },
   { id: 'settings', label: 'Settings' }
 ]
+
+/** How often the tab label re-reads the file while the Scratchpad page itself is not open. */
+const OPEN_COUNT_POLL_MS = 10_000
+
+/**
+ * How many prompts the project's scratchpad has open, for the tab label.
+ *
+ * ⚠️ Read from the file, not remembered: it changes in VS Code too. While the page is open it is the
+ * page's own document that reports (`report`) — it is ahead of the file by up to a save — so the poll
+ * stands down (`poll` false) rather than racing it. The count is tagged with its project so a switch
+ * never draws one project's number on another.
+ */
+function useScratchpadOpenCount(
+  projectId: string,
+  poll: boolean
+): { count: number; report: (count: number) => void } {
+  const [read, setRead] = useState<{ projectId: string; count: number } | null>(null)
+  const report = useCallback((count: number) => setRead({ projectId, count }), [projectId])
+
+  useEffect(() => {
+    if (!poll) return
+    let live = true
+    const load = (): void => {
+      if (document.hidden) return
+      void rpc('scratchpad.get', { projectId })
+        .then((doc) => {
+          if (live) report(openCount(parseScratch(doc.text)))
+        })
+        .catch(() => undefined)
+    }
+    load()
+    const timer = setInterval(load, OPEN_COUNT_POLL_MS)
+    return () => {
+      live = false
+      clearInterval(timer)
+    }
+  }, [projectId, poll, report])
+
+  return { count: read?.projectId === projectId ? read.count : 0, report }
+}
 
 /**
  * One project, which is the unit of work.
@@ -82,6 +123,7 @@ export function Project({
   /** Open the composer to file a scratchpad card. Owned by `App`, like every other composer. */
   composeFrom: (seed: ComposerSeed) => void
 }): React.JSX.Element {
+  const openPrompts = useScratchpadOpenCount(project.id, tab !== 'scratchpad')
   return (
     <div className="stack">
       <header className="project-head">
@@ -108,6 +150,11 @@ export function Project({
             onClick={() => setTab(t.id)}
           >
             {t.label}
+            {t.id === 'scratchpad' && openPrompts.count > 0 && (
+              <span className="tab-count" title={`${openPrompts.count} open prompt${openPrompts.count === 1 ? '' : 's'} (marked * New)`}>
+                ({openPrompts.count})
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -127,7 +174,13 @@ export function Project({
       ) : tab === 'scratchpad' ? (
         // ⚠️ Keyed by project: its save loop holds the file's version, and a switch must not carry
         // one project's unsaved edit into another's file.
-        <Scratchpad key={project.id} project={project} composeFrom={composeFrom} onOpenTask={openTask} />
+        <Scratchpad
+          key={project.id}
+          project={project}
+          composeFrom={composeFrom}
+          onOpenTask={openTask}
+          onOpenCount={openPrompts.report}
+        />
       ) : tab === 'thread' ? (
         taskId ? (
           <TaskThread
