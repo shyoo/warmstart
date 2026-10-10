@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
-import type {
-  Distribution,
-  PriceBasis,
-  PriceStatRow,
-  QualityStatRow,
-  StatRow,
-  StatisticsReport,
-  StatisticsWindow
+import {
+  STATISTICS_WINDOWS,
+  type Distribution,
+  type PriceBasis,
+  type PriceStatRow,
+  type QualityStatRow,
+  type StatRow,
+  type StatisticsReport,
+  type StatisticsWindow
 } from '@shared/statistics'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { duration, money, when } from '../lib/format'
@@ -1175,7 +1176,7 @@ export function Statistics({
 }): React.JSX.Element {
   const [report, setReport] = useState<StatisticsReport | null>(null)
   const [error, setError] = useState<string | null>(null)
-  // ⭐ Which window to read: the last 200 finished tasks, or all of them. Remembered per display.
+  // ⭐ Which window to read: the last 200, a percentage, or all finished tasks. Remembered per display.
   const [scope, setScope] = useState<StatisticsWindow>(() => readStatisticsWindow())
   // ⛔ Conversations stay in unless the operator takes them out (t695): one long conversation
   //    billed a whole evening of chat to its model, but dropping a kind silently would narrow the
@@ -1230,17 +1231,23 @@ export function Statistics({
             // ⚠️ Worded for the empty fleet too. *last 0 finished tasks* is not a sentence, and the
             //    state it describes — a new install — is the one a stranger reads this page in first.
             <span className="tag" title={`Read at ${when(report.generatedAt)}`}>
-              {report.price.tasks === 0
-                ? 'nothing finished yet'
-                : `${report.window === 'all' ? 'all' : 'last'} ${report.price.tasks} finished task${report.price.tasks === 1 ? '' : 's'}`}
+              {windowSummary(report)}
             </span>
           )}
           {/* ⭐ The window is a choice, not a constant (t361). A fleet past its two-hundredth task
               was reading a window that quietly dropped its oldest work. */}
           <label className="pager-size" title="How far back every tab on this page reads">
             <span className="dim">Window</span>
-            <select value={scope} onChange={(e) => chooseWindow(e.target.value === 'all' ? 'all' : 'recent')}>
+            <select
+              value={scope}
+              onChange={(e) => {
+                const next = e.target.value as StatisticsWindow
+                if (STATISTICS_WINDOWS.includes(next)) chooseWindow(next)
+              }}
+            >
               <option value="recent">last 200 finished tasks</option>
+              <option value="p25">last 25% finished tasks</option>
+              <option value="p50">last 50% finished tasks</option>
               <option value="all">all finished tasks</option>
             </select>
           </label>
@@ -1290,6 +1297,16 @@ export function Statistics({
   )
 }
 
+function windowSummary(report: StatisticsReport): string {
+  const count = report.price.tasks
+  if (count === 0) return 'nothing finished yet'
+  const tasks = `finished task${count === 1 ? '' : 's'}`
+  if (report.window === 'p25' || report.window === 'p50') {
+    return `last ${report.window === 'p25' ? '25%' : '50%'} (${count}) ${tasks}`
+  }
+  return `${report.window === 'all' ? 'all' : 'last'} ${count} ${tasks}`
+}
+
 /**
  * The report the tabs draw: a `sole` effort row restates its model's numbers, so it would cost a
  * line and say nothing. Only the trade-off scatters read it (t812).
@@ -1310,6 +1327,11 @@ function Window({ report }: { report: StatisticsReport }): React.JSX.Element {
       {report.sampleLimit === null ? (
         <>
           every <strong>completed</strong> task this fleet still has — {report.price.tasks} of them
+        </>
+      ) : report.window === 'p25' || report.window === 'p50' ? (
+        <>
+          the last {report.window === 'p25' ? '25%' : '50%'} of <strong>completed</strong> tasks (
+          {report.price.tasks} most recently updated task{report.price.tasks === 1 ? '' : 's'})
         </>
       ) : (
         <>

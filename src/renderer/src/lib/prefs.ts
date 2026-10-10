@@ -321,16 +321,18 @@ export function writeQualityGradableOnly(gradableOnly: boolean): void {
 const STATISTICS_WINDOW_KEY = appKey('statisticsWindow')
 
 /**
- * How far back Analytics › Statistics reads: the last 200 finished tasks, or every one.
+ * How far back Analytics › Statistics reads: the last 200 finished tasks, last 25%, last 50%, or every one.
  *
- * ⛔ Only the one value opts in. Anything else — absent, empty, a window that has since been
+ * ⛔ Only known values opt in. Anything else — absent, empty, a window that has since been
  * renamed — reads as `recent`, because the default has to be the bounded read. Per-display, in
  * `localStorage`, on the precedent every other preference here sets.
  */
 export function readStatisticsWindow(): StatisticsWindow {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return 'recent'
-    return window.localStorage.getItem(STATISTICS_WINDOW_KEY) === 'all' ? 'all' : 'recent'
+    const stored = window.localStorage.getItem(STATISTICS_WINDOW_KEY)
+    if (stored === 'all' || stored === 'p25' || stored === 'p50') return stored
+    return 'recent'
   } catch {
     return 'recent'
   }

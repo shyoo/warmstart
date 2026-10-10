@@ -296,6 +296,17 @@ describe('the sample set', () => {
     expect(all.price.tasks).toBe(203)
     // ⚠️ And the default is the bounded read, so nothing that never asked gets an unbounded one.
     expect(stats.statisticsReport().price.tasks).toBe(200)
+
+    // t1015: last 25% and last 50% finished tasks
+    const p25 = stats.statisticsReport(Date.now(), 'p25')
+    expect(p25.sampleLimit).toBe(51)
+    expect(p25.window).toBe('p25')
+    expect(p25.price.tasks).toBe(51)
+
+    const p50 = stats.statisticsReport(Date.now(), 'p50')
+    expect(p50.sampleLimit).toBe(102)
+    expect(p50.window).toBe('p50')
+    expect(p50.price.tasks).toBe(102)
   })
 })
 

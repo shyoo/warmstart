@@ -172,12 +172,13 @@ export interface QualityStats {
  *
  * `recent` is the last 200 finished tasks — the same ceiling `paceFactors` uses, so Statistics and
  * the pace factor next door are looking at the same window and a disagreement between them is real.
+ * `p25` and `p50` read the most recent 25% and 50% of finished tasks.
  * `all` is every completed task the fleet still has. ⚠️ A per-display preference, not a fleet
  * setting: which window somebody wants to read is a property of the person reading.
  */
-export type StatisticsWindow = 'recent' | 'all'
+export type StatisticsWindow = 'recent' | 'p25' | 'p50' | 'all'
 
-export const STATISTICS_WINDOWS: readonly StatisticsWindow[] = ['recent', 'all']
+export const STATISTICS_WINDOWS: readonly StatisticsWindow[] = ['recent', 'p25', 'p50', 'all']
 
 export interface StatisticsReport {
   generatedAt: number

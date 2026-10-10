@@ -243,11 +243,11 @@ acted on. *Statistics* (`components/Statistics.tsx`, one `statistics.report` cal
 describes what happened: nothing on it is smoothed. Price, Velocity and Quality each fold finished
 tasks into an agent → model → effort tree, **re-folding the raw samples at every level** rather than
 averaging the level below, and every table prints `n` beside its percentiles. ⭐ **How far back it
-reads is the reader's choice** (t361): the *Window* control in the head reads the last 200 finished
-tasks (the same ceiling `paceFactors` uses, so the two surfaces agree about which tasks exist) or
-*all* of them, remembered per display in `localStorage` (`readStatisticsWindow`, `prefs.ts`) and
+reads is the reader's choice** (t361, t1015): the *Window* control in the head reads the last 200 finished
+tasks (the same ceiling `paceFactors` uses, so the two surfaces agree about which tasks exist), the last 25%,
+the last 50%, or *all* of them, remembered per display in `localStorage` (`readStatisticsWindow`, `prefs.ts`) and
 sent as `{ window }`; the report echoes `window` and a `sampleLimit` of `null` for the unbounded
-read, and the daemon reads the default for anything but the literal `all`. ⭐ **Whether
+read, and the daemon reads the default for anything but a known window choice. ⭐ **Whether
 conversations count is the reader's choice too** (t695): the *Include conversations* checkbox beside
 it folds conversation-kind tasks out of all three tabs together when off — chat is not work, and one
 long evening of it once billed a whole task's cost to its model (t667). On is the old answer

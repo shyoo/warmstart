@@ -321,13 +321,17 @@ describe('the statistics window', () => {
     delete (globalThis as { window?: unknown }).window
   })
 
-  it('reads the bounded window by default, and after any value that is not the literal all', () => {
+  it('reads the bounded window by default, and after any value that is not a known window', () => {
     stub({})
     expect(readStatisticsWindow()).toBe('recent')
     const store: Record<string, string> = {}
     stub(store)
     writeStatisticsWindow('all')
     expect(readStatisticsWindow()).toBe('all')
+    writeStatisticsWindow('p25')
+    expect(readStatisticsWindow()).toBe('p25')
+    writeStatisticsWindow('p50')
+    expect(readStatisticsWindow()).toBe('p50')
     store[Object.keys(store)[0] as string] = 'everything'
     expect(readStatisticsWindow()).toBe('recent')
   })

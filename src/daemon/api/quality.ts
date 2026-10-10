@@ -118,12 +118,12 @@ export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
     'routing.velocity': () => velocityReport(),
     'routing.models': () => modelReport(),
     'quality.report': () => qualityReport(),
-    // ⚠️ Anything but the literal `all` reads the default window: a stale or mistyped preference
+    // ⚠️ Anything but a known window reads the default window: a stale or mistyped preference
     //    must not turn into an unbounded read.
     'statistics.report': (p) =>
       statisticsReport(
         Date.now(),
-        p?.window === 'all' ? 'all' : 'recent',
+        p?.window === 'all' || p?.window === 'p25' || p?.window === 'p50' ? p.window : 'recent',
         // ⛔ Opt-out, never opt-in: anything but an explicit `false` reads conversations in, so a
         //    stale or mistyped preference cannot silently narrow the page.
         p?.includeConversations !== false

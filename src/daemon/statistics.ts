@@ -52,8 +52,11 @@ import type {
  */
 const SAMPLE_LIMIT = 200
 
-function limitFor(window: StatisticsWindow): number | null {
-  return window === 'all' ? null : SAMPLE_LIMIT
+function limitFor(window: StatisticsWindow, totalTasks = 0): number | null {
+  if (window === 'all') return null
+  if (window === 'p25') return Math.ceil(totalTasks * 0.25)
+  if (window === 'p50') return Math.ceil(totalTasks * 0.5)
+  return SAMPLE_LIMIT
 }
 
 /** The absent level of a key, written the same way `pace.ts` writes it. */
@@ -195,37 +198,27 @@ function effortsForSessions(credits: Map<string, Credit>): Map<string, string | 
   }
   return out
 }
-
-/**
- * Every finished task this page describes, credited and measured.
- *
- * ⛔ **Exported for the tests, which is the only way the folding below can be checked at all.**
- * Building a fleet's worth of runs, sessions, quota samples and reviews in a fixture to exercise one
- * percentile is a test about SQLite; the arithmetic is what can be wrong in an interesting way.
- */
-export function samples(
-  now = Date.now(),
-  window: StatisticsWindow = 'recent',
-  includeConversations = true
-): Sample[] {
-  const finished = rows<{ id: string }>(
+function finishedTaskIds(
+  window: StatisticsWindow,
+  includeConversations: boolean
+): { ids: string[]; limit: number | null } {
+  // ⛔ Exclusions and the conversation choice define the population before a percentage is taken.
+  // All three tabs then fold the same selected tasks.
+  const where = `status = 'completed' and deleted_at is null and coalesce(stats_excluded, 0) = 0
+    ${includeConversations ? '' : `and kind != 'conversation'`}`
+  const total = window === 'p25' || window === 'p50'
+    ? (db().prepare(`select count(*) as total from tasks where ${where}`).get() as { total: number }).total
+    : 0
+  const limit = limitFor(window, total)
+  const ids = rows<{ id: string }>(
     db()
-      .prepare(
-        // ⛔ `stats_excluded = 0`. A task an operator has taken out of the numbers is out of all
-        //    three tabs at once — the price, the duration and the grade are folded from one sample
-        //    set precisely so that they cannot disagree about which tasks exist. Conversations are
-        //    the same one-set rule applied to a kind: excluding them drops one long conversation
-        //    (t667 billed a whole evening of chat to its model) from price, pace and grade together,
-        //    rather than letting each tab disagree about whether chat is work.
-        `select id from tasks
-          where status = 'completed' and deleted_at is null and coalesce(stats_excluded, 0) = 0
-          ${includeConversations ? '' : `and kind != 'conversation'`}
-          order by updated_at desc
-          limit ?`
-      )
-      .all(limitFor(window) ?? -1)
-  )
-  const ids = finished.map((t) => t.id)
+      .prepare(`select id from tasks where ${where} order by updated_at desc limit ?`)
+      .all(limit ?? -1)
+  ).map((t) => t.id)
+  return { ids, limit }
+}
+
+function samplesForTaskIds(ids: string[], now: number): Sample[] {
   if (ids.length === 0) return []
 
   const credits = creditedKeys(ids)
@@ -262,6 +255,22 @@ export function samples(
     })
   }
   return out
+}
+
+/**
+ * Every finished task this page describes, credited and measured.
+ *
+ * ⛔ **Exported for the tests, which is the only way the folding below can be checked at all.**
+ * Building a fleet's worth of runs, sessions, quota samples and reviews in a fixture to exercise one
+ * percentile is a test about SQLite; the arithmetic is what can be wrong in an interesting way.
+ */
+export function samples(
+  now = Date.now(),
+  window: StatisticsWindow = 'recent',
+  includeConversations = true
+): Sample[] {
+  const { ids } = finishedTaskIds(window, includeConversations)
+  return samplesForTaskIds(ids, now)
 }
 
 // ---------------------------------------------------------------------------- the tree
@@ -603,12 +612,13 @@ export function statisticsReport(
   window: StatisticsWindow = 'recent',
   includeConversations = true
 ): StatisticsReport {
-  const all = samples(now, window, includeConversations)
+  const { ids, limit } = finishedTaskIds(window, includeConversations)
+  const all = samplesForTaskIds(ids, now)
   const labels = adapterLabels()
   const label = (id: string): string => labels[id] ?? id
   return {
     generatedAt: now,
-    sampleLimit: limitFor(window),
+    sampleLimit: limit,
     window,
     includeConversations,
     price: priceStats(all, label),
