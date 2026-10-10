@@ -22,16 +22,17 @@ import {
   type TaskCommit,
   type TaskDiffSummary,
   type TaskMessage,
-  type ModelClass,
   hasPendingSchedule
 } from '@shared/tasks'
 import type { AdapterInfo, ModelOptions, Session } from '@shared/protocol'
 import type { ManualReview, QualityReview } from '@shared/review'
-import { autoModelCount } from '@shared/modelroutes'
+import { autoModelCount, routableTags } from '@shared/modelroutes'
+import { fleetTags, tagsLabel } from '@shared/modeltags'
 import { rpc, useActivity, useDaemonEvents, useNow, type ActivityLine, type FleetEntry } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { ImageChips, usePastedImages } from '../lib/pasteimages'
 import { Pill, PillOptions, type PillOption } from './Pill'
+import { TagPicker, TagsPill } from './TagControls'
 import { useIsRemote } from '../lib/target'
 import { SettingButtonSelect } from './SettingButtonSelect'
 import { SettingSwitch } from './SettingRow'
@@ -903,14 +904,7 @@ function TaskDetail({
               {(offered.length > 0 || taskEfforts.length > 0 || Boolean(task.constraints.model)) && (
                 <div className="model-next">
                 <SettingButtonSelect
-                  value={
-                    task.constraints.model ??
-                    (routerChoosesModel(task.constraints)
-                      ? task.constraints.modelClass
-                        ? `__auto__:${task.constraints.modelClass}`
-                        : '__auto__'
-                      : '')
-                  }
+                  value={task.constraints.model ?? (routerChoosesModel(task.constraints) ? '__auto__' : '')}
                   options={[
                     ...(task.constraints.model && !offered.some((m) => m.id === task.constraints.model)
                       ? [
@@ -922,10 +916,7 @@ function TaskDetail({
                       : []),
                     ...(offered.length > 1
                       ? [
-                          { value: '__auto__', label: 'Auto Model (scheduler decides)' },
-                          { value: '__auto__:high', label: 'Auto Model (high)' },
-                          { value: '__auto__:med', label: 'Auto Model (med)' },
-                          { value: '__auto__:low', label: 'Auto Model (low)' }
+                          { value: '__auto__', label: 'Auto Model (scheduler decides)' }
                         ]
                       : []),
                     {
@@ -949,8 +940,8 @@ function TaskDetail({
                     task.constraints.model && !offered.some((m) => m.id === task.constraints.model)
                       ? `Invalid model: ${modelLabel(task.constraints.model) ?? task.constraints.model}`
                       : routerChoosesModel(task.constraints)
-                      ? task.constraints.modelClass
-                        ? `Auto Model (${task.constraints.modelClass})`
+                      ? task.constraints.modelTags?.length
+                        ? `Auto Model (${tagsLabel(task.constraints.modelTags)})`
                         : 'Auto Model'
                       : !task.constraints.model
                         ? assigned?.defaultModels && Object.values(assigned.defaultModels).filter(Boolean).length > 1
@@ -963,19 +954,50 @@ function TaskDetail({
                   onChange={(val) => {
                     const isAuto = val.startsWith('__auto__')
                     const modelPolicy = isAuto ? 'auto' : !val ? 'inherit' : null
-                    const modelClass = isAuto && val.includes(':') ? (val.split(':')[1] as ModelClass) : null
                     const model = isAuto || !val ? null : val
                     void rpc('task.setModel', {
                       id: task.id,
                       model,
                       modelPolicy,
-                      modelClass,
+                      // ⛔ Switching to Auto keeps the tags the task already asked for; any other
+                      // choice has none to ask for.
+                      modelTags: isAuto ? (task.constraints.modelTags ?? []) : [],
                       // ⛔ Cleared with the model. A level legal for the old model need not be legal
                       // for the new one, and the daemon refuses the pair rather than storing it.
                       effort: null
                     }).then(refresh)
                   }}
                 />
+              {/* Tags are asked of the pair the router picks, so they exist only under Auto Model (t1042).
+                  Written straight to the task, like the model beside it: the next run reads them. */}
+              {routerChoosesModel(task.constraints) && (
+                <TagsPill
+                  tags={task.constraints.modelTags ?? []}
+                  empty="Any tags"
+                  ariaLabel="Tags for the next run"
+                  title="Tags the chosen model and effort must all carry"
+                  menu={() => (
+                    <TagPicker
+                      label="the next run"
+                      available={
+                        assigned
+                          ? routableTags(assigned, resolved.model)
+                          : fleetTags(fleet.map((f) => f.worker))
+                      }
+                      selected={task.constraints.modelTags ?? []}
+                      onChange={(next) =>
+                        void rpc('task.setModel', {
+                          id: task.id,
+                          model: null,
+                          modelPolicy: task.constraints.modelPolicy ?? null,
+                          modelTags: next,
+                          effort: null
+                        }).then(refresh)
+                      }
+                    />
+                  )}
+                />
+              )}
               {/* ⛔ Not under Auto Model: the level belongs to the model the router picks, and this
                   list is the account default's — the composer hides it for the same reason (t636). */}
               {taskEfforts.length > 0 && !routerChoosesModel(task.constraints) && (

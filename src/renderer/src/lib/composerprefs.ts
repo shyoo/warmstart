@@ -11,7 +11,8 @@ import {
   type Priority,
   type SessionSharingChoice
 } from '@shared/tasks'
-import type { ModelClass } from '@shared/modelclass'
+import { cleanTags, classTag } from '@shared/modeltags'
+import { MODEL_CLASSES } from '@shared/modelclass'
 import { canWork, type WorkerRole } from '@shared/protocol'
 import { appKey } from './storagekeys'
 
@@ -77,8 +78,13 @@ export interface ModelChoice {
    * ⚠️ Ignored while `model` is set: a pin is a mandate, and there is nothing left to police.
    */
   policy: ModelPolicy
-  /** Capability class requested when policy is 'auto' ('high' | 'med' | 'low') */
-  modelClass?: ModelClass
+  /**
+   * Tags a pair must all carry when policy is `auto` (`@shared/modeltags`).
+   *
+   * ⚠️ A choice stored before tags carried `modelClass` — one of three — and is read back as that one
+   * tag (`readByWorker`), so what an operator left selected still means what it meant.
+   */
+  modelTags?: string[]
 }
 
 /** `auto` — the scheduler scores the routable models. `inherit` — the account's own default. */
@@ -102,7 +108,7 @@ export function showsEffortPicker(model: string, modelPolicy: ModelPolicy): bool
 export interface FiledModelChoice {
   model?: string
   modelPolicy?: 'inherit'
-  modelClass?: ModelClass
+  modelTags?: string[]
   effort?: string
 }
 
@@ -112,8 +118,8 @@ export interface FiledModelChoice {
  * ⛔ **An effort the pill is not offering is never filed** (t811, 2026-09-28). The pick is remembered
  * per account, and moving from `Opus 5.5 · High` to `Auto Model (med)` hid the Effort pill
  * (`showsEffortPicker`) without clearing it: t809 and t810 went out as `modelClass: med,
- * effort: high` and ran Opus at `high`, the `high` class. The daemon now keeps a class's own effort
- * (`classBoundEffort`), and this is the other half: what was filed is what the pills said.
+ * effort: high` and ran Opus at `high`, the `high` class. The daemon now keeps a tagged row's own effort
+ * (`tagBoundEffort`), and this is the other half: what was filed is what the pills said.
  *
  * ⚠️ `efforts` is the list the pill offers for the model that would run; a level outside it is a
  * leftover from another model, not a choice.
@@ -121,16 +127,16 @@ export interface FiledModelChoice {
 export function filedModelChoice(input: {
   model: string
   modelPolicy: ModelPolicy
-  modelClass?: ModelClass
+  modelTags?: readonly string[]
   effort: string
   efforts: readonly string[]
 }): FiledModelChoice {
-  const { model, modelPolicy, modelClass, effort, efforts } = input
+  const { model, modelPolicy, modelTags, effort, efforts } = input
   const showsEffort = showsEffortPicker(model, modelPolicy) && efforts.includes(effort)
   return {
     ...(model ? { model } : {}),
     ...(modelPolicy === 'inherit' && !model ? { modelPolicy: 'inherit' as const } : {}),
-    ...(modelClass && !model && modelPolicy === 'auto' ? { modelClass } : {}),
+    ...(modelTags && modelTags.length > 0 && !model && modelPolicy === 'auto' ? { modelTags: [...modelTags] } : {}),
     ...(effort && showsEffort ? { effort } : {})
   }
 }
@@ -280,21 +286,24 @@ function readByWorker(raw: unknown): Record<string, ModelChoice> {
   const out: Record<string, ModelChoice> = {}
   for (const [workerId, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!value || typeof value !== 'object') continue
-    const { model, effort, policy, modelClass } = value as {
+    const { model, effort, policy, modelClass, modelTags } = value as {
       model?: unknown
       effort?: unknown
       policy?: unknown
       modelClass?: unknown
+      modelTags?: unknown
     }
+    // ⛔ `modelTags` wins; a choice stored as `modelClass` becomes that one tag, so an operator's
+    // saved "Auto Model (Med)" still resolves Med after the upgrade. An unknown class is dropped.
+    const legacy = MODEL_CLASSES.find((c) => c === modelClass)
+    const tags = Array.isArray(modelTags) ? cleanTags(modelTags) : legacy ? [classTag(legacy)] : []
     out[workerId] = {
       model: typeof model === 'string' ? model : '',
       effort: typeof effort === 'string' ? effort : '',
       // ⚠️ Anything unreadable — including every choice stored before this field existed — is `auto`,
       // which is what those choices did.
       policy: policy === 'inherit' ? 'inherit' : 'auto',
-      ...(modelClass === 'high' || modelClass === 'med' || modelClass === 'low'
-        ? { modelClass }
-        : {})
+      ...(tags.length > 0 ? { modelTags: tags } : {})
     }
   }
   return out

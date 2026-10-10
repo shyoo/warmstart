@@ -1,5 +1,6 @@
 import type { ModelOptions, Worker } from '@shared/protocol'
 import { samePair, type ModelRoute } from '@shared/modelroutes'
+import { cleanTags, inferredTags } from '@shared/modeltags'
 
 /**
  * One line of the model table in Settings → Workers (t638).
@@ -7,7 +8,8 @@ import { samePair, type ModelRoute } from '@shared/modelroutes'
  * ⭐ **Every model the adapter can price has a line, whether or not anybody stored one.** The
  * operator's ask was to see all of them and tick which does what, rather than open a menu to find
  * out what exists. A line nobody has touched is `stored: false` and is not written back: it names a
- * model, a seeded effort and the built-in class, and nothing about it is a setting until it is.
+ * model, a seeded effort and the built-in class as its one tag, and nothing about it is a setting until
+ * it is — opening its Tags popover writes nothing; changing a tag stores that one line.
  */
 export interface ModelTableRow extends ModelRoute {
   /** Written back on the next edit. False for a line drawn only so the model is on screen. */
@@ -136,7 +138,7 @@ export function isSummaryRow(worker: TableWorker, options: ModelOptions | null, 
  *
  * ⛔ **Canonical order: the adapter's model order, then effort strongest first.** The order is
  * load-bearing, because plain Auto takes the first auto line of each model (`autoCandidates`) — so
- * it is the strongest effort ticked, and `Auto (class)` narrows to the class before that. Writing
+ * it is the strongest effort ticked, and `Auto (tags)` narrows to the matching lines before that. Writing
  * back in the drawn order is what keeps the order on screen and the order the router reads the same.
  *
  * ⚠️ The default, grading, judgment and summary choices always have a line. A choice with no line to tick
@@ -152,7 +154,7 @@ export function modelTableRows(worker: TableWorker, options: ModelOptions | null
     const pair = pairOf(options, model, effort)
     if (!pair) return
     if (rows.some((r) => samePair(r, pair))) return
-    rows.push({ ...pair, modelClass: null, auto: false, stored: false })
+    rows.push({ ...pair, tags: inferredTags(pair.model), auto: false, stored: false })
   }
   ensure(worker.defaultModel, worker.defaultEffort)
   for (const model of Object.values(worker.defaultModels ?? {})) ensure(model, null)
@@ -187,5 +189,18 @@ export function modelTableRows(worker: TableWorker, options: ModelOptions | null
  * `null` in the store — the "inert until opted in" state `routableCandidatesFor` reads.
  */
 export function routesToStore(rows: ModelTableRow[]): ModelRoute[] {
-  return rows.filter((r) => r.stored).map(({ model, effort, modelClass, auto }) => ({ model, effort, modelClass, auto }))
+  return rows.filter((r) => r.stored).map(({ model, effort, tags, auto }) => ({ model, effort, tags: [...tags], auto }))
+}
+
+/**
+ * One line's tags changed (t1042): that line, and only that line, becomes a stored row.
+ *
+ * ⛔ **An untouched line stays unstored.** The Tags popover draws a line's built-in class as its one
+ * tag before anything is saved; opening, closing or ticking nothing writes nothing (`routesToStore`
+ * of an untouched table is `[]`, the "inert until opted in" state). Changing a tag stores the edited
+ * line with `auto` exactly as it was, so a tag edit can never opt a worker into Auto Model, and every
+ * other line — its order, its Auto-route tick, its purposes — is the line it was.
+ */
+export function setRowTags(rows: ModelTableRow[], index: number, tags: readonly string[]): ModelTableRow[] {
+  return rows.map((r, i) => (i === index ? { ...r, tags: cleanTags([...tags]), stored: true } : r))
 }

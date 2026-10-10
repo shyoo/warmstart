@@ -855,13 +855,18 @@ server.registerTool(
               .string()
               .optional()
               .describe('A short label for the board, e.g. "Add the migration"'),
+            tags: z
+              .array(z.string())
+              .optional()
+              .describe(
+                'Optional tags the model/effort pair running this piece must ALL carry, e.g. ["Low"] for ' +
+                  'mechanical work a cheaper model can do, ["High"] for hard reasoning, or an operator tag ' +
+                  'such as "ZDR". The scheduler picks the account; a tag nothing carries holds the piece.'
+              ),
             class: z
               .enum(['low', 'med', 'high'])
               .optional()
-              .describe(
-                'Optional capability class for the agent that runs this piece: low for mechanical ' +
-                  'work a cheaper model can do, high for hard reasoning. The scheduler picks the account.'
-              ),
+              .describe('Older spelling of one tag: low, med or high. Prefer tags.'),
             adapter: z
               .string()
               .optional()
@@ -904,6 +909,7 @@ server.registerTool(
         pieces: (args.pieces ?? []).map((p) => ({
           title: p.instruction,
           ...(p.summary ? { summary: p.summary } : {}),
+          ...(p.tags?.length ? { modelTags: p.tags } : {}),
           ...(p.class ? { modelClass: p.class } : {}),
           ...(p.adapter ? { adapter: p.adapter } : {}),
           ...(p.worker ? { worker: p.worker } : {}),

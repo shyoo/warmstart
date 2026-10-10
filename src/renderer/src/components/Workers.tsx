@@ -20,6 +20,7 @@ import { errorMessage } from '@shared/errors.js'
 import { ModelTable, MODEL_TABLE_HELP } from './ModelTable'
 import { WorkerStatusBadge } from './WorkerStatusBadge'
 import { workerStatus } from '@shared/workerstatus'
+import { fleetTags } from '@shared/modeltags'
 
 /**
  * The (i) beside a column heading whose number needs a sentence.
@@ -183,6 +184,9 @@ export function Workers({
       void refresh()
     }
   })
+
+  /** Every tag any pair carries, plus Low/Med/High — what each row's Tags picker offers to tick. */
+  const allTags = fleetTags(fleet.map((f) => f.worker))
 
   useEffect(() => {
     void rpc('adapter.list').then(setAdapters)
@@ -820,6 +824,7 @@ export function Workers({
                       <ModelTable
                         worker={worker}
                         options={modelsFor(worker.adapterId, worker.id)}
+                        fleetTags={allTags}
                         busy={busy === `models:${worker.id}`}
                         onPatch={(patch) =>
                           void guard(`models:${worker.id}`, async () => {

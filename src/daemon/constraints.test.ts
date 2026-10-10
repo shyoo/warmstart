@@ -121,13 +121,21 @@ describe('choosing a model', () => {
     const antigravity = workers.createWorker({ adapterId: 'antigravity-cli', label: 'Antigravity', enabled: false })
     try {
       workers.updateWorker(antigravity.id, {
-        modelRoutes: [{ model: 'gemini-3.8-flash', effort: 'high', modelClass: 'med', auto: true }]
+        modelRoutes: [{ model: 'gemini-3.8-flash', effort: 'high', tags: ['Med'], auto: true }]
       })
 
-      expect(() => api.checkConstraints({ workerId: antigravity.id, modelPolicy: 'auto', modelClass: 'high' })).toThrow(
-        /Antigravity has no Auto Model \(high\) route/
+      expect(() => api.checkConstraints({ workerId: antigravity.id, modelPolicy: 'auto', modelTags: ['High'] })).toThrow(
+        /Antigravity has no Auto Model \(High\) route/
       )
-      expect(() => api.checkConstraints({ workerId: antigravity.id, modelPolicy: 'auto', modelClass: 'med' })).not.toThrow()
+      expect(() => api.checkConstraints({ workerId: antigravity.id, modelPolicy: 'auto', modelTags: ['Med'] })).not.toThrow()
+      // Every tag, on the same pair: Med alone is there, Med + Audio is not.
+      expect(() => api.checkConstraints({ workerId: antigravity.id, modelPolicy: 'auto', modelTags: ['Med', 'Audio'] })).toThrow(
+        /no Auto Model \(Med \+ Audio\) route/
+      )
+      // The old single-class spelling is still read, as one tag.
+      expect(() => api.checkConstraints({ workerId: antigravity.id, modelPolicy: 'auto', modelClass: 'high' } as never)).toThrow(
+        /no Auto Model \(High\) route/
+      )
     } finally {
       workers.retireWorker(antigravity.id)
     }
@@ -611,7 +619,9 @@ describe('filing a task against a disabled or retired account (t969)', () => {
     )
     // The account that is on, and a task pinned to nothing (Auto Worker), are admitted.
     expect(api.checkConstraints({ workerId: on.id }, { switchedOn: true }).adapterId).toBe('claude-code')
-    expect(api.checkConstraints({ modelClass: 'med' }, { switchedOn: true })).toEqual({ modelClass: 'med' })
+    expect(api.checkConstraints({ modelTags: ['Med'] }, { switchedOn: true })).toEqual({ modelTags: ['Med'] })
+    // An old caller's class arrives as the one tag, and nothing of the old key is stored.
+    expect(api.checkConstraints({ modelClass: 'med' } as never, { switchedOn: true })).toEqual({ modelTags: ['Med'] })
     expect(api.checkConstraints({}, { switchedOn: true })).toEqual({})
     // Without the flag nothing changes: reassignment and every other caller keep their old answer.
     expect(api.checkConstraints({ workerId: off.id }).workerId).toBe(off.id)
@@ -631,7 +641,7 @@ describe('filing a task against a disabled or retired account (t969)', () => {
 
   it('task.create files the same task with Auto Worker, with the account on, and with a class', async () => {
     const handlers = handlersFor()
-    const auto = await handlers['task.create']({ title: 'auto worker', constraints: { modelClass: 'med' } })
+    const auto = await handlers['task.create']({ title: 'auto worker', constraints: { modelTags: ['Med'] } })
     expect(auto.constraints.workerId).toBeUndefined()
     const bare = await handlers['task.create']({ title: 'no constraints at all' })
     expect(bare.constraints.workerId).toBeUndefined()

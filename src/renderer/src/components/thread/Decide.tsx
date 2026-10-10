@@ -13,7 +13,6 @@ import {
   FINISH_SHORT,
   type FinishPolicy,
   resolveModelChoice,
-  type ModelClass,
   type PendingWork,
   type ResolvedFinishPolicy,
   type Task,
@@ -22,6 +21,9 @@ import {
 import type { ModelOptions } from '@shared/protocol'
 import { rpc, useNow, type FleetEntry } from '../../lib/daemon'
 import { SettingButtonSelect } from '../SettingButtonSelect'
+import { TagPicker, TagsPill } from '../TagControls'
+import { routableTags } from '@shared/modelroutes'
+import { fleetTags, sameTags } from '@shared/modeltags'
 import { SplitButton } from '../SplitButton'
 import {
   COMMIT_FALLBACK,
@@ -79,17 +81,18 @@ export function QuotaDecide({
   const [preemptReassignWorkerId, setPreemptReassignWorkerId] = useState<string | null>(
     warning?.reassignWorkerId === undefined ? null : warning.reassignWorkerId ?? ''
   )
-  const [preemptModel, setPreemptModel] = useState(warning?.reassignModelPolicy === 'auto'
-    ? `__auto__${warning.reassignModelClass ? `:${warning.reassignModelClass}` : ''}`
-    : warning?.reassignModel ?? '')
+  const [preemptModel, setPreemptModel] = useState(warning?.reassignModelPolicy === 'auto' ? '__auto__' : warning?.reassignModel ?? '')
+  // ⛔ The redirect's Auto Model carries tags like any other (t1042); only an Auto choice has any.
+  const [preemptTags, setPreemptTags] = useState<string[]>(warning?.reassignModelTags ?? [])
   const [preemptEffort, setPreemptEffort] = useState(warning?.reassignEffort ?? '')
+  const warnedTagsKey = (warning?.reassignModelTags ?? []).join('\u0000')
   useEffect(() => {
     setPreemptReassignWorkerId(warning?.reassignWorkerId === undefined ? null : warning.reassignWorkerId ?? '')
-    setPreemptModel(warning?.reassignModelPolicy === 'auto'
-      ? `__auto__${warning.reassignModelClass ? `:${warning.reassignModelClass}` : ''}`
-      : warning?.reassignModel ?? '')
+    setPreemptModel(warning?.reassignModelPolicy === 'auto' ? '__auto__' : warning?.reassignModel ?? '')
+    setPreemptTags(warning?.reassignModelTags ?? [])
     setPreemptEffort(warning?.reassignEffort ?? '')
-  }, [warning?.reassignWorkerId, warning?.reassignModel, warning?.reassignModelPolicy, warning?.reassignModelClass, warning?.reassignEffort])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the tag list is compared by warnedTagsKey
+  }, [warning?.reassignWorkerId, warning?.reassignModel, warning?.reassignModelPolicy, warnedTagsKey, warning?.reassignEffort])
   const preemptWorker = fleet.find((e) => e.worker.id === preemptReassignWorkerId)?.worker
   const preemptEntry = fleet.find((e) => e.worker.id === preemptReassignWorkerId)
   const preemptOptions = modelOptions.find((o) => o.adapterId === preemptWorker?.adapterId)
@@ -142,9 +145,8 @@ export function QuotaDecide({
   const handoffReassignActive = warning?.action === 'handoff' && warning.reassignWorkerId !== undefined
   const reassignMatchesSelection = handoffReassignActive &&
     (warning?.reassignWorkerId ?? '') === preemptReassignWorkerId &&
-    (warning?.reassignModelPolicy === 'auto'
-      ? `__auto__${warning.reassignModelClass ? `:${warning.reassignModelClass}` : ''}`
-      : warning?.reassignModel ?? '') === preemptModel &&
+    (warning?.reassignModelPolicy === 'auto' ? '__auto__' : warning?.reassignModel ?? '') === preemptModel &&
+    (preemptModel !== '__auto__' || sameTags(warning?.reassignModelTags ?? [], preemptTags)) &&
     (warning?.reassignEffort ?? '') === preemptEffort
 
   const handleOverride = async (withdraw = false) => {
@@ -188,8 +190,7 @@ export function QuotaDecide({
           ...(reassignWorkerId ? {
             reassignModel: preemptModel.startsWith('__auto__') ? null : preemptModel || null,
             reassignModelPolicy: preemptModel.startsWith('__auto__') ? 'auto' : 'inherit',
-            reassignModelClass: preemptModel.startsWith('__auto__:')
-              ? preemptModel.split(':')[1] as ModelClass : null,
+            reassignModelTags: preemptModel.startsWith('__auto__') ? preemptTags : [],
             reassignEffort: filedReassignEffort(preemptModel, preemptEffort, preemptEfforts)
           } : {})
         } : {})
@@ -289,12 +290,29 @@ export function QuotaDecide({
                         options={[
                           { value: '', label: preemptDefault ? `Account default (${modelLabel(preemptDefault) ?? preemptDefault})` : 'CLI default model' },
                           { value: '__auto__', label: 'Auto Model' },
-                          { value: '__auto__:high', label: 'Auto Model (high)' },
-                          { value: '__auto__:med', label: 'Auto Model (med)' },
-                          { value: '__auto__:low', label: 'Auto Model (low)' },
                           ...preemptModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
                         ]}
-                        onChange={(value) => { setPreemptModel(value); setPreemptEffort('') }} />
+                        onChange={(value) => {
+                          setPreemptModel(value)
+                          setPreemptEffort('')
+                          if (!value.startsWith('__auto__')) setPreemptTags([])
+                        }} />
+                    )}
+                    {preemptReassignWorkerId && preemptModel.startsWith('__auto__') && (
+                      <TagsPill
+                        tags={preemptTags}
+                        empty="Any tags"
+                        ariaLabel="Handoff destination tags"
+                        title="Tags the chosen model and effort must all carry"
+                        menu={() => (
+                          <TagPicker
+                            label="the handoff destination"
+                            available={preemptWorker ? routableTags(preemptWorker, preemptDefault) : fleetTags(fleet.map((e) => e.worker))}
+                            selected={preemptTags}
+                            onChange={setPreemptTags}
+                          />
+                        )}
+                      />
                     )}
                     {preemptReassignWorkerId && preemptEfforts.length > 0 && (
                       <SettingButtonSelect className="reassign-select" value={preemptEffort} disabled={busy}
@@ -603,7 +621,7 @@ export function Decide({
         workerId: choice.workerId || null,
         model: isAuto ? null : selected || null,
         modelPolicy: isAuto ? 'auto' : 'inherit',
-        modelClass: isAuto && selected.includes(':') ? (selected.split(':')[1] as ModelClass) : null,
+        modelTags: isAuto ? choice.tags : [],
         effort: choice.filedEffort
       })
       await onRefresh()

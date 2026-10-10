@@ -15,6 +15,7 @@ import {
 import type { ModelOptions, Session } from '@shared/protocol'
 import type { QualityReview } from '@shared/review'
 import { autoModelCount, autoRoutes, type ModelRoute } from '@shared/modelroutes'
+import { tagsLabel } from '@shared/modeltags'
 import type { FleetEntry } from './daemon'
 import { duration } from './format'
 import { modelLabel } from './modelname'
@@ -490,28 +491,28 @@ export interface ModelLine {
  * ⛔ **For a task no account has been chosen for yet.** With an Auto worker there is no account to
  * resolve a default against and no allowlist to count, so the cell and the thread's model row used
  * to say nothing — or *CLI default*, which is not what was filed. What *was* filed is the policy and
- * its class, and those are facts even before the scheduler acts on them.
+ * its tags, and those are facts even before the scheduler acts on them.
  */
-export function autoModelLabel(constraints: Pick<Task['constraints'], 'modelPolicy' | 'modelClass'>): string {
+export function autoModelLabel(constraints: Pick<Task['constraints'], 'modelPolicy' | 'modelTags'>): string {
   if (constraints.modelPolicy === 'inherit') return 'account default'
-  return constraints.modelClass ? `Auto Model (${constraints.modelClass})` : 'Auto Model'
+  return constraints.modelTags?.length ? `Auto Model (${tagsLabel(constraints.modelTags)})` : 'Auto Model'
 }
 
 /**
  * Whether a task's own constraints leave the model to the router — the answer the composer's
- * *Auto Model (high/med/low)* files.
+ * *Auto Model (tags)* files.
  *
  * ⛔ **The composer never stores `modelPolicy: 'auto'`** (`filedModelChoice`): Auto is what an absent
- * policy means, and a class tier is filed as `{ modelClass }` alone. The scheduler routes that task
+ * policy means, and a tag requirement is filed as `{ modelTags }` alone. The scheduler routes that task
  * (`chooseTarget` reads only `'inherit'` as the account's default), so a picker that looked for
  * `'auto'` showed the account's default model beside a run the router had put on another one —
- * *Next model: Sonnet 5.5* under *Opus 5.5* for a task filed as Auto Model (high).
+ * *Next model: Sonnet 5.5* under *Opus 5.5* for a task filed as Auto Model (High).
  */
 export function routerChoosesModel(
-  constraints: Pick<Task['constraints'], 'model' | 'modelPolicy' | 'modelClass'>
+  constraints: Pick<Task['constraints'], 'model' | 'modelPolicy' | 'modelTags'>
 ): boolean {
   if (constraints.model || constraints.modelPolicy === 'inherit') return false
-  return constraints.modelPolicy === 'auto' || Boolean(constraints.modelClass)
+  return constraints.modelPolicy === 'auto' || Boolean(constraints.modelTags?.length)
 }
 
 /**
@@ -571,7 +572,7 @@ export function modelLine(
   // ⚠️ Only where nothing has run. `ranModel` is a measurement, and a measurement outranks the
   // question of who would choose next — that is the "what ran beats what would run" rule above.
   if (task.ranModel === null && routerPicksModel(task.constraints, entry?.worker, resolved.modelSource)) {
-    const label = task.constraints.modelClass ? `router picks (${task.constraints.modelClass})` : 'router picks'
+    const label = task.constraints.modelTags?.length ? `router picks (${tagsLabel(task.constraints.modelTags)})` : 'router picks'
     return {
       label,
       id: null,
@@ -740,9 +741,9 @@ export function pieceSettings(
     // ⛔ The pieces' Auto answer, in the composer's own words: without this row a class the
     // operator chose would be invisible everywhere but the filed children's constraints.
     const policy = defaults.modelPolicy ?? fallback.modelPolicy ?? null
-    const klass = defaults.modelClass ?? fallback.modelClass ?? null
+    const tags = defaults.modelTags ?? fallback.modelTags ?? null
     if (policy === 'inherit') rows.push({ label: 'model', value: 'Inherit — account default' })
-    else if (klass) rows.push({ label: 'model', value: `Auto Model (${klass})` })
+    else if (tags?.length) rows.push({ label: 'model', value: `Auto Model (${tagsLabel(tags)})` })
   }
   rows.push({ label: 'priority', value: defaults.priority ?? task.priority })
   if (defaults.finishPolicy) rows.push({ label: 'finish', value: defaults.finishPolicy })

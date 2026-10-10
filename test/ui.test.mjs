@@ -1931,6 +1931,71 @@ try {
   )
   await closeMenus()
 
+  // ⭐ Tags (t1042): Auto Model asks for tags the chosen pair must all carry, and the choice is
+  // remembered per account like every other pill. Asserted with no account pinned, where the picker
+  // offers the fleet's tags — at least Low, Med and High — so there is something to tick.
+  const modelTagsPill = `[...document.querySelectorAll('button.pill')].find(p => (p.getAttribute('aria-label') ?? '').startsWith('Model tags'))`
+  check(
+    'Auto Model draws a Tags pill beside it, reading "Any tags" until some are chosen',
+    (await evaluate(`(${modelTagsPill})?.innerText?.trim() ?? ''`)) === 'Any tags'
+  )
+  await evaluate(`(${modelTagsPill})?.click()`)
+  await wait(300)
+  const offeredTags = JSON.parse(
+    await evaluate(`JSON.stringify([...document.querySelectorAll('.pill-menu .tag-picker .tag-picker-name')].map(n => n.textContent.trim()))`)
+  )
+  check(
+    'the picker offers the fleet’s tags, including the built-in Low, Med and High',
+    ['High', 'Med', 'Low'].every((t) => offeredTags.includes(t)),
+    JSON.stringify(offeredTags)
+  )
+  for (const wanted of ['High', 'Low']) {
+    await evaluate(
+      `[...document.querySelectorAll('.pill-menu .tag-picker-label')].find(l => l.textContent.trim() === ${JSON.stringify(wanted)})?.querySelector('input')?.click()`
+    )
+    await wait(250)
+  }
+  const chosenName = await evaluate(`(${modelTagsPill})?.getAttribute('aria-label') ?? ''`)
+  check(
+    'two ticked tags read on the pill and in its accessible name, and the model pill names the requirement',
+    chosenName.includes('High') && chosenName.includes('Low') &&
+      (await pillLabel('Model')) === 'Auto Model (High + Low)',
+    `${chosenName} / ${await pillLabel('Model')}`
+  )
+  const rememberedTags = await evaluate(`(() => {
+    const key = Object.keys(window.localStorage).find((k) => k.endsWith('composer'))
+    return key ? JSON.stringify(Object.values(JSON.parse(window.localStorage.getItem(key)).byWorker ?? {}).map((c) => c.modelTags ?? null)) : 'no composer key'
+  })()`)
+  check(
+    'the choice is remembered for the account, as tags',
+    rememberedTags.includes('["High","Low"]'),
+    rememberedTags
+  )
+  await closeMenus()
+  await openPill('Model')
+  await pickInMenu('Model', 'policy:inherit')
+  check(
+    'Inherit has no tags to ask for, so the pill goes',
+    (await evaluate(`!(${modelTagsPill})`)) === true
+  )
+  await openPill('Model')
+  await pickInMenu('Model', 'policy:auto')
+  check(
+    'and returns, with the tags last chosen for this account, when Auto Model is chosen again',
+    ((await evaluate(`(${modelTagsPill})?.getAttribute('aria-label') ?? ''`)).includes('High')) === true,
+    await evaluate(`(${modelTagsPill})?.getAttribute('aria-label') ?? ''`)
+  )
+  // Leave the composer as found: untick both, so nothing later inherits a requirement.
+  await evaluate(`(${modelTagsPill})?.click()`)
+  await wait(300)
+  for (const wanted of ['High', 'Low']) {
+    await evaluate(
+      `[...document.querySelectorAll('.pill-menu .tag-picker-label')].find(l => l.textContent.trim() === ${JSON.stringify(wanted)})?.querySelector('input')?.click()`
+    )
+    await wait(250)
+  }
+  await closeMenus()
+
   // Pin the account this suite commissioned, and the models its cost model can price appear.
   await openPill('Worker')
   const workerValues = await menuValues('Worker')
@@ -3862,10 +3927,114 @@ try {
     'the retired role switches are not duplicated beside the model-purpose matrix',
     (await evaluate(`String(document.querySelectorAll('.worker-role-checks').length)`)) === '0'
   )
+  const tagsHeader = await evaluate(`[...${modelsCell}?.querySelectorAll('th') ?? []].find(h => h.textContent.trim() === 'Tags')?.getAttribute('title') ?? ''`)
   check(
-    'Label explains how it refines Auto Model',
-    (await evaluate(`${modelsCell}?.querySelector('th[title]')?.getAttribute('title') ?? ''`)).includes('Auto Model')
+    'Tags says what a tag is and that the operator, not Warmstart, vouches for it',
+    tagsHeader.includes('routing tags') && tagsHeader.includes('not something Warmstart verifies'),
+    tagsHeader
   )
+
+  // ⭐ Tags (t1042): one multi-tag control per line, one line high however many tags it holds.
+  // ⛔ Asserted non-empty first. The UI worker has no credentials, so everything here is about the
+  // table and the stored rows, never about a run; an empty table would pass every height check.
+  const tagButtons = `${modelsCell}?.querySelectorAll('button.pill[aria-label^="Tags for"]')`
+  const tagButtonCount = Number(await evaluate(`String(${tagButtons}?.length ?? 0)`))
+  check('every drawn line has a Tags button', tagButtonCount > 0 && tagButtonCount === Number(await evaluate(`String(${modelRows}?.length ?? 0)`)), String(tagButtonCount))
+  const rowHeights = async () =>
+    JSON.parse(await evaluate(`JSON.stringify([...(${modelRows} ?? [])].map(r => [r.querySelector('.worker-models-name')?.textContent.trim(), Math.round(r.getBoundingClientRect().height)]))`))
+  const heightsBefore = await rowHeights()
+  const firstTagsLabel = `${modelsCell}?.querySelector('button.pill[aria-label^="Tags for"]')`
+  const setNative = (el, value) =>
+    `(() => { const el = ${el}; const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('input', { bubbles: true })); })()`
+  // Opening it writes nothing: the table was not stored before, and still is not.
+  const routesBeforeOpen = await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify(w?.modelRoutes ?? null))`)
+  await evaluate(`${firstTagsLabel}?.click()`)
+  await wait(300)
+  check(
+    'the Tags popover opens as a group at the document root, out of the table’s scroller',
+    (await evaluate(`!!document.body.querySelector(':scope > .pill-menu .tag-picker[role="group"]')`)) === true
+  )
+  check(
+    'opening the popover writes nothing',
+    (await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify(w?.modelRoutes ?? null))`)) === routesBeforeOpen,
+    routesBeforeOpen
+  )
+  const sixTags = ['Zeta1', 'Zeta2', 'Zeta3', 'Zeta4', 'Zeta5', 'Zeta6']
+  for (const tag of sixTags) {
+    await evaluate(setNative(`document.querySelector('.pill-menu .tag-picker-input')`, tag))
+    await evaluate(`document.querySelector('.pill-menu .tag-picker-add button[type="submit"]')?.click()`)
+    await wait(600)
+  }
+  const storedTags = JSON.parse(
+    await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify((w?.modelRoutes ?? []).map(r => r.tags)))`)
+  )
+  check(
+    'six added tags reach the daemon on one pair, beside the built-in class tag it started with',
+    storedTags.some((t) => sixTags.every((z) => t.includes(z))),
+    JSON.stringify(storedTags)
+  )
+  await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`)
+  await wait(300)
+  check(
+    'Escape closes the popover and focus returns to the Tags button',
+    (await evaluate(`!document.querySelector('.pill-menu .tag-picker') && (document.activeElement?.getAttribute('aria-label') ?? '').startsWith('Tags for')`)) === true,
+    await evaluate(`document.activeElement?.getAttribute('aria-label') ?? '(nothing focused)'`)
+  )
+  const heightsAfter = await rowHeights()
+  check(
+    'a line carrying seven tags is as tall as it was with one',
+    heightsBefore.length > 0 && heightsAfter.length === heightsBefore.length && heightsAfter.every(([n, h], i) => n === heightsBefore[i][0] && Math.abs(h - heightsBefore[i][1]) <= 2),
+    JSON.stringify({ heightsBefore, heightsAfter })
+  )
+  const fullName = await evaluate(`${firstTagsLabel}?.getAttribute('aria-label') ?? ''`)
+  const fullTitle = await evaluate(`${firstTagsLabel}?.getAttribute('title') ?? ''`)
+  check(
+    'the button’s accessible name and tooltip list every tag, though it draws two and +N',
+    sixTags.every((z) => fullName.includes(z) && fullTitle.includes(z)) &&
+      Number(await evaluate(`String(${firstTagsLabel}?.querySelectorAll('.tag-chip').length ?? 0)`)) === 3 &&
+      (await evaluate(`${firstTagsLabel}?.querySelector('.tag-chip--more')?.textContent ?? ''`)).startsWith('+'),
+    fullName
+  )
+  // Narrow: constrain the real scroll surface, as the routing-model check above does, rather than
+  // the browser viewport. The table must scroll sideways, and no line may wrap taller.
+  await evaluate(`(() => { const el = ${modelsCell}?.querySelector('.worker-models-scroll'); if (el) el.style.width = '420px' })()`)
+  await wait(200)
+  const narrow = JSON.parse(
+    await evaluate(`JSON.stringify((() => {
+      const el = ${modelsCell}?.querySelector('.worker-models-scroll')
+      return { scrolls: !!el && el.scrollWidth > el.clientWidth, heights: [...el.querySelectorAll('.worker-models-table > tbody > tr')].map(r => [r.querySelector('.worker-models-name')?.textContent.trim(), Math.round(r.getBoundingClientRect().height)]) }
+    })())`)
+  )
+  check(
+    'narrow, the matrix scrolls sideways and a seven-tag line does not wrap taller',
+    narrow.scrolls && narrow.heights.length === heightsBefore.length && narrow.heights.every(([n, h], i) => n === heightsBefore[i][0] && Math.abs(h - heightsBefore[i][1]) <= 2),
+    JSON.stringify({ narrow, heightsBefore })
+  )
+  await evaluate(`(() => { const el = ${modelsCell}?.querySelector('.worker-models-scroll'); if (el) el.style.width = '' })()`)
+  // The keyboard: type a tag into the focused add box and press Enter — the path that needs no mouse.
+  await evaluate(`${firstTagsLabel}?.click()`)
+  await wait(300)
+  await evaluate(`document.querySelector('.pill-menu .tag-picker-input')?.focus()`)
+  await send('Input.insertText', { text: 'Keyed' })
+  const typed = await evaluate(`document.querySelector('.pill-menu .tag-picker-input')?.value ?? '(no input)'`)
+  // ⚠️ A DOM key event, as the rest of this suite sends them: implicit form submission over raw CDP
+  // input is the one thing that is not deterministic here, and the box handles Enter itself.
+  await evaluate(`document.querySelector('.pill-menu .tag-picker-input')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))`)
+  await wait(900)
+  check(
+    'a tag typed and entered from the keyboard persists through fleet.list',
+    typed === 'Keyed' && (await evaluate(`${firstWorkerRpc}.then(w => (w?.modelRoutes ?? []).some(r => r.tags.includes('Keyed')))`)) === true,
+    `typed: ${typed}`
+  )
+  // Remove it from the same popover with the explicit action.
+  await evaluate(`document.querySelector('.pill-menu .tag-picker-remove[aria-label="Remove tag Keyed"]')?.click()`)
+  await wait(700)
+  check(
+    'Remove takes the tag off this pair and nothing else',
+    (await evaluate(`${firstWorkerRpc}.then(w => { const r = (w?.modelRoutes ?? []); return !r.some(x => x.tags.includes('Keyed')) && r.some(x => sixTags.every(z => x.tags.includes(z))) })`.replace('sixTags', JSON.stringify(sixTags)))) === true
+  )
+  await evaluate(`document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`)
+  await wait(300)
 
   // ⭐ + Add model/effort: a second line for a model that already has one, at another effort.
   await evaluate(`[...${modelsCell}?.querySelectorAll('button') ?? []].find(b => b.textContent.includes('Add model/effort'))?.click()`)

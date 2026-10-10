@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { canWork } from '@shared/protocol.js'
-import type { ModelClass } from '@shared/modelclass.js'
-import { autoCandidates, autoRoutes, classOnWorker, modelOffered, type ModelRoute } from '@shared/modelroutes.js'
+import { cleanTags, hasAllTags } from '@shared/modeltags.js'
+import { autoCandidates, autoRoutes, modelOffered, readRoutes, tagsOnWorker, type ModelRoute } from '@shared/modelroutes.js'
 import type {
   CreditStatus,
   CreditsIntent,
@@ -77,7 +77,7 @@ function toWorker(r: WorkerRow): Worker {
     gradingEnabled: r.grading_enabled !== 0,
     defaultEffort: r.default_effort,
     defaultModels: r.default_models_json ? (JSON.parse(r.default_models_json) as Record<string, string | null>) : null,
-    modelRoutes: r.model_routes_json ? (JSON.parse(r.model_routes_json) as ModelRoute[]) : null,
+    modelRoutes: r.model_routes_json ? readRoutes(JSON.parse(r.model_routes_json)) : null,
     judgmentModel: r.judgment_model,
     judgmentEffort: r.judgment_effort,
     identity: (() => {
@@ -275,7 +275,13 @@ function normaliseEffort(adapterId: string, model: string | null, effort: string
 
 /** Persist an explicit neutral effort for selectable models; `null` remains only for models with no levels. */
 function normaliseRoutes(adapterId: string, routes: ModelRoute[] | null | undefined): ModelRoute[] | null | undefined {
-  return routes?.map((route) => ({ ...route, effort: normaliseEffort(adapterId, route.model, route.effort) })) ?? routes
+  return (
+    routes?.map((route) => ({
+      ...route,
+      effort: normaliseEffort(adapterId, route.model, route.effort),
+      tags: cleanTags(route.tags)
+    })) ?? routes
+  )
 }
 
 export function updateWorker(
@@ -384,19 +390,20 @@ export function routableModelsFor(worker: Worker): Array<string | null> {
 }
 
 /**
- * The (model, effort) pairs Auto Model may dispatch on this worker, narrowed to a class if asked.
+ * The (model, effort) pairs Auto Model may dispatch on this worker, narrowed to a tag requirement if asked.
  *
  * ⛔ One pair per model — see `autoCandidates`. ⚠️ The inherited fallback carries no effort of its
  * own: `resolveModelChoice` already gives the default model the default row's effort.
  */
 export function routableCandidatesFor(
   worker: Worker,
-  modelClass?: ModelClass | null
+  tags?: readonly string[] | null
 ): Array<{ model: string | null; effort: string | null }> {
-  if (autoRoutes(worker).length > 0) return autoCandidates(worker, modelClass)
+  if (autoRoutes(worker).length > 0) return autoCandidates(worker, tags)
   const inherited = inheritedModelFor(worker).map((model) => ({ model, effort: null }))
-  if (!modelClass) return inherited
-  return inherited.filter((c) => c.model && classOnWorker(worker, c.model, worker.defaultEffort) === modelClass)
+  if (!tags || tags.length === 0) return inherited
+  // ⛔ The default *pair*, not the default model: its row's tags, at the default effort.
+  return inherited.filter((c) => c.model && hasAllTags(tagsOnWorker(worker, c.model, worker.defaultEffort), tags))
 }
 
 /**

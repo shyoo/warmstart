@@ -303,18 +303,42 @@ describe('what the new-task composer was left set to', () => {
     })
   })
 
-  it('remembers and restores modelClass in byWorker', () => {
+  it('remembers and restores modelTags in byWorker', () => {
     const store: Record<string, string> = {}
     stub(store)
     writeComposerPrefs({
       ...DEFAULT_COMPOSER_PREFS,
       byWorker: {
-        'w-claude': { model: '', effort: '', policy: 'auto', modelClass: 'high' }
+        'w-claude': { model: '', effort: '', policy: 'auto', modelTags: ['High', 'ZDR'] }
       }
     })
     const back = readComposerPrefs()
-    expect(back.byWorker['w-claude']?.modelClass).toBe('high')
+    expect(back.byWorker['w-claude']?.modelTags).toEqual(['High', 'ZDR'])
     expect(back.byWorker['w-claude']?.policy).toBe('auto')
+  })
+
+  it('⛔ reads a choice saved as one class as that one tag, so a saved Auto Model (med) is still Med', () => {
+    const store: Record<string, string> = {}
+    stub(store)
+    // Exactly the shape the previous build wrote, under the key this build reads.
+    writeComposerPrefs(DEFAULT_COMPOSER_PREFS)
+    const key = Object.keys(store)[0]!
+    store[key] = JSON.stringify({
+      byWorker: {
+        'w-a': { model: '', effort: '', policy: 'auto', modelClass: 'med' },
+        'w-b': { model: '', effort: '', policy: 'auto', modelClass: 'ultra' },
+        'w-c': { model: '', effort: '', policy: 'auto', modelClass: 'low', modelTags: ['Audio', ' audio '] },
+        'w-d': { model: '', effort: '', policy: 'auto' }
+      }
+    })
+    const back = readComposerPrefs().byWorker
+    expect(back['w-a']?.modelTags).toEqual(['Med'])
+    // An unknown class is dropped, never turned into a tag nobody typed.
+    expect(back['w-b']?.modelTags).toBeUndefined()
+    // Tags written by this build win over a leftover class, and are tidied.
+    expect(back['w-c']?.modelTags).toEqual(['Audio'])
+    expect(back['w-d']?.modelTags).toBeUndefined()
+    expect('modelClass' in (back['w-a'] ?? {})).toBe(false)
   })
 
   it('ignores a stored shape that is not a record', () => {
@@ -353,25 +377,25 @@ describe('filedModelChoice (t811)', () => {
       policy: 'auto'
     })
     const pinned = modelChoiceFor(prefs, 'w-claude')
-    prefs = rememberModelChoice(prefs, 'w-claude', { model: '', effort: pinned.effort, policy: 'auto', modelClass: 'med' })
+    prefs = rememberModelChoice(prefs, 'w-claude', { model: '', effort: pinned.effort, policy: 'auto', modelTags: ['Med'] })
     const auto = modelChoiceFor(prefs, 'w-claude')
     expect(auto.effort).toBe('high')
 
     const filed = filedModelChoice({
       model: auto.model,
       modelPolicy: auto.policy,
-      modelClass: auto.modelClass,
+      modelTags: auto.modelTags,
       effort: auto.effort,
       efforts: OPUS_LEVELS
     })
-    expect(filed).toEqual({ modelClass: 'med' })
+    expect(filed).toEqual({ modelTags: ['Med'] })
   })
 
-  it('files no effort for any Auto Model variant', () => {
-    for (const modelClass of [undefined, 'high', 'med', 'low'] as const) {
-      const filed = filedModelChoice({ model: '', modelPolicy: 'auto', modelClass, effort: 'max', efforts: OPUS_LEVELS })
+  it('files no effort for any Auto Model, whatever its tags', () => {
+    for (const modelTags of [undefined, ['High'], ['Med'], ['Low'], ['High', 'ZDR']] as const) {
+      const filed = filedModelChoice({ model: '', modelPolicy: 'auto', modelTags, effort: 'max', efforts: OPUS_LEVELS })
       expect(filed.effort).toBeUndefined()
-      expect(filed).toEqual(modelClass ? { modelClass } : {})
+      expect(filed).toEqual(modelTags ? { modelTags } : {})
     }
   })
 
@@ -394,11 +418,11 @@ describe('filedModelChoice (t811)', () => {
     })
   })
 
-  it('never files a class beside a pinned model or under Inherit', () => {
+  it('never files tags beside a pinned model or under Inherit', () => {
     expect(
-      filedModelChoice({ model: 'claude-opus-5-5', modelPolicy: 'auto', modelClass: 'med', effort: '', efforts: OPUS_LEVELS })
+      filedModelChoice({ model: 'claude-opus-5-5', modelPolicy: 'auto', modelTags: ['Med'], effort: '', efforts: OPUS_LEVELS })
     ).toEqual({ model: 'claude-opus-5-5' })
-    expect(filedModelChoice({ model: '', modelPolicy: 'inherit', modelClass: 'med', effort: '', efforts: [] })).toEqual({
+    expect(filedModelChoice({ model: '', modelPolicy: 'inherit', modelTags: ['Med'], effort: '', efforts: [] })).toEqual({
       modelPolicy: 'inherit'
     })
   })

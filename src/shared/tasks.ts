@@ -16,8 +16,7 @@
  */
 
 import type { QuotaSnapshot, QuotaWindow, Worker } from './protocol.js'
-import type { ModelClass } from './modelclass.js'
-import { modelOffered, pairInClass, routeEffortFor, type ModelRoute } from './modelroutes.js'
+import { modelOffered, pairWithTags, routeEffortFor, type ModelRoute } from './modelroutes.js'
 
 export type { ModelClass } from './modelclass.js'
 
@@ -814,12 +813,12 @@ export interface ChildDefaults {
   model?: string | null
   effort?: string | null
   /**
-   * The pieces' Auto model answer (t732): `modelPolicy` with a `modelClass` tier is what the
+   * The pieces' Auto model answer (t732): `modelPolicy` with `modelTags` is what the
    * composer's Executor row files where the Planner row files the same pair. Absent means the
    * scheduler scores every routable model, exactly like an absent policy on a task.
    */
   modelPolicy?: 'auto' | 'inherit'
-  modelClass?: ModelClass
+  modelTags?: string[]
   /** The model each named account runs a piece with — a model id belongs to one CLI, never to a fleet. */
   modelsByWorker?: Record<string, string>
   /** The effort each named account is asked for, where its CLI takes an effort flag at all. */
@@ -1356,7 +1355,7 @@ export interface Task {
     /** Next run's model choice, carried with the redirect until the wrap-up lands. */
     reassignModel?: string | null
     reassignModelPolicy?: 'auto' | 'inherit' | null
-    reassignModelClass?: ModelClass | null
+    reassignModelTags?: string[] | null
     reassignEffort?: string | null
   } | null
   branch: string | null
@@ -1615,9 +1614,11 @@ export interface TaskConstraints {
    */
   modelPolicy?: 'auto' | 'inherit'
   /**
-   * Preferred model capability tier when model is chosen automatically ('high' | 'med' | 'low').
+   * Tags a pair must carry when the model is chosen automatically (`modeltags.ts`): every one, on
+   * the same (model, effort) pair. Absent or empty is plain Auto Model. ⛔ Replaced `modelClass`
+   * (t1042); migration 90 and `readTaskConstraints` turn the old single class into one tag.
    */
-  modelClass?: ModelClass
+  modelTags?: string[]
   /**
    * How hard the model should think, where the CLI can be told.
    *
@@ -3644,7 +3645,7 @@ export function resolveModelChoice(
     | (Pick<TaskConstraints, 'model' | 'effort'> & {
         modelsByWorker?: Record<string, string>
         effortsByWorker?: Record<string, string>
-        modelClass?: ModelClass | null
+        modelTags?: readonly string[] | null
       })
     | null
     | undefined,
@@ -3725,11 +3726,11 @@ export function resolveModelChoice(
       : undefined
   const asked = workerSpecificEffort || constraints?.effort || null
   const classPair =
-    constraints?.modelClass && resolvedModel
-      ? pairInClass(worker, resolvedModel, asked, constraints.modelClass)
+    constraints?.modelTags && constraints.modelTags.length > 0 && resolvedModel
+      ? pairWithTags(worker, resolvedModel, asked, constraints.modelTags)
       : null
-  // ⛔ A task effort that takes the model out of its requested class is not the task's answer: the
-  // class row's effort is (t811, `classBoundEffort`).
+  // ⛔ A task effort that takes the model out of its requested tags is not the task's answer: the
+  // matching row's effort is (t811, `tagBoundEffort`).
   const effort = classPair?.effort && asked !== classPair.effort ? null : asked
   // ⛔ The default row's effort for the default model; otherwise the effort the model's own row in
   // the worker's table carries; otherwise the account's default effort, as before there was a table.

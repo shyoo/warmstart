@@ -6,7 +6,8 @@ import { log } from './log.js'
 import { costModel } from './costmodel.js'
 import { namesAnAuthor } from './blinding.js'
 import { TASK_QUALITY_RECOMPUTE_SQL } from './qualitysql.js'
-import { routesFromLegacy } from '@shared/modelroutes.js'
+import { readRoutes, routesFromLegacy } from '@shared/modelroutes.js'
+import { upgradeLegacyClass } from '@shared/modeltags.js'
 import type { ModelClass } from '@shared/modelclass.js'
 
 /**
@@ -2367,7 +2368,71 @@ const MIGRATIONS: Migration[] = [
   `update workers
       set default_model = 'gpt-6.1-sol'
     where adapter_id = 'openai-compatible'
-      and default_model = 'gpt-6-sol';`
+      and default_model = 'gpt-6-sol';`,
+  // 90 - model tags replace the single capability class (t1042, plan t1024).
+  //
+  // Every stored worker row becomes a pair carrying `tags` — its *effective* class as one tag, the
+  // override or else the built-in for its model, so an old `high` row is still `High` and routes
+  // exactly where it did. ⛔ Only rows that exist are rewritten: a worker with no `model_routes_json`
+  // stays null and so stays out of Auto Model; this must never opt an untouched table in. Task
+  // constraints, a task's piece defaults and a quota warning's redirect carry the class as
+  // `modelClass` / `reassignModelClass`; each becomes the one-tag requirement `modelTags` /
+  // `reassignModelTags`. No custom tag is ever inferred. ⚠️ Replay-safe: a rewritten value has no
+  // class key left to match, a row that already has `tags` keeps exactly those, and the `like` only
+  // selects rows that still need it. `versionBefore` replays this.
+  (conn) => {
+    const rewrite = (table: string, id: string, column: string, value: string): void => {
+      conn.prepare(`update ${table} set ${column} = ? where id = ?`).run(value, id)
+    }
+    const workerRows = conn
+      .prepare("select id, model_routes_json from workers where model_routes_json like '%odelClass%'")
+      .all() as Array<{ id: string; model_routes_json: string }>
+    for (const w of workerRows) {
+      try {
+        rewrite('workers', w.id, 'model_routes_json', JSON.stringify(readRoutes(JSON.parse(w.model_routes_json))))
+      } catch {
+        // A malformed legacy table is left to the normal reader rather than blocking startup.
+      }
+    }
+    const upgrade = (json: string, classKey: string, tagsKey: string): string => {
+      const value = upgradeLegacyClass(JSON.parse(json) as object, classKey, tagsKey) as Record<string, unknown>
+      const nested = value.pieceConstraints
+      if (nested && typeof nested === 'object') value.pieceConstraints = upgradeLegacyClass(nested, classKey, tagsKey)
+      return JSON.stringify(value)
+    }
+    const taskRows = conn
+      .prepare(
+        `select id, constraints_json, child_defaults_json, quota_preempt_json from tasks
+          where constraints_json like '%odelClass%' or child_defaults_json like '%odelClass%'
+             or quota_preempt_json like '%odelClass%'`
+      )
+      .all() as Array<{
+      id: string
+      constraints_json: string
+      child_defaults_json: string | null
+      quota_preempt_json: string | null
+    }>
+    for (const t of taskRows) {
+      try {
+        if (t.constraints_json?.includes('odelClass')) {
+          rewrite('tasks', t.id, 'constraints_json', upgrade(t.constraints_json, 'modelClass', 'modelTags'))
+        }
+        if (t.child_defaults_json?.includes('odelClass')) {
+          rewrite('tasks', t.id, 'child_defaults_json', upgrade(t.child_defaults_json, 'modelClass', 'modelTags'))
+        }
+        if (t.quota_preempt_json?.includes('odelClass')) {
+          rewrite(
+            'tasks',
+            t.id,
+            'quota_preempt_json',
+            upgrade(t.quota_preempt_json, 'reassignModelClass', 'reassignModelTags')
+          )
+        }
+      } catch {
+        // An unreadable blob is read as absent by the same readers; it cannot block a start.
+      }
+    }
+  }
 ]
 
 /**

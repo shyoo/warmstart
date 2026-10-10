@@ -213,7 +213,8 @@ import { settings } from './settings.js'
 import { overrunFactor } from './estimator.js'
 import type { Objective } from '@shared/tasks.js'
 import { resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
-import { classBoundEffort, routeEffortFor } from '@shared/modelroutes.js'
+import { routeEffortFor, tagBoundEffort } from '@shared/modelroutes.js'
+import { tagsLabel } from '@shared/modeltags.js'
 import {
   DEFAULT_OBJECTIVE,
   policy,
@@ -1655,12 +1656,12 @@ export function dispatchModelChoice(
     }
   }
   // ⛔ Against the model that will actually run, not the one the resolver guessed before routing.
-  // `Auto Model (med)` must not dispatch a pair the worker files under `high` (t811).
-  if (canSetEffort && task.constraints.modelClass) {
-    const bound = classBoundEffort(worker, picked.model, picked.effort, task.constraints.modelClass)
+  // `Auto Model (Med)` must not dispatch a pair the worker files under `High` (t811).
+  if (canSetEffort && task.constraints.modelTags?.length) {
+    const bound = tagBoundEffort(worker, picked.model, picked.effort, task.constraints.modelTags)
     if (bound !== picked.effort) {
       log.info(
-        `t${task.seq}: effort ${picked.effort} would take ${picked.model} out of Auto Model (${task.constraints.modelClass}) on ${worker.label}; running at ${bound}`
+        `t${task.seq}: effort ${picked.effort} would take ${picked.model} out of Auto Model (${tagsLabel(task.constraints.modelTags ?? [])}) on ${worker.label}; running at ${bound}`
       )
       picked.effort = bound
     }
@@ -3284,14 +3285,14 @@ function redirectHandoff(
   choice: Task['quotaPreemptWarning'] | undefined,
   why: string
 ): void {
-  const { workerId, adapterId, model, effort, modelPolicy, modelClass, workerIds, ...rest } =
+  const { workerId, adapterId, model, effort, modelPolicy, modelTags, workerIds, ...rest } =
     requireTask(taskId).constraints
   updateTask(taskId, {
     constraints: destination
       ? { ...rest, workerId: destination.id, adapterId: destination.adapterId,
           model: choice?.reassignModel ?? undefined, effort: choice?.reassignEffort ?? undefined,
           modelPolicy: choice?.reassignModelPolicy ?? 'inherit',
-          modelClass: choice?.reassignModelClass ?? undefined }
+          ...(choice?.reassignModelTags?.length ? { modelTags: choice.reassignModelTags } : {}) }
       : rest,
     notBefore: null,
     assigneeHint: destination?.id ?? null

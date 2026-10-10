@@ -2402,7 +2402,7 @@ export interface RpcMap {
       reassignWorkerId?: string | null
       reassignModel?: string | null
       reassignModelPolicy?: 'auto' | 'inherit' | null
-      reassignModelClass?: ModelClass | null
+      reassignModelTags?: string[] | null
       reassignEffort?: string | null
     }
     result: { task: Task; until: number | null; applies: boolean; reason: string }
@@ -2641,6 +2641,8 @@ export interface RpcMap {
       model: string | null
       effort: string | null
       modelPolicy?: 'auto' | 'inherit' | null
+      modelTags?: string[] | null
+      /** @deprecated Read for old callers and turned into `modelTags: [tag]`; never written back. */
       modelClass?: ModelClass | null
     }
     result: Task
@@ -2659,6 +2661,8 @@ export interface RpcMap {
       model?: string | null
       effort?: string | null
       modelPolicy?: 'auto' | 'inherit' | null
+      modelTags?: string[] | null
+      /** @deprecated Read for old callers and turned into `modelTags: [tag]`; never written back. */
       modelClass?: ModelClass | null
     }
     result: Task
@@ -2744,6 +2748,8 @@ export interface RpcMap {
       workerId?: string | null
       model?: string | null
       modelPolicy?: 'auto' | 'inherit' | null
+      modelTags?: string[] | null
+      /** @deprecated Read for old callers and turned into `modelTags: [tag]`; never written back. */
       modelClass?: ModelClass | null
       effort?: string | null
     }
@@ -3063,6 +3069,8 @@ export interface RpcMap {
         title: string
         summary?: string
         dependsOn: number[]
+        modelTags?: string[]
+        /** @deprecated Read for old callers and turned into `modelTags: [tag]`. */
         modelClass?: ModelClass
         adapter?: string
         worker?: string

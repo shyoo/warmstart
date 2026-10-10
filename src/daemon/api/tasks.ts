@@ -3,7 +3,7 @@ import { commandById } from '@shared/commands.js'
 import { delegationOn, setDelegation } from '../delegation.js'
 import { resolveAutoCompact, resolveWorkspaceMode, trunkPolicyConflict, windowHighWater } from '@shared/tasks.js'
 import type { Task, WorkspaceModeChoice } from '@shared/tasks.js'
-import type { ModelClass } from '@shared/modelclass.js'
+import { checkTags, tagsFromLegacyClass } from '@shared/modeltags.js'
 import { modelOffered } from '@shared/modelroutes.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { adapter } from '../adapters/index.js'
@@ -58,6 +58,18 @@ type TaskMethod =
   | 'conversation.list' | 'looseend.list' | 'looseend.retire' | 'looseend.delete' | 'looseend.dismiss'
   | 'looseend.reclaim' | 'looseend.cleanup' | 'looseend.checkMerged' | 'delivery.pending'
 
+/**
+ * The tag requirement a call asks for, whichever spelling it used.
+ *
+ * `undefined` means the call said nothing (keep what the task has), `[]` means "none". `modelTags`
+ * wins; the old `modelClass` is still read for callers that have not moved.
+ */
+function askedTags(p: { modelTags?: string[] | null; modelClass?: string | null }): string[] | undefined {
+  if (p.modelTags !== undefined) return p.modelTags === null ? [] : checkTags(p.modelTags, 'modelTags')
+  if (p.modelClass !== undefined) return p.modelClass === null ? [] : tagsFromLegacyClass(p.modelClass)
+  return undefined
+}
+
 /** Apply a next-run worker/model choice without sending a generic “Continue” turn first. */
 function reassignForResolveRetry(
   id: string,
@@ -66,7 +78,7 @@ function reassignForResolveRetry(
     model: string | null
     modelPolicy: 'auto' | 'inherit' | null
     effort: string | null
-    modelClass?: ModelClass | null
+    modelTags?: string[] | undefined
   }
 ): void {
   const task = requireTask(id)
@@ -81,9 +93,9 @@ function reassignForResolveRetry(
   if (!choice.workerId) {
     const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...constraints } = task.constraints
     voidQuestionsForTask(task.id, 'task reassigned')
-    if (choice.modelClass !== undefined) {
-      if (choice.modelClass) constraints.modelClass = choice.modelClass
-      else delete constraints.modelClass
+    if (choice.modelTags !== undefined) {
+      if (choice.modelTags.length > 0) constraints.modelTags = choice.modelTags
+      else delete constraints.modelTags
     }
     updateTask(id, { constraints, assigneeHint: null })
     return
@@ -93,7 +105,7 @@ function reassignForResolveRetry(
   if (task.constraints.workerId !== worker.id) voidQuestionsForTask(task.id, 'task reassigned')
   const adapterChanged = task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId
   const { workerIds: _workerIds, ...baseConstraints } = task.constraints
-  const modelClass = choice.modelClass !== undefined ? (choice.modelClass ?? undefined) : (choice.model ? undefined : task.constraints.modelClass)
+  const modelTags = choice.modelTags !== undefined ? choice.modelTags : (choice.model ? undefined : task.constraints.modelTags)
   const targetCm = costModel(adapter(worker.adapterId).info.policy.costModelId)
   const candidateModel = choice.model !== undefined ? (choice.model ?? undefined) : (adapterChanged ? undefined : task.constraints.model)
   // ⛔ A model carried over from before (not one just chosen) is dropped when the new account's plan
@@ -119,12 +131,12 @@ function reassignForResolveRetry(
     model,
     effort,
     modelPolicy,
-    modelClass
+    modelTags
   })
   if (!constraints.model) delete constraints.model
   if (!constraints.effort) delete constraints.effort
   if (!constraints.modelPolicy) delete constraints.modelPolicy
-  if (!constraints.modelClass) delete constraints.modelClass
+  if (!constraints.modelTags) delete constraints.modelTags
   delete constraints.workerIds
   updateTask(id, { constraints, assigneeHint: worker.id })
 }
@@ -343,48 +355,44 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       const task = requireTask(p.id)
       let model: string | undefined
       let modelPolicy: 'auto' | 'inherit' | undefined
-      let modelClass: ModelClass | undefined = task.constraints.modelClass
+      let modelTags: string[] | undefined = task.constraints.modelTags
 
       if (p.modelPolicy !== undefined) {
         modelPolicy = p.modelPolicy ?? undefined
       }
-      if (p.modelClass !== undefined) {
-        modelClass = p.modelClass ?? undefined
+      const askedNow = askedTags(p)
+      if (askedNow !== undefined) {
+        modelTags = askedNow.length > 0 ? askedNow : undefined
       }
 
       if (p.model !== undefined) {
         if (p.model === '__inherit__' || p.model === 'policy:inherit') {
           model = undefined
           modelPolicy = 'inherit'
-          modelClass = undefined
+          modelTags = undefined
         } else if (p.model === '__auto__' || p.model === 'policy:auto') {
           model = undefined
           modelPolicy = 'auto'
-          if (p.modelClass === undefined) modelClass = undefined
-        } else if (p.model === '__auto__:high' || p.model === 'policy:auto:high') {
+          if (askedNow === undefined) modelTags = undefined
+        } else if (p.model && /^(__auto__|policy:auto):(high|med|low)$/.test(p.model)) {
+          // The old one-class spelling of Auto Model, still read; it is one tag now.
           model = undefined
           modelPolicy = 'auto'
-          modelClass = 'high'
-        } else if (p.model === '__auto__:med' || p.model === 'policy:auto:med') {
-          model = undefined
-          modelPolicy = 'auto'
-          modelClass = 'med'
-        } else if (p.model === '__auto__:low' || p.model === 'policy:auto:low') {
-          model = undefined
-          modelPolicy = 'auto'
-          modelClass = 'low'
+          modelTags = tagsFromLegacyClass(p.model.split(':').pop())
         } else if (p.model) {
           model = p.model
           if (p.modelPolicy === undefined) {
             modelPolicy = undefined
           }
-          modelClass = undefined
+          modelTags = undefined
         } else {
           model = undefined
           if (p.modelPolicy === undefined) {
             modelPolicy = 'inherit'
           }
-          modelClass = undefined
+          // ⛔ `model: null` with `modelPolicy: 'auto'` is how a client says Auto Model, and the tags it
+          // sends are that choice's: only a call that is not Auto discards them.
+          if (!(p.modelPolicy === 'auto' && askedNow !== undefined)) modelTags = undefined
         }
       } else {
         model = task.constraints.model
@@ -413,12 +421,12 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         ...task.constraints,
         model,
         modelPolicy,
-        modelClass,
+        modelTags,
         effort
       })
       if (!model) delete constraints.model
       if (!modelPolicy) delete constraints.modelPolicy
-      if (!modelClass) delete constraints.modelClass
+      if (!modelTags) delete constraints.modelTags
       if (!effort) delete constraints.effort
       const isResting = !['running', 'assigned'].includes(task.status)
       if (isResting) setHoldReason(task.id, null)
@@ -429,9 +437,10 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       if (!p.workerId) {
         // Reassigned to auto / scheduler choice: clear workerId, adapterId, model, effort, modelPolicy, workerIds
         const { workerId, adapterId, model, effort, modelPolicy, workerIds, ...rest } = task.constraints
-        if (p.modelClass !== undefined) {
-          if (p.modelClass) rest.modelClass = p.modelClass
-          else delete rest.modelClass
+        const askedHere = askedTags(p)
+        if (askedHere !== undefined) {
+          if (askedHere.length > 0) rest.modelTags = askedHere
+          else delete rest.modelTags
         }
         const isResting = !['running', 'assigned'].includes(task.status)
         voidQuestionsForTask(task.id, 'task reassigned')
@@ -461,7 +470,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       // land after either RPC, so setting the worker and then the model used to let the new account's
       // default model start a run before the explicit choice arrived.
       const adapterChanged = task.constraints.adapterId && task.constraints.adapterId !== worker.adapterId
-      const hasModelChoice = p.model !== undefined || p.modelPolicy !== undefined || p.effort !== undefined || p.modelClass !== undefined
+      const hasModelChoice = p.model !== undefined || p.modelPolicy !== undefined || p.effort !== undefined || p.modelClass !== undefined || p.modelTags !== undefined
       const targetCm = costModel(adapter(worker.adapterId).info.policy.costModelId)
       const existingModel = !adapterChanged && task.constraints.model && targetCm.modelSpec(task.constraints.model) &&
         modelOffered(worker, task.constraints.model)
@@ -480,7 +489,8 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       const modelPolicy = hasModelChoice
         ? (p.modelPolicy ?? (p.model ? undefined : 'inherit'))
         : (adapterChanged || !model ? 'inherit' : (task.constraints.modelPolicy ?? (task.constraints.model ? undefined : 'inherit')))
-      const modelClass = p.modelClass !== undefined ? (p.modelClass ?? undefined) : (p.model ? undefined : task.constraints.modelClass)
+      const askedWorker = askedTags(p)
+      const modelTags = askedWorker !== undefined ? askedWorker : (p.model ? undefined : task.constraints.modelTags)
       const { workerIds: _workerIds, ...baseConstraints } = task.constraints
       const constraints = checkConstraints({
         ...baseConstraints,
@@ -489,7 +499,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         model,
         effort,
         modelPolicy,
-        modelClass
+        modelTags
       })
       if (!model) {
         delete constraints.model
@@ -498,7 +508,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         delete constraints.effort
       }
       if (!constraints.modelPolicy) delete constraints.modelPolicy
-      if (!constraints.modelClass) delete constraints.modelClass
+      if (!constraints.modelTags) delete constraints.modelTags
       delete constraints.workerIds
       const isResting = !['running', 'assigned'].includes(task.status)
       if (isResting) {
@@ -538,7 +548,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
           model: p.model ?? null,
           modelPolicy: p.modelPolicy ?? null,
           effort: p.effort ?? null,
-          modelClass: p.modelClass ?? null
+          modelTags: askedTags(p) ?? []
         })
         setHoldReason(p.id, holdReason)
       }
@@ -631,7 +641,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         if (p.reassignWorkerId) requireWorker(p.reassignWorkerId)
         if (p.reassignWorkerId === undefined &&
             (p.reassignModel !== undefined || p.reassignModelPolicy !== undefined ||
-             p.reassignModelClass !== undefined || p.reassignEffort !== undefined)) {
+             p.reassignModelTags !== undefined || p.reassignEffort !== undefined)) {
           throw new Error('model and effort require a hand-off redirect')
         }
         if (p.reassignWorkerId === null && (p.reassignModel || p.reassignEffort)) {
@@ -643,7 +653,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
             adapterId: requireWorker(p.reassignWorkerId).adapterId,
             model: p.reassignModel ?? undefined,
             modelPolicy: p.reassignModelPolicy ?? 'inherit',
-            modelClass: p.reassignModelClass ?? undefined,
+            modelTags: checkTags(p.reassignModelTags, 'reassignModelTags'),
             effort: p.reassignEffort ?? undefined
           })
         }
@@ -653,7 +663,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
           ...warning, action: p.preemptionAction, reassignWorkerId,
           reassignModel: reassignWorkerId ? p.reassignModel : undefined,
           reassignModelPolicy: reassignWorkerId ? p.reassignModelPolicy : undefined,
-          reassignModelClass: reassignWorkerId ? p.reassignModelClass : undefined,
+          reassignModelTags: reassignWorkerId ? p.reassignModelTags : undefined,
           reassignEffort: reassignWorkerId ? p.reassignEffort : undefined
         })
         log.info(

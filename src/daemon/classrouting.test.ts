@@ -4,7 +4,8 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Worker } from '@shared/protocol.js'
 import type { TaskConstraints } from '@shared/tasks.js'
-import { routeClass, samePair, type ModelRoute } from '@shared/modelroutes.js'
+import { samePair, type ModelRoute } from '@shared/modelroutes.js'
+import { classTag, hasAllTags, inferredTags } from '@shared/modeltags.js'
 import { MODEL_CLASSES, type ModelClass } from '@shared/modelclass.js'
 
 /**
@@ -62,9 +63,9 @@ beforeEach(() => {
 
 /** ClaudeFirst's table as the store held it when t809 ran, read from `workers.model_routes_json`. */
 const CLAUDE_FIRST: ModelRoute[] = [
-  { model: 'claude-opus-5-5', effort: 'high', modelClass: null, auto: true },
-  { model: 'claude-opus-5-5', effort: 'medium', modelClass: 'med', auto: true },
-  { model: 'claude-sonnet-5', effort: 'medium', modelClass: 'low', auto: true }
+  { model: 'claude-opus-5-5', effort: 'high', tags: inferredTags('claude-opus-5-5'), auto: true },
+  { model: 'claude-opus-5-5', effort: 'medium', tags: ['Med'], auto: true },
+  { model: 'claude-sonnet-5', effort: 'medium', tags: ['Low'], auto: true }
 ]
 
 let seq = 0
@@ -93,21 +94,21 @@ function dispatched(worker: Worker, constraints: Partial<TaskConstraints>): { mo
 /** The class the worker's own table files this exact pair under, or null if it is not a row at all. */
 function classOfRow(worker: Worker, pair: { model: string | null; effort: string | null }): ModelClass | null {
   const row = (workers.requireWorker(worker.id).modelRoutes ?? []).find((r) => samePair(r, pair))
-  return row ? routeClass(row) : null
+  return row ? (MODEL_CLASSES.find((c) => hasAllTags(row.tags, [classTag(c)])) ?? null) : null
 }
 
 describe('⛔ t809/t810: Auto Model (med) with an effort the composer was not showing', () => {
   it('runs the med row, Opus 5.5 at medium, not Opus 5.5 at high', () => {
     const w = account(CLAUDE_FIRST)
     // The constraints exactly as `tasks.constraints_json` recorded them for t809 and t810.
-    const got = dispatched(w, { modelClass: 'med', effort: 'high' })
+    const got = dispatched(w, { modelTags: ['Med'], effort: 'high' })
     expect(got).toEqual({ model: 'claude-opus-5-5', effort: 'medium' })
     expect(classOfRow(w, got)).toBe('med')
   })
 
   it('still runs the med row when the task names no effort at all', () => {
     const w = account(CLAUDE_FIRST)
-    expect(dispatched(w, { modelClass: 'med' })).toEqual({ model: 'claude-opus-5-5', effort: 'medium' })
+    expect(dispatched(w, { modelTags: ['Med'] })).toEqual({ model: 'claude-opus-5-5', effort: 'medium' })
   })
 })
 
@@ -125,7 +126,7 @@ describe('every class, against every effort a task could carry', () => {
     for (const effort of EFFORTS) {
       it(`Auto Model (${modelClass}) with effort ${effort ?? '(none)'} dispatches a ${modelClass} row`, () => {
         const w = account(CLAUDE_FIRST)
-        const got = dispatched(w, { modelClass, ...(effort ? { effort } : {}) })
+        const got = dispatched(w, { modelTags: [classTag(modelClass)], ...(effort ? { effort } : {}) })
         expect(classOfRow(w, got)).toBe(modelClass)
         expect(got).toEqual(EXPECTED[modelClass])
       })
@@ -138,7 +139,7 @@ describe('a class routed to a model other than the account default', () => {
     // ⚠️ The resolver sees the account's default (Opus), where `low` has no row, so only the dispatch
     // — which knows the router picked Sonnet — can see that `sonnet-5 · high` is not the `low` row.
     const w = account(CLAUDE_FIRST)
-    const got = dispatched(w, { modelClass: 'low', effort: 'high' })
+    const got = dispatched(w, { modelTags: ['Low'], effort: 'high' })
     expect(got).toEqual({ model: 'claude-sonnet-5', effort: 'medium' })
   })
 })
@@ -146,24 +147,24 @@ describe('a class routed to a model other than the account default', () => {
 describe('a task effort that is itself one of the class rows', () => {
   it('is honoured, because it names a pair the class already contains', () => {
     const w = account([
-      { model: 'claude-opus-5-5', effort: 'high', modelClass: 'high', auto: true },
-      { model: 'claude-opus-5-5', effort: 'xhigh', modelClass: 'high', auto: false },
-      { model: 'claude-sonnet-5', effort: 'medium', modelClass: 'med', auto: true }
+      { model: 'claude-opus-5-5', effort: 'high', tags: ['High'], auto: true },
+      { model: 'claude-opus-5-5', effort: 'xhigh', tags: ['High'], auto: false },
+      { model: 'claude-sonnet-5', effort: 'medium', tags: ['Med'], auto: true }
     ])
-    expect(dispatched(w, { modelClass: 'high', effort: 'xhigh' })).toEqual({ model: 'claude-opus-5-5', effort: 'xhigh' })
+    expect(dispatched(w, { modelTags: ['High'], effort: 'xhigh' })).toEqual({ model: 'claude-opus-5-5', effort: 'xhigh' })
     // …and the class's own auto row when the task says nothing.
-    expect(dispatched(w, { modelClass: 'high' })).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
+    expect(dispatched(w, { modelTags: ['High'] })).toEqual({ model: 'claude-opus-5-5', effort: 'high' })
   })
 
   it('follows an operator class override, not the built-in keyword heuristic', () => {
     // Sonnet overridden into `high`: `sonnet-5 · max` is a high row here, so Auto (high) may run it.
     const w = account([
-      { model: 'claude-sonnet-5', effort: 'max', modelClass: 'high', auto: true },
-      { model: 'claude-opus-5-5', effort: 'medium', modelClass: 'med', auto: true }
+      { model: 'claude-sonnet-5', effort: 'max', tags: ['High'], auto: true },
+      { model: 'claude-opus-5-5', effort: 'medium', tags: ['Med'], auto: true }
     ])
-    const high = dispatched(w, { modelClass: 'high', effort: 'medium' })
+    const high = dispatched(w, { modelTags: ['High'], effort: 'medium' })
     expect(high).toEqual({ model: 'claude-sonnet-5', effort: 'max' })
-    expect(dispatched(w, { modelClass: 'med', effort: 'max' })).toEqual({ model: 'claude-opus-5-5', effort: 'medium' })
+    expect(dispatched(w, { modelTags: ['Med'], effort: 'max' })).toEqual({ model: 'claude-opus-5-5', effort: 'medium' })
   })
 })
 

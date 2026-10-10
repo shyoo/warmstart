@@ -111,8 +111,8 @@ describe('filing a delegation', () => {
       expect(child.landingTarget).toBe('warmstart/t1-caller')
       expect(child.parentTaskId).toBe(task.id)
     }
-    expect(result.children[0]!.constraints.modelClass).toBe('low')
-    expect(result.children[1]!.constraints.modelClass).toBeUndefined()
+    expect(result.children[0]!.constraints.modelTags).toEqual(['Low'])
+    expect(result.children[1]!.constraints.modelTags).toBeUndefined()
     expect(delegation.delegationsFor(task.id)).toHaveLength(1)
   })
 

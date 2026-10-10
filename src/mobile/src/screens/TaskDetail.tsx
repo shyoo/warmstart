@@ -106,7 +106,7 @@ export function TaskDetailScreen({ id, refreshKey }: { id: string; refreshKey: n
   const nextModel =
     task.constraints.model ??
     (task.constraints.modelPolicy === 'auto' ||
-    (task.constraints.modelClass && task.constraints.modelPolicy !== 'inherit')
+    (task.constraints.modelTags?.length && task.constraints.modelPolicy !== 'inherit')
       ? 'Automatic'
       : 'Worker default')
   const spentTokens = runs.reduce(

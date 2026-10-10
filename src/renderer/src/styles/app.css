@@ -3382,6 +3382,36 @@ body {
 .worker-models-foot { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); }
 .worker-models-add { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
 .worker-models-help { margin: 0; font-size: var(--text-meta); color: var(--color-text-dim); max-width: 72ch; }
+
+/*
+ * Tags (t1042). ⛔ The closed control is one line and one width however many tags it holds: two short
+ * chips and +N, each ellipsized, so a row with twelve tags is as tall as a row with one and the
+ * matrix scrolls sideways instead of wrapping. The full list is the tooltip and the accessible name.
+ */
+.tags-pill .pill { width: 13.5rem; max-width: 13.5rem; min-width: 0; justify-content: flex-start; }
+.tag-chips { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
+.tag-chip {
+  flex: 0 1 auto; min-width: 0; max-width: 5.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 0 6px; border-radius: 999px; border: 1px solid var(--color-border-strong);
+  background: var(--color-bg); color: var(--color-text); font-size: var(--text-meta); line-height: 1.5;
+}
+.tag-chip--more { flex: 0 0 auto; color: var(--color-text-dim); }
+.tag-chips-empty { color: var(--color-text-dim); }
+.tag-picker { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-1); min-width: 14rem; }
+.tag-picker-list { list-style: none; margin: 0; padding: 0; max-height: 12rem; overflow-y: auto; display: flex; flex-direction: column; }
+.tag-picker-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+.tag-picker-label { display: flex; align-items: center; gap: var(--sp-2); padding: 2px 4px; min-width: 0; flex: 1 1 auto; cursor: pointer; font-size: var(--text-dense); }
+.tag-picker-label:hover { background: var(--color-surface); }
+.tag-picker-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tag-picker-remove { background: none; border: 0; padding: 0 6px; line-height: 1; color: var(--color-text-dim); cursor: pointer; }
+.tag-picker-remove:hover:not(:disabled), .tag-picker-remove:focus-visible { color: var(--state-danger); outline: none; }
+.tag-picker-empty, .tag-picker-note { margin: 0; font-size: var(--text-meta); color: var(--color-text-dim); }
+.tag-picker-add { display: flex; align-items: center; gap: var(--sp-2); }
+.tag-picker-input {
+  flex: 1 1 auto; min-width: 0; font-size: var(--text-dense); padding: 2px 6px; border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text);
+}
+.tag-picker-input:focus-visible { outline: none; border-color: var(--color-accent); box-shadow: 0 0 0 1px var(--color-accent-dim); }
 .tbl-workers .num-input { text-align: left; justify-self: start; }
 .tbl-workers .tbl-path { max-width: 100%; font-size: var(--text-meta); color: var(--color-text-dim); }
 .tbl-workers .worker-actions { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: var(--sp-2); width: auto; white-space: nowrap; }
@@ -9458,3 +9488,6 @@ button.scratch-tag:hover {
 .hl-link {
   color: var(--state-human);
 }
+
+/* A tag requirement the pinned account has no pair for: said beside the pill, never a block (t1042). */
+.tag-warn { font-size: var(--text-meta); color: var(--state-warn); }

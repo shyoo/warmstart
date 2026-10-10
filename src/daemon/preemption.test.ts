@@ -449,7 +449,7 @@ describe('the switches that gate all of this', () => {
     const warning = tasks.requireTask(task.id).quotaPreemptWarning
     tasks.setQuotaPreemptWarning(task.id, {
       ...warning!, action: 'handoff', reassignWorkerId: other,
-      reassignModelPolicy: 'auto', reassignModelClass: 'high'
+      reassignModelPolicy: 'auto', reassignModelTags: ['High']
     })
 
     // Countdown expires, preemption wrap-up starts:
@@ -472,7 +472,7 @@ describe('the switches that gate all of this', () => {
     expect(after?.notBefore).toBeNull()
     expect(after?.constraints.workerId).toBe(other)
     expect(after?.constraints.modelPolicy).toBe('auto')
-    expect(after?.constraints.modelClass).toBe('high')
+    expect(after?.constraints.modelTags).toEqual(['High'])
 
     const messages = tasks.messagesFor(task.id).map((m) => m.text)
     expect(messages.some((m) => m.startsWith('Back in the queue for'))).toBe(true)

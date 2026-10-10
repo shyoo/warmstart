@@ -3,7 +3,8 @@ import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import type { Objective, Project, Task } from '@shared/tasks.js'
 import { projectTrunkOnly, resolveWorkspaceMode, windowHighWater, WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { WEIGHT_SIGNS } from '@shared/routing.js'
-import { isRoutableModel, modelOffered, notOffered, pairInClass } from '@shared/modelroutes.js'
+import { isRoutableModel, modelOffered, notOffered, pairWithTags } from '@shared/modelroutes.js'
+import { tagsLabel } from '@shared/modeltags.js'
 import { adapter } from './adapters/index.js'
 import { paceFactors, paceFor, paceValue, type PaceFactors } from './pace.js'
 import {
@@ -467,29 +468,30 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       // and dispatchIntoWarmSession cannot change it.
       candidateModels = [{ model: reuseModel, effort: null }]
     } else if (task.constraints.modelPolicy === 'auto') {
-      candidateModels = routableCandidatesFor(worker, task.constraints.modelClass)
+      candidateModels = routableCandidatesFor(worker, task.constraints.modelTags)
       classFiltered = true
     } else if (heldModel) {
       // For tasks with no explicit model or policy, preserve conversational continuity on resume.
       candidateModels = [{ model: heldModel, effort: null }]
     } else {
-      candidateModels = routableCandidatesFor(worker, task.constraints.modelClass)
+      candidateModels = routableCandidatesFor(worker, task.constraints.modelTags)
       classFiltered = true
     }
 
-    const modelClass = task.constraints.modelClass
-    if (modelClass) {
+    const modelTags = task.constraints.modelTags
+    if (modelTags && modelTags.length > 0) {
       if (!classFiltered) {
-        // ⛔ Per (model, effort) row, never by the model's first row (`pairInClass`, t697). The session
+        // ⛔ Per (model, effort) row, never by the model's first row (`pairWithTags`, t697). The session
         // a candidate continues ran at an effort of its own, and that is the row it is.
         const sessionEffort = reuseModel ? reuse?.effort : heldModel ? held?.effort : null
         candidateModels = candidateModels.flatMap((c) => {
-          const pair = pairInClass(worker, c.model, c.effort ?? sessionEffort, modelClass)
+          const pair = pairWithTags(worker, c.model, c.effort ?? sessionEffort, modelTags)
           return pair ? [pair] : []
         })
       }
       if (candidateModels.length === 0) {
-        reasons.push(`${worker.label}: no routable models in '${modelClass}' class`)
+        // ⛔ Names the requirement in full: a hold that says only "no match" cannot be acted on.
+        reasons.push(`${worker.label}: no routable model/effort pair with ${tagsLabel(modelTags)}`)
         continue
       }
     }
@@ -782,8 +784,8 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
     switch (basis) {
       case 'pinned': {
         const narrowed =
-          !modelPinned && task.constraints.modelClass && candidates.length <= 1
-            ? `; Auto(${task.constraints.modelClass}) narrowed the field to this model`
+          !modelPinned && task.constraints.modelTags?.length && candidates.length <= 1
+            ? `; Auto(${tagsLabel(task.constraints.modelTags)}) narrowed the field to this model`
             : ''
         return `pinned to ${label}${model}${narrowed}`
       }

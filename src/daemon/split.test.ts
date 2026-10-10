@@ -428,23 +428,23 @@ describe('pieceConstraints', () => {
     expect(split.pieceConstraints(parent, parent.childDefaults)).toMatchObject({
       modelPolicy: 'inherit'
     })
-    const classed = planner({ childDefaults: { modelClass: 'low' } })
+    const classed = planner({ childDefaults: { modelTags: ['Low'] } })
     expect(split.pieceConstraints(classed, classed.childDefaults)).toMatchObject({
-      modelClass: 'low'
+      modelTags: ['Low']
     })
   })
 
   it('reads the class from the planner’s own pieceConstraints when childDefaults is silent', () => {
     const parent = planner({
-      constraints: { pieceConstraints: { modelClass: 'med' } }
+      constraints: { pieceConstraints: { modelTags: ['Med'] } }
     })
     expect(split.pieceConstraints(parent, parent.childDefaults)).toMatchObject({
-      modelClass: 'med'
+      modelTags: ['Med']
     })
   })
 
   it('lets the operator’s class beat the agent’s hint, and the hint stand otherwise', () => {
-    const pinned = planner({ childDefaults: { modelClass: 'high' } })
+    const pinned = planner({ childDefaults: { modelTags: ['High'] } })
     const over = split.applySplit(
       pinned.id,
       [{ ...piece('a'), modelClass: 'low' as const }, { ...piece('b'), modelClass: 'low' as const }],
@@ -454,7 +454,7 @@ describe('pieceConstraints', () => {
     expect(over.ok).toBe(true)
     if (!over.ok) return
     for (const child of over.children) {
-      expect(tasks.requireTask(child.id).constraints.modelClass).toBe('high')
+      expect(tasks.requireTask(child.id).constraints.modelTags).toEqual(['High'])
     }
 
     const open = planner()
@@ -467,7 +467,7 @@ describe('pieceConstraints', () => {
     expect(hinted.ok).toBe(true)
     if (!hinted.ok) return
     for (const child of hinted.children) {
-      expect(tasks.requireTask(child.id).constraints.modelClass).toBe('low')
+      expect(tasks.requireTask(child.id).constraints.modelTags).toEqual(['Low'])
     }
   })
 
@@ -705,9 +705,9 @@ describe('delegation target routing (worker, adapter, model, effort) (t843)', ()
       { ...piece('second piece'), adapter: 'claude-code', model: 'claude-sonnet-5-5', effort: 'high' },
       { ...piece('third piece'), worker: 'CodexFirst', model: 'AutoModel (med)' }
     ])
-    expect(approval.question).toContain('1. first piece _(worker: CodexFirst, class: high)_')
+    expect(approval.question).toContain('1. first piece _(worker: CodexFirst, tags: High)_')
     expect(approval.question).toContain('2. second piece _(adapter: claude-code, model: claude-sonnet-5-5, effort: high)_')
-    expect(approval.question).toContain('3. third piece _(worker: CodexFirst, class: med)_')
+    expect(approval.question).toContain('3. third piece _(worker: CodexFirst, tags: Med)_')
   })
 
   it('applies worker, adapter, model, and effort to child task constraints and assigneeHint', () => {
@@ -735,7 +735,7 @@ describe('delegation target routing (worker, adapter, model, effort) (t843)', ()
     expect(t1.constraints.workerId).toBe(codex.id)
     expect(t1.constraints.workerIds).toEqual([codex.id])
     expect(t1.constraints.adapterId).toBe('openai-compatible')
-    expect(t1.constraints.modelClass).toBe('high')
+    expect(t1.constraints.modelTags).toEqual(['High'])
     expect(t1.constraints.modelPolicy).toBe('auto')
 
     // Child 2: pinned to claude adapter, model claude-sonnet-5-5, effort high
@@ -744,14 +744,14 @@ describe('delegation target routing (worker, adapter, model, effort) (t843)', ()
     expect(t2.constraints.adapterId).toBe('claude-code')
     expect(t2.constraints.model).toBe('claude-sonnet-5-5')
     expect(t2.constraints.effort).toBe('high')
-    expect(t2.constraints.modelClass).toBeUndefined()
+    expect(t2.constraints.modelTags).toBeUndefined()
 
     // Child 3: AutoModel parsed from model string to class low
     const t3 = tasks.requireTask(c3!.id)
     expect(t3.assigneeHint).toBe(codex.id)
     expect(t3.constraints.workerId).toBe(codex.id)
     expect(t3.constraints.adapterId).toBe('openai-compatible')
-    expect(t3.constraints.modelClass).toBe('low')
+    expect(t3.constraints.modelTags).toEqual(['Low'])
     expect(t3.constraints.modelPolicy).toBe('auto')
     expect(t3.constraints.model).toBeUndefined()
   })

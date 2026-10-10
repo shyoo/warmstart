@@ -334,12 +334,12 @@ describe('task.overrideQuota', () => {
       preemptionAction: 'handoff',
       reassignWorkerId: other.id,
       reassignModelPolicy: 'auto',
-      reassignModelClass: 'high'
+      reassignModelTags: ['High']
     })
     expect(result.task.quotaPreemptWarning?.action).toBe('handoff')
     expect(result.task.quotaPreemptWarning?.reassignWorkerId).toBe(other.id)
     expect(result.task.quotaPreemptWarning?.reassignModelPolicy).toBe('auto')
-    expect(result.task.quotaPreemptWarning?.reassignModelClass).toBe('high')
+    expect(result.task.quotaPreemptWarning?.reassignModelTags).toEqual(['High'])
   })
 
   it('clears an earlier redirect when handoff & pause is chosen again', async () => {

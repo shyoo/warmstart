@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { PillOptions } from '../Pill'
-import { availableAutoClasses, initialSelectedModel, pillLabels, unavailableAutoClass } from './Reassign'
+import { availableAutoTags, initialSelectedModel, pillLabels, unavailableAutoTags } from './Reassign'
 
 const base = {
   workerId: '',
@@ -43,7 +43,7 @@ describe('pillLabels (t674)', () => {
     const labels = pillLabels({
       ...base,
       workerId: 'w2',
-      model: '__auto__:high',
+      model: '__auto__',
       worker: { label: 'CodexFirst', defaultEffort: 'medium' },
       current: { workerId: 'w2', model: 'gpt-6-sol', effort: 'xhigh' },
       currentWorkerLabel: 'CodexFirst'
@@ -190,45 +190,61 @@ describe('worker dropdown menu selection (t763)', () => {
 })
 
 describe('initialSelectedModel', () => {
-  it('reads a class tier filed without a policy as Auto, not the account default (t896)', () => {
-    expect(initialSelectedModel(undefined, undefined, 'high')).toBe('__auto__:high')
-    expect(initialSelectedModel(undefined, 'auto', 'med')).toBe('__auto__:med')
+  it('reads tags filed without a policy as Auto, not the account default (t896)', () => {
+    expect(initialSelectedModel(undefined, undefined, ['High'])).toBe('__auto__')
+    expect(initialSelectedModel(undefined, 'auto', ['Med', 'ZDR'])).toBe('__auto__')
     expect(initialSelectedModel(undefined, 'auto')).toBe('__auto__')
-    expect(initialSelectedModel(undefined, 'inherit', 'high')).toBe('')
-    expect(initialSelectedModel('claude-opus-5-5', undefined, 'high')).toBe('claude-opus-5-5')
+    expect(initialSelectedModel(undefined, 'inherit', ['High'])).toBe('')
+    expect(initialSelectedModel(undefined, undefined, [])).toBe('')
+    expect(initialSelectedModel('claude-opus-5-5', undefined, ['High'])).toBe('claude-opus-5-5')
     expect(initialSelectedModel()).toBe('')
   })
 })
 
-describe('availableAutoClasses (t764)', () => {
-  it('offers only tiers that an account’s Auto routes can actually dispatch', () => {
+describe('availableAutoTags (t764, tags t1042)', () => {
+  it('offers only tags an account’s auto routes carry, never an unticked row’s', () => {
     expect(
-      availableAutoClasses(
+      availableAutoTags(
         {
           modelRoutes: [
-            { model: 'gemini-3.8-flash', effort: 'high', modelClass: 'med', auto: true },
-            { model: 'gemini-3.1-pro', effort: 'high', modelClass: 'high', auto: false }
+            { model: 'gemini-3.8-flash', effort: 'high', tags: ['Med', 'Audio'], auto: true },
+            { model: 'gemini-3.1-pro', effort: 'high', tags: ['High', 'ZDR'], auto: false }
           ]
         },
         'gemini-3.8-flash'
       )
-    ).toEqual(['med'])
+    ).toEqual(['Med', 'Audio'])
   })
 
-  it('uses the inherited model’s class when this account has no Auto table', () => {
-    expect(availableAutoClasses({ modelRoutes: [] }, 'gemini-3.8-flash')).toEqual(['med'])
+  it('uses the default pair’s tags when this account has no Auto table', () => {
+    expect(availableAutoTags({ modelRoutes: [] }, 'gemini-3.8-flash')).toEqual(['Med'])
   })
 })
 
-describe('unavailableAutoClass (t899)', () => {
-  it('does not refuse an Auto tier when the scheduler still picks the account', () => {
-    // No account selected: availableAutoClasses(null, …) is [], which is not "this account has no route".
-    expect(availableAutoClasses(null, null)).toEqual([])
-    expect(unavailableAutoClass('__auto__:med', [], false)).toBeNull()
+describe('unavailableAutoTags (t899, tags t1042)', () => {
+  const worker = {
+    modelRoutes: [
+      { model: 'claude-opus-5-5', effort: 'high', tags: ['High'], auto: true },
+      { model: 'claude-sonnet-5', effort: 'medium', tags: ['Med', 'Audio'], auto: true }
+    ]
+  }
+
+  it('does not refuse tags when the scheduler still picks the account', () => {
+    // No account selected is not "this account has no route".
+    expect(availableAutoTags(null, null)).toEqual([])
+    expect(unavailableAutoTags('__auto__', ['Med'], null, null)).toBeNull()
   })
 
-  it('still refuses a tier the selected account has no route for', () => {
-    expect(unavailableAutoClass('__auto__:high', ['med'], true)).toBe('high')
-    expect(unavailableAutoClass('__auto__:med', ['med'], true)).toBeNull()
+  it('refuses a requirement no single pair holds, even when each tag is on the table', () => {
+    expect(unavailableAutoTags('__auto__', ['High'], worker, null)).toBeNull()
+    expect(unavailableAutoTags('__auto__', ['Med', 'Audio'], worker, null)).toBeNull()
+    expect(unavailableAutoTags('__auto__', ['High', 'Audio'], worker, null)).toEqual(['High', 'Audio'])
+    expect(unavailableAutoTags('__auto__', ['ZDR'], worker, null)).toEqual(['ZDR'])
+  })
+
+  it('says nothing for a pinned model, the account default, or no tags', () => {
+    expect(unavailableAutoTags('claude-opus-5-5', ['ZDR'], worker, null)).toBeNull()
+    expect(unavailableAutoTags('', ['ZDR'], worker, null)).toBeNull()
+    expect(unavailableAutoTags('__auto__', [], worker, null)).toBeNull()
   })
 })

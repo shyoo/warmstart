@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { ModelRoute } from '@shared/modelroutes.js'
+import { inferredTags } from '@shared/modeltags.js'
 
 /**
  * A worker's model table: (model, effort) rows with a class and an auto-route flag (t638).
@@ -50,13 +51,13 @@ const row = (
   model: string,
   effort: string | null,
   auto = true,
-  modelClass: ModelRoute['modelClass'] = null
-): ModelRoute => ({ model, effort, modelClass, auto })
+  tags: string[] = inferredTags(model)
+): ModelRoute => ({ model, effort, tags, auto })
 
 describe('the model table column', () => {
   it('round-trips through worker.update and getWorker', () => {
     const w = claudeWorker()
-    const routes = [row('claude-sonnet-5', 'high'), row('claude-haiku-4-5', null, false, 'low')]
+    const routes = [row('claude-sonnet-5', 'high'), row('claude-haiku-4-5', null, false, ['Low'])]
     workers.updateWorker(w.id, { modelRoutes: routes })
     expect(workers.requireWorker(w.id).modelRoutes).toEqual(routes)
   })
@@ -105,12 +106,12 @@ describe('the model table column', () => {
     ])
   })
 
-  it('⭐ one pair per model, and the class filter runs before that reduction', () => {
+  it('⭐ one pair per model, and the tag filter runs before that reduction', () => {
     const w = claudeWorker()
     workers.updateWorker(w.id, {
       modelRoutes: [
-        row('claude-opus-5-5', 'medium', true, 'med'),
-        row('claude-opus-5-5', 'high', true, 'high'),
+        row('claude-opus-5-5', 'medium', true, ['Med']),
+        row('claude-opus-5-5', 'high', true, ['High']),
         row('claude-sonnet-5', 'high', true)
       ]
     })
@@ -121,24 +122,24 @@ describe('the model table column', () => {
       { model: 'claude-sonnet-5', effort: 'high' }
     ])
     // Auto (high): the medium row is `med`, so the high row is the one that counts.
-    expect(workers.routableCandidatesFor(reread, 'high')).toEqual([{ model: 'claude-opus-5-5', effort: 'high' }])
-    expect(workers.routableCandidatesFor(reread, 'med')).toEqual([
+    expect(workers.routableCandidatesFor(reread, ['High'])).toEqual([{ model: 'claude-opus-5-5', effort: 'high' }])
+    expect(workers.routableCandidatesFor(reread, ['Med'])).toEqual([
       { model: 'claude-opus-5-5', effort: 'medium' },
       { model: 'claude-sonnet-5', effort: 'high' }
     ])
-    expect(workers.routableCandidatesFor(reread, 'low')).toEqual([])
+    expect(workers.routableCandidatesFor(reread, ['Low'])).toEqual([])
   })
 
-  it("the class filter on an inherited default reads the default row's class", () => {
+  it("the tag filter on an inherited default reads the default row's tags", () => {
     const w = claudeWorker()
     workers.updateWorker(w.id, {
       defaultModel: 'claude-opus-5',
       defaultEffort: 'low',
-      modelRoutes: [row('claude-opus-5', 'low', false, 'low')]
+      modelRoutes: [row('claude-opus-5', 'low', false, ['Low'])]
     })
     const reread = workers.requireWorker(w.id)
-    expect(workers.routableCandidatesFor(reread, 'low')).toEqual([{ model: 'claude-opus-5', effort: null }])
-    expect(workers.routableCandidatesFor(reread, 'high')).toEqual([])
+    expect(workers.routableCandidatesFor(reread, ['Low'])).toEqual([{ model: 'claude-opus-5', effort: null }])
+    expect(workers.routableCandidatesFor(reread, ['High'])).toEqual([])
   })
 
   it('refuses a model the cost model does not declare, before anything is stored', () => {
@@ -167,12 +168,19 @@ describe('the model table column', () => {
     ).not.toThrow()
   })
 
-  it('refuses an invalid class and a repeated (model, effort) pair', () => {
+  it('refuses an over-long tag, too many tags and a repeated (model, effort) pair', () => {
+    // XHigh is an ordinary tag now, not an invalid class: it is stored, spelled as typed.
+    expect(() =>
+      api.checkWorkerDefaults('claude-code', { modelRoutes: [row('claude-opus-5', 'high', true, ['XHigh'])] })
+    ).not.toThrow()
+    expect(() =>
+      api.checkWorkerDefaults('claude-code', { modelRoutes: [row('claude-opus-5', 'high', true, ['x'.repeat(25)])] })
+    ).toThrow(/longer than 24/)
     expect(() =>
       api.checkWorkerDefaults('claude-code', {
-        modelRoutes: [row('claude-opus-5', 'high', true, 'xhigh' as unknown as ModelRoute['modelClass'])]
+        modelRoutes: [row('claude-opus-5', 'high', true, Array.from({ length: 13 }, (_v, i) => `t${i}`))]
       })
-    ).toThrow(/invalid model class/)
+    ).toThrow(/at most 12/)
     expect(() =>
       api.checkWorkerDefaults('claude-code', {
         modelRoutes: [row('claude-opus-5', 'high'), row('claude-opus-5', 'high', false)]
@@ -225,11 +233,11 @@ describe('the model table column', () => {
     db.openDb(dbPath)
 
     expect(workers.requireWorker(w.id).modelRoutes).toEqual([
-      row('claude-sonnet-5', 'medium', true, 'high'),
+      row('claude-sonnet-5', 'medium', true, ['High']),
       row('claude-opus-5', 'high', true),
       // Never routable, but an operator set an effort or a class on them — kept as manual rows.
       row('claude-opus-5-5', 'max', false),
-      row('claude-haiku-4-5', null, false, 'low')
+      row('claude-haiku-4-5', null, false, ['Low'])
     ])
     const legacy = db
       .db()
@@ -274,8 +282,9 @@ describe('the model table column', () => {
     expect(reread.defaultModel).toBe('gemini-3.7-flash')
     expect(reread.defaultEffort).toBe('medium')
     expect(reread.defaultModels).toEqual({ gemini: 'gemini-3.7-flash', claude: 'claude-sonnet-4-6' })
+    // The tag was stored by the fixture from the blended name (`-high`); a migration never re-infers it.
     expect(reread.modelRoutes).toEqual([
-      row('gemini-3.8-flash', 'high', true),
+      row('gemini-3.8-flash', 'high', true, ['High']),
       row('claude-sonnet-4-6', null, true)
     ])
     expect(reread.gradingModel).toBe('gemini-3.8-flash')

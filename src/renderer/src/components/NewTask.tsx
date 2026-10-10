@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   FinishPolicyChoice,
-  ModelClass,
   Project,
   SessionSharingChoice,
   Task,
@@ -38,6 +37,9 @@ import { candidatesFor, useTaskCandidates } from './Dependencies'
 import { effortLabel, modelLabel } from '../lib/modelname'
 import { statusLabel, STATUS_TONE, taskLabelShort } from '../lib/taskview'
 import { Pill, PillOptions, PillSelect, SegmentedControl, type PillOption } from './Pill'
+import { TagPicker, TagsPill } from './TagControls'
+import { routableTags, tagsRoutable } from '@shared/modelroutes'
+import { cleanTags, fleetTags, tagsLabel } from '@shared/modeltags'
 import {
   MAX_PIECES,
   MIN_PIECES,
@@ -187,9 +189,6 @@ const FANOUT_OPTIONS: PillOption[] = Array.from({ length: MAX_PIECES - MIN_PIECE
  * CLI verbatim, and `auto` is a plausible name for one.
  */
 const MODEL_AUTO = 'policy:auto'
-const MODEL_AUTO_HIGH = 'policy:auto:high'
-const MODEL_AUTO_MED = 'policy:auto:med'
-const MODEL_AUTO_LOW = 'policy:auto:low'
 const MODEL_INHERIT = 'policy:inherit'
 
 const ATTACH_OPTIONS: PillOption[] = [
@@ -495,30 +494,16 @@ export function NewTask({
   const [pieceEfforts, setPieceEfforts] = useState<Record<string, string>>({})
   /**
    * The Executor row's Auto model answer, in the planner Model pill's own values: unset is the
-   * scheduler's default routing, `policy:auto:*` narrows it to a capability class, and
+   * scheduler's default routing (narrowed by the Tags pill beside it, t1042), and
    * `policy:inherit` takes each dispatched account's default. A specific model id is never
    * offered here — an id belongs to one CLI, so a fleet-wide pin would hand at least one
    * account a model it cannot start on; per-account models stay in the Workers picker.
    */
   const [pieceModel, setPieceModel] = useState<string>('')
-  const pieceModelClass: ModelClass | undefined =
-    pieceModel === MODEL_AUTO_HIGH
-      ? 'high'
-      : pieceModel === MODEL_AUTO_MED
-        ? 'med'
-        : pieceModel === MODEL_AUTO_LOW
-          ? 'low'
-          : undefined
-  const pieceModelLabel =
-    pieceModel === MODEL_AUTO_HIGH
-      ? 'Auto Model (high)'
-      : pieceModel === MODEL_AUTO_MED
-        ? 'Auto Model (med)'
-        : pieceModel === MODEL_AUTO_LOW
-          ? 'Auto Model (low)'
-          : pieceModel === MODEL_INHERIT
-            ? 'Inherit — account default'
-            : 'Auto Model'
+  /** Tags every piece's model/effort pair must carry. ⚠️ Only meaningful while the pieces are Auto. */
+  const [pieceTags, setPieceTags] = useState<string[]>([])
+  const pieceModelTags = pieceModel === MODEL_INHERIT ? [] : pieceTags
+  const pieceModelLabel = pieceModel === MODEL_INHERIT ? 'Inherit — account default' : 'Auto Model'
   /**
    * The roster, the round budget and the exchange rule, held as one so a seat change is one write.
    *
@@ -648,6 +633,12 @@ export function NewTask({
   const pinnable = pinnableOf(fleet.map((e) => e.worker))
   // ⛔ `pinId`, never `prefs.workerId`, is what gets filed and remembered against: see `livePin`.
   const pinId = livePin(prefs.workerId, pinnable)
+  // ⚠️ The tags the pieces can be routed on: those of the accounts the pieces may use, else the fleet's.
+  const pieceTagOptions = cleanTags(
+    (pieceWorkerIds.length > 0 ? pinnable.filter((w) => pieceWorkerIds.includes(w.id)) : pinnable).flatMap((w) =>
+      routableTags(w, null)
+    )
+  )
   const pinned = pinnable.find((w) => w.id === pinId) ?? null
   const forAdapter = pinned ? (options.find((o) => o.adapterId === pinned.adapterId) ?? null) : null
   const canSetEffort = forAdapter?.selectableEffort ?? false
@@ -670,18 +661,18 @@ export function NewTask({
    * beside a pinned model would be reporting a setting that changes nothing.
    */
   const modelPolicy: ModelPolicy = model ? 'auto' : remembered.policy
-  const modelClass: ModelClass | undefined = model ? undefined : remembered.modelClass
+  const modelTags: string[] = model || modelPolicy !== 'auto' ? [] : (remembered.modelTags ?? [])
   const resolved = resolveModelChoice({ model: model || undefined }, pinned, canSetEffort)
   const effectiveModel = forAdapter?.models.find((m) => m.id === (resolved.model ?? '')) ?? null
   const efforts = canSetEffort ? (effectiveModel?.effortLevels ?? []) : []
   const effort = efforts.includes(remembered.effort) ? remembered.effort : ''
-  // ⛔ Auto Model (any of its four class variants) has no one model to pick an effort for — see
+  // ⛔ Auto Model (with any tags) has no one model to pick an effort for — see
   // `showsEffortPicker`. Without this, the pill offered a level against the account's plain default
   // model while the model pill itself said the router would choose, which reads as a promise this
   // control cannot honour.
   const showEffort = efforts.length > 0 && showsEffortPicker(model, modelPolicy)
   // ⛔ What every submit path files for this row: the pills as drawn, never a hidden leftover (t811).
-  const filedModel = filedModelChoice({ model, modelPolicy, modelClass, effort, efforts })
+  const filedModel = filedModelChoice({ model, modelPolicy, modelTags, effort, efforts })
   const hasFiledModel = Object.keys(filedModel).length > 0
 
   const hasMultiPoolDefaults =
@@ -706,24 +697,14 @@ export function NewTask({
     model ||
     (modelPolicy === 'inherit'
       ? MODEL_INHERIT
-      : modelClass === 'high'
-        ? MODEL_AUTO_HIGH
-        : modelClass === 'med'
-          ? MODEL_AUTO_MED
-          : modelClass === 'low'
-            ? MODEL_AUTO_LOW
-            : MODEL_AUTO)
+      : MODEL_AUTO)
   const modelPillLabel = model
     ? (modelLabel(model) ?? model)
     : modelPolicy === 'inherit'
       ? inheritedModelLabel
-      : modelClass === 'high'
-        ? 'Auto Model (high)'
-        : modelClass === 'med'
-          ? 'Auto Model (med)'
-          : modelClass === 'low'
-            ? 'Auto Model (low)'
-            : 'Auto Model'
+      : modelTags.length > 0
+        ? `Auto Model (${tagsLabel(modelTags)})`
+        : 'Auto Model'
   const modelPillOptions: PillOption[] = [
     {
       value: MODEL_AUTO,
@@ -731,27 +712,6 @@ export function NewTask({
       hint: pinned
         ? `Scheduler selects the optimal routable model for ${pinned.label}`
         : 'Scheduler selects the worker account and its optimal model'
-    },
-    {
-      value: MODEL_AUTO_HIGH,
-      label: 'Auto Model (high)',
-      hint: pinned
-        ? `High capability models for ${pinned.label} (e.g. Opus, Astra, Sol, Gemini Flash High)`
-        : 'Scheduler routes to high capability models (Opus, Astra, Sol, Gemini Flash High)'
-    },
-    {
-      value: MODEL_AUTO_MED,
-      label: 'Auto Model (med)',
-      hint: pinned
-        ? `Medium capability models for ${pinned.label} (e.g. Sonnet, Terra, Gemini Flash Med)`
-        : 'Scheduler routes to medium capability models (Sonnet, Terra, Gemini Flash Med)'
-    },
-    {
-      value: MODEL_AUTO_LOW,
-      label: 'Auto Model (low)',
-      hint: pinned
-        ? `Economy capability models for ${pinned.label} (e.g. Haiku, Mini, Gemini Flash Low)`
-        : 'Scheduler routes to economy models (Haiku, Mini, Gemini Flash Low)'
     },
     {
       value: MODEL_INHERIT,
@@ -767,6 +727,43 @@ export function NewTask({
       hint: m.id
     }))
   ]
+
+  /**
+   * The tags the router's pair must all carry, drawn beside the Model pill while it reads Auto Model.
+   *
+   * ⛔ **Offered: the tags on this account's routable pairs** (its default pair where it has no auto
+   * rows), or the whole fleet's while no account is pinned. A tag already chosen that no pair carries
+   * any more stays on the list, ticked, and the pill says so rather than clearing it silently.
+   * ⚠️ Not routable is a warning, never a block: a spent account still files the task and holds it,
+   * and an account with no matching pair is refused by the daemon with the tags named.
+   */
+  const autoTagOptions = pinned
+    ? routableTags(pinned, resolved.model ?? null)
+    : fleetTags(pinnable)
+  const tagsUnroutable = pinned !== null && modelTags.length > 0 && !tagsRoutable(pinned, modelTags, resolved.model ?? null)
+  const chooseTags = (next: string[]): void => {
+    setPrefs(rememberModelChoice(prefs, pinId, { model: '', effort, policy: 'auto', modelTags: next }))
+  }
+  const modelTagsPill =
+    !model && modelPolicy === 'auto' ? (
+      <>
+        <TagsPill
+          tags={modelTags}
+          empty="Any tags"
+          align="right"
+          ariaLabel="Model tags"
+          title="Tags the chosen model and effort must all carry"
+          menu={() => (
+            <TagPicker label="Auto Model" available={autoTagOptions} selected={modelTags} onChange={chooseTags} />
+          )}
+        />
+        {tagsUnroutable && pinned && (
+          <span className="tag-warn" role="alert">
+            {pinned.label} has no model/effort pair with {tagsLabel(modelTags)}
+          </span>
+        )}
+      </>
+    ) : null
 
   const kind = prefs.kind
   /**
@@ -926,28 +923,16 @@ export function NewTask({
   const chooseModel = (next: string): void => {
     // ⚠️ Options on this pill that are not models. Picking one clears the pin and records
     // *which* policy/class answer was meant.
-    if (
-      next === MODEL_AUTO ||
-      next === MODEL_AUTO_HIGH ||
-      next === MODEL_AUTO_MED ||
-      next === MODEL_AUTO_LOW ||
-      next === MODEL_INHERIT
-    ) {
+    if (next === MODEL_AUTO || next === MODEL_INHERIT) {
       const policy: ModelPolicy = next === MODEL_INHERIT ? 'inherit' : 'auto'
-      const chosenClass: ModelClass | undefined =
-        next === MODEL_AUTO_HIGH
-          ? 'high'
-          : next === MODEL_AUTO_MED
-            ? 'med'
-            : next === MODEL_AUTO_LOW
-              ? 'low'
-              : undefined
       setPrefs(
         rememberModelChoice(prefs, pinId, {
           model: '',
           effort,
           policy,
-          modelClass: chosenClass
+          // ⚠️ Kept through Inherit and a pin, not cleared: the tags last chosen for this account come
+          // back with Auto Model. Hidden is not filed — `filedModelChoice` files them only under Auto.
+          ...((remembered.modelTags?.length ?? 0) > 0 ? { modelTags: remembered.modelTags } : {})
         })
       )
       return
@@ -961,13 +946,13 @@ export function NewTask({
         model: next,
         effort: keptEffort,
         policy: modelPolicy,
-        modelClass: undefined
+        ...((remembered.modelTags?.length ?? 0) > 0 ? { modelTags: remembered.modelTags } : {})
       })
     )
   }
 
   const chooseEffort = (next: string): void => {
-    setPrefs(rememberModelChoice(prefs, pinId, { model, effort: next, policy: modelPolicy, modelClass }))
+    setPrefs(rememberModelChoice(prefs, pinId, { model, effort: next, policy: modelPolicy, ...((remembered.modelTags?.length ?? 0) > 0 ? { modelTags: remembered.modelTags } : {}) }))
   }
 
   const submit = async (targetStatus: 'draft' | 'ready'): Promise<void> => {
@@ -983,13 +968,13 @@ export function NewTask({
         }
         const pieceConstraints =
           pieceWorkerIds.length > 0 || Object.keys(pieceModels).length > 0 || Object.keys(pieceEfforts).length > 0 ||
-          pieceModel === MODEL_INHERIT || pieceModelClass !== undefined
+          pieceModel === MODEL_INHERIT || pieceModelTags.length > 0
             ? {
                 ...(pieceWorkerIds.length > 0 ? { workerIds: pieceWorkerIds } : {}),
                 ...(Object.keys(pieceModels).length > 0 ? { modelsByWorker: pieceModels } : {}),
                 ...(Object.keys(pieceEfforts).length > 0 ? { effortsByWorker: pieceEfforts } : {}),
                 ...(pieceModel === MODEL_INHERIT ? { modelPolicy: 'inherit' as const } : {}),
-                ...(pieceModelClass ? { modelClass: pieceModelClass } : {})
+                ...(pieceModelTags.length > 0 ? { modelTags: pieceModelTags } : {})
               }
             : undefined
 
@@ -1032,10 +1017,10 @@ export function NewTask({
             ...(Object.keys(pieceModels).length > 0 ? { modelsByWorker: pieceModels } : {}),
             ...(Object.keys(pieceEfforts).length > 0 ? { effortsByWorker: pieceEfforts } : {}),
             // ⛔ The pieces' Auto answer, in the planner constraints' own spelling: `inherit`
-            // files a policy, a class files a tier, and bare Auto files nothing — absent is
+            // files a policy, tags file a requirement, and bare Auto files nothing — absent is
             // already auto-routing, so a value here would be a second name for the default.
             ...(pieceModel === MODEL_INHERIT ? { modelPolicy: 'inherit' as const } : {}),
-            ...(pieceModelClass ? { modelClass: pieceModelClass } : {})
+            ...(pieceModelTags.length > 0 ? { modelTags: pieceModelTags } : {})
           },
           constraints: {
             ...(pinId ? { workerId: pinId } : {}),
@@ -1447,6 +1432,7 @@ export function NewTask({
                       options={modelPillOptions}
                       onChange={chooseModel}
                     />
+                    {modelTagsPill}
                     {showEffort && (
                       <PillSelect
                         ariaLabel="Effort"
@@ -1691,6 +1677,7 @@ export function NewTask({
               options={modelPillOptions}
               onChange={chooseModel}
             />
+            {modelTagsPill}
 
             {/* Effort appears only where the CLI can be told one *and* the model in effect has
                 levels to offer. A control that cannot be honoured is worse than no control. */}
@@ -1836,6 +1823,7 @@ export function NewTask({
                         options={modelPillOptions}
                         onChange={chooseModel}
                       />
+                      {modelTagsPill}
                       {showEffort && (
                         <PillSelect
                           ariaLabel="Effort"
@@ -1940,19 +1928,36 @@ export function NewTask({
                       <PillSelect
                         ariaLabel="Piece Model"
                         align="right"
-                        title="Model policy for each subtask. Auto Model routes within a capability class; Inherit uses each dispatched account's default."
+                        title="Model policy for each subtask. Auto Model routes among pairs carrying the chosen tags; Inherit uses each dispatched account's default."
                         muted={pieceModel === ''}
                         value={pieceModel}
                         label={pieceModelLabel}
                         options={[
                           { value: '', label: 'Auto Model', hint: 'Scheduler selects the worker account and its optimal model' },
-                          { value: MODEL_AUTO_HIGH, label: 'Auto Model (high)', hint: 'Scheduler routes pieces to high capability models' },
-                          { value: MODEL_AUTO_MED, label: 'Auto Model (med)', hint: 'Scheduler routes pieces to medium capability models' },
-                          { value: MODEL_AUTO_LOW, label: 'Auto Model (low)', hint: 'Scheduler routes pieces to economy capability models' },
                           { value: MODEL_INHERIT, label: 'Inherit — account default', hint: 'Use default model of the dispatched account' }
                         ]}
-                        onChange={setPieceModel}
+                        onChange={(value) => {
+                          setPieceModel(value)
+                          if (value === MODEL_INHERIT) setPieceTags([])
+                        }}
                       />
+                      {pieceModel !== MODEL_INHERIT && (
+                        <TagsPill
+                          tags={pieceTags}
+                          empty="Any tags"
+                          align="right"
+                          ariaLabel="Piece model tags"
+                          title="Tags each piece's model and effort must all carry"
+                          menu={() => (
+                            <TagPicker
+                              label="the pieces"
+                              available={pieceTagOptions}
+                              selected={pieceTags}
+                              onChange={setPieceTags}
+                            />
+                          )}
+                        />
+                      )}
                       <WorkersPicker
                         workers={pinnable}
                         modelOptions={options}

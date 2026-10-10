@@ -27,6 +27,8 @@ id, a context size, a cache expiry and a topic fingerprint.
 **Human-occupied worker** — an account whose quota Warmstart tracks but never spends, because a
 person is using it by hand. Keeps the budget arithmetic honest without taking the account over.
 
+**Model tag** — *a word the operator puts on one (model, effort) pair of a worker's model table* (`Low`, `High`, `ZDR`, `Audio`, anything), and the requirement a task asks Auto Model to meet. A task needing several tags needs **all of them on the same pair**; a missing one is a failed match and a visible hold, never a downgrade. ⛔ A tag is the operator's assertion, not something Warmstart verifies or infers — in particular never `ZDR` or `Audio` from a provider name. Replaced the one-of-three *model class* (t1042); `Low`, `Med` and `High` are ordinary tags now. See [`routing.md`](routing.md) § model tags.
+
 **Worker health** — *whether work survives on this account*, which is a different question from
 **identity** (*who is signed in*) and answered by different evidence. Identity is free and local and
 cannot tell a live subscription from a lapsed one; health comes from a dispatch that produced **no

@@ -25,6 +25,7 @@ import {
   type TaskConstraints
 } from '@shared/tasks.js'
 import { MODEL_CLASSES, type ModelClass } from '@shared/modelclass.js'
+import { checkTags, classTag, cleanTags, tagClass, tagsFromLegacyClass, tagsLabel } from '@shared/modeltags.js'
 import { canWork, type Worker } from '@shared/protocol.js'
 import { errorMessage } from '@shared/errors.js'
 import { listWorkers } from './workers.js'
@@ -67,9 +68,12 @@ export interface SplitPiece {
   /** Indices into this same list, and they must point **backwards**. */
   dependsOn: number[]
   /**
-   * The agent's capability-class hint (t704). ⚠️ A hint the scheduler routes within, never an
-   * account — and ignored where the operator's piece settings already pin an account or a model.
+   * The agent's tag hint (t704, tags t1042): the tags a model/effort pair must all carry. ⚠️ A hint
+   * the scheduler routes within, never an account — and ignored where the operator's piece settings
+   * already pin an account or a model.
    */
+  modelTags?: string[]
+  /** @deprecated The old single class, read as one tag (`Low`, `Med`, `High`). */
   modelClass?: ModelClass
   /** Target adapter type, command name, or alias (e.g. 'codex', 'claude-code', 'antigravity-cli'). */
   adapter?: string
@@ -98,7 +102,22 @@ export type SplitResult =
   | { ok: false; reason: string }
 
 /** `Auto`, `AutoModel`, `Auto Model (med)`: the shorthand for a class rather than a model id. */
-const AUTO_MODEL_RE = /^auto(?:[-_\s]*model)?(?:\s*\((low|med|high)\))?$/i
+const AUTO_MODEL_RE = /^auto(?:[-_\s]*model)?(?:\s*\(([^)]+)\))?$/i
+
+/**
+ * `Auto Model (Audio + ZDR)` or `(low)`: the tags inside the parentheses, split on `+` or `,`.
+ * A word that spells one of the old classes (`low`, `medium`) is written as the built-in tag.
+ */
+function autoTags(group: string | undefined): string[] {
+  if (!group) return []
+  return cleanTags(group.split(/[+,]/).map((t) => { const c = tagClass(t); return c ? classTag(c) : t }))
+}
+
+/** The tags a piece asks for: `modelTags`, else the old `modelClass` as one tag. */
+function pieceTagsOf(piece: Pick<SplitPiece, 'modelTags' | 'modelClass'>): string[] {
+  if (piece.modelTags !== undefined) return cleanTags(piece.modelTags)
+  return piece.modelClass ? tagsFromLegacyClass(piece.modelClass) : []
+}
 
 const norm = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
 const clean = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -176,20 +195,20 @@ export function pieceTargetLabel(piece: SplitPiece): string {
   }
 
   let pieceModel = piece.model?.trim()
-  let pieceClass = piece.modelClass
+  let pieceTags = pieceTagsOf(piece)
 
   if (pieceModel) {
     const autoMatch = pieceModel.match(AUTO_MODEL_RE)
     if (autoMatch) {
-      if (autoMatch[1]) pieceClass = autoMatch[1].toLowerCase() as ModelClass
+      if (autoMatch[1]) pieceTags = autoTags(autoMatch[1])
       pieceModel = undefined
     }
   }
 
   if (pieceModel) {
     tags.push(`model: ${pieceModel}`)
-  } else if (pieceClass) {
-    tags.push(`class: ${pieceClass}`)
+  } else if (pieceTags.length > 0) {
+    tags.push(`tags: ${tagsLabel(pieceTags)}`)
   }
 
   if (piece.effort?.trim()) {
@@ -234,25 +253,23 @@ export function pieceResolvedConstraints(
   }
 
   let pieceModel = piece.model?.trim()
-  let pieceClass = piece.modelClass
+  let pieceTags = pieceTagsOf(piece)
 
   if (pieceModel) {
     const autoMatch = pieceModel.match(AUTO_MODEL_RE)
     if (autoMatch) {
-      if (autoMatch[1]) {
-        pieceClass = autoMatch[1].toLowerCase() as ModelClass
-      }
+      if (autoMatch[1]) pieceTags = autoTags(autoMatch[1])
       pieceModel = undefined
     }
   }
 
   if (pieceModel) {
     result.model = pieceModel
-    delete result.modelClass
+    delete result.modelTags
     delete result.modelPolicy
-  } else if (pieceClass) {
+  } else if (pieceTags.length > 0) {
     if (!operatorPinned || resolvedWorker || resolvedAdapterId) {
-      result.modelClass = pieceClass
+      result.modelTags = pieceTags
       result.modelPolicy = 'auto'
       delete result.model
     }
@@ -451,6 +468,11 @@ export function validateSplit(
     if (piece.modelClass && !MODEL_CLASSES.includes(piece.modelClass)) {
       return { ok: false, reason: `piece ${i + 1} has invalid model class '${piece.modelClass}' (expected 'low', 'med', or 'high')` }
     }
+    try {
+      checkTags(piece.modelTags, `piece ${i + 1} modelTags`)
+    } catch (err) {
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+    }
 
     if (piece.model !== undefined && typeof piece.model === 'string' && piece.model.trim().length === 0) {
       return { ok: false, reason: `piece ${i + 1} has empty model name` }
@@ -526,7 +548,7 @@ export function pieceConstraints(
   // accounts the list above names, or the whole fleet where it named none. Dropped where a pin
   // already says the model, because scoring reads the pin first and the class would be dead text.
   const modelPolicy = model ? undefined : (defaults?.modelPolicy ?? fallback.modelPolicy ?? undefined)
-  const modelClass = model ? undefined : (defaults?.modelClass ?? fallback.modelClass ?? undefined)
+  const modelTags = model ? undefined : (defaults?.modelTags ?? fallback.modelTags ?? undefined)
 
   return {
     ...(ids.length === 1 ? { workerId: ids[0]! } : {}),
@@ -536,7 +558,7 @@ export function pieceConstraints(
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
     ...(modelPolicy ? { modelPolicy } : {}),
-    ...(modelClass ? { modelClass } : {})
+    ...(modelTags?.length ? { modelTags } : {})
   }
 }
 
@@ -679,7 +701,7 @@ export function applySplit(
     constraints.workerId ||
     constraints.workerIds?.length ||
     constraints.modelPolicy ||
-    constraints.modelClass
+    constraints.modelTags?.length
   )
   const delegating = isDelegation(parent)
   const handoff = isPlanExecute(parent)

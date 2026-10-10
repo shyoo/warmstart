@@ -10,7 +10,8 @@ import {
   isSummaryRow,
   modelTableRows,
   routesToStore,
-  seedEffort
+  seedEffort,
+  setRowTags
 } from './modeltable'
 
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max']
@@ -40,7 +41,7 @@ const worker = (over: Partial<Worker> = {}): TableWorker => ({
   summarisingEffort: null,
   ...over
 })
-const row = (model: string, effort: string | null, auto = true): ModelRoute => ({ model, effort, modelClass: null, auto })
+const row = (model: string, effort: string | null, auto = true): ModelRoute => ({ model, effort, tags: [], auto })
 const pairs = (rows: Array<{ model: string; effort: string | null }>): string[] =>
   rows.map((r) => `${r.model}${r.effort ? `@${r.effort}` : ''}`)
 
@@ -185,5 +186,58 @@ describe('the model table (t638)', () => {
   it('turns a legacy selectable blank effort into medium, while a model with no levels remains n/a', () => {
     const rows = modelTableRows(worker({ modelRoutes: [row('claude-opus-5', null), row('claude-haiku-4-5', null)] }), claude)
     expect(pairs(rows)).toEqual(['claude-opus-5@medium', 'claude-haiku-4-5'])
+  })
+})
+
+describe('editing tags on a line (t1042)', () => {
+  it('⛔ writes nothing until a tag changes, and draws an untouched line with its built-in class tag', () => {
+    const rows = modelTableRows(worker(), claude)
+    expect(rows[0]?.tags).toEqual(['Low'])
+    expect(rows[0]?.stored).toBe(false)
+    // Opening and closing the popover is no edit: the table is still the inert one.
+    expect(routesToStore(rows)).toEqual([])
+  })
+
+  it('stores only the edited line, leaving Auto-route, purposes and order exactly as they were', () => {
+    const w = worker({
+      gradingModel: 'claude-haiku-4-5',
+      modelRoutes: [row('claude-opus-5-5', 'xhigh'), row('claude-opus-5-5', 'medium'), row('claude-sonnet-5', 'high', false)]
+    })
+    const rows = modelTableRows(w, claude)
+    const before = pairs(rows)
+    const next = setRowTags(rows, 1, ['Med', 'ZDR', 'Audio'])
+    expect(pairs(next)).toEqual(before)
+    const stored = routesToStore(next)
+    expect(stored.map((r) => [r.model, r.effort, r.auto])).toEqual([
+      ['claude-opus-5-5', 'xhigh', true],
+      ['claude-opus-5-5', 'medium', true],
+      ['claude-sonnet-5', 'high', false]
+    ])
+    expect(stored[1]?.tags).toEqual(['Med', 'ZDR', 'Audio'])
+    expect(stored[0]?.tags).toEqual([])
+    // The grading choice still points at its line.
+    expect(isGradingRow(w, claude, next.find((r) => r.model === 'claude-haiku-4-5')!)).toBe(true)
+  })
+
+  it('turns only the edited inferred line into a stored one, and never ticks Auto-route for it', () => {
+    const rows = modelTableRows(worker({ defaultModel: 'claude-opus-5-5', defaultEffort: 'high' }), claude)
+    const opus = rows.findIndex((r) => r.model === 'claude-opus-5-5')
+    const stored = routesToStore(setRowTags(rows, opus, ['High', 'ZDR']))
+    expect(stored).toEqual([{ model: 'claude-opus-5-5', effort: 'high', tags: ['High', 'ZDR'], auto: false }])
+  })
+
+  it('keeps tags on a stored line whose model is no longer offered, so they stay visible and removable', () => {
+    const w = worker({ modelRoutes: [{ model: 'claude-retired-1', effort: null, tags: ['ZDR'], auto: false }] })
+    const rows = modelTableRows(w, claude)
+    const retired = rows.find((r) => r.model === 'claude-retired-1')
+    expect(retired?.tags).toEqual(['ZDR'])
+    const cleared = setRowTags(rows, rows.indexOf(retired!), [])
+    expect(routesToStore(cleared).find((r) => r.model === 'claude-retired-1')?.tags).toEqual([])
+  })
+
+  it('tidies what is stored: trimmed, de-duplicated by case, spelling kept', () => {
+    const rows = modelTableRows(worker({ modelRoutes: [row('claude-opus-5', 'high')] }), claude)
+    const idx = rows.findIndex((r) => r.model === 'claude-opus-5')
+    expect(routesToStore(setRowTags(rows, idx, [' ZDR', 'zdr', '', 'Audio']))[0]?.tags).toEqual(['ZDR', 'Audio'])
   })
 })

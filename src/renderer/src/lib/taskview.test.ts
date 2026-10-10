@@ -886,12 +886,17 @@ describe('the model under the account, in the Worker column', () => {
       undecided: true,
       unrouted: true
     })
-    for (const modelClass of ['high', 'med', 'low'] as const) {
+    for (const tag of ['High', 'Med', 'Low']) {
       expect(
-        modelLine(routed({ assignee: null, constraints: { modelPolicy: 'auto', modelClass } }), fleet(), options)
+        modelLine(routed({ assignee: null, constraints: { modelPolicy: 'auto', modelTags: [tag] } }), fleet(), options)
           ?.label
-      ).toBe(`Auto Model (${modelClass})`)
+      ).toBe(`Auto Model (${tag})`)
     }
+    // Several tags read as one requirement.
+    expect(
+      modelLine(routed({ assignee: null, constraints: { modelPolicy: 'auto', modelTags: ['ZDR', 'Audio'] } }), fleet(), options)
+        ?.label
+    ).toBe('Auto Model (ZDR + Audio)')
     expect(
       modelLine(routed({ assignee: null, constraints: { modelPolicy: 'inherit' } }), fleet(), options)?.label
     ).toBe('account default')
@@ -902,7 +907,7 @@ describe('the model under the account, in the Worker column', () => {
     // And what ran still beats what was filed.
     expect(
       modelLine(
-        routed({ assignee: null, ranModel: 'claude-opus-5', constraints: { modelClass: 'high' } }),
+        routed({ assignee: null, ranModel: 'claude-opus-5', constraints: { modelTags: ['High'] } }),
         fleet(),
         options
       )?.unrouted
@@ -917,7 +922,7 @@ describe('the model under the account, in the Worker column', () => {
     expect(workerCellLabel(t({ assignee: 'w1' }), fleet())).toBe(worker().label)
   })
 
-  it('an undecided model filed with a class says so in the thread headline (t760)', () => {
+  it('an undecided model filed with tags says so in the thread headline (t760)', () => {
     const { headline } = modelFacts({
       observed: null,
       ran: null,
@@ -926,20 +931,20 @@ describe('the model under the account, in the Worker column', () => {
         effort: null,
         source: 'as filed',
         undecided: true,
-        label: autoModelLabel({ modelPolicy: 'auto', modelClass: 'high' })
+        label: autoModelLabel({ modelPolicy: 'auto', modelTags: ['High'] })
       }
     })
-    expect(headline.text).toBe('Auto Model (high)')
+    expect(headline.text).toBe('Auto Model (High)')
   })
 
-  it('a class tier filed without a policy is still the router’s choice, not the account default', () => {
+  it('a tag requirement filed without a policy is still the router’s choice, not the account default', () => {
     // What the composer files for Auto Model (high): `filedModelChoice` never stores `'auto'`.
-    expect(routerChoosesModel({ modelClass: 'high' })).toBe(true)
+    expect(routerChoosesModel({ modelTags: ['High'] })).toBe(true)
     expect(routerChoosesModel({ modelPolicy: 'auto' })).toBe(true)
-    expect(routerChoosesModel({ modelPolicy: 'auto', modelClass: 'med' })).toBe(true)
+    expect(routerChoosesModel({ modelPolicy: 'auto', modelTags: ['Med'] })).toBe(true)
     // A pin, an explicit inherit and an unconstrained task are not.
-    expect(routerChoosesModel({ model: 'claude-opus-5-5', modelClass: 'high' })).toBe(false)
-    expect(routerChoosesModel({ modelPolicy: 'inherit', modelClass: 'high' })).toBe(false)
+    expect(routerChoosesModel({ model: 'claude-opus-5-5', modelTags: ['High'] })).toBe(false)
+    expect(routerChoosesModel({ modelPolicy: 'inherit', modelTags: ['High'] })).toBe(false)
     expect(routerChoosesModel({})).toBe(false)
   })
 
@@ -969,9 +974,9 @@ describe('the model under the account, in the Worker column', () => {
       expect(line?.routable).toBe(2)
     })
 
-    it('names the requested model class when the choice is pending', () => {
-      const line = modelLine(routed({ constraints: { modelClass: 'high' } }), fleet(routable), options)
-      expect(line).toMatchObject({ label: 'router picks (high)', id: null, ran: false, undecided: true })
+    it('names the requested tags when the choice is pending', () => {
+      const line = modelLine(routed({ constraints: { modelTags: ['High'] } }), fleet(routable), options)
+      expect(line).toMatchObject({ label: 'router picks (High)', id: null, ran: false, undecided: true })
     })
 
     it('names what ran the instant a run records one', () => {
@@ -1525,9 +1530,9 @@ describe('a plan task, as its own page describes it', () => {
   it('names the Auto answer the pieces were filed with, beside the open workers row', () => {
     // ⛔ t732: a class the operator chose would otherwise be invisible everywhere but the filed
     // children's constraints — the ledger would read exactly like full-Auto routing.
-    const classed = pieceSettings(planner({ childDefaults: { modelClass: 'low' } }), fleet)
+    const classed = pieceSettings(planner({ childDefaults: { modelTags: ['Low'] } }), fleet)
     expect(classed.find((r) => r.label === 'workers')?.value).toBe('any account the scheduler picks')
-    expect(classed.find((r) => r.label === 'model')?.value).toBe('Auto Model (low)')
+    expect(classed.find((r) => r.label === 'model')?.value).toBe('Auto Model (Low)')
     const inherited = pieceSettings(planner({ childDefaults: { modelPolicy: 'inherit' } }), fleet)
     expect(inherited.find((r) => r.label === 'model')?.value).toBe('Inherit — account default')
     // ⛔ And still nothing where nothing was chosen: today's plans gain no new row.

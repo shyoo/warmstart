@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { resolveModelChoice } from '@shared/tasks.js'
 import type { TaskConstraints } from '@shared/tasks.js'
 import type { ModelRoute } from '@shared/modelroutes.js'
+import { inferredTags } from '@shared/modeltags.js'
 
 /**
  * Which model and effort a dispatch actually reaches for.
@@ -102,7 +103,7 @@ describe('resolving effort, where the CLI can be told one', () => {
   })
 
   const rows = (...pairs: Array<[string, string | null, boolean?]>): ModelRoute[] =>
-    pairs.map(([model, effort, auto]) => ({ model, effort, modelClass: null, auto: auto ?? true }))
+    pairs.map(([model, effort, auto]) => ({ model, effort, tags: inferredTags(model), auto: auto ?? true }))
 
   it("⛔ the default model runs at the default row's effort, not at another row's", () => {
     const acc = {
@@ -149,14 +150,14 @@ describe('resolving effort, where the CLI can be told one', () => {
     expect(r.effortSource).toBe('worker')
   })
 
-  it('prefers the route effort matching modelClass when the task specifies a class', () => {
+  it("prefers the route effort carrying the task's tags", () => {
     const acc = {
       defaultModel: 'claude-opus-5',
       defaultEffort: 'medium',
       modelRoutes: rows(['claude-opus-5', 'high'])
     }
     const r = resolveModelChoice(
-      { model: 'claude-opus-5', modelClass: 'high' },
+      { model: 'claude-opus-5', modelTags: ['High'] },
       acc,
       true
     )
@@ -171,27 +172,27 @@ describe('an Auto class with a task effort beside it (t811)', () => {
     defaultModel: 'claude-opus-5-5',
     defaultEffort: 'medium',
     modelRoutes: [
-      { model: 'claude-opus-5-5', effort: 'high', modelClass: null, auto: true },
-      { model: 'claude-opus-5-5', effort: 'medium', modelClass: 'med' as const, auto: true },
-      { model: 'claude-sonnet-5', effort: 'medium', modelClass: 'low' as const, auto: true }
+      { model: 'claude-opus-5-5', effort: 'high', tags: inferredTags('claude-opus-5-5'), auto: true },
+      { model: 'claude-opus-5-5', effort: 'medium', tags: ['Med'], auto: true },
+      { model: 'claude-sonnet-5', effort: 'medium', tags: ['Low'], auto: true }
     ]
   }
 
   it("⛔ the class row's effort wins over a task effort outside the class", () => {
-    const r = resolveModelChoice({ modelClass: 'med', effort: 'high' }, claudeFirst, true)
+    const r = resolveModelChoice({ modelTags: ['Med'], effort: 'high' }, claudeFirst, true)
     expect([r.model, r.effort]).toEqual(['claude-opus-5-5', 'medium'])
     expect(r.effortSource).toBe('worker')
   })
 
   it('a task effort that is the class row is still the task speaking', () => {
-    const r = resolveModelChoice({ modelClass: 'high', effort: 'high' }, claudeFirst, true)
+    const r = resolveModelChoice({ modelTags: ['High'], effort: 'high' }, claudeFirst, true)
     expect(r.effort).toBe('high')
     expect(r.effortSource).toBe('task')
   })
 
   it('the worker-specific effort of a split piece is bound the same way', () => {
     const r = resolveModelChoice(
-      { modelClass: 'med', effortsByWorker: { w1: 'max' } },
+      { modelTags: ['Med'], effortsByWorker: { w1: 'max' } },
       { ...claudeFirst, id: 'w1' },
       true
     )
@@ -205,6 +206,6 @@ describe('an Auto class with a task effort beside it (t811)', () => {
   })
 
   it('an adapter that takes no effort still gets none', () => {
-    expect(resolveModelChoice({ modelClass: 'med', effort: 'high' }, claudeFirst, false).effort).toBeNull()
+    expect(resolveModelChoice({ modelTags: ['Med'], effort: 'high' }, claudeFirst, false).effort).toBeNull()
   })
 })

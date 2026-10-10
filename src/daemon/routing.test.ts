@@ -7,6 +7,7 @@ import type { Run } from '@shared/tasks.js'
 import type { WorkerChoice } from './scheduler.js'
 import { messageBody } from './threadline.js'
 import { routesFromLegacy } from '@shared/modelroutes.js'
+import { inferredTags } from '@shared/modeltags.js'
 
 /**
  * The routing and reporting faults found in one afternoon of real use, turned into checks.
@@ -1043,13 +1044,13 @@ describe('quota as a slope rather than a switch', () => {
       const w = workers.createWorker({ adapterId: 'claude-code', label: 'PinnedClass', enabled: true })
       workers.updateWorker(w.id, { modelRoutes: routesFromLegacy(['claude-opus-5-5']) })
       const task = tasks.createTask({ title: 'Pinned worker, one high-class model' })
-      tasks.updateTask(task.id, { constraints: { workerId: w.id, modelClass: 'high' } })
+      tasks.updateTask(task.id, { constraints: { workerId: w.id, modelTags: ['High'] } })
       const choice = scoring.chooseTarget(tasks.requireTask(task.id))
       expect(choice.worker?.id).toBe(w.id)
       expect(choice.model).toBe('claude-opus-5-5')
       expect(choice.routedBy).toBe('pinned')
       expect(choice.reason).toContain('pinned to PinnedClass / claude-opus-5-5')
-      expect(choice.reason).toContain('Auto(high) narrowed the field to this model')
+      expect(choice.reason).toContain('Auto(High) narrowed the field to this model')
     })
   })
 
@@ -1942,14 +1943,14 @@ describe('model-aware routing', () => {
     workers.updateWorker(w.id, {
       defaultModel: 'claude-opus-5-5',
       modelRoutes: [
-        { model: 'claude-opus-5-5', effort: 'high', modelClass: null, auto: true },
-        { model: 'claude-sonnet-5', effort: 'medium', modelClass: null, auto: true }
+        { model: 'claude-opus-5-5', effort: 'high', tags: inferredTags('claude-opus-5-5'), auto: true },
+        { model: 'claude-sonnet-5', effort: 'medium', tags: inferredTags('claude-sonnet-5'), auto: true }
       ]
     })
     // t667's pin shape: high class, no model, no policy.
     const task = tasks.createTask({
       title: 'Ghost model task',
-      constraints: { workerId: w.id, modelClass: 'high' }
+      constraints: { workerId: w.id, modelTags: ['High'] }
     })
 
     const sId = 'session-ghost-model'
@@ -2027,7 +2028,7 @@ describe('model-aware routing', () => {
       // Task requesting high class gets opus
       const highTask = tasks.createTask({
         title: 'High complexity task',
-        constraints: { workerId: w.id, modelClass: 'high' }
+        constraints: { workerId: w.id, modelTags: ['High'] }
       })
       const highCandidates = scoring.chooseTarget(highTask).scored?.filter((s) => s.workerId === w.id)
       expect(highCandidates).toHaveLength(1)
@@ -2036,7 +2037,7 @@ describe('model-aware routing', () => {
       // Task requesting med class gets sonnet
       const medTask = tasks.createTask({
         title: 'Med task',
-        constraints: { workerId: w.id, modelClass: 'med' }
+        constraints: { workerId: w.id, modelTags: ['Med'] }
       })
       const medCandidates = scoring.chooseTarget(medTask).scored?.filter((s) => s.workerId === w.id)
       expect(medCandidates).toHaveLength(1)
@@ -2045,7 +2046,7 @@ describe('model-aware routing', () => {
       // Task requesting low class gets haiku
       const lowTask = tasks.createTask({
         title: 'Low task',
-        constraints: { workerId: w.id, modelClass: 'low' }
+        constraints: { workerId: w.id, modelTags: ['Low'] }
       })
       const lowCandidates = scoring.chooseTarget(lowTask).scored?.filter((s) => s.workerId === w.id)
       expect(lowCandidates).toHaveLength(1)
@@ -2061,11 +2062,11 @@ describe('model-aware routing', () => {
 
       const task = tasks.createTask({
         title: 'Must have high capability',
-        constraints: { workerId: w.id, modelClass: 'high' }
+        constraints: { workerId: w.id, modelTags: ['High'] }
       })
       const choice = scoring.chooseTarget(task)
       expect(choice.worker).toBeNull()
-      expect(choice.reason).toContain("no routable models in 'high' class")
+      expect(choice.reason).toContain('no routable model/effort pair with High')
     })
 
     it('honors per-worker model class overrides over built-in defaults', () => {
@@ -2076,7 +2077,7 @@ describe('model-aware routing', () => {
 
       const task = tasks.createTask({
         title: 'High capability task',
-        constraints: { workerId: w.id, modelClass: 'high' }
+        constraints: { workerId: w.id, modelTags: ['High'] }
       })
       const candidates = scoring.chooseTarget(task).scored?.filter((s) => s.workerId === w.id)
       // Both sonnet-5 (via override) and opus-5 (via default) are now in 'high' class
@@ -2088,19 +2089,19 @@ describe('model-aware routing', () => {
       const w = workers.createWorker({ adapterId: 'claude-code', label: 'TwoEffortsWorker', enabled: true })
       workers.updateWorker(w.id, {
         modelRoutes: [
-          { model: 'claude-opus-5', effort: 'xhigh', modelClass: 'high', auto: true },
-          { model: 'claude-opus-5', effort: 'low', modelClass: 'low', auto: true }
+          { model: 'claude-opus-5', effort: 'xhigh', tags: ['High'], auto: true },
+          { model: 'claude-opus-5', effort: 'low', tags: ['Low'], auto: true }
         ]
       })
 
       const high = scoring.chooseTarget(
-        tasks.createTask({ title: 'Hard one', constraints: { workerId: w.id, modelClass: 'high' } })
+        tasks.createTask({ title: 'Hard one', constraints: { workerId: w.id, modelTags: ['High'] } })
       )
       expect(high.worker?.id).toBe(w.id)
       expect([high.model, high.effort]).toEqual(['claude-opus-5', 'xhigh'])
 
       const low = scoring.chooseTarget(
-        tasks.createTask({ title: 'Typo', constraints: { workerId: w.id, modelClass: 'low' } })
+        tasks.createTask({ title: 'Typo', constraints: { workerId: w.id, modelTags: ['Low'] } })
       )
       expect([low.model, low.effort]).toEqual(['claude-opus-5', 'low'])
 
@@ -2144,13 +2145,13 @@ describe('model-aware routing', () => {
         defaultModel: 'claude-opus-5-5',
         defaultEffort: 'medium',
         modelRoutes: [
-          { model: 'claude-opus-5-5', effort: 'xhigh', modelClass: 'high', auto: true },
-          { model: 'claude-opus-5-5', effort: 'medium', modelClass: 'med', auto: true }
+          { model: 'claude-opus-5-5', effort: 'xhigh', tags: ['High'], auto: true },
+          { model: 'claude-opus-5-5', effort: 'medium', tags: ['Med'], auto: true }
         ]
       })
       const task = tasks.createTask({
         title: 'Resumed med-class task',
-        constraints: { workerId: w.id, modelClass: 'med' }
+        constraints: { workerId: w.id, modelTags: ['Med'] }
       })
 
       const now = Date.now()

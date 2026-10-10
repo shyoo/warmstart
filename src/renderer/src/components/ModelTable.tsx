@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import type { ModelOptions, RpcParams, Worker } from '@shared/protocol'
-import { MODEL_CLASS_LABELS, MODEL_CLASSES, type ModelClass } from '@shared/modelclass'
-import { modelOffered, notOffered, routeClass, routeLabel, samePair } from '@shared/modelroutes'
+import { modelOffered, notOffered, routeLabel, samePair } from '@shared/modelroutes'
+import { cleanTags, inferredTags } from '@shared/modeltags'
 import { isLocalModelId, localModelLabel } from '@shared/localmodel'
 import { effortLabel, modelLabel } from '../lib/modelname'
+import { TagPicker, TagsPill } from './TagControls'
 import {
   effortLevelsFor,
   defaultSelectionPatch,
@@ -15,6 +16,7 @@ import {
   poolOf,
   routesToStore,
   seedEffort,
+  setRowTags,
   type ModelTableRow
 } from '../lib/modeltable'
 
@@ -25,13 +27,13 @@ import {
  * the fleet's model-aware routing — it is the honest default, because widening every worker to
  * every model it can price would hand a scorer dozens of candidates a tick that nobody chose.
  * ⚠️ It names the one-per-model rule, because two ticked efforts of one model do not both compete:
- * the router takes the first (strongest) of them, and a class-scoped Auto picks within its class first.
+ * the router takes the first (strongest) of them, and a tag-scoped Auto picks among the matching lines first.
  */
 export const MODEL_TABLE_HELP =
   'Sets Auto Model and purpose models (grading, judgment, summaries). You can still choose a model and effort on each task.'
 
-const LABEL_HELP =
-  'A user-defined capability label. When filing with Auto Model, choose a label to refine its model selection.'
+const TAGS_HELP =
+  'Your own routing tags for this model and effort (Low, High, ZDR, Audio, anything). A task that asks for tags runs only on a line that has all of them. A tag is your assertion, not something Warmstart verifies.'
 
 export type WorkerPatch = Omit<RpcParams<'worker.update'>, 'id'>
 
@@ -50,11 +52,14 @@ export type WorkerPatch = Omit<RpcParams<'worker.update'>, 'id'>
 export function ModelTable({
   worker,
   options,
+  fleetTags,
   busy,
   onPatch
 }: {
   worker: Worker
   options: ModelOptions | null
+  /** Every tag any pair in the fleet carries, plus the built-ins — what the picker offers to tick. */
+  fleetTags: readonly string[]
   busy: boolean
   onPatch: (patch: WorkerPatch) => void
 }): React.JSX.Element {
@@ -120,7 +125,7 @@ export function ModelTable({
             <tr>
               <th>Model</th>
               <th>Effort</th>
-              <th title={LABEL_HELP}>Label</th>
+              <th title={TAGS_HELP}>Tags</th>
               <th className="worker-models-tick">Default</th>
               <th className="worker-models-tick">Auto-route</th>
               <th className="worker-models-tick">Grading</th>
@@ -190,20 +195,26 @@ export function ModelTable({
                     )}
                   </td>
                   <td>
-                    <select
-                      className="worker-models-select"
-                      value={routeClass(r)}
-                      disabled={busy}
-                      aria-label={`Label for ${label} on ${worker.label}`}
-                      title={LABEL_HELP}
-                      onChange={(e) => write(withRow(index, { modelClass: e.target.value as ModelClass }))}
-                    >
-                      {MODEL_CLASSES.map((cls) => (
-                        <option key={cls} value={cls}>
-                          {MODEL_CLASS_LABELS[cls]}
-                        </option>
-                      ))}
-                    </select>
+                    {/* ⛔ Opening it writes nothing: an untouched line still shows its built-in class as
+                        its one tag and stays unstored until a tag is changed (`withRow` stores just
+                        that line). */}
+                    <TagsPill
+                      className="worker-models-tags"
+                      tags={r.tags}
+                      ariaLabel={`Tags for ${label} on ${worker.label}`}
+                      title={TAGS_HELP}
+                      menu={() => (
+                        <TagPicker
+                          label={`${label} on ${worker.label}`}
+                          available={cleanTags([...fleetTags, ...rows.flatMap((o) => o.tags)])}
+                          selected={r.tags}
+                          busy={busy}
+                          onAdd
+                          onRemove
+                          onChange={(next) => write(setRowTags(rows, index, next))}
+                        />
+                      )}
+                    />
                   </td>
                   <td className="worker-models-tick">
                     <input
@@ -317,7 +328,7 @@ export function ModelTable({
               disabled={busy || addTaken}
               title={addTaken ? 'That model and effort already has a line' : undefined}
               onClick={() => {
-                write([...rows, { ...adding, modelClass: null, auto: false, stored: true }])
+                write([...rows, { ...adding, tags: inferredTags(adding.model), auto: false, stored: true }])
                 setAdding(null)
               }}
             >

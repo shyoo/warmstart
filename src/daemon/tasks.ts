@@ -36,6 +36,7 @@ import {
   type TaskStatus,
   type TaskView
 } from '@shared/tasks.js'
+import { upgradeLegacyClass } from '@shared/modeltags.js'
 import { timingForRuns, timingForTasks, ZERO_TIMING, type ActiveTiming } from './activetime.js'
 import { attachmentsFor, bindAttachments } from './attachments.js'
 import { db, row, rows } from './db.js'
@@ -230,7 +231,7 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     notBefore: r.not_before,
     deadline: r.deadline,
     requires: JSON.parse(r.requires_json) as Task['requires'],
-    constraints: JSON.parse(r.constraints_json) as TaskConstraints,
+    constraints: upgradeLegacyClass(JSON.parse(r.constraints_json) as TaskConstraints),
     verification: r.verification as Task['verification'],
     // ⚠️ Coalesced rather than trusted. A row written before migration 9 has no value, and `inherit`
     // is the honest reading of a task that has never expressed a preference.
@@ -255,7 +256,7 @@ function toTask(r: TaskRow, timing: ActiveTiming = ZERO_TIMING): Task {
     holdUntil: r.hold_until,
     quotaOverrideUntil: r.quota_override_until,
     quotaPreemptWarning: r.quota_preempt_json
-      ? (JSON.parse(r.quota_preempt_json) as Task['quotaPreemptWarning'])
+      ? upgradeLegacyClass(JSON.parse(r.quota_preempt_json) as NonNullable<Task['quotaPreemptWarning']>, 'reassignModelClass', 'reassignModelTags')
       : null,
     branch: r.branch,
     // ⚠️ `null` reads as 1: every row written before migration 63, which is every task that has
@@ -300,7 +301,7 @@ function parseChildDefaults(json: string | null): ChildDefaults | null {
   if (!json) return null
   try {
     const parsed = JSON.parse(json) as ChildDefaults | null
-    return parsed && typeof parsed === 'object' ? parsed : null
+    return parsed && typeof parsed === 'object' ? upgradeLegacyClass(parsed) : null
   } catch {
     return null
   }

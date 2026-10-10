@@ -31,7 +31,7 @@ describe('worker event fleet refresh', () => {
 
   it('keeps model edits on the event path', () => {
     expect(workerChangeNeedsFleetRefresh(worker, {
-      ...worker, modelRoutes: [{ model: 'model-a', effort: 'medium', modelClass: null, auto: true }]
+      ...worker, modelRoutes: [{ model: 'model-a', effort: 'medium', tags: ['Med'], auto: true }]
     })).toBe(false)
   })
 

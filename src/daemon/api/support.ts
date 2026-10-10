@@ -1,7 +1,7 @@
 /** The RPC types, the request context, and the validators every domain shares. */
 import type { RpcMethod, RpcParams, RpcResult, Worker } from '@shared/protocol.js'
 import { canWork } from '@shared/protocol.js'
-import { MODEL_CLASSES } from '@shared/modelclass.js'
+import { checkTags, inferredTags, tagsFromLegacyClass, tagsLabel } from '@shared/modeltags.js'
 import { modelOffered, notOffered, routeLabel, type ModelRoute } from '@shared/modelroutes.js'
 import type { ChildDefaults, Task, TaskConstraints } from '@shared/tasks.js'
 import { windowsForPool } from '@shared/tasks.js'
@@ -148,9 +148,14 @@ export function checkWorkerDefaults(
       // never stored — `routableCandidatesFor` and the scorer both trust that every row is legal.
       const spec = cm.modelSpec(r.model)
       if (!spec) throw refused(r.model)
-      if (r.modelClass !== null && !MODEL_CLASSES.includes(r.modelClass)) {
-        throw new Error(`invalid model class '${r.modelClass}' for model '${r.model}'`)
+      // ⛔ Tags are bounded at the door: an over-long tag is refused, never truncated into another tag.
+      // An old window still sends `modelClass` on a row (`null` = the built-in): read as its one tag.
+      const legacy = (r as { modelClass?: string | null }).modelClass
+      delete (r as { modelClass?: unknown }).modelClass
+      if (r.tags === undefined && legacy !== undefined) {
+        r.tags = legacy === null ? inferredTags(r.model) : tagsFromLegacyClass(legacy)
       }
+      r.tags = checkTags(r.tags, `tags for model '${r.model}'`)
       if (r.effort) {
         if (!info.capabilities.selectableEffort) {
           throw new Error(`${info.label} takes no effort flag, so '${r.model}' has no effort to set`)
@@ -289,6 +294,15 @@ export function checkConstraints(c: TaskConstraints, opts: { switchedOn?: boolea
   const switchedOn = opts.switchedOn === true
   const checked: TaskConstraints = { ...c }
 
+  // ⛔ One requirement shape past this door. `modelClass` (one of three) is still *read* — an old
+  // window, an agent's saved call, a script — and becomes one tag; nothing downstream sees it.
+  const legacyClass = (checked as { modelClass?: string | null }).modelClass
+  delete (checked as { modelClass?: unknown }).modelClass
+  const tags = checkTags(c.modelTags, 'modelTags')
+  const required = tags.length > 0 ? tags : tagsFromLegacyClass(legacyClass)
+  if (required.length > 0) checked.modelTags = required
+  else delete checked.modelTags
+
   if (c.workerIds) {
     for (const id of c.workerIds) requirePinnableWorker(id, switchedOn)
   }
@@ -330,10 +344,6 @@ export function checkConstraints(c: TaskConstraints, opts: { switchedOn?: boolea
     checked.pieceConstraints = checkConstraints(c.pieceConstraints, opts)
   }
 
-  if (c.modelClass && !MODEL_CLASSES.includes(c.modelClass)) {
-    throw new Error(`invalid modelClass '${c.modelClass}'`)
-  }
-
   let worker: Worker | null = null
   if (c.workerId) {
     worker = requirePinnableWorker(c.workerId, switchedOn)
@@ -344,8 +354,8 @@ export function checkConstraints(c: TaskConstraints, opts: { switchedOn?: boolea
   // Refuse it at admission when the account has no matching pair: otherwise it waits in the queue
   // forever with no action a scheduler tick can take. The picker makes the same test before it
   // offers a tier, but this is the authoritative boundary for stale windows and API callers.
-  if (worker && c.modelPolicy === 'auto' && c.modelClass && routableCandidatesFor(worker, c.modelClass).length === 0) {
-    throw new Error(`${worker.label} has no Auto Model (${c.modelClass}) route — choose another model or tier`)
+  if (worker && c.modelPolicy === 'auto' && required.length > 0 && routableCandidatesFor(worker, required).length === 0) {
+    throw new Error(`${worker.label} has no Auto Model (${tagsLabel(required)}) route — choose other tags or another model`)
   }
 
   const adapterId = checked.adapterId

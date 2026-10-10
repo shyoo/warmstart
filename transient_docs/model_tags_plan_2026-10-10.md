@@ -1,6 +1,6 @@
 # Model and effort tags — implementation plan (2026-10-10, t1024)
 
-Status: design agreed; runtime behavior has not changed. This is a dated plan, not the maintained
+Status: implemented in t1042 (2026-10-10); the maintained reference pages now describe the behaviour. This is a dated plan, not the maintained
 reference. Replace the affected descriptions in `docs/routing.md`, `docs/data-model.md`, `docs/ui.md`,
 `docs/mcp.md`, and `HANDOFF.md` as the implementation lands.
 
