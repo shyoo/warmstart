@@ -21,6 +21,7 @@ import { openClaims, trunkResourceId } from './resources.js'
 import type { MergeReading } from './landing.js'
 import { commitsOnlyOn, ensurePool, refreshTargetRef, taskBranches, workspaceState } from './worktrees.js'
 import type { TaskBranch } from './worktrees.js'
+import { branchVerdicts, carriesClause, type BranchVerdict } from './carried.js'
 import { mergedDeliveryFor, openDeliveryFor, type PullRequestDelivery } from './deliveries.js'
 import type { WorkspaceState } from './worktrees.js'
 import { settings } from './settings.js'
@@ -782,8 +783,15 @@ export function branchLooseEnd(input: {
   branch: TaskBranch
   merged: PullRequestDelivery | undefined
   openPr: PullRequestDelivery | null
+  /**
+   * What a *not landed* row counts and names when open branches carry part of it or finished branches
+   * fold into it (`carried.ts`, t1041). Absent, the row counts the trunk-only `branch.ahead`.
+   */
+  own?: { count: number; carries: TaskBranch[] }
 }): LooseEnd {
   const { projectId, projectName, workspacePath, branch, merged: pr, openPr } = input
+  const ahead = input.own?.count ?? branch.ahead
+  const carries = carriesClause(input.own?.carries ?? [])
   const base = {
     projectId,
     projectName,
@@ -809,11 +817,12 @@ export function branchLooseEnd(input: {
       ...base,
       id: `unlanded:${branch.branch}`,
       kind: 'unlanded',
-      count: branch.ahead,
+      count: ahead,
       ...(openPr ? { url: openPr.url } : {}),
-      summary: openPr
-        ? `Pull request ${openPr.url} is open — ${branch.ahead} commit(s) on \`${branch.branch}\` that the trunk does not have`
-        : `${branch.ahead} commit(s) on \`${branch.branch}\` that the trunk does not have`
+      summary:
+        (openPr
+          ? `Pull request ${openPr.url} is open — ${ahead} commit(s) on \`${branch.branch}\` that the trunk does not have`
+          : `${ahead} commit(s) on \`${branch.branch}\` that the trunk does not have`) + carries
     }
   }
   if (branch.ahead > 0) {
@@ -861,8 +870,9 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
     // branch while it works; showing that work here races the task pane and offers clean-up actions
     // before the task is done.  Branch names carry the task sequence, so resolve that evidence from
     // the durable task row rather than inferring state from the worktree's current contents.
+    const projectTasks = listTasks({ projectId: project.id })
     const closedTaskSeqs = new Set(
-      listTasks({ projectId: project.id })
+      projectTasks
         .filter((task) => task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled')
         .map((task) => task.seq)
     )
@@ -899,6 +909,16 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
       branches = await taskBranches(project, policy.landingTarget)
       merged = mergedFor(branches)
     }
+    // ⭐ **The trunk is not the only thing keeping work alive** (t1041, `carried.ts`). A finished
+    // piece its open parent has merged — or has yet to merge — and a link of a chain another finished
+    // branch already carries are not separate loose ends. Measured on muturn 2026-10-10: five rows,
+    // four of them wholly inside the open conversation's own branch.
+    const verdicts: Map<string, BranchVerdict> = await branchVerdicts(
+      project.root,
+      policy.landingTarget,
+      branches,
+      new Map(projectTasks.map((task) => [task.seq, task]))
+    ).catch(() => new Map<string, BranchVerdict>())
     for (const path of members) {
       const state = await workspaceState(path, policy.landingTarget)
       const taskSeq = taskSeqFromBranch(state.branch)
@@ -943,17 +963,28 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
         }
       }
       const landedElsewhere = (known?.contentLanded ?? false) && ahead > 0
+      // ⚠️ The same verdict as the branch loop below, or the two rows for one branch would disagree.
+      const verdict = state.branch ? verdicts.get(state.branch) : undefined
+      if (verdict?.kind === 'own') ahead = verdict.count
       const scopedState = {
         ...state,
         stashes: 0,
         // ⚠️ A merged branch's commits are reported once, as merged, by the branch loop below —
-        // and a content-landed branch's, once, as stranded.
-        unlandedCommits: !state.branch || merged.has(state.branch) || landedElsewhere ? 0 : Math.max(ahead, 0)
+        // and a content-landed branch's, once, as stranded. A carried, folded or parent-held
+        // branch's are not reported here at all; its uncommitted files still are.
+        unlandedCommits:
+          !state.branch || merged.has(state.branch) || landedElsewhere || (verdict && verdict.kind !== 'own')
+            ? 0
+            : Math.max(ahead, 0)
       }
       for (const end of looseEndsIn(project, scopedState)) {
         if (seen.has(end.id) || dismissed.has(end.id)) continue
         seen.add(end.id)
-        found.push(end)
+        found.push(
+          end.kind === 'unlanded' && verdict?.kind === 'own'
+            ? { ...end, summary: end.summary + carriesClause(verdict.carries) }
+            : end
+        )
       }
     }
 
@@ -966,13 +997,17 @@ export async function scanLooseEnds(): Promise<LooseEnd[]> {
     for (const branch of branches) {
       // ⚠️ `-1` is "git could not measure it", not "nothing on it". Neither reported nor retired.
       if (branch.ahead < 0 || branch.taskSeq === null || !closedTaskSeqs.has(branch.taskSeq)) continue
+      const verdict = verdicts.get(branch.branch)
+      // ⚠️ A merged pull request's branch still draws its own *merged* row: that is a clean-up, not work.
+      if (verdict && verdict.kind !== 'own' && !merged.has(branch.branch)) continue
       const end = branchLooseEnd({
         projectId: project.id,
         projectName: project.name,
         workspacePath: branch.heldBy ?? project.root,
         branch,
         merged: merged.get(branch.branch),
-        openPr: openDeliveryFor(project.id, branch.branch)
+        openPr: openDeliveryFor(project.id, branch.branch),
+        ...(verdict?.kind === 'own' ? { own: { count: verdict.count, carries: verdict.carries } } : {})
       })
       if (seen.has(end.id) || dismissed.has(end.id)) continue
       seen.add(end.id)

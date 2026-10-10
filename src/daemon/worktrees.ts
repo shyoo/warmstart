@@ -1571,6 +1571,23 @@ export async function landedRef(path: string, target: string): Promise<string> {
 }
 
 /**
+ * The refs of `also` that resolve to a commit, minus `branch` itself.
+ *
+ * ⭐ `also` widens "what would deleting this lose" beyond the trunk (t1041): the branch of a task that
+ * is still open carries whatever it has merged, so a finished child it took in loses nothing either.
+ * ⚠️ A name that no longer resolves is skipped, never an error — the open branch may have been
+ * retired between the listing and this read, and that must not sink the trunk's own answer.
+ */
+async function resolvingRefs(cwd: string, also: readonly string[], branch: string): Promise<string[]> {
+  const found: string[] = []
+  for (const ref of also) {
+    if (ref === branch) continue
+    if (await gitOk(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) found.push(ref)
+  }
+  return found
+}
+
+/**
  * How many commits on `branch` exist nowhere else — on neither the local `target` nor `origin/<target>`.
  *
  * ⛔ **A different question from `landedRef`, and the loose-ends scan asks this one.** `landedRef`
@@ -1583,12 +1600,18 @@ export async function landedRef(path: string, target: string): Promise<string> {
  *
  * ⚠️ Throws when neither ref resolves, so a caller's "could not measure" stays distinct from zero.
  */
-export async function commitsOnlyOn(cwd: string, branch: string, target: string): Promise<number> {
+export async function commitsOnlyOn(
+  cwd: string,
+  branch: string,
+  target: string,
+  also: readonly string[] = []
+): Promise<number> {
   const refs: string[] = []
   for (const ref of [target, `origin/${target}`]) {
     if (await gitOk(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) refs.push(ref)
   }
   if (refs.length === 0) throw new Error(`neither \`${target}\` nor \`origin/${target}\` resolves`)
+  refs.push(...(await resolvingRefs(cwd, also, branch)))
   const count = Number.parseInt(await git(cwd, ['rev-list', '--count', branch, '--not', ...refs]), 10)
   if (!Number.isFinite(count)) throw new Error(`git could not count the commits on \`${branch}\``)
   return count
@@ -1618,12 +1641,18 @@ export async function commitsOnlyOn(cwd: string, branch: string, target: string)
  * no resolving ref, no ahead commits, git failing anywhere, or anything left unproven all read
  * false — the row stays *not landed*, exactly today's answer.
  */
-export async function branchContentLanded(cwd: string, branch: string, target: string): Promise<boolean> {
+export async function branchContentLanded(
+  cwd: string,
+  branch: string,
+  target: string,
+  also: readonly string[] = []
+): Promise<boolean> {
   const refs: string[] = []
   for (const ref of [target, `origin/${target}`]) {
     if (await gitOk(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) refs.push(ref)
   }
   if (refs.length === 0) return false
+  refs.push(...(await resolvingRefs(cwd, also, branch)))
   const ahead = await tryGit(cwd, ['rev-list', branch, '--not', ...refs])
   const aheadShas = (ahead ?? '')
     .split(/\r?\n/)

@@ -486,6 +486,49 @@ describe('task branches the repository still has a name for', () => {
     },
     60_000
   )
+
+  it(
+    'lists a finished piece only once its open parent closes, and then folds the chain into one row',
+    async () => {
+      // ⛔ muturn, 2026-10-10 (t1041): an open conversation's finished pieces read as *not landed*
+      // although it had merged most of them. Wired end to end here; the verdicts are in carried.test.ts.
+      const { project, taskId, root } = seed('warmstart/temporary-parent-branch')
+      const parent = tasks.requireTask(taskId)
+      const parentBranch = `warmstart/t${parent.seq}.3-the-conversation`
+      git(root, 'branch', '-m', parentBranch)
+      const piece = (label: string) =>
+        tasks.createTask({ title: label, projectId: project.id, createdBy: { kind: 'human' }, parentTaskId: parent.id })
+      const first = piece('first piece')
+      const second = piece('second piece')
+      const firstBranch = `warmstart/t${first.seq}-first-piece`
+      const secondBranch = `warmstart/t${second.seq}-second-piece`
+      git(root, 'switch', '-c', firstBranch, 'main')
+      writeFileSync(join(root, 'first.txt'), 'first\n')
+      git(root, 'add', '-A')
+      git(root, 'commit', '-m', 'first piece')
+      git(root, 'switch', '-c', secondBranch)
+      writeFileSync(join(root, 'second.txt'), 'second\n')
+      git(root, 'add', '-A')
+      git(root, 'commit', '-m', 'second piece')
+      git(root, 'switch', parentBranch)
+      git(root, 'merge', '--no-ff', '-m', 'take the first piece', firstBranch)
+      git(root, 'switch', 'main')
+      tasks.setStatus(first.id, 'completed')
+      tasks.setStatus(second.id, 'completed')
+
+      const open = (await finish.scanLooseEnds()).filter((e) => e.projectId === project.id)
+      expect(open.filter((e) => e.kind === 'unlanded')).toEqual([])
+
+      tasks.setStatus(parent.id, 'completed')
+      const closed = (await finish.scanLooseEnds()).filter((e) => e.projectId === project.id && e.kind === 'unlanded')
+      // The second piece holds the first; the parent holds the first too. Two rows, never three.
+      expect(closed.map((e) => e.branch).sort()).toEqual([parentBranch, secondBranch].sort())
+      const row = closed.find((e) => e.branch === secondBranch)
+      expect(row?.count).toBe(2)
+      expect(row?.summary).toContain(`also carries t${first.seq}`)
+    },
+    60_000
+  )
 })
 
 /**

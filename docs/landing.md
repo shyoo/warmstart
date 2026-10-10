@@ -492,6 +492,17 @@ Five kinds of work that exists and is going nowhere, listed on **Overview**:
   reached the trunk as a squash, rebase or cherry-pick (different SHAs), or that reached the origin
   while this machine's refs stood still, reads here as stranded instead (t948) — the scan fetches
   `origin/<target>` once when something reads unlanded, then proves content equivalence per branch.
+  ⭐ **The trunk is not the only thing keeping work alive** (t1041, `carried.ts`). Measured on muturn
+  2026-10-10: five rows were pieces filed by conversation t1007, four of them wholly inside its open
+  branch `t1007.3` (merge commits) and one it had not merged yet. Now a finished task's branch is
+  **hidden** while its parent task is open (merging it is the parent's job), and also **hidden**
+  when the branch of any open task holds every unlanded commit (by SHA, or by the t948 proofs). A row
+  counts only what no open branch holds. Among finished branches, one whose every unlanded commit
+  another holds is **folded** into that row (*also carries t1013, t1021*), so a chain draws one row;
+  two branches with the same commits fold into the later name, never both. ⚠️ The panel only: the
+  sweep and **Retire it** still delete a name on trunk proof alone, so if an open branch is rebased
+  or reset the child's name is still there. Deleting the outer row leaves the folded names, which
+  show up on the next scan.
 - **stashed** — work the tool moved out of the way to free a workspace for the next task. Recover it
   with `git stash list` and `git stash show -p` in the workspace.
 - **branch left behind** — a task branch carrying nothing the local or remote target does not
