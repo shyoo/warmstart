@@ -9214,6 +9214,9 @@ select:focus-visible,
   flex-direction: column;
   gap: var(--sp-2);
 }
+.scratchpad-new-bottom {
+  align-self: flex-start;
+}
 .scratchpad-fold {
   align-self: flex-start;
   background: none;
@@ -9234,13 +9237,38 @@ select:focus-visible,
   border-radius: var(--radius);
   background: var(--color-surface);
   min-width: 0;
+  transition: opacity 350ms ease;
+}
+.scratch-card--fading {
+  opacity: 0;
+  pointer-events: none;
 }
 .scratch-card[data-tag='new'] {
   border-left: 2px solid var(--state-warn);
 }
-.scratch-card--drop {
+.scratch-card[data-drop] {
+  position: relative;
   border-color: var(--color-accent);
-  box-shadow: 0 -2px 0 var(--color-accent);
+}
+.scratch-card[data-drop]::before {
+  content: 'Insert ' attr(data-drop) ' this prompt';
+  position: absolute;
+  left: var(--sp-2);
+  z-index: 1;
+  padding: 1px var(--sp-2);
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  color: var(--color-bg);
+  font-size: var(--text-meta);
+  pointer-events: none;
+}
+.scratch-card[data-drop='before']::before {
+  top: 0;
+  transform: translateY(-50%);
+}
+.scratch-card[data-drop='after']::before {
+  bottom: 0;
+  transform: translateY(50%);
 }
 .scratch-card-head {
   display: flex;
@@ -9352,9 +9380,12 @@ button.scratch-tag:hover {
 .hl-rule {
   color: var(--color-accent);
 }
-.hl-marker,
+.hl-marker-new,
 .hl-bullet {
   color: var(--state-warn);
+}
+.hl-marker-done {
+  color: var(--state-ok);
 }
 .hl-quote,
 .hl-fence {

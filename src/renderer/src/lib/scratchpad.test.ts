@@ -3,6 +3,7 @@ import {
   conversationTargets,
   insertAfter,
   mergeWithNext,
+  moveBeside,
   moveItem,
   openCount,
   parseScratch,
@@ -66,6 +67,15 @@ describe('parse and serialize', () => {
 })
 
 describe('card operations', () => {
+  it('drops before or after the target from either drag direction', () => {
+    const doc = parseScratch('one\n---\ntwo\n---\nthree\n')
+    const order = (from: number, target: number, side: 'before' | 'after') =>
+      moveBeside(doc, from, target, side).items.map((item) => item.body.trim())
+    expect(order(0, 2, 'before')).toEqual(['two', 'one', 'three'])
+    expect(order(0, 2, 'after')).toEqual(['two', 'three', 'one'])
+    expect(order(2, 0, 'before')).toEqual(['three', 'one', 'two'])
+    expect(order(2, 0, 'after')).toEqual(['one', 'three', 'two'])
+  })
   const three = 'one\n\n---\n\ntwo\n\n---\n\nthree\n'
 
   it('moves bodies and leaves the blank lines where they were', () => {

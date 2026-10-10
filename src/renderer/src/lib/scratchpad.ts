@@ -185,6 +185,15 @@ export function moveItem(doc: ScratchDoc, from: number, to: number): ScratchDoc 
   return { ...doc, items }
 }
 
+/** Place a dragged card on the indicated side of a target, regardless of drag direction. */
+export function moveBeside(doc: ScratchDoc, from: number, target: number, side: 'before' | 'after'): ScratchDoc {
+  if (from === target) return doc
+  const to = side === 'before'
+    ? target - (from < target ? 1 : 0)
+    : target + (from > target ? 1 : 0)
+  return moveItem(doc, from, to)
+}
+
 /**
  * A new card after `index` (or at the very end with `index` omitted), and its key.
  *
@@ -301,7 +310,7 @@ export type ScratchRow =
  * ⛔ **Only `New` shows by default** (operator's decision, t994): a filed prompt, a sent one and every
  * untagged one from before this page existed fold into one row per consecutive run, in place, so
  * the order on screen is still the order in the file. `shown` holds cards opened anyway — a run the
- * operator unfolded, or a card filed a moment ago that would otherwise vanish under the pointer.
+ * operator unfolded, or a card filed a moment ago during its brief confirmation period.
  */
 export function scratchRows(doc: ScratchDoc, showAll: boolean, shown: ReadonlySet<number>): ScratchRow[] {
   const rows: ScratchRow[] = []

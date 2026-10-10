@@ -7,6 +7,7 @@ import {
   conversationTargets,
   insertAfter,
   mergeWithNext,
+  moveBeside,
   moveItem,
   openCount,
   parseScratch,
@@ -35,6 +36,9 @@ import { Markdown } from './thread/Markdown'
 const SAVE_AFTER_MS = 700
 /** How often an idle page asks whether the file changed elsewhere — VS Code, another window. */
 const POLL_MS = 3000
+/** Let a newly filed card show its result briefly before it joins the older prompts. */
+const FILED_VISIBLE_MS = 4000
+const FOLD_FADE_MS = 350
 const NEW_CARD = '* New\n\n'
 
 /**
@@ -48,7 +52,7 @@ const NEW_CARD = '* New\n\n'
  *
  * ⭐ **New is what is open.** Only cards marked `* New` show; everything else folds in place under a
  * count (operator's decision, t994). Filing a card — as a task or into a conversation — rewrites its
- * marker to `* Filed t###` / `* Sent t###`, and the card stays open until the page is reloaded.
+ * marker to `* Filed t###` / `* Sent t###`, then the card folds after a short confirmation period.
  */
 export function Scratchpad({
   project,
@@ -77,6 +81,7 @@ export function Scratchpad({
   const [note, setNote] = useState<string | null>(null)
   const [showAll, setShowAll] = useState(false)
   const [shown, setShown] = useState<ReadonlySet<number>>(() => new Set())
+  const [fading, setFading] = useState<ReadonlySet<number>>(() => new Set())
   const [whole, setWhole] = useState(false)
   const [mode, setMode] = useState<'edit' | 'preview'>('edit')
   const [flipped, setFlipped] = useState<ReadonlySet<number>>(() => new Set())
@@ -92,6 +97,7 @@ export function Scratchpad({
   const againRef = useRef(false)
   const conflictRef = useRef(false)
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const filedTimers = useRef(new Map<number, ReturnType<typeof setTimeout>[]>())
   const caretRef = useRef(new Map<number, number>())
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -196,6 +202,7 @@ export function Scratchpad({
   useEffect(
     () => () => {
       clearTimeout(timerRef.current)
+      for (const timers of filedTimers.current.values()) for (const timer of timers) clearTimeout(timer)
       void flush()
     },
     [flush]
@@ -241,6 +248,30 @@ export function Scratchpad({
       if (!found) return
       reveal([key])
       change(setTag(found.doc, found.at, tag))
+      for (const timer of filedTimers.current.get(key) ?? []) clearTimeout(timer)
+      filedTimers.current.delete(key)
+      setFading((prev) => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+      if (tag?.kind === 'filed' || tag?.kind === 'sent') {
+        const fade = setTimeout(() => setFading((prev) => new Set(prev).add(key)), FILED_VISIBLE_MS - FOLD_FADE_MS)
+        const fold = setTimeout(() => {
+          setShown((prev) => {
+            const next = new Set(prev)
+            next.delete(key)
+            return next
+          })
+          setFading((prev) => {
+            const next = new Set(prev)
+            next.delete(key)
+            return next
+          })
+          filedTimers.current.delete(key)
+        }, FILED_VISIBLE_MS)
+        filedTimers.current.set(key, [fade, fold])
+      }
     },
     [change, reveal]
   )
@@ -266,10 +297,10 @@ export function Scratchpad({
         const found = find(key)
         if (found) change(moveItem(found.doc, found.at, to))
       },
-      moveOnto: (key, ontoKey) => {
+      moveOnto: (key, ontoKey, side) => {
         const found = find(key)
         const onto = find(ontoKey)
-        if (found && onto) change(moveItem(found.doc, found.at, onto.at))
+        if (found && onto) change(moveBeside(found.doc, found.at, onto.at, side))
       },
       insertBelow: (key) => {
         const current = docRef.current ?? parseScratch('')
@@ -456,6 +487,7 @@ export function Scratchpad({
                 above={neighbour(rows, r, -1)}
                 below={neighbour(rows, r, 1)}
                 preview={(mode === 'preview') !== flipped.has(row.item.key)}
+                fading={!showAll && fading.has(row.item.key)}
                 autoFocus={focusKey === row.item.key}
                 tasks={tasks}
                 targets={targets}
@@ -465,6 +497,9 @@ export function Scratchpad({
           )}
         </div>
       )}
+      <button className="btn btn--primary scratchpad-new-bottom" onClick={() => actions.insertBelow(null)} disabled={!doc}>
+        + New prompt
+      </button>
     </div>
   )
 }
@@ -515,7 +550,7 @@ interface CardActions {
   settle: (key: number) => void
   caret: (key: number, offset: number) => void
   move: (key: number, to: number) => void
-  moveOnto: (key: number, ontoKey: number) => void
+  moveOnto: (key: number, ontoKey: number, side: 'before' | 'after') => void
   insertBelow: (key: number | null) => void
   split: (key: number) => void
   merge: (key: number) => void
@@ -536,6 +571,7 @@ const ScratchCard = memo(function ScratchCard({
   above,
   below,
   preview,
+  fading,
   autoFocus,
   tasks,
   targets,
@@ -547,12 +583,13 @@ const ScratchCard = memo(function ScratchCard({
   above: number | undefined
   below: number | undefined
   preview: boolean
+  fading: boolean
   autoFocus: boolean
   tasks: Task[]
   targets: Task[]
   actions: CardActions
 }): React.JSX.Element {
-  const [dropping, setDropping] = useState(false)
+  const [dropping, setDropping] = useState<'before' | 'after' | null>(null)
   const tag = tagOf(item.body)
   const linked = tag && tag.kind !== 'new' ? taskForRef(tasks, tag.ref) : undefined
   const key = item.key
@@ -587,18 +624,23 @@ const ScratchCard = memo(function ScratchCard({
 
   return (
     <article
-      className={`scratch-card${dropping ? ' scratch-card--drop' : ''}`}
+      className={`scratch-card${fading ? ' scratch-card--fading' : ''}`}
       data-tag={tag?.kind ?? 'none'}
+      data-drop={dropping ?? undefined}
       onDragOver={(event) => {
         if (!event.dataTransfer.types.includes(DRAG_TYPE)) return
         event.preventDefault()
-        setDropping(true)
+        event.dataTransfer.dropEffect = 'move'
+        setDropping(dropSide(event.currentTarget, event.clientY))
       }}
-      onDragLeave={() => setDropping(false)}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node)) setDropping(null)
+      }}
       onDrop={(event) => {
-        setDropping(false)
+        event.preventDefault()
+        setDropping(null)
         const from = Number(event.dataTransfer.getData(DRAG_TYPE))
-        if (Number.isFinite(from) && from !== key) actions.moveOnto(from, key)
+        if (Number.isFinite(from) && from !== key) actions.moveOnto(from, key, dropSide(event.currentTarget, event.clientY))
       }}
     >
       <header className="scratch-card-head">
@@ -680,6 +722,11 @@ const ScratchCard = memo(function ScratchCard({
     </article>
   )
 })
+
+function dropSide(card: HTMLElement, clientY: number): 'before' | 'after' {
+  const box = card.getBoundingClientRect()
+  return clientY < box.top + box.height / 2 ? 'before' : 'after'
+}
 
 function TagPill({
   tag,

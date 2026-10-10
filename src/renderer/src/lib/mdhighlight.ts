@@ -15,7 +15,8 @@ export type MdTokenKind =
   | 'text'
   | 'heading'
   | 'rule'
-  | 'marker'
+  | 'marker-new'
+  | 'marker-done'
   | 'bullet'
   | 'quote'
   | 'fence'
@@ -63,7 +64,7 @@ function inline(text: string): MdToken[] {
 function line(text: string): MdToken[] {
   if (RULE.test(text)) return [{ kind: 'rule', text }]
   if (HEADING.test(text)) return [{ kind: 'heading', text }]
-  if (MARKER.test(text)) return [{ kind: 'marker', text }]
+  if (MARKER.test(text)) return [{ kind: /^\*[ \t]+new\b/i.test(text) ? 'marker-new' : 'marker-done', text }]
   const list = LIST.exec(text)
   if (list) {
     const [whole, indent = '', bullet = '', gap = ''] = list

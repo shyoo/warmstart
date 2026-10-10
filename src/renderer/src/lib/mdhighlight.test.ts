@@ -31,11 +31,15 @@ describe('highlightLines', () => {
     expect(kinds('# Title\n---\n* New\n* Filed t994\n- item\n> q')).toEqual([
       ['heading'],
       ['rule'],
-      ['marker'],
-      ['marker'],
+      ['marker-new'],
+      ['marker-done'],
       ['bullet', 'text', 'text'],
       ['quote', 'text']
     ])
+  })
+
+  it('colours filed and sent markers alike while keeping New distinct', () => {
+    expect(kinds('* New\n* Filed t12\n* Sent t13')).toEqual([['marker-new'], ['marker-done'], ['marker-done']])
   })
 
   it('names inline code, bold, italics and links, and leaves snake_case alone', () => {

@@ -2,6 +2,8 @@
 
 ## Current state — 2026-09-27
 
+**Scratchpad refinements (t1018, 2026-10-09).** Both page and thread pane offer a bottom **+ New prompt**. A drag target shows whether the card will land before or after it; the result is independent of drag direction. Filed and sent source markers use the same green as their pills. Newly filed or sent cards fade into the older prompts after four seconds; the markdown file retains them. L1 drag placement and marker colour token tests added. Checks on this branch (Windows 11, 2026-10-09): typecheck, lint and build passed; L1 4,598 passed, 3 skipped (265 files).
+
 **Antigravity malformed tool call recovery (t1016 ← t1015, 2026-10-09).** t1015's task record shows three warm runs on one conversation ID failing with the same empty function-call error. The adapter now recognises that exact error; the scheduler invalidates that conversation and queues a cold attempt, while a cold failure still waits for a person. L1 tests cover both outcomes. A live cold retry has not been observed.
 The same run exposed a `forkhome.test.ts` fixture leak: it restored newly added `GIT_CONFIG_*` keys but left the overwritten `GIT_CONFIG_COUNT` at 2, failing the following 13 tests; the fixture now restores the saved values too.
 
