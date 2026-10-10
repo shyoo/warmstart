@@ -54,13 +54,19 @@ export function Scratchpad({
   project,
   composeFrom,
   onOpenTask,
-  onOpenCount
+  onOpenCount,
+  compact = false
 }: {
   project: Project
   composeFrom: (seed: ComposerSeed) => void
   onOpenTask: (taskId: string) => void
   /** Tells the tab label how many cards are open, as edits land. */
   onOpenCount?: (count: number) => void
+  /**
+   * Drawn in a narrow column beside a thread (t1011) rather than as the page. ⚠️ It then scrolls in
+   * its own pane, not the page's `.content`: landing at the bottom must not carry the thread with it.
+   */
+  compact?: boolean
 }): React.JSX.Element {
   const projectId = project.id
   const [meta, setMeta] = useState<ScratchpadDoc | null>(null)
@@ -204,9 +210,9 @@ export function Scratchpad({
   useEffect(() => {
     if (landed.current || !doc) return
     landed.current = true
-    const scroller = rootRef.current?.closest('.content')
+    const scroller = rootRef.current?.closest(compact ? '.detail-side--scratchpad' : '.content')
     if (scroller) scroller.scrollTop = scroller.scrollHeight
-  }, [doc])
+  }, [doc, compact])
 
   const resolve = (keep: 'mine' | 'theirs'): void => {
     if (!conflict) return
@@ -357,7 +363,7 @@ export function Scratchpad({
   const wholeText = useMemo(() => (whole && doc ? serializeScratch(doc) : ''), [whole, doc])
 
   return (
-    <div className="scratchpad" ref={rootRef}>
+    <div className={`scratchpad${compact ? ' scratchpad--compact' : ''}`} ref={rootRef}>
       <ScratchpadFile meta={meta} projectRoot={project.root} beforeChange={flush} onChanged={adopt} />
 
       <div className="scratchpad-bar">

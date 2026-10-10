@@ -94,6 +94,8 @@ import { DebateBoard } from './thread/DebateBoard'
 import { CompactionRow, ReviewRow, RunRow } from './thread/RunRow'
 import { LedgerPeek } from './thread/LedgerPeek'
 import { TitleEditor } from './thread/TitleEditor'
+import { SideToggle } from './thread/SideToggle'
+import { effectiveSide, readThreadSide, toggleSide, writeThreadSide, type ThreadSide } from '../lib/threadside'
 import { FoldedMarkdown, Markdown } from './thread/Markdown'
 import {
   compactionChoice,
@@ -175,7 +177,8 @@ export function TaskThread({
   fleet,
   onBack,
   backLabel = 'Tasks',
-  onOpenTask
+  onOpenTask,
+  scratchpad
 }: {
   taskId: string
   /** Only so a worker id can be drawn as the name of an account. */
@@ -183,6 +186,12 @@ export function TaskThread({
   onBack: () => void
   backLabel?: string
   onOpenTask?: (taskId: string) => void
+  /**
+   * The project's scratchpad, drawn in the status pane's place when the operator asks for it (t1011).
+   * ⚠️ A node, not a project: only the page that knows the project can build one, and a thread opened
+   * from somewhere with no project (Unassigned, Quality Review) passes none and gets no button.
+   */
+  scratchpad?: React.ReactNode
 }): React.JSX.Element {
   const { activity, seed } = useActivity()
   const now = useNow(1000)
@@ -256,6 +265,7 @@ export function TaskThread({
       refresh={refresh}
       back={back}
       onOpenTask={onOpenTask}
+      scratchpad={scratchpad}
     />
   )
 }
@@ -279,7 +289,8 @@ function TaskDetail({
   refresh,
   back,
   onDeleted,
-  onOpenTask
+  onOpenTask,
+  scratchpad
 }: {
   detail: TaskDetailData
   /** The live tail, kept outside the detail so it survives a re-fetch of it. */
@@ -299,7 +310,18 @@ function TaskDetail({
    */
   onDeleted: () => void
   onOpenTask?: (taskId: string) => void
+  scratchpad?: React.ReactNode
 }): React.JSX.Element {
+  // ⭐ Which pane stands beside the conversation (t1011): the status ledger, the project's scratchpad,
+  // or neither. One at a time, remembered across tasks.
+  const hasScratchpad = scratchpad !== undefined && scratchpad !== null
+  const [storedSide, setStoredSide] = useState<ThreadSide>(readThreadSide)
+  const side = effectiveSide(storedSide, hasScratchpad)
+  const chooseSide = (clicked: 'status' | 'scratchpad'): void => {
+    const next = toggleSide(side, clicked)
+    setStoredSide(next)
+    writeThreadSide(next)
+  }
   const {
     task,
     messages,
@@ -539,9 +561,10 @@ function TaskDetail({
         ) : (
           <TitleEditor task={task} onRenamed={refresh} />
         )}
+        <SideToggle side={side} hasScratchpad={hasScratchpad} onToggle={chooseSide} />
       </header>
 
-      <div className="detail-grid">
+      <div className={`detail-grid${side === 'none' ? ' detail-grid--solo' : side === 'scratchpad' ? ' detail-grid--scratch' : ''}`}>
         <div className="detail-main">
           {task.status === 'draft' && (
             <DraftControls
@@ -676,7 +699,10 @@ function TaskDetail({
           <div ref={threadBottom} aria-hidden="true" />
         </div>
 
-        <aside className="detail-side">
+        {/* ⚠️ `hidden`, not unmounted: the ledger keeps its open disclosures, pickers and the
+            scrolled-past observers while the scratchpad has its column, and is there as it was when
+            it comes back. */}
+        <aside className="detail-side" hidden={side !== 'status'}>
           <div className="detail-side-box" ref={setLedgerBox}>
             <Fact label="status" className="fact--status">
               <span className={`status ${statusToneFor(task)}`} title={statusHintFor(task)}>
@@ -1388,6 +1414,11 @@ function TaskDetail({
             </div>
           )}
         </aside>
+        {side === 'scratchpad' && hasScratchpad && (
+          <aside className="detail-side detail-side--scratchpad" aria-label="Scratchpad">
+            {scratchpad}
+          </aside>
+        )}
       </div>
     </section>
   )

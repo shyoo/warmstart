@@ -4815,6 +4815,69 @@ select:focus-visible,
   font-size: var(--text-meta);
 }
 
+/* ⭐ The pane beside the thread is one of three states (t1011, `lib/threadside.ts`). ⚠️ The ledger is
+   hidden by the attribute, not unmounted, and `.detail-side`'s own `display: flex` would beat the
+   user-agent rule for `[hidden]`, so it is restated here. */
+.detail-side[hidden] {
+  display: none;
+}
+.detail-grid--solo {
+  grid-template-columns: minmax(0, 1fr);
+}
+/* A little wider than the ledger: a card's buttons need the room, and the operator chose "small", not
+   "narrow". Under 1000px the grid is one column for every state, as it always was. */
+.detail-grid--scratch {
+  grid-template-columns: minmax(0, 1fr) clamp(320px, 34%, 480px);
+}
+@media (max-width: 1000px) {
+  .detail-grid--scratch {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* The scratchpad scrolls in its own pane, pinned under the sticky title bar, so jotting an idea never
+   moves the thread. ⚠️ The offset and height are the title bar's and the fleet strip's, measured by
+   eye rather than derived — if the bar grows, this is the line to look at. */
+.detail-side--scratchpad {
+  align-self: start;
+  position: sticky;
+  top: 2.75rem;
+  max-height: calc(100vh - 11rem);
+  overflow-y: auto;
+  overflow-x: hidden;
+  font-size: inherit;
+}
+
+/* The two pictogram buttons at the right of the title bar (t1011, `thread/SideToggle.tsx`). */
+.side-toggle {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-1);
+  align-self: center;
+}
+.side-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-dim);
+  cursor: pointer;
+}
+.side-toggle-btn:hover {
+  color: var(--color-text);
+  border-color: var(--color-border-strong);
+}
+.side-toggle-btn[aria-pressed='true'] {
+  color: var(--color-accent);
+  border-color: var(--color-border-strong);
+  background: var(--color-surface);
+}
+
 .detail-side-box {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
@@ -9115,8 +9178,33 @@ select:focus-visible,
   min-width: 6ch;
   text-align: right;
 }
+/* ⭐ Green once the file has the text (t1011): the faint grey it had does not stand out, and *saved* is
+   the state somebody looks for before they close the page. */
+.scratchpad-save--saved {
+  color: var(--state-ok);
+}
 .scratchpad-save--unsaved {
   color: var(--state-warn);
+}
+/* The same page in the column beside a thread (t1011): the bar scrolls with the pane, and a card's
+   buttons wrap under its title rather than pushing the column wider. */
+.scratchpad--compact .scratchpad-bar {
+  top: 0;
+  gap: var(--sp-2);
+}
+.scratchpad--compact .scratchpad-counts {
+  margin-left: 0;
+}
+.scratchpad--compact .scratch-card-head {
+  flex-wrap: wrap;
+}
+.scratchpad--compact .scratch-card-title {
+  flex: 1 1 8ch;
+}
+.scratchpad--compact .scratch-card-actions {
+  flex-shrink: 1;
+  flex-wrap: wrap;
+  margin-left: auto;
 }
 .scratchpad-note {
   cursor: pointer;

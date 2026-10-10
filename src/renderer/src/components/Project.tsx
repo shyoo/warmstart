@@ -188,6 +188,18 @@ export function Project({
             fleet={fleet}
             onBack={() => setTab('tasks')}
             onOpenTask={openTask}
+            // ⭐ The project's scratchpad, offered in the status pane's place (t1011). Keyed by project
+            // for the reason the tab's is: its save loop holds the file's version.
+            scratchpad={
+              <Scratchpad
+                key={project.id}
+                project={project}
+                composeFrom={composeFrom}
+                onOpenTask={openTask}
+                onOpenCount={openPrompts.report}
+                compact
+              />
+            }
           />
         ) : (
           // ⚠️ An empty state rather than a hidden tab. A tab that appeared and disappeared as you
