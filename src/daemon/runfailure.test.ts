@@ -44,6 +44,11 @@ const ORG_DISABLED =
   'Your organization has disabled Claude subscription access for Claude Code. ' +
   'Contact your administrator or use an API key.'
 
+const EMPTY_AGY_CALL =
+  'Your previous response contained an improperly formatted function call: Malformed function call: ' +
+  'Failed to parse function call: Function call is empty - no input to parse. ' +
+  'Please retry with a properly formatted function call Retries remaining: 3'
+
 /** A session row, written straight to the store: no CLI is installed in a unit test and none is needed. */
 function seedSession(
   id: string,
@@ -191,6 +196,36 @@ afterAll(() => {
   } catch {
     // A held file handle on Windows is not a test failure.
   }
+})
+
+describe('Antigravity malformed tool call from a resumed conversation (t1015)', () => {
+  it('discards the broken conversation and queues one fresh attempt without benching the worker', async () => {
+    const { task, run, session, worker } = seedRunningTask({
+      adapterId: 'antigravity-cli', startedWarm: true, metered: 100, contextTokens: 500
+    })
+
+    await scheduler.endUnfinishedRun(session, tasks.requireRun(run.id), EMPTY_AGY_CALL, 'failed')
+
+    expect(tasks.requireRun(run.id).outcome).toBe('failed')
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+    expect(sessions.getSession(session.id)?.contextTokens).toBe(0)
+    expect(sessions.getSession(session.id)?.state).toBe('failed')
+    expect(workers.getWorker(worker.id)?.health?.state).not.toBe('suspect')
+    expect(tasks.messagesFor(task.id).some((m) => m.text.includes('restarting cold'))).toBe(true)
+    workers.retireWorker(worker.id)
+  })
+
+  it('hands a fresh conversation failure to the operator instead of retrying forever', async () => {
+    const { task, run, session, worker } = seedRunningTask({
+      adapterId: 'antigravity-cli', startedWarm: false, metered: 100
+    })
+
+    await scheduler.endUnfinishedRun(session, tasks.requireRun(run.id), EMPTY_AGY_CALL, 'failed')
+
+    expect(tasks.requireTask(task.id).status).toBe('awaiting_human')
+    expect(tasks.requireTask(task.id).holdReason).toContain('improperly formatted function call')
+    workers.retireWorker(worker.id)
+  })
 })
 
 describe('a cache-clock compaction that interrupts an open run', () => {

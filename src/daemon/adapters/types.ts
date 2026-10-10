@@ -297,6 +297,13 @@ export interface AgentAdapter {
   overloaded?: (reason: string) => boolean
 
   /**
+   * Did the CLI reject a malformed tool call from its own conversation? A warm conversation with
+   * this error may replay the same broken call on every resume. The scheduler may discard that
+   * conversation and try once cold; a cold failure still goes to the operator.
+   */
+  malformedToolCall?: (reason: string) => boolean
+
+  /**
    * Where a person checks whether this vendor's service is down, named in the note that hands an
    * overloaded task back to them. Absent where none is known: the note then says "the provider's
    * status page" rather than point at the wrong vendor.

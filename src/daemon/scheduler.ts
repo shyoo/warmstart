@@ -4805,6 +4805,15 @@ export async function endUnfinishedRun(
         holdReason: `Provider overloaded (attempt ${overloadRetry.attempt}/${MAX_OVERLOAD_ATTEMPTS})`,
         holdUntil: overloadRetry.retryAt
       })
+    } else if (outcome === 'failed' && run.startedWarm && ad.malformedToolCall?.(why)) {
+      // The vendor rejected a call in this conversation, and t1015 showed that resuming it three
+      // times reproduced the identical error. Do not bench the account or ask a person to press
+      // Resume into the same context. A cold failure takes the ordinary failure path below.
+      invalidateSessionContext(session.id)
+      addMessage(task.id, 'system', 'Conversation tool call failed — restarting cold', null, [], {
+        detail: `${why} This conversation cannot be resumed; the task will retry in a fresh conversation.`
+      })
+      setStatus(task.id, 'ready', { assignee: null })
     } else if (dead) {
       // ⚠️ The vendor's own words, where the stream gave any. `why` is a sentence a person can act
       // on — "your organization has disabled…" — while `deadOnArrival` can only report silence.

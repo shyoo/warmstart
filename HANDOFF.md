@@ -2,6 +2,9 @@
 
 ## Current state — 2026-09-27
 
+**Antigravity malformed tool call recovery (t1016 ← t1015, 2026-10-09).** t1015's task record shows three warm runs on one conversation ID failing with the same empty function-call error. The adapter now recognises that exact error; the scheduler invalidates that conversation and queues a cold attempt, while a cold failure still waits for a person. L1 tests cover both outcomes. A live cold retry has not been observed.
+The same run exposed a `forkhome.test.ts` fixture leak: it restored newly added `GIT_CONFIG_*` keys but left the overwritten `GIT_CONFIG_COUNT` at 2, failing the following 13 tests; the fixture now restores the saved values too.
+
 Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling, pooled worktrees, model-aware routing, quality review, remote access, packaging, and atomic worker/model reassignment.
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.

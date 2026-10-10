@@ -229,6 +229,7 @@ describe('Make my fork home (t903)', () => {
       expect(git(root, 'rev-parse', '--abbrev-ref', 'main@{upstream}')).toBe('origin/main')
     } finally {
       for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key]
+      Object.assign(process.env, saved)
     }
   })
 

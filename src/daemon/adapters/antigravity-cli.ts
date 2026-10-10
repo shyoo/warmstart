@@ -1009,6 +1009,15 @@ export const antigravityCli: AgentAdapter = {
     return said.includes('unavailable (code 503)') || said.includes('the service is currently unavailable')
   },
 
+  // t1015, 2026-10-09: three resumes of one conversation returned this vendor error verbatim.
+  // Match both the malformed-call diagnosis and empty-input detail so unrelated parse errors do
+  // not discard a useful conversation.
+  malformedToolCall: (reason: string): boolean => {
+    const said = reason.toLowerCase()
+    return said.includes('improperly formatted function call') &&
+      said.includes('function call is empty - no input to parse')
+  },
+
   /**
    * ⚠️ Measured, not imagined: verbatim from t610, 2026-09-22 — `UNAUTHENTICATED (code 401): Request
    * had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other
