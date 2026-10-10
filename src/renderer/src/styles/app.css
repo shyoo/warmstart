@@ -4193,6 +4193,20 @@ select:focus-visible,
   margin-bottom: var(--sp-2);
 }
 
+.project-tabs {
+  overflow-x: auto;
+}
+
+.project-tabs .tab {
+  align-items: center;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.project-tab-icon {
+  flex-shrink: 0;
+}
+
 .global-settings-tabs {
   position: sticky;
   top: 0;

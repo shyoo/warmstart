@@ -55,8 +55,9 @@ terminal bytes and goes to xterm.js and nowhere else.
 { kind: 'unassigned', … }   ⚠️ temporary; it removes itself once tasks.project_id is never null
 ```
 
-`ProjectTab` (`components/Project.tsx`): `flow · tasks · scratchpad · thread · conversations ·
-sessionTui · settings`.
+`ProjectTab` (`components/ProjectTabs.tsx`): `flow · scratchpad · tasks · thread · conversations ·
+sessionTui · settings`. The project tab bar gives each destination a pictogram in the tab's text
+colour and scrolls horizontally when the window is narrow.
 
 ⚠️ **`taskId` rides on the route**, not on the Tasks list: the Thread tab is a destination, so Back
 has to return to a *task* and not merely to a tab. The open task survives a tab change.

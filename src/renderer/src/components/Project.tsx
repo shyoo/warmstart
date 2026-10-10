@@ -15,31 +15,7 @@ import { PathField } from './NewProject'
 import { Scratchpad } from './Scratchpad'
 import type { ComposerSeed } from './NewTask'
 import { openCount, parseScratch } from '../lib/scratchpad'
-
-export type ProjectTab = 'flow' | 'tasks' | 'scratchpad' | 'thread' | 'conversations' | 'sessionTui' | 'settings'
-
-/**
- * ⛔ **Thread**, not Conversation. A conversation in this app is the agent session you resume with
- * `--resume` or `--conversation` — it has an id, it outlives the task that opened it, and Settings
- * has a page listing them. A task's messages are a different thing entirely, and giving both the
- * same name would make "which conversation is this task in?" ambiguous on the one screen that
- * answers it. See docs/glossary.md.
- */
-/**
- * ⛔ **Session TUI**, not Sessions. That tab shows one thing and only one: the *raw terminal* of a
- * live agent process, keystrokes and all. Called "Sessions" it read as a list of this project's
- * sessions — which is a real and different thing, is now called **Conversations**, and is the tab
- * beside it. Two tabs, two nouns; the pane that draws a TTY says so in its name.
- */
-export const PROJECT_TABS: Array<{ id: ProjectTab; label: string }> = [
-  { id: 'flow', label: 'Flow' },
-  { id: 'tasks', label: 'Tasks' },
-  { id: 'scratchpad', label: 'Scratchpad' },
-  { id: 'thread', label: 'Thread' },
-  { id: 'conversations', label: 'Conversations' },
-  { id: 'sessionTui', label: 'Session TUI' },
-  { id: 'settings', label: 'Settings' }
-]
+import { PROJECT_TABS, ProjectTabIcon, type ProjectTab } from './ProjectTabs'
 
 /** How often the tab label re-reads the file while the Scratchpad page itself is not open. */
 const OPEN_COUNT_POLL_MS = 10_000
@@ -142,13 +118,14 @@ export function Project({
         <RelocateBanner project={project} refreshProjects={refreshProjects} />
       )}
 
-      <div className="tabs">
+      <div className="tabs project-tabs">
         {PROJECT_TABS.map((t) => (
           <button
             key={t.id}
             className={`tab${tab === t.id ? ' tab--active' : ''}`}
             onClick={() => setTab(t.id)}
           >
+            <ProjectTabIcon tab={t.id} />
             {t.label}
             {t.id === 'scratchpad' && openPrompts.count > 0 && (
               <span className="tab-count" title={`${openPrompts.count} open prompt${openPrompts.count === 1 ? '' : 's'} (marked * New)`}>
