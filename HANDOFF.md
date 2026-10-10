@@ -24,7 +24,7 @@ Warmstart M0–M6 is implemented, including debate mode, quota-aware scheduling,
 The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
 design and incident history belongs in `transient_docs/`, not here.
 
-Baseline (2026-10-09, **Windows 11**, t1015): typecheck, lint and build pass; L1 **4,594 passed, 3 skipped** (265 files). L3 **536 checks, all passed** (4 skipped) on 2026-10-08 (t994). Earlier: L3 523 (t907.2). Earlier: L3 514 (t903). Earlier L3 figures: 501 (t890 merged tree, `ff9dc0ed`), 497 (t733). L2 **204 checks** (7 skipped) t727's and packaged app **19 checks** t723's, not re-run here. The L3 add-project wizard assertion checks the managed default and portable config introduced at t714, using the host path separator on Linux and Windows.
+Baseline (2026-10-10, **Windows 11**, t1038, `5425414d`): typecheck, lint and build pass; L1 **4,615 passed, 3 skipped** (266 files); L2 **204 checks** (7 skipped); L3 **540 checks** (4 skipped); packaged app **19 checks**, all passed. L2/L3 first ran against a stale `out/` and refused it; they passed after `npm run build`. The L3 add-project wizard assertion checks the managed default and portable config introduced at t714, using the host path separator on Linux and Windows.
 ⚠️ The `%TEMP%` figure is t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI and the Release workflow are enabled.
 
 **`v0.3.3` is `latest`** (t682, 2026-09-24), promoted onto `v0.3.3-rc.1`'s commit `8cf5d301`.
