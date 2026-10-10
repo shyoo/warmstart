@@ -898,9 +898,15 @@ export function clearQuarantineByProbe(id: string): void {
  * the same dead account every fifteen minutes, each time costing a workspace claim, a process, and a
  * task handed to a person as though their own work had failed.
  */
-export async function refreshIdentity(id: string, lift = false): Promise<Worker> {
+export async function refreshIdentity(
+  id: string,
+  lift = false,
+  opts?: { forceTokenRefresh?: boolean }
+): Promise<Worker> {
   const w = requireWorker(id)
-  const probe = await adapter(w.adapterId).probeIdentity(w.isolationRoot)
+  const probe = await adapter(w.adapterId).probeIdentity(w.isolationRoot, {
+    forceTokenRefresh: opts?.forceTokenRefresh ?? lift
+  })
   const identity = {
     // ⛔ Kept, not dropped. The adapter answered this question; throwing it away and having the
     // scheduler grep `raw` for `"loggedIn": false` is how a worker with no CLI installed used to

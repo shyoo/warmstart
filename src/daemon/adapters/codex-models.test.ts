@@ -39,4 +39,27 @@ describe('readCodexAvailableModels', () => {
     writeFileSync(join(dir, 'models_cache.json'), '{not json')
     expect(readCodexAvailableModels(dir)).toBeNull()
   })
+
+  it('restricts models for Free accounts, but treats a stale Free cache as unknown for paid accounts', () => {
+    const freeRoot = cache([
+      { slug: 'gpt-6-luna', visibility: 'list' },
+      { slug: 'gpt-5.6-terra', visibility: 'list' }
+    ])
+    // Free plan: restricted to the models in cache
+    expect(readCodexAvailableModels(freeRoot, 'Free')).toEqual(['gpt-6-luna', 'gpt-5.6-terra'])
+    expect(readCodexAvailableModels(freeRoot, null)).toEqual(['gpt-6-luna', 'gpt-5.6-terra'])
+
+    // Plus/Pro plan: if cache is stale from free tier (missing gpt-6-sol), return null so models are unconstrained
+    expect(readCodexAvailableModels(freeRoot, 'Plus')).toBeNull()
+    expect(readCodexAvailableModels(freeRoot, 'Pro')).toBeNull()
+
+    // Plus/Pro plan with updated cache: returns all available models
+    const plusRoot = cache([
+      { slug: 'gpt-6-astra', visibility: 'list' },
+      { slug: 'gpt-6-sol', visibility: 'list' },
+      { slug: 'gpt-6-luna', visibility: 'list' }
+    ])
+    expect(readCodexAvailableModels(plusRoot, 'Plus')).toEqual(['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'])
+    expect(readCodexAvailableModels(plusRoot, 'Pro')).toEqual(['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'])
+  })
 })

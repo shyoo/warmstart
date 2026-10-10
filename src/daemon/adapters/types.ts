@@ -149,7 +149,7 @@ export interface AgentAdapter {
   isInstalled(): boolean
 
   /** Who is logged in to this isolation root? Must not spend a turn. */
-  probeIdentity(isolationRoot: string): Promise<IdentityProbe>
+  probeIdentity(isolationRoot: string, opts?: { forceTokenRefresh?: boolean }): Promise<IdentityProbe>
 
   /**
    * How much of this account's window is left.

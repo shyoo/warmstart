@@ -153,6 +153,13 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
           log.warn(`quota probe failed for ${p.id}:`, err)
         })
       }
+      if (!refused) {
+        // ⭐ Re-read identity now that the CLI has run (e.g. codex app-server or refreshUsage,
+        // which refreshes on-disk auth tokens and models cache).
+        await refreshIdentity(p.id, false).catch((err: unknown) => {
+          log.warn(`identity refresh failed for ${p.id}:`, err)
+        })
+      }
       const reading =
         lastQuotaReading(p.id) ??
         lastQuota(p.id) ?? {

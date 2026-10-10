@@ -9,6 +9,7 @@ import {
   openaiCompatible,
   parseJwtPayload,
   readCodexAuthIdentity,
+  refreshTokensIfExpired,
   rolloutQuota,
   rolloutSpend,
   windowsFromRateLimits
@@ -363,6 +364,27 @@ describe('codex identity and JWT payload parsing', () => {
       loggedIn: true,
       subscriptionType: 'API Key'
     })
+  })
+
+  it('refreshTokensIfExpired skips refresh if unexpired unless force is true', async () => {
+    const futureExp = Math.floor(Date.now() / 1000) + 3600
+    const accessClaims = { exp: futureExp }
+    const accessToken = `h.${Buffer.from(JSON.stringify(accessClaims)).toString('base64url')}.s`
+    const dir = join(root, 'tokenrefresh')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'auth.json'),
+      JSON.stringify({
+        tokens: {
+          access_token: accessToken,
+          refresh_token: 'rt_mock'
+        }
+      })
+    )
+
+    // With force = false: token is not expired, returns true without fetching
+    const unforced = await refreshTokensIfExpired(dir, false)
+    expect(unforced).toBe(true)
   })
 })
 

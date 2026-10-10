@@ -824,7 +824,10 @@ export function formatPlan(plan?: string | null): string | null {
  * an empty offer — when the file is missing, unparseable or lists nothing: a worker that has not run
  * yet must not lose every model.
  */
-export function readCodexAvailableModels(isolationRoot: string): string[] | null {
+export function readCodexAvailableModels(
+  isolationRoot: string,
+  subscriptionType?: string | null
+): string[] | null {
   const path = join(isolationRoot, 'models_cache.json')
   if (!existsSync(path)) return null
   try {
@@ -834,7 +837,20 @@ export function readCodexAvailableModels(isolationRoot: string): string[] | null
     const slugs = (cache.models ?? [])
       .filter((m) => m.visibility === 'list' && typeof m.slug === 'string' && m.slug !== '')
       .map((m) => m.slug as string)
-    return slugs.length > 0 ? slugs : null
+    if (slugs.length === 0) return null
+
+    // ⛔ A paid plan (Plus, Pro, Team, Enterprise, Business) offers Sol and Astra.
+    // If models_cache.json lacks 'gpt-6-sol' while the subscription is paid, the cache
+    // on disk is stale from a prior Free period. Returning null treats available models
+    // as unknown (unconstrained) until the CLI or next probe refreshes the cache.
+    const isPaid = Boolean(
+      subscriptionType && !/free/i.test(subscriptionType) && subscriptionType !== 'API Key'
+    )
+    if (isPaid && !slugs.includes('gpt-6-sol')) {
+      return null
+    }
+
+    return slugs
   } catch (err) {
     log.debug('codex models_cache.json unreadable:', err)
     return null
@@ -853,7 +869,7 @@ export interface CodexAuthFile {
   last_refresh?: string
 }
 
-export async function refreshTokensIfExpired(isolationRoot: string): Promise<boolean> {
+export async function refreshTokensIfExpired(isolationRoot: string, force = false): Promise<boolean> {
   const authPath = join(isolationRoot, 'auth.json')
   if (!existsSync(authPath)) return false
   try {
@@ -864,7 +880,7 @@ export async function refreshTokensIfExpired(isolationRoot: string): Promise<boo
 
     const accessPayload = auth.tokens?.access_token ? parseJwtPayload(auth.tokens.access_token) : null
     const exp = typeof accessPayload?.exp === 'number' ? accessPayload.exp * 1000 : 0
-    if (exp > Date.now() + 60_000) {
+    if (!force && exp > Date.now() + 60_000) {
       return true
     }
 
@@ -1304,8 +1320,8 @@ export const openaiCompatible: AgentAdapter = {
    * ⛔ Presence of an auth file, never its contents. agentyard does not read, copy or proxy a
    * credential; it looks at whether the vendor put one there and reports the filename.
    */
-  async probeIdentity(isolationRoot: string): Promise<IdentityProbe> {
-    await refreshTokensIfExpired(isolationRoot)
+  async probeIdentity(isolationRoot: string, opts?: { forceTokenRefresh?: boolean }): Promise<IdentityProbe> {
+    await refreshTokensIfExpired(isolationRoot, opts?.forceTokenRefresh ?? false)
     const authIdent = readCodexAuthIdentity(isolationRoot)
 
     const resolved = which(info.command)
@@ -1330,7 +1346,7 @@ export const openaiCompatible: AgentAdapter = {
     }
 
     if (authIdent) {
-      const availableModels = readCodexAvailableModels(isolationRoot)
+      const availableModels = readCodexAvailableModels(isolationRoot, authIdent.subscriptionType)
       return {
         loggedIn: authIdent.loggedIn,
         ...(availableModels ? { availableModels } : {}),
