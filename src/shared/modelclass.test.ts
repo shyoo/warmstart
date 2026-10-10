@@ -10,6 +10,7 @@ describe('modelclass', () => {
     expect(defaultModelClass('claude-haiku-5-5')).toBe('low')
     expect(defaultModelClass('claude-haiku-4-5')).toBe('low')
 
+    expect(defaultModelClass('gpt-6.1-sol')).toBe('high')
     expect(defaultModelClass('gpt-6-astra')).toBe('high')
     expect(defaultModelClass('gpt-6-sol')).toBe('high')
     expect(defaultModelClass('gpt-5.6-sol')).toBe('high')

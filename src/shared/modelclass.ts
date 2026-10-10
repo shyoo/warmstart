@@ -32,6 +32,7 @@ export const DEFAULT_MODEL_CLASSES: Record<string, ModelClass> = {
   'claude-haiku-4-5': 'low',
 
   // OpenAI Codex
+  'gpt-6.1-sol': 'high',
   'gpt-6-astra': 'high',
   'gpt-6-sol': 'high',
   'gpt-6-luna': 'low',

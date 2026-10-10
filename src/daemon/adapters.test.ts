@@ -238,6 +238,11 @@ describe('a cost model may say it does not know', () => {
     // The cache is the CLI's own account-aware model catalogue, so it proves a Codex subscription
     // may select them; the public API catalogue alone would not establish that.
     const codex = costModel('openai.codex.2026-08')
+    // gpt-6.1-sol: codex-cli 0.162.1's catalogue, 2026-10-10 (priority 1, low through ultra, 872000).
+    expect(codex.modelIds()).toContain('gpt-6.1-sol')
+    expect(codex.modelSpec('gpt-6.1-sol')?.effort_levels).toEqual(codex.modelSpec('gpt-6-sol')?.effort_levels)
+    expect(codex.modelSpec('gpt-6.1-sol')?.effort_levels).toContain('ultra')
+    expect(codex.modelSpec('gpt-6.1-sol')?.context_window).toBe(872000)
     expect(codex.modelIds()).toContain('gpt-6-astra')
     expect(codex.modelSpec('gpt-6-astra')?.effort_levels).toEqual([
       'low',

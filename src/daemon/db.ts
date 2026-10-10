@@ -2354,7 +2354,20 @@ const MIGRATIONS: Migration[] = [
     project_id text primary key references projects(id),
     path text not null,
     updated_at integer not null
-  );`
+  );`,
+  // 89 - GPT 6.1 Sol replaces GPT 6 Sol as a Codex worker's default model.
+  //
+  // codex-cli 0.162.1 lists `gpt-6.1-sol` at priority 1 and keeps `gpt-6-sol` below it, so this is
+  // a succession, not a retirement: only the stored *default* moves. ⛔ The model table
+  // (`model_routes_json`) and the grading, summarising and judgment choices are the operator's own
+  // and stay as written; a `gpt-6-sol` row is still a valid pick. `default_effort` carries over
+  // because both models declare the same six levels. ⚠️ Replay-safe: after one pass no row
+  // matches. A worker whose plan does not list the new model is refused at filing with the usual
+  // *does not offer* message until its next identity refresh reads the CLI's cache.
+  `update workers
+      set default_model = 'gpt-6.1-sol'
+    where adapter_id = 'openai-compatible'
+      and default_model = 'gpt-6-sol';`
 ]
 
 /**

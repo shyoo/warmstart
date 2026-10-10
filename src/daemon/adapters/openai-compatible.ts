@@ -239,7 +239,8 @@ const info: AdapterInfo = {
       'usage record and the terminal one. `-c model_reasoning_effort=<level>` re-measured 2026-09-15 ' +
       'against a signed-in ChatGPT account, on a fresh exec and on exec resume: both echoed the level ' +
       'back in the rollout turn_context, and an unsupported level failed the turn with the API’s ' +
-      'own enum error rather than being silently dropped.'
+      'own enum error rather than being silently dropped. codex-cli 0.162.1 (2026-10-10) lists ' +
+      'gpt-6.1-sol at priority 1 in `codex debug models`; it has not been driven through a turn.'
   }
 }
 

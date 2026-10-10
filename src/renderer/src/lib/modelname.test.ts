@@ -9,6 +9,7 @@ import { compactModelLabel, effortLabel, modelLabel } from './modelname.js'
 describe('modelLabel', () => {
   it('writes the ids in costmodels/ the way a person says them', () => {
     // openai.codex.2026-08
+    expect(modelLabel('gpt-6.1-sol')).toBe('GPT 6.1 Sol')
     expect(modelLabel('gpt-6-astra')).toBe('GPT 6 Astra')
     expect(modelLabel('gpt-6-sol')).toBe('GPT 6 Sol')
     expect(modelLabel('gpt-5.6-terra')).toBe('GPT 5.6 Terra')
