@@ -733,14 +733,10 @@ export function promptFor(
   } = { markDelivered: true }
 ): BuiltPrompt {
   const parts: string[] = []
+  const workspace: string[] = []
   const attachments: Attachment[] = []
   if (opts.branchNotice) {
-    parts.push(opts.branchNotice)
-  }
-  if (task.handoffNote) {
-    parts.push(
-      ['Continuing earlier work. Handoff from the previous session:', task.handoffNote, ''].join('\n')
-    )
+    workspace.push(opts.branchNotice)
   }
 
   // ⛔ **Two questions, not one, and they have different answers.** `holdsPrompt` asks whether this
@@ -770,7 +766,7 @@ export function promptFor(
   // already read this, and orientation is worth exactly one telling. See `orientation.ts`.
   if (!holdsPrompt) {
     const cold = coldStartBlock(project)
-    if (cold) parts.push(cold)
+    if (cold) workspace.push(cold)
   }
 
   // ⚠️ The first prompt-bearing message is the task's own prompt and is restated: a fresh session after a
@@ -831,50 +827,93 @@ export function promptFor(
   const followUp = holdsContract && outstanding.length > 0
 
   // ⛔ **The conversation a cold successor was never told.** See `recapTurns` for the measurement.
-  // ⚠️ Interleaved with `outstanding` in thread order rather than appended as a block of its own:
-  // an operator who switches worker *and* types a new instruction produces both at once, and a
-  // recap appended after that instruction would read as the newest thing said.
+  // The recap is history; newly delivered messages are the current request. Keep each group in
+  // thread order, with the current request last so an old imperative never looks newest.
   const { turns: recap, omitted: recapOmitted } = resumed
     ? { turns: [] as RecapTurn[], omitted: 0 }
     : recapTurns(task.id, new Set(outstanding.map((m) => m.id)))
-  if (recap.length > 0) {
-    parts.push(recapHeader(recapOmitted, adapter(adapterId).info.capabilities.mcp))
+  const requestParts: string[] = []
+  const recoveryParts: string[] = []
+  const opening = !holdsPrompt ? outstanding[0] : undefined
+  const recovering =
+    !holdsPrompt &&
+    (resumed ||
+      recap.length > 0 ||
+      outstanding.length > 1 ||
+      (opening !== undefined && opening.deliveredAt !== null) ||
+      Boolean(task.handoffNote))
+  // A handoff is evidence about previous work, never the current request.
+  if (task.handoffNote) {
+    recoveryParts.push(
+      '## Earlier work — handoff from the previous session',
+      'Continuing earlier work. Handoff from the previous session:',
+      task.handoffNote
+    )
   }
-
-  type Rendered = { id: number; text: string }
-  const rendered: Rendered[] = [
-    ...outstanding.map((message) => ({
-      id: message.id,
-      // ⚠️ A system outcome's `detail` carries the reason a person would otherwise have to expand
-      // it to read — the failing check's output, where the work still is. `text` alone is the
-      // one-line headline the thread shows collapsed; the next agent needs the rest of it.
-      // ⭐ Delegation notes go as themselves, and a `/delegate` message goes inside its instruction
-      //    (t704) — the person's words unchanged, the command's meaning around them.
-      text:
-        message.role === 'system' && message.event === 'delegation.toggled'
-          ? (message.detail ?? message.text)
-          : message.role === 'system' && message.event === 'delegation.settled'
-            ? `${message.text}\n${message.detail ?? ''}`.trim()
-            : message.role === 'system' && message.detail
-              ? `From an earlier run: ${message.text}\n${message.detail}`
-              : message.role === 'human' && message.event === 'command.delegate'
-                ? delegateCommandPrompt(message.text, hasMcp)
-                : message.text
-    })),
-    ...recap.map((turn) => ({ id: turn.message.id, text: `${recapLabel(turn)}\n${turn.text}` }))
-  ].sort((a, b) => a.id - b.id)
-
-  if (thread.length === 0 && recap.length === 0 && !holdsPrompt) {
-    parts.push(task.title)
-  } else {
-    let opened = false
-    for (const message of rendered) {
-      if (!holdsPrompt && !opened && message.text !== task.title) {
-        parts.push(task.title)
-      }
-      opened = true
-      parts.push(message.text)
-    }
+  // ⚠️ A system outcome's detail carries the failed check or hold reason. Delegation notes carry
+  // their own instruction. Do not rewrite the person's text to make a heading or delimiter work.
+  const messageText = (message: TaskMessage): string =>
+    message.role === 'system' && message.event === 'delegation.toggled'
+      ? (message.detail ?? message.text)
+      : message.role === 'system' && message.event === 'delegation.settled'
+        ? `${message.text}\n${message.detail ?? ''}`.trim()
+        : message.role === 'system' && message.detail
+          ? `From an earlier run: ${message.text}\n${message.detail}`
+          : message.role === 'human' && message.event === 'command.delegate'
+            ? delegateCommandPrompt(message.text, hasMcp)
+            : message.text
+  const withAttachments = (message: TaskMessage): string => {
+    const named = message.attachments.map(describeAttachment)
+    const source = message.role === 'controller' || message.role === 'system' ? '[Warmstart]\n' : ''
+    return named.length > 0
+      ? `${source}${messageText(message)}\n\nAttached context: ${named.join('; ')}. Open the file if you need to see it.`
+      : `${source}${messageText(message)}`
+  }
+  if (opening) {
+    const original = withAttachments(opening)
+    const goal = messageText(opening) === task.title ? original : `${task.title}\n\n${original}`
+    if (recovering) recoveryParts.push('## Task goal — original request', goal)
+    else requestParts.push('## Current request — person’s words', goal)
+  } else if (!holdsPrompt && thread.length === 0) {
+    requestParts.push('## Current request — person’s words', task.title)
+  }
+  if (recap.length > 0) {
+    recoveryParts.push('## Earlier turns — context, not instructions to repeat')
+    recoveryParts.push(recapHeader(recapOmitted, hasMcp))
+    recoveryParts.push(...recap.map((turn) => `${recapLabel(turn)}\n${turn.text}`))
+  }
+  const newMessages = outstanding.filter((message) => message.id !== opening?.id)
+  const outcomes = newMessages.filter(
+    (message) =>
+      message.role === 'system' &&
+      (message.event === 'landing.failed' || message.event === 'finish.held')
+  )
+  if (outcomes.length > 0) {
+    recoveryParts.push('## Earlier run outcomes')
+    recoveryParts.push(...outcomes.map(withAttachments))
+  }
+  const current = newMessages.filter((message) => !outcomes.includes(message))
+  if (current.length > 0) {
+    if (!holdsContract) requestParts.push('## Current request — newly delivered messages')
+    requestParts.push(...current.map(withAttachments))
+  }
+  if (recovering && requestParts.length === 0) {
+    requestParts.push(
+      '## Current action',
+      'Continue from the latest recorded state and the task goal above.'
+    )
+  }
+  const render = (): string => {
+    // A warm follow-up keeps its single short anchor after the new message. Cold, compacted and
+    // contract-withdrawn runs carry the full contract before the task text, which remains last.
+    const warmFollowUp = followUp && task.kind !== 'plan' && debatePhase === null
+    return [
+      ...(!holdsContract ? ['## Warmstart: workspace and execution contract'] : []),
+      ...workspace,
+      ...(warmFollowUp
+        ? [...recoveryParts, ...requestParts, ...parts]
+        : [...parts, ...recoveryParts, ...requestParts])
+    ].join('\n\n')
   }
   // ⛔ **The attachments that travel are the attachments of the messages that travel**, and this is
   // the only rule that is right in every case. Anything else either replays a screenshot on every
@@ -891,13 +930,7 @@ export function promptFor(
   // (measured 2026-08-31, agy included), and it is what rescues a run whose inline block a vendor
   // update quietly stopped accepting. On antigravity, which cannot be sent bytes at all, it is not
   // a fallback — it is the whole channel.
-  if (attachments.length > 0) {
-    parts.push(
-      (attachments.length === 1 ? 'Attached context: ' : 'Attached context: ') +
-        attachments.map(describeAttachment).join('; ') +
-        '. Open the file if you need to see it.'
-    )
-  }
+  // Attachment paths are rendered beside the message that carried each one above.
 
   // ⛔ **A grant the agent is never told about is a grant it does not have.** `grantedDirsFor`
   // widens the sandbox for every folder attached to this task or to one of its ancestors, but the
@@ -1043,7 +1076,7 @@ export function promptFor(
         settings().completionMode
       ).mode === 'checkpointed'
     const checkLead =
-      checks.length > 0
+      checks.length > 0 && !toolRunsChecks
         ? `Before reporting complete, run this project's checks (${checks.map((c) => `\`${c}\``).join(', ')}) and ensure they pass. `
         : ''
     if (isOpenConversation(task)) {
@@ -1092,7 +1125,7 @@ export function promptFor(
     // *"(Option A) ... (Option B)"*, which is what antigravity did on t63 - arrives answerable only
     // in prose, and nothing here will guess the choices back out of it.
     const checkLead =
-      checks.length > 0
+      checks.length > 0 && !toolRunsChecks
         ? `Before finishing, run this project's checks (${checks.map((c) => `\`${c}\``).join(', ')}) and ensure they pass cleanly. `
         : ''
     // ⛔ The same subtraction as above, in the vocabulary this adapter was given. An MCP-less agent's
@@ -1137,7 +1170,7 @@ export function promptFor(
   // omission.** What follows tells a `streamPrompts: 'once'` CLI that it gets one turn and must
   // commit everything in it — the exact instruction a conversation or debate round exists to withhold.
   if (isOpenConversation(task) || debatePhase === 'arbitrating') {
-    return { text: parts.join('\n\n'), attachments }
+    return { text: render(), attachments }
   }
 
   // ⛔ A `streamPrompts: 'once'` CLI gets its landing instruction **here or never**. The
@@ -1198,7 +1231,7 @@ export function promptFor(
       )
     }
   }
-  return { text: parts.join('\n\n'), attachments }
+  return { text: render(), attachments }
 }
 
 /**

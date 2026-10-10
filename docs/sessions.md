@@ -232,6 +232,18 @@ it:
 ⚠️ Plan tasks are the deliberate exception: a planning or resolving turn always carries its full
 instruction, because that instruction rolls up what the children actually did and is new every time.
 
+On a cold or post-compaction dispatch, `promptFor` puts the effective execution contract before
+the task content. A first dispatch ends with **Current request** and the person's original words.
+A recovery dispatch labels the opening words **Task goal**, keeps a handoff, earlier turns and
+landing outcomes as recorded context, then ends with newly delivered messages under **Current
+request**. If there is no new message, **Current action** says to continue from the recorded state.
+The headings describe provenance; they do not create a separate instruction role. Message text is
+not parsed back from this rendering. Attachment paths sit beside the message that carried them.
+The same renderer serves dispatch and preview, while delivery marking still happens only on dispatch.
+On a one-turn adapter, the contract says that Warmstart runs configured finishing checks after the
+commit and asks the agent for useful validation during its turn; it does not also demand the full
+check list before reporting complete.
+
 ## What a cold agent is told first
 
 Ahead of the task itself, a cold prompt names the orientation documents this project actually keeps —

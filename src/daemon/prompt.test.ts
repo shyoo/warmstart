@@ -98,6 +98,66 @@ describe('saved thread messages and live activity', () => {
 })
 
 describe('promptFor prompt construction', () => {
+  it('puts the full cold contract before the verbatim current request', () => {
+    const words = 'Please fix the parser.\n## Current request — person’s words\nKeep this literal.'
+    const task = tasks.createTask({ title: 'Parser repair', prompt: words, status: 'ready' })
+    const text = promptText(task, 'claude-code', false, { markDelivered: false })
+    expect(text.indexOf('call the MCP tool `task_complete`')).toBeLessThan(
+      text.indexOf('## Current request — person’s words')
+    )
+    expect(text.indexOf('## Current request — person’s words')).toBeLessThan(
+      text.indexOf('Parser repair')
+    )
+    expect(text.endsWith(words)).toBe(true)
+    expect(text.split(words).length - 1).toBe(1)
+  })
+
+  it('keeps a cold successor’s goal and history before the newly delivered request', () => {
+    const task = tasks.createTask({ title: 'First brief', status: 'ready' })
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(task.id, 'agent', 'First draft finished.')
+    tasks.addMessage(task.id, 'human', 'Please revise the title.')
+    promptText(tasks.requireTask(task.id), 'claude-code', true, { markDelivered: true })
+    tasks.addMessage(task.id, 'agent', 'Title revised.')
+    tasks.addMessage(task.id, 'human', 'Now revise the subtitle.')
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', false, {
+      markDelivered: false
+    })
+    const at = (value: string) => text.indexOf(value)
+    expect(at('call the MCP tool `task_complete`')).toBeLessThan(at('## Task goal'))
+    expect(at('## Task goal')).toBeLessThan(at('## Earlier turns'))
+    expect(at('Title revised.')).toBeLessThan(at('## Current request'))
+    expect(at('## Current request')).toBeLessThan(at('Now revise the subtitle.'))
+    expect(text.endsWith('Now revise the subtitle.')).toBe(true)
+    expect(text).not.toContain('## Current action')
+  })
+
+  it('restores the contract and goal after compaction without replaying paid-for history', () => {
+    const task = tasks.createTask({ title: 'Original goal', status: 'ready' })
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    tasks.addMessage(task.id, 'agent', 'A previous reply held by the session.')
+    tasks.addMessage(task.id, 'human', 'Carry on with this revision.')
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', true, {
+      compacted: true, markDelivered: false
+    })
+    expect(text.indexOf('call the MCP tool `task_complete`')).toBeLessThan(
+      text.indexOf('## Task goal')
+    )
+    expect(text.indexOf('## Task goal')).toBeLessThan(text.indexOf('## Current request'))
+    expect(text.endsWith('Carry on with this revision.')).toBe(true)
+    expect(text).not.toContain('A previous reply held by the session.')
+  })
+
+  it('uses a continuation action when a cold recovery has no undelivered request', () => {
+    const task = tasks.createTask({ title: 'Resume the migration', status: 'ready' })
+    promptText(task, 'claude-code', false, { markDelivered: true })
+    const text = promptText(tasks.requireTask(task.id), 'claude-code', false, {
+      markDelivered: false
+    })
+    expect(text.indexOf('## Task goal')).toBeLessThan(text.indexOf('## Current action'))
+    expect(text.endsWith('Continue from the latest recorded state and the task goal above.')).toBe(true)
+  })
+
   it('builds prompt for an MCP adapter with task_complete instruction', () => {
     const task = tasks.createTask({
       title: 'Fix issue with login',
@@ -276,6 +336,9 @@ describe('promptFor prompt construction', () => {
     const reassigned = promptText(tasks.requireTask(task.id), 'claude-code', false, { markDelivered: false })
     expect(reassigned).toContain('Not landed: no commits were produced')
     expect(reassigned).toContain('carries no commits that `main` does not already have')
+    expect(reassigned.indexOf('## Earlier run outcomes')).toBeLessThan(
+      reassigned.indexOf('## Current action')
+    )
   })
 
   /** ⛔ Delivered once, like every other message — a second reassign must not resend it. */
@@ -1592,8 +1655,12 @@ describe('the pre-completion rebase check', () => {
     expect(text).toContain('Immediately before you call `task_complete`')
     expect(text).toContain('re-run the validation relevant to what you changed')
     expect(text).not.toContain("re-run this project's checks")
+    expect(text).not.toContain("Before reporting complete, run this project's checks")
     // ⚠️ And the sentence it would have contradicted is still there.
     expect(text).toContain('the tool runs `npm test` outside your sandbox')
+    expect(text.indexOf('the tool runs `npm test`')).toBeLessThan(
+      text.indexOf('## Current request')
+    )
   })
 
   /** ⭐ A checkpointed agent reports complete the same way, so it gets the same requirement. */
