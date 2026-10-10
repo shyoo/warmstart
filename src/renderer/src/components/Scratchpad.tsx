@@ -18,7 +18,7 @@ import {
   serializeScratch,
   setBody,
   setTag,
-  settleToTop,
+  settleAll,
   splitAt,
   tagOf,
   taskForRef,
@@ -111,16 +111,6 @@ export function Scratchpad({
   const caretRef = useRef(new Map<number, number>())
   const rootRef = useRef<HTMLDivElement>(null)
 
-  const adopt = useCallback((next: ScratchpadDoc) => {
-    const parsed = parseScratch(next.text)
-    baseRef.current = next.version
-    docRef.current = parsed
-    dirtyRef.current = false
-    setMeta(next)
-    setDocState(parsed)
-    setSaveState('saved')
-  }, [])
-
   const refreshTasks = useCallback(() => {
     void rpc('task.list', { projectId })
       .then(setTasks)
@@ -168,8 +158,14 @@ export function Scratchpad({
     return run
   }, [projectId])
 
+  /**
+   * Every edit lands here. ⭐ The earlier prompts are kept above the open ones (`settleAll`, t1026):
+   * only a card filed in the last few seconds (`filedTimers`) may sit among them. `raw` skips that for
+   * the whole-document editor, where the text must stay as it is typed.
+   */
   const change = useCallback(
-    (next: ScratchDoc) => {
+    (edit: ScratchDoc, raw = false) => {
+      const next = raw ? edit : settleAll(edit, new Set(filedTimers.current.keys()))
       docRef.current = next
       dirtyRef.current = true
       setDocState(next)
@@ -178,6 +174,22 @@ export function Scratchpad({
       timerRef.current = setTimeout(() => void flush(), SAVE_AFTER_MS)
     },
     [flush]
+  )
+
+  const adopt = useCallback(
+    (next: ScratchpadDoc) => {
+      const parsed = parseScratch(next.text)
+      baseRef.current = next.version
+      docRef.current = parsed
+      dirtyRef.current = false
+      setMeta(next)
+      setDocState(parsed)
+      setSaveState('saved')
+      // A file read with an earlier prompt below an open one (from before this, or edited elsewhere) is put in order.
+      const ordered = settleAll(parsed)
+      if (ordered !== parsed) change(ordered)
+    },
+    [change]
   )
 
   useEffect(() => {
@@ -213,18 +225,15 @@ export function Scratchpad({
     () => () => {
       clearTimeout(timerRef.current)
       // A card still waiting out its confirmation period goes up now, or it would stay where it was.
-      for (const [key, timers] of filedTimers.current) {
-        for (const timer of timers) clearTimeout(timer)
-        const found = findCard(docRef.current, key)
-        if (found) {
-          const moved = settleToTop(found.doc, found.at)
-          if (moved !== found.doc) {
-            docRef.current = moved
-            dirtyRef.current = true
-          }
+      for (const timers of filedTimers.current.values()) for (const timer of timers) clearTimeout(timer)
+      filedTimers.current.clear()
+      if (docRef.current) {
+        const ordered = settleAll(docRef.current)
+        if (ordered !== docRef.current) {
+          docRef.current = ordered
+          dirtyRef.current = true
         }
       }
-      filedTimers.current.clear()
       void flush()
     },
     [flush]
@@ -269,7 +278,6 @@ export function Scratchpad({
       const found = findCard(docRef.current, key)
       if (!found) return
       reveal([key])
-      change(setTag(found.doc, found.at, tag))
       for (const timer of filedTimers.current.get(key) ?? []) clearTimeout(timer)
       filedTimers.current.delete(key)
       setFading((prev) => {
@@ -280,10 +288,11 @@ export function Scratchpad({
       if (tag && tag.kind !== 'new') {
         const fade = setTimeout(() => setFading((prev) => new Set(prev).add(key)), FILED_VISIBLE_MS - FOLD_FADE_MS)
         const fold = setTimeout(() => {
-          const settled = findCard(docRef.current, key)
-          if (settled) {
-            const moved = settleToTop(settled.doc, settled.at)
-            if (moved !== settled.doc) change(moved)
+          // Released first, so the move below counts it with the rest.
+          filedTimers.current.delete(key)
+          if (docRef.current) {
+            const ordered = settleAll(docRef.current, new Set(filedTimers.current.keys()))
+            if (ordered !== docRef.current) change(ordered)
           }
           setShown((prev) => {
             const next = new Set(prev)
@@ -295,10 +304,11 @@ export function Scratchpad({
             next.delete(key)
             return next
           })
-          filedTimers.current.delete(key)
         }, FILED_VISIBLE_MS)
         filedTimers.current.set(key, [fade, fold])
       }
+      // After the hold is set: a card just filed stays where it is, one marked New again is put in order now.
+      change(setTag(found.doc, found.at, tag))
     },
     [change, reveal]
   )
@@ -467,7 +477,18 @@ export function Scratchpad({
           Show filed and older
         </label>
         <label className="scratchpad-toggle" title="Every prompt in one editor, joined by --- as in the file">
-          <input type="checkbox" checked={whole} onChange={(event) => setWhole(event.target.checked)} />
+          <input
+            type="checkbox"
+            checked={whole}
+            onChange={(event) => {
+              setWhole(event.target.checked)
+              // What was typed as text is put in order when the cards come back.
+              if (!event.target.checked && docRef.current) {
+                const ordered = settleAll(docRef.current)
+                if (ordered !== docRef.current) change(ordered)
+              }
+            }}
+          />
           Whole document
         </label>
         <span className="scratchpad-counts dim">
@@ -509,7 +530,7 @@ export function Scratchpad({
         <div className="scratchpad-whole">
           <HighlightEditor
             value={wholeText}
-            onChange={(text) => change(parseScratch(text))}
+            onChange={(text) => change(parseScratch(text), true)}
             ariaLabel="The whole scratchpad"
           />
         </div>

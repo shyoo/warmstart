@@ -306,15 +306,28 @@ export function markerLength(body: string): number {
 }
 
 /**
- * A settled card (filed, sent, completed) goes up with the earlier prompts, ahead of the first card
- * still New (t1025): the open ones stay together at the bottom, where a new prompt is also added, and
- * the history reads oldest to newest. A card already ahead of every New one, or a file with none, is unchanged.
+ * Keep the earlier prompts above the open ones (t1026): every card that is not `* New` and sits after
+ * the first one that is moves up to just before it, in the order it was in. The open prompts stay
+ * together at the bottom, where a new one is also added, and the history reads oldest to newest.
+ *
+ * `held` are cards left where they are for now — one filed a few seconds ago, kept in view while its
+ * result is read. Nothing else is exempt, so a file with no New card, or none out of place, comes back
+ * as the same object. ⚠️ Only the order of the bodies changes; each slot keeps its own blank lines
+ * and separator, as in `moveItem`.
  */
-export function settleToTop(doc: ScratchDoc, index: number): ScratchDoc {
-  const item = doc.items[index]
-  if (!item || tagOf(item.body)?.kind === 'new') return doc
-  const firstNew = doc.items.findIndex((each, i) => i !== index && tagOf(each.body)?.kind === 'new')
-  return firstNew < 0 || index < firstNew ? doc : moveItem(doc, index, firstNew)
+export function settleAll(doc: ScratchDoc, held: ReadonlySet<number> = new Set()): ScratchDoc {
+  const open = doc.items.map((item) => tagOf(item.body)?.kind === 'new')
+  const first = open.indexOf(true)
+  if (first < 0) return doc
+  const movers = doc.items.filter((item, i) => i > first && !open[i] && !held.has(item.key))
+  if (movers.length === 0) return doc
+  const moving = new Set(movers)
+  const items = [
+    ...doc.items.slice(0, first),
+    ...movers,
+    ...doc.items.slice(first).filter((item) => !moving.has(item))
+  ]
+  return { ...doc, items }
 }
 
 /** What filing or sending a card hands over: its text, without the marker. */

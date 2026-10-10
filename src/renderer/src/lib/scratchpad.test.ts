@@ -14,7 +14,7 @@ import {
   serializeScratch,
   setBody,
   setTag,
-  settleToTop,
+  settleAll,
   splitAt,
   tagOf,
   taskForRef,
@@ -185,32 +185,56 @@ describe('tags', () => {
   })
 })
 
-describe('settling a card (t1025)', () => {
-  const file = 'old\n\n---\n\n* New\n\na\n\n---\n\n* New\n\nb\n\n---\n\n* Filed t7\n\nc\n'
+describe('keeping the earlier prompts on top (t1026)', () => {
+  const file = 'old\n\n---\n\n* New\n\na\n\n---\n\n* New\n\nb\n\n---\n\n* Filed t7\n\nc\n\n---\n\nold two\n'
   const bodies = (doc: ReturnType<typeof parseScratch>) => doc.items.map((item) => item.body)
 
-  it('moves a settled card ahead of the first New one, after the earlier prompts', () => {
+  it('moves every card that is not New ahead of the first New one, keeping their order', () => {
     const doc = parseScratch(file)
-    const moved = settleToTop(doc, 3)
-    expect(bodies(moved)).toEqual(['old', '* Filed t7\n\nc', '* New\n\na', '* New\n\nb'])
-    expect(serializeScratch(moved)).toBe('old\n\n---\n\n* Filed t7\n\nc\n\n---\n\n* New\n\na\n\n---\n\n* New\n\nb\n')
+    const moved = settleAll(doc)
+    expect(bodies(moved)).toEqual(['old', '* Filed t7\n\nc', 'old two', '* New\n\na', '* New\n\nb'])
+    expect(serializeScratch(moved)).toBe(
+      'old\n\n---\n\n* Filed t7\n\nc\n\n---\n\nold two\n\n---\n\n* New\n\na\n\n---\n\n* New\n\nb\n'
+    )
     expect(moved.items[1]?.key).toBe(doc.items[3]?.key)
   })
 
-  it('leaves a card already in the history, a New card, and a file with no New alone', () => {
-    const doc = parseScratch(file)
-    expect(settleToTop(doc, 0)).toBe(doc)
-    expect(settleToTop(doc, 1)).toBe(doc)
+  it('leaves a file already in order, or with no New card, as the same object', () => {
+    const ordered = settleAll(parseScratch(file))
+    expect(settleAll(ordered)).toBe(ordered)
     const none = parseScratch('x\n\n---\n\n* Filed t1\n\ny\n')
-    expect(settleToTop(none, 1)).toBe(none)
-    expect(settleToTop(doc, 9)).toBe(doc)
+    expect(settleAll(none)).toBe(none)
+    const empty = parseScratch('')
+    expect(settleAll(empty)).toBe(empty)
   })
 
-  it('keeps successive settled cards in the order they settled', () => {
-    let doc = parseScratch(file)
-    doc = settleToTop(setTag(doc, 1, { kind: 'done' }), 1)
-    doc = settleToTop(doc, 3)
-    expect(bodies(doc)).toEqual(['old', '* Completed\n\na', '* Filed t7\n\nc', '* New\n\nb'])
+  it('leaves a card just filed where it is while it is held, and moves it once released', () => {
+    const doc = parseScratch(file)
+    const filed = doc.items[3]
+    if (!filed) throw new Error('expected a fourth card')
+    const held = settleAll(doc, new Set([filed.key]))
+    expect(bodies(held)).toEqual(['old', 'old two', '* New\n\na', '* New\n\nb', '* Filed t7\n\nc'])
+    expect(settleAll(held, new Set([filed.key]))).toBe(held)
+    expect(bodies(settleAll(held))).toEqual(['old', 'old two', '* Filed t7\n\nc', '* New\n\na', '* New\n\nb'])
+  })
+
+  it('puts a card in order when it is completed or marked New again', () => {
+    const doc = parseScratch(file)
+    expect(bodies(settleAll(setTag(doc, 1, { kind: 'done' })))).toEqual([
+      'old',
+      '* Completed\n\na',
+      '* Filed t7\n\nc',
+      'old two',
+      '* New\n\nb'
+    ])
+    const ordered = settleAll(doc)
+    expect(bodies(settleAll(setTag(ordered, 0, { kind: 'new' })))).toEqual([
+      '* Filed t7\n\nc',
+      'old two',
+      '* New\n\nold',
+      '* New\n\na',
+      '* New\n\nb'
+    ])
   })
 })
 
