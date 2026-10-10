@@ -2,6 +2,8 @@
 
 ## Current state — 2026-09-27
 
+**Model and effort tags plan (t1024, 2026-10-10).** The [dated implementation plan](transient_docs/model_tags_plan_2026-10-10.md) replaces each pair's single Low/Med/High label with multiple user tags. The operator chose one tag system and all-tags-required routing; no runtime change has landed. Next: implement migration, routing gates, task surfaces and a fixed-height worker-matrix tag editor, then run the planned regression and layout checks. Windows 11 checks (2026-10-10): typecheck, lint and build passed; L1 4,600 passed, 3 skipped (266 files).
+
 **Prompt structure plan (t1022, 2026-10-09).** A dated [implementation plan](transient_docs/prompt_restructure_2026-10-09.md) proposes moving the full execution contract ahead of the person's request, with explicit recovery/history sections for compaction and cold reassignment. No runtime prompt change yet; next step is to implement the envelope and compare it against recorded recovery scenarios. On Windows 11 (2026-10-09): typecheck, lint and build passed; L1 4,600 passed, 3 skipped (266 files).
 
 **Project tab navigation (t1020, 2026-10-09).** Project tabs now read Flow, Scratchpad, Tasks, Thread, Conversations, Session TUI, Settings. Each has a distinct text-colour pictogram; the bar scrolls in a narrow window. L1 verifies the order and icon set. Windows 11 checks (2026-10-09): typecheck, lint, build pass; L1 4,600 passed, 3 skipped (266 files).
@@ -188,11 +190,3 @@ judgement. Do not replace the missing evidence with a unit test.
 | Vertex/Antigravity cache price | Find a published vendor price; do not infer it experimentally. | Keeps `cache.kind: "unpriced"` honest. |
 | Expected-idle estimator | Gather real queue data first. | No honest design exists without it. |
 Record results, CLI versions and dates in [`docs/cost-model.md`](docs/cost-model.md), then remove the row.
-
-## Durable constraints
-
-- A worker is an account; a session is a live process. Quota belongs to the worker, context to the session. [`docs/glossary.md`](docs/glossary.md) is authoritative.
-- The scheduler spends zero tokens; model judgment is asynchronous and has a deterministic fallback.
-- Agents use pooled worktrees, never the trunk — unless the task's workspace mode is `trunk`, which
-  holds the single trunk lease. Nothing kills a process by image name or bare PID.
-- The renderer treats agent output as untrusted text; no raw HTML. Do not trust an agent-session view of `%APPDATA%`: packaged hosts can redirect it. See [`docs/development.md`](docs/development.md) §4.
