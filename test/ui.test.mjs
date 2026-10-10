@@ -392,10 +392,10 @@ try {
     titlebar
   )
   check(
-    'it carries the panel toggle, back, forward, refresh, both zooms and New task',
+    'it carries the panel toggle, back, forward, refresh, both zooms, When done and New task',
     ['Hide panel', 'Back', 'Forward', 'Refresh', 'Zoom out (Ctrl -)', 'Zoom in (Ctrl +)'].every(
       (name) => t.controls?.includes(name)
-    ) && t.controls?.includes('New task'),
+    ) && t.controls?.includes('When done ▾') && t.controls?.includes('New task'),
     titlebar
   )
   // ⛔ Both halves. `drag` with no `no-drag` on the controls is a strip whose buttons move the window

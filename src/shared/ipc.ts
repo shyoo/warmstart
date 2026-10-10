@@ -14,6 +14,15 @@ export interface AppInfo {
   platform: NodeJS.Platform
 }
 
+export type PowerAction = 'shutdown' | 'sleep' | 'hibernate'
+export interface PowerActionState {
+  available: PowerAction[]
+  action: PowerAction | null
+  /** Absolute epoch milliseconds; null while work is still active. */
+  dueAt: number | null
+  error: string | null
+}
+
 /** The update file is downloaded and checksum-verified, never installed by Warmstart itself. */
 export type UpdatePhase = 'idle' | 'checking' | 'current' | 'downloading' | 'downloaded' | 'unavailable' | 'error'
 
@@ -178,6 +187,10 @@ export interface TargetEvent {
 
 export interface AgentyardApi {
   getAppInfo(): Promise<AppInfo>
+  getPowerAction(): Promise<PowerActionState>
+  armPowerAction(action: PowerAction): Promise<PowerActionState>
+  cancelPowerAction(): Promise<PowerActionState>
+  onPowerAction(handler: (state: PowerActionState) => void): () => void
   getUpdateStatus(): Promise<AppUpdateState>
   /** Opens the folder containing a checksum-verified installer. Never runs it. */
   showDownloadedUpdate(): Promise<boolean>
@@ -221,6 +234,10 @@ export interface AgentyardApi {
 
 export const IPC = {
   appInfo: 'app:info',
+  powerGet: 'power:get',
+  powerArm: 'power:arm',
+  powerCancel: 'power:cancel',
+  powerPush: 'power:push',
   updateStatus: 'app:update-status',
   updateShowDownloaded: 'app:update-show-downloaded',
   updatePush: 'app:update-push',

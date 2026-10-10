@@ -4,6 +4,7 @@ import {
   dialog,
   Menu,
   Notification,
+  powerMonitor,
   powerSaveBlocker,
   Tray,
   ipcMain,
@@ -14,7 +15,7 @@ import {
 } from 'electron'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { IPC, LOCAL_TARGET, type AppInfo, type DaemonUiStatus, type NotifyRequest, type PairRemoteRequest, type TargetEvent, type TargetsState, type UiSettings } from '@shared/ipc.js'
+import { IPC, LOCAL_TARGET, type AppInfo, type DaemonUiStatus, type NotifyRequest, type PairRemoteRequest, type PowerAction, type TargetEvent, type TargetsState, type UiSettings } from '@shared/ipc.js'
 import type { DaemonEvent, RpcMethod } from '@shared/protocol.js'
 import { DaemonClient, daemonScriptPath } from './daemon.js'
 import { TargetManager, localUiStatus } from './targets.js'
@@ -29,6 +30,7 @@ import { appEnv } from '@shared/env.js'
 import { APP_VERSION, RELEASE_REPOSITORY } from '@shared/version.js'
 import { UpdateManager } from './updates.js'
 import { applicationMenuTemplate } from './applicationmenu.js'
+import { hasActiveWork, PowerActionController, runPowerCommand } from './poweraction.js'
 
 const dirname = join(fileURLToPath(import.meta.url), '..')
 
@@ -247,6 +249,7 @@ function applyTraySetting(): void {
  * lifetime, and stopping a wrong id is silently ignored — so the id is the only authority.
  */
 let preventSleepBlockerId = -1
+let powerTransition = false
 
 /**
  * Start or stop the OS sleep blocker to match `uiSettings.preventSleep`.
@@ -259,7 +262,7 @@ let preventSleepBlockerId = -1
  * never a window where the setting says one thing and the OS blocker says another.
  */
 function applyPreventSleep(): void {
-  const want = uiSettings.preventSleep
+  const want = uiSettings.preventSleep && !powerTransition
   const running = preventSleepBlockerId !== -1 && powerSaveBlocker.isStarted(preventSleepBlockerId)
   if (want && !running) {
     preventSleepBlockerId = powerSaveBlocker.start('prevent-app-suspension')
@@ -268,6 +271,31 @@ function applyPreventSleep(): void {
     preventSleepBlockerId = -1
   }
 }
+
+const powerAction = new PowerActionController(
+  process.platform,
+  async () => {
+    const [tasks, sessions] = await Promise.all([
+      daemon.rpc('task.list', {}),
+      daemon.rpc('session.list', undefined)
+    ])
+    return hasActiveWork(tasks, sessions)
+  },
+  async (action) => {
+    if (action === 'sleep' || action === 'hibernate') {
+      powerTransition = true
+      applyPreventSleep()
+    }
+    try {
+      await runPowerCommand(process.platform, action)
+    } catch (error) {
+      powerTransition = false
+      applyPreventSleep()
+      throw error
+    }
+  },
+  (state) => broadcast(IPC.powerPush, state)
+)
 
 function createWindow(): BrowserWindow {
   const icon = windowIcon()
@@ -343,6 +371,16 @@ function createWindow(): BrowserWindow {
 }
 
 void app.whenReady().then(() => {
+  ipcMain.handle(IPC.powerGet, () => powerAction.state())
+  ipcMain.handle(IPC.powerArm, (_event, action: PowerAction) => {
+    if (headless) throw new Error('Power actions are unavailable in headless mode')
+    return powerAction.arm(action)
+  })
+  ipcMain.handle(IPC.powerCancel, () => powerAction.cancel())
+  powerMonitor.on('resume', () => {
+    powerTransition = false
+    applyPreventSleep()
+  })
   ipcMain.handle(
     IPC.appInfo,
     (): AppInfo => ({
@@ -464,6 +502,7 @@ app.on('window-all-closed', () => {
 // macOS: the app stays alive with no windows, so this is the only path Cmd-Q takes.
 app.on('before-quit', () => {
   quitting = true
+  powerAction.dispose()
   targets?.dispose()
   daemon.dispose()
 })

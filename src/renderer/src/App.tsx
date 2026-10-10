@@ -79,6 +79,7 @@ import { MachinePicker } from './components/MachinePicker'
 import { WelcomeTour } from './components/WelcomeTour'
 import { completeWelcome, welcomePending } from './lib/welcome'
 import { reorderedProjectIds } from './lib/projectorder'
+import { PowerActionControl } from './components/PowerActionControl'
 
 /**
  * The shell.
@@ -513,6 +514,7 @@ export function App({
           </IconButton>
         </div>
         <span className="titlebar-name">Warmstart</span>
+        <PowerActionControl remote={target.kind === 'remote'} />
         <button
           className="btn btn--primary titlebar-new-task"
           onClick={() => openNewTask(route.kind === 'project' ? route.id : undefined)}

@@ -82,6 +82,16 @@ until someone decides otherwise. It is off by default and gated a second time pe
 Events flow the other way over a WebSocket: `DaemonEvent` (`protocol.ts`) → main → `daemon:event-push`
 → renderer. `session.data` carries raw terminal bytes; everything else is typed state.
 
+Electron main owns the one-time **When done** power action (`main/poweraction.ts`). Only the local
+window may arm it; a paired desktop cannot order another computer to shut down. While armed, main
+reads `task.list` and `session.list` every 5 s without consulting a model. Ready, blocked, scheduled,
+assigned, running, landing-queued and cancelling tasks hold the action; human and quota holds do not.
+Live work, consult and review sessions also hold it. An empty fleet starts a 60 s cancel window;
+new work clears that countdown, and main reads both lists again before issuing the OS command.
+RPC failure cancels the action with an error. The action is one-shot and lives only as long as the
+Electron process. Sleep and hibernate temporarily release the idle-sleep blocker and restore it on
+resume. macOS offers shutdown and sleep; Windows and Linux also offer hibernate.
+
 ⛔ **The daemon is single-threaded and every handler is synchronous `node:sqlite`, so an expensive
 RPC is not slow — it is a stall for everyone.** And node's socket reapers are timers: they do not
 fire *during* a stall, they fire in a batch the instant it clears. Measured 2026-09-09 by stacking 40

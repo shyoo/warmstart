@@ -162,8 +162,13 @@ operator has opened and written in, because rewriting it would discard their wor
 ⛔ **The window's title bar is this app's, and there is only one of it.** `captionOptions` in
 [`../src/main/titlebar.ts`](../src/main/titlebar.ts) hides the native caption on Windows and macOS and
 leaves the platform's own window buttons overlaid at one end of it; `.titlebar` in `App.tsx` draws the
-rest — panel toggle, back, forward, refresh, the two zooms with their reset badge, the app name, and
-the global **New task**. ⚠️ Two halves make it work and either alone is a bug that looks like the
+rest — panel toggle, back, forward, refresh, the two zooms with their reset badge, the app name,
+**When done** and the global **New task**. **When done** arms a one-time shutdown, sleep or hibernate
+for this computer. While armed it names the action beside **Cancel**; after work settles it shows a
+60-second countdown there. It is disabled while viewing a remote computer, though an already armed
+local action remains visible and cancellable. An empty queue cannot be armed. The action is lost if
+the app quits before it runs; a hidden tray window keeps it armed. ⚠️ Two halves make the strip work
+and either alone is a bug that looks like the
 other's. (1) The strip's inset comes from `env(titlebar-area-x/width/height)`, never a constant: the
 buttons are at the right on Windows and the left on macOS, and their width follows the display scale —
 145px on the machine this was measured on (2026-09-11, t356). (2) `-webkit-app-region: drag` on the

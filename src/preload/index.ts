@@ -4,6 +4,8 @@ import {
   type AgentyardApi,
   type AppInfo,
   type AppUpdateState,
+  type PowerAction,
+  type PowerActionState,
   type DaemonUiStatus,
   type TargetEvent,
   type TargetsState,
@@ -20,6 +22,14 @@ import type { DaemonEvent, RpcMethod, RpcParams, RpcResult } from '@shared/proto
  */
 const api: AgentyardApi = {
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfo) as Promise<AppInfo>,
+  getPowerAction: () => ipcRenderer.invoke(IPC.powerGet) as Promise<PowerActionState>,
+  armPowerAction: (action: PowerAction) => ipcRenderer.invoke(IPC.powerArm, action) as Promise<PowerActionState>,
+  cancelPowerAction: () => ipcRenderer.invoke(IPC.powerCancel) as Promise<PowerActionState>,
+  onPowerAction(handler) {
+    const listener = (_e: unknown, state: PowerActionState) => handler(state)
+    ipcRenderer.on(IPC.powerPush, listener)
+    return () => ipcRenderer.removeListener(IPC.powerPush, listener)
+  },
   getUpdateStatus: () => ipcRenderer.invoke(IPC.updateStatus) as Promise<AppUpdateState>,
   showDownloadedUpdate: () => ipcRenderer.invoke(IPC.updateShowDownloaded) as Promise<boolean>,
   onUpdateStatus(handler) {

@@ -2,8 +2,8 @@
 
 ## Current state — 2026-09-27
 
-**Scratchpad completion and menu scroll sizing (t1029, 2026-10-10).** The card's **…** menu offers **Mark completed** through the existing tag action. Scrolling inside any portalled pill menu no longer remeasures and shrinks it; ancestor scrolling and resize still reposition it.
-Windows 11: typecheck, lint, build pass; L1 4,606 passed, 3 skipped (266 files); L3 `test:ui` 540 passed, 4 skipped, including menu geometry and the persisted Completed marker.
+**Scratchpad completion and menu scroll sizing (t1029, 2026-10-10).** The card's **…** menu offers **Mark completed** through the existing tag action. Scrolling inside any portalled pill menu no longer remeasures and shrinks it; ancestor scrolling and resize still reposition it. Windows 11: typecheck, lint, build pass; L1 4,606 passed, 3 skipped (266 files); L3 `test:ui` 540 passed, 4 skipped, including menu geometry and the persisted Completed marker.
+**One-time power action (t1030, 2026-10-10).** Title-bar **When done** arms shutdown/sleep/hibernate on this computer, with a 60 s **Cancel** countdown. Main polls local task/session work every 5 s and rechecks before acting; human/quota holds do not delay it (operator decision), resource holds do. It cancels on RPC failure or app exit; a hidden tray window keeps it. macOS offers shutdown/sleep only. No test actually powers off a computer. Windows 11: typecheck, lint, build pass; full L1 **4,610 passed, 3 skipped** (267 files), then the added queue-race test and docs guard passed in a targeted run; L3 **538 passed, 4 skipped**.
 
 **Earlier prompts always sit above the open ones (t1026, 2026-10-10).** `settleAll` (`lib/scratchpad.ts`) runs on every edit and every file read: any non-New card after the first New card moves up before it; only a card filed/sent/completed in the last 4 s is held in place. A disordered file is rewritten when opened. L1: 4 new in `scratchpad.test.ts`. ⚠️ Not driven in the app.
 
