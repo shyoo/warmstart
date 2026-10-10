@@ -113,16 +113,20 @@ export function Pill({
     reposition()
   }, [open, reposition])
 
-  // ⚠️ Scrolling *anything* moves the pill, so the listener is on the capture phase: a scroll inside
-  // the composer's own row does not bubble to the window.
+  // ⚠️ Ancestor scrolling moves the pill, so listen in capture phase. Scrolling the portalled menu
+  // itself does not move the pill; measuring its constrained height again can shrink it on each scroll.
   useEffect(() => {
     if (!open) return
-    const onMove = (): void => reposition()
-    window.addEventListener('resize', onMove)
-    window.addEventListener('scroll', onMove, true)
+    const onResize = (): void => reposition()
+    const onScroll = (event: Event): void => {
+      if (event.target instanceof Node && menuRef.current?.contains(event.target)) return
+      reposition()
+    }
+    window.addEventListener('resize', onResize)
+    window.addEventListener('scroll', onScroll, true)
     return () => {
-      window.removeEventListener('resize', onMove)
-      window.removeEventListener('scroll', onMove, true)
+      window.removeEventListener('resize', onResize)
+      window.removeEventListener('scroll', onScroll, true)
     }
   }, [open, reposition])
 

@@ -978,6 +978,10 @@ only thing the row actually knows.
 project. There is deliberately no fleet-wide Resources table: it listed the pools a project's own
 Settings tab already shows.
 
+The scratchpad card's **…** menu offers **Mark completed**, which writes the same `* Completed`
+marker as its status pill. A scroll inside any portalled pill menu must leave its size and position
+alone; only scrolling the anchor's ancestors or resizing the window calls for repositioning.
+
 ## 4. Renderer-side logic lives in `lib/`, and is unit-tested
 
 ⭐ **The reason this directory exists:** the UI suite's worker has no credentials, so nothing it files

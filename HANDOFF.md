@@ -2,6 +2,9 @@
 
 ## Current state — 2026-09-27
 
+**Scratchpad completion and menu scroll sizing (t1029, 2026-10-10).** The card's **…** menu offers **Mark completed** through the existing tag action. Scrolling inside any portalled pill menu no longer remeasures and shrinks it; ancestor scrolling and resize still reposition it.
+Windows 11: typecheck, lint, build pass; L1 4,606 passed, 3 skipped (266 files); L3 `test:ui` 540 passed, 4 skipped, including menu geometry and the persisted Completed marker.
+
 **Earlier prompts always sit above the open ones (t1026, 2026-10-10).** `settleAll` (`lib/scratchpad.ts`) runs on every edit and every file read: any non-New card after the first New card moves up before it; only a card filed/sent/completed in the last 4 s is held in place. A disordered file is rewritten when opened. L1: 4 new in `scratchpad.test.ts`. ⚠️ Not driven in the app.
 
 **Scratchpad status dropdown, image paste, settled cards move up (t1025, 2026-10-10).** (1) A filed, sent or completed card moves ahead of the first remaining `* New` card once its four-second confirmation ends (now via t1026's `settleAll`). (2) Pasting an image into a card uploads it like the composer; **File as task…** seeds the composer with it attached and **Send ▾** passes `attachmentIds`. Not written to the file. (3) The card title line is gone. (4) The `New` pill is a *New / Completed* dropdown writing `* New` / `* Completed`; the marker line is hidden from the card's text (still in *Whole document*). Checks (Windows 11): typecheck, lint, build pass; L1 4,605 passed, 3 skipped. L3 `test:ui` 538 passed (4 skipped), with a new card-head check. ⚠️ Not driven with a real clipboard image or a real filing (the UI worker has none); the paste path and the move-up timing are covered by source and L1 only. `docs/ui.md`, `glossary.md`.

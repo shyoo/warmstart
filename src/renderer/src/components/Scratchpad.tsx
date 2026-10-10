@@ -672,6 +672,7 @@ const ScratchCard = memo(function ScratchCard({
     { value: '', label: 'New conversation…', hint: 'Opens the composer with this prompt, as a Conversation' }
   ]
   const moreOptions: PillOption[] = [
+    { value: 'complete', label: 'Mark completed', disabled: tag?.kind === 'done' || tag?.kind === 'filed' || tag?.kind === 'sent' },
     { value: 'copy', label: 'Copy prompt' },
     { value: 'below', label: 'New prompt below' },
     { value: 'split', label: 'Split at cursor', hint: 'Cuts this prompt in two where the cursor was last' },
@@ -681,7 +682,8 @@ const ScratchCard = memo(function ScratchCard({
     { value: 'delete', label: 'Delete…' }
   ]
   const onMore = (value: string): void => {
-    if (value === 'copy') actions.copy(key)
+    if (value === 'complete') actions.tag(key, { kind: 'done' })
+    else if (value === 'copy') actions.copy(key)
     else if (value === 'below') actions.insertBelow(key)
     else if (value === 'split') actions.split(key)
     else if (value === 'merge') actions.merge(key)

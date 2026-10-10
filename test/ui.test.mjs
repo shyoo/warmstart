@@ -5002,6 +5002,41 @@ try {
   await evaluate(`document.querySelector('button[aria-label="Close new task"]')?.click()`)
   await wait(400)
 
+  await evaluate(`document.querySelector('.scratch-card button[aria-label="More for this prompt"]')?.click()`)
+  await waitFor(
+    async () => await evaluate(`!!document.querySelector('.pill-menu [data-value="complete"]')`),
+    'the prompt actions to open'
+  )
+  const menuBeforeScroll = await evaluate(`(() => {
+    const menu = document.querySelector('.pill-menu')
+    return menu ? { height: menu.getBoundingClientRect().height, top: menu.getBoundingClientRect().top } : null
+  })()`)
+  await evaluate(`(() => {
+    const menu = document.querySelector('.pill-menu')
+    menu.scrollTop = menu.scrollHeight
+    menu.dispatchEvent(new Event('scroll'))
+  })()`)
+  await wait(100)
+  const menuAfterScroll = await evaluate(`(() => {
+    const menu = document.querySelector('.pill-menu')
+    return menu ? { height: menu.getBoundingClientRect().height, top: menu.getBoundingClientRect().top } : null
+  })()`)
+  check(
+    'scrolling prompt actions keeps the menu the same size and position',
+    menuBeforeScroll?.height > 0 && menuAfterScroll?.height === menuBeforeScroll.height && menuAfterScroll?.top === menuBeforeScroll.top,
+    JSON.stringify({ menuBeforeScroll, menuAfterScroll })
+  )
+  await evaluate(`document.querySelector('.pill-menu [data-value="complete"]')?.click()`)
+  await waitFor(
+    async () => await evaluate(`document.querySelector('.scratch-card .scratch-status .pill')?.innerText.trim() === 'Completed ▾'`),
+    'the prompt status to become Completed'
+  )
+  await waitFor(
+    async () => (await evaluate(`window.agentyard.rpc('scratchpad.get', { projectId: ${JSON.stringify(scratchProject)} })`))?.text?.startsWith('* Completed'),
+    'the completed marker to save in the file'
+  )
+  check('Mark completed in prompt actions writes the Completed status', true)
+
   section('open conversations in the sidebar, and renaming from the convoHeading')
   // ⛔ Switching between two conversations meant Tasks board → find the row → open it, every time
   // (t479). A project now lists the conversations it is in the middle of under itself in the
