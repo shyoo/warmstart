@@ -14,7 +14,7 @@
  * on a live account. Every caller is bounded: the warm-up it replaces (once per silent streak), a
  * person's Probe press, and the sweep's re-check of an expired account (`RECHECK_EXPIRED_MS`).
  */
-import type { AccountCheck } from '@shared/protocol.js'
+import type { AccountCheck, AdapterInfo } from '@shared/protocol.js'
 import type { AgentAdapter } from './adapters/types.js'
 import type { StreamEvent } from './stream.js'
 import { adapter } from './adapters/index.js'
@@ -86,6 +86,23 @@ export function expiredRecheckDue(workerId: string, now = Date.now()): boolean {
   return now - last >= RECHECK_EXPIRED_MS
 }
 
+/**
+ * Does a person's Probe press ask the vendor to run a turn on this account first? (t1010)
+ *
+ * ⛔ Yes wherever the adapter has a check and its usage refresh does not run it from inside: only a
+ * screen-answered refresh does (`readUsage`, when its panel reads unavailable). Claude's types
+ * `/usage` and reads a cache file, and both read healthy on an account whose access was withdrawn —
+ * measured on ClaudeSecond, 2026-10-09 — so before this its Probe said *no usage data*, never
+ * *expired*. An account already held as expired is always re-asked.
+ */
+export function probeAsksVendor(
+  info: Pick<AdapterInfo, 'accountCheck' | 'usageRefresh'>,
+  health: { subscriptionExpired?: boolean } | null | undefined
+): boolean {
+  if (!info.accountCheck) return false
+  return health?.subscriptionExpired === true || info.usageRefresh?.answer !== 'screen'
+}
+
 const inFlight = new Map<string, Promise<AccountCheckResult>>()
 
 /**
@@ -110,7 +127,12 @@ async function runCheck(workerId: string, why: string): Promise<AccountCheckResu
   const at = Date.now()
   if (!check) return { verdict: 'inconclusive', reason: `${ad.info.label} declares no account check`, at }
 
-  const { spawnSession, closeSession, onSessionStream, onSessionEnd, sendPrompt } = await import('./sessions.js')
+  const { spawnSession, closeSession, onSessionStream, onSessionEnd, sendPrompt, whyNoSession } = await import('./sessions.js')
+  // ⛔ Asked before trying, as the usage refresh does: a check is a turn on a live account, and an
+  // account closed to work (disabled, retired, human-occupied) is not spent — t1010 relies on this,
+  // because Probe now asks Claude's accounts, and the L2 suite probes a disabled copy of a real one.
+  const blocked = whyNoSession(w, 'probe')
+  if (blocked) return { verdict: 'inconclusive', reason: `not asked: ${blocked}`, at }
   let sessionId: string | null = null
   let result: { text: string; isError: boolean } | null
   try {

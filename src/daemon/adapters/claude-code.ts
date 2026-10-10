@@ -129,6 +129,18 @@ const info: AdapterInfo = {
   // input and 14s for the answer to reach disk; both are padded here, because being early means
   // reading the old number and believing it.
   usageRefresh: { command: '/usage', readyMs: 12_000, settleMs: 16_000 },
+  // ⛔ **The only way to see a lapsed or disabled subscription** (t1010). Measured 2026-10-09 on
+  // ClaudeSecond, whose access had been withdrawn: `auth status --json` still said `loggedIn: true,
+  // subscriptionType: pro`, `.claude.json` still read `billingType: stripe_subscription`, and the
+  // usage cache simply stopped updating — so Probe read *no usage data*, never *expired*. One `-p`
+  // turn answered in under a second with `is_error: true, api_error_status: 403`, `total_cost_usd: 0`,
+  // zero tokens: `Your organization has disabled Claude subscription access for Claude Code …`, which
+  // `subscriptionExpired` already reads. Free while the vendor refuses. ⚠️ No `effort`: `--effort low`
+  // was not measured against a live account, and the CLI refused this one before any model ran.
+  accountCheck: {
+    prompt: 'What model are you? Answer in one short sentence and do nothing else.',
+    timeoutMs: 90_000
+  },
   // ⛔ Measured 2026-08-27. Signing in is not being set up: the credential lands in the isolation
   // root and `hasCompletedOnboarding` does not, so the first interactive session there shows the
   // theme picker and the login-method chooser instead of a prompt. Print mode never sees them,

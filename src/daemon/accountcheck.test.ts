@@ -64,6 +64,70 @@ describe('the Muse adapter declares a check', () => {
   })
 })
 
+/**
+ * t1010: the verbatim record `claude -p` returned on ClaudeSecond, 2026-10-09, after access was
+ * withdrawn: `is_error: true`, `api_error_status: 403`, `total_cost_usd: 0`, while `auth status`
+ * still said `loggedIn: true` and `.claude.json` still said `billingType: stripe_subscription`.
+ */
+const CLAUDE_DISABLED =
+  'Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, or ask your admin to enable access'
+
+describe('the Claude adapter declares a check (t1010)', () => {
+  let claudeCode: typeof import('./adapters/claude-code.js')['claudeCode']
+  beforeAll(async () => {
+    claudeCode = (await import('./adapters/claude-code.js')).claudeCode
+  })
+
+  it('so Probe has a turn that can tell, where nothing free can', () => {
+    expect(claudeCode.info.accountCheck?.prompt).toBeTruthy()
+  })
+
+  it('reads the withdrawn-access refusal as expired, not as a failure or a re-login', () => {
+    const verdict = check.classifyAccountCheck(claudeCode, { text: CLAUDE_DISABLED, isError: true })
+    expect(verdict.verdict).toBe('expired')
+    expect(verdict.reason).toBe(CLAUDE_DISABLED)
+  })
+
+  it('still reads a turn the vendor ran as ok', () => {
+    expect(check.classifyAccountCheck(claudeCode, { text: 'I am Claude.', isError: false }).verdict).toBe('ok')
+  })
+
+  it('holds the account as expired when a check refuses it', () => {
+    const id = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeWithdrawn', enabled: true }).id
+    check.noteTurnFailure({ workerId: id, adapterId: 'claude-code', purpose: 'review' }, { text: CLAUDE_DISABLED, isError: true })
+    expect(workers.requireWorker(id).health?.subscriptionExpired).toBe(true)
+  })
+
+  it('is not spent on an account closed to work', async () => {
+    const id = workers.createWorker({ adapterId: 'claude-code', label: 'ClaudeClosed', enabled: false }).id
+    const result = await check.checkAccount(id, 'test')
+    expect(result.verdict).toBe('inconclusive')
+    expect(result.reason).toContain('disabled')
+    expect(workers.requireWorker(id).health).toBeNull()
+  })
+})
+
+describe('probeAsksVendor', () => {
+  const info = (answer?: 'screen', accountCheck = true) =>
+    ({
+      ...(accountCheck ? { accountCheck: { prompt: 'p', timeoutMs: 1 } } : {}),
+      usageRefresh: { command: '/usage', readyMs: 1, settleMs: 1, ...(answer ? { answer } : {}) }
+    }) as Parameters<typeof check.probeAsksVendor>[0]
+
+  it('asks where the usage refresh reads a file, so a withdrawn account cannot hide behind its cache', () => {
+    expect(check.probeAsksVendor(info(), null)).toBe(true)
+  })
+
+  it('leaves a screen-answered refresh to ask for itself, unless the account is already held as expired', () => {
+    expect(check.probeAsksVendor(info('screen'), null)).toBe(false)
+    expect(check.probeAsksVendor(info('screen'), { subscriptionExpired: true })).toBe(true)
+  })
+
+  it('never asks an adapter that declares no check', () => {
+    expect(check.probeAsksVendor(info(undefined, false), { subscriptionExpired: true })).toBe(false)
+  })
+})
+
 describe('noteTurnFailure', () => {
   it('holds an account whose quality review the vendor refused to bill', () => {
     const id = seed('ReviewRefused')

@@ -6,7 +6,7 @@ import { adapter, adapters } from '../adapters/index.js'
 import { createWorker, knownModelIds, listWorkers, creditsDiscrepancy, noteCreditsDiscrepancyReported, setWorkerCreditsIntent, refreshIdentity, reorderWorkers, requireWorker, retireWorker, updateWorker } from '../workers.js'
 import { accountUnavailability } from '../eligibility.js'
 import { lastQuota, lastQuotaReading, probeWorker, refreshNow } from '../quota.js'
-import { checkAccount } from '../accountcheck.js'
+import { checkAccount, probeAsksVendor } from '../accountcheck.js'
 import { emit } from '../events.js'
 import { attachTerminal, backscroll, closeSession, listSessions, resizeSession, sessionsForWorker, sessionsAndWarmConversationsForWorker, spawnSession, streamLog, writeSession } from '../sessions.js'
 import { costModel, costModels } from '../costmodel.js'
@@ -125,8 +125,16 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
       // valid — `refreshIdentity` leaves it standing where the adapter has a check, and the check
       // lifts it only if the vendor actually runs a turn. Free while the vendor still refuses.
       const held = requireWorker(p.id)
-      if (held.health?.subscriptionExpired && adapter(held.adapterId).info.accountCheck) {
-        await checkAccount(p.id, 'a person pressed Probe')
+      const heldInfo = adapter(held.adapterId).info
+      // ⛔ t1010: asked first where the adapter's usage refresh does not ask by itself. A screen-answered
+      // refresh runs the check from inside, when its panel reads unavailable; Claude's types `/usage`
+      // and reads a cache file, and both read healthy on an account whose access was withdrawn (the
+      // cache just stops moving), so Probe said *no usage data*, never *expired*. Free while the vendor
+      // refuses; one small turn on a live account — which a person pressing Probe has asked for.
+      let refused = false
+      if (probeAsksVendor(heldInfo, held.health)) {
+        const checked = await checkAccount(p.id, 'a person pressed Probe')
+        refused = checked.verdict === 'expired' || checked.verdict === 'reauth'
       }
       // ⛔ Claim the same refresh ledger as the dispatch gate and poller. Calling `refreshUsage`
       // directly left this manual TUI invisible: the next scheduler tick started a second probe,
@@ -134,7 +142,9 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
       // attempt overwrote the fresh baseline the operator had just requested.
       const w = requireWorker(p.id)
       const info = adapter(w.adapterId).info
-      if (info.usageRefresh) {
+      if (info.usageRefresh && !refused) {
+        // ⚠️ Not driven when the vendor just refused the account: a TUI on it would spend ~30 s to
+        // read nothing, and the cache read below is the honest answer.
         // ⚠️ A person asking for a number on a silent account gets the warm-up that produces one,
         // within the same once-per-streak bound the sweep has (t723).
         await refreshNow(p.id, 0, { autoWarmUp: true })

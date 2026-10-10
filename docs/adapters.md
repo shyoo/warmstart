@@ -356,8 +356,13 @@ a timeout, an effort — and `checkAccount` (`src/daemon/accountcheck.ts`) spend
 `stream` turn**, so the verdict is the vendor's terminal record read by the adapter's own
 `subscriptionExpired` / `needsReauth` / `overloaded`, never the screen. Measured 2026-10-07 on
 MuseFirst: `muse exec --json` failed in 2.0 s, exit 1, `run.terminal.failed` → `402 … (billing_error)`;
-through `checkAccount` itself, `expired` in 4.3 s (2.5 s of it the prompt delay). Muse Code is the only
-adapter that declares one.
+through `checkAccount` itself, `expired` in 4.3 s (2.5 s of it the prompt delay). Muse Code and Claude
+Code declare one (Claude's since t1010: ClaudeSecond's access was withdrawn on 2026-10-09 and
+`auth status` still said `loggedIn: true, subscriptionType: pro`, `.claude.json` still read
+`billingType: stripe_subscription`, and Probe read *no usage data*; `claude -p` answered in under a
+second with `is_error: true`, `api_error_status: 403`, 0 tokens, $0 —
+*Your organization has disabled Claude subscription access for Claude Code …*. No `effort` declared:
+`--effort low` was not measured on a live account).
 
 - ⭐ **Where an adapter declares it, the warm-up *is* the check**, so the turn that warm-up already
   spends goes over `exec` instead of being typed into the TUI — t689 measured an exec turn ending a
@@ -373,6 +378,12 @@ adapter that declares one.
 - ⛔ **Probe does not lift an expired hold on a credential file.** `refreshIdentity(lift)` leaves it
   standing where the adapter has a check, and `worker.probe` runs the check first; only `ok` (the
   vendor ran a turn) clears it.
+- ⭐ **Probe asks wherever the refresh does not** (`probeAsksVendor`, t1010). A screen-answered refresh
+  (Muse) runs the check from inside; Claude's refresh types `/usage` and reads a cache file, which cannot
+  see a withdrawn account, so Probe runs the check first and, on `expired`/`reauth`, skips the TUI and
+  reads the cache for nothing. ⚠️ One small turn on a live Claude account per press, free on a refused
+  one. ⛔ `checkAccount` never spends on an account that is disabled, retired or human-occupied
+  (`whyNoSession`): Probe on such an account still cannot say *expired*.
 - ⭐ **An expired hold is re-asked every six hours** by the sweep (`RECHECK_EXPIRED_MS`, the
   operator's choice) — free while the vendor still refuses, one small turn on the sweep that finds it
   renewed. Each refusal moves `health.checkedAt`, not `since`.
