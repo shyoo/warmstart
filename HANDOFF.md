@@ -2,6 +2,8 @@
 
 ## Current state — 2026-09-27
 
+**Prompt structure plan (t1022, 2026-10-09).** A dated [implementation plan](transient_docs/prompt_restructure_2026-10-09.md) proposes moving the full execution contract ahead of the person's request, with explicit recovery/history sections for compaction and cold reassignment. No runtime prompt change yet; next step is to implement the envelope and compare it against recorded recovery scenarios. On Windows 11 (2026-10-09): typecheck, lint and build passed; L1 4,600 passed, 3 skipped (266 files).
+
 **Project tab navigation (t1020, 2026-10-09).** Project tabs now read Flow, Scratchpad, Tasks, Thread, Conversations, Session TUI, Settings. Each has a distinct text-colour pictogram; the bar scrolls in a narrow window. L1 verifies the order and icon set. Windows 11 checks (2026-10-09): typecheck, lint, build pass; L1 4,600 passed, 3 skipped (266 files).
 
 **Scratchpad refinements (t1018, 2026-10-09).** Both page and thread pane offer a bottom **+ New prompt**. A drag target shows whether the card will land before or after it; the result is independent of drag direction. Filed and sent source markers use the same green as their pills. Newly filed or sent cards fade into the older prompts after four seconds; the markdown file retains them. L1 drag placement and marker colour token tests added. Checks on this branch (Windows 11, 2026-10-09): typecheck, lint and build passed; L1 4,598 passed, 3 skipped (265 files).
