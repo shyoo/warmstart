@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   conversationTargets,
   insertAfter,
+  markerLength,
   mergeWithNext,
   moveBeside,
   moveItem,
@@ -13,11 +14,14 @@ import {
   serializeScratch,
   setBody,
   setTag,
+  settleToTop,
   splitAt,
   tagOf,
   taskForRef,
   titleOf,
-  withTag
+  withoutMarker,
+  withTag,
+  withText
 } from './scratchpad'
 
 /** A history shaped like the one the page was built for: a heading, hundreds of prompts, a few New. */
@@ -155,11 +159,58 @@ describe('tags', () => {
     expect(serializeScratch(setTag(doc, 1, { kind: 'filed', ref: 't5' }))).toBe('a\n\n---\n\n* Filed t5\n\nb\n')
   })
 
+  it('reads and writes * Completed, the status a person picks without a task', () => {
+    expect(tagOf('* Completed\n\nprompt')).toEqual({ kind: 'done' })
+    expect(tagOf('* Completed the migration')).toBeNull()
+    expect(withTag('* New\n\nDo it.', { kind: 'done' })).toBe('* Completed\n\nDo it.')
+  })
+
+  it('edits the text under a marker without touching the marker line or reading text as one (t1025)', () => {
+    expect(withoutMarker('* Filed t3\n\nDo it.')).toBe('Do it.')
+    expect(withText('* Filed t3\n\nDo it.', 'Do it twice.')).toBe('* Filed t3\n\nDo it twice.')
+    expect(withText('* New', 'First words')).toBe('* New\n\nFirst words')
+    expect(withText('* New\n\nold', '')).toBe('* New')
+    // Typed text that looks like a marker stays text.
+    expect(withText('* New\n\nold', '* Sent t1')).toBe('* New\n\n* Sent t1')
+    expect(withText('plain', 'plainer')).toBe('plainer')
+    expect(markerLength('* New\n\nabc')).toBe('* New\n\n'.length)
+    expect(markerLength('abc')).toBe(0)
+  })
+
   it('files the prompt without its marker, and names it by its first line of text', () => {
     expect(promptOf('* New\n\n## Add a scratchpad\n\nDetails.')).toBe('## Add a scratchpad\n\nDetails.')
     expect(titleOf('* New\n\n## Add a scratchpad\n\nDetails.')).toBe('Add a scratchpad')
     expect(titleOf('* New')).toBe('Empty prompt')
     expect(titleOf('- '.padEnd(200, 'x'), 20)).toHaveLength(20)
+  })
+})
+
+describe('settling a card (t1025)', () => {
+  const file = 'old\n\n---\n\n* New\n\na\n\n---\n\n* New\n\nb\n\n---\n\n* Filed t7\n\nc\n'
+  const bodies = (doc: ReturnType<typeof parseScratch>) => doc.items.map((item) => item.body)
+
+  it('moves a settled card ahead of the first New one, after the earlier prompts', () => {
+    const doc = parseScratch(file)
+    const moved = settleToTop(doc, 3)
+    expect(bodies(moved)).toEqual(['old', '* Filed t7\n\nc', '* New\n\na', '* New\n\nb'])
+    expect(serializeScratch(moved)).toBe('old\n\n---\n\n* Filed t7\n\nc\n\n---\n\n* New\n\na\n\n---\n\n* New\n\nb\n')
+    expect(moved.items[1]?.key).toBe(doc.items[3]?.key)
+  })
+
+  it('leaves a card already in the history, a New card, and a file with no New alone', () => {
+    const doc = parseScratch(file)
+    expect(settleToTop(doc, 0)).toBe(doc)
+    expect(settleToTop(doc, 1)).toBe(doc)
+    const none = parseScratch('x\n\n---\n\n* Filed t1\n\ny\n')
+    expect(settleToTop(none, 1)).toBe(none)
+    expect(settleToTop(doc, 9)).toBe(doc)
+  })
+
+  it('keeps successive settled cards in the order they settled', () => {
+    let doc = parseScratch(file)
+    doc = settleToTop(setTag(doc, 1, { kind: 'done' }), 1)
+    doc = settleToTop(doc, 3)
+    expect(bodies(doc)).toEqual(['old', '* Completed\n\na', '* Filed t7\n\nc', '* New\n\nb'])
   })
 })
 

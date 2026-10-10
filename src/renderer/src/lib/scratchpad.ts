@@ -242,20 +242,24 @@ export function removeItem(doc: ScratchDoc, index: number): ScratchDoc {
  * and `* Sent t990` are written by this page when a card becomes a task or goes to a conversation,
  * and name it. Anything else on the first line is the prompt's own text.
  */
-export type ScratchTag = { kind: 'new' } | { kind: 'filed' | 'sent'; ref: string }
+export type ScratchTag = { kind: 'new' } | { kind: 'done' } | { kind: 'filed' | 'sent'; ref: string }
 
 const NEW_MARKER = /^\*[ \t]+new[ \t]*$/i
+const COMPLETED_MARKER = /^\*[ \t]+completed[ \t]*$/i
 const DONE_MARKER = /^\*[ \t]+(filed|sent)[ \t]+(t\d+(?:\.\d+)*)[ \t]*$/i
 
 export function tagOf(body: string): ScratchTag | null {
   const first = body.split('\n', 1)[0] ?? ''
   if (NEW_MARKER.test(first)) return { kind: 'new' }
+  if (COMPLETED_MARKER.test(first)) return { kind: 'done' }
   const done = DONE_MARKER.exec(first)
   return done ? { kind: done[1]!.toLowerCase() as 'filed' | 'sent', ref: done[2]!.toLowerCase() } : null
 }
 
 export function markerFor(tag: ScratchTag): string {
-  return tag.kind === 'new' ? '* New' : `* ${tag.kind === 'filed' ? 'Filed' : 'Sent'} ${tag.ref}`
+  if (tag.kind === 'new') return '* New'
+  if (tag.kind === 'done') return '* Completed'
+  return `* ${tag.kind === 'filed' ? 'Filed' : 'Sent'} ${tag.ref}`
 }
 
 /** How many cards are open: marked `* New`, the ones the page shows by default. */
@@ -263,8 +267,12 @@ export function openCount(doc: ScratchDoc): number {
   return doc.items.filter((item) => tagOf(item.body)?.kind === 'new').length
 }
 
-/** The body with its marker line (and the blank lines after it) taken off. */
-function withoutMarker(body: string): string {
+/**
+ * The body with its marker line (and the blank lines after it) taken off: what a card's editor shows
+ * (t1025). The status lives in the card's dropdown; the marker stays in the file, where *Whole
+ * document* still draws it.
+ */
+export function withoutMarker(body: string): string {
   if (!tagOf(body)) return body
   const newline = body.indexOf('\n')
   return newline < 0 ? '' : body.slice(newline + 1).replace(/^(?:[ \t]*\n)*/, '')
@@ -280,6 +288,33 @@ export function withTag(body: string, tag: ScratchTag | null): string {
 export function setTag(doc: ScratchDoc, index: number, tag: ScratchTag | null): ScratchDoc {
   const item = doc.items[index]
   return item ? setBody(doc, index, withTag(item.body, tag)) : doc
+}
+
+/**
+ * Put edited text back under the card's existing marker line, which is kept exactly as written.
+ * ⚠️ Not `withTag`: that strips a marker-looking first line from `text`, and the person may have typed one.
+ */
+export function withText(body: string, text: string): string {
+  if (!tagOf(body)) return text
+  const marker = body.split('\n', 1)[0] ?? ''
+  return text === '' ? marker : `${marker}\n\n${text}`
+}
+
+/** How many characters of `body` come before the text its editor shows — for a caret taken there. */
+export function markerLength(body: string): number {
+  return body.length - withoutMarker(body).length
+}
+
+/**
+ * A settled card (filed, sent, completed) goes up with the earlier prompts, ahead of the first card
+ * still New (t1025): the open ones stay together at the bottom, where a new prompt is also added, and
+ * the history reads oldest to newest. A card already ahead of every New one, or a file with none, is unchanged.
+ */
+export function settleToTop(doc: ScratchDoc, index: number): ScratchDoc {
+  const item = doc.items[index]
+  if (!item || tagOf(item.body)?.kind === 'new') return doc
+  const firstNew = doc.items.findIndex((each, i) => i !== index && tagOf(each.body)?.kind === 'new')
+  return firstNew < 0 || index < firstNew ? doc : moveItem(doc, index, firstNew)
 }
 
 /** What filing or sending a card hands over: its text, without the marker. */

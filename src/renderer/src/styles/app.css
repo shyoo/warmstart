@@ -9212,9 +9212,6 @@ select:focus-visible,
 .scratchpad--compact .scratch-card-head {
   flex-wrap: wrap;
 }
-.scratchpad--compact .scratch-card-title {
-  flex: 1 1 8ch;
-}
 .scratchpad--compact .scratch-card-actions {
   flex-shrink: 1;
   flex-wrap: wrap;
@@ -9299,20 +9296,19 @@ select:focus-visible,
   letter-spacing: -2px;
   padding: 0 var(--sp-1);
 }
-.scratch-card-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--text-dense);
-  color: var(--color-text-dim);
-}
 .scratch-card-actions {
   display: flex;
   align-items: center;
   gap: var(--sp-1);
   flex-shrink: 0;
+  margin-left: auto;
+}
+/* The status dropdown keeps the colour the tag pill had: amber while open, green once settled. */
+.scratch-status--new .pill {
+  color: var(--state-warn);
+}
+.scratch-status--done .pill {
+  color: var(--state-ok);
 }
 .scratch-tag {
   font: inherit;
@@ -9322,9 +9318,6 @@ select:focus-visible,
   border: 1px solid currentColor;
   background: none;
   white-space: nowrap;
-}
-.scratch-tag--new {
-  color: var(--state-warn);
 }
 .scratch-tag--filed,
 .scratch-tag--sent {

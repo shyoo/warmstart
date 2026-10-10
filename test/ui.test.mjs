@@ -4977,7 +4977,20 @@ try {
   )
   check(
     'markdown in it is coloured, not rendered',
-    await evaluate(`!!document.querySelector('.scratch-card .hl-layer .hl-marker') && !!document.querySelector('.scratch-card .hl-layer .hl-strong')`)
+    await evaluate(`!!document.querySelector('.scratch-card .hl-layer .hl-strong')`)
+  )
+  const cardHead = await evaluate(`(() => {
+    const card = document.querySelector('.scratch-card')
+    return card ? {
+      status: card.querySelector('.scratch-status .pill')?.innerText.trim(),
+      title: !!card.querySelector('.scratch-card-title'),
+      editor: card.querySelector('.hl-input')?.value
+    } : null
+  })()`)
+  check(
+    'a card shows its status as a dropdown, no title and no * New line in its text',
+    cardHead?.status === 'New ▾' && cardHead.title === false && cardHead.editor === 'Ship the **scratchpad** check.',
+    JSON.stringify(cardHead)
   )
   await evaluate(`[...document.querySelectorAll('.scratch-card button')].find(b => b.innerText.includes('File as task'))?.click()`)
   await waitFor(

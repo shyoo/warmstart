@@ -33,8 +33,8 @@ export interface MdToken {
 const FENCE = /^[ \t]{0,3}(```|~~~)/
 const RULE = /^[ \t]{0,3}-{3,}[ \t]*$/
 const HEADING = /^[ \t]{0,3}#{1,6}(?:[ \t]|$)/
-/** The scratchpad's own card markers: `* New`, `* Filed t994`, `* Sent t990`. See `lib/scratchpad.ts`. */
-const MARKER = /^\*[ \t]+(?:new|(?:filed|sent)[ \t]+t\d+(?:\.\d+)*)[ \t]*$/i
+/** The scratchpad's own card markers: `* New`, `* Filed t994`, `* Sent t990`, `* Completed`. See `lib/scratchpad.ts`. */
+const MARKER = /^\*[ \t]+(?:new|completed|(?:filed|sent)[ \t]+t\d+(?:\.\d+)*)[ \t]*$/i
 const LIST = /^([ \t]*)([*+-]|\d+[.)])([ \t]+)/
 const QUOTE = /^([ \t]*>[ \t]?)/
 /** Inline code, bold, italics and links, leftmost first. */

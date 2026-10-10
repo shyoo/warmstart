@@ -31,7 +31,7 @@ import type { ModelReportRow } from '@shared/routing'
 import { debateNotices } from '../lib/debatenotice'
 import { executorNotices } from '../lib/executornotice'
 import { plannerMcpNotice } from '../lib/plannernotice'
-import { ImageChips, usePastedImages } from '../lib/pasteimages.js'
+import { ImageChips, usePastedImages, type PastedImage } from '../lib/pasteimages.js'
 import { rpc, type FleetEntry } from '../lib/daemon'
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { candidatesFor, useTaskCandidates } from './Dependencies'
@@ -411,6 +411,11 @@ export function resizeRoster(seats: DebateSeat[], n: number): DebateSeat[] {
 export interface ComposerSeed {
   prompt: string
   kind?: ComposerKind
+  /**
+   * Images pasted into the card (t1025), already uploaded: the composer starts with them attached, so
+   * they travel with the task's first message like any pasted into the box.
+   */
+  attachments?: PastedImage[]
   onFiled: (task: Task) => void
 }
 
@@ -544,7 +549,7 @@ export function NewTask({
   // ⚠️ Uploaded the moment they are added, so what the form carries is a list of ids.
   // ⚠️ Seeded from the scratch, which holds ids and no bytes: a restored attachment is the same
   // upload wearing a name instead of a thumbnail.
-  const paste = usePastedImages(useMemo(() => scratchImages(restored), [restored]))
+  const paste = usePastedImages(useMemo(() => seed?.attachments ?? scratchImages(restored), [restored, seed]))
 
   /**
    * ⛔ Fetched, not compiled in. The renderer holds no cost models, and a second table of model facts

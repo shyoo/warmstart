@@ -20,6 +20,7 @@ export function HighlightEditor({
   onChange,
   onBlur,
   onCaret,
+  onPaste,
   ariaLabel,
   autoFocus,
   placeholder
@@ -27,6 +28,8 @@ export function HighlightEditor({
   value: string
   onChange: (value: string) => void
   onBlur?: () => void
+  /** A paste into the box; an image is the caller's to take (t1025), text goes on as the browser's own. */
+  onPaste?: (event: React.ClipboardEvent) => void
   /** Where the caret is, for *Split at cursor*. */
   onCaret?: (offset: number) => void
   ariaLabel: string
@@ -57,6 +60,7 @@ export function HighlightEditor({
         spellCheck
         onChange={(event) => onChange(event.target.value)}
         onBlur={onBlur}
+        onPaste={onPaste}
         onSelect={(event) => onCaret?.(event.currentTarget.selectionStart)}
       />
     </div>

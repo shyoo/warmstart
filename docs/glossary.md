@@ -266,8 +266,9 @@ that answers it.
 its `---` lines. ⛔ **Not a draft and not the composer's scratch.** A draft is a task — a row with an
 id that the Tasks board lists; the composer's scratch is the half-typed text one form remembers. A
 scratchpad card is neither until it is *filed* (it becomes a task, and its `* New` line becomes
-`* Filed t###`) or *sent* (it goes into a conversation's thread, `* Sent t###`). The file is the
-record: nothing about a card lives anywhere but in its text.
+`* Filed t###`) or *sent* (it goes into a conversation's thread, `* Sent t###`); a person can also
+mark one *Completed* by hand. The page shows that status as a dropdown, not as a line of the card.
+The file is the record: nothing about a card lives anywhere but in its text.
 
 **Continuation** — *another run on a task that had stopped*, started by somebody replying to it. ⛔ A
 run, never a new task: same thread, same budget, same branch. Nothing routes it by hand — the session

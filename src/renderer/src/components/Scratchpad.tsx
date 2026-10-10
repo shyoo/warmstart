@@ -13,23 +13,28 @@ import {
   parseScratch,
   promptOf,
   removeItem,
+  markerLength,
   scratchRows,
   serializeScratch,
   setBody,
   setTag,
+  settleToTop,
   splitAt,
   tagOf,
   taskForRef,
   titleOf,
+  withoutMarker,
+  withText,
   type ScratchDoc,
   type ScratchItem,
   type ScratchRow,
   type ScratchTag
 } from '../lib/scratchpad'
+import { ImageChips, usePastedImages, type PasteImages } from '../lib/pasteimages'
 import { taskLabelShort } from '../lib/taskview'
 import { HighlightEditor } from './HighlightEditor'
 import type { ComposerSeed } from './NewTask'
-import { Pill, PillOptions, SegmentedControl, type PillOption } from './Pill'
+import { Pill, PillOptions, PillSelect, SegmentedControl, type PillOption } from './Pill'
 import { Markdown } from './thread/Markdown'
 
 /** How long typing must pause before the file is written. */
@@ -52,7 +57,12 @@ const NEW_CARD = '* New\n\n'
  *
  * ⭐ **New is what is open.** Only cards marked `* New` show; everything else folds in place under a
  * count (operator's decision, t994). Filing a card — as a task or into a conversation — rewrites its
- * marker to `* Filed t###` / `* Sent t###`, then the card folds after a short confirmation period.
+ * marker to `* Filed t###` / `* Sent t###`, then the card folds after a short confirmation period
+ * and moves up with the earlier prompts, so the open ones stay together at the bottom (t1025).
+ *
+ * ⭐ **The status is the dropdown, not a line of the card (t1025).** A card's editor shows its text
+ * without the marker line; *New* / *Completed* in the head writes it. The file, and *Whole document*,
+ * still carry the marker.
  */
 export function Scratchpad({
   project,
@@ -202,7 +212,19 @@ export function Scratchpad({
   useEffect(
     () => () => {
       clearTimeout(timerRef.current)
-      for (const timers of filedTimers.current.values()) for (const timer of timers) clearTimeout(timer)
+      // A card still waiting out its confirmation period goes up now, or it would stay where it was.
+      for (const [key, timers] of filedTimers.current) {
+        for (const timer of timers) clearTimeout(timer)
+        const found = findCard(docRef.current, key)
+        if (found) {
+          const moved = settleToTop(found.doc, found.at)
+          if (moved !== found.doc) {
+            docRef.current = moved
+            dirtyRef.current = true
+          }
+        }
+      }
+      filedTimers.current.clear()
       void flush()
     },
     [flush]
@@ -255,9 +277,14 @@ export function Scratchpad({
         next.delete(key)
         return next
       })
-      if (tag?.kind === 'filed' || tag?.kind === 'sent') {
+      if (tag && tag.kind !== 'new') {
         const fade = setTimeout(() => setFading((prev) => new Set(prev).add(key)), FILED_VISIBLE_MS - FOLD_FADE_MS)
         const fold = setTimeout(() => {
+          const settled = findCard(docRef.current, key)
+          if (settled) {
+            const moved = settleToTop(settled.doc, settled.at)
+            if (moved !== settled.doc) change(moved)
+          }
           setShown((prev) => {
             const next = new Set(prev)
             next.delete(key)
@@ -278,9 +305,9 @@ export function Scratchpad({
 
   const actions = useMemo<CardActions>(
     () => ({
-      edit: (key, body) => {
+      edit: (key, text) => {
         const found = find(key)
-        if (found) change(setBody(found.doc, found.at, body))
+        if (found) change(setBody(found.doc, found.at, withText(found.item.body, text)))
       },
       settle: (key) => {
         const found = find(key)
@@ -312,7 +339,13 @@ export function Scratchpad({
       split: (key) => {
         const found = find(key)
         if (!found) return
-        const next = splitAt(found.doc, found.at, caretRef.current.get(key) ?? found.item.body.length)
+        // The caret is in the text the editor shows, which starts after the marker line.
+        const caret = caretRef.current.get(key)
+        const next = splitAt(
+          found.doc,
+          found.at,
+          caret === undefined ? found.item.body.length : caret + markerLength(found.item.body)
+        )
         if (next === found.doc) {
           setNote('Put the cursor inside the text where it should be cut, then choose Split.')
           return
@@ -345,33 +378,49 @@ export function Scratchpad({
           if (!next.delete(key)) next.add(key)
           return next
         }),
-      file: (key, kind) => {
+      file: (key, kind, pasted) => {
         const prompt = promptOf(find(key)?.item.body ?? '')
         if (!prompt) {
           setNote('This prompt is empty.')
+          return
+        }
+        if (pasted?.busy) {
+          setNote('An image is still uploading; try again in a moment.')
           return
         }
         composeFrom({
           prompt,
           ...(kind ? { kind } : {}),
+          ...(pasted && pasted.images.length > 0 ? { attachments: pasted.images } : {}),
           onFiled: (task) => {
+            // The task owns the uploads now; leaving the chips would offer them to the next filing.
+            pasted?.clear()
             tagCard(key, { kind: kind === 'conversation' ? 'sent' : 'filed', ref: `t${task.seq}` })
             refreshTasks()
           }
         })
       },
-      send: async (key, target) => {
+      send: async (key, target, pasted) => {
         const prompt = promptOf(find(key)?.item.body ?? '')
         if (!prompt) {
           setNote('This prompt is empty.')
           return
         }
+        if (pasted?.busy) {
+          setNote('An image is still uploading; try again in a moment.')
+          return
+        }
         try {
-          const sent = await rpc('task.message', { id: target.id, text: prompt })
+          const sent = await rpc('task.message', {
+            id: target.id,
+            text: prompt,
+            ...(pasted && pasted.ids.length > 0 ? { attachmentIds: pasted.ids } : {})
+          })
           if (sent.outcome === 'ignored') {
             setNote(`t${target.seq} is no longer there; nothing was sent.`)
             return
           }
+          pasted?.clear()
           tagCard(key, { kind: 'sent', ref: `t${target.seq}` })
           setNote(`Sent to t${target.seq}.`)
           refreshTasks()
@@ -558,8 +607,9 @@ interface CardActions {
   remove: (key: number) => void
   copy: (key: number) => void
   flip: (key: number) => void
-  file: (key: number, kind?: 'conversation') => void
-  send: (key: number, target: Task) => Promise<void>
+  /** `pasted` is the card's own pasted images (t1025): they go with the filing or the message. */
+  file: (key: number, kind?: 'conversation', pasted?: PasteImages) => void
+  send: (key: number, target: Task, pasted?: PasteImages) => Promise<void>
   openTask: (taskId: string) => void
 }
 
@@ -590,8 +640,10 @@ const ScratchCard = memo(function ScratchCard({
   actions: CardActions
 }): React.JSX.Element {
   const [dropping, setDropping] = useState<'before' | 'after' | null>(null)
+  // Images pasted into this card wait here, uploaded already, for File as task… or Send (t1025).
+  const pasted = usePastedImages()
   const tag = tagOf(item.body)
-  const linked = tag && tag.kind !== 'new' ? taskForRef(tasks, tag.ref) : undefined
+  const linked = tag && (tag.kind === 'filed' || tag.kind === 'sent') ? taskForRef(tasks, tag.ref) : undefined
   const key = item.key
 
   const sendOptions: PillOption[] = [
@@ -605,9 +657,6 @@ const ScratchCard = memo(function ScratchCard({
     { value: 'merge', label: 'Merge with next', disabled: last },
     { value: 'up', label: 'Move up', disabled: above === undefined },
     { value: 'down', label: 'Move down', disabled: below === undefined },
-    tag?.kind === 'new'
-      ? { value: 'untag', label: 'Clear New', hint: 'Folds it away with the older prompts' }
-      : { value: 'new', label: 'Mark as New' },
     { value: 'delete', label: 'Delete…' }
   ]
   const onMore = (value: string): void => {
@@ -617,8 +666,6 @@ const ScratchCard = memo(function ScratchCard({
     else if (value === 'merge') actions.merge(key)
     else if (value === 'up' && above !== undefined) actions.move(key, above)
     else if (value === 'down' && below !== undefined) actions.move(key, below)
-    else if (value === 'untag') actions.tag(key, null)
-    else if (value === 'new') actions.tag(key, { kind: 'new' })
     else if (value === 'delete') actions.remove(key)
   }
 
@@ -656,15 +703,12 @@ const ScratchCard = memo(function ScratchCard({
         >
           ⋮⋮
         </span>
-        <TagPill tag={tag} linked={linked} onOpenTask={actions.openTask} />
-        <span className="scratch-card-title" title={titleOf(item.body, 400)}>
-          {titleOf(item.body)}
-        </span>
+        <StatusPill tag={tag} linked={linked} onPick={(next) => actions.tag(key, next)} onOpenTask={actions.openTask} />
         <div className="scratch-card-actions">
           <button className="btn btn--quiet" onClick={() => actions.flip(key)}>
             {preview ? 'Edit' : 'Preview'}
           </button>
-          <button className="btn btn--primary" onClick={() => actions.file(key)}>
+          <button className="btn btn--primary" onClick={() => actions.file(key, undefined, pasted)}>
             File as task…
           </button>
           <Pill
@@ -681,8 +725,8 @@ const ScratchCard = memo(function ScratchCard({
                 onPick={(value) => {
                   close()
                   const target = targets.find((t) => t.id === value)
-                  if (target) void actions.send(key, target)
-                  else actions.file(key, 'conversation')
+                  if (target) void actions.send(key, target, pasted)
+                  else actions.file(key, 'conversation', pasted)
                 }}
               />
             )}
@@ -711,14 +755,16 @@ const ScratchCard = memo(function ScratchCard({
         </div>
       ) : (
         <HighlightEditor
-          value={item.body}
-          onChange={(body) => actions.edit(key, body)}
+          value={withoutMarker(item.body)}
+          onChange={(text) => actions.edit(key, text)}
           onBlur={() => actions.settle(key)}
           onCaret={(offset) => actions.caret(key, offset)}
+          onPaste={pasted.onPaste}
           ariaLabel={`Prompt: ${titleOf(item.body, 60)}`}
           autoFocus={autoFocus}
         />
       )}
+      <ImageChips paste={pasted} />
     </article>
   )
 })
@@ -728,30 +774,58 @@ function dropSide(card: HTMLElement, clientY: number): 'before' | 'after' {
   return clientY < box.top + box.height / 2 ? 'before' : 'after'
 }
 
-function TagPill({
+const STATUS_OPTIONS: PillOption[] = [
+  { value: 'new', label: 'New', hint: 'Open: shown by default, counted on the tab' },
+  { value: 'done', label: 'Completed', hint: 'Moves up with the earlier prompts' }
+]
+
+/**
+ * A card's status as a dropdown (t1025) — the one place it is shown or changed; the marker line itself
+ * is not part of the card's text. A filed or sent card reads *Completed* and names its task beside it.
+ */
+function StatusPill({
   tag,
   linked,
+  onPick,
   onOpenTask
 }: {
   tag: ScratchTag | null
   linked: Task | undefined
+  onPick: (tag: ScratchTag) => void
   onOpenTask: (taskId: string) => void
-}): React.JSX.Element | null {
-  if (!tag) return null
-  if (tag.kind === 'new') return <span className="scratch-tag scratch-tag--new">New</span>
-  const label = `${tag.kind === 'filed' ? 'Filed' : 'Sent'} ${tag.ref}`
-  return linked ? (
-    <button
-      className={`scratch-tag scratch-tag--${tag.kind}`}
-      title={`Open t${linked.seq} · ${taskLabelShort(linked, 80)}`}
-      onClick={() => onOpenTask(linked.id)}
-    >
-      {label}
-    </button>
-  ) : (
-    <span className={`scratch-tag scratch-tag--${tag.kind}`} title="Not a task in this project">
-      {label}
-    </span>
+}): React.JSX.Element {
+  const status = tag ? (tag.kind === 'new' ? 'new' : 'done') : ''
+  const label = status === 'new' ? 'New' : status === 'done' ? 'Completed' : 'No status'
+  const ref = tag && (tag.kind === 'filed' || tag.kind === 'sent') ? tag : null
+  return (
+    <>
+      <PillSelect
+        ariaLabel="Prompt status"
+        title="New prompts stay open; Completed ones move up with the earlier prompts"
+        className={`scratch-status scratch-status--${status || 'none'}`}
+        label={`${label} ▾`}
+        value={status}
+        options={STATUS_OPTIONS}
+        muted={status === ''}
+        onChange={(next) => {
+          if (next !== status) onPick(next === 'new' ? { kind: 'new' } : { kind: 'done' })
+        }}
+      />
+      {ref &&
+        (linked ? (
+          <button
+            className={`scratch-tag scratch-tag--${ref.kind}`}
+            title={`Open t${linked.seq} · ${taskLabelShort(linked, 80)}`}
+            onClick={() => onOpenTask(linked.id)}
+          >
+            {ref.kind === 'filed' ? 'Filed' : 'Sent'} {ref.ref}
+          </button>
+        ) : (
+          <span className={`scratch-tag scratch-tag--${ref.kind}`} title="Not a task in this project">
+            {ref.kind === 'filed' ? 'Filed' : 'Sent'} {ref.ref}
+          </span>
+        ))}
+    </>
   )
 }
 
