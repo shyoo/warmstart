@@ -777,10 +777,15 @@ export interface ProjectPolicy {
  */
 export function landingTargetFor(
   task: Pick<Task, 'landingTarget'> | null | undefined,
-  project: Project
+  project: Pick<Project, 'config'>
 ): string {
   const own = task?.landingTarget?.trim()
-  return own && own.length > 0 ? own : policyFor(project).landingTarget
+  return own && own.length > 0 ? own : projectLandingTarget(project)
+}
+
+/** The target alone needs no filesystem/workspace policy resolution. */
+export function projectLandingTarget(project: Pick<Project, 'config'>): string {
+  return project.config.landing?.target ?? DEFAULTS.landingTarget
 }
 
 /**
@@ -824,7 +829,7 @@ export function policyFor(project: Project): ProjectPolicy {
     postLanding: c.postLanding ?? [],
     quotaAutoResume: c.quota?.autoResume !== false,
     landingStrategy: c.landing?.strategy ?? DEFAULTS.landingStrategy,
-    landingTarget: c.landing?.target ?? DEFAULTS.landingTarget,
+    landingTarget: projectLandingTarget(project),
     pushRemote: c.landing?.pushRemote?.trim() && c.landing.pushRemote.trim() !== 'origin' ? c.landing.pushRemote.trim() : null,
     upstreamRemote:
       c.landing?.upstreamRemote?.trim() && c.landing.upstreamRemote.trim() !== 'origin'

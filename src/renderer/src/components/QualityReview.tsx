@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { GradeBatch, ReviewCounts, ReviewFilter, ReviewQueuePage } from '@shared/quality'
 import { BATCH_SIZES, BATCH_THRESHOLDS, thresholdLabel } from '@shared/quality'
 import type { Project } from '@shared/tasks'
@@ -8,6 +8,7 @@ import { agentNames } from '../lib/agentname'
 import { readQualityGradableOnly, writeQualityGradableOnly } from '../lib/prefs'
 import { AgentLabel } from './AgentLabel'
 import { errorMessage } from '@shared/errors.js'
+import { latestRequest } from '../lib/latestrequest'
 
 /**
  * Analytics › Quality Review.
@@ -50,7 +51,7 @@ export function QualityReview({
   /** The distribution of the scores themselves lives one page over; this is the way there. */
   onOpenStatistics: () => void
 }): React.JSX.Element {
-  const [page, setPage] = useState<ReviewQueuePage | null>(null)
+  const [pageResult, setPageResult] = useState<{ selection: string; page: ReviewQueuePage } | null>(null)
   const [counts, setCounts] = useState<ReviewCounts | null>(null)
   const [filter, setFilter] = useState<ReviewFilter>('none')
   const [offset, setOffset] = useState(0)
@@ -77,60 +78,76 @@ export function QualityReview({
    * (`isTaskGradable`, `applyLoopbackTimeouts`) — this is the half that stops asking a question
    * faster than it can be answered.
    *
-   * ⚠️ A dropped tick, not a queued one: the next poll is 3s away and it asks for the current state
-   * anyway, so a refresh that waited its turn would only ever paint something staler.
+   * Keep one follow-up with the latest selection, and discard responses for older selections.
    */
-  const inFlight = useRef(false)
-  /** Coverage walks history, so its background refresh must not pile up behind itself either. */
+  const requests = useRef(latestRequest())
+  const loadingSelection = useRef<string | null>(null)
+  const selection = `${filter}:${offset}:${gradableOnly}`
+  const page = pageResult?.selection === selection ? pageResult.page : null
+  /** Independent reads must not pile up behind themselves. */
   const coverageInFlight = useRef(false)
+  const batchInFlight = useRef(false)
   const refresh = useCallback(async () => {
-    if (inFlight.current) return
-    inFlight.current = true
-    try {
-      const [queue, running] = await Promise.all([
-        rpc('quality.queue', { filter, limit: PAGE_SIZE, offset, gradableOnly }),
-        rpc('quality.batch')
-      ])
-      setPage(queue)
-      setBatch(running)
-      setError(null)
-      // Coverage checks every historical diff. Let this page paint its visible rows first, then
-      // fill in the aggregate tiles without making the opening path grow with task history.
-      if (!coverageInFlight.current) {
-        coverageInFlight.current = true
-        void rpc('quality.coverage')
-          .then(setCounts)
-          .catch((err: unknown) => setError(errorMessage(err)))
-          .finally(() => {
-            coverageInFlight.current = false
-          })
+    await requests.current.run(selection, async (current) => {
+      const timeout = setTimeout(() => {
+        if (current()) setError('Candidates have not loaded within 5 seconds. Press Refresh to retry.')
+      }, 5000)
+      try {
+        const queue = await rpc('quality.queue', { filter, limit: PAGE_SIZE, offset, gradableOnly })
+        if (!current()) return
+        loadingSelection.current = null
+        setPageResult({ selection, page: queue })
+        setError(null)
+        if (!batchInFlight.current) {
+          batchInFlight.current = true
+          void rpc('quality.batch').then(setBatch)
+            .catch((err: unknown) => setError(errorMessage(err)))
+            .finally(() => { batchInFlight.current = false })
+        }
+        if (!coverageInFlight.current) {
+          coverageInFlight.current = true
+          void rpc('quality.coverage')
+            .then(setCounts)
+            .catch((err: unknown) => setError(errorMessage(err)))
+            .finally(() => { coverageInFlight.current = false })
+        }
+      } catch (err) {
+        if (current()) {
+          loadingSelection.current = null
+          setError(errorMessage(err))
+        }
+      } finally {
+        clearTimeout(timeout)
       }
-    } catch (err) {
-      setError(errorMessage(err))
-    } finally {
-      inFlight.current = false
-    }
-  }, [filter, offset, gradableOnly])
+    })
+  }, [filter, offset, gradableOnly, selection])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    requests.current.select(selection)
+    loadingSelection.current = selection
+    // Include time spent waiting behind the previous selection's outstanding request.
+    const timeout = setTimeout(() => {
+      if (loadingSelection.current === selection) setError('Candidates have not loaded within 5 seconds. Press Refresh to retry.')
+    }, 5000)
     void refresh()
-  }, [refresh])
+    const queue = requests.current
+    return () => { clearTimeout(timeout); queue.select('') }
+  }, [refresh, selection])
 
   useDaemonEvents((event) => {
     // A grade being stored rewrites a row's bucket, and a review is a run — both arrive here.
-    if (event.type === 'task.changed' || event.type === 'run.changed') void refresh()
+    if (event.type === 'task.changed' || event.type === 'run.changed' || event.type === 'worker.changed' || event.type === 'project.changed') void refresh()
   })
 
   /**
-   * ⚠️ A poll, and only while a batch is running. A batch lives in the daemon's memory rather than
-   * in the database, so nothing emits when one entry moves from queued to grading; the alternative
-   * is a new event type carrying state that is gone on restart anyway.
+   * Poll quickly for grading/validation progress, otherwise refresh expiry once a minute so
+   * external repository changes cannot leave this open view stale indefinitely.
    */
   useEffect(() => {
-    if (!batch || batch.state !== 'running') return
-    const timer = setInterval(() => void refresh(), 3000)
+    const interval = batch?.state === 'running' || page?.pending || counts?.pending ? 3000 : 60_000
+    const timer = setInterval(() => void refresh(), interval)
     return () => clearInterval(timer)
-  }, [batch, refresh])
+  }, [batch, page?.pending, counts?.pending, refresh])
 
   const start = useCallback(async () => {
     setBusy(true)
@@ -210,6 +227,7 @@ export function QualityReview({
         <Tile value={counts ? String(counts.many) : '—'} label="Gradable tasks with 2+ reviews" />
         <Tile value={counts && counts.ungradable !== undefined ? String(counts.ungradable) : '—'} label="Non-gradable tasks" />
       </div>
+      {!!counts?.pending && <p className="dim" role="status">Coverage is incomplete: {counts.pending} tasks are checking eligibility. Unchecked tasks are excluded from these totals.</p>}
 
       <section className="doc-section">
         <h3>Commission a batch</h3>
@@ -301,6 +319,7 @@ export function QualityReview({
         </label>
       </div>
 
+      {!!page?.pending && <p className="dim" role="status">Checking eligibility for {page.pending} candidates. {gradableOnly ? 'Unchecked candidates remain visible until confirmed; confirmed refusals are hidden.' : 'Unknown eligibility is not a refusal.'}</p>}
       {!page ? (
         <p className="dim">Reading peer review coverage…</p>
       ) : page.rows.length === 0 ? (
@@ -342,8 +361,8 @@ export function QualityReview({
                 <td className="dim" title={agentNames(row.gradedBy, labels)?.title}>
                   {agentNames(row.gradedBy, labels)?.text ?? '—'}
                 </td>
-                <td className={row.eligible ? 'dim' : 'warn'}>
-                  {row.grading ? 'grading now' : row.eligible ? 'yes' : `no — ${row.ineligibleReason}`}
+                <td className={row.eligible || row.eligibilityPending ? 'dim' : 'warn'} title={row.eligibilityCheckedAt ? `Range checked ${when(row.eligibilityCheckedAt)}` : undefined}>
+                  {row.grading ? 'grading now' : row.eligibilityPending ? 'Checking eligibility' : row.eligible ? 'yes' : `no — ${row.ineligibleReason}`}
                 </td>
                 <td className="tbl-when">{when(row.finishedAt)}</td>
               </tr>

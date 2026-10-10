@@ -2432,7 +2432,15 @@ const MIGRATIONS: Migration[] = [
         // An unreadable blob is read as absent by the same readers; it cannot block a start.
       }
     }
-  }
+  },
+  // 91 - a display cache, never authority to spend a review turn (t1043).
+  `create table if not exists review_range_cache (
+     task_id text primary key references tasks(id) on delete cascade,
+     fingerprint text not null,
+     ok integer not null,
+     reason text not null,
+     checked_at integer not null
+   );`
 ]
 
 /**

@@ -17,7 +17,7 @@ import { taskCommits } from './taskcommits.js'
 import { requireTask } from './tasks.js'
 import { emit } from './events.js'
 import { log } from './log.js'
-import { git, tryGit } from './git.js'
+import { git, tryGit, type GitOptions } from './git.js'
 
 /**
  * Peer quality review — the rubric, the diff, and the grade.
@@ -129,27 +129,23 @@ export type RangeResolution =
  * review of the wrong commits is still worse than no review, because it produces a number that
  * looks exactly like a real one and is indistinguishable from one later.
  */
-const rangeCache = new Map<string, RangeResolution>()
-
 export function clearRangeCache(): void {
-  rangeCache.clear()
+  db().exec('delete from review_range_cache')
 }
 
 export async function resolveRange(
   task: Pick<Task, 'landedBaseSha' | 'landedHeadSha' | 'branch'> & { id?: string },
-  project: Project,
+  project: Pick<Project, 'root'>,
   target: string,
-  projectTarget = target
+  projectTarget = target,
+  options: GitOptions = {}
 ): Promise<RangeResolution> {
-  const cacheKey = task.id
-    ? `${task.id}:${target}:${projectTarget}:${task.landedHeadSha ?? ''}:${task.branch ?? ''}:` +
-      taskCommits(task.id).length
-    : null
-  if (cacheKey && rangeCache.has(cacheKey)) {
-    return rangeCache.get(cacheKey)!
-  }
-
   const cwd = project.root
+  const resolves = (root: string, ref: string): Promise<string | null> =>
+    tryGit(root, ['rev-parse', `${ref}^{commit}`], options)
+  const isAncestor = (root: string, ancestor: string, descendant: string): Promise<boolean> =>
+    ancestry(root, ancestor, descendant, options)
+  const rangeGit = (root: string, args: string[]): Promise<string | null> => tryGit(root, args, options)
   const trunkSha = await resolves(cwd, target)
 
   // ---- level 1: the recorded commits, which are exact even when no single range is.
@@ -166,13 +162,13 @@ export async function resolveRange(
     // ⚠️ **All of them or none.** A partially reachable list means history was rewritten under
     // these rows, and grading the surviving half would silently review part of the work as if it
     // were the whole — the failure `truncated` exists to make visible, arriving invisibly.
-    const ordered = await orderByAncestry(cwd, reachable)
+    const ordered = await orderByAncestry(cwd, reachable, options)
     const oldest = ordered[0]
     const head = ordered[ordered.length - 1]
     if (oldest && head && ordered.length === recorded.length) {
       // ⚠️ The oldest commit's own parent, so `base..head` brackets every recorded commit. A root
       // commit has no parent and brackets itself; `diffSpecs` falls back to per-commit patches.
-      const base = (await tryGit(cwd, ['rev-parse', `${oldest}^{commit}^`])) ?? oldest
+      const base = (await rangeGit(cwd, ['rev-parse', `${oldest}^{commit}^`])) ?? oldest
       const anchor =
         trunkSha && (await isAncestor(cwd, head, trunkSha)) ? trunkSha : (projectTrunk ?? trunkSha)
       if (anchor) {
@@ -185,7 +181,6 @@ export async function resolveRange(
           cwd,
           from: 'commits'
         }
-        if (cacheKey) rangeCache.set(cacheKey, res)
         return res
       }
     }
@@ -204,7 +199,6 @@ export async function resolveRange(
     const landedOnProject = head && projectTrunkSha ? await isAncestor(cwd, head, projectTrunkSha) : false
     if (base && head && baseBeforeHead && (landedOnTarget || landedOnProject)) {
       const res: RangeResolution = { ok: true, base, head, trunkSha: (landedOnTarget ? trunkSha : projectTrunkSha) as string, cwd, from: 'landed' }
-      if (cacheKey) rangeCache.set(cacheKey, res)
       return res
     }
   }
@@ -213,7 +207,7 @@ export async function resolveRange(
   if (task.branch) {
     const branch = await resolves(cwd, task.branch)
     if (branch) {
-      const base = await tryGit(cwd, ['merge-base', target, task.branch])
+      const base = await rangeGit(cwd, ['merge-base', target, task.branch])
       if (base) return { ok: true, base, head: branch, trunkSha, cwd, from: 'branch' }
     }
   }
@@ -230,7 +224,6 @@ export async function resolveRange(
           : 'this task landed nothing that can still be identified — no commits were recorded for ' +
             'it, no landing was ever announced on its thread, and its branch has been retired'
   }
-  if (cacheKey) rangeCache.set(cacheKey, failed)
   return failed
 }
 
@@ -244,13 +237,13 @@ export async function resolveRange(
  * because these lists are one to three commits long: of the 60 tasks that had a recorded range on
  * 2026-09-05, 58 spanned exactly one commit, and only 7 tasks in the fleet ever landed twice.
  */
-async function orderByAncestry(cwd: string, shas: string[]): Promise<string[]> {
+async function orderByAncestry(cwd: string, shas: string[], options: GitOptions = {}): Promise<string[]> {
   const sorted: string[] = []
   for (const sha of shas) {
     let at = sorted.length
     for (let i = 0; i < sorted.length; i += 1) {
       const other = sorted[i]
-      if (other && (await isAncestor(cwd, sha, other))) {
+      if (other && (await ancestry(cwd, sha, other, options))) {
         at = i
         break
       }
@@ -260,18 +253,16 @@ async function orderByAncestry(cwd: string, shas: string[]): Promise<string[]> {
   return sorted
 }
 
-async function isAncestor(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
+async function ancestry(cwd: string, ancestor: string, descendant: string, options: GitOptions = {}): Promise<boolean> {
   try {
-    await git(cwd, ['merge-base', '--is-ancestor', ancestor, descendant])
+    await git(cwd, ['merge-base', '--is-ancestor', ancestor, descendant], options)
     return true
-  } catch {
+  } catch (err) {
+    if (options.signal?.aborted || (err as { killed?: boolean }).killed) throw err
     return false
   }
 }
 
-async function resolves(cwd: string, ref: string): Promise<string | null> {
-  return tryGit(cwd, ['rev-parse', `${ref}^{commit}`])
-}
 
 
 /**

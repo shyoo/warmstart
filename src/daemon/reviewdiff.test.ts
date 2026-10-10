@@ -124,6 +124,18 @@ afterAll(() => {
 })
 
 describe('the resolution ladder', () => {
+  it('revalidates recorded commits against current target refs before another review', async () => {
+    const project = makeRepo()
+    const { base, head } = branchWithWork(project, 'feature')
+    git(project.root, 'merge', '--ff-only', 'feature')
+    git(project.root, 'branch', '-D', 'feature')
+    const subject = taskWithCommits([head])
+    expect((await review.resolveRange(subject, project, 'main')).ok).toBe(true)
+    // Move only the fixture's ref: the objects still exist, but these commits are no longer landed.
+    git(project.root, 'update-ref', 'refs/heads/main', base)
+    expect((await review.resolveRange(subject, project, 'main')).ok).toBe(false)
+  })
+
   it('level 1: recorded commits answer after the branch is gone, and outrank the range', async () => {
     const project = makeRepo()
     const { base, head } = branchWithWork(project, 'feature')

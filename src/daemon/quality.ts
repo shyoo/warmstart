@@ -10,19 +10,18 @@ import type {
   QualityReport,
   QualityReviewerTally,
   ReviewCounts,
-  ReviewCredit,
   ReviewFilter,
   ReviewQueuePage,
   UngradedTask
 } from '@shared/quality.js'
 import { db, rows } from './db.js'
 import { adapter, adapterLabels } from './adapters/index.js'
-import { pendingReviews } from './review.js'
 import { getTasksByIds } from './tasks.js'
 import type { Task } from '@shared/tasks.js'
 import { defaultGradingModel, listWorkers } from './workers.js'
 import { hasBatchReviewer, reviewRange, reviewerAvailability } from './reviewer.js'
 import { medianFloat } from './stats.js'
+import { candidatePage, candidateCoverage } from './reviewread.js'
 
 /**
  * What the fleet has actually measured about *quality*, aggregated from stored peer and user reviews.
@@ -367,14 +366,6 @@ const FINISHED = `from tasks t
      and coalesce(t.stats_excluded, 0) = 0
      and exists (select 1 from runs r where r.task_id = t.id and r.kind = 'work')`
 
-/** The `where` fragment for one bucket. ⚠️ `many` is two *or more*, so exactly two is in it. */
-function filterClause(filter: ReviewFilter): string {
-  if (filter === 'none') return ' and t.quality_review_count = 0'
-  if (filter === 'one') return ' and t.quality_review_count = 1'
-  if (filter === 'many') return ' and t.quality_review_count >= 2'
-  return ''
-}
-
 function scalar(sql: string): number {
   return ((db().prepare(sql).get() as { n: number } | undefined)?.n ?? 0)
 }
@@ -396,66 +387,6 @@ interface QueueRow {
   quality_review_score: number | null
   adapter_id: string | null
   model: string | null
-}
-
-/**
- * The tasks in one bucket, newest first.
- *
- * ⚠️ Newest first for the reason `ungradedTasks` is: a review reads a commit range, and
- * `resolveRange` gets less able to answer the further back it reaches. A page of the oldest work is
- * a page of tasks that will mostly refuse.
- */
-function queueRows(filter: ReviewFilter, limit: number, offset: number): QueueRow[] {
-  return rows<QueueRow>(
-    db()
-      .prepare(
-        `select t.id, t.seq, t.title, t.project_id, t.updated_at, t.quality_review_count,
-                t.quality_review_score,
-                (select r.adapter_id from runs r
-                  where r.task_id = t.id and r.kind = 'work'
-                    and coalesce(r.outcome, '') <> 'failed'
-                  order by r.started_at desc limit 1) as adapter_id,
-                (select r.model from runs r
-                  where r.task_id = t.id and r.kind = 'work'
-                    and coalesce(r.outcome, '') <> 'failed'
-                  order by r.started_at desc limit 1) as model
-           ${FINISHED}${filterClause(filter)}
-          order by t.updated_at desc
-          limit ? offset ?`
-      )
-      .all(limit, offset)
-  )
-}
-
-/**
- * Who has already graded each of these tasks, in one read rather than one per row.
- *
- * ⚠️ **Adapter *and* model**, distinct on both. Two grades from `openai-compatible` may be two
- * different judges — Codex on one account, a small local model on another — and the row that says
- * why nobody else may grade this task is the row where that difference is worth seeing.
- *
- * ⛔ Eligibility is still burned per *adapter*, and that is `reviewer.ts`'s rule, not this read's to
- * restate: naming both models here does not mean a second model behind the same adapter may grade.
- */
-function gradersByTask(taskIds: string[]): Map<string, ReviewCredit[]> {
-  const out = new Map<string, ReviewCredit[]>()
-  if (taskIds.length === 0) return out
-  const marks = taskIds.map(() => '?').join(', ')
-  for (const r of rows<{ task_id: string; reviewer_adapter: string; reviewer_model: string | null }>(
-    db()
-      .prepare(
-        `select distinct task_id, reviewer_adapter, reviewer_model from quality_reviews
-          where status = 'complete' and composite is not null and task_id in (${marks})
-          order by task_id, reviewer_adapter, reviewer_model`
-      )
-      .all(...taskIds)
-  )) {
-    out.set(r.task_id, [
-      ...(out.get(r.task_id) ?? []),
-      { adapterId: r.reviewer_adapter, model: r.reviewer_model }
-    ])
-  }
-  return out
 }
 
 export async function isTaskGradable(task: Task): Promise<{ ok: boolean; reason: string }> {
@@ -487,92 +418,13 @@ export async function reviewQueue(
   offset = 0,
   gradableOnly = false
 ): Promise<ReviewQueuePage> {
-  const take = Math.max(1, Math.min(200, Math.floor(limit)))
-  const skip = Math.max(0, Math.floor(offset))
-  // ⛔ Read and validate the visible page first. The old shape collected up to 1,000 finished
-  // tasks and resolved every one of their git ranges before returning 25 rows. That made opening
-  // this page get slower with history, even though the reader could not see those rows yet.
-  // `reviewCoverage` deliberately keeps the whole-history read, but it is requested after this
-  // response has painted the page.
-  const raw = queueRows(filter, gradableOnly ? 1000 : take, gradableOnly ? 0 : skip)
-  // ⛔ One batched fetch, not `getTask` per row: `TASK_SELECT`'s correlated subqueries and its
-  // timing lookup are each designed to run once for the whole page, and calling `getTask` in this
-  // loop paid for both of them per task instead. See `getTasksByIds`.
-  const tasksById = getTasksByIds(raw.map((r) => r.id))
-  const gradableMap = new Map<string, { ok: boolean; reason: string }>()
-
-  await Promise.all(
-    raw.map(async (r) => {
-      const task = tasksById.get(r.id) ?? null
-      const gradable = task
-        ? await isTaskGradable(task)
-        : { ok: false, reason: 'this task is no longer readable' }
-      gradableMap.set(r.id, gradable)
-    })
-  )
-
-  const found = gradableOnly ? raw.filter((r) => gradableMap.get(r.id)?.ok).slice(skip, skip + take) : raw
-  // A precise total after filtering to eligible work requires the same fleet-wide validation as
-  // the coverage tiles. Keep that deliberate, opt-in filter honest; ordinary page navigation is
-  // a cheap SQL count and never touches historical git ranges.
-  const total = gradableOnly
-    ? raw.filter((r) => gradableMap.get(r.id)?.ok).length
-    : scalar(`select count(*) as n ${FINISHED}${filterClause(filter)}`)
-
-  const graders = gradersByTask(found.map((r) => r.id))
-  const grading = new Set(pendingReviews().map((r) => r.taskId))
-
-  return {
-    total,
-    adapterLabels: adapterLabels(),
-    rows: found.map((r) => {
-      const gradable = gradableMap.get(r.id) ?? { ok: false, reason: 'unknown' }
-      return {
-        taskId: r.id,
-        seq: r.seq,
-        title: r.title.slice(0, 400),
-        projectId: r.project_id,
-        finishedAt: r.updated_at,
-        adapterId: r.adapter_id,
-        model: r.model,
-        reviewCount: r.quality_review_count,
-        score: r.quality_review_score,
-        gradedBy: graders.get(r.id) ?? [],
-        eligible: gradable.ok,
-        ineligibleReason: gradable.ok ? '' : gradable.reason,
-        grading: grading.has(r.id)
-      }
-    })
-  }
+  return candidatePage(filter, Math.max(1, Math.min(200, Math.floor(limit))),
+    Math.max(0, Math.floor(offset)), gradableOnly)
 }
 
-/**
- * The exact totals behind the coverage tiles and tab badges.
- *
- * ⛔ Kept separate from `reviewQueue`: this validates historical git ranges, so it grows with
- * history. The renderer asks only after the visible page has arrived; correctness remains the
- * same, but a reader no longer waits for work outside the page they opened.
- */
+/** Cached coverage; unchecked ranges are explicit and finish in the background. */
 export async function reviewCoverage(): Promise<ReviewCounts> {
-  const allFinished = queueRows('all', 1000, 0)
-  const tasksById = getTasksByIds(allFinished.map((r) => r.id))
-  const gradable = await Promise.all(
-    allFinished.map(async (r) => {
-      const task = tasksById.get(r.id)
-      return task ? (await isTaskGradable(task)).ok : false
-    })
-  )
-  let none = 0
-  let one = 0
-  let many = 0
-  for (let i = 0; i < allFinished.length; i += 1) {
-    if (!gradable[i]) continue
-    const count = allFinished[i]?.quality_review_count ?? 0
-    if (count === 0) none += 1
-    else if (count === 1) one += 1
-    else many += 1
-  }
-  return { none, one, many, total: none + one + many, ungradable: allFinished.length - (none + one + many) }
+  return candidateCoverage()
 }
 
 /**

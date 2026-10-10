@@ -128,6 +128,8 @@ export interface ReviewCounts {
   many: number
   total: number
   ungradable?: number
+  /** Unchecked ranges are neither gradable nor refused. */
+  pending?: number
 }
 
 /**
@@ -171,6 +173,8 @@ export interface ReviewQueueRow {
    * is the bug `reviewCandidates` documents.
    */
   eligible: boolean
+  eligibilityPending?: boolean
+  eligibilityCheckedAt?: number | null
   /** ⛔ Never a bare "unavailable": names every candidate considered and why each was rejected. */
   ineligibleReason: string
   /** A grade is being produced for this task right now. */
@@ -181,6 +185,7 @@ export interface ReviewQueuePage {
   rows: ReviewQueueRow[]
   /** Rows matching the filter, before paging. */
   total: number
+  pending?: number
   /**
    * `openai-compatible` → `Codex CLI`, for every adapter this build has loaded.
    *

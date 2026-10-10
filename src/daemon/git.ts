@@ -25,9 +25,11 @@ import { spawnEnv, which } from './which.js'
 export const GIT_MAX_BUFFER = 64 * 1024 * 1024
 
 /** Run git in `cwd` and return stdout with trailing whitespace removed. Throws if git does. */
-export async function git(cwd: string, args: string[]): Promise<string> {
+export interface GitOptions { signal?: AbortSignal; timeout?: number }
+
+export async function git(cwd: string, args: string[], options: GitOptions = {}): Promise<string> {
   const binary = which('git') ?? 'git'
-  const { stdout } = await run(binary, args, { cwd, env: spawnEnv(), maxBuffer: GIT_MAX_BUFFER })
+  const { stdout } = await run(binary, args, { cwd, env: spawnEnv(), maxBuffer: GIT_MAX_BUFFER, ...options })
   return stdout.replace(/\s+$/, '')
 }
 
@@ -38,10 +40,11 @@ export async function git(cwd: string, args: string[]): Promise<string> {
  * remote that is not configured. ⛔ Not a general error swallow: a caller that cannot tell "git said
  * no" from "git could not run" should use `git` and let the failure surface.
  */
-export async function tryGit(cwd: string, args: string[]): Promise<string | null> {
+export async function tryGit(cwd: string, args: string[], options: GitOptions = {}): Promise<string | null> {
   try {
-    return await git(cwd, args)
-  } catch {
+    return await git(cwd, args, options)
+  } catch (err) {
+    if (options.signal?.aborted || (err as { killed?: boolean }).killed) throw err
     return null
   }
 }

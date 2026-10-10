@@ -104,12 +104,14 @@ had succeeded; only the answer was destroyed in transit. Two rules follow:
   header/request reapers. They exist to stop a hostile client dribbling a request; on 127.0.0.1
   behind a bearer token, with our own main process as the only client, the sole thing they ever
   caught was our own slowness. ⚠️ **Not for `daemon/remote/`**, which is reachable from a tailnet.
-- ⛔ **A polled RPC's cost is multiplied by its cadence, so it may not be O(everything).**
+- ⛔ **A polled RPC's cost is multiplied by its cadence: historical Git checks belong outside reads.**
   `reviewQueue` asked `isTaskGradable` for all 322 finished tasks, which built the reviewer *menu*,
   whose `typicalReviewMs` is a `runs` scan **per worker**: 2,576 scans and **5.0s of a 5.1s** call
-  for a menu no caller read. It now asks `reviewRange` — the diff half only — and migration 59 gives
-  the scan an index (5,225ms → 91ms for the same 2,576 calls). ⚠️ The renderer owes the other half:
-  a poll must not stack on itself (`QualityReview.tsx`).
+  for a menu no caller read. `reviewread.ts` now batches metadata and current peer facts, with
+  persisted, fingerprinted range evidence (migration 91). Two background Git chains at most
+  validate ranges with a four-second abort budget; unknown is distinct from refusal. The display
+  cache never authorises review execution, which resolves current repository state afresh.
+  `QualityReview.tsx` keeps one request and one latest follow-up; see [`ui.md`](ui.md) for freshness.
 
 The RPC method table is **148 methods across six domain files** — `daemon/api/workers.ts`,
 `projects.ts`, `tasks.ts`, `quality.ts`, `agent.ts` and `remote.ts` — that `daemon/api.ts` spreads

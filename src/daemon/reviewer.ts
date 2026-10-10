@@ -229,20 +229,25 @@ function reviewQuotaBlock(worker: Worker): BlockingWindow | null {
  * stream mode · then, when availability is required, the shared account list · the same quota water
  * mark work goes through · not already reviewing.
  */
-function reviewCandidates(task: Task, requireAvailable: boolean): { candidates: Worker[]; reason: string } {
-  const { authors } = authorshipOf(task.id)
-  const authorAdapters = new Set(authors.map((a) => a.adapterId))
+export interface ReviewPeerFacts {
+  authors: Set<string>
+  graded: Set<string>
+  workers: Worker[]
+}
+
+function reviewCandidates(task: Pick<Task, 'id'>, requireAvailable: boolean, facts?: ReviewPeerFacts): { candidates: Worker[]; reason: string } {
+  const authorAdapters = facts?.authors ?? new Set(authorshipOf(task.id).authors.map((a) => a.adapterId))
   // ⛔ **An adapter is asked at most once.** A second grade from a judge that has already answered
   // is a turn spent re-reading a diff to reproduce a number that is already stored, and on a batch
   // of fifty that is the difference between measuring the fleet and emptying a quota window. See
   // `gradedAdaptersOf` for why this is by adapter and why only `complete` counts.
-  const gradedAdapters = gradedAdaptersOf(task.id)
+  const gradedAdapters = facts?.graded ?? gradedAdaptersOf(task.id)
   const rejected: string[] = []
   /** ⚠️ Counted apart from the rest: "everybody here wrote it" is a different sentence. */
   let rejectedAsAuthor = 0
   const candidates: Worker[] = []
 
-  for (const worker of listWorkers()) {
+  for (const worker of facts?.workers ?? listWorkers()) {
     if (worker.retiredAt) continue
     if (authorAdapters.has(worker.adapterId)) {
       rejected.push(`${worker.label} did this work`)
@@ -332,12 +337,13 @@ function reviewCandidates(task: Task, requireAvailable: boolean): { candidates: 
  * graded this" do not clear, and those are the two this column is for.
  */
 export function reviewerAvailability(
-  task: Task,
+  task: Pick<Task, 'id'>,
   /** ⚠️ `true` additionally asks whether an account could start *this instant*. The batch driver's
    *  question, and the only caller that may treat a `false` as something that will clear. */
-  requireAvailable = false
+  requireAvailable = false,
+  facts?: ReviewPeerFacts
 ): { eligible: boolean; reason: string; count: number } {
-  const { candidates, reason } = reviewCandidates(task, requireAvailable)
+  const { candidates, reason } = reviewCandidates(task, requireAvailable, facts)
   return { eligible: candidates.length > 0, reason, count: candidates.length }
 }
 

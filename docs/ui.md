@@ -384,18 +384,27 @@ finished work carries **no** grade, exactly one, two or more, or **cannot be gra
 and whether both an exact diff and a peer remain so it can still be graded. The 0/1/2+ tiles and tab
 badges count only gradable work; **Non-gradable tasks** is disjoint, so a permanent refusal is never
 claimed in both totals. A "Filter out cannot be graded" toggle
-persists in operator preferences, and permanent refusals are printed beside **no**, not deferred until a batch skips it.
+persists in operator preferences. Confirmed refusals are printed beside **no** when shown.
+Unchecked ranges remain visible as **Checking eligibility**, including with the filter checked;
+they are neither confirmed gradable nor non-gradable. Coverage reports their pending count separately.
 The two link to each other in both
 directions rather than repeating each other. ⛔ **It is also the only place a review is commissioned in bulk** —
 the *Grade up to five* button that used to sit on Routing Model › Quality is gone and links here,
 because two buttons spending turns on the same accounts under different caps is a way to empty a
 quota window by pressing the wrong one.
 
-⚠️ **The visible page arrives before the fleet-wide coverage totals.** The table validates only the
-page a person can see; the 0/1/2+ tiles and tab badges fill after `quality.coverage` has checked the
-entire finished history. That keeps an old backlog from delaying the first 25 rows, while the totals
-remain exact rather than guessed. **One steady progress mark, beside Refresh, tracks grading rather
-than the fetch.**
+⚠️ **Candidate reads do not wait for Git.** `reviewread.ts` batches lightweight metadata and peer
+facts across all finished history, without the former 1,000-task cap or full task hydration.
+Range verdicts persist for at most 60 seconds with an evidence fingerprint and checked time;
+hover a confirmed row's eligibility to see its age. Two background checks run at most, prioritising
+the visible page, with a four-second process abort budget. Unavailable repositories/timeouts stay
+unknown and retry after 30 seconds. Task range/commit and project root/target changes invalidate
+evidence; peer eligibility uses current workers, authors and grades on every read. Review execution
+always resolves current Git state again. Totals exclude pending checks and say when incomplete.
+The table loads independently of batch/coverage reads, rejects obsolete selection responses, and
+queues one refresh for the latest selection. A five-second delay surfaces a Refresh instruction.
+The open view polls every three seconds for pending checks or grading, otherwise once a minute
+to recheck external repository changes. **One steady mark beside Refresh tracks grading.**
 While a batch runs the page polls every three seconds; a spinner bound to the fetch therefore blinked
 on and off across both the Refresh button and the "Filter out cannot be graded" label, at a cadence
 that described the poll and nothing an operator cares about. The mark is drawn for as long as

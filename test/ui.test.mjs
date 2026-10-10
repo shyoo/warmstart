@@ -2788,6 +2788,50 @@ try {
     'this install grades nothing, so the empty state is the state under test'
   )
 
+  // t1043: drive actual candidate rows with the persisted filter checked. This worker has no
+  // credentials; the completed work and its runs must be seeded explicitly, never asserted empty.
+  {
+    const store = new DatabaseSync(join(dataDir, 'warmstart.db'))
+    const peer = store.prepare("select id, enabled, grading_enabled from workers where adapter_id='claude-code' limit 1").get()
+    store.prepare('update workers set enabled=1, grading_enabled=1 where id=?').run(peer.id)
+    store.prepare(`insert into projects(id,name,root,vcs,created_at) values(?,?,?,'git',?)`)
+      .run('ui-quality-project', 'Quality fixture', join(dataDir, 'missing-quality-repository'), Date.now())
+    const baseSeq = store.prepare('select coalesce(max(seq),0) as n from tasks').get().n
+    const putTask = store.prepare(`insert into tasks(id,seq,title,project_id,status,created_by_json,
+      mandate_json,budget_json,quality_review_count,created_at,updated_at)
+      values(?,?,?,'ui-quality-project','completed','{}','{}','{}',?,?,?)`)
+    const putRun = store.prepare(`insert into runs(id,task_id,worker_id,adapter_id,model,kind,started_at,ended_at,outcome)
+      values(?,?,?,'ui-quality-author','fixture-model','work',1,2,'completed')`)
+    store.exec('begin')
+    for (let i = 0; i < 60; i++) {
+      putTask.run(`ui-quality-${i}`, baseSeq + i + 1, `Quality candidate ${i}`, i < 40 ? 0 : 1, 1, Date.now() + i)
+      putRun.run(`ui-quality-run-${i}`, `ui-quality-${i}`, peer.id)
+    }
+    store.exec('commit')
+    await evaluate(`[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim() === 'Dashboard').click(); localStorage.setItem('warmstart.qualityGradableOnly','true')`)
+    const opened = Date.now()
+    await evaluate(`[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Quality Review')).click()`)
+    const drawn = await until(() => evaluate(`document.querySelector('.content')?.innerText.includes('Quality candidate') &&
+      [...document.querySelectorAll('.content tbody tr')].some(r => r.innerText.includes('Checking eligibility'))`), 4800)
+    check('quality candidates render within five seconds with gradable-only checked', drawn && Date.now() - opened < 5000, `${Date.now() - opened} ms; seeded 60 work tasks`)
+    check('unchecked candidates are visible and explicitly marked', await evaluate(`document.querySelector('.content input[type=checkbox]').checked &&
+      [...document.querySelectorAll('.content tbody tr')].filter(r => r.innerText.includes('Quality candidate')).length > 0 &&
+      document.querySelector('.content').innerText.includes('Unchecked candidates remain visible')`))
+    await evaluate(`[...document.querySelectorAll('.content .tab')].find(b => b.innerText.startsWith('1 review')).click();
+      [...document.querySelectorAll('.content .tab')].find(b => b.innerText.startsWith('All finished')).click()`)
+    check('rapid quality filter changes render the latest selection', await until(() => evaluate(`document.querySelector('.content .tab--active')?.innerText.startsWith('All finished') &&
+      [...document.querySelectorAll('.content tbody tr')].some(r => r.innerText.includes('Quality candidate 59'))`), 4800))
+    await evaluate(`[...document.querySelectorAll('.content button')].find(b => b.innerText.includes('Older')).click()`)
+    check('older quality candidates page without waiting for Git', await until(() => evaluate(`document.querySelector('.content').innerText.includes('page 2 of') &&
+      [...document.querySelectorAll('.content tbody tr')].some(r => r.innerText.includes('Quality candidate'))`), 4800))
+    await evaluate(`[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim() === 'Dashboard').click(); localStorage.removeItem('warmstart.qualityGradableOnly')`)
+    store.prepare("delete from runs where task_id like 'ui-quality-%'").run()
+    store.prepare("delete from tasks where id like 'ui-quality-%'").run()
+    store.prepare("delete from projects where id='ui-quality-project'").run()
+    store.prepare('update workers set enabled=?, grading_enabled=? where id=?').run(peer.enabled, peer.grading_enabled, peer.id)
+    store.close()
+  }
+
   section('controller')
   // Controller has its own destination under Overview in the sidebar.
   await evaluate(

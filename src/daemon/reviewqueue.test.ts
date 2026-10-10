@@ -23,6 +23,9 @@ let reviewer: typeof import('./reviewer.js')
 let tasks: typeof import('./tasks.js')
 let adapters: typeof import('./adapters/index.js')
 
+let reads: typeof import('./reviewread.js')
+let gitRunner: typeof import('./git.js')
+
 let seq = 0
 
 /** A completed task with one work run — the three conditions that make a task gradeable at all. */
@@ -104,6 +107,8 @@ beforeAll(async () => {
   db = await import('./db.js')
   quality = await import('./quality.js')
   review = await import('./review.js')
+  reads = await import('./reviewread.js')
+  gitRunner = await import('./git.js')
   reviewer = await import('./reviewer.js')
   tasks = await import('./tasks.js')
   adapters = await import('./adapters/index.js')
@@ -125,6 +130,7 @@ beforeAll(async () => {
 })
 
 beforeEach(() => {
+  reads.stopReviewChecks()
   db.db().exec('delete from quality_reviews')
   db.db().exec('delete from runs')
   db.db().exec('delete from tasks')
@@ -132,6 +138,7 @@ beforeEach(() => {
 })
 
 afterAll(() => {
+  reads.stopReviewChecks()
   db.closeDb()
   rmSync(dir, { recursive: true, force: true })
 })
@@ -375,12 +382,14 @@ describe('what a batch would attempt', () => {
  * *"TypeError: fetch failed"*.
  */
 describe('what the coverage page costs to draw', () => {
-  it('returns the visible page before it walks historical diff ranges for the coverage totals', () => {
-    const source = readFileSync(new URL('./quality.ts', import.meta.url), 'utf8')
-    const queue = source.slice(source.indexOf('export async function reviewQueue'), source.indexOf('export async function reviewCoverage'))
-    expect(queue).toContain("const raw = queueRows(filter, gradableOnly ? 1000 : take, gradableOnly ? 0 : skip)")
-    expect(queue).not.toContain("queueRows('all', 1000, 0)")
-    expect(source.slice(source.indexOf('export async function reviewCoverage'))).toContain("queueRows('all', 1000, 0)")
+  it('counts and pages history beyond the old 1,000-task ceiling', async () => {
+    db.db().exec('begin')
+    try { for (let i = 0; i < 1100; i++) task() }
+    finally { db.db().exec('commit') }
+    const page = await quality.reviewQueue('all', 25, 1075, true)
+    expect(page.rows).toHaveLength(25)
+    expect(page.total).toBe(1100)
+    expect((await quality.reviewCoverage()).total).toBe(1100)
   })
 
   it('asks whether a task has a diff, never who is free to grade it and how fast they are', () => {
@@ -414,6 +423,148 @@ describe('what the coverage page costs to draw', () => {
     expect(detail).toContain('runs_worker')
     expect(detail).not.toContain('SCAN runs')
     expect(detail).not.toContain('TEMP B-TREE')
+  })
+})
+
+describe('candidate loading while ranges are unchecked', () => {
+  function projectTask(): string {
+    db.db().prepare(`insert or ignore into projects (id,name,root,vcs,created_at)
+      values ('p-read','fixture',?,'git',1)`).run(join(dir, 'repo'))
+    const id = task()
+    db.db().prepare("update tasks set project_id='p-read', branch='task-branch' where id=?").run(id)
+    return id
+  }
+
+  it('returns 25 actual rows from 10,000 cold candidates without starting Git or hydrating tasks', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const hydrate = vi.spyOn(tasks, 'getTask')
+    const ranges = vi.spyOn(review, 'resolveRange')
+    try {
+      db.db().exec('begin')
+      for (let i = 0; i < 10_000; i++) projectTask()
+      db.db().exec('commit')
+      const start = performance.now()
+      const page = await quality.reviewQueue('none', 25, 0, true)
+      const elapsed = performance.now() - start
+      expect(page.rows).toHaveLength(25)
+      expect(page.total).toBe(10_000)
+      expect(page.pending).toBe(10_000)
+      expect(page.rows.every((r) => r.eligibilityPending && !r.eligible)).toBe(true)
+      expect(hydrate).not.toHaveBeenCalled()
+      expect(ranges).not.toHaveBeenCalled()
+      expect(elapsed).toBeLessThan(5000)
+      console.log(`quality cold 10,000 candidates: ${elapsed.toFixed(1)} ms`)
+      expect(await quality.reviewCoverage()).toEqual({ none: 0, one: 0, many: 0, total: 0, ungradable: 0, pending: 10_000 })
+    } finally {
+      reads.stopReviewChecks(); hydrate.mockRestore(); ranges.mockRestore(); vi.useRealTimers()
+    }
+  })
+
+  it('shares background checks, persists results, and immediately rechecks changed range evidence', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const id = projectTask()
+    let resolve!: (r: import('./review.js').RangeResolution) => void
+    const ranges = vi.spyOn(review, 'resolveRange').mockImplementation(() => new Promise((done) => { resolve = done }))
+    const git = vi.spyOn(gitRunner, 'git').mockResolvedValue('.git')
+    try {
+      expect((await quality.reviewQueue('none', 25, 0, true)).rows[0]?.eligibilityPending).toBe(true)
+      await vi.advanceTimersByTimeAsync(10)
+      await quality.reviewCoverage(); await quality.reviewQueue('none', 25, 0, true)
+      expect(ranges).toHaveBeenCalledTimes(1)
+      resolve({ ok: false, reason: 'recorded commits are missing' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect((await quality.reviewQueue('none', 25, 0, true)).rows).toHaveLength(0)
+      expect((await quality.reviewCoverage()).ungradable).toBe(1)
+      reads.stopReviewChecks() // Simulate restarting the display service, keeping the database.
+      expect((await quality.reviewQueue('none')).rows[0]?.ineligibleReason).toContain('missing')
+      expect(ranges).toHaveBeenCalledTimes(1)
+      db.db().prepare('update tasks set landed_base_sha=? where id=?').run('new-base', id)
+      expect((await quality.reviewQueue('none', 25, 0, true)).rows[0]?.eligibilityPending).toBe(true)
+      await vi.advanceTimersByTimeAsync(10)
+      expect(ranges).toHaveBeenCalledTimes(2)
+      resolve({ ok: false, reason: 'still missing' })
+      await vi.advanceTimersByTimeAsync(0)
+      db.db().prepare('update review_range_cache set checked_at=? where task_id=?').run(Date.now() - reads.RANGE_FRESH_MS - 1, id)
+      expect((await quality.reviewQueue('none', 25, 0, true)).rows[0]?.eligibilityPending).toBe(true)
+    } finally {
+      reads.stopReviewChecks(); ranges.mockRestore(); git.mockRestore(); vi.useRealTimers()
+    }
+  })
+
+  it('leaves an unavailable repository unknown and retries without calling it non-gradable', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    projectTask()
+    const git = vi.spyOn(gitRunner, 'git').mockRejectedValue(new Error('repository unavailable'))
+    try {
+      await quality.reviewQueue('none', 25, 0, true)
+      await vi.advanceTimersByTimeAsync(10)
+      expect(await quality.reviewCoverage()).toMatchObject({ pending: 1, ungradable: 0 })
+      expect((await quality.reviewQueue('none', 25, 0, true)).rows).toHaveLength(1)
+      expect(git).toHaveBeenCalledTimes(1)
+      await vi.advanceTimersByTimeAsync(30_001)
+      await quality.reviewQueue('none')
+      await vi.advanceTimersByTimeAsync(10)
+      expect(git).toHaveBeenCalledTimes(2)
+    } finally { reads.stopReviewChecks(); git.mockRestore(); vi.useRealTimers() }
+  })
+
+  it('recomputes peer availability over a warm positive range after worker and review changes', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    const id = projectTask()
+    const git = vi.spyOn(gitRunner, 'git').mockResolvedValue('.git')
+    const ranges = vi.spyOn(review, 'resolveRange').mockResolvedValue({ ok: true, base: 'base', head: 'head', trunkSha: 'head', cwd: dir, from: 'landed' })
+    try {
+      await quality.reviewQueue('none')
+      await vi.advanceTimersByTimeAsync(10)
+      expect((await quality.reviewQueue('none', 25, 0, true)).rows[0]?.eligible).toBe(true)
+      db.db().prepare("update workers set grading_enabled=0 where id='w-antigravity'").run()
+      expect((await quality.reviewQueue('none', 25, 0, true)).rows).toHaveLength(0)
+      db.db().prepare("update workers set grading_enabled=1 where id='w-antigravity'").run()
+      grade(id, 'antigravity-cli', 'complete', 8)
+      expect((await quality.reviewQueue('none', 25, 0, true)).rows).toHaveLength(0)
+      db.db().prepare('delete from quality_reviews where task_id=?').run(id)
+      expect((await quality.reviewQueue('none', 25, 0, true)).rows[0]?.eligible).toBe(true)
+      expect(ranges).toHaveBeenCalledTimes(1)
+      db.db().prepare("update projects set root=? where id='p-read'").run(join(dir, 'changed-repo'))
+      expect((await quality.reviewQueue('none', 25, 0, true)).rows[0]?.eligibilityPending).toBe(true)
+    } finally {
+      db.db().prepare("update workers set grading_enabled=1 where id='w-antigravity'").run()
+      reads.stopReviewChecks(); git.mockRestore(); ranges.mockRestore(); vi.useRealTimers()
+    }
+  })
+
+  it('runs at most two Git checks even when a whole history is pending', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    for (let i = 0; i < 5; i++) projectTask()
+    let running = 0
+    let maximum = 0
+    const git = vi.spyOn(gitRunner, 'git').mockImplementation((_cwd, _args, options) => new Promise((_done, reject) => {
+      maximum = Math.max(maximum, ++running)
+      options?.signal?.addEventListener('abort', () => { running--; reject(new Error('aborted')) }, { once: true })
+    }))
+    try {
+      await quality.reviewQueue('none')
+      await vi.advanceTimersByTimeAsync(10)
+      expect(git).toHaveBeenCalledTimes(2)
+      await vi.advanceTimersByTimeAsync(4020)
+      expect(git).toHaveBeenCalledTimes(4)
+      expect(maximum).toBe(2)
+      expect(await quality.reviewCoverage()).toMatchObject({ pending: 5, ungradable: 0 })
+    } finally { reads.stopReviewChecks(); git.mockRestore(); vi.useRealTimers() }
+  })
+
+  it('bounds a hung Git check at the process and never records its timeout as a refusal', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
+    projectTask()
+    const git = vi.spyOn(gitRunner, 'git').mockImplementation((_cwd, _args, options) => new Promise((_done, reject) => {
+      options?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+    }))
+    try {
+      await quality.reviewQueue('none')
+      await vi.advanceTimersByTimeAsync(4010)
+      expect(await quality.reviewCoverage()).toMatchObject({ pending: 1, ungradable: 0 })
+      expect(db.db().prepare('select count(*) as n from review_range_cache').get()).toMatchObject({ n: 0 })
+    } finally { reads.stopReviewChecks(); git.mockRestore(); vi.useRealTimers() }
   })
 })
 
