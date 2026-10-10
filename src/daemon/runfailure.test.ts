@@ -2025,3 +2025,51 @@ describe('resolveTask when a person marks a task as complete', () => {
     expect(after.status).not.toBe('blocked')
   })
 })
+
+/**
+ * A reply written into a turn that will not read it until it ends (t1039 ← t1037).
+ *
+ * ⛔ The reply was stored as delivered the moment it was written, and the thread said nothing else,
+ * so a person watching an Antigravity agent work on past it had no way to know it was waiting.
+ */
+describe('a note written into a running turn', () => {
+  const queuedLines = (taskId: string) =>
+    tasks.messagesFor(taskId).filter((m) => m.role === 'system' && m.text === 'Message queued behind the current turn')
+
+  it('says it is queued while the turn runs, still counts it delivered, and stops saying so once the turn has ended', async () => {
+    // One test, not two: this CLI allows one account per machine, so a second seeded worker is refused.
+    const { task, session, worker } = seedRunningTask({ adapterId: 'antigravity-cli' })
+    const send = vi.spyOn(sessions, 'sendPrompt').mockImplementation(() => {})
+    const id = tasks.addMessage(task.id, 'human', 'Please wrap up')
+
+    expect(scheduler.deliverToLiveSession(task.id, id, 'Please wrap up')).toBe(true)
+
+    expect(send).toHaveBeenCalledTimes(1)
+    const lines = queuedLines(task.id)
+    expect(lines).toHaveLength(1)
+    expect(lines[0]?.detail).toContain('cannot interrupt')
+    // Still delivered: the CLI will run it, and an undelivered note is pasted into the next prompt too.
+    expect(tasks.messagesFor(task.id).find((m) => m.id === id)?.deliveredAt).toBeTruthy()
+
+    // The turn has ended: the next turn reads a note at once, so there is nothing to wait for.
+    const idlestate = await import('./idlestate.js')
+    idlestate.markTaskIdle(task.id, session.id, Date.now())
+    const later = tasks.addMessage(task.id, 'human', 'And another thing')
+    scheduler.deliverToLiveSession(task.id, later, 'And another thing')
+    expect(queuedLines(task.id)).toHaveLength(1)
+
+    idlestate.clearIdleForSession(session.id, false)
+    db.db().prepare('delete from sessions').run()
+    db.db().prepare('delete from workers where id = ?').run(worker.id)
+  })
+
+  it('says nothing for an adapter nobody has measured', () => {
+    const { task } = seedRunningTask({ adapterId: 'claude-code' })
+    vi.spyOn(sessions, 'sendPrompt').mockImplementation(() => {})
+    const id = tasks.addMessage(task.id, 'human', 'Hello')
+
+    scheduler.deliverToLiveSession(task.id, id, 'Hello')
+
+    expect(queuedLines(task.id)).toHaveLength(0)
+  })
+})

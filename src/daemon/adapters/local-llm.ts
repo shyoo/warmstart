@@ -66,6 +66,7 @@ const info: AdapterInfo = {
     // ⭐ The bridge keeps stdin open and reads NDJSON prompts line by line, so follow-up messages
     // (wrap-up nudges, finish instructions) can be sent mid-conversation.
     streamPrompts: 'conversation',
+    promptDuringTurn: 'unmeasured',
     // The bridge flushes its SSE buffer on a newline, a sentence end or 60 characters, so an event
     // is a chunk of one reply rather than the reply.
     outputFraming: 'delta',

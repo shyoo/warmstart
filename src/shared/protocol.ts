@@ -1314,6 +1314,22 @@ export interface AdapterCapabilities {
    */
   streamPrompts: 'conversation' | 'once'
   /**
+   * What a prompt written into a stream session **while a turn is running** does.
+   *
+   *  - `queued`     — nothing, until that turn ends; the CLI then runs it as a turn of its own. The
+   *                   agent cannot see it, and there is no stdin event that interrupts the turn.
+   *  - `steers`     — the running turn reads it at its next step.
+   *  - `unmeasured` — nobody has watched. Read as `steers` it promises the agent heard a message it may
+   *                   not have, so nothing treats this as `steers`; it simply says nothing extra.
+   *
+   * ⛔ Added 2026-10-10 (t1039). A person's reply to t1037, 13 minutes into one Antigravity turn, was
+   * stored as *delivered* the instant it was written and the agent carried on without it. Measured
+   * on agy 1.3.3: prompt 1 ran a 25 s command, prompt 2 was written at 10 s, and its `result` arrived
+   * at 36.7 s, after prompt 1's at 34.7 s. The binary accepts one stdin event, `user` (anything else
+   * is *"not supported yet"*), and its help says it *"runs a turn for each"* message.
+   */
+  promptDuringTurn: 'steers' | 'queued' | 'unmeasured'
+  /**
    * What one `assistant_text` event off this adapter's stream **is** — a finished piece of prose, or
    * a fragment of one still arriving.
    *

@@ -24,6 +24,7 @@ import {
 } from '@shared/tasks.js'
 import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import { adapter } from './adapters/index.js'
+import { idleSinceOf } from './idlestate.js'
 import type { ProbeDemand } from './quota.js'
 import { recordRoutingDecision } from './routingdecisions.js'
 import type { RoutingBasis, RoutingCandidate } from '@shared/routing.js'
@@ -3675,6 +3676,30 @@ async function readTrunkMovement(
 }
 
 /**
+ * Say so on the thread when a note was written into a turn that will not read it until it ends.
+ *
+ * ⛔ **`delivered` meant *written*, and for `promptDuringTurn: 'queued'` that is not *heard*** (t1039
+ * ← t1037). A reply sent 13 minutes into one Antigravity turn was marked delivered at once, nothing
+ * on the thread said otherwise, and the agent worked on as if it had never been sent — which, until
+ * the turn ended, it had not. The CLI does run it afterwards, so the note stays delivered (clearing
+ * that would paste it into the next prompt a second time); what was missing is the sentence telling
+ * the person to expect the wait, and that a reply cannot interrupt it.
+ *
+ * ⚠️ Said only while no *turn ended* mark is set: an idle session reads the note as its next turn at
+ * once. `unmeasured` says nothing, because nobody has watched what it does.
+ */
+function noteIfQueuedBehindTurn(taskId: string, session: { adapterId: string }): void {
+  const info = adapter(session.adapterId).info
+  if (info.capabilities.promptDuringTurn !== 'queued') return
+  if (idleSinceOf(taskId) !== null) return
+  addMessage(taskId, 'system', 'Message queued behind the current turn', null, [], {
+    detail:
+      `${info.label} reads its input one turn at a time, so this reply waits until the turn it is in ends ` +
+      'and cannot interrupt it. To stop the turn now, cancel the task and send the reply again.'
+  })
+}
+
+/**
  * Say something to a task that is already running.
  *
  * ⛔ This is the cheap half of §18.4: a note into a live session is a cache read - `0.1·C`, and it
@@ -3688,6 +3713,7 @@ export function deliverToLiveSession(taskId: string, messageId: number, text: st
   try {
     sendPrompt(session.id, text)
     markDelivered([messageId])
+    noteIfQueuedBehindTurn(taskId, session)
     return true
   } catch (err) {
     log.warn(`could not deliver a note into t${taskId.slice(0, 8)}'s session:`, err)

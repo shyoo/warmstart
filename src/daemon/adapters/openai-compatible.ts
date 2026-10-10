@@ -164,6 +164,7 @@ const info: AdapterInfo = {
      * no error anywhere to say so.
      */
     streamPrompts: 'once',
+    promptDuringTurn: 'unmeasured',
     // `item.completed` only — codex publishes an `agent_message` when it is finished writing one.
     outputFraming: 'message',
     // ⚠️ `codex exec --json` has no partial-message flag measured on it. Conservative is the cheap

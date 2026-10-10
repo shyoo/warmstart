@@ -252,6 +252,10 @@ const info: AdapterInfo = {
     spendProbe: 'none',
     // stdin stays open and takes prompt after prompt; that is what the stream transport is for.
     streamPrompts: 'conversation',
+    // ⛔ `queued`, measured on agy 1.3.3 (2026-10-10, t1039): a second NDJSON line written 10 s into a
+    // 25 s turn got its own `result` 2 s after the first turn's. Only the `user` event exists, so a turn
+    // in flight cannot be steered or interrupted from stdin; see `AdapterCapabilities.promptDuringTurn`.
+    promptDuringTurn: 'queued',
     // `step_update` carries `text_delta`/`thought_delta`: a few tokens at a time, split mid-word.
     outputFraming: 'delta',
     // ⚠️ Its stream is already a delta stream — every `step_update` is a fragment — so there is no

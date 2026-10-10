@@ -87,6 +87,7 @@ function capabilitiesFrom(file: ExternalAdapterFile): AdapterInfo['capabilities'
     // Irrelevant until a declarative adapter can decode a stream, and `conversation` is the
     // shape a PTY has anyway.
     streamPrompts: 'conversation',
+    promptDuringTurn: 'unmeasured',
     // ⛔ `message`, and not negotiable from a config file either: a declarative adapter has no
     // decoder, so it emits no `assistant_text` at all today. The value still has to be the safe one
     // for the day one does — framing unknown events as whole messages costs an extra row, framing

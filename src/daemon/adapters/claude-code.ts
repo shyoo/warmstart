@@ -75,6 +75,8 @@ const info: AdapterInfo = {
     spendProbe: 'config-cache',
     // stdin stays open and takes prompt after prompt; that is what the stream transport is for.
     streamPrompts: 'conversation',
+    // Not watched: nothing here has measured whether a prompt written mid-turn reaches the turn.
+    promptDuringTurn: 'unmeasured',
     // One `{"type":"assistant"}` record per message, its text blocks joined. Whole prose, own
     // linebreaks, and the next record is a new message rather than more of this one.
     outputFraming: 'message',
