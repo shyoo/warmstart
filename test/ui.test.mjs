@@ -5349,6 +5349,83 @@ try {
   await waitFor(async () => await evaluate(`document.querySelector('[aria-label="Scratchpad project"]')?.innerText.trim() === 'Global' && /No prompts yet/.test(document.querySelector('.scratchpad .empty-inline')?.innerText ?? '')`), 'scratchpad from outside a project to select Global')
   check('the top-row scratchpad works outside a project and starts at Global', true)
 
+  section('scratchpad Send to existing task threads (t1072)')
+  // Real project routes and persisted messages: a pure target-filter test cannot prove this seam.
+  const sendFixtures = await evaluate(`(async () => {
+    const r = window.agentyard.rpc;
+    const work = await r('task.create', { projectId: ${JSON.stringify(scratchProject)}, kind: 'work', title: 'Scratchpad existing work thread', prompt: 'Original work request' });
+    const conversation = await r('task.create', { projectId: ${JSON.stringify(scratchProject)}, kind: 'conversation', title: 'Scratchpad existing conversation', prompt: 'Original conversation request' });
+    const closed = await r('task.create', { projectId: ${JSON.stringify(scratchProject)}, title: 'Scratchpad closed thread' });
+    await r('task.resolve', { id: closed.id });
+    const draft = await r('task.create', { projectId: ${JSON.stringify(scratchProject)}, status: 'draft', title: 'Scratchpad draft thread' });
+    const deleted = await r('task.create', { projectId: ${JSON.stringify(scratchProject)}, status: 'draft', title: 'Scratchpad deleted thread' });
+    await r('task.delete', { id: deleted.id });
+    const elsewhere = await r('task.create', { kind: 'conversation', title: 'Scratchpad thread outside this project' });
+    const doc = await r('scratchpad.get', { projectId: ${JSON.stringify(scratchProject)} });
+    await r('scratchpad.save', { projectId: ${JSON.stringify(scratchProject)}, baseVersion: doc.version,
+      text: '* New\\n\\nReply from the project scratchpad.\\n\\n---\\n\\n* New\\n\\nReply from beside the work thread.\\n\\n---\\n\\n* New\\n\\nStart a fresh conversation.' });
+    return { work, conversation, excluded: [closed.id, draft.id, deleted.id, elsewhere.id] };
+  })()`)
+  await evaluate(`document.querySelector('.titlebar button.titlebar-action:not(.titlebar-new-task):not(.titlebar-power-toggle)').click()`)
+  await waitFor(async () => await evaluate(`!!document.querySelector('[aria-label="Scratchpad project"]')`), 'the scratchpad selector for Send')
+  await evaluate(`document.querySelector('[aria-label="Scratchpad project"]').click()`)
+  await evaluate(`document.querySelector('.pill-menu [data-value="${scratchProject}"]').click()`)
+  await waitFor(async () => await evaluate(`document.querySelector('.scratch-card .hl-input')?.value === 'Reply from the project scratchpad.'`), 'the Send fixture cards')
+  await evaluate(`document.querySelector('.scratch-card [aria-label="Send to a conversation"]').click()`)
+  await waitFor(async () => await evaluate(`!!document.querySelector('.pill-menu [data-value="${sendFixtures.conversation.id}"]')`), 'the Send targets')
+  const sendValues = await evaluate(`[...document.querySelectorAll('.pill-menu [role="option"]')].map(b => b.dataset.value)`)
+  check('Send offers existing work and conversation threads plus New conversation',
+    sendValues.includes(sendFixtures.work.id) && sendValues.includes(sendFixtures.conversation.id) && sendValues.includes(''), JSON.stringify(sendValues))
+  check('Send excludes closed, draft, deleted and other-project threads',
+    sendValues.length > 0 && sendFixtures.excluded.every(id => !sendValues.includes(id)), JSON.stringify(sendValues))
+  // Continue after a failed membership assertion so a broken build reports the actual regression.
+  if (sendValues.includes(sendFixtures.work.id)) {
+    await evaluate(`document.querySelector('.pill-menu [data-value="${sendFixtures.work.id}"]').click()`)
+    await waitFor(async () => {
+      const detail = await evaluate(`window.agentyard.rpc('task.get', { id: ${JSON.stringify(sendFixtures.work.id)} })`)
+      return detail.messages.some(m => m.role === 'human' && m.text === 'Reply from the project scratchpad.')
+    }, 'the card to reach the existing work thread')
+    await waitFor(async () => (await evaluate(`window.agentyard.rpc('scratchpad.get', { projectId: ${JSON.stringify(scratchProject)} })`)).text.includes('* Sent t' + sendFixtures.work.seq), 'the Sent marker to persist')
+    const detail = await evaluate(`window.agentyard.rpc('task.get', { id: ${JSON.stringify(sendFixtures.work.id)} })`)
+    check('Send appends one unmarked reply to the same work thread and keeps its original request',
+      detail.task.id === sendFixtures.work.id && detail.messages.filter(m => m.text === 'Reply from the project scratchpad.').length === 1 && detail.messages.some(m => m.text === 'Original work request'))
+    await evaluate(`[...document.querySelectorAll('.nav-item--task')].find(b => b.innerText.includes('Scratchpad existing work thread')).click()`)
+    await waitFor(async () => await evaluate(`document.querySelector('.detail-head h3')?.innerText.includes('Scratchpad existing work thread')`), 'the project work thread')
+    await waitFor(async () => await evaluate(`[...document.querySelectorAll('.thread--task .msg-bubble')].some(m => m.innerText.trim() === 'Reply from the project scratchpad.')`), 'the sent reply to render in the existing thread')
+    check('the existing work thread renders the reply sent from the scratchpad', true)
+    await evaluate(`document.querySelector('.side-toggle [data-pane="scratchpad"]').click()`)
+    await waitFor(async () => await evaluate(`[...document.querySelectorAll('.scratchpad--compact .hl-input')].some(box => box.value === 'Reply from beside the work thread.')`), 'the scratchpad cards beside the work thread to load')
+    await evaluate(`(() => {
+      const card = [...document.querySelectorAll('.scratchpad--compact .scratch-card')].find(c => c.querySelector('.hl-input')?.value === 'Reply from beside the work thread.');
+      card.querySelector('[aria-label="Send to a conversation"]').click();
+    })()`)
+    await waitFor(async () => await evaluate(`!!document.querySelector('.pill-menu [data-value="${sendFixtures.conversation.id}"]')`), 'the compact Send targets')
+    check('the compact scratchpad also offers the work thread currently open', await evaluate(`!!document.querySelector('.pill-menu [data-value="${sendFixtures.work.id}"]')`))
+    await evaluate(`document.querySelector('.pill-menu [data-value="${sendFixtures.conversation.id}"]').click()`)
+    await waitFor(async () => {
+      const detail = await evaluate(`window.agentyard.rpc('task.get', { id: ${JSON.stringify(sendFixtures.conversation.id)} })`)
+      const doc = await evaluate(`window.agentyard.rpc('scratchpad.get', { projectId: ${JSON.stringify(scratchProject)} })`)
+      return detail.messages.some(m => m.text === 'Reply from beside the work thread.') && doc.text.includes('* Sent t' + sendFixtures.conversation.seq)
+    }, 'the compact reply and Sent marker to persist')
+    check('the compact scratchpad sends to an existing Conversation and persists its destination', true)
+    await evaluate(`(() => {
+      const card = [...document.querySelectorAll('.scratch-card')].find(c => c.querySelector('.hl-input')?.value === 'Start a fresh conversation.');
+      card.querySelector('[aria-label="Send to a conversation"]').click();
+    })()`)
+    await evaluate(`document.querySelector('.pill-menu [data-value=""]').click()`)
+    await waitFor(async () => await evaluate(`document.querySelector('.task-composer-modal textarea[aria-label="Prompt"]')?.value === 'Start a fresh conversation.'`), 'New conversation to seed the composer')
+    check('New conversation still opens a Conversation composer with the unmarked card text',
+      await evaluate(`document.querySelector('.task-composer-modal textarea[aria-label="Prompt"]')?.placeholder.startsWith('Start an interactive session.') && !document.querySelector('.task-composer-modal [aria-label="Finish policy"]')`))
+    await evaluate(`document.querySelector('button[aria-label="Close new task"]').click()`)
+    await waitFor(async () => await evaluate(`!document.querySelector('.task-composer-modal')`), 'the Send composer to close')
+    await evaluate(`document.querySelector('.side-toggle [data-pane="status"]').click()`)
+    await waitFor(async () => await evaluate(`!document.querySelector('.scratchpad--compact')`), 'the status pane to replace the Send fixture scratchpad')
+  } else {
+    await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`)
+  }
+  // Keep these fixtures out of the subsequent sidebar tests.
+  await evaluate(`Promise.all(${JSON.stringify([sendFixtures.work.id, sendFixtures.conversation.id])}.map(id => window.agentyard.rpc('task.resolve', { id })))`)
+
   section('open conversations in the sidebar, and renaming from the convoHeading')
   // ⛔ Switching between two conversations meant Tasks board → find the row → open it, every time
   // (t479). A project now lists the conversations it is in the middle of under itself in the

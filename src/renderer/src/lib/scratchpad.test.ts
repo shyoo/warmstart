@@ -274,10 +274,10 @@ describe('what is drawn', () => {
 })
 
 describe('task links', () => {
-  const task = (seq: number, kind: 'work' | 'conversation', status: string, updatedAt = seq, deletedAt: number | null = null) =>
+  const task = (seq: number, kind: 'work' | 'conversation' | 'plan' | 'debate', status: string, updatedAt = seq, deletedAt: number | null = null) =>
     ({ id: `id${seq}`, seq, kind, status, updatedAt, deletedAt }) as Parameters<typeof conversationTargets>[0][number]
 
-  it('offers open conversations only, newest first', () => {
+  it('offers open task threads of every kind, newest first, without changing the input', () => {
     const tasks = [
       task(1, 'conversation', 'awaiting_human', 10),
       task(2, 'work', 'running', 50),
@@ -287,8 +287,24 @@ describe('task links', () => {
       task(6, 'conversation', 'draft', 70),
       task(7, 'conversation', 'running', 80, 1)
     ]
-    expect(conversationTargets(tasks).map((t) => t.seq)).toEqual([4, 5, 1])
+    expect(conversationTargets(tasks).map((t) => t.seq)).toEqual([2, 4, 5, 1])
+    expect(tasks.map((t) => t.seq)).toEqual([1, 2, 3, 4, 5, 6, 7])
   })
+
+  for (const kind of ['work', 'conversation', 'plan', 'debate'] as const) {
+    it(`offers replyable ${kind} threads and excludes closed, draft and deleted ones`, () => {
+      const open = ['ready', 'blocked', 'scheduled', 'assigned', 'running', 'awaiting_human',
+        'paused_quota', 'paused_user', 'landing_queued', 'cancelling', 'failed']
+      for (const status of open) {
+        const row = task(1, kind, status)
+        expect(conversationTargets([row]), status).toEqual([row])
+        expect(conversationTargets([task(1, kind, status, 1, 123)]), `deleted ${status}`).toEqual([])
+      }
+      for (const status of ['draft', 'completed', 'cancelled']) {
+        expect(conversationTargets([task(1, kind, status)]), status).toEqual([])
+      }
+    })
+  }
 
   it('finds the task a marker names', () => {
     const tasks = [task(12, 'work', 'completed'), task(994, 'work', 'running')]

@@ -820,7 +820,7 @@ const ScratchCard = memo(function ScratchCard({
           </button>
           <Pill
             ariaLabel="Send to a conversation"
-            title="Send this prompt to one of this project's open conversations"
+            title="Send this prompt to one of this project's open task threads"
             align="right"
             label="Send ▾"
             menu={(close) => (

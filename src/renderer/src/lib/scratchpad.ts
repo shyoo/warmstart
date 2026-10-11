@@ -379,15 +379,16 @@ export function scratchRows(doc: ScratchDoc, showAll: boolean, shown: ReadonlySe
 type TaskRow = Pick<Task, 'id' | 'seq' | 'kind' | 'status' | 'deletedAt' | 'updatedAt'>
 
 /**
- * The conversations a card can be sent to: this project's, still going, newest first.
+ * The task threads a card can be sent to: this project's, still going, newest first.
  *
  * ⚠️ The sidebar's rule (`lib/sidebartasks.ts`): a conversation rests at `awaiting_human` between
  * turns and is still open there, and a failed one is still a thread to reply to. A message to one
- * that stopped starts a new run on the same thread, which is what sending means.
+ * that stopped starts a new run on the same thread, which is what sending means. Every task kind
+ * has a replyable thread; restricting this to kind `conversation` hides ordinary work (t1072).
  */
 export function conversationTargets<T extends TaskRow>(tasks: readonly T[]): T[] {
   return tasks
-    .filter((t) => t.kind === 'conversation' && t.deletedAt === null && !CLOSED.has(t.status))
+    .filter((t) => t.deletedAt === null && !CLOSED.has(t.status))
     .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
