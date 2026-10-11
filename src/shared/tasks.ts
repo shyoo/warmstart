@@ -3226,6 +3226,19 @@ export interface TaskDiffFile {
   bytes: number
 }
 
+/** One file's full content, capped. */
+export interface TaskFileContent {
+  ok: boolean
+  reason: string
+  path: string
+  /** The full text content of the file. */
+  content: string
+  /** The content was cut at a line boundary because it exceeded the cap. */
+  truncated: boolean
+  /** The full size before any cut, so the viewer can say "showing X of Y". */
+  bytes: number
+}
+
 /**
  * Work that exists and is going nowhere.
  *

@@ -20,11 +20,12 @@
  * Decisions: `transient_docs/diff_pane_2026-09-13.md`.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { TaskDiffFile, TaskDiffFileEntry, TaskDiffSummary } from '@shared/tasks'
+import type { TaskDiffFile, TaskDiffFileEntry, TaskDiffSummary, TaskFileContent } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { initialExpansion, type DiffPaneRequest } from '../lib/diffpane'
 import { readDiffView, writeDiffView, type DiffView } from '../lib/prefs'
-import { counts, PatchBody, ViewToggle } from './thread/DiffPanel'
+import { counts, PatchBody, SplitBody, ViewToggle } from './thread/DiffPanel'
+import { Markdown } from './thread/Markdown'
 import { PaneResizer, type PaneResizerSpec } from './SidebarResizer'
 
 export const DIFFPANE_DEFAULT = 560
@@ -56,6 +57,7 @@ export function DiffPaneResizer(): React.JSX.Element {
  * open — by the budget or by a press — and kept.
  */
 function PaneFile({
+  taskId,
   file,
   open,
   focused,
@@ -65,6 +67,7 @@ function PaneFile({
   onSettled,
   mount
 }: {
+  taskId: string
   file: TaskDiffFileEntry
   open: boolean
   focused: boolean
@@ -77,6 +80,10 @@ function PaneFile({
 }): React.JSX.Element {
   const [patch, setPatch] = useState<TaskDiffFile | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const isMd = file.path.toLowerCase().endsWith('.md')
+  const [renderMode, setRenderMode] = useState<'diff' | 'rendered'>('diff')
+  const [doc, setDoc] = useState<TaskFileContent | null>(null)
+  const [docError, setDocError] = useState<string | null>(null)
   const shown = !file.binary && !file.generated
 
   useEffect(() => {
@@ -96,6 +103,22 @@ function PaneFile({
       live = false
     }
   }, [open, shown, patch, error, load, file.path, onSettled])
+
+  useEffect(() => {
+    if (!open || !shown || !isMd || renderMode !== 'rendered' || doc !== null || docError !== null) return
+    let live = true
+    void (async () => {
+      try {
+        const answer = await rpc('task.fileContent', { id: taskId, path: file.path })
+        if (live) setDoc(answer)
+      } catch (e) {
+        if (live) setDocError(e instanceof Error ? e.message : 'could not read this document')
+      }
+    })()
+    return () => {
+      live = false
+    }
+  }, [open, shown, isMd, renderMode, doc, docError, taskId, file.path])
 
   return (
     <section
@@ -120,9 +143,45 @@ function PaneFile({
       </button>
       {open && shown && (
         <div className="diffpane-file-body">
-          {error && <p className="diff-refusal">{error}</p>}
-          {!error && !patch && <p className="diff-note">Reading…</p>}
-          {!error && patch && <PatchBody file={patch} view={view} />}
+          {isMd && (
+            <div className="diffpane-file-modes">
+              <button
+                type="button"
+                className={`btn btn--ghost viewer-subtab${renderMode === 'diff' ? ' viewer-subtab--active' : ''}`}
+                onClick={() => setRenderMode('diff')}
+              >
+                Diff
+              </button>
+              <button
+                type="button"
+                className={`btn btn--ghost viewer-subtab${renderMode === 'rendered' ? ' viewer-subtab--active' : ''}`}
+                onClick={() => setRenderMode('rendered')}
+              >
+                Rendered
+              </button>
+            </div>
+          )}
+          {renderMode === 'rendered' ? (
+            <div className="viewer-file-rendered">
+              {docError && <p className="diff-refusal">{docError}</p>}
+              {!docError && !doc && <p className="diff-note">Loading document…</p>}
+              {doc && !doc.ok && <p className="diff-refusal">{doc.reason}</p>}
+              {doc && doc.ok && (
+                <div className="viewer-doc">
+                  {doc.truncated && (
+                    <p className="diff-warn">Showing first {Math.round(doc.bytes / 1024)} KB of this file.</p>
+                  )}
+                  <Markdown text={doc.content} />
+                </div>
+              )}
+            </div>
+          ) : (
+            <>
+              {error && <p className="diff-refusal">{error}</p>}
+              {!error && !patch && <p className="diff-note">Reading…</p>}
+              {!error && patch && <PatchBody file={patch} view={view} />}
+            </>
+          )}
         </div>
       )}
     </section>
@@ -136,11 +195,13 @@ function PaneFile({
  * rather than inheriting a set of paths from a change that had different files.
  */
 function PaneFiles({
+  taskId,
   summary,
   focusPath,
   view,
   load
 }: {
+  taskId: string
   summary: TaskDiffSummary
   focusPath: string | undefined
   view: DiffView
@@ -188,6 +249,7 @@ function PaneFiles({
       {summary.files.map((f) => (
         <PaneFile
           key={f.path}
+          taskId={taskId}
           file={f}
           open={open.has(f.path)}
           focused={f.path === focusPath}
@@ -199,6 +261,120 @@ function PaneFiles({
         />
       ))}
     </>
+  )
+}
+
+/** One specific file viewed in the Viewer pane (e.g. from an artifact link or chip). */
+function SingleFileView({
+  taskId,
+  filePath,
+  sha,
+  initialMode,
+  view,
+  onViewChange
+}: {
+  taskId: string
+  filePath: string
+  sha: string | null
+  initialMode?: 'rendered' | 'diff'
+  view: DiffView
+  onViewChange: (v: DiffView) => void
+}): React.JSX.Element {
+  const isMd = filePath.toLowerCase().endsWith('.md')
+  const [mode, setMode] = useState<'rendered' | 'diff'>(() => initialMode ?? (isMd ? 'rendered' : 'diff'))
+  const [fileContent, setFileContent] = useState<TaskFileContent | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
+  const [patch, setPatch] = useState<TaskDiffFile | null>(null)
+  const [patchError, setPatchError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let live = true
+    if (mode === 'rendered') {
+      void (async () => {
+        try {
+          const res = await rpc('task.fileContent', { id: taskId, path: filePath, sha })
+          if (live) setFileContent(res)
+        } catch (e) {
+          if (live) setFileError(e instanceof Error ? e.message : 'could not read file')
+        }
+      })()
+    } else {
+      void (async () => {
+        try {
+          const res =
+            sha === null
+              ? await rpc('task.diffFile', { id: taskId, path: filePath })
+              : await rpc('task.commitFile', { id: taskId, sha, path: filePath })
+          if (live) setPatch(res)
+        } catch (e) {
+          if (live) setPatchError(e instanceof Error ? e.message : 'could not read diff')
+        }
+      })()
+    }
+    return () => {
+      live = false
+    }
+  }, [taskId, filePath, sha, mode])
+
+  return (
+    <div className="viewer-file-view">
+      <div className="viewer-file-toolbar">
+        <div className="viewer-mode-toggle" role="group" aria-label="Viewer display mode">
+          <button
+            type="button"
+            className={`btn btn--ghost viewer-tab${mode === 'rendered' ? ' viewer-tab--active' : ''}`}
+            onClick={() => setMode('rendered')}
+          >
+            Rendered
+          </button>
+          <button
+            type="button"
+            className={`btn btn--ghost viewer-tab${mode === 'diff' ? ' viewer-tab--active' : ''}`}
+            onClick={() => setMode('diff')}
+          >
+            Diff
+          </button>
+        </div>
+        {mode === 'diff' && <ViewToggle view={view} onView={onViewChange} />}
+      </div>
+
+      <div className="viewer-file-body">
+        {mode === 'rendered' ? (
+          <>
+            {fileError && <p className="diff-refusal">{fileError}</p>}
+            {!fileError && !fileContent && <p className="diff-note">Loading document…</p>}
+            {fileContent && !fileContent.ok && <p className="diff-refusal">{fileContent.reason}</p>}
+            {fileContent && fileContent.ok && (
+              <div className="viewer-doc">
+                {fileContent.truncated && (
+                  <p className="diff-warn">Showing first {Math.round(fileContent.bytes / 1024)} KB of this file.</p>
+                )}
+                <Markdown text={fileContent.content} />
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            {patchError && <p className="diff-refusal">{patchError}</p>}
+            {!patchError && !patch && <p className="diff-note">Loading diff…</p>}
+            {patch && !patch.ok && <p className="diff-refusal">{patch.reason}</p>}
+            {patch && patch.ok && (
+              <div className="viewer-diff-wrap">
+                {patch.patch ? (
+                  view === 'split' ? (
+                    <SplitBody patch={patch.patch} />
+                  ) : (
+                    <PatchBody file={patch} view={view} />
+                  )
+                ) : (
+                  <p className="diff-note">This file has no diff on this branch.</p>
+                )}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -247,6 +423,7 @@ export function DiffPane({
   }, [taskId])
 
   useEffect(() => {
+    if (source.kind === 'file') return
     let live = true
     setSummary(null)
     setError(null)
@@ -264,7 +441,7 @@ export function DiffPane({
     return () => {
       live = false
     }
-  }, [taskId, sha, version])
+  }, [taskId, sha, version, source.kind])
 
   const load = useCallback(
     (path: string) =>
@@ -285,24 +462,27 @@ export function DiffPane({
 
   const title = useMemo(() => {
     const t = seq === null ? 't?' : `t${seq}`
+    if (source.kind === 'file') {
+      return `${t} · ${source.path}`
+    }
     return sha === null ? `${t} · Changes in this task` : `${t} · ${sha.slice(0, 8)}`
-  }, [seq, sha])
+  }, [seq, sha, source])
 
   // ⚠️ The stack is keyed on what it shows, so a new commit or a re-read starts its expansion afresh.
   const stackKey = `${taskId}:${sha ?? 'branch'}:${version}`
 
   return (
-    <aside className="diffpane" aria-label="Diff pane" onKeyDown={onKeyDown}>
+    <aside className="diffpane" aria-label="Viewer pane" onKeyDown={onKeyDown}>
       <header className="diffpane-head">
         <span className="diffpane-title">
-          <span className={sha === null ? undefined : 'mono'}>{title}</span>
+          <span className={sha === null && source.kind !== 'file' ? undefined : 'mono'}>{title}</span>
           {source.kind === 'commit' && source.subject && (
             <span className="diffpane-subject" title={source.subject}>
               {source.subject}
             </span>
           )}
         </span>
-        {summary?.ok && (
+        {source.kind !== 'file' && summary?.ok && (
           <span className="diff-panel-meta">
             {summary.files.length.toLocaleString()}
             {summary.filesTruncated ? '+' : ''} file{summary.files.length === 1 ? '' : 's'}
@@ -312,8 +492,8 @@ export function DiffPane({
         <button
           type="button"
           className="icon-btn diffpane-close"
-          title="Close the Diff pane (Esc)"
-          aria-label="Close the Diff pane"
+          title="Close the Viewer pane (Esc)"
+          aria-label="Close the Viewer pane"
           onClick={onClose}
         >
           <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
@@ -321,43 +501,59 @@ export function DiffPane({
           </svg>
         </button>
       </header>
-      {summary?.ok && summary.files.length > 0 && (
+      {source.kind !== 'file' && summary?.ok && summary.files.length > 0 && (
         <div className="diffpane-tools">
           <ViewToggle view={view} onView={choose} />
         </div>
       )}
       <div className="diffpane-body">
-        {error && <p className="diff-refusal">{error}</p>}
-        {!error && !summary && <p className="diff-note">Reading…</p>}
-        {summary && !summary.ok && <p className="diff-refusal">{summary.reason}</p>}
-        {summary?.ok && summary.separateCommits > 1 && (
-          <p className="diff-warn">
-            This task landed {summary.separateCommits} separate commits, with other tasks&rsquo; work
-            between them. Each is counted and shown on its own.
-          </p>
-        )}
-        {summary?.ok && summary.filesTruncated && (
-          <p className="diff-warn">
-            More files changed than are listed here. The largest changes are shown first.
-          </p>
-        )}
-        {/* ⛔ The banner that keeps what lands apart from what does not, here as in the thread. */}
-        {summary?.ok && sha === null && summary.workspaceReadable && summary.uncommittedFiles > 0 && (
-          <p className="diff-warn">
-            {summary.uncommittedFiles} file{summary.uncommittedFiles === 1 ? '' : 's'} in the
-            workspace {summary.uncommittedFiles === 1 ? 'is' : 'are'} not committed and{' '}
-            <strong>will not land</strong>.
-          </p>
-        )}
-        {summary?.ok && (
-          <PaneFiles key={stackKey} summary={summary} focusPath={focusPath} view={view} load={load} />
-        )}
-        {summary?.ok && summary.files.length === 0 && (
-          <p className="diff-note">
-            {sha === null ? 'This branch changes no files.' : 'This commit changes no files.'}
-          </p>
+        {source.kind === 'file' ? (
+          <SingleFileView
+            key={`${source.path}:${sha ?? 'head'}`}
+            taskId={taskId}
+            filePath={source.path}
+            sha={source.sha ?? null}
+            initialMode={request.viewMode ?? source.initialMode}
+            view={view}
+            onViewChange={choose}
+          />
+        ) : (
+          <>
+            {error && <p className="diff-refusal">{error}</p>}
+            {!error && !summary && <p className="diff-note">Reading…</p>}
+            {summary && !summary.ok && <p className="diff-refusal">{summary.reason}</p>}
+            {summary?.ok && summary.separateCommits > 1 && (
+              <p className="diff-warn">
+                This task landed {summary.separateCommits} separate commits, with other tasks&rsquo; work
+                between them. Each is counted and shown on its own.
+              </p>
+            )}
+            {summary?.ok && summary.filesTruncated && (
+              <p className="diff-warn">
+                More files changed than are listed here. The largest changes are shown first.
+              </p>
+            )}
+            {/* ⛔ The banner that keeps what lands apart from what does not, here as in the thread. */}
+            {summary?.ok && sha === null && summary.workspaceReadable && summary.uncommittedFiles > 0 && (
+              <p className="diff-warn">
+                {summary.uncommittedFiles} file{summary.uncommittedFiles === 1 ? '' : 's'} in the
+                workspace {summary.uncommittedFiles === 1 ? 'is' : 'are'} not committed and{' '}
+                <strong>will not land</strong>.
+              </p>
+            )}
+            {summary?.ok && (
+              <PaneFiles key={stackKey} taskId={taskId} summary={summary} focusPath={focusPath} view={view} load={load} />
+            )}
+            {summary?.ok && summary.files.length === 0 && (
+              <p className="diff-note">
+                {sha === null ? 'This branch changes no files.' : 'This commit changes no files.'}
+              </p>
+            )}
+          </>
         )}
       </div>
     </aside>
   )
 }
+
+export { DiffPane as ViewerPane, DiffPaneResizer as ViewerPaneResizer }

@@ -16,14 +16,20 @@ import { markdownBlocks, type Block, type Inline, type TableAlign } from '../../
  * `shell.openExternal`. An in-window navigation would replace the app with a web page and there
  * would be no way back to it.
  */
-export function Markdown({ text }: { text: string }): React.JSX.Element {
+export function Markdown({
+  text,
+  onOpenFile
+}: {
+  text: string
+  onOpenFile?: (path: string) => void
+}): React.JSX.Element {
   // ⚠️ Stripped here as well as where the daemon writes: a thread written before 2026-09-11 holds
   // check output with vitest's colour codes in it, and a person reading it now should not.
   const blocks = markdownBlocks(stripAnsi(text))
   return (
     <div className="md">
       {blocks.map((block, i) => (
-        <MarkdownBlock key={i} block={block} />
+        <MarkdownBlock key={i} block={block} onOpenFile={onOpenFile} />
       ))}
     </div>
   )
@@ -33,15 +39,21 @@ export function Markdown({ text }: { text: string }): React.JSX.Element {
  * `Markdown`, folded past `COLLAPSE_AFTER_LINES` behind a press — for an agent's whole closing
  * reply (t734). Open by press only, and the rest is in the DOM either way (`hidden`). See `foldAt`.
  */
-export function FoldedMarkdown({ text }: { text: string }): React.JSX.Element {
+export function FoldedMarkdown({
+  text,
+  onOpenFile
+}: {
+  text: string
+  onOpenFile?: (path: string) => void
+}): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const folded = foldAt(text)
-  if (!folded) return <Markdown text={text} />
+  if (!folded) return <Markdown text={text} onOpenFile={onOpenFile} />
   return (
     <>
-      <Markdown text={folded.head} />
+      <Markdown text={folded.head} onOpenFile={onOpenFile} />
       <div hidden={!open}>
-        <Markdown text={folded.rest} />
+        <Markdown text={folded.rest} onOpenFile={onOpenFile} />
       </div>
       <button
         type="button"
@@ -55,7 +67,13 @@ export function FoldedMarkdown({ text }: { text: string }): React.JSX.Element {
   )
 }
 
-function MarkdownBlock({ block }: { block: Block }): React.JSX.Element {
+function MarkdownBlock({
+  block,
+  onOpenFile
+}: {
+  block: Block
+  onOpenFile?: (path: string) => void
+}): React.JSX.Element {
   switch (block.kind) {
     case 'rule':
       return <hr className="md-rule" />
@@ -74,14 +92,14 @@ function MarkdownBlock({ block }: { block: Block }): React.JSX.Element {
       const level = Math.min(6, Math.max(1, block.level))
       return (
         <div className={`md-h md-h${level}`} role="heading" aria-level={level}>
-          <Spans spans={block.spans} />
+          <Spans spans={block.spans} onOpenFile={onOpenFile} />
         </div>
       )
     }
     case 'quote':
       return (
         <blockquote className="md-quote">
-          <Spans spans={block.spans} />
+          <Spans spans={block.spans} onOpenFile={onOpenFile} />
         </blockquote>
       )
     case 'table':
@@ -94,7 +112,7 @@ function MarkdownBlock({ block }: { block: Block }): React.JSX.Element {
               <tr>
                 {block.header.map((cell, c) => (
                   <th key={c} className={alignClass(block.align[c])}>
-                    <Spans spans={cell} />
+                    <Spans spans={cell} onOpenFile={onOpenFile} />
                   </th>
                 ))}
               </tr>
@@ -104,7 +122,7 @@ function MarkdownBlock({ block }: { block: Block }): React.JSX.Element {
                 <tr key={r}>
                   {row.map((cell, c) => (
                     <td key={c} className={alignClass(block.align[c])}>
-                      <Spans spans={cell} />
+                      <Spans spans={cell} onOpenFile={onOpenFile} />
                     </td>
                   ))}
                 </tr>
@@ -119,7 +137,7 @@ function MarkdownBlock({ block }: { block: Block }): React.JSX.Element {
         <Tag className="md-list" {...(block.ordered && block.start !== 1 ? { start: block.start } : {})}>
           {block.items.map((item, i) => (
             <li key={i} className={`md-item md-depth${item.depth}`}>
-              <Spans spans={item.spans} />
+              <Spans spans={item.spans} onOpenFile={onOpenFile} />
             </li>
           ))}
         </Tag>
@@ -128,7 +146,7 @@ function MarkdownBlock({ block }: { block: Block }): React.JSX.Element {
     default:
       return (
         <p className="md-p">
-          <Spans spans={block.spans} />
+          <Spans spans={block.spans} onOpenFile={onOpenFile} />
         </p>
       )
   }
@@ -138,11 +156,43 @@ function alignClass(align: TableAlign | undefined): string | undefined {
   return align ? `md-cell-${align}` : undefined
 }
 
-function Spans({ spans }: { spans: Inline[] }): React.JSX.Element {
+function Spans({
+  spans,
+  onOpenFile
+}: {
+  spans: Inline[]
+  onOpenFile?: (path: string) => void
+}): React.JSX.Element {
   return (
     <>
       {spans.map((span, i) => {
         switch (span.kind) {
+          case 'artifact': {
+            const target = span.path ?? span.text
+            return onOpenFile ? (
+              <button
+                key={i}
+                type="button"
+                className="md-artifact"
+                title={`Open ${target} in Viewer`}
+                onClick={() => onOpenFile(target)}
+              >
+                <svg className="md-artifact-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M3 2.5A1.5 1.5 0 0 1 4.5 1h5l3.5 3.5v9A1.5 1.5 0 0 1 11.5 15h-7A1.5 1.5 0 0 1 3 13.5v-11z" />
+                  <path d="M9.5 1v3.5H13" />
+                </svg>
+                <span className="md-artifact-text">{span.text}</span>
+              </button>
+            ) : (
+              <span key={i} className="md-artifact md-artifact--static" title={target}>
+                <svg className="md-artifact-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M3 2.5A1.5 1.5 0 0 1 4.5 1h5l3.5 3.5v9A1.5 1.5 0 0 1 11.5 15h-7A1.5 1.5 0 0 1 3 13.5v-11z" />
+                  <path d="M9.5 1v3.5H13" />
+                </svg>
+                <span className="md-artifact-text">{span.text}</span>
+              </span>
+            )
+          }
           case 'code':
             return (
               <code className="msg-code" key={i}>

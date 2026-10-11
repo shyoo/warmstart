@@ -84,6 +84,7 @@ export const REMOTE_METHODS = {
   // very same patch text, and nothing about a commit row makes unbounded text fit on a phone.
   'task.commitDiff': 'deny',
   'task.commitFile': 'deny',
+  'task.fileContent': 'deny',
   // ⚠️ Allowed on t585's decision, and only the commit half: asking an agent to commit a
   // conversation's work is no more powerful than the retry the phone already offers, and the level
   // is the task's own default, not a picker. `landConversation` stays denied — merging to the

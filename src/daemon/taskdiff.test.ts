@@ -49,6 +49,16 @@ function projectWithBranch(files: Record<string, string>): { project: Project; t
   return { project, task: tasks.requireTask(task.id) }
 }
 
+/** A project whose task has landed one commit onto `main`, with the row recorded for it. */
+async function landedOne(files: Record<string, string>): Promise<{ project: Project; task: Task; sha: string }> {
+  const { project, task } = projectWithBranch(files)
+  kit.git(project.root, 'merge', '--no-ff', '-m', 'land it', task.branch as string)
+  const sha = kit.git(project.root, 'rev-parse', `${task.branch as string}`).trim()
+  const commits = await import('./taskcommits.js')
+  commits.recordTaskCommits(task.id, [{ sha, subject: 'the work', authoredAt: Date.now() }], 'main')
+  return { project, task, sha }
+}
+
 beforeAll(async () => {
   // ⛔ The data directory is set before the first import, the way `reviewdiff.test.ts` does it: a
   // module that reads `paths` while being evaluated would otherwise capture the real one.
@@ -269,16 +279,6 @@ describe('the grader and the panel read one change', () => {
  * than ours.
  */
 describe('one recorded commit', () => {
-  /** A project whose task has landed one commit onto `main`, with the row recorded for it. */
-  async function landedOne(files: Record<string, string>): Promise<{ project: Project; task: Task; sha: string }> {
-    const { project, task } = projectWithBranch(files)
-    kit.git(project.root, 'merge', '--no-ff', '-m', 'land it', task.branch as string)
-    const sha = kit.git(project.root, 'rev-parse', `${task.branch as string}`).trim()
-    const commits = await import('./taskcommits.js')
-    commits.recordTaskCommits(task.id, [{ sha, subject: 'the work', authoredAt: Date.now() }], 'main')
-    return { project, task, sha }
-  }
-
   it('counts only that commit’s own lines', async () => {
     const { task, sha } = await landedOne({ 'one.ts': 'export const one = 1\n' })
     const summary = await taskdiff.commitDiffFor(task.id, sha)
@@ -336,5 +336,48 @@ describe('one recorded commit', () => {
     const summary = await taskdiff.commitDiffFor(task.id, sha)
     expect(summary.workspaceReadable).toBe(false)
     expect(summary.uncommittedFiles).toBe(0)
+  })
+})
+
+describe('taskdiff.fileContentFor', () => {
+  it('reads a file created on a task branch', async () => {
+    const { task } = projectWithBranch({
+      'transient_docs/plan.md': '# Intro Plan\n\n- step 1\n- step 2\n'
+    })
+    const res = await taskdiff.fileContentFor(task.id, 'transient_docs/plan.md')
+    expect(res.ok).toBe(true)
+    expect(res.path).toBe('transient_docs/plan.md')
+    expect(res.content).toBe('# Intro Plan\n\n- step 1\n- step 2')
+    expect(res.truncated).toBe(false)
+  })
+
+  it('reads a file from a specific recorded commit', async () => {
+    const { task, sha } = await landedOne({
+      'docs/summary.md': '# Summary\nAll done.\n'
+    })
+    const res = await taskdiff.fileContentFor(task.id, 'docs/summary.md', sha)
+    expect(res.ok).toBe(true)
+    expect(res.path).toBe('docs/summary.md')
+    expect(res.content).toBe('# Summary\nAll done.')
+  })
+
+  it('refuses invalid paths with traversal or absolute paths', async () => {
+    const { task } = projectWithBranch({ 'readme.md': '# Hello\n' })
+    const traversal = await taskdiff.fileContentFor(task.id, '../secret.md')
+    expect(traversal.ok).toBe(false)
+    expect(traversal.reason).toBe('invalid file path')
+
+    const dotGit = await taskdiff.fileContentFor(task.id, '.git/config')
+    expect(dotGit.ok).toBe(false)
+    expect(dotGit.reason).toBe('invalid file path')
+  })
+
+  it('refuses binary files', async () => {
+    const { task } = projectWithBranch({
+      'binary.dat': 'hello\0world\n'
+    })
+    const res = await taskdiff.fileContentFor(task.id, 'binary.dat')
+    expect(res.ok).toBe(false)
+    expect(res.reason).toMatch(/binary/)
   })
 })

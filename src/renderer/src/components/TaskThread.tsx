@@ -343,6 +343,13 @@ function TaskDetail({
   // re-observe when the node arrives. See `LedgerPeek`.
   const [ledgerBox, setLedgerBox] = useState<HTMLElement | null>(null)
   const [timelineBox, setTimelineBox] = useState<HTMLElement | null>(null)
+  const diffPane = useDiffPane()
+  const onOpenFile = useCallback(
+    (filePath: string) => {
+      diffPane.open({ taskId: task.id, source: { kind: 'file', path: filePath }, viewMode: 'rendered' })
+    },
+    [diffPane, task.id]
+  )
   // Opening a task lands at the bottom of its thread, where the recent conversation is — a long
   // thread otherwise opens at the top. Once per navigation, never per render: a thread growing
   // under a running agent must not yank back a person who scrolled up to read.
@@ -622,7 +629,7 @@ function TaskDetail({
               parsed as the closed markdown subset; nothing here renders raw HTML. */}
           <DebateBoard task={task} />
 
-          <Thread messages={messages} runs={runs} activity={activity} live={live} landing={Boolean(task.landing)} working={!turnEnded(task)} />
+          <Thread messages={messages} runs={runs} activity={activity} live={live} landing={Boolean(task.landing)} working={!turnEnded(task)} onOpenFile={onOpenFile} />
 
           {/* ⛔ Between the conversation and the box for replying, because that is what it is: the
               agent's turn to speak ended with a question, and this is where the answer goes. In the
@@ -1518,15 +1525,17 @@ function MessageImage({ attachment }: { attachment: Attachment }): React.JSX.Ele
 function MessageText({
   text,
   markdown = false,
-  foldable = false
+  foldable = false,
+  onOpenFile
 }: {
   text: string
   markdown?: boolean
   /** An agent's reply, which is posted whole since t734 and folds past `COLLAPSE_AFTER_LINES`. */
   foldable?: boolean
+  onOpenFile?: (path: string) => void
 }): React.JSX.Element {
-  if (markdown && foldable) return <FoldedMarkdown text={text} />
-  if (markdown) return <Markdown text={text} />
+  if (markdown && foldable) return <FoldedMarkdown text={text} onOpenFile={onOpenFile} />
+  if (markdown) return <Markdown text={text} onOpenFile={onOpenFile} />
   // ⚠️ Stripped here as well as where the daemon writes: a thread written before 2026-09-11 holds
   // check output with vitest's colour codes in it, and a person reading it now should not.
   return (
@@ -1552,7 +1561,8 @@ const Thread = memo(function Thread({
   activity,
   live,
   landing,
-  working
+  working,
+  onOpenFile
 }: {
   messages: TaskMessage[]
   runs: Run[]
@@ -1561,6 +1571,7 @@ const Thread = memo(function Thread({
   landing: boolean
   /** False once the turn has ended with the run still open: the tail is kept, its animation is not (t950). */
   working: boolean
+  onOpenFile?: (path: string) => void
 }): React.JSX.Element {
   /**
    * ⛔ **`live` alone.** This was `live || activity.length > 0`, and the tail is not cleared when a
@@ -1626,7 +1637,7 @@ const Thread = memo(function Thread({
                         {commandForEvent(m.event)!.label}
                       </span>
                     )}
-                    <MessageText text={m.text} markdown={m.role !== 'human'} foldable={m.role === 'agent'} />
+                    <MessageText text={m.text} markdown={m.role !== 'human'} foldable={m.role === 'agent'} onOpenFile={onOpenFile} />
                     {m.attachments.length > 0 && (
                       <span className="msg-images">
                         {m.attachments.map((a) =>
@@ -1651,7 +1662,7 @@ const Thread = memo(function Thread({
                   {anchoredRun?.prompt && (
                     <PromptChip prompt={anchoredRun.prompt} title="The prompt this message produced" />
                   )}
-                  {m.detail && <details className="msg-detail"><summary title="Show details">ⓘ</summary><div><MessageText text={m.detail} markdown /></div></details>}
+                  {m.detail && <details className="msg-detail"><summary title="Show details">ⓘ</summary><div><MessageText text={m.detail} markdown onOpenFile={onOpenFile} /></div></details>}
                 </div>
               </div>
             </div>

@@ -40,6 +40,9 @@ describe('naming the same change', () => {
     expect(sameSource({ kind: 'commit', sha: 'a' }, { kind: 'commit', sha: 'a' })).toBe(true)
     expect(sameSource({ kind: 'commit', sha: 'a' }, { kind: 'commit', sha: 'b' })).toBe(false)
     expect(sameSource({ kind: 'branch' }, { kind: 'commit', sha: 'a' })).toBe(false)
+    expect(sameSource({ kind: 'file', path: 'doc.md' }, { kind: 'file', path: 'doc.md' })).toBe(true)
+    expect(sameSource({ kind: 'file', path: 'doc.md' }, { kind: 'file', path: 'other.md' })).toBe(false)
+    expect(sameSource({ kind: 'file', path: 'doc.md' }, { kind: 'branch' })).toBe(false)
   })
 })
 

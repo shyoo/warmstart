@@ -210,3 +210,51 @@ describe('tables (t908)', () => {
     expect(hasMarkdown(table)).toBe(true)
   })
 })
+
+describe('artifact paths and links', () => {
+  it('parses plain text markdown paths into artifact spans (t1058)', () => {
+    const text = 'Please review transient_docs/cloudland_intro_plan_2026-10-10.md (committed as 5bae93b)'
+    const spans = inlineSpans(text)
+    expect(spans).toEqual([
+      { kind: 'text', text: 'Please review ' },
+      {
+        kind: 'artifact',
+        text: 'transient_docs/cloudland_intro_plan_2026-10-10.md',
+        path: 'transient_docs/cloudland_intro_plan_2026-10-10.md'
+      },
+      { kind: 'text', text: ' (committed as 5bae93b)' }
+    ])
+  })
+
+  it('parses markdown links with relative .md paths as artifacts', () => {
+    const text = 'Read [the plan](transient_docs/plan.md) before continuing'
+    expect(inlineSpans(text)).toEqual([
+      { kind: 'text', text: 'Read ' },
+      { kind: 'artifact', text: 'the plan', path: 'transient_docs/plan.md' },
+      { kind: 'text', text: ' before continuing' }
+    ])
+  })
+
+  it('parses backticked .md paths as artifacts', () => {
+    const text = 'Check `docs/testing.md` for guidance'
+    expect(inlineSpans(text)).toEqual([
+      { kind: 'text', text: 'Check ' },
+      { kind: 'artifact', text: 'docs/testing.md', path: 'docs/testing.md' },
+      { kind: 'text', text: ' for guidance' }
+    ])
+  })
+
+  it('leaves non-markdown backticks as ordinary code spans', () => {
+    expect(inlineSpans('run `npm test` and check `src/daemon/tasks.ts`')).toEqual([
+      { kind: 'text', text: 'run ' },
+      { kind: 'code', text: 'npm test' },
+      { kind: 'text', text: ' and check ' },
+      { kind: 'code', text: 'src/daemon/tasks.ts' }
+    ])
+  })
+
+  it('refuses unsafe paths with traversal or absolute schemes', () => {
+    expect(inlineSpans('[bad](../secret.md)')[0]?.kind).toBe('text')
+    expect(inlineSpans('[bad](file:///C:/secret.md)')[0]?.kind).toBe('text')
+  })
+})

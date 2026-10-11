@@ -1,11 +1,13 @@
-/** The change a task is about to land, read for a person rather than for a grader. */
-import type { TaskDiffFile, TaskDiffFileEntry, TaskDiffSummary } from '@shared/tasks.js'
+import fs from 'node:fs/promises'
+import path from 'node:path'
+import type { TaskDiffFile, TaskDiffFileEntry, TaskDiffSummary, TaskFileContent } from '@shared/tasks.js'
 import { tryGit } from './git.js'
 import { getProject, landingTargetFor, policyFor } from './projects.js'
 import { diffSpecs, isGeneratedPath, numstatEntries, patchFor, resolveRange } from './review.js'
 import { pendingWorkFor } from './resolutions.js'
 import { taskCommitShas } from './taskcommits.js'
 import { getTask } from './tasks.js'
+import { workspaceOnBranch } from './worktrees.js'
 
 /**
  * The diff a person reads before pressing Land.
@@ -285,4 +287,99 @@ function cutPatch(path: string, full: string): TaskDiffFile {
     truncated: true,
     bytes
   }
+}
+
+export const MAX_FILE_CHARS = 500_000
+
+function sanitizePath(raw: string): string | null {
+  const normalized = raw.replace(/\\/g, '/').trim().replace(/^\.\//, '')
+  if (!normalized || normalized.startsWith('/') || /^[a-zA-Z]:/.test(normalized)) return null
+  const parts = normalized.split('/')
+  if (parts.some((p) => p === '..' || p === '')) return null
+  if (parts[0] === '.git') return null
+  return normalized
+}
+
+function cutContent(p: string, full: string): TaskFileContent {
+  const bytes = full.length
+  if (full.includes('\0')) {
+    return { ok: false, reason: 'this file is binary, so there is nothing to show', path: p, content: '', truncated: false, bytes }
+  }
+  if (bytes <= MAX_FILE_CHARS) {
+    return { ok: true, reason: '', path: p, content: full, truncated: false, bytes }
+  }
+  const cut = full.slice(0, MAX_FILE_CHARS)
+  const lastBreak = cut.lastIndexOf('\n')
+  return {
+    ok: true,
+    reason: '',
+    path: p,
+    content: lastBreak > 0 ? cut.slice(0, lastBreak) : cut,
+    truncated: true,
+    bytes
+  }
+}
+
+/** One file's full content, capped and cut at a line boundary. */
+export async function fileContentFor(
+  taskId: string,
+  filePath: string,
+  sha?: string | null
+): Promise<TaskFileContent> {
+  const none: TaskFileContent = { ok: false, reason: '', path: filePath, content: '', truncated: false, bytes: 0 }
+  const cleanPath = sanitizePath(filePath)
+  if (!cleanPath) return { ...none, reason: 'invalid file path' }
+
+  if (sha) {
+    const at = await locateCommit(taskId, sha)
+    if (!at.ok) return { ...none, reason: at.reason }
+    const full = await tryGit(at.cwd, ['show', `${at.head}:${cleanPath}`])
+    if (full === null) return { ...none, reason: 'could not read that file from this commit' }
+    return cutContent(cleanPath, full)
+  }
+
+  const task = getTask(taskId)
+  if (!task) return { ...none, reason: 'no such task' }
+  const project = task.projectId ? getProject(task.projectId) : null
+  if (!project) return { ...none, reason: 'this task has no project' }
+
+  // 1. Try reading from the live workspace on disk if available (e.g. uncommitted/active files).
+  if (task.branch) {
+    const target = landingTargetFor(task, project)
+    const ws = await workspaceOnBranch(project, task.branch, target)
+    if (ws?.path) {
+      const absPath = path.resolve(ws.path, cleanPath)
+      const wsRoot = path.resolve(ws.path)
+      if (absPath.startsWith(wsRoot + path.sep)) {
+        try {
+          const content = await fs.readFile(absPath, 'utf8')
+          return cutContent(cleanPath, content)
+        } catch {
+          // File may not exist on disk yet or unreadable; fall back to git
+        }
+      }
+    }
+  } else if (task.workspaceMode === 'trunk' || project.root) {
+    const absPath = path.resolve(project.root, cleanPath)
+    const rootNorm = path.resolve(project.root)
+    if (absPath.startsWith(rootNorm + path.sep)) {
+      try {
+        const content = await fs.readFile(absPath, 'utf8')
+        return cutContent(cleanPath, content)
+      } catch {
+        // Fall back to git
+      }
+    }
+  }
+
+  // 2. Try git show HEAD / resolved head.
+  const at = await locate(taskId)
+  if (at.ok && at.head) {
+    const full = await tryGit(at.cwd, ['show', `${at.head}:${cleanPath}`])
+    if (full !== null) {
+      return cutContent(cleanPath, full)
+    }
+  }
+
+  return { ...none, reason: 'could not read that file from this task' }
 }

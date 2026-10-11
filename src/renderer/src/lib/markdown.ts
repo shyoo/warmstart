@@ -35,10 +35,12 @@
 
 /** One run of text inside a block, and what it is set as. */
 export interface Inline {
-  kind: 'text' | 'code' | 'strong' | 'em' | 'strike' | 'link'
+  kind: 'text' | 'code' | 'strong' | 'em' | 'strike' | 'link' | 'artifact'
   text: string
   /** Only on `link`, and only ever an `http`, `https` or `mailto` URL. */
   href?: string
+  /** Only on `artifact`: the relative file path to view. */
+  path?: string
 }
 
 export type Block =
@@ -57,6 +59,21 @@ export type TableAlign = 'left' | 'center' | 'right' | null
 /** ⛔ The whole of what a link may point at. Everything else stays literal text. */
 const SAFE_SCHEME = /^(https?:|mailto:)/i
 
+/** Whether a path string names a safe relative markdown artifact inside the repository. */
+export function isMarkdownFilePath(raw: string): boolean {
+  const norm = raw.replace(/\\/g, '/').trim()
+  if (!norm.toLowerCase().endsWith('.md')) return false
+  if (norm.includes('://') || norm.startsWith('/') || /^[a-zA-Z]:/.test(norm)) return false
+  const parts = norm.split('/')
+  if (parts.some((p) => p === '..' || p === '')) return false
+  if (parts[0] === '.git') return false
+  return true
+}
+
+export function normalizeArtifactPath(raw: string): string {
+  return raw.replace(/\\/g, '/').trim().replace(/^\.\//, '')
+}
+
 /**
  * ⚠️ **Order matters and the code span goes first.** Backticks are the strongest fence in this
  * grammar — `**` inside one is two asterisks, not emphasis — so the code alternative has to win the
@@ -66,7 +83,7 @@ const SAFE_SCHEME = /^(https?:|mailto:)/i
  * an operator typed would otherwise swallow every line up to the next one.
  */
 const INLINE =
-  /(`[^`\n]+`)|(\*\*[^\n]+?\*\*)|(~~[^\n]+?~~)|(\*[^\s*][^\n]*?\*|_[^\s_][^\n]*?_)|(\[[^\]\n]*\]\([^)\s]+\))|(https?:\/\/[^\s<>"'`]+)/i
+  /(`[^`\n]+`)|(\*\*[^\n]+?\*\*)|(~~[^\n]+?~~)|(\*[^\s*][^\n]*?\*|_[^\s_][^\n]*?_)|(\[[^\]\n]*\]\([^)\s]+\))|(https?:\/\/[^\s<>"'`]+)|\b([a-zA-Z0-9_.-]+(?:[/\\][a-zA-Z0-9_.-]+)*\.md)\b/i
 
 /**
  * ⭐ **A bare URL is a link.** *"Pull request opened for `…` into `main`: https://github.com/…/pull/141"*
@@ -105,8 +122,22 @@ export function inlineSpans(text: string): Inline[] {
       rest = rest.slice(match.index + token.length)
       continue
     }
+    if (match[7]) {
+      if (isMarkdownFilePath(token)) {
+        out.push({ kind: 'artifact', text: token, path: normalizeArtifactPath(token) })
+      } else {
+        out.push({ kind: 'text', text: token })
+      }
+      rest = rest.slice(match.index + token.length)
+      continue
+    }
     if (token.startsWith('`')) {
-      out.push({ kind: 'code', text: token.slice(1, -1) })
+      const inner = token.slice(1, -1)
+      if (isMarkdownFilePath(inner)) {
+        out.push({ kind: 'artifact', text: inner, path: normalizeArtifactPath(inner) })
+      } else {
+        out.push({ kind: 'code', text: inner })
+      }
     } else if (token.startsWith('**')) {
       out.push({ kind: 'strong', text: token.slice(2, -2) })
     } else if (token.startsWith('~~')) {
@@ -117,8 +148,13 @@ export function inlineSpans(text: string): Inline[] {
       const href = token.slice(split + 2, -1)
       // ⛔ Whitelisted at the parse, not at the render: a scheme this does not know never becomes an
       // `href`, so no component downstream has to remember to check one.
-      if (SAFE_SCHEME.test(href)) out.push({ kind: 'link', text: label || href, href })
-      else out.push({ kind: 'text', text: token })
+      if (SAFE_SCHEME.test(href)) {
+        out.push({ kind: 'link', text: label || href, href })
+      } else if (isMarkdownFilePath(href)) {
+        out.push({ kind: 'artifact', text: label || href, path: normalizeArtifactPath(href) })
+      } else {
+        out.push({ kind: 'text', text: token })
+      }
     } else {
       out.push({ kind: 'em', text: token.slice(1, -1) })
     }

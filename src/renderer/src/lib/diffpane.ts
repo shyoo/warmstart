@@ -21,19 +21,28 @@ export type DiffSource =
   | { kind: 'branch' }
   /** `subject` is for the pane's head only; the sha is what names the change. */
   | { kind: 'commit'; sha: string; subject?: string | null }
+  /** A specific file/artifact to view, either rendered as markdown or inspected as diff. */
+  | { kind: 'file'; path: string; sha?: string | null; initialMode?: 'rendered' | 'diff' }
 
 export interface DiffPaneRequest {
   taskId: string
   source: DiffSource
   /** A file to expand and scroll to, when the pane was opened from one row of the inline list. */
   focusPath?: string
+  /** Mode to display if source is a file: 'diff' | 'rendered' */
+  viewMode?: 'diff' | 'rendered'
 }
+
+export type ViewerSource = DiffSource
+export type ViewerPaneRequest = DiffPaneRequest
 
 export interface DiffPaneApi {
   request: DiffPaneRequest | null
   open: (request: DiffPaneRequest) => void
   close: () => void
 }
+
+export type ViewerPaneApi = DiffPaneApi
 
 /** The default does nothing, so a component rendered outside the shell (a test) can still mount. */
 export const DiffPaneContext = createContext<DiffPaneApi>({
@@ -42,13 +51,20 @@ export const DiffPaneContext = createContext<DiffPaneApi>({
   close: () => undefined
 })
 
+export const ViewerPaneContext = DiffPaneContext
+
 export function useDiffPane(): DiffPaneApi {
   return useContext(DiffPaneContext)
 }
 
-/** Do two sources name the same change? */
+export const useViewerPane = useDiffPane
+
+/** Do two sources name the same change or file? */
 export function sameSource(a: DiffSource, b: DiffSource): boolean {
-  return a.kind === 'branch' ? b.kind === 'branch' : b.kind === 'commit' && a.sha === b.sha
+  if (a.kind === 'branch') return b.kind === 'branch'
+  if (a.kind === 'commit') return b.kind === 'commit' && a.sha === b.sha
+  if (a.kind === 'file') return b.kind === 'file' && a.path === b.path && a.sha === b.sha
+  return false
 }
 
 /**

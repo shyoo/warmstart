@@ -55,6 +55,7 @@ import type {
   PendingWork,
   TaskDiffFile,
   TaskDiffSummary,
+  TaskFileContent,
   Question,
   QuestionKind,
   QuestionOption,
@@ -2349,6 +2350,12 @@ export interface RpcMap {
    * commit the branch no longer carries.
    */
   'task.commitFile': { params: { id: string; sha: string; path: string }; result: TaskDiffFile }
+  /**
+   * One file's full text content (e.g. to render in the Viewer pane).
+   *
+   * ⛔ The path must be within the task's repository root and free of traversal (`..`).
+   */
+  'task.fileContent': { params: { id: string; path: string; sha?: string | null }; result: TaskFileContent }
   /**
    * Ask this conversation's agent to commit, on the level the operator picked.
    *

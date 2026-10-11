@@ -278,6 +278,11 @@ export function DiffPanel({
   const [error, setError] = useState<string | null>(null)
   const pane = useDiffPane()
 
+  const artifacts = useMemo(() => {
+    if (!summary?.ok) return []
+    return summary.files.filter((f) => f.path.toLowerCase().endsWith('.md'))
+  }, [summary])
+
   useEffect(() => {
     let live = true
     void (async () => {
@@ -355,16 +360,48 @@ export function DiffPanel({
           </p>
         )}
 
+        {artifacts.length > 0 && (
+          <div className="diff-panel-artifacts">
+            <div className="diff-artifacts-label">
+              <svg className="diff-artifact-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5">
+                <path d="M3 2.5A1.5 1.5 0 0 1 4.5 1h5l3.5 3.5v9A1.5 1.5 0 0 1 11.5 15h-7A1.5 1.5 0 0 1 3 13.5v-11z" />
+                <path d="M9.5 1v3.5H13" />
+              </svg>
+              <span>Artifacts ({artifacts.length})</span>
+            </div>
+            <div className="diff-artifacts-chips">
+              {artifacts.map((art) => (
+                <button
+                  key={art.path}
+                  type="button"
+                  className="artifact-chip"
+                  title={`View ${art.path} in Viewer pane`}
+                  onClick={() =>
+                    pane.open({
+                      taskId,
+                      source: { kind: 'file', path: art.path },
+                      viewMode: 'rendered'
+                    })
+                  }
+                >
+                  <span className="artifact-chip-name">{art.path}</span>
+                  {counts(art.added, art.removed)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         {summary?.ok && summary.files.length > 0 && (
           <div className="diff-panel-actions">
             <button
               type="button"
               className="btn btn--ghost diff-open-pane"
               aria-pressed={shownInPane}
-              title="Read every file's patch in the Diff pane, at the right of the window."
+              title="Read every file's patch in the Viewer pane, at the right of the window."
               onClick={() => openPane()}
             >
-              {shownInPane ? 'Shown in Diff pane' : 'Open in Diff pane'}
+              {shownInPane ? 'Shown in Viewer pane' : 'Open in Viewer pane'}
             </button>
           </div>
         )}
