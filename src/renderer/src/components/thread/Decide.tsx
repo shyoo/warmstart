@@ -327,6 +327,8 @@ export function QuotaDecide({
               </div>
             </section>
           )}
+          <div className={warning ? 'quota-immediate' : undefined} role={warning ? 'group' : undefined}
+            aria-label={warning ? 'Take action now' : undefined}>
           {warning && <div className="quota-immediate-head">Take action now</div>}
           {!vendorRefused && !isOtherHeld && (
             <div className="decide-option">
@@ -416,6 +418,7 @@ export function QuotaDecide({
               </span>
             </div>
           )}
+          </div>
 
           {canReassign && (
             <p className="decide-note" data-armed={choice.changed ? 'true' : undefined}>
