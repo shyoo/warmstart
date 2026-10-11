@@ -1503,6 +1503,63 @@ try {
     `[...document.querySelectorAll('.pill-menu [role="option"]')].find(o => o.dataset.value === 'plan')?.click()`
   )
   await wait(500)
+  const closeMenus = async () => {
+    await evaluate(
+      `document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`
+    )
+    await wait(200)
+  }
+  const openPill = async (name) => {
+    await closeMenus()
+    await evaluate(
+      `[...document.querySelectorAll('button.pill')].find(p => p.getAttribute('aria-label') === ${JSON.stringify(
+        name
+      )})?.click()`
+    )
+    await wait(300)
+  }
+  // ⛔ Found through `aria-controls`, not through the pill's parent. The menu is rendered into a
+  // portal at the document root so that no scroll container can clip it, so it is not a sibling of
+  // the button any more — and the id the button already publishes is the only honest link between
+  // the two.
+  const menuOf = (name) => `
+    (() => {
+      const pill = [...document.querySelectorAll('button.pill')]
+        .find(p => p.getAttribute('aria-label') === ${JSON.stringify(name)});
+      const id = pill?.getAttribute('aria-controls');
+      return id ? document.getElementById(id) : null;
+    })()
+  `
+  const menuValues = async (name) =>
+    JSON.parse(
+      await evaluate(`
+        JSON.stringify((() => {
+          const menu = ${menuOf(name)};
+          return [...(menu?.querySelectorAll('[role="option"]') ?? [])].map(o => o.dataset.value);
+        })())
+      `)
+    )
+  const pickInMenu = async (name, value) => {
+    await evaluate(`
+      (() => {
+        const v = ${JSON.stringify(value)};
+        const menu = ${menuOf(name)};
+        const row = [...(menu?.querySelectorAll('[role="option"]') ?? [])].find(o => o.dataset.value === v);
+        row?.click();
+        return !!row;
+      })()
+    `)
+    await wait(400)
+  }
+  const pillLabel = async (name) =>
+    (
+      await evaluate(
+        `([...document.querySelectorAll('button.pill')].find(p => p.getAttribute('aria-label') === ${JSON.stringify(
+          name
+        )})?.innerText ?? '')`
+      )
+    ).trim()
+
   const planned = await evaluate(`
     JSON.stringify((() => {
       const composer = document.querySelector('.composer');
@@ -1621,6 +1678,36 @@ try {
     })())
   `)
   const h = JSON.parse(handed)
+  const executorControls = async () => JSON.parse(await evaluate(`JSON.stringify(
+    [...document.querySelectorAll('.composer-plan-table tr:last-child button.pill')]
+      .map(p => p.getAttribute('aria-label')).filter(n => /Piece (workers|Model|Effort|model tags)/.test(n)))`))
+  check('executor controls read Worker, Model, Tags under Auto Model',
+    (await executorControls()).join('|') === 'Piece workers|Piece Model|Piece model tags: Any tags')
+  await openPill('Piece Model')
+  const executorManualValues = (await menuValues('Piece Model')).filter(v => v.startsWith('['))
+  const executorManual = executorManualValues.find(v => {
+    // Select an effort-capable model from the real model catalogue.
+    return /opus|gpt/.test(JSON.parse(v)[1])
+  }) ?? executorManualValues[0]
+  check('the executor model picker offers manual models before a worker is pinned', !!executorManual)
+  await pickInMenu('Piece Model', executorManual)
+  check('manual executor routing reads Worker, Model, Effort and hides Tags',
+    (await executorControls()).join('|') === 'Piece workers|Piece Model|Piece Effort',
+    JSON.stringify(await executorControls()))
+  await openPill('Piece Effort')
+  const executorEfforts = await menuValues('Piece Effort')
+  const chosenExecutorEffort = executorEfforts.find(v => JSON.parse(v)[1])
+  await pickInMenu('Piece Effort', chosenExecutorEffort)
+  check('a manually selected executor effort appears on its own pill',
+    (await pillLabel('Piece Effort')) !== 'Default effort')
+  await openPill('Piece Model')
+  await pickInMenu('Piece Model', '')
+  check('returning the executor to Auto Model replaces Effort with Tags',
+    (await executorControls()).join('|') === 'Piece workers|Piece Model|Piece model tags: Any tags')
+  await openPill('Piece workers')
+  await evaluate(`document.querySelector('.workers-menu-action')?.click()`)
+  await closeMenus()
+
   check('the send button says Plan & Execute', h.sendLabel === 'Plan & Execute', handed)
   check(
     'Plan & Execute keeps the Planner and Executor rows, with the kind first',
@@ -1732,63 +1819,6 @@ try {
   // block left every menu it opened standing, and a query across the document then answered the
   // Worker pill's question with the schedule presets still on screen — which picked `now` as a
   // worker id and reported green all the way to the check that finally could not parse it.
-  const closeMenus = async () => {
-    await evaluate(
-      `document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`
-    )
-    await wait(200)
-  }
-  const openPill = async (name) => {
-    await closeMenus()
-    await evaluate(
-      `[...document.querySelectorAll('button.pill')].find(p => p.getAttribute('aria-label') === ${JSON.stringify(
-        name
-      )})?.click()`
-    )
-    await wait(300)
-  }
-  // ⛔ Found through `aria-controls`, not through the pill's parent. The menu is rendered into a
-  // portal at the document root so that no scroll container can clip it, so it is not a sibling of
-  // the button any more — and the id the button already publishes is the only honest link between
-  // the two.
-  const menuOf = (name) => `
-    (() => {
-      const pill = [...document.querySelectorAll('button.pill')]
-        .find(p => p.getAttribute('aria-label') === ${JSON.stringify(name)});
-      const id = pill?.getAttribute('aria-controls');
-      return id ? document.getElementById(id) : null;
-    })()
-  `
-  const menuValues = async (name) =>
-    JSON.parse(
-      await evaluate(`
-        JSON.stringify((() => {
-          const menu = ${menuOf(name)};
-          return [...(menu?.querySelectorAll('[role="option"]') ?? [])].map(o => o.dataset.value);
-        })())
-      `)
-    )
-  const pickInMenu = async (name, value) => {
-    await evaluate(`
-      (() => {
-        const v = ${JSON.stringify(value)};
-        const menu = ${menuOf(name)};
-        const row = [...(menu?.querySelectorAll('[role="option"]') ?? [])].find(o => o.dataset.value === v);
-        row?.click();
-        return !!row;
-      })()
-    `)
-    await wait(400)
-  }
-  const pillLabel = async (name) =>
-    (
-      await evaluate(
-        `([...document.querySelectorAll('button.pill')].find(p => p.getAttribute('aria-label') === ${JSON.stringify(
-          name
-        )})?.innerText ?? '')`
-      )
-    ).trim()
-
   // ⛔ The finish policy reaches every level of the ladder plus `inherit`, which is the value that
   // keeps following the project as it changes.
   // ⚠️ And the list comes from FINISH_ORDER rather than a hand-written copy: three dropdowns each
@@ -1907,9 +1937,7 @@ try {
   const s = JSON.parse(sizing)
   check('the prompt textarea dynamically resizes with content and wrap', s.grew && s.wrapped && s.shrunk, sizing)
 
-  // ⛔ Never disabled, and never absent. A model list belongs to one CLI, so until an account is
-  // pinned there is no list to draw — but *let the router choose* and *use whatever the account
-  // defaults to* are answerable without knowing which account, and a locked pill said the opposite.
+  // A manual model names its compatible worker before filing, so it is offered even under Auto Worker.
   const unpinnedModel = (f.pills ?? []).find((p) => p.name === 'Model')
   check(
     'the model pill is answerable before an account is pinned',
@@ -1919,12 +1947,8 @@ try {
   await openPill('Model')
   const unpinnedModelValues = (await menuValues('Model')).filter(Boolean)
   check(
-    // ⚠️ Policy answers only, and no model ids: an id belongs to one CLI, so there is genuinely
-    // nothing to name yet. t620 added the three class-scoped Autos (high/med/low) beside the plain
-    // one; the claim is the *absence of model ids*, so assert that rather than a count that a new
-    // routing policy quietly invalidates.
-    'and offers exactly the answers that are not a model',
-    unpinnedModelValues.every((v) => v.startsWith('policy:')) &&
+    'and offers manual models with compatible workers alongside both policies',
+    unpinnedModelValues.some((v) => v.startsWith('[')) &&
       unpinnedModelValues.includes('policy:auto') &&
       unpinnedModelValues.includes('policy:inherit'),
     JSON.stringify(unpinnedModelValues)
@@ -1959,9 +1983,11 @@ try {
   check(
     'two ticked tags read on the pill and in its accessible name, and the model pill names the requirement',
     chosenName.includes('High') && chosenName.includes('Low') &&
-      (await pillLabel('Model')) === 'Auto Model (High | Low)',
+      (await pillLabel('Model')) === 'Auto Model (tags)',
     `${chosenName} / ${await pillLabel('Model')}`
   )
+  check('composer tags grow to fit their chips instead of reserving a fixed width',
+    Number(await evaluate(`String((${modelTagsPill})?.getBoundingClientRect().width ?? 0)`)) < 180)
   const rememberedTags = await evaluate(`(() => {
     const key = Object.keys(window.localStorage).find((k) => k.endsWith('composer'))
     return key ? JSON.stringify(Object.values(JSON.parse(window.localStorage.getItem(key)).byWorker ?? {}).map((c) => c.modelTags ?? null)) : 'no composer key'
@@ -1995,6 +2021,24 @@ try {
     await wait(250)
   }
   await closeMenus()
+
+  await openPill('Model')
+  const fleetManualModel = (await menuValues('Model')).find((v) => v.startsWith('['))
+  const [manualWorkerId, manualModelId] = JSON.parse(fleetManualModel)
+  await pickInMenu('Model', fleetManualModel)
+  check(
+    'choosing a manual model under Auto Worker pins its compatible worker and remembers the model',
+    (await pillLabel('Worker')) !== 'Auto Worker' &&
+      (await evaluate(`(() => {
+        const key = Object.keys(localStorage).find(k => k.endsWith('composer'));
+        const prefs = JSON.parse(localStorage.getItem(key));
+        return prefs.workerId === ${JSON.stringify(manualWorkerId)} && prefs.byWorker[prefs.workerId]?.model === ${JSON.stringify(manualModelId)};
+      })()`)) === true
+  )
+  await openPill('Model')
+  await pickInMenu('Model', 'policy:auto')
+  await openPill('Worker')
+  await pickInMenu('Worker', '')
 
   // Pin the account this suite commissioned, and the models its cost model can price appear.
   await openPill('Worker')
@@ -3987,6 +4031,7 @@ try {
   const rowHeights = async () =>
     JSON.parse(await evaluate(`JSON.stringify([...(${modelRows} ?? [])].map(r => [r.querySelector('.worker-models-name')?.textContent.trim(), Math.round(r.getBoundingClientRect().height)]))`))
   const heightsBefore = await rowHeights()
+  const tagWidthBefore = Number(await evaluate(`String(${modelsCell}?.querySelector('button.pill[aria-label^="Tags for"]')?.getBoundingClientRect().width ?? 0)`))
   const firstTagsLabel = `${modelsCell}?.querySelector('button.pill[aria-label^="Tags for"]')`
   const setNative = (el, value) =>
     `(() => { const el = ${el}; const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('input', { bubbles: true })); })()`
@@ -4025,6 +4070,9 @@ try {
     await evaluate(`document.activeElement?.getAttribute('aria-label') ?? '(nothing focused)'`)
   )
   const heightsAfter = await rowHeights()
+  const tagWidthAfter = Number(await evaluate(`String(${firstTagsLabel}?.getBoundingClientRect().width ?? 0)`))
+  check('worker tag controls grow with their content', tagWidthBefore > 0 && tagWidthAfter > tagWidthBefore + 10,
+    JSON.stringify({ tagWidthBefore, tagWidthAfter }))
   check(
     'a line carrying seven tags is as tall as it was with one',
     heightsBefore.length > 0 && heightsAfter.length === heightsBefore.length && heightsAfter.every(([n, h], i) => n === heightsBefore[i][0] && Math.abs(h - heightsBefore[i][1]) <= 2),

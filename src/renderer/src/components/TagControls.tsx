@@ -18,7 +18,7 @@ import { Pill } from './Pill'
  * (t1042): the Settings → Workers matrix, the composer, the plan-piece editor, the thread's
  * reassignment control and the quota redirect.
  *
- * ⛔ **The closed control is one line high and a fixed width, whatever it holds.** At most two short
+ * ⛔ **The closed control is one line high with a content-sized width.** At most two short
  * chips and `+N`, each ellipsized; the full list is the tooltip and the accessible name. A row with
  * twelve tags is the same height as a row with one, because the matrix is a table of single lines and
  * a wrapping cell would push the purpose columns around.

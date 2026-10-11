@@ -3387,11 +3387,11 @@ body {
 .worker-models-help { margin: 0; font-size: var(--text-meta); color: var(--color-text-dim); max-width: 72ch; }
 
 /*
- * Tags (t1042). ⛔ The closed control is one line and one width however many tags it holds: two short
+ * Tags (t1042). ⛔ The closed control is one line with a content-sized width: two short
  * chips and +N, each ellipsized, so a row with twelve tags is as tall as a row with one and the
  * matrix scrolls sideways instead of wrapping. The full list is the tooltip and the accessible name.
  */
-.tags-pill .pill { width: 13.5rem; max-width: 13.5rem; min-width: 0; justify-content: flex-start; }
+.tags-pill .pill { width: auto; max-width: 13.5rem; min-width: 0; justify-content: flex-start; }
 .tag-chips { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
 .tag-chip {
   flex: 0 1 auto; min-width: 0; max-width: 5.5rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

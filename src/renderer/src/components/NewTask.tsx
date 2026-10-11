@@ -492,18 +492,10 @@ export function NewTask({
   const [pieceWorkerIds, setPieceWorkerIds] = useState<string[]>([])
   const [pieceModels, setPieceModels] = useState<Record<string, string>>({})
   const [pieceEfforts, setPieceEfforts] = useState<Record<string, string>>({})
-  /**
-   * The Executor row's Auto model answer, in the planner Model pill's own values: unset is the
-   * scheduler's default routing (narrowed by the Tags pill beside it, t1042), and
-   * `policy:inherit` takes each dispatched account's default. A specific model id is never
-   * offered here — an id belongs to one CLI, so a fleet-wide pin would hand at least one
-   * account a model it cannot start on; per-account models stay in the Workers picker.
-   */
+  // Model ids belong to workers; Auto and Inherit apply across the executor candidate set.
   const [pieceModel, setPieceModel] = useState<string>('')
-  /** Tags every piece's model/effort pair must carry. ⚠️ Only meaningful while the pieces are Auto. */
   const [pieceTags, setPieceTags] = useState<string[]>([])
   const pieceModelTags = pieceModel === MODEL_INHERIT ? [] : pieceTags
-  const pieceModelLabel = pieceModel === MODEL_INHERIT ? 'Inherit — account default' : 'Auto Model'
   /**
    * The roster, the round budget and the exchange rule, held as one so a seat change is one write.
    *
@@ -640,7 +632,7 @@ export function NewTask({
     )
   )
   const pinned = pinnable.find((w) => w.id === pinId) ?? null
-  const forAdapter = pinned ? (options.find((o) => o.adapterId === pinned.adapterId) ?? null) : null
+  const forAdapter = pinned ? (options.find((o) => o.workerId === pinned.id) ?? options.find((o) => o.adapterId === pinned.adapterId && !o.workerId) ?? null) : null
   const canSetEffort = forAdapter?.selectableEffort ?? false
 
   /**
@@ -703,7 +695,7 @@ export function NewTask({
     : modelPolicy === 'inherit'
       ? inheritedModelLabel
       : modelTags.length > 0
-        ? `Auto Model (${tagsLabel(modelTags)})`
+        ? 'Auto Model (tags)'
         : 'Auto Model'
   const modelPillOptions: PillOption[] = [
     {
@@ -721,11 +713,14 @@ export function NewTask({
         : 'Use default model of the dispatched account'
     },
     // ⚠️ Named for reading, valued by id — what is sent is the exact string the CLI takes.
-    ...(forAdapter?.models ?? []).map((m) => ({
-      value: m.id,
-      label: modelLabel(m.id) ?? m.id,
-      hint: m.id
-    }))
+    ...(pinned ? [pinned] : pinnable).flatMap((w) => {
+      const catalog = options.find((o) => o.workerId === w.id) ?? options.find((o) => o.adapterId === w.adapterId && !o.workerId)
+      return (catalog?.models ?? []).map((m) => ({
+        value: pinned ? m.id : JSON.stringify([w.id, m.id]),
+        label: modelLabel(m.id) ?? m.id,
+        hint: pinned ? m.id : `${w.label} · selects this worker`
+      }))
+    })
   ]
 
   /**
@@ -935,6 +930,13 @@ export function NewTask({
           ...((remembered.modelTags?.length ?? 0) > 0 ? { modelTags: remembered.modelTags } : {})
         })
       )
+      return
+    }
+    if (!pinned) {
+      const [workerId, modelId] = JSON.parse(next) as [string, string]
+      setPrefs(rememberModelChoice({ ...prefs, workerId }, workerId, {
+        model: modelId, effort: '', policy: 'auto'
+      }))
       return
     }
     const levels = forAdapter?.models.find((m) => m.id === next)?.effortLevels ?? []
@@ -1925,45 +1927,17 @@ export function NewTask({
                   </td>
                   <td>
                     <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
-                      <PillSelect
-                        ariaLabel="Piece Model"
-                        align="right"
-                        title="Model policy for each subtask. Auto Model routes among pairs carrying the chosen tags; Inherit uses each dispatched account's default."
-                        muted={pieceModel === ''}
-                        value={pieceModel}
-                        label={pieceModelLabel}
-                        options={[
-                          { value: '', label: 'Auto Model', hint: 'Scheduler selects the worker account and its optimal model' },
-                          { value: MODEL_INHERIT, label: 'Inherit — account default', hint: 'Use default model of the dispatched account' }
-                        ]}
-                        onChange={(value) => {
-                          setPieceModel(value)
-                          if (value === MODEL_INHERIT) setPieceTags([])
-                        }}
-                      />
-                      {pieceModel !== MODEL_INHERIT && (
-                        <TagsPill
-                          tags={pieceTags}
-                          empty="Any tags"
-                          align="right"
-                          ariaLabel="Piece model tags"
-                          title="Tags each piece's model and effort must all carry"
-                          menu={() => (
-                            <TagPicker
-                              label="the pieces"
-                              available={pieceTagOptions}
-                              selected={pieceTags}
-                              onChange={setPieceTags}
-                            />
-                          )}
-                        />
-                      )}
-                      <WorkersPicker
+                      <ExecutorRouting
                         workers={pinnable}
                         modelOptions={options}
                         selectedWorkerIds={pieceWorkerIds}
                         selectedModels={pieceModels}
                         selectedEfforts={pieceEfforts}
+                        policy={pieceModel}
+                        tags={pieceTags}
+                        tagOptions={pieceTagOptions}
+                        onPolicyChange={setPieceModel}
+                        onTagsChange={setPieceTags}
                         onChange={(workerIds, models, efforts) => {
                           setPieceWorkerIds(workerIds)
                           setPieceModels(models)
@@ -2167,12 +2141,17 @@ function DependencyMenu({
   )
 }
 
-function WorkersPicker({
+function ExecutorRouting({
   workers,
   modelOptions,
   selectedWorkerIds,
   selectedModels,
   selectedEfforts,
+  policy,
+  tags,
+  tagOptions,
+  onPolicyChange,
+  onTagsChange,
   onChange
 }: {
   workers: Array<{
@@ -2186,6 +2165,11 @@ function WorkersPicker({
   selectedWorkerIds: string[]
   selectedModels: Record<string, string>
   selectedEfforts: Record<string, string>
+  policy: string
+  tags: string[]
+  tagOptions: string[]
+  onPolicyChange: (policy: string) => void
+  onTagsChange: (tags: string[]) => void
   onChange: (
     workerIds: string[],
     models: Record<string, string>,
@@ -2195,7 +2179,7 @@ function WorkersPicker({
   const label = useMemo(() => {
     // ⛔ Named for what it is: nobody checked means the scheduler picks, which is Auto by any
     // other name, and a muted "Workers" reads as a control that was never answered.
-    if (selectedWorkerIds.length === 0) return 'Auto'
+    if (selectedWorkerIds.length === 0) return 'Auto Worker'
     if (selectedWorkerIds.length === 1) {
       const w = workers.find((x) => x.id === selectedWorkerIds[0])
       return w ? w.label : '1 Worker'
@@ -2206,7 +2190,8 @@ function WorkersPicker({
   const toggleWorker = (id: string): void => {
     if (selectedWorkerIds.includes(id)) {
       const next = selectedWorkerIds.filter((x) => x !== id)
-      onChange(next, selectedModels, selectedEfforts)
+      onChange(next, Object.fromEntries(Object.entries(selectedModels).filter(([key]) => next.includes(key))),
+        Object.fromEntries(Object.entries(selectedEfforts).filter(([key]) => next.includes(key))))
     } else {
       onChange([...selectedWorkerIds, id], selectedModels, selectedEfforts)
     }
@@ -2219,7 +2204,9 @@ function WorkersPicker({
     // a value nobody can see is still filed as `effortsByWorker` (t811).
     const nextEfforts = { ...selectedEfforts }
     if (nextEfforts[id] && !levels.includes(nextEfforts[id])) delete nextEfforts[id]
-    onChange(selectedWorkerIds, nextModels, nextEfforts)
+    onPolicyChange(MODEL_INHERIT)
+    onTagsChange([])
+    onChange(selectedWorkerIds.length === 0 ? [id] : selectedWorkerIds, nextModels, nextEfforts)
   }
 
   const setWorkerEffort = (id: string, effort: string): void => {
@@ -2229,100 +2216,117 @@ function WorkersPicker({
   }
 
   const selectAll = (): void => {
+    onPolicyChange('')
     onChange([], {}, {})
   }
 
-  return (
-    <Pill
-      ariaLabel="Piece workers"
-      title="Select workers and models permitted to run subtasks"
-      align="right"
-      muted={selectedWorkerIds.length === 0}
-      label={label}
-      menu={() => (
-        <div className="workers-menu">
-          <div className="workers-menu-head">
-            <span className="workers-menu-title">Workers & Models</span>
-            {selectedWorkerIds.length > 0 && (
-              <button type="button" className="workers-menu-action" onClick={selectAll}>
-                Reset to Auto (All)
-              </button>
-            )}
-          </div>
-          <div className="workers-menu-list">
-            {workers.map((w) => {
-              const isChecked = selectedWorkerIds.includes(w.id)
-              const forAdapter = modelOptions.find((o) => o.adapterId === w.adapterId)
-              const models = forAdapter?.models ?? []
-              const selectedModel = selectedModels[w.id] ?? ''
-              const effectiveModel = models.find((m) => m.id === selectedModel)
-              const canEffort = forAdapter?.selectableEffort ?? false
-              const effortLevels = canEffort ? (effectiveModel?.effortLevels ?? []) : []
-              const selectedEffort = selectedEfforts[w.id] ?? ''
+  const candidates = selectedWorkerIds.length > 0
+    ? workers.filter((w) => selectedWorkerIds.includes(w.id)) : workers
+  const catalogFor = (w: (typeof workers)[number]): ModelOptions | undefined =>
+    modelOptions.find((o) => o.workerId === w.id) ?? modelOptions.find((o) => o.adapterId === w.adapterId && !o.workerId)
+  const manual = candidates.filter((w) => selectedModels[w.id])
+  const modelLabelText = manual.length === 1 && candidates.length === 1
+    ? (modelLabel(selectedModels[manual[0]!.id]) ?? selectedModels[manual[0]!.id])
+    : manual.length > 0 ? 'Custom models'
+    : policy === MODEL_INHERIT ? 'Account default' : tags.length > 0 ? 'Auto Model (tags)' : 'Auto Model'
+  const effortWorkers = candidates.filter((w) => {
+    const catalog = catalogFor(w)
+    return catalog?.selectableEffort && (catalog.models.find((m) => m.id === (selectedModels[w.id] ?? w.defaultModel))?.effortLevels.length ?? 0) > 0
+  })
 
-              return (
-                <div key={w.id} className="workers-menu-item">
-                  <label className="workers-menu-worker-row">
-                    <div className="workers-menu-worker-info">
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => toggleWorker(w.id)}
-                      />
-                      <span className="workers-menu-worker-name">{w.label}</span>
-                    </div>
-                  </label>
-                  {(isChecked || selectedWorkerIds.length === 0) && (
-                    <div className="workers-menu-model-row">
-                      <select
-                        aria-label={`Model for ${w.label}`}
-                        className="workers-menu-model-select"
-                        value={selectedModel}
-                        onChange={(e) =>
-                          setWorkerModel(
-                            w.id,
-                            e.target.value,
-                            canEffort ? (models.find((m) => m.id === e.target.value)?.effortLevels ?? []) : []
-                          )
-                        }
-                      >
-                        <option value="">
-                          CLI default (
-                          {w.defaultModel
-                            ? (modelLabel(w.defaultModel) ?? w.defaultModel)
-                            : 'default'}
-                          )
-                        </option>
-                        {models.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {modelLabel(m.id) ?? m.id}
-                          </option>
-                        ))}
-                      </select>
-                      {effortLevels.length > 0 && (
-                        <select
-                          aria-label={`Effort for ${w.label}`}
-                          className="workers-menu-model-select"
-                          value={selectedEffort}
-                          onChange={(e) => setWorkerEffort(w.id, e.target.value)}
-                        >
-                          <option value="">Default effort</option>
-                          {effortLevels.map((l) => (
-                            <option key={l} value={l}>
-                              {effortLabel(l) ?? l}
-                            </option>
-                          ))}
-                        </select>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+  return (
+    <>
+      <Pill
+        ariaLabel="Piece workers"
+        title="Select workers permitted to run subtasks"
+        align="right"
+        muted={selectedWorkerIds.length === 0}
+        label={label}
+        menu={() => (
+          <div className="workers-menu">
+            <div className="workers-menu-head">
+              <span className="workers-menu-title">Workers</span>
+              {selectedWorkerIds.length > 0 && (
+                <button type="button" className="workers-menu-action" onClick={selectAll}>
+                  Reset to Auto (All)
+                </button>
+              )}
+            </div>
+            <div className="workers-menu-list">
+              {workers.map((w) => {
+                const isChecked = selectedWorkerIds.includes(w.id)
+
+                return (
+                  <div key={w.id} className="workers-menu-item">
+                    <label className="workers-menu-worker-row">
+                      <div className="workers-menu-worker-info">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => toggleWorker(w.id)}
+                        />
+                        <span className="workers-menu-worker-name">{w.label}</span>
+                      </div>
+                    </label>
+
+                  </div>
+                )
+              })}
+            </div>
           </div>
-        </div>
+        )}
+      />
+      <PillSelect
+        ariaLabel="Piece Model"
+        align="right"
+        value={manual.length > 0 ? JSON.stringify([manual[0]!.id, selectedModels[manual[0]!.id]]) : policy}
+        label={modelLabelText}
+        muted={manual.length === 0}
+        options={[
+          { value: '', label: 'Auto Model', hint: 'Scheduler selects a model and effort matching the tags' },
+          { value: MODEL_INHERIT, label: 'Inherit — account default' },
+          ...candidates.flatMap((w) => (catalogFor(w)?.models ?? []).map((m) => ({
+            value: JSON.stringify([w.id, m.id]), label: modelLabel(m.id) ?? m.id,
+            hint: `${w.label}${selectedWorkerIds.length === 0 ? ' · selects this worker' : ''}`
+          })))
+        ]}
+        onChange={(value) => {
+          if (value === '' || value === MODEL_INHERIT) {
+            onPolicyChange(value)
+            onChange(selectedWorkerIds, {}, {})
+          } else {
+            const [id, model] = JSON.parse(value) as [string, string]
+            const w = workers.find((w) => w.id === id)!
+            const catalog = catalogFor(w)
+            setWorkerModel(id, model, catalog?.selectableEffort
+              ? (catalog.models.find((m) => m.id === model)?.effortLevels ?? []) : [])
+          }
+        }}
+      />
+      {policy !== MODEL_INHERIT && manual.length === 0 ? (
+        <TagsPill tags={tags} empty="Any tags" align="right" ariaLabel="Piece model tags"
+          title="Tags each piece's model and effort must carry"
+          menu={() => <TagPicker label="the pieces" available={tagOptions} selected={tags} onChange={onTagsChange} />}
+        />
+      ) : effortWorkers.length > 0 && (
+        <PillSelect ariaLabel="Piece Effort" align="right"
+          value={effortWorkers.length === 1 ? JSON.stringify([effortWorkers[0]!.id, selectedEfforts[effortWorkers[0]!.id] ?? '']) : ''}
+          label={effortWorkers.length === 1
+            ? (effortLabel(selectedEfforts[effortWorkers[0]!.id] || effortWorkers[0]!.defaultEffort) ?? 'Default effort')
+            : 'Efforts'}
+          options={effortWorkers.flatMap((w) => {
+            const levels = catalogFor(w)?.models.find((m) => m.id === (selectedModels[w.id] ?? w.defaultModel))?.effortLevels ?? []
+            return ['', ...levels].map((level) => ({
+              value: JSON.stringify([w.id, level]), label: effortLabel(level) ?? 'Default effort', hint: w.label
+            }))
+          })}
+          onChange={(value) => {
+            const [id, effort] = JSON.parse(value) as [string, string]
+            setWorkerEffort(id, effort)
+          }}
+        />
       )}
-    />
+    </>
   )
 }
 
@@ -2330,7 +2334,7 @@ function WorkersPicker({
 /**
  * The roster: one row per seat, each pinned to exactly one (account, model, effort).
  *
- * ⛔ **Not `WorkersPicker`, and the difference is the whole of §4.3.** That control answers *which
+ * ⛔ **Not `ExecutorRouting`, and the difference is the whole of §4.3.** That control answers *which
  * accounts may run a piece* — a closed list the scheduler picks from — and reusing it here would
  * let three seats land on one account and still be called a debate. This one answers *who sits in
  * seat 2*, which is a different question with a different shape.
