@@ -100,6 +100,11 @@ export function Scratchpad({
   const [flipped, setFlipped] = useState<ReadonlySet<number>>(() => new Set())
   const [focusKey, setFocusKey] = useState<number | null>(null)
   const [tasks, setTasks] = useState<Task[]>([])
+  const [pendingRemove, setPendingRemove] = useState<{ key: number; title: string } | null>(null)
+  const keepRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (pendingRemove) keepRef.current?.focus()
+  }, [pendingRemove])
 
   // ⚠️ The save loop reads these, not state: it runs from timers and promise callbacks that would
   // otherwise close over a document several keystrokes old.
@@ -376,8 +381,9 @@ export function Scratchpad({
       remove: (key) => {
         const found = find(key)
         if (!found) return
-        if (!confirm(`Delete "${titleOf(found.item.body, 60)}"? It is removed from the scratchpad file.`)) return
-        change(removeItem(found.doc, found.at))
+        // ⚠️ Not window.confirm: the native dialog leaves the Electron window without keyboard focus,
+        // so no field could be typed in until the window was clicked away and back.
+        setPendingRemove({ key, title: titleOf(found.item.body, 60) })
       },
       copy: (key) => {
         const found = find(key)
@@ -546,6 +552,43 @@ export function Scratchpad({
         </div>
       )}
       {error && <div className="alert">{error}</div>}
+      {pendingRemove && (
+        <div className="confirm-shade" role="presentation">
+          <div
+            className="confirm-dialog"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="scratch-delete-title"
+            aria-describedby="scratch-delete-copy"
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setPendingRemove(null)
+            }}
+          >
+            <h3 id="scratch-delete-title">Delete this prompt?</h3>
+            <p id="scratch-delete-copy">
+              &ldquo;{pendingRemove.title}&rdquo; is removed from the scratchpad file.
+            </p>
+            <div className="confirm-actions">
+              <button ref={keepRef} type="button" className="btn" onClick={() => setPendingRemove(null)}>
+                Keep it
+              </button>
+              <button
+                type="button"
+                className="btn btn--danger"
+                onClick={() => {
+                  const target = pendingRemove
+                  setPendingRemove(null)
+                  const current = docRef.current
+                  const at = current?.items.findIndex((item) => item.key === target.key) ?? -1
+                  if (current && at >= 0) change(removeItem(current, at))
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {note && (
         <div className="notice scratchpad-note" onClick={() => setNote(null)}>
           {note}
