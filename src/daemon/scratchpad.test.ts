@@ -42,6 +42,20 @@ afterAll(() => {
 })
 
 describe('the default file', () => {
+  it('keeps Global independent of projects and refuses a stale Global save', () => {
+    const empty = scratchpad.readScratchpad(null)
+    expect(empty).toMatchObject({ projectId: null, exists: false, text: '', version: '' })
+    expect(empty.path).toBe(join(dir, 'scratchpads', 'global.md'))
+    const saved = scratchpad.saveScratchpad(null, '* New\n\nGlobal note\n', empty.version)
+    expect(saved.saved).toBe(true)
+    const project = makeProject()
+    scratchpad.saveScratchpad(project.id, '* New\n\nProject note\n', '')
+    expect(scratchpad.readScratchpad(null).text).toBe('* New\n\nGlobal note\n')
+    expect(scratchpad.readScratchpad(project.id).text).toBe('* New\n\nProject note\n')
+    writeFileSync(empty.path, '* New\n\nExternal edit\n')
+    expect(scratchpad.saveScratchpad(null, 'stale', saved.doc.version).saved).toBe(false)
+    expect(scratchpad.readScratchpad(null).text).toContain('External edit')
+  })
   it('is private, absent until the first save, and created by it', () => {
     const project = makeProject()
     const empty = scratchpad.readScratchpad(project.id)

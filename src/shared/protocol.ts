@@ -2053,12 +2053,12 @@ export interface RpcMap {
   'project.listArchived': { params: void; result: Project[] }
   'project.writeConfig': { params: { id: string }; result: { path: string } }
   /**
-   * A project's prompt scratchpad (t994): the markdown file's text, and the version a save must name.
+   * Project or Global (projectId: null) scratchpad: file text and the version a save must name.
    * ⛔ The daemon never parses it; splitting into prompts is the renderer's (`lib/scratchpad.ts`).
    */
-  'scratchpad.get': { params: { projectId: string }; result: ScratchpadDoc }
+  'scratchpad.get': { params: { projectId: string | null }; result: ScratchpadDoc }
   /** ⛔ Refused, not merged, when the file changed since `baseVersion` was read — see `ScratchpadSave`. */
-  'scratchpad.save': { params: { projectId: string; text: string; baseVersion: string }; result: ScratchpadSave }
+  'scratchpad.save': { params: { projectId: string | null; text: string; baseVersion: string }; result: ScratchpadSave }
   /** A file inside the project root, or `null` for the private default. This install only. */
   'scratchpad.setPath': { params: { projectId: string; path: string | null }; result: ScratchpadDoc }
   /**
@@ -3352,7 +3352,8 @@ export type RpcResponse =
  * `version` is a hash of the bytes on disk, `''` for a file that does not exist yet.
  */
 export interface ScratchpadDoc {
-  projectId: string
+  /** null names the private Global scratchpad, independent of every project. */
+  projectId: string | null
   /** Absolute, for display. */
   path: string
   /** Relative to the project root when the operator chose the file; `null` is the private default. */

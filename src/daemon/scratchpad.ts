@@ -38,7 +38,8 @@ export function defaultScratchpadPath(projectId: string): string {
 }
 
 /** The file, and what it was named relative to, for a project. */
-function locate(projectId: string): { file: string; relativePath: string | null } {
+function locate(projectId: string | null): { file: string; relativePath: string | null } {
+  if (projectId === null) return { file: defaultScratchpadPath('global'), relativePath: null }
   const project = requireProject(projectId)
   const chosen = storedPath(projectId)
   if (!chosen) return { file: defaultScratchpadPath(project.id), relativePath: null }
@@ -68,7 +69,7 @@ function readRaw(file: string): string | null {
  * as `\n` and comes back through `eol`, so saving one card of a CRLF file does not rewrite every line
  * of it.
  */
-export function readScratchpad(projectId: string): ScratchpadDoc {
+export function readScratchpad(projectId: string | null): ScratchpadDoc {
   const { file, relativePath } = locate(projectId)
   const raw = readRaw(file)
   return {
@@ -82,7 +83,7 @@ export function readScratchpad(projectId: string): ScratchpadDoc {
   }
 }
 
-export function saveScratchpad(projectId: string, text: string, baseVersion: string): ScratchpadSave {
+export function saveScratchpad(projectId: string | null, text: string, baseVersion: string): ScratchpadSave {
   const { file } = locate(projectId)
   const before = readRaw(file)
   if (versionOf(before) !== baseVersion) {

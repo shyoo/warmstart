@@ -69,9 +69,12 @@ export function Scratchpad({
   composeFrom,
   onOpenTask,
   onOpenCount,
-  compact = false
+  compact = false,
+  projects = []
 }: {
-  project: Project
+  project: Project | null
+  /** Destinations for moving a Global card into a project. */
+  projects?: Project[]
   composeFrom: (seed: ComposerSeed) => void
   onOpenTask: (taskId: string) => void
   /** Tells the tab label how many cards are open, as edits land. */
@@ -82,7 +85,7 @@ export function Scratchpad({
    */
   compact?: boolean
 }): React.JSX.Element {
-  const projectId = project.id
+  const projectId = project?.id ?? null
   const [meta, setMeta] = useState<ScratchpadDoc | null>(null)
   const [doc, setDocState] = useState<ScratchDoc | null>(null)
   const [saveState, setSaveState] = useState<'saved' | 'unsaved' | 'saving'>('saved')
@@ -110,8 +113,10 @@ export function Scratchpad({
   const filedTimers = useRef(new Map<number, ReturnType<typeof setTimeout>[]>())
   const caretRef = useRef(new Map<number, number>())
   const rootRef = useRef<HTMLDivElement>(null)
+  const movingRef = useRef(new Set<number>())
 
   const refreshTasks = useCallback(() => {
+    if (projectId === null) { setTasks([]); return }
     void rpc('task.list', { projectId })
       .then(setTasks)
       .catch(() => setTasks([]))
@@ -438,10 +443,35 @@ export function Scratchpad({
           setError(errorMessage(err))
         }
       },
+      transfer: async (key, destination) => {
+        if (movingRef.current.has(key)) return
+        const found = find(key)
+        if (!found) return
+        movingRef.current.add(key)
+        const body = found.item.body
+        try {
+          const target = await rpc('scratchpad.get', { projectId: destination })
+          const parsed = parseScratch(target.text)
+          const appended = insertAfter(parsed, body, parsed.items.length - 1).doc
+          const saved = await rpc('scratchpad.save', {
+            projectId: destination, text: serializeScratch(appended), baseVersion: target.version
+          })
+          if (!saved.saved) throw new Error('The destination changed. Nothing was moved; try again.')
+          const current = find(key)
+          if (current && current.item.body === body) {
+            change(removeItem(current.doc, current.at))
+            await flush()
+            setNote(dirtyRef.current ? 'Saved in the project. Removing the Global copy still needs to save.' : 'Moved to the project scratchpad.')
+          } else {
+            setNote('A copy was saved in the project. Your newer edits remain here.')
+          }
+        } catch (err) { setError(errorMessage(err)) }
+        finally { movingRef.current.delete(key) }
+      },
       openTask: onOpenTask
     }),
     // `find` reads only the ref.
-    [change, reveal, tagCard, composeFrom, refreshTasks, onOpenTask]
+    [change, reveal, tagCard, composeFrom, refreshTasks, onOpenTask, flush]
   )
 
   const rows = useMemo(() => (doc ? scratchRows(doc, showAll, shown) : []), [doc, showAll, shown])
@@ -454,7 +484,7 @@ export function Scratchpad({
 
   return (
     <div className={`scratchpad${compact ? ' scratchpad--compact' : ''}`} ref={rootRef}>
-      <ScratchpadFile meta={meta} projectRoot={project.root} beforeChange={flush} onChanged={adopt} />
+      <ScratchpadFile meta={meta} projectRoot={project?.root ?? null} beforeChange={flush} onChanged={adopt} />
 
       <div className="scratchpad-bar">
         <button className="btn btn--primary" onClick={() => actions.insertBelow(null)} disabled={!doc}>
@@ -561,6 +591,7 @@ export function Scratchpad({
                 autoFocus={focusKey === row.item.key}
                 tasks={tasks}
                 targets={targets}
+                moveProjects={project === null ? projects : []}
                 actions={actions}
               />
             )
@@ -615,6 +646,7 @@ function neighbour(rows: ScratchRow[], r: number, step: -1 | 1): number | undefi
 }
 
 interface CardActions {
+  transfer: (key: number, projectId: string) => Promise<void>
   edit: (key: number, body: string) => void
   /** On blur: a `---` typed into the card splits it there. */
   settle: (key: number) => void
@@ -646,7 +678,8 @@ const ScratchCard = memo(function ScratchCard({
   autoFocus,
   tasks,
   targets,
-  actions
+  actions,
+  moveProjects
 }: {
   item: ScratchItem
   last: boolean
@@ -659,6 +692,7 @@ const ScratchCard = memo(function ScratchCard({
   tasks: Task[]
   targets: Task[]
   actions: CardActions
+  moveProjects: Project[]
 }): React.JSX.Element {
   const [dropping, setDropping] = useState<'before' | 'after' | null>(null)
   // Images pasted into this card wait here, uploaded already, for File as task… or Send (t1025).
@@ -728,6 +762,13 @@ const ScratchCard = memo(function ScratchCard({
         </span>
         <StatusPill tag={tag} linked={linked} onPick={(next) => actions.tag(key, next)} onOpenTask={actions.openTask} />
         <div className="scratch-card-actions">
+          {moveProjects.length > 0 && <PillSelect
+            ariaLabel="Move prompt to project" label="Move to project…" value=""
+            options={moveProjects.map((p) => ({ value: p.id, label: p.name }))}
+            onChange={(destination) => void actions.transfer(key, destination)}
+            disabled={pasted.images.length > 0 || pasted.busy}
+            title="Move this note to a project's scratchpad. File or remove pasted images first."
+          />}
           <button className="btn btn--quiet" onClick={() => actions.flip(key)}>
             {preview ? 'Edit' : 'Preview'}
           </button>
@@ -863,7 +904,7 @@ function ScratchpadFile({
   onChanged
 }: {
   meta: ScratchpadDoc | null
-  projectRoot: string
+  projectRoot: string | null
   beforeChange: () => Promise<void>
   onChanged: (doc: ScratchpadDoc) => void
 }): React.JSX.Element {
@@ -873,7 +914,7 @@ function ScratchpadFile({
   const [refusal, setRefusal] = useState<string | null>(null)
 
   const choose = async (next: string | null): Promise<void> => {
-    if (!meta) return
+    if (!meta || meta.projectId === null) return
     setBusy(true)
     setRefusal(null)
     try {
@@ -895,7 +936,7 @@ function ScratchpadFile({
           {meta?.path ?? '…'}
         </span>
         {meta && !meta.exists && <span className="dim"> · created on the first edit</span>}
-        {!editing && (
+        {!editing && projectRoot !== null && (
           <button
             className="btn btn--quiet"
             disabled={!meta}

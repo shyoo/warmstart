@@ -61,6 +61,7 @@ terminal bytes and goes to xterm.js and nowhere else.
 { kind: 'overview',   page: 'dashboard' | 'controller' }
 { kind: 'project',    id, tab: ProjectTab, taskId? }
 { kind: 'unassigned', … }   ⚠️ temporary; it removes itself once tasks.project_id is never null
+{ kind: 'scratchpad', projectId: string | null }   null selects Global notes
 ```
 
 `ProjectTab` (`components/ProjectTabs.tsx`): `flow · scratchpad · tasks · thread · conversations ·
@@ -75,6 +76,16 @@ has to return to a *task* and not merely to a tab. The open task survives a tab 
 thing entirely. See [`glossary.md`](glossary.md).
 
 ## 3. The component map
+
+The title-row **Scratchpad** button opens the editor from any page, with a **Project / Global**
+selector. Opening from a project preselects it; other pages start at Global. Global has no project,
+uses `<dataDir>/scratchpads/global.md`, and has no **Change file…** setting. Its cards offer
+**Move to project…**: the destination is saved against its current version before the source card
+is removed. If destination saving fails, the source stays; if the source changes while saving, the
+destination gets a copy and the newer source stays. An interrupted source save may leave a duplicate,
+never lose the note. Pasted images must be filed or removed before moving, because they are not
+stored in the note file. The title-row Scratchpad, When done and New task buttons share
+`.titlebar-action` for height, padding, type, border and colour.
 
 | Component | Screen |
 |---|---|

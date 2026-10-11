@@ -81,6 +81,8 @@ import { WelcomeTour } from './components/WelcomeTour'
 import { completeWelcome, welcomePending } from './lib/welcome'
 import { reorderedProjectIds } from './lib/projectorder'
 import { PowerActionControl } from './components/PowerActionControl'
+import { Scratchpad } from './components/Scratchpad'
+import { PillSelect } from './components/Pill'
 
 /**
  * The shell.
@@ -98,6 +100,7 @@ import { PowerActionControl } from './components/PowerActionControl'
  * "the project is the unit of work" true of the code and not only of the sidebar.
  */
 type Route =
+  | { kind: 'scratchpad'; projectId: string | null }
   | { kind: 'overview'; page: 'dashboard' | 'controller' }
   /**
    * ⚠️ `taskId` rides on the route rather than living in the Tasks list. The Thread tab is a
@@ -544,9 +547,12 @@ export function App({
         </div>
         <span className="titlebar-name">Warmstart</span>
         <PowerActionControl remote={target.kind === 'remote'} />
+        <button className="btn titlebar-action" onClick={() => setRoute({
+          kind: 'scratchpad', projectId: route.kind === 'project' ? route.id : route.kind === 'scratchpad' ? route.projectId : null
+        })}>Scratchpad</button>
         <button
-          className="btn btn--primary titlebar-new-task"
-          onClick={() => openNewTask(route.kind === 'project' ? route.id : undefined)}
+          className="btn titlebar-action titlebar-new-task"
+          onClick={() => openNewTask(route.kind === 'project' ? route.id : route.kind === 'scratchpad' ? route.projectId ?? undefined : undefined)}
         >
           New task
         </button>
@@ -994,6 +1000,25 @@ export function App({
               onAddProject={() => setAddingProject(true)}
               remoteMachineLabel={target.kind === 'remote' ? target.label : null}
             />
+          ) : route.kind === 'scratchpad' ? (
+            <section>
+              <header className="composer-head">
+                <h2>Scratchpad</h2>
+                <PillSelect ariaLabel="Scratchpad project" label={projects.find((p) => p.id === route.projectId)?.name ?? 'Global'}
+                  value={route.projectId ?? ''}
+                  options={[{ value: '', label: 'Global', hint: 'Notes without an associated project' },
+                    ...projects.map((p) => ({ value: p.id, label: p.name }))]}
+                  onChange={(id) => setRoute({ kind: 'scratchpad', projectId: id || null })} />
+              </header>
+              {route.projectId !== null && !projects.some((p) => p.id === route.projectId) ?
+                <p className="dim">Choose an active project or Global to open its notes.</p> : <Scratchpad key={`${target.id}:${route.projectId ?? 'global'}`}
+                project={projects.find((p) => p.id === route.projectId) ?? null} projects={projects}
+                composeFrom={(seed) => openNewTask(route.projectId ?? undefined, seed)}
+                onOpenTask={(id) => {
+                  const task = tasks.find((t) => t.id === id)
+                  if (task) setRoute(routeForTask(task))
+                }} />}
+            </section>
           ) : route.kind === 'project' ? (
             <ProjectRoute
               route={route}

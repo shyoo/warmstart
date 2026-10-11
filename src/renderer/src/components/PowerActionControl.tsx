@@ -44,7 +44,7 @@ export function PowerActionControl({ remote }: { remote: boolean }): React.JSX.E
       </span>
       <button className="titlebar-power-cancel" onClick={() => void cancel()} disabled={busy}>Cancel</button>
     </> : <>
-      <button className="titlebar-power-toggle" aria-expanded={open} aria-haspopup="menu"
+      <button className="btn titlebar-action titlebar-power-toggle" aria-expanded={open} aria-haspopup="menu"
         title={remote ? 'Power actions are available on this computer only' : 'Choose what this computer does after running and queued tasks settle'}
         disabled={remote || busy || !state?.available.length} onClick={() => setOpen((value) => !value)}>
         When done ▾
