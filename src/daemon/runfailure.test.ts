@@ -1863,6 +1863,16 @@ describe('a turn failed because the remote provider is overloaded (529)', () => 
     workers.retireWorker(first.worker.id)
   })
 
+  it('treats Antigravity INTERNAL (code 500) as a transient provider fault (t1060)', async () => {
+    const { antigravityCli } = await import('./adapters/antigravity-cli.js')
+    expect(
+      antigravityCli.overloaded?.(
+        'The agent reported a failure (ERROR): API error (attempt 1): INTERNAL (code 500): Internal error encountered.'
+      )
+    ).toBe(true)
+    expect(antigravityCli.overloaded?.('INTERNAL (code 500): something else entirely')).toBe(false)
+  })
+
   it('⛔ does not read an outage into the other things `API error` is prefixed to', async () => {
     const { antigravityCli } = await import('./adapters/antigravity-cli.js')
     for (const text of [

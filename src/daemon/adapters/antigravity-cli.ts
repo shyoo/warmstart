@@ -1005,12 +1005,23 @@ export const antigravityCli: AgentAdapter = {
    * ⛔ Anchored on the gRPC status and the vendor's own sentence, never on `ERROR`, `API error` or
    * `503` alone: `API error` also prefixes `RESOURCE_EXHAUSTED` and `UNAUTHENTICATED`, which are an
    * account's quota and credential, not an outage, and a tool call that met a 503 is a bad turn.
-   * Only the one wording is measured; other 5xx statuses (`INTERNAL`, `DEADLINE_EXCEEDED`) are
-   * deliberately not guessed at.
+   * Two wordings are measured; other 5xx statuses (`DEADLINE_EXCEEDED`) are deliberately not
+   * guessed at.
+   *
+   * t1060 ← t1059, 2026-10-10: three runs resuming one conversation ended on `API error (attempt 1):
+   * INTERNAL (code 500): Internal error encountered.` — 4 times in 90 minutes, 7 min into a turn
+   * that had made ~25 successful `streamGenerateContent` calls. `cli.log` records no local fault
+   * (the same sentence appears there in six earlier logs, 2026-09-13…09-30, as `Run: attempt 1
+   * failed (INTERNAL (code 500)…), retrying in 4s`): it is Google's backend answering, which agy
+   * relays. That is a provider fault, so it is retried with backoff rather than handed to a person.
    */
   overloaded: (reason: string): boolean => {
     const said = reason.toLowerCase()
-    return said.includes('unavailable (code 503)') || said.includes('the service is currently unavailable')
+    return (
+      said.includes('unavailable (code 503)') ||
+      said.includes('the service is currently unavailable') ||
+      said.includes('internal (code 500): internal error encountered')
+    )
   },
 
   // t1015, 2026-10-09: three resumes of one conversation returned this vendor error verbatim.
