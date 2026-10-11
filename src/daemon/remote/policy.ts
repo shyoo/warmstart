@@ -25,6 +25,7 @@ export const REMOTE_METHODS = {
   'model.options': 'read',
   'daemon.shutdown': 'deny',
   'doctor.run': 'deny',
+  'diagnostics.performance': 'deny',
   'session.list': 'deny',
   'session.spawn': 'deny',
   'session.write': 'deny',

@@ -1931,6 +1931,7 @@ export interface RpcMap {
    */
   'daemon.shutdown': { params: void; result: { stopping: boolean; liveSessions: number } }
   'doctor.run': { params: void; result: DoctorReport }
+  'diagnostics.performance': { params: void; result: import('./performance.js').PerformanceSnapshot }
 
   'session.list': { params: void; result: Session[] }
   'session.spawn': {

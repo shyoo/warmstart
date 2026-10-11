@@ -4,6 +4,7 @@ import { rpc, useDaemonEvents } from '../lib/daemon'
 import { cacheUrgency, countdown, duration } from '../lib/format'
 import { isQuotaGated } from '../lib/taskview'
 import { LatestResponse } from '../lib/latestresponse'
+import { refreshGate } from '../lib/refresh'
 import {
   isQuotaAlertDismissed,
   prunedQuotaAlerts,
@@ -55,36 +56,39 @@ function answerableHere(question: Question): boolean {
 
 export function Attention({
   now,
+  tasks,
+  ready,
   onOpenTask
 }: {
   now: number
+  tasks: Task[]
+  ready: boolean
   onOpenTask?: (taskId: string) => void
 }): React.JSX.Element | null {
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [questions, setQuestions] = useState<Question[]>([])
   const questionResponses = useRef(new LatestResponse())
-  const [gatedTasks, setGatedTasks] = useState<Task[]>([])
+  const gatedTasks = tasks.filter((t) => isQuotaGated(t, now))
+  const reads = useRef(refreshGate())
   const [busy, setBusy] = useState<string | null>(null)
   // ⚠️ Read once, from `localStorage`: a quota park lasts hours and the operator who dismissed it
   // was very likely in a different run of the app. See `quotaalerts.ts`.
   const [dismissed, setDismissed] = useState<QuotaAlertDismissals>(() => readQuotaAlertDismissals())
+  const [lastTasks, setLastTasks] = useState(tasks)
+  // Adjust only after a real snapshot. An unloaded empty list must not clear dismissals.
+  if (ready && lastTasks !== tasks) {
+    setLastTasks(tasks)
+    setDismissed((held) => prunedQuotaAlerts(held, gatedTasks))
+  }
+  useEffect(() => { if (ready) writeQuotaAlertDismissals(dismissed) }, [dismissed, ready])
 
   const refresh = useCallback(() => {
-    void rpc('approval.list').then(setApprovals)
-    void questionResponses.current.apply(rpc('question.list'), setQuestions)
-    void rpc('task.list')
-      .then((all) => {
-        const gated = all.filter((t) => isQuotaGated(t, Date.now()))
-        setGatedTasks(gated)
-        // ⛔ Pruned against what is *actually* gated now, so a task released by its window reset
-        // gets a fresh interruption the next time it hits one.
-        setDismissed((held) => {
-          const kept = prunedQuotaAlerts(held, gated)
-          if (Object.keys(kept).length !== Object.keys(held).length) writeQuotaAlertDismissals(kept)
-          return kept
-        })
-      })
-      .catch(() => setGatedTasks([]))
+    void reads.current.run(async () => {
+      await Promise.all([
+        rpc('approval.list').then(setApprovals),
+        questionResponses.current.apply(rpc('question.list'), setQuestions)
+      ])
+    })
   }, [])
 
   const dismissQuota = (task: Task): void => {
@@ -102,9 +106,7 @@ export function Attention({
       event.type === 'approval.answered' ||
       event.type === 'question.opened' ||
       event.type === 'question.answered' ||
-      event.type === 'question.parked' ||
-      event.type === 'task.changed' ||
-      event.type === 'quota.changed'
+      event.type === 'question.parked'
     ) {
       refresh()
     }

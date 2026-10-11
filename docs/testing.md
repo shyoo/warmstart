@@ -22,6 +22,15 @@ a suite in this repository has reported a confident pass for code that was broke
 
 `npm run test:all` is L1 + L2 + L3. That is the pre-commit set.
 
+`npm run test:performance` is a token-free loaded UI/HTTP benchmark (build first): four synthetic
+streams plus two review lifecycles, non-empty history and quota series. Random ports and isolated
+data/code directories let two copies run together. `WARMSTART_PERFORMANCE_FRAMES=1` is honored
+only with `WARMSTART_HEADLESS=1`; it uses offscreen foreground frame cadence, because an unmapped
+normal window throttles RAF to 1 Hz even with background throttling disabled on Windows 11.
+The native-input/second-frame barrier is a frame proxy, not physical presentation/INP. Vendor
+inference, compiler/disk contention and process teardown need live diagnostics. The fixture stops
+the window before asking its server to stop, so reconnect cannot spawn a replacement daemon.
+
 ⛔ **Never run `test:e2e` unasked.** It is the only suite that spends, it is gated behind
 `WARMSTART_E2E=1`, and CI deliberately never invokes it.
 

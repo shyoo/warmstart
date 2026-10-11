@@ -5,6 +5,7 @@ import type { DaemonEvent, RpcMethod, RpcRequest, RpcResponse } from '@shared/pr
 import { buildApi, type ApiContext } from './api.js'
 import { log } from './log.js'
 import { errorMessage } from '@shared/errors.js'
+import { daemonTimings, monitorPerformance } from './performance.js'
 
 /**
  * The daemon's front door.
@@ -31,10 +32,15 @@ export async function startServer(token: string, ctx: Omit<ApiContext, 'port'>):
   const context: ApiContext = { ...ctx, port: 0 }
   const api = buildApi(context)
   const clients = new Set<WebSocket>()
+  const stopMonitor = monitorPerformance()
 
   const server = createServer((req, res) => {
+    let method: string | null = null
     const send = (status: number, body: unknown) => {
+      const start = performance.now()
       const payload = JSON.stringify(body)
+      const bytes = Buffer.byteLength(payload)
+      if (method) daemonTimings.record(`RPC encode ${method}`, performance.now() - start, bytes)
       res.writeHead(status, {
         'content-type': 'application/json',
         'content-length': Buffer.byteLength(payload),
@@ -42,6 +48,7 @@ export async function startServer(token: string, ctx: Omit<ApiContext, 'port'>):
         'access-control-allow-origin': 'null'
       })
       res.end(payload)
+      return bytes
     }
 
     if (!authorized(req, token)) return send(401, { error: 'unauthorized' })
@@ -78,13 +85,21 @@ export async function startServer(token: string, ctx: Omit<ApiContext, 'port'>):
             error: { message: `unknown method '${request.method}'` }
           } satisfies RpcResponse)
         }
+        method = String(request.method)
+        const finish = daemonTimings.begin(`RPC total ${method}`)
         try {
-          const result = await handler(request.params)
-          send(200, { id: request.id, ok: true, result } satisfies RpcResponse)
+          const start = performance.now()
+          let pending: unknown
+          try { pending = handler(request.params) }
+          finally { daemonTimings.record(`RPC sync ${method}`, performance.now() - start) }
+          const result = await pending
+          const bytes = send(200, { id: request.id, ok: true, result } satisfies RpcResponse)
+          finish(false, bytes)
         } catch (err) {
           const message = errorMessage(err)
           log.warn(`rpc ${request.method} failed: ${message}`)
-          send(200, { id: request.id, ok: false, error: { message } } satisfies RpcResponse)
+          const bytes = send(200, { id: request.id, ok: false, error: { message } } satisfies RpcResponse)
+          finish(true, bytes)
         }
       })()
     })
@@ -106,7 +121,9 @@ export async function startServer(token: string, ctx: Omit<ApiContext, 'port'>):
 
   applyLoopbackTimeouts(server)
 
-  const port = await listen(server)
+  let port: number
+  try { port = await listen(server) }
+  catch (err) { stopMonitor(); wss.close(); throw err }
   context.port = port
   log.info(`orchestratord listening on 127.0.0.1:${port}`)
 
@@ -114,6 +131,7 @@ export async function startServer(token: string, ctx: Omit<ApiContext, 'port'>):
     server,
     port,
     broadcast(event: DaemonEvent) {
+      const start = performance.now()
       const payload = JSON.stringify(event)
       for (const ws of clients) {
         // readyState 1 is OPEN. Sending to a closing socket throws and would take the loop with it.
@@ -125,8 +143,10 @@ export async function startServer(token: string, ctx: Omit<ApiContext, 'port'>):
           }
         }
       }
+      daemonTimings.record(`event ${event.type}`, performance.now() - start, Buffer.byteLength(payload))
     },
     close() {
+      stopMonitor()
       for (const ws of clients) ws.terminate()
       clients.clear()
       wss.close()

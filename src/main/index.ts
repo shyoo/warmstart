@@ -89,6 +89,7 @@ let quitting = false
  * is the test saying so.
  */
 const headless = appEnv('HEADLESS') === '1'
+const performanceFrames = headless && appEnv('PERFORMANCE_FRAMES') === '1'
 
 // Electron's default userData is `<appdata>/warmstart`, which is exactly where the fleet database
 // lives - so Chromium's caches would sit next to it, and anyone clearing a cache directory could
@@ -316,6 +317,9 @@ function createWindow(): BrowserWindow {
       preload: join(dirname, '../preload/index.cjs'),
       sandbox: true,
       contextIsolation: true,
+      // The load benchmark needs offscreen foreground cadence; an unmapped window caps RAF at 1 Hz.
+      offscreen: performanceFrames,
+      backgroundThrottling: !performanceFrames,
       nodeIntegration: false
     }
   })

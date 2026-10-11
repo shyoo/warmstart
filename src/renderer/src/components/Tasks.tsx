@@ -1,8 +1,10 @@
-import { Fragment, useCallback, useDeferredValue, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { Project, PullRequestDelivery, Task, TaskSort, TaskView } from '@shared/tasks'
 import { hasPendingSchedule, TASK_VIEW_ORDER, TASK_VIEWS, taskTypeLabel } from '@shared/tasks'
 import type { ModelOptions } from '@shared/protocol'
 import { rpc, useActivity, useDaemonEvents, useNow, type FleetEntry } from '../lib/daemon'
+import { latestRequest } from '../lib/latestrequest'
+import { taskPageChanged, rememberTaskProjects } from '../lib/refresh'
 import { showsLiveOutput } from '../lib/live'
 import { tokens, whenParts } from '../lib/format'
 import { Money, taskPriceTitle } from './Price'
@@ -195,6 +197,7 @@ export function Tasks({
   // Rendering the ordinary empty state for that interval made an existing board briefly say
   // "No tasks yet", which reads as lost work rather than a page still loading.
   const [tasksLoaded, setTasksLoaded] = useState(false)
+  const requests = useRef(latestRequest())
   const [error, setError] = useState<string | null>(null)
   const [deliveries, setDeliveries] = useState<PullRequestDelivery[]>(propsPendingDeliveries ?? [])
   const [checkingMerged, setCheckingMerged] = useState(false)
@@ -308,7 +311,9 @@ export function Tasks({
   // ever fetch (or a fetch that changed page-of-range) has no prior data to keep showing.
   const loadedOnce = useRef(false)
 
+  const selection = JSON.stringify([projectId, views, sort, asc, page, pageSize, deferredSearch])
   const refresh = useCallback(async () => {
+    await requests.current.run(selection, async (current) => {
     if (!loadedOnce.current) setTasksLoaded(false)
     const got = await rpc('task.page', {
       ...(projectId ? { projectId } : {}),
@@ -319,6 +324,8 @@ export function Tasks({
       offset: page * pageSize,
       ...(deferredSearch.trim() ? { query: deferredSearch.trim() } : {})
     })
+    if (!current()) return
+    rememberTaskProjects(got.tasks)
     if (page > 0 && page * pageSize >= got.total) {
       setPage(Math.max(0, Math.ceil(got.total / pageSize) - 1))
       return
@@ -328,11 +335,15 @@ export function Tasks({
     setCounts(got.counts)
     setTasksLoaded(true)
     loadedOnce.current = true
-  }, [projectId, views, sort, asc, page, pageSize, deferredSearch])
+    })
+  }, [projectId, views, sort, asc, page, pageSize, deferredSearch, selection])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const gate = requests.current
+    gate.select(selection)
     void refresh()
-  }, [refresh])
+    return () => { gate.select('') }
+  }, [refresh, selection])
 
   // ⛔ Back to the first page whenever what is being listed changes. Staying on page 4 of a filter
   // that now has one page renders an empty table over a chip reading `Done 3`, which reads as a
@@ -382,7 +393,7 @@ export function Tasks({
   }
 
   useDaemonEvents((event) => {
-    if (event.type === 'task.changed' || event.type === 'run.changed') void refresh()
+    if (taskPageChanged(event, projectId, tasks)) void refresh()
     if (event.type === 'project.changed' || event.type === 'task.changed') void refreshDeliveries()
   })
 

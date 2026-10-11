@@ -1639,6 +1639,11 @@ and, since migration 43, every writer of the pay-as-you-go side too: a `spend_sa
 run's `list_usd` / `on_overage`. What a run was *billed
 against* does not change, and is the only part worth freezing in a column.
 
+`attribute()` walks reading segments with an interval sweep and binary-search anchors (t1046),
+preserving the original span order for identical sums and peer ordering. It retains reset,
+correction, partial-evidence and in-flight semantics; pricing invalidation remains unchanged.
+The pre-optimization algorithm is a test-only reference in `src/daemon/fixtures/pricing-reference.ts`.
+
 ⛔ **A malformed quota rendering is removed from both inputs to that timeline.** t163's 2026-09-03
 Antigravity probe misread clipped `Quota ava…` text as 0% Gemini utilisation; its false sample and
 the run's before snapshot must be cleared together. Leaving either would make the next valid reading

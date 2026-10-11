@@ -21,6 +21,8 @@ import { log, logFiles, recentLog } from '../log.js'
 import type { Api, ApiContext } from './support.js'
 import { checkWorkerDefaults, describeAge } from './support.js'
 import { which } from '../which.js'
+import { performanceSnapshot } from '../performance.js'
+import { db } from '../db.js'
 
 export function supportTools(): DoctorReport['tools'] {
   const tools: Array<Pick<DoctorReport['tools'][number], 'id' | 'label' | 'need'>> = [
@@ -41,7 +43,7 @@ type WorkerMethod =
   | 'model.options' | 'daemon.shutdown' | 'doctor.run' | 'session.list' | 'session.spawn' | 'session.write'
   | 'session.resize' | 'session.close' | 'session.backscroll' | 'session.streamlog' | 'session.attach'
   | 'settings.get' | 'settings.set' | 'log.tail'
-  | 'log.files'
+  | 'log.files' | 'diagnostics.performance'
 
 /** What the adapter declares that changes what a worker's status means (t961). Never its name. */
 function statusFactsFor(adapterId: string): WorkerStatusFacts | undefined {
@@ -59,6 +61,15 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
 
   return {
     health: () => ({ ok: true as const, version: ctx.version, uptimeMs: uptime() }),
+    'diagnostics.performance': () => {
+      const snapshot = performanceSnapshot()
+      try {
+        const counts = db().prepare('select kind, count(*) as n from runs where ended_at is null group by kind').all()
+        snapshot.openRuns = { work: Number(counts.find((r) => r.kind === 'work')?.n ?? 0),
+          reviews: Number(counts.find((r) => r.kind === 'quality_review')?.n ?? 0) }
+      } catch { snapshot.openRuns = null }
+      return snapshot
+    },
     'adapter.list': (): AdapterInfo[] => adapters().map((a) => a.info),
     'adapter.detect': () => Promise.all(adapters().map((a) => a.detect())),
     'tool.detect': supportTools,

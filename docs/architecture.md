@@ -113,7 +113,7 @@ had succeeded; only the answer was destroyed in transit. Two rules follow:
   cache never authorises review execution, which resolves current repository state afresh.
   `QualityReview.tsx` keeps one request and one latest follow-up; see [`ui.md`](ui.md) for freshness.
 
-The RPC method table is **148 methods across six domain files** — `daemon/api/workers.ts`,
+The RPC method table is split across six domain files — `daemon/api/workers.ts`,
 `projects.ts`, `tasks.ts`, `quality.ts`, `agent.ts` and `remote.ts` — that `daemon/api.ts` spreads
 into one object. `RpcMethod`/`RpcParams`/`RpcResult` in `shared/protocol.ts` are derived from it, so adding a
 method is one edit plus its types.
@@ -126,6 +126,15 @@ the only reason splitting the table was safe, and nothing may replace it with a 
 `checkConstraints` / `checkWorkerDefaults` validators that refuse a bad request at the door.
 
 ## 2. Three loops
+
+Performance sampling (`daemon/performance.ts`) adds no model calls: a five-second loop-delay/
+utilization sample and bounded timing/count/size metadata around RPC dispatch, encoding, event
+broadcast and pricing. `diagnostics.performance` is desktop-only; see
+[`external-task-debugging.md`](external-task-debugging.md#investigating-responsiveness) for scope.
+The shell and Attention share a task snapshot and patch event rows; task/run traffic never asks
+the shell to rehydrate history. View reads keep one active request plus one latest follow-up.
+Pricing remains synchronous and exact, with an interval sweep and binary anchors replacing the
+full historical span scan; moving the single mutation owner is not part of this optimization.
 
 | Loop | Cadence | Where | Spends |
 |---|---|---|---|

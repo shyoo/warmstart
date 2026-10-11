@@ -3,6 +3,7 @@ import type { DoctorReport } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
 import { age } from '../lib/format'
 import { errorMessage } from '@shared/errors.js'
+import { PerformanceDiagnostics } from './PerformanceDiagnostics'
 
 /**
  * Doctor.
@@ -46,6 +47,7 @@ export function Doctor({ now, view = 'status' }: { now: number; view?: 'notice' 
       </header>
 
       {error && <div className="alert">{error}</div>}
+      {view === 'status' && <PerformanceDiagnostics />}
       {!report ? (
         <p className="dim">Checking…</p>
       ) : (

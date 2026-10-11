@@ -12,6 +12,14 @@ conventions live.
 
 ## 1. What the renderer is allowed to be
 
+The shell shares one task snapshot with Attention and patches task/resource event rows. Project
+membership/order is reconciled separately; run traffic does not reload historical sidebar rows.
+Task pages scope invalidations to their project (including moves/deletions) and serialize reads
+with one latest follow-up; threads do the same per task and retain visit/response guards.
+**Global → Status → Performance diagnostics** captures bounded local UI/daemon metadata and
+exports JSON on a click. It never exports task content or credentials; see
+[`external-task-debugging.md`](external-task-debugging.md#investigating-responsiveness).
+
 ⛔ **It holds no daemon token and no port.** Every call goes `window.agentyard.rpc(method, params)` →
 `ipcRenderer.invoke('daemon:rpc')` → main → orchestratord. The renderer is the surface that displays
 **untrusted agent output**; it does not get a credential to a service that can spawn processes.

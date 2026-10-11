@@ -3,6 +3,7 @@ import { costModel, CostModel, type BillingWindowRef, type PlanRef } from './cos
 import type { SpendMeter } from '@shared/protocol.js'
 import { log } from './log.js'
 import type { RunPrice, RunQuota } from '@shared/tasks.js'
+import { daemonTimings } from './performance.js'
 
 /**
  * What a run cost in money.
@@ -189,6 +190,7 @@ export function attribute(
   // Every run's effective span, and whether it can be anchored at all.
   interface Span {
     run: AttributionRun
+    order: number
     from: number
     to: number
     stale: boolean
@@ -242,7 +244,7 @@ export function attribute(
     }
     const stale =
       gapBefore > ANCHOR_STALE_MS || gapAfter > ANCHOR_STALE_MS || !!before.stale || !!after.stale
-    spans.push({ run, from, to, stale, inFlight, unmeasuredMs: unmeasured })
+    spans.push({ run, order: spans.length, from, to, stale, inFlight, unmeasuredMs: unmeasured })
   }
 
   const acc = new Map<
@@ -253,12 +255,20 @@ export function attribute(
     acc.set(s.run.id, { percent: 0, shared: false, parallel: new Set(), reset: false, corrected: false })
   }
 
+  // Sweep only overlapping spans. Keep original order for identical sums and peer ordering.
+  const incoming = [...spans].sort((a, b) => a.from - b.from || a.order - b.order)
+  const live = new Map<number, Span>()
+  let next = 0
   for (let i = 0; i + 1 < series.length; i++) {
     const a = series[i]!
     const b = series[i + 1]!
-    const active = spans
-      .map((s) => ({ s, overlap: Math.max(0, Math.min(s.to, b.at) - Math.max(s.from, a.at)) }))
-      .filter((x) => x.overlap > 0)
+    while (next < incoming.length && incoming[next]!.from < b.at) {
+      const span = incoming[next++]!
+      if (span.to > a.at) live.set(span.order, span)
+    }
+    for (const [order, span] of live) if (span.to <= a.at) live.delete(order)
+    const active = [...live.values()].sort((a, b) => a.order - b.order)
+      .map((s) => ({ s, overlap: Math.min(s.to, b.at) - Math.max(s.from, a.at) }))
     if (active.length === 0) continue
 
     const delta = spentAcross(a, b)
@@ -325,17 +335,25 @@ function dedupe(readings: Reading[]): Reading[] {
 }
 
 function lastAtOrBefore(series: Reading[], at: number): Reading | null {
-  let found: Reading | null = null
-  for (const r of series) {
-    if (r.at <= at) found = r
-    else break
+  let low = 0
+  let high = series.length
+  while (low < high) {
+    const mid = (low + high) >>> 1
+    if (series[mid]!.at <= at) low = mid + 1
+    else high = mid
   }
-  return found
+  return series[low - 1] ?? null
 }
 
 function firstAtOrAfter(series: Reading[], at: number): Reading | null {
-  for (const r of series) if (r.at >= at) return r
-  return null
+  let low = 0
+  let high = series.length
+  while (low < high) {
+    const mid = (low + high) >>> 1
+    if (series[mid]!.at < at) low = mid + 1
+    else high = mid
+  }
+  return series[low] ?? null
 }
 
 // ---------------------------------------------------------------------------- the database layer
@@ -465,13 +483,16 @@ interface MeterSeries {
 
 function compute(): { runs: Map<string, RunPrice>; tasks: Map<string, TaskPrice> } {
   if (memo && memo.epoch === epoch) return memo
+  const finish = daemonTimings.begin('pricing rebuild')
   const result = { epoch, runs: new Map<string, RunPrice>(), tasks: new Map<string, TaskPrice>() }
   try {
     build(result.runs, result.tasks)
   } catch (err) {
     // ⛔ A pricing failure may not take the task list down with it. Every run reads `n/a` instead.
     log.warn('pricing pass failed - runs will read n/a:', err)
+    finish(true)
   }
+  finish()
   memo = result
   return result
 }

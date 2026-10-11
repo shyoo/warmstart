@@ -1,5 +1,5 @@
 import { sessionEnded } from '@shared/protocol'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Project, PullRequestDelivery, ResourceAvailability, Task } from '@shared/tasks'
 import {
   fleetCounts,
@@ -75,6 +75,7 @@ import { ProjectFilterButton, ProjectRowMenu, TaskRowMenu } from './components/P
 import { holdsProjectOpen } from '@shared/tasks'
 import { useUiSettings } from './lib/uisettings'
 import { useTarget } from './lib/target'
+import { refreshGate, patchTask, rememberTaskProjects } from './lib/refresh'
 import { MachinePicker } from './components/MachinePicker'
 import { WelcomeTour } from './components/WelcomeTour'
 import { completeWelcome, welcomePending } from './lib/welcome'
@@ -213,7 +214,13 @@ export function App({
   const [projectDrop, setProjectDrop] = useState<{ id: string; after: boolean } | null>(null)
   const [resources, setResources] = useState<ResourceAvailability[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
-  const [orphanTasks, setOrphanTasks] = useState(0)
+  const [taskSnapshotReady, setTaskSnapshotReady] = useState(false)
+  const orphanTasks = tasks.filter((t) => t.projectId === null).length
+  const snapshotGate = useRef(refreshGate())
+  const metadataGate = useRef(refreshGate())
+  const snapshotRunning = useRef(false)
+  const taskPatches = useRef(new Map<string, Task>())
+  const resourcePatches = useRef(new Map<string, ResourceAvailability>())
   const [pendingDeliveries, setPendingDeliveries] = useState<PullRequestDelivery[]>([])
   const [activePrBadgeProjectId, setActivePrBadgeProjectId] = useState<string | null>(null)
   /**
@@ -264,20 +271,39 @@ export function App({
     [diffRequest]
   )
 
+  const refreshMetadata = useCallback(async () => {
+    if (!connected) return
+    await metadataGate.current.run(async () => {
+      const [active, archived, deliveries] = await Promise.all([
+        rpc('project.list'), rpc('project.listArchived'), rpc('delivery.pending').catch(() => [])
+      ])
+      setProjects(active); setArchivedProjects(archived); setPendingDeliveries(deliveries)
+    })
+  }, [connected])
+
   const refreshProjects = useCallback(async () => {
     if (!connected) return
-    setProjects(await rpc('project.list'))
-    setArchivedProjects(await rpc('project.listArchived'))
-    setResources(await rpc('resource.list'))
-    const all = await rpc('task.list', {})
-    setTasks(all)
-    setOrphanTasks(all.filter((t) => t.projectId === null).length)
-    try {
-      setPendingDeliveries(await rpc('delivery.pending'))
-    } catch {
-      setPendingDeliveries([])
-    }
-  }, [connected])
+    await snapshotGate.current.run(async () => {
+      snapshotRunning.current = true
+      taskPatches.current.clear(); resourcePatches.current.clear()
+      try {
+        const [resources, all] = await Promise.all([rpc('resource.list'), rpc('task.list', {})])
+        let merged = all
+        for (const task of taskPatches.current.values()) merged = patchTask(merged, task)
+        rememberTaskProjects(merged, true, target.id)
+        setTasks(merged)
+        setTaskSnapshotReady(true)
+        const byId = new Map(resources.map((r) => [r.resource.id, r]))
+        for (const [id, r] of resourcePatches.current) byId.set(id, r)
+        setResources([...byId.values()])
+        await refreshMetadata()
+      } finally {
+        snapshotRunning.current = false
+        taskPatches.current.clear(); resourcePatches.current.clear()
+      }
+    })
+  }, [connected, refreshMetadata, target.id])
+
 
   useEffect(() => {
     if (!activePrBadgeProjectId) return
@@ -335,13 +361,16 @@ export function App({
   }, [openNewTask])
 
   useDaemonEvents((event) => {
-    if (
-      event.type === 'project.changed' ||
-      event.type === 'resource.changed' ||
-      event.type === 'task.changed' ||
-      event.type === 'run.changed'
-    ) {
-      void refreshProjects()
+    if (event.type === 'task.changed') {
+      rememberTaskProjects([event.task])
+      if (snapshotRunning.current) taskPatches.current.set(event.task.id, event.task)
+      setTasks((prev) => patchTask(prev, event.task))
+    } else if (event.type === 'resource.changed') {
+      if (snapshotRunning.current) resourcePatches.current.set(event.availability.resource.id, event.availability)
+      setResources((prev) => [...prev.filter((r) => r.resource.id !== event.availability.resource.id), event.availability])
+    } else if (event.type === 'project.changed') {
+      // Reconcile membership/order, including soft deletion, without reading task history.
+      void refreshMetadata()
     }
   })
 
@@ -870,7 +899,7 @@ export function App({
             comes back as a `quota.changed` event the fleet subscription already handles, which is
             why nothing here is done with the result. */}
         <FleetStrip fleet={fleet} now={now} onProbe={(id) => rpc('worker.probe', { id })} />
-        {connected && <Attention now={now} onOpenTask={openTaskById} />}
+        {connected && <Attention now={now} tasks={tasks} ready={taskSnapshotReady} onOpenTask={openTaskById} />}
 
         <div className="content">
           {!connected ? (

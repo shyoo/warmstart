@@ -4287,7 +4287,8 @@ try {
       .run('paused_quota', Date.now() + 60 * 60 * 1000, heldId)
     store.close()
   }
-  // A task event is what makes the sidebar re-read; the edit itself changes nothing.
+  // Direct bulk fixture writes bypass per-task events. Reconcile once, then test the held row.
+  await evaluate(`window.dispatchEvent(new Event('warmstart:refresh-projects'))`)
   await evaluate(
     `window.agentyard.rpc('task.setPriority', { id: ${JSON.stringify(heldId)}, priority: 'P2' })`
   )

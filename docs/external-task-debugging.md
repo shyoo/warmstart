@@ -88,6 +88,47 @@ Epoch columns are milliseconds. JSON columns such as `mandate_json`, `budget_jso
 
 ## Follow the code and logs
 
+### Investigating responsiveness
+
+Separate interaction paint, the Electron IPC/HTTP round trip, daemon queueing, synchronous
+handler work, SQLite reads, and result serialization. A responsive sidebar beside a Loading
+thread suggests delayed data; it does not establish whether the renderer or database is healthy.
+Open **Global → Status → Performance diagnostics**, reproduce the delay, then **Capture timings**
+and **Export timings**. Bounded local memory retains up to 512 stage labels and 128 recent samples
+per label; counters are cumulative for retained labels. No prompts, results, tokens or transcript
+content are recorded. Open run counts describe the capture instant, not CPU activity.
+
+**UI RPC** includes IPC, daemon queueing and response delivery. **RPC total** begins at handler
+dispatch; **RPC sync** measures its initial synchronous work; **RPC encode** measures serialization.
+**pricing rebuild** separates cold pricing from the surrounding handler. Loop delay includes the
+20 ms sampling interval, is summarized every five seconds, and carries its sampling time beside
+utilization. Browser event/long-task timing is present only where supported; event durations below
+16 ms are not reported and the table is not a full-session INP score. Missing sizes/timings are
+unmeasured, not zero. A large UI/daemon gap warrants checking IPC/renderer work; a large loop gap
+without a slow RPC warrants profiling background callbacks, lifecycle/file work and GC.
+
+`npm run test:performance` drives a built UI against an isolated fixture with four synthetic
+streams, two review lifecycles, 1,000 historical tasks and 80,000 readings. It records native input
+to a second-frame barrier, data arrival and health p50/p95/max, and rejects event-driven history
+reloads. Offscreen foreground cadence avoids the hidden window's 1 Hz RAF cap; this is a frame
+proxy, not physical display latency or a test of vendor inference/compiler pressure. The fixture
+starts no scheduler, poller or vendor CLI. Use live exported timings to investigate those cases.
+
+For historical-data profiling, use SQLite's online `backup()` API through a read-only source
+connection, then profile the isolated copy. Preserve real history and include cold pricing
+epochs: a warm `task.get` can be cheap while its first read after a quota/run change recomputes
+account-wide pricing. Compare the raw query with full task hydration and response bytes.
+V8 CPU sampling can distinguish attribution/GC from native SQLite calls. It is a diagnostic,
+not proof that the same function caused an earlier unrecorded incident.
+
+Count task/run event bursts and the reads each view starts. Repeated full `task.list` reads from
+sidebar refreshes can contend with the visible page even though `task.page` itself is fast.
+Authenticated health timings provide evidence outside the renderer; they include queueing and
+transport and cannot identify a single expensive callback. Do not log the endpoint token,
+prompts, transcript content or RPC parameters in a performance report.
+
+### Task evidence
+
 `projects.root` is the landing checkout, not necessarily the task workspace. Prefer the `sessions.cwd`
 used by the latest run; confirm its current branch with `git -C <cwd> status --short --branch` and
 compare it with `tasks.branch`. Never assume a clean checkout proves the task landed.

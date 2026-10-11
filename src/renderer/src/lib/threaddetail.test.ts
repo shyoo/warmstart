@@ -91,21 +91,23 @@ describe('TaskDetailStore — a thread only ever shows the task the route names'
     store.open('b')
     store.open('a') // back again before anything answered
     const second = store.refresh() // a, visit two
+    answer(0, detail('a', 1))
+    await settle()
+    expect(shown('a').detail).toBeNull() // first visit cannot fill the second visit
     answer(1, detail('a', 2))
-    await second
-    answer(0, detail('a', 1)) // visit one's read arrives late, older than what is shown
-    await first
+    await Promise.all([first, second])
     expect(shown('a').detail?.rev).toBe(2)
   })
 
-  it('an older read of the same task never replaces a newer one', async () => {
+  it('a burst on the same task shares one read and asks once more for current data', async () => {
     const { store, answer, shown } = harness()
     const older = store.refresh()
     const newer = store.refresh()
-    answer(1, detail('a', 2))
-    await newer
+    for (let i = 0; i < 100; i++) void store.refresh()
     answer(0, detail('a', 1))
-    await older
+    await settle()
+    answer(1, detail('a', 2))
+    await Promise.all([older, newer])
     expect(shown('a').detail?.rev).toBe(2)
   })
 
@@ -196,13 +198,20 @@ describe('TaskDetailStore — a thread only ever shows the task the route names'
         }
         reads.push(store.refresh())
       }
-      const order = pending.map((_, i) => i).sort(() => rand() - 0.5)
-      for (const i of order) {
-        answer(i, detail(pending[i]!.id, i))
-        await settle()
-        const view = viewFor(store.getSnapshot(), route)
-        if (view.detail) expect(view.detail.task.id).toBe(route)
+      const answered = new Set<number>()
+      // Follow-up reads may be issued after an answer; drain them too, without allowing overlap.
+      for (let sweep = 0; sweep < 5; sweep++) {
+        const order = pending.map((_, i) => i).filter((i) => !answered.has(i)).sort(() => rand() - 0.5)
+        if (!order.length) break
+        for (const i of order) {
+          answered.add(i)
+          answer(i, detail(pending[i]!.id, i))
+          await settle()
+          const view = viewFor(store.getSnapshot(), route)
+          if (view.detail) expect(view.detail.task.id).toBe(route)
+        }
       }
+      expect(pending.length).toBeLessThanOrEqual(4) // two task keys, each with at most one follow-up
       await Promise.all(reads)
       const finalView = viewFor(store.getSnapshot(), route)
       if (finalView.detail) expect(finalView.detail.task.id).toBe(route)

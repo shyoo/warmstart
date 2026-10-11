@@ -40,6 +40,9 @@ export class TaskDetailStore<T extends DetailLike> {
   /** Requests are numbered as they start; a response keeps the number it started with. */
   private issued = 0
   private applied = 0
+  private visit = 0
+  private readonly inFlight = new Map<string, Promise<void>>()
+  private readonly again = new Set<string>()
 
   constructor(
     private readonly fetchDetail: (taskId: string) => Promise<T | null>,
@@ -59,6 +62,7 @@ export class TaskDetailStore<T extends DetailLike> {
   open(taskId: string): void {
     // The same task keeps what it has; the caller refreshes if it wants newer.
     if (taskId === this.state.taskId) return
+    this.visit++
     this.set({ taskId, detail: null, missing: false })
   }
 
@@ -66,18 +70,25 @@ export class TaskDetailStore<T extends DetailLike> {
    * Read the open task again. Resolves once this request is settled, whether or not it was applied;
    * a rejection (the daemon unreachable) propagates to the caller exactly as the bare `rpc` did.
    */
-  async refresh(): Promise<void> {
+  refresh(): Promise<void> {
     const taskId = this.state.taskId
-    const ticket = ++this.issued
-    const got = await this.fetchDetail(taskId)
-    // ⛔ Rule 1: the store moved to another task while this was in flight.
-    if (taskId !== this.state.taskId) return
-    // ⛔ Rule 2: a newer read of this task has already been applied.
-    if (ticket < this.applied) return
-    // ⛔ And never a body that names another task, whatever it was asked for.
-    if (got !== null && got.task.id !== taskId) return
-    this.applied = ticket
-    this.set(got ? { taskId, detail: got, missing: false } : { taskId, detail: null, missing: true })
+    const existing = this.inFlight.get(taskId)
+    if (existing) { this.again.add(taskId); return existing }
+    const work = (async () => {
+      do {
+        this.again.delete(taskId)
+        const ticket = ++this.issued
+        const visit = this.visit
+        const got = await this.fetchDetail(taskId)
+        if (taskId === this.state.taskId && visit === this.visit && ticket >= this.applied &&
+            (got === null || got.task.id === taskId)) {
+          this.applied = ticket
+          this.set(got ? { taskId, detail: got, missing: false } : { taskId, detail: null, missing: true })
+        }
+      } while (this.again.has(taskId) && this.state.taskId === taskId)
+    })().finally(() => { this.inFlight.delete(taskId); this.again.delete(taskId) })
+    this.inFlight.set(taskId, work)
+    return work
   }
 
   private set(next: DetailState<T>): void {
