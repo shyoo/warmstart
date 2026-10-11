@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { BUILTIN_TAGS, MAX_TAG_LENGTH, MAX_TAGS, cleanTags, isTierTag, tagKey, tagsLabel } from '@shared/modeltags'
+import {
+  BUILTIN_TAGS,
+  MAX_TAG_LENGTH,
+  MAX_TAGS,
+  TIER_PREFIX,
+  asTierTag,
+  cleanTags,
+  isTierTag,
+  tagDisplay,
+  tagKey,
+  tagsLabel
+} from '@shared/modeltags'
 import { Pill } from './Pill'
 
 /**
@@ -28,7 +39,7 @@ export function TagChips({ tags, empty = 'No tags' }: { tags: readonly string[];
     <span className="tag-chips">
       {shown.map((t) => (
         <span key={tagKey(t)} className="tag-chip">
-          {t}
+          {tagDisplay(t)}
         </span>
       ))}
       {hidden > 0 && <span className="tag-chip tag-chip--more">+{hidden}</span>}
@@ -111,6 +122,7 @@ export function TagPicker({
   limitHint?: string
 }): React.JSX.Element {
   const [draft, setDraft] = useState('')
+  const [asTier, setAsTier] = useState(false)
   const firstRef = useRef<HTMLInputElement>(null)
   useEffect(() => {
     firstRef.current?.focus()
@@ -137,7 +149,8 @@ export function TagPicker({
     else if (!full) onChange([...selected, tag])
   }
   const add = (): void => {
-    const [tag] = cleanTags([draft])
+    const [typed] = cleanTags([draft])
+    const tag = typed && asTier ? asTierTag(typed) : typed
     if (!tag || tag.length > MAX_TAG_LENGTH) return
     setDraft('')
     // Typing a tag that already exists ticks it rather than making a second spelling.
@@ -158,7 +171,7 @@ export function TagPicker({
             disabled={busy || (!on && full)}
             onChange={() => toggle(tag)}
           />
-          <span className="tag-picker-name">{tag}</span>
+          <span className="tag-picker-name">{tagDisplay(tag)}</span>
         </label>
         {onRemove && on && (
           <button
@@ -215,7 +228,7 @@ export function TagPicker({
             type="text"
             className="tag-picker-input"
             value={draft}
-            maxLength={MAX_TAG_LENGTH}
+            maxLength={asTier ? MAX_TAG_LENGTH - TIER_PREFIX.length : MAX_TAG_LENGTH}
             disabled={busy || full}
             placeholder="Add a tag"
             aria-label={`New tag for ${label}`}
@@ -232,6 +245,10 @@ export function TagPicker({
           <button type="submit" className="btn" disabled={busy || full || cleanTags([draft]).length === 0}>
             Add
           </button>
+          <label className="tag-picker-label" title="Match as a capability tier: any selected tier (OR)">
+            <input type="checkbox" checked={asTier} disabled={busy || full} onChange={() => setAsTier(!asTier)} />
+            <span className="tag-picker-name">As capability tier</span>
+          </label>
         </form>
       )}
     </div>

@@ -73,9 +73,36 @@ export function checkTags(input: unknown, what: string): string[] {
   return tags
 }
 
-/** Is `tag` one of the capability tiers (`Low`, `Med`, `High` or their aliases)? */
+/** The marker that makes an operator's own tag a capability tier: `Tier:Ultra`. */
+export const TIER_PREFIX = 'Tier:'
+
+/** A custom tier's name without its marker, or null when `tag` is not one. */
+function customTierName(tag: string): string | null {
+  const t = cleanOne(tag)
+  if (t.slice(0, TIER_PREFIX.length).toLowerCase() !== TIER_PREFIX.toLowerCase()) return null
+  const name = t.slice(TIER_PREFIX.length).trim()
+  return name || null
+}
+
+/** `tag` as an operator's custom capability tier (`Ultra` → `Tier:Ultra`); built-in tiers are unchanged. */
+export function asTierTag(tag: string): string {
+  const t = cleanOne(tag)
+  return !t || isTierTag(t) ? t : `${TIER_PREFIX}${t}`
+}
+
+/** How a tag reads to a person: a custom tier loses its `Tier:` marker. */
+export function tagDisplay(tag: string): string {
+  return customTierName(tag) ?? tag
+}
+
+/**
+ * Is `tag` a capability tier: `Low`, `Med`, `High` (or their aliases), or a custom `Tier:<name>`?
+ *
+ * ⛔ Tiers match as OR, features as AND. The marker is stored in the tag itself so a custom tier
+ * needs no catalogue, schema change or migration.
+ */
 export function isTierTag(tag: string): boolean {
-  return tagClass(tag) !== null
+  return tagClass(tag) !== null || customTierName(tag) !== null
 }
 
 /**
@@ -135,7 +162,7 @@ export function sameTags(a: readonly string[] | null | undefined, b: readonly st
  */
 export function tagsLabel(tags: readonly string[]): string {
   if (!tags || tags.length === 0) return ''
-  const tierNeed = tags.filter(isTierTag)
+  const tierNeed = tags.filter(isTierTag).map(tagDisplay)
   const featureNeed = tags.filter((t) => !isTierTag(t))
 
   if (tierNeed.length > 1) {
@@ -146,7 +173,7 @@ export function tagsLabel(tags: readonly string[]): string {
     return tierPart
   }
 
-  return tags.join(' + ')
+  return tags.map(tagDisplay).join(' + ')
 }
 
 /** A capability class as the tag that replaced it: `med` → `Med`. */
