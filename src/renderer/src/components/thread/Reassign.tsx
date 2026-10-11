@@ -249,7 +249,9 @@ export function useReassignChoice(
     setUserPickedWorker(true)
     setWorkerId(next)
     if (!next) {
-      setModel('')
+      // ⚠️ Tags survive "Auto worker": the scheduler picks the account, and the tags are what it is
+      // asked to find on it. Dropping them here is what made tags unreachable without a pinned account.
+      setModel(tags.length > 0 ? '__auto__' : '')
       setEffort('')
       return
     }
@@ -278,7 +280,7 @@ export function useReassignChoice(
     await rpc('task.setWorker', {
       id: task.id,
       workerId: workerId || null,
-      ...(workerId ? { model: pinned, modelPolicy, modelTags, effort: filedEffort } : {})
+      ...(workerId ? { model: pinned, modelPolicy, modelTags, effort: filedEffort } : { modelTags: tags })
     })
   }
 
@@ -316,9 +318,13 @@ export function useReassignChoice(
       if (!next.startsWith('__auto__')) setTags([])
     },
     tags,
-    setTags,
+    setTags: (next) => {
+      setTags(next)
+      // No account chosen: the model pill is locked, so the tags alone decide whether this is Auto.
+      if (!workerId) setModel(next.length > 0 ? '__auto__' : '')
+    },
     tagOptions: autoTagOptions,
-    showsTags: model.startsWith('__auto__'),
+    showsTags: model.startsWith('__auto__') || !workerId,
     setEffort,
     reset,
     apply,
