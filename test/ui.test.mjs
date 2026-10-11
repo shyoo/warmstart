@@ -5644,6 +5644,29 @@ try {
   // safeguard, and this suite is not a person.
   await evaluate(`window.agentyard.rpc('task.resolve', { id: ${JSON.stringify(t901.taskId)} })`)
   await waitFor(async () => (await workRow()) === null, 'the finished task to leave the sidebar')
+  const completedProjectRow = `[...document.querySelectorAll('.nav-item-project-wrapper > .nav-item')].find(b => b.querySelector('.nav-project-name')?.innerText === 'archive me')`
+  const completionDot = async () => JSON.parse(await evaluate(`(() => {
+    const dot = ${completedProjectRow}?.querySelector('.project-dot');
+    if (!dot) return 'null';
+    const css = getComputedStyle(dot);
+    return JSON.stringify({ state: dot.className, color: css.backgroundColor, animation: css.animationName,
+      green: getComputedStyle(document.documentElement).getPropertyValue('--state-ok').trim(), title: dot.getAttribute('aria-label') });
+  })()`))
+  await waitFor(async () => (await completionDot())?.state.includes('project-dot--completed'), 'the completed project to show its green notification')
+  const greenDot = await completionDot()
+  const greenTokenColor = await evaluate(`(() => {
+    const span = document.createElement('span');
+    span.style.color = 'var(--state-ok)'; document.body.append(span);
+    const color = getComputedStyle(span).color; span.remove(); return color;
+  })()`)
+  check('a newly completed project shows solid green with an accessible completion label',
+    greenDot.color === greenTokenColor && greenDot.animation === 'none' && /Task completed/.test(greenDot.title), JSON.stringify(greenDot))
+  await evaluate(`${completedProjectRow}?.click()`)
+  await waitFor(async () => (await completionDot())?.state.includes('project-dot--idle'), 'clicking the project to acknowledge completion')
+  check('clicking the project restores its empty dot', (await completionDot()).state.includes('project-dot--idle'))
+  await evaluate(`window.dispatchEvent(new CustomEvent('warmstart:refresh-projects'))`)
+  await wait(400)
+  check('refreshing completed task metadata does not relight an acknowledged dot', (await completionDot()).state.includes('project-dot--idle'))
   await evaluate(`window.confirm = () => true`)
   await evaluate(openProjectMenu)
   await wait(300)

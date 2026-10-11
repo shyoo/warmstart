@@ -1,6 +1,8 @@
 # Warmstart — Session Handoff
 
-## Current state — 2026-09-27
+## Current state — 2026-10-11
+
+**Project completion notification (t1071, 2026-10-11).** The sidebar dot is solid green for a new completion once agent/human work settles; clicking the project acknowledges it. Window-local transition tracking ignores initial history and repeated metadata changes; another completion can notify again. Typecheck, lint, build and 170 targeted L1 tests pass. L3: all 579 UI checks pass (4 skipped), including green colour/no animation, click acknowledgement and refresh stability. `docs/ui.md`.
 
 **Antigravity `INTERNAL (code 500)` retries like a 503 (t1060 ← t1059, 2026-10-10).** t1059 resumed conversation 90af30ef three times and each run ended after 4-7 min on `API error (attempt 1): INTERNAL (code 500): Internal error encountered.` Measured: agy's `cli.log` shows ~25 successful `streamGenerateContent` calls then the failure, no local fault, and the same sentence in six older logs (2026-09-13..09-30) as `Run: attempt 1 failed (INTERNAL (code 500)...)` - Google's backend, not this tool's or agy's own bug; the tool's fault was classifying it as a person's problem. `overloaded` in `antigravity-cli.ts` now matches it (backoff 1m/2m/4m, then hand-back). *Inferred, not measured:* a very long resumed conversation may make the backend fault more likely - if retries keep failing, start a fresh conversation.
 
@@ -23,15 +25,13 @@
 
 **Loose ends no longer list work an open task carries (t1041, 2026-10-10).** All five muturn rows (t1013, t1021, t1027, t1028, t1034) were pieces of open conversation t1007, four of them already merged into its `t1007.3` branch. Operator decisions: a finished task's branch is hidden while its parent is open, and also hidden when an open task's branch holds all its unlanded commits; finished chains fold into one row (*also carries …*); the sweep stays trunk-proof only. `carried.ts` (`branchVerdicts`), wired into `scanLooseEnds`; `commitsOnlyOn`/`branchContentLanded` take extra refs. Measured read-only on live muturn: all five `parent-open`; with t1007/t1037 closed, seven branches → one row (t1034, 12 commits). L1: 5 in `carried.test.ts` (parent and open-branch checks mutation-checked red), 1 scan test in `landingcorners.test.ts`. ⚠️ A squash onto an open branch that had already moved on is not detected (t948's limit). Side finding, not fixed: t1007 is `blocked` on t1037, which is `paused_user` after a restart mid-cancel. `docs/landing.md` § Loose ends.
 
-The maintained reference in [`docs/`](docs/README.md) is the authority on each subsystem; dated
-design and incident history belongs in `transient_docs/`, not here.
+The maintained reference in [`docs/`](docs/README.md) is the authority; dated design and incidents belong in `transient_docs/`.
 
 Baseline (2026-10-10, **Windows 11**, t1059): typecheck, lint and build pass; L1 **4,695 passed, 3 skipped** (275 files); L2 **204 checks** (7 skipped); L3 **556 checks** (4 skipped); packaged app **19 checks**, all passed. ⚠️ L3's *"finished conversation to leave the sidebar"* wait timed out on 2 of 5 runs today (once on a stale build, once under a mutation) and passed on rerun — a flake, not investigated. The L3 add-project wizard assertion checks the managed default and portable config introduced at t714, using the host path separator on Linux and Windows.
 ⚠️ The `%TEMP%` figure is t579's, not re-measured here. macOS 13 arm64, 2026-09-14: L3 434 (6 skipped), L4 17 on a signed, hardened-runtime bundle. CI and the Release workflow are enabled.
 
 **`v0.3.3` is `latest`** (t682, 2026-09-24), promoted onto `v0.3.3-rc.1`'s commit `8cf5d301`.
-The next `/release rc` opens the patch series at `0.3.4-rc.1` unless `--bump minor|major` is asked for.
-Phase 3/4 (write-up, landing page, channels) remains off-repo.
+The next `/release rc` opens `0.3.4-rc.1` unless `--bump minor|major` is asked for. Phase 3/4 (write-up, landing page, channels) remains off-repo.
 
 **Routing Model v1.2 preserves expiry urgency (t552); dispatches explain the pick (t691).**
 `prepaid` is field-normalized $/h to reset (same $3.68 scores 1/24 at 24h, 1 at 1h); the winner's

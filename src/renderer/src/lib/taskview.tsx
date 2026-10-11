@@ -291,26 +291,29 @@ export function hasQuotaGate(
   return held || Boolean(warning) || live
 }
 
-export type ProjectWorkState = 'working' | 'needs_attention' | 'paused' | 'pending_pr' | 'idle'
+export type ProjectWorkState = 'working' | 'needs_attention' | 'completed' | 'paused' | 'pending_pr' | 'idle'
 
 /**
  * Computes the work state for a project from the same buckets as `projectTaskCounts`, so the dot
  * and the numbers beside it never disagree:
  * - 'working': at least one task is in the agent bucket (blue).
  * - 'needs_attention': at least one task is awaiting a human (yellow).
+ * - 'completed': an unacknowledged completion, with no agent or human work (green).
  * - 'pending_pr': at least one pending pull request has been opened and not landed yet.
  * - 'paused': nothing is moving and nobody is waited on, but unfinished work is parked (grey).
  * - 'idle': no unfinished work.
  *
- * Precedence rule: working > needs_attention > pending_pr > paused.
+ * Precedence rule: working > needs_attention > completed > pending_pr > paused.
  */
 export function projectWorkState(
   tasks: ReadonlyArray<Pick<Task, 'status'> & Partial<Pick<Task, 'gradingWorkerId' | 'landing' | 'deletedAt'>>>,
-  hasPendingPr = false
+  hasPendingPr = false,
+  hasUnseenCompletion = false
 ): ProjectWorkState {
   const counts = projectTaskCounts(tasks)
   if (counts.running > 0) return 'working'
   if (counts.awaiting > 0) return 'needs_attention'
+  if (hasUnseenCompletion) return 'completed'
   if (hasPendingPr) return 'pending_pr'
   if (counts.waiting > 0) return 'paused'
   return 'idle'
@@ -396,7 +399,9 @@ export function ProjectDot({
           ? 'Parked — paused, blocked or quota-held; no action needed'
           : state === 'pending_pr'
             ? 'Pending pull request — click to view'
-            : 'Idle'
+            : state === 'completed'
+              ? 'Task completed — click the project to dismiss'
+              : 'Idle'
   const title = customTitle ?? defaultTitle
   return (
     <span

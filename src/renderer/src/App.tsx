@@ -76,6 +76,7 @@ import { holdsProjectOpen } from '@shared/tasks'
 import { useUiSettings } from './lib/uisettings'
 import { useTarget } from './lib/target'
 import { refreshGate, patchTask, rememberTaskProjects } from './lib/refresh'
+import { ProjectCompletions } from './lib/projectcompletion'
 import { MachinePicker } from './components/MachinePicker'
 import { WelcomeTour } from './components/WelcomeTour'
 import { completeWelcome, welcomePending } from './lib/welcome'
@@ -218,6 +219,9 @@ export function App({
   const [resources, setResources] = useState<ResourceAvailability[]>([])
   const [tasks, setTasks] = useState<Task[]>([])
   const [taskSnapshotReady, setTaskSnapshotReady] = useState(false)
+  const projectCompletions = useRef(new ProjectCompletions())
+  const completionSnapshotLoaded = useRef(false)
+  const [completedProjects, setCompletedProjects] = useState<Set<string>>(new Set())
   const orphanTasks = tasks.filter((t) => t.projectId === null).length
   const snapshotGate = useRef(refreshGate())
   const metadataGate = useRef(refreshGate())
@@ -294,6 +298,8 @@ export function App({
         let merged = all
         for (const task of taskPatches.current.values()) merged = patchTask(merged, task)
         rememberTaskProjects(merged, true, target.id)
+        setCompletedProjects(projectCompletions.current.observe(merged, !completionSnapshotLoaded.current))
+        completionSnapshotLoaded.current = true
         setTasks(merged)
         setTaskSnapshotReady(true)
         const byId = new Map(resources.map((r) => [r.resource.id, r]))
@@ -366,6 +372,7 @@ export function App({
   useDaemonEvents((event) => {
     if (event.type === 'task.changed') {
       rememberTaskProjects([event.task])
+      setCompletedProjects(projectCompletions.current.observe([event.task], !completionSnapshotLoaded.current))
       if (snapshotRunning.current) taskPatches.current.set(event.task.id, event.task)
       setTasks((prev) => patchTask(prev, event.task))
     } else if (event.type === 'resource.changed') {
@@ -615,7 +622,7 @@ export function App({
               const projectTasks = tasks.filter((t) => t.projectId === project.id)
               const projectPendingPrs = pendingDeliveries.filter((d) => d.projectId === project.id)
               const hasPendingPr = projectPendingPrs.length > 0
-              const state = projectWorkState(projectTasks, hasPendingPr)
+              const state = projectWorkState(projectTasks, hasPendingPr, completedProjects.has(project.id))
               const counts = projectTaskCounts(projectTasks)
               // ⛔ The tasks this project is in the middle of, listed under it so switching between
               // them is one click here rather than a trip through the Tasks board (t479 for
@@ -664,7 +671,10 @@ export function App({
                       threads retain the project scope cue. */}
                   <NavItem
                     active={projectSidebarActive(route, project.id, listed)}
-                    onClick={() => setRoute({ kind: 'project', id: project.id, tab: 'tasks' })}
+                    onClick={() => {
+                      setCompletedProjects(projectCompletions.current.acknowledge(project.id))
+                      setRoute({ kind: 'project', id: project.id, tab: 'tasks' })
+                    }}
                     className={archived ? 'nav-item--archived' : undefined}
                     title={archived ? `${project.name} (archived)` : undefined}
                     onContextMenu={(event) => {
@@ -685,7 +695,7 @@ export function App({
                     <ProjectDot
                       state={state}
                       onClick={
-                        hasPendingPr
+                        state === 'pending_pr'
                           ? (e) => {
                               e.stopPropagation()
                               setActivePrBadgeProjectId((cur) => (cur === project.id ? null : project.id))

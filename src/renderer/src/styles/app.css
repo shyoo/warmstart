@@ -1327,6 +1327,11 @@ body {
   border-color: var(--color-text-dim);
 }
 
+.project-dot--completed {
+  background: var(--state-ok);
+  border: 1px solid var(--state-ok);
+}
+
 .project-dot--working {
   background: var(--state-running);
   border: 1px solid var(--state-running);
