@@ -3372,7 +3372,10 @@ body {
   font-size: var(--text-dense); padding: 1px 4px; border-radius: var(--radius-sm);
   border: 1px solid var(--color-border); background: var(--color-bg); color: var(--color-text);
 }
-.worker-models-remove { width: 1%; text-align: right; }
+/* ⚠️ The table is squeezed by the fixed-width tags pill; without a floor the effort select shrinks to
+   a clipped "Hi" / "M" and the scroll container never gets a reason to scroll. */
+.worker-models-table td > .worker-models-select { min-width: 6.5rem; }
+.worker-models-remove{ width: 1%; text-align: right; }
 .worker-models-remove-btn {
   background: none; border: 0; padding: 0 4px; font-size: var(--text-body); line-height: 1;
   color: var(--color-text-dim); cursor: pointer;
