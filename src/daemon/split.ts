@@ -110,7 +110,7 @@ const AUTO_MODEL_RE = /^auto(?:[-_\s]*model)?(?:\s*\(([^)]+)\))?$/i
  */
 function autoTags(group: string | undefined): string[] {
   if (!group) return []
-  return cleanTags(group.split(/[+,]/).map((t) => { const c = tagClass(t); return c ? classTag(c) : t }))
+  return cleanTags(group.split(/[+,|]/).map((t) => { const c = tagClass(t); return c ? classTag(c) : t }))
 }
 
 /** The tags a piece asks for: `modelTags`, else the old `modelClass` as one tag. */

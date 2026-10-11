@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { MAX_TAG_LENGTH, MAX_TAGS, cleanTags, tagKey, tagsLabel } from '@shared/modeltags'
+import { BUILTIN_TAGS, MAX_TAG_LENGTH, MAX_TAGS, cleanTags, isTierTag, tagKey, tagsLabel } from '@shared/modeltags'
 import { Pill } from './Pill'
 
 /**
@@ -122,6 +122,15 @@ export function TagPicker({
   const rows = cleanTags([...available, ...selected])
   const full = selected.length >= MAX_TAGS
 
+  const tierRows = rows
+    .filter(isTierTag)
+    .sort((a, b) => {
+      const ia = BUILTIN_TAGS.findIndex((t) => tagKey(t) === tagKey(a))
+      const ib = BUILTIN_TAGS.findIndex((t) => tagKey(t) === tagKey(b))
+      return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib)
+    })
+  const featureRows = rows.filter((t) => !isTierTag(t))
+
   const toggle = (tag: string): void => {
     const key = tagKey(tag)
     if (chosen.has(key)) onChange(selected.filter((t) => tagKey(t) !== key))
@@ -137,41 +146,60 @@ export function TagPicker({
     if (!chosen.has(tagKey(spelled)) && !full) onChange([...selected, spelled])
   }
 
+  const renderRow = (tag: string, isFirst: boolean) => {
+    const on = chosen.has(tagKey(tag))
+    return (
+      <li key={tagKey(tag)} className="tag-picker-row">
+        <label className="tag-picker-label" title={tag}>
+          <input
+            ref={isFirst ? firstRef : undefined}
+            type="checkbox"
+            checked={on}
+            disabled={busy || (!on && full)}
+            onChange={() => toggle(tag)}
+          />
+          <span className="tag-picker-name">{tag}</span>
+        </label>
+        {onRemove && on && (
+          <button
+            type="button"
+            className="tag-picker-remove"
+            disabled={busy}
+            aria-label={`Remove tag ${tag}`}
+            title={`Remove ${tag}`}
+            onClick={() => toggle(tag)}
+          >
+            ×
+          </button>
+        )}
+      </li>
+    )
+  }
+
   return (
     <div className="tag-picker" role="group" aria-label={label}>
       {rows.length === 0 ? (
         <p className="tag-picker-empty">No tags yet.</p>
       ) : (
         <ul className="tag-picker-list">
-          {rows.map((tag, i) => {
-            const on = chosen.has(tagKey(tag))
-            return (
-              <li key={tagKey(tag)} className="tag-picker-row">
-                <label className="tag-picker-label" title={tag}>
-                  <input
-                    ref={i === 0 ? firstRef : undefined}
-                    type="checkbox"
-                    checked={on}
-                    disabled={busy || (!on && full)}
-                    onChange={() => toggle(tag)}
-                  />
-                  <span className="tag-picker-name">{tag}</span>
-                </label>
-                {onRemove && on && (
-                  <button
-                    type="button"
-                    className="tag-picker-remove"
-                    disabled={busy}
-                    aria-label={`Remove tag ${tag}`}
-                    title={`Remove ${tag}`}
-                    onClick={() => toggle(tag)}
-                  >
-                    ×
-                  </button>
-                )}
+          {tierRows.length > 0 && (
+            <>
+              <li className="tag-picker-section">
+                <span className="tag-picker-section-title">Capability tier</span>
+                <span className="tag-picker-section-hint">any match (OR)</span>
               </li>
-            )
-          })}
+              {tierRows.map((tag, i) => renderRow(tag, i === 0))}
+            </>
+          )}
+          {featureRows.length > 0 && (
+            <>
+              <li className="tag-picker-section">
+                <span className="tag-picker-section-title">Features & constraints</span>
+                <span className="tag-picker-section-hint">all required (AND)</span>
+              </li>
+              {featureRows.map((tag, i) => renderRow(tag, tierRows.length === 0 && i === 0))}
+            </>
+          )}
         </ul>
       )}
       {full && <p className="tag-picker-note">{limitHint ?? `At most ${MAX_TAGS} tags.`}</p>}

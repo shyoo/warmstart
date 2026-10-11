@@ -1959,7 +1959,7 @@ try {
   check(
     'two ticked tags read on the pill and in its accessible name, and the model pill names the requirement',
     chosenName.includes('High') && chosenName.includes('Low') &&
-      (await pillLabel('Model')) === 'Auto Model (High + Low)',
+      (await pillLabel('Model')) === 'Auto Model (High | Low)',
     `${chosenName} / ${await pillLabel('Model')}`
   )
   const rememberedTags = await evaluate(`(() => {

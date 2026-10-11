@@ -73,18 +73,50 @@ export function checkTags(input: unknown, what: string): string[] {
   return tags
 }
 
-/** Does a pair carrying `have` satisfy a task requiring `need`? Every required tag, none optional; no requirement always matches. */
-export function hasAllTags(have: readonly string[] | null | undefined, need: readonly string[] | null | undefined): boolean {
+/** Is `tag` one of the capability tiers (`Low`, `Med`, `High` or their aliases)? */
+export function isTierTag(tag: string): boolean {
+  return tagClass(tag) !== null
+}
+
+/**
+ * Does a pair carrying `have` satisfy a task requiring `need`?
+ *
+ * ⛔ **Capability tiers (Low/Med/High) are evaluated as OR; feature tags are evaluated as AND.**
+ * A task asking for `High` and `Med` matches any pair whose tier is `High` OR `Med`.
+ * Any orthogonal feature tag (such as `Audio` or `ZDR`) must be present on the matching pair.
+ * No requirement always matches.
+ */
+export function matchesModelTags(have: readonly string[] | null | undefined, need: readonly string[] | null | undefined): boolean {
   if (!need || need.length === 0) return true
   if (!have || have.length === 0) return false
   const keys = new Set(have.map(tagKey))
-  return need.every((t) => keys.has(tagKey(t)))
+
+  const tierNeed = need.filter(isTierTag)
+  const featureNeed = need.filter((t) => !isTierTag(t))
+
+  if (tierNeed.length > 0 && !tierNeed.some((t) => keys.has(tagKey(t)))) {
+    return false
+  }
+
+  return featureNeed.every((t) => keys.has(tagKey(t)))
+}
+
+/** Does a pair carrying `have` satisfy a task requiring `need`? */
+export function hasAllTags(have: readonly string[] | null | undefined, need: readonly string[] | null | undefined): boolean {
+  return matchesModelTags(have, need)
 }
 
 /** The requirement not met by `have`, for the hold reason: `ZDR + Audio` minus `ZDR` is `Audio`. */
 export function missingTags(have: readonly string[] | null | undefined, need: readonly string[] | null | undefined): string[] {
+  if (!need || need.length === 0) return []
   const keys = new Set((have ?? []).map(tagKey))
-  return (need ?? []).filter((t) => !keys.has(tagKey(t)))
+  const tierNeed = need.filter(isTierTag)
+  const featureNeed = need.filter((t) => !isTierTag(t))
+
+  const missingFeatures = featureNeed.filter((t) => !keys.has(tagKey(t)))
+  const missingTiers = tierNeed.length > 0 && !tierNeed.some((t) => keys.has(tagKey(t))) ? tierNeed : []
+
+  return [...missingTiers, ...missingFeatures]
 }
 
 /** The same set, whatever the order or case — what "unchanged" means when comparing two selections. */
@@ -94,8 +126,26 @@ export function sameTags(a: readonly string[] | null | undefined, b: readonly st
   return ka.size === kb.size && [...ka].every((k) => kb.has(k))
 }
 
-/** `ZDR + Audio`: how a requirement reads in a pill, a hold reason and a log line. */
+/**
+ * How a requirement reads in a pill, a hold reason and a log line:
+ * - Single tier / feature: `High` or `Audio`
+ * - Multiple tiers: `High | Med`
+ * - Tiers + features: `(High | Med) + Audio` or `High + Audio`
+ * - Multiple features: `Audio + ZDR`
+ */
 export function tagsLabel(tags: readonly string[]): string {
+  if (!tags || tags.length === 0) return ''
+  const tierNeed = tags.filter(isTierTag)
+  const featureNeed = tags.filter((t) => !isTierTag(t))
+
+  if (tierNeed.length > 1) {
+    const tierPart = tierNeed.join(' | ')
+    if (featureNeed.length > 0) {
+      return `(${tierPart}) + ${featureNeed.join(' + ')}`
+    }
+    return tierPart
+  }
+
   return tags.join(' + ')
 }
 

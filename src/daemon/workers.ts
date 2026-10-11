@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { canWork } from '@shared/protocol.js'
-import { cleanTags, hasAllTags } from '@shared/modeltags.js'
+import { cleanTags, matchesModelTags } from '@shared/modeltags.js'
 import { autoCandidates, autoRoutes, modelOffered, readRoutes, tagsOnWorker, type ModelRoute } from '@shared/modelroutes.js'
 import type {
   CreditStatus,
@@ -403,7 +403,7 @@ export function routableCandidatesFor(
   const inherited = inheritedModelFor(worker).map((model) => ({ model, effort: null }))
   if (!tags || tags.length === 0) return inherited
   // ⛔ The default *pair*, not the default model: its row's tags, at the default effort.
-  return inherited.filter((c) => c.model && hasAllTags(tagsOnWorker(worker, c.model, worker.defaultEffort), tags))
+  return inherited.filter((c) => c.model && matchesModelTags(tagsOnWorker(worker, c.model, worker.defaultEffort), tags))
 }
 
 /**

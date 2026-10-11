@@ -3402,6 +3402,10 @@ body {
 .tag-chips-empty { color: var(--color-text-dim); }
 .tag-picker { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-1); min-width: 14rem; }
 .tag-picker-list { list-style: none; margin: 0; padding: 0; max-height: 12rem; overflow-y: auto; display: flex; flex-direction: column; }
+.tag-picker-section { display: flex; align-items: baseline; justify-content: space-between; padding: 4px 4px 2px; border-bottom: 1px solid var(--color-border); margin-top: 4px; }
+.tag-picker-section:first-child { margin-top: 0; }
+.tag-picker-section-title { font-size: var(--text-meta); font-weight: 600; color: var(--color-text-dim); }
+.tag-picker-section-hint { font-size: var(--text-meta); color: var(--color-text-dim); opacity: 0.8; }
 .tag-picker-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-2); }
 .tag-picker-label { display: flex; align-items: center; gap: var(--sp-2); padding: 2px 4px; min-width: 0; flex: 1 1 auto; cursor: pointer; font-size: var(--text-dense); }
 .tag-picker-label:hover { background: var(--color-surface); }

@@ -1,5 +1,5 @@
 import { defaultModelClass, MODEL_CLASSES, type ModelClass } from './modelclass.js'
-import { classTag, cleanTags, hasAllTags, inferredTags } from './modeltags.js'
+import { classTag, cleanTags, inferredTags, matchesModelTags } from './modeltags.js'
 
 /**
  * One row of a worker's model table: a model, the effort it runs at, the tags the operator put on
@@ -122,9 +122,9 @@ export function pairWithTags(
   if (!model) return null
   const rows = (worker?.modelRoutes ?? []).filter((r) => r.model === model)
   if (rows.length === 0) {
-    return hasAllTags(inferredTags(model), tags) ? { model, effort: preferredEffort ?? null } : null
+    return matchesModelTags(inferredTags(model), tags) ? { model, effort: preferredEffort ?? null } : null
   }
-  const matching = rows.filter((r) => hasAllTags(r.tags, tags))
+  const matching = rows.filter((r) => matchesModelTags(r.tags, tags))
   const row =
     (preferredEffort ? matching.find((r) => r.effort === preferredEffort) : undefined) ??
     matching.find((r) => r.auto) ??
@@ -220,7 +220,7 @@ export function autoCandidates(worker: RoutesHolder, tags?: readonly string[] | 
   const seen = new Set<string>()
   const out: Array<{ model: string; effort: string | null }> = []
   for (const r of autoRoutes(worker)) {
-    if (!hasAllTags(r.tags, tags)) continue
+    if (!matchesModelTags(r.tags, tags)) continue
     if (seen.has(r.model)) continue
     seen.add(r.model)
     out.push({ model: r.model, effort: r.effort })
@@ -307,5 +307,5 @@ export function tagsRoutable(worker: DefaultPairHolder, tags: readonly string[],
   if (tags.length === 0) return true
   if (!worker) return false
   if (autoRoutes(worker).length > 0) return autoCandidates(worker, tags).length > 0
-  return !!inheritedModel && hasAllTags(tagsOnWorker(worker, inheritedModel, worker.defaultEffort), tags)
+  return !!inheritedModel && matchesModelTags(tagsOnWorker(worker, inheritedModel, worker.defaultEffort), tags)
 }

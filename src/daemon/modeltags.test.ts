@@ -89,6 +89,21 @@ describe('routing on several tags', () => {
     expect(got.effort).toBe('medium')
   })
 
+  it('routes when multiple capability tiers are specified (Tier OR, Feature AND)', () => {
+    const w = account(table)
+    // Both High and Med are tiers: matches High row (or Med row)
+    const got = choose(w, { modelPolicy: 'auto', modelTags: ['High', 'Med'] })
+    expect(got.worker?.id).toBe(w.id)
+    expect(got.model).toBe('claude-opus-5-5')
+
+    // Multiple tiers with a feature tag: must match (High | Med) AND Audio
+    // opus-5-5 high has High but not Audio. opus-5-5 medium has Med AND Audio.
+    const gotAudio = choose(w, { modelPolicy: 'auto', modelTags: ['High', 'Med', 'Audio'] })
+    expect(gotAudio.worker?.id).toBe(w.id)
+    expect(gotAudio.model).toBe('claude-opus-5-5')
+    expect(gotAudio.effort).toBe('medium')
+  })
+
   it('⛔ holds the task, naming the whole requirement, when no pair carries all of them', () => {
     const w = account(table)
     const got = choose(w, { modelPolicy: 'auto', modelTags: ['ZDR', 'High'] })
@@ -177,6 +192,20 @@ describe('the doors', () => {
         handlers['task.setWorker']({ id: task.id, workerId: w.id, model: null, modelPolicy: 'auto', modelTags: ['Med', 'ZDR'] })
       )
     ).rejects.toThrow(/no Auto Model \(Med \+ ZDR\) route/)
+  })
+
+  it('accepts multi-tier tags on a pinned worker when it has a pair matching any tier', async () => {
+    const handlers = api.buildApi({ version: '1.0.0', startedAt: Date.now(), port: 8080 })
+    const w = account([route('claude-opus-5-5', 'medium', ['Med'])])
+    const task = tasks.createTask({ title: 'pinned, multi-tier matched' })
+    const moved = await handlers['task.setWorker']({
+      id: task.id,
+      workerId: w.id,
+      model: null,
+      modelPolicy: 'auto',
+      modelTags: ['High', 'Med']
+    })
+    expect(moved.constraints.modelTags).toEqual(['High', 'Med'])
   })
 })
 

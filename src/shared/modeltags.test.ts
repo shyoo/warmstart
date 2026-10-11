@@ -7,6 +7,8 @@ import {
   fleetTags,
   hasAllTags,
   inferredTags,
+  isTierTag,
+  matchesModelTags,
   MAX_TAG_LENGTH,
   MAX_TAGS,
   missingTags,
@@ -44,8 +46,21 @@ describe('tag normalization (t1042)', () => {
   })
 })
 
-describe('matching: every required tag, on the same pair', () => {
-  it('needs all of them, ignoring case and order', () => {
+describe('matching: Tier OR, Feature AND', () => {
+  it('evaluates multiple tiers as OR and feature tags as AND', () => {
+    // Both High and Med are tiers: either satisfies the requirement
+    expect(matchesModelTags(['Med'], ['High', 'Med'])).toBe(true)
+    expect(matchesModelTags(['High'], ['High', 'Med'])).toBe(true)
+    expect(matchesModelTags(['Low'], ['High', 'Med'])).toBe(false)
+
+    // With a feature tag: must satisfy tier OR AND feature AND
+    expect(matchesModelTags(['Med', 'Audio'], ['High', 'Med', 'Audio'])).toBe(true)
+    expect(matchesModelTags(['High', 'Audio'], ['High', 'Med', 'Audio'])).toBe(true)
+    expect(matchesModelTags(['Med'], ['High', 'Med', 'Audio'])).toBe(false)
+    expect(matchesModelTags(['Low', 'Audio'], ['High', 'Med', 'Audio'])).toBe(false)
+  })
+
+  it('needs all feature tags, ignoring case and order', () => {
     expect(hasAllTags(['ZDR', 'Audio', 'High'], ['audio', 'ZDR'])).toBe(true)
     expect(hasAllTags(['ZDR'], ['ZDR', 'Audio'])).toBe(false)
     expect(missingTags(['ZDR'], ['zdr', 'Audio'])).toEqual(['Audio'])
@@ -66,6 +81,10 @@ describe('matching: every required tag, on the same pair', () => {
 
   it('reads a requirement the way the hold reason prints it', () => {
     expect(tagsLabel(['ZDR', 'Audio'])).toBe('ZDR + Audio')
+    expect(tagsLabel(['High', 'Med'])).toBe('High | Med')
+    expect(tagsLabel(['High', 'Med', 'Audio'])).toBe('(High | Med) + Audio')
+    expect(tagsLabel(['High', 'Audio'])).toBe('High + Audio')
+    expect(tagsLabel(['High'])).toBe('High')
   })
 })
 
@@ -76,6 +95,10 @@ describe('the old classes are ordinary tags now', () => {
     expect(tagClass('medium')).toBe('med')
     expect(tagClass('Med')).toBe('med')
     expect(tagClass('ZDR')).toBeNull()
+    expect(isTierTag('High')).toBe(true)
+    expect(isTierTag('med')).toBe(true)
+    expect(isTierTag('Low')).toBe(true)
+    expect(isTierTag('Audio')).toBe(false)
     expect(BUILTIN_TAGS).toEqual(['High', 'Med', 'Low'])
   })
 
