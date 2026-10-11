@@ -5192,7 +5192,7 @@ try {
   )
   const scratchEmpty = await evaluate(`document.querySelector('.scratchpad .empty-inline')?.innerText ?? ''`)
   check('a project with no scratchpad says how one is written', /---/.test(scratchEmpty) && /\* New/.test(scratchEmpty), scratchEmpty)
-  await evaluate(`[...document.querySelectorAll('.scratchpad-bar button')].find(b => b.innerText.includes('New prompt'))?.click()`)
+  await evaluate(`[...document.querySelectorAll('.scratchpad button')].find(b => b.innerText.includes('New prompt'))?.click()`)
   await waitFor(
     async () => await evaluate(`document.activeElement?.classList.contains('hl-input') ?? false`),
     'the new card to take the caret'
@@ -5205,7 +5205,7 @@ try {
     box.dispatchEvent(new Event('input', { bubbles: true }))
   })()`)
   await waitFor(
-    async () => await evaluate(`document.querySelector('.scratchpad-save')?.innerText.trim() === 'Saved'`),
+    async () => await evaluate(`document.querySelector('.scratchpad-save')?.getAttribute('aria-label') === 'Saved'`),
     'the scratchpad to save'
   )
   const scratchProject = await evaluate(

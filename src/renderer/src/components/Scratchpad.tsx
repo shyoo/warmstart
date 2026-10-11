@@ -61,7 +61,7 @@ const NEW_CARD = '* New\n\n'
  * and moves up with the earlier prompts, so the open ones stay together at the bottom (t1025).
  *
  * ⭐ **The status is the dropdown, not a line of the card (t1025).** A card's editor shows its text
- * without the marker line; *New* / *Completed* in the head writes it. The file, and *Whole document*,
+ * without the marker line; *New* / *Completed* in the head writes it. The file, and *View original file*,
  * still carry the marker.
  */
 export function Scratchpad({
@@ -493,9 +493,6 @@ export function Scratchpad({
       <ScratchpadFile meta={meta} projectRoot={project?.root ?? null} beforeChange={flush} onChanged={adopt} />
 
       <div className="scratchpad-bar">
-        <button className="btn btn--primary" onClick={() => actions.insertBelow(null)} disabled={!doc}>
-          + New prompt
-        </button>
         <SegmentedControl
           ariaLabel="Show prompts as"
           value={mode}
@@ -510,7 +507,7 @@ export function Scratchpad({
         />
         <label className="scratchpad-toggle">
           <input type="checkbox" checked={showAll} onChange={(event) => setShowAll(event.target.checked)} />
-          Show filed and older
+          Show previous prompts
         </label>
         <label className="scratchpad-toggle" title="Every prompt in one editor, joined by --- as in the file">
           <input
@@ -525,13 +522,26 @@ export function Scratchpad({
               }
             }}
           />
-          Whole document
+          View original file
         </label>
         <span className="scratchpad-counts dim">
           {counts.fresh} new · {counts.all} in all
         </span>
-        <span className={`scratchpad-save scratchpad-save--${saveState}`} aria-live="polite">
-          {saveState === 'saving' ? 'Saving…' : saveState === 'unsaved' ? 'Unsaved' : 'Saved'}
+        <span
+          className={`scratchpad-save scratchpad-save--${saveState}`}
+          role="status"
+          aria-label={saveState === 'saving' ? 'Saving…' : saveState === 'unsaved' ? 'Unsaved' : 'Saved'}
+          title={saveState === 'saving' ? 'Saving…' : saveState === 'unsaved' ? 'Unsaved' : 'Saved'}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {saveState === 'saved' ? (
+              <><circle cx="12" cy="12" r="9" /><path d="m8 12 3 3 5-6" /></>
+            ) : saveState === 'unsaved' ? (
+              <path d="m16 3 5 5-12 12-6 1 1-6Z M13 6l5 5" />
+            ) : (
+              <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>
+            )}
+          </svg>
         </span>
       </div>
 

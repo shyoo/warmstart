@@ -9467,10 +9467,13 @@ select:focus-visible,
   margin-left: auto;
 }
 .scratchpad-save {
-  font-size: var(--text-meta);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 16px;
+  width: 16px;
+  height: 16px;
   color: var(--color-text-faint);
-  min-width: 6ch;
-  text-align: right;
 }
 /* ⭐ Green once the file has the text (t1011): the faint grey it had does not stand out, and *saved* is
    the state somebody looks for before they close the page. */
