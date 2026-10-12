@@ -5764,9 +5764,19 @@ try {
 
   // The funnel: Archived, then All, then back to Active.
   const pickFilter = async (label) => {
-    await evaluate(`document.querySelector('.nav-filter')?.click()`)
-    await wait(250)
-    await evaluate(`[...document.querySelectorAll('.pill-menu [role="option"]')].find(o => o.innerText.trim() === ${JSON.stringify(label)})?.click()`)
+    // Wait on the menu and on the funnel, not on a sleep: a slow runner (Windows CI) opened the
+    // menu after the fixed 250 ms and the click landed on nothing.
+    const optionOf = `[...document.querySelectorAll('.pill-menu [role="option"]')].find(o => o.innerText.trim() === ${JSON.stringify(label)})`
+    await waitFor(async () => {
+      if (!(await evaluate(`!!${optionOf}`))) await evaluate(`document.querySelector('.nav-filter')?.click()`)
+      return evaluate(`!!${optionOf}`)
+    }, `the funnel menu to offer ${label}`)
+    await evaluate(`${optionOf}?.click()`)
+    const lit = label !== 'Active'
+    await waitFor(
+      async () => (await evaluate(`document.querySelector('.nav-filter')?.classList.contains('nav-filter--on') ?? false`)) === lit,
+      `the funnel to apply ${label}`
+    )
     await wait(400)
     return sidebarNames()
   }
