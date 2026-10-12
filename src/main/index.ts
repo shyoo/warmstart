@@ -31,6 +31,7 @@ import { APP_VERSION, RELEASE_REPOSITORY } from '@shared/version.js'
 import { UpdateManager } from './updates.js'
 import { applicationMenuTemplate } from './applicationmenu.js'
 import { hasActiveWork, PowerActionController, runPowerCommand } from './poweraction.js'
+import { QuitConfirmation } from './quitconfirmation.js'
 
 const dirname = join(fileURLToPath(import.meta.url), '..')
 
@@ -44,6 +45,14 @@ const dirname = join(fileURLToPath(import.meta.url), '..')
 
 const daemon = new DaemonClient()
 const windows = new Set<WebContents>()
+const quitConfirmation = new QuitConfirmation()
+let quitPending = false
+ipcMain.on(IPC.quitReady, (event) => {
+  if (windows.has(event.sender)) quitConfirmation.ready(event.sender.id)
+})
+ipcMain.on(IPC.quitAnswer, (event, id: unknown, choice: unknown) => {
+  if (windows.has(event.sender)) quitConfirmation.answer(event.sender.id, id, choice)
+})
 /** Created once the app is ready: `safeStorage` cannot answer before then. */
 let targets: TargetManager | null = null
 
@@ -182,23 +191,18 @@ function showWindow(): void {
  * closed is not a preference anybody set.
  */
 async function stopDaemonAndQuit(): Promise<void> {
+  if (quitPending || quitting) return
+  quitPending = true
   try {
     const live = await daemon.rpc('session.list', undefined)
     const working = Array.isArray(live) ? live.filter((s) => s.purpose === 'work').length : 0
     if (working > 0) {
-      const { response } = await dialog.showMessageBox({
-        type: 'warning',
-        buttons: ['Stop them and quit', 'Leave them running', 'Cancel'],
-        defaultId: 2,
-        cancelId: 2,
-        message: `${working} agent ${working === 1 ? 'session is' : 'sessions are'} still running.`,
-        detail:
-          'Quitting stops orchestratord, which ends them. Their work so far is saved, but the ' +
-          'context each one is holding is not - a stopped session starts cold next time.\n\n' +
-          'Leave them running to quit the window only. Turn the tray on if you want that to be ' +
-          'the normal behaviour.'
-      })
-      if (response === 2) return
+      showWindow()
+      const win = mainWindow()
+      if (!win) return
+      const response = await quitConfirmation.ask(win.webContents.id, working,
+        (request) => win.webContents.send(IPC.quitConfirmation, request))
+      if (response === 0) return
       if (response === 1) {
         quitting = true
         app.quit()
@@ -210,6 +214,8 @@ async function stopDaemonAndQuit(): Promise<void> {
     // ⚠️ Not reachable, or it refused. Quit anyway: an app that cannot be closed because its
     // background service is unwell is a worse failure than a daemon left running, and Doctor says
     // where to look.
+  } finally {
+    quitPending = false
   }
   quitting = true
   app.quit()
@@ -347,14 +353,27 @@ function createWindow(): BrowserWindow {
   // "A JavaScript error occurred in the main process" when they close the window. The Set is keyed
   // by this reference, so holding it is also the only way the delete can match.
   const wc = win.webContents
+  const wcId = wc.id
   windows.add(wc)
-  win.on('closed', () => windows.delete(wc))
+  win.on('closed', () => {
+    quitConfirmation.forget(wcId)
+    windows.delete(wc)
+  })
+  wc.on('render-process-gone', () => quitConfirmation.forget(wcId))
+  wc.on('did-start-loading', () => quitConfirmation.forget(wcId))
   trackWindowBounds(win)
 
   // ⛔ Only with a tray, and only when this is not the quit itself. Without the `quitting`
   // guard, Quit would hide the window and leave an app nobody can reach or exit.
   win.on('close', (event) => {
-    if (!uiSettings.tray || quitting) return
+    if (quitting) return
+    if (!uiSettings.tray) {
+      if (process.platform !== 'darwin') {
+        event.preventDefault()
+        void stopDaemonAndQuit()
+      }
+      return
+    }
     event.preventDefault()
     win.hide()
   })

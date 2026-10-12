@@ -92,6 +92,11 @@ RPC failure cancels the action with an error. The action is one-shot and lives o
 Electron process. Sleep and hibernate temporarily release the idle-sleep blocker and restore it on
 resume. macOS offers shutdown and sleep; Windows and Linux also offer hibernate.
 
+Quit confirmation uses main → preload → `ConfirmationHost`, with a request id and a closed set of
+answers accepted only from the requested window. A renderer lost or reloaded cancels the request.
+Without a tray on Windows/Linux, close waits for the choice while the window remains available;
+Cancel keeps it open, Leave them running exits only the window, and Stop asks the daemon to shut down.
+
 ⛔ **The daemon is single-threaded and every handler is synchronous `node:sqlite`, so an expensive
 RPC is not slow — it is a stall for everyone.** And node's socket reapers are timers: they do not
 fire *during* a stall, they fire in a batch the instant it clears. Measured 2026-09-09 by stacking 40

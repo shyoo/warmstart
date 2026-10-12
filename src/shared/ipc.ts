@@ -14,6 +14,18 @@ export interface AppInfo {
   platform: NodeJS.Platform
 }
 
+/** In-app choices. The first action is always the safe dismissal. */
+export interface ConfirmationOptions {
+  title: string
+  message: string
+  actions: { label: string; danger?: boolean }[]
+}
+
+export interface QuitConfirmationRequest {
+  id: number
+  options: ConfirmationOptions
+}
+
 export type PowerAction = 'shutdown' | 'sleep' | 'hibernate'
 export interface PowerActionState {
   available: PowerAction[]
@@ -186,6 +198,8 @@ export interface TargetEvent {
 }
 
 export interface AgentyardApi {
+  onQuitConfirmation(handler: (request: QuitConfirmationRequest) => void): () => void
+  answerQuitConfirmation(id: number, choice: number): void
   getAppInfo(): Promise<AppInfo>
   getPowerAction(): Promise<PowerActionState>
   armPowerAction(action: PowerAction): Promise<PowerActionState>
@@ -233,6 +247,9 @@ export interface AgentyardApi {
 }
 
 export const IPC = {
+  quitConfirmation: 'app:quit-confirmation',
+  quitReady: 'app:quit-ready',
+  quitAnswer: 'app:quit-answer',
   appInfo: 'app:info',
   powerGet: 'power:get',
   powerArm: 'power:arm',

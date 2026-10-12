@@ -3,6 +3,7 @@ import {
   IPC,
   type AgentyardApi,
   type AppInfo,
+  type QuitConfirmationRequest,
   type AppUpdateState,
   type PowerAction,
   type PowerActionState,
@@ -21,6 +22,13 @@ import type { DaemonEvent, RpcMethod, RpcParams, RpcResult } from '@shared/proto
  * holds the daemon token.
  */
 const api: AgentyardApi = {
+  onQuitConfirmation(handler) {
+    const listener = (_e: unknown, request: QuitConfirmationRequest) => handler(request)
+    ipcRenderer.on(IPC.quitConfirmation, listener)
+    ipcRenderer.send(IPC.quitReady)
+    return () => ipcRenderer.removeListener(IPC.quitConfirmation, listener)
+  },
+  answerQuitConfirmation: (id, choice) => ipcRenderer.send(IPC.quitAnswer, id, choice),
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfo) as Promise<AppInfo>,
   getPowerAction: () => ipcRenderer.invoke(IPC.powerGet) as Promise<PowerActionState>,
   armPowerAction: (action: PowerAction) => ipcRenderer.invoke(IPC.powerArm, action) as Promise<PowerActionState>,

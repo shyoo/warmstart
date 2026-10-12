@@ -3,6 +3,7 @@ import type { LooseEnd } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { errorMessage } from '@shared/errors.js'
 import { mergedSweepNote } from '../lib/looseends'
+import { confirmAction } from '../lib/confirmation'
 
 // The overview unmounts while another page is open. Keep the last confirmed scan at module scope so
 // returning to it does not briefly erase the decisions the operator was just reading.
@@ -166,10 +167,11 @@ export function LooseEnds(): React.JSX.Element | null {
                       onClick={() =>
                         void act(async () => {
                           if (
-                            !confirm(
+                            !(await confirmAction(
                               `Delete \`${end.branch}\`? This discards ${end.count} commit(s) that ` +
-                                'the trunk does not have. This cannot be undone.'
-                            )
+                                'the trunk does not have. This cannot be undone.',
+                              'Delete branch'
+                            ))
                           )
                             return null
                           setBusy(end.id)

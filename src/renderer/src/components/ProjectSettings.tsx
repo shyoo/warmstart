@@ -34,6 +34,7 @@ import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { SettingRow, SettingSwitch } from './SettingRow'
 import { deleteProject, toggleArchive } from './ProjectMenus'
 import { errorMessage } from '@shared/errors.js'
+import { confirmAction } from '../lib/confirmation'
 
 /**
  * Everything about one project that is a *setting* rather than a task.
@@ -400,19 +401,20 @@ function PolicyPanel({
    * worktree directories, with confirmation. Coming back restores the old pool size and leaves the
    * default workspace as it is.
    */
-  const switchTopology = (toTrunkOnly: boolean): void => {
+  const switchTopology = async (toTrunkOnly: boolean): Promise<void> => {
     if (toTrunkOnly === trunkOnly || busy || project.vcs !== 'git') return
     if (!toTrunkOnly) {
       apply({ poolSize: Math.min(32, Math.max(1, Math.trunc(lastPool) || 3)) })
       return
     }
     if (
-      !confirm(
+      !(await confirmAction(
         'Run this project trunk-only? Every task will take the trunk lease and run serially in ' +
           'the checkout itself — no parallel worktrees, no task branches. Idle worktree ' +
           'directories are removed from disk (work in flight is kept, and branches and stashes ' +
-          'are never deleted). New tasks will default to the trunk.'
-      )
+          'are never deleted). New tasks will default to the trunk.',
+        'Run trunk-only'
+      ))
     )
       return
     setBusy(true)
@@ -445,6 +447,27 @@ function PolicyPanel({
         setBusy(false)
       }
     })()
+  }
+
+  const makeForkHome = async (): Promise<void> => {
+    if (!(await confirmAction(
+      `Make ${project.config.landing?.pushRemote ?? 'the fork'} this project’s origin, and today’s origin its upstream?`,
+      'Make my fork home', false
+    ))) return
+    setBusy(true)
+    setNote(null)
+    try {
+      const result = await rpc('project.makeForkHome', { id: project.id })
+      setNote(
+        `origin is now ${result.fork}; upstream is ${result.upstream}.` +
+          (result.warnings.length > 0 ? ` ${result.warnings.join(' ')}` : '')
+      )
+      await refreshProjects()
+    } catch (err) {
+      setNote(errorMessage(err))
+    } finally {
+      setBusy(false)
+    }
   }
 
   const finishChoice = projectFinishChoice(project)
@@ -575,27 +598,7 @@ function PolicyPanel({
                 type="button"
                 className="btn"
                 disabled={busy}
-                onClick={() => {
-                  if (
-                    !confirm(
-                      `Make ${project.config.landing?.pushRemote ?? 'the fork'} this project’s origin, and today’s origin its upstream?`
-                    )
-                  ) {
-                    return
-                  }
-                  setBusy(true)
-                  setNote(null)
-                  void rpc('project.makeForkHome', { id: project.id })
-                    .then(async (result) => {
-                      setNote(
-                        `origin is now ${result.fork}; upstream is ${result.upstream}.` +
-                          (result.warnings.length > 0 ? ` ${result.warnings.join(' ')}` : '')
-                      )
-                      await refreshProjects()
-                    })
-                    .catch((err: unknown) => setNote(errorMessage(err)))
-                    .finally(() => setBusy(false))
-                }}
+                onClick={() => void makeForkHome()}
               >
                 Make my fork home
               </button>
@@ -743,7 +746,7 @@ function PolicyPanel({
               disabled={busy || project.vcs !== 'git'}
               ariaLabel="Workspace topology"
               title="Trunk + worktrees runs tasks in parallel in isolated checkouts; trunk-only keeps no worktrees and runs every task serially in the project checkout."
-              onChange={(val) => switchTopology(val === 'trunk-only')}
+              onChange={(val) => void switchTopology(val === 'trunk-only')}
             />
           }
         />

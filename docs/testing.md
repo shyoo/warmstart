@@ -22,6 +22,14 @@ a suite in this repository has reported a confident pass for code that was broke
 
 `npm run test:all` is L1 + L2 + L3. That is the pre-commit set.
 
+Desktop native-dialog prevention has two guards: L1 parses every production main/preload/renderer
+source for browser dialogs and Electron message boxes (comments and string fixtures are excluded);
+L3 replaces browser dialog functions with throwing traps, clicks the in-app archive/delete choices,
+and sends DevTools text input into the composer and scratchpad afterwards. DOM key events check
+Escape and Tab containment; CDP keyDown left the hidden-window dialog unchanged in t1100. Cancel
+and initial focus are checked too. Headless input proves renderer editing, not physical Windows
+focus recovery. Never auto-accept `window.confirm` in a UI test: that bypasses the behaviour at issue.
+
 `npm run test:performance` is a token-free loaded UI/HTTP benchmark (build first): four synthetic
 streams plus two review lifecycles, non-empty history and quota series. Random ports and isolated
 data/code directories let two copies run together. `WARMSTART_PERFORMANCE_FRAMES=1` is honored

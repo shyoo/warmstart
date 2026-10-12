@@ -3047,6 +3047,11 @@ body {
   background: rgb(0 0 0 / 0.58);
 }
 
+/* Confirmations remain above the composer and its portalled menus. */
+.confirmation-shade { z-index: 400; }
+.confirmation-shade .confirm-dialog { max-height: 90vh; overflow-y: auto; }
+.confirmation-shade .confirm-actions { flex-wrap: wrap; }
+
 /* The task composer is modal wherever it opens. It is deliberately narrower than a task table:
    writing a prompt benefits from a readable measure, while every row of pills — the ordinary bar
    and the Plan & Split / Debate tables alike — scrolls inside rather than needing the width of its

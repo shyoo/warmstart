@@ -179,6 +179,10 @@ try {
   checkBuildIsCurrent()
 
   await waitFor(() => evaluate('!!document.querySelector(".statusbar")'), 'the shell to render')
+  // Native dialogs must never be silently auto-accepted: they can steal Windows keyboard focus.
+  await evaluate(`window.__nativeDialogs = []; ['confirm', 'alert', 'prompt'].forEach(api => {
+    window[api] = () => { window.__nativeDialogs.push(api); throw new Error('Native dialog forbidden: ' + api) };
+  })`)
   // ⚠️ Polled, not read once. The shell renders before the daemon has finished starting, so a bare
   // read here asserts "the daemon connected *within the time this machine took to paint*" - true on
   // a warm development box, false on a cold runner, and it failed on all three in CI. Everything
@@ -5717,8 +5721,7 @@ try {
   )
   check('and the daemon refuses it too, saying why', /unfinished task/.test(refusedArchive), refusedArchive)
 
-  // Finishing the task frees the project. ⚠️ `confirm` is answered here: the dialog is the operator's
-  // safeguard, and this suite is not a person.
+  // Finishing the task frees the project. Drive the in-app safeguard with explicit clicks.
   await evaluate(`window.agentyard.rpc('task.resolve', { id: ${JSON.stringify(t901.taskId)} })`)
   await waitFor(async () => (await workRow()) === null, 'the finished task to leave the sidebar')
   const completedProjectRow = `[...document.querySelectorAll('.nav-item-project-wrapper > .nav-item')].find(b => b.querySelector('.nav-project-name')?.innerText === 'archive me')`
@@ -5744,12 +5747,51 @@ try {
   await evaluate(`window.dispatchEvent(new CustomEvent('warmstart:refresh-projects'))`)
   await wait(400)
   check('refreshing completed task metadata does not relight an acknowledged dot', (await completionDot()).state.includes('project-dot--idle'))
-  await evaluate(`window.confirm = () => true`)
+  const answerConfirmation = async (label) => {
+    await waitFor(async () => await evaluate(`!!document.querySelector('.confirmation-shade [role="alertdialog"]')`), 'the in-app confirmation')
+    await evaluate(`[...document.querySelectorAll('.confirmation-shade button')].find(b => b.innerText === ${JSON.stringify(label)}).click()`)
+    await waitFor(async () => await evaluate(`!document.querySelector('.confirmation-shade') && !document.getElementById('root').inert`), 'the confirmation to release the app')
+  }
+  const verifyTypingAfterConfirmation = async (label) => {
+    await evaluate(`document.querySelector('.titlebar-new-task').click()`)
+    await waitFor(async () => await evaluate(`!!document.querySelector('.task-composer-modal .ask-input')`), 'the composer after confirmation')
+    check(`${label}: the new-task prompt receives focus`, await evaluate(`document.activeElement === document.querySelector('.task-composer-modal .ask-input')`))
+    const beforeTyping = await evaluate(`document.querySelector('.task-composer-modal .ask-input').value`)
+    await send('Input.insertText', { text: 'Typing after ' + label })
+    const afterTyping = await evaluate(`document.querySelector('.task-composer-modal .ask-input').value`)
+    check(`${label}: keyboard input edits the new-task prompt`, afterTyping === beforeTyping + 'Typing after ' + label, JSON.stringify({ beforeTyping, afterTyping }))
+    await evaluate(`document.querySelector('button[aria-label="Close new task"]').click()`)
+    await evaluate(`document.querySelector('.titlebar button.titlebar-action:not(.titlebar-new-task):not(.titlebar-power-toggle)').click()`)
+    await waitFor(async () => await evaluate(`!!document.querySelector('[aria-label="Scratchpad project"]') && !!document.querySelector('.scratchpad')`), 'the scratchpad after confirmation')
+    await evaluate(`document.querySelector('[aria-label="Scratchpad project"]').click()`)
+    await waitFor(async () => await evaluate(`!!document.querySelector('.pill-menu [data-value=""]')`), 'the Global scratchpad option')
+    await evaluate(`document.querySelector('.pill-menu [data-value=""]').click()`)
+    await waitFor(async () => await evaluate(`/No prompts yet/.test(document.querySelector('.scratchpad .empty-inline')?.innerText ?? '') || !!document.querySelector('.scratchpad .hl-input')`), 'the Global scratchpad')
+    await evaluate(`document.querySelector('.scratchpad-new-bottom').click()`)
+    await waitFor(async () => await evaluate(`!!document.querySelector('.scratch-card .hl-input')`), 'the new scratchpad prompt')
+    await evaluate(`document.querySelector('.scratch-card .hl-input').focus()`)
+    await send('Input.insertText', { text: 'Scratchpad after ' + label })
+    check(`${label}: keyboard input edits the scratchpad`, await evaluate(`[...document.querySelectorAll('.scratch-card .hl-input')].some(box => box.value.includes(${JSON.stringify('Scratchpad after ' + label)}))`))
+  }
   await evaluate(openProjectMenu)
   await wait(300)
   const freeItem = await menuItem()
   check('once nothing can run, Archive is offered', freeItem?.disabled === false, JSON.stringify(freeItem))
   await clickMenuItem('archive project')
+  await waitFor(async () => await evaluate(`!!document.querySelector('.confirmation-shade')`), 'the archive confirmation')
+  check('Archive asks in-app, focuses Cancel and blocks the underlying app', await evaluate(`document.activeElement?.innerText === 'Cancel' && document.getElementById('root').inert && /branches and stashes are never deleted/.test(document.querySelector('.confirmation-shade').innerText)`))
+  // CDP keyDown left this hidden-window confirmation unchanged in t1100; dispatch on the focused DOM node,
+  // as the tag editor check does. Input.insertText below still exercises Chromium text editing.
+  await evaluate(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true, cancelable: true }))`)
+  check('Tab stays inside the confirmation', await evaluate(`document.activeElement?.innerText === 'Archive project'`))
+  await evaluate(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))`)
+  await waitFor(async () => await evaluate(`!document.querySelector('.confirmation-shade')`), 'Escape to cancel archive')
+  check('Escape cancels Archive without changing the project', await evaluate(`window.agentyard.rpc('project.list').then(ps => ps.some(p => p.id === ${JSON.stringify(t901.projectId)}))`))
+  await verifyTypingAfterConfirmation('cancel archive')
+  await evaluate(openProjectMenu)
+  await waitFor(async () => (await menuItem()) !== null, 'the archive menu to reopen')
+  await clickMenuItem('archive project')
+  await answerConfirmation('Archive project')
   const sidebarNames = async () =>
     JSON.parse(
       await evaluate(
@@ -5761,6 +5803,7 @@ try {
     `window.agentyard.rpc('project.listArchived').then(ps => JSON.stringify(ps.map(p => p.name)))`
   )
   check('archiving takes it off the Active list and into the archived one', JSON.parse(archivedRecord).includes('archive me'), archivedRecord)
+  await verifyTypingAfterConfirmation('archive')
 
   // The funnel: Archived, then All, then back to Active.
   const pickFilter = async (label) => {
@@ -5896,18 +5939,25 @@ try {
   await evaluate(openProjectMenu)
   await wait(300)
   await clickMenuItem('delete project')
+  await answerConfirmation('Cancel')
+  check('Cancel keeps the project in the sidebar', (await sidebarNames()).some(p => p.name === 'archive me renamed'))
+  await evaluate(openProjectMenu)
+  await waitFor(async () => (await menuItem('delete project')) !== null, 'the delete menu to reopen')
+  await clickMenuItem('delete project')
+  await answerConfirmation('Delete project')
   await waitFor(async () => !(await sidebarNames()).some((p) => p.name === 'archive me renamed'), 'the deleted project to leave the sidebar')
   const afterDelete = JSON.parse(
     await evaluate(`Promise.all([window.agentyard.rpc('project.list'), window.agentyard.rpc('project.listArchived')]).then(([a, b]) => JSON.stringify([...a, ...b].map(p => p.id)))`)
   )
   check('⛔ a deleted project is in neither the active nor the archived list', !afterDelete.includes(t901.projectId), JSON.stringify(afterDelete))
   check('and its folder is still on disk', existsSync(archiveRoot), archiveRoot)
+  await verifyTypingAfterConfirmation('delete project')
+  check('the UI suite used no browser native dialogs', await evaluate(`window.__nativeDialogs.length === 0`))
 
   // Leave the suite where it found it: one project fewer to reason about in every later section.
   // ⚠️ Already gone from every list; archiving a deleted row is a no-op, kept so a red check above
   // still leaves nothing active behind.
   await evaluate(`window.agentyard.rpc('project.archive', { id: ${JSON.stringify(t901.projectId)} }).catch(() => null)`)
-  await evaluate(`delete window.confirm`)
 
   section('global settings')
   await evaluate(

@@ -6,6 +6,7 @@ import { rpc } from '../lib/daemon'
 import { menuPosition, type MenuPlacement, type Rect } from '../lib/menuposition'
 import { PROJECT_FILTERS, type ProjectFilter } from '../lib/sidebartasks'
 import { PillOptions } from './Pill'
+import { confirmAction } from '../lib/confirmation'
 
 /**
  * The sidebar's two small menus (t901): the project filter under the funnel, and the menu a right
@@ -134,33 +135,35 @@ export function ProjectFilterButton({
 }
 
 /** What a person is agreeing to. Both entry points ask this, word for word. */
-export function confirmArchive(project: Pick<Project, 'name'>): boolean {
-  return confirm(
+export function confirmArchive(project: Pick<Project, 'name'>): Promise<boolean> {
+  return confirmAction(
     `Archive ${project.name}? It leaves the sidebar's Active list and its idle pool worktrees are ` +
       'removed from disk (a worktree with work in it is kept; branches and stashes are never deleted). ' +
-      'Its tasks and history stay, and Unarchive brings it back.'
+      'Its tasks and history stay, and Unarchive brings it back.',
+    'Archive project'
   )
 }
 
 /** Archive or unarchive, asking first for the one that removes anything. Null when declined. */
 export async function toggleArchive(project: Pick<Project, 'id' | 'name' | 'archivedAt'>): Promise<Project | null> {
   if (project.archivedAt !== null) return rpc('project.unarchive', { id: project.id })
-  if (!confirmArchive(project)) return null
+  if (!(await confirmArchive(project))) return null
   return rpc('project.archive', { id: project.id })
 }
 
 /** What a person is agreeing to when they delete. Both entry points ask this, word for word. */
-export function confirmDelete(project: Pick<Project, 'name' | 'root'>): boolean {
-  return confirm(
+export function confirmDelete(project: Pick<Project, 'name' | 'root'>): Promise<boolean> {
+  return confirmAction(
     `Delete ${project.name} from Warmstart? It leaves every list, archived included, and its idle pool ` +
       `worktrees are removed. Nothing in ${project.root} is deleted — not a file, branch or stash — and ` +
-      'its tasks and history are kept. Adding the folder again brings it back.'
+      'its tasks and history are kept. Adding the folder again brings it back.',
+    'Delete project'
   )
 }
 
 /** Delete, asking first. False when declined; throws the daemon's refusal. */
 export async function deleteProject(project: Pick<Project, 'id' | 'name' | 'root'>): Promise<boolean> {
-  if (!confirmDelete(project)) return false
+  if (!(await confirmDelete(project))) return false
   await rpc('project.delete', { id: project.id })
   return true
 }

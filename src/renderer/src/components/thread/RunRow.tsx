@@ -21,6 +21,7 @@ import { Money, runPriceTitle } from '../Price'
 import { modelLabel } from '../../lib/modelname'
 import { outcomeClass } from '../../lib/threadview'
 import { ActivityChip, PromptChip } from './Disclosure'
+import { confirmAction } from '../../lib/confirmation'
 
 /**
  * One attempt, with what it cost — twice over, and deliberately not reconciled.
@@ -239,7 +240,7 @@ export function ReviewRow({
   const rubric = rubricFor(review.rubricVersion)
 
   const removeReview = async () => {
-    if (!confirm('Remove this quality review record?')) return
+    if (!(await confirmAction('Remove this quality review record?', 'Remove review'))) return
     setDeleting(true)
     try {
       await rpc('review.delete', { reviewId: review.id })

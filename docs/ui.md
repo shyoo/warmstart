@@ -50,6 +50,15 @@ identifies the opening prompt when it is edited.
 ⛔ **No native modules here.** They live in the daemon so an Electron upgrade cannot break a running
 fleet.
 
+⛔ **Desktop confirmations stay inside the app.** Browser `confirm` / `alert` / `prompt` and Electron
+message boxes are forbidden by `src/renderer/src/lib/native-dialogs.test.ts`; folder pickers remain
+native. `ConfirmationHost` owns the asynchronous choice queue above the shell, including quit
+requests from main. Cancel is focused first; Tab stays inside, Escape and backdrop dismiss safely,
+and the shell is inert until the answer. Archive/delete, pool removal, fork setup, loose-end deletion
+and review removal wait for that answer before their RPC. Scratchpad/task deletion retain their
+existing in-app confirmations. Native confirmation left scratchpad fields without keyboard focus;
+the archive recurrence was operator-reported, not independently reproduced with an OS dialog.
+
 Events arrive as `DaemonEvent` over `daemon:event-push` (`shared/protocol.ts`). `session.data` is raw
 terminal bytes and goes to xterm.js and nowhere else.
 
