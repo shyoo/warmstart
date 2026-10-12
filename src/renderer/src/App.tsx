@@ -558,7 +558,7 @@ export function App({
           kind: 'scratchpad', projectId: route.kind === 'project' ? route.id : route.kind === 'scratchpad' ? route.projectId : null
         })}>Scratchpad</button>
         <button
-          className="btn titlebar-action titlebar-new-task"
+          className="btn btn--primary titlebar-action titlebar-new-task"
           onClick={() => openNewTask(route.kind === 'project' ? route.id : route.kind === 'scratchpad' ? route.projectId ?? undefined : undefined)}
         >
           New task

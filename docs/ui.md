@@ -85,7 +85,7 @@ is removed. If destination saving fails, the source stays; if the source changes
 destination gets a copy and the newer source stays. An interrupted source save may leave a duplicate,
 never lose the note. Pasted images must be filed or removed before moving, because they are not
 stored in the note file. The title-row Scratchpad, When done and New task buttons share
-`.titlebar-action` for height, padding, type, border and colour.
+`.titlebar-action` for height, padding, type and shape; New task uses the blue primary-button style.
 
 | Component | Screen |
 |---|---|

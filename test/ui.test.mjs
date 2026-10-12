@@ -5306,9 +5306,9 @@ try {
     const button = [...document.querySelectorAll('.titlebar button')].find(b => b.innerText.trim() === label)
     if (!button) return null
     const s = getComputedStyle(button)
-    return [s.height, s.backgroundColor, s.color, s.fontSize, s.padding, s.borderRadius].join('|')
+    return [s.height, s.fontSize, s.padding, s.borderRadius].join('|')
   })`)
-  check('Scratchpad, When done and New task share size and colour', headerStyles.length === 3 && headerStyles[0] && headerStyles.every(s => s === headerStyles[0]), JSON.stringify(headerStyles))
+  check('Scratchpad, When done and New task share size', headerStyles.length === 3 && headerStyles[0] && headerStyles.every(s => s === headerStyles[0]), JSON.stringify(headerStyles))
   const selectedProject = await evaluate(`document.querySelector('[aria-label="Scratchpad project"]')?.innerText`)
   check('opening from a project selects that project', selectedProject?.includes('ui project'), selectedProject)
   await evaluate(`document.querySelector('[aria-label="Scratchpad project"]')?.click()`)
