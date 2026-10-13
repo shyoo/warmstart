@@ -5,6 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { Session, Worker } from '@shared/protocol.js'
 import type { Task } from '@shared/tasks.js'
 import { messageBody } from './threadline.js'
+import { openaiCompatible } from './adapters/openai-compatible.js'
 
 /**
  * What happens to a task when the run under it does not succeed.
@@ -1833,6 +1834,28 @@ describe('a turn failed because the remote provider is overloaded (529)', () => 
     })
     expect(tasks.requireTask(seeded.task.id).status).toBe('scheduled')
     expect(workers.requireWorker(seeded.worker.id).health).toBeNull()
+  })
+
+  it('retries a terminal Codex disconnect at 1m/2m/4m, then hands back without quarantining the worker', async () => {
+    const text = 'stream disconnected before completion: websocket closed by server before response.completed'
+    const first = seedRunningTask({ adapterId: 'openai-compatible', metered: 0 })
+    await turnend.onStreamResult(first.session, { isError: true, text, terminalReason: 'turn.failed' })
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const task = tasks.requireTask(first.task.id)
+      expect(task.status).toBe('scheduled')
+      expect(task.notBefore! - Date.now()).toBeGreaterThan(60_000 * 2 ** (attempt - 1) - 5000)
+      expect(task.notBefore! - Date.now()).toBeLessThanOrEqual(60_000 * 2 ** (attempt - 1))
+      expect(task.holdReason).toContain(`attempt ${attempt}/3`)
+      expect(tasks.runsFor(task.id).every((r) => r.outcome === 'preempted')).toBe(true)
+      expect(workers.requireWorker(first.worker.id).health).toBeNull()
+      db.db().prepare('update tasks set not_before = ? where id = ?').run(Date.now() - 1000, task.id)
+      expect(tasks.admitScheduled()).toBe(1)
+      expect(tasks.requireTask(task.id).status).toBe('ready')
+      await refuse(text, { adapterId: 'openai-compatible', existingTask: task, worker: first.worker })
+    }
+    expect(tasks.requireTask(first.task.id).status).toBe('awaiting_human')
+    expect(workers.requireWorker(first.worker.id).health).toBeNull()
+    expect(openaiCompatible.overloaded?.('Tool failed: socket disconnected')).toBe(false)
   })
 
   // ⛔ t947 ← t936, 2026-10-06: four consecutive Antigravity runs each ended on this exact sentence

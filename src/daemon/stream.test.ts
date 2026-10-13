@@ -445,6 +445,31 @@ describe('openai-compatible', () => {
     ).toMatchObject({ kind: 'assistant_text', text: 'rate limited' })
   })
 
+  const reconnect = 'Reconnecting... 2/5 (stream disconnected before completion: websocket closed by server before response.completed)'
+
+  it('keeps Codex reconnect progress nonterminal so the same turn can finish', () => {
+    const progress = JSON.stringify({ type: 'error', message: reconnect })
+    expect(parse('openai-compatible', [progress])).toEqual([
+      { kind: 'assistant_text', text: reconnect }
+    ])
+    const events = parse('openai-compatible', [started, progress, message, completed])
+    expect(events.filter((e) => e.kind === 'result')).toEqual([
+      expect.objectContaining({ isError: false, text: 'ok', terminalReason: 'turn.completed' })
+    ])
+  })
+
+  it('still ends an exhausted reconnect turn and an ordinary error', () => {
+    const events = parse('openai-compatible', [
+      JSON.stringify({ type: 'error', message: reconnect }),
+      JSON.stringify({ type: 'turn.failed', error: { message: reconnect } })
+    ])
+    expect(events.filter((e) => e.kind === 'result')).toEqual([
+      expect.objectContaining({ isError: true, text: reconnect, terminalReason: 'turn.failed' })
+    ])
+    expect(parse('openai-compatible', ['{"type":"error","message":"invalid configuration"}']))
+      .toEqual([expect.objectContaining({ kind: 'result', isError: true, text: 'invalid configuration' })])
+  })
+
   it('decodes command_execution into tool_use and deduplicates item.started and item.completed', () => {
     const startedExec =
       '{"type":"item.started","item":{"id":"cmd_1","type":"command_execution","command":"\\"C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe\\" -Command whoami"}}'

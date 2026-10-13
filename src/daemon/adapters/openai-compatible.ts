@@ -554,6 +554,12 @@ function decodeStream(
           : typeof errorRecord?.message === 'string'
             ? errorRecord.message
             : errorInfo
+    // t1115 (2026-10-13): exec emits `error` for its own reconnect progress too.
+    // Ending the run here closes the process before its remaining attempts can land.
+    // Only the numbered progress notice is nonterminal; turn.failed still ends the turn.
+    if (errorText && /^Reconnecting\.\.\.\s+\d+\/\d+\b/i.test(errorText)) {
+      return { kind: 'assistant_text', text: errorText }
+    }
     return {
       kind: 'result',
       text: errorText,
@@ -1248,7 +1254,8 @@ export const openaiCompatible: AgentAdapter = {
       said.includes('backend-api/codex/responses') ||
       said.includes('503 service unavailable') ||
       said.includes('502 bad gateway') ||
-      said.includes('504 gateway timeout')
+      said.includes('504 gateway timeout') ||
+      said.includes('stream disconnected before completion')
     )
   },
 
