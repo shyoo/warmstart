@@ -198,6 +198,43 @@ describe('the /usage panel', () => {
     expect(disabledFiveHour?.id).toBe('5h')
   })
 })
+
+/**
+ * ⛔ t1120: the `agy.EXE` rewritten in place on 2026-10-14, still reporting 1.3.5, places the panel's
+ * rows by cursor address (`ESC[19;5H`) instead of `\r\n`. Stripped of ANSI they arrive glued —
+ * `Weekly Limit Remaining[███] 99.97%Refreshes in 156h 8m  Five Hour…` — and every probe since read
+ * *did not appear* against a panel that had drawn. This fixture is that backscroll, verbatim.
+ */
+describe('the /usage panel as agy 1.3.5 draws it (rows by cursor address)', () => {
+  const glued = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '__fixtures__', 'agy-usage-screen-1.3.5.txt'),
+    'utf8'
+  )
+
+  it('reads all four windows from rows that arrive on one line', () => {
+    const windows = parseUsageScreen(glued, NOW)
+    expect(windows?.map((w) => [w.label, w.percent])).toEqual([
+      ['Gemini 5h', 0.12],
+      ['Gemini 7d', 0.03],
+      ['Claude/GPT 5h', 100],
+      ['Claude/GPT 7d', 100]
+    ])
+  })
+
+  it('keeps each reset with its own window, and gates the disabled five-hour until the weekly reset', () => {
+    const windows = parseUsageScreen(glued, NOW)
+    const at = (label: string): number | null | undefined => windows?.find((w) => w.label === label)?.resetsAt
+    expect(at('Gemini 7d')).toBe(NOW + (156 * 60 + 8) * 60_000)
+    expect(at('Gemini 5h')).toBe(NOW + (3 * 60 + 12) * 60_000)
+    expect(at('Claude/GPT 7d')).toBe(NOW + (27 * 60 + 24) * 60_000)
+    expect(at('Claude/GPT 5h')).toBe(at('Claude/GPT 7d'))
+  })
+
+  it('still reads the account from its own line', () => {
+    expect(parseUsageScreenIdentity(glued)?.account).toBe('someone@example.com')
+  })
+})
+
 describe('parseTokenCount', () => {
   it('parses abbreviations and commas into exact numbers', () => {
     expect(parseTokenCount('28.9k')).toBe(28900)

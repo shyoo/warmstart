@@ -7,6 +7,13 @@ Verbatim captures from real CLIs, used by tests that parse rendered output.
   ⚠️ The account line is **redacted**: the panel prints the signed-in address and a fixture is not a
   place for one. Nothing in the parser reads it.
 
+- `agy-usage-screen-1.3.5.txt` — the same panel, captured 2026-10-14 (t1120) from the `agy` 1.3.5 build
+  rewritten in place that day, driven in a real PTY at 120×100 with `/usage` typed at 5s and 12s, and
+  ANSI stripped by the same pattern as `stripAnsi`. It is the whole backscroll, startup banner and
+  window title included, because the probe parses the whole backscroll. Its rows arrive glued:
+  this build places them by cursor address. ⚠️ **Redacted**: the account address, and the user's
+  name inside paths.
+
 - `agy-credits-screen.txt` — Antigravity's `/credits` panel, captured 2026-09-04 from `agy` 1.1.26 driven
   in a real PTY at 120 columns, with ANSI escapes stripped and nothing else changed. Shows "Remaining AI Credits: AI Credits not enabled (enable in /settings)".
 

@@ -652,7 +652,7 @@ codebase where rendered text becomes state, permitted for a quota reading and no
 Live reading, 2026-08-27, agy 1.1.22, Google AI Pro: Gemini weekly 5.48% used · Gemini 5-hour
 32.80% · Claude-and-GPT weekly 42.80% · Claude-and-GPT 5-hour 0%.
 
-⚠️ Five failure modes; the first four were measured, and the fifth is labelled with its basis:
+⚠️ Six failure modes, each measured on the date it gives:
 
 - The panel reports **remaining**; `QuotaWindow.percent` is **used**. Inverted in the parser.
 - A clipped **`Quota ava…` does not prove `Quota available`**. The parser accepts only the complete
@@ -675,6 +675,15 @@ Live reading, 2026-08-27, agy 1.1.22, Google AI Pro: Gemini weekly 5.48% used ·
   limit had been hit. The old completeness guard discarded all four otherwise valid windows, so
   Probe appeared to do nothing. The parser now carries that shorter window as 100% used until the
   weekly reset: it is unavailable, and a five-hour-only scheduler gate must not dispatch into it.
+- ⛔ **Rows placed by cursor address arrive glued.** t1120, 2026-10-14: `agy.EXE` was rewritten in
+  place at 16:43 local and still reported `1.3.5`. Every probe before it read (last 23:27Z) and
+  every one after read *did not appear*. In a node-pty capture the new build ends some panel rows
+  with `ESC[<row>;<col>H` instead of `\r\n`, `stripAnsi` leaves nothing in its place, and the
+  stripped text read `…Remaining[███] 99.97%Refreshes in 156h 8m  Five Hour…12mCLAUDE AND GPT
+  MODELS`. `splitPanelRows` breaks the lines again at the panel's own fixed phrases, and only where
+  something is glued to one, so the 1.1.22 fixture is untouched. Capture: `__fixtures__/agy-usage-screen-1.3.5.txt`. ⚠️ The same build now
+  opens with a dismissible *"Verbosity now defaults to medium"* notice. In two live captures the
+  panel drew anyway.
 
 What was tried before and does not work:
 

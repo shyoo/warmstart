@@ -728,6 +728,30 @@ export function parseContextScreen(screen: string): ContextSnapshot | null {
   }
 }
 
+/**
+ * Put the `/usage` panel's rows back on lines of their own.
+ *
+ * ⛔ Measured 2026-10-14 (t1120): the `agy.EXE` rewritten in place that afternoon, still reporting
+ * 1.3.5, places each row by cursor address (`ESC[19;5H`) instead of ending the one before with
+ * `\r\n`. Stripping ANSI deletes the address and leaves nothing in its place, so the panel arrives as
+ * `Weekly Limit Remaining[███] 99.97%Refreshes in 156h 8m  Five Hour…12mCLAUDE AND GPT MODELS`, which
+ * the line-anchored reader below matched none of, and every probe from then on read *did not appear*.
+ * Each split here is at one of the panel's own fixed phrases, and only where something is glued to
+ * it: on a panel that already breaks its lines (the 1.1.22 fixture) none of them fires.
+ */
+function splitPanelRows(screen: string): string {
+  return (
+    screen
+      // The text a row ends on: a heading's label, or a bar's own figure.
+      .replace(/(Limit Remaining|\][ \t]*(?:[\d.]+[ \t]*%|Quota available))(?=[ \t]*\S)/g, '$1\n')
+      // The text a row starts with.
+      .replace(/(\S)[ \t]*(?=(?:Weekly|Five Hour) Limit Remaining|Models within this group)/g, '$1\n')
+      // A group heading glued to the reset above it. Never inside one: what precedes the split may be
+      // neither a capital nor a space, so `CLAUDE AND GPT MODELS` is not cut at `LAUDE` or `GPT`.
+      .replace(/(?<=[^\sA-Z])[ \t]*(?=[A-Z][A-Z0-9&/]*(?: [A-Z0-9&/]+)* MODELS\b)/g, '\n')
+  )
+}
+
 export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[] | null {
   const hasUsage = /Models\s*&\s*Quota/.test(screen)
   const hasContext = /Context\s+(?:Usage|Breakdown)/i.test(screen)
@@ -742,7 +766,7 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
     let group: { id: string; label: string } | null = null
     let kind: 'weekly' | '5h' | null = null
 
-    const lines = screen.split(/\r?\n/)
+    const lines = splitPanelRows(screen).split(/\r?\n/)
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? ''
 

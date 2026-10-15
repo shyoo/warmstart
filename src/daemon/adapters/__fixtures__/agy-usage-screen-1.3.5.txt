@@ -1,0 +1,122 @@
+4;2m1u[?u q
+▄▀▀▄        Antigravity CLI 1.3.5
+▀▀▀▀▀▀someone@example.com                                                                                    
+▀▀▀▀▀▀▀▀~/AppData/Roaming/warmstart/scratch                                                                   
+▄▀▀▀▀▄                                                                                                           
+▄▀▀      ▀▀▄                                                                                                          
+
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>                                                                                                                       
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcuts                                                                                                         
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+:\Users\someone\AppData\Local\agy\bin\agy.EXE  Gemini 3.8 Flash (High)~/AppData/Roaming/warmstart/scratchGemini 3.8 Flash · hig
+ ┃ Verbosity now defaults to medium
+ ┃ Verbosity is now medium by default, so tool calls and thoughts roll up into summaries. You can change your
+ ┃ preferred verbosity anytime in /config > Verbosity.
+ ┃ esc to dismiss
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+? for shortcutsXGemini 3.8 Flash · hig (Google AI Pro) q────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+>
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+└ Models & Quota
+
+  Account: someone@example.com
+
+GEMINI MODELS
+  Models within this group: Gemini Flash, Gemini Pro  Weekly Limit Remaining[██████████████████████████████████████████████████] 99.97%Refreshes in 156h 8m  Five Hour Limit Remaining[██████████████████████████████████████████████████] 99.88%Refreshes in 3h 12mCLAUDE AND GPT MODELS
+  Models within this group: Claude Opus, Claude Sonnet, GPT-OSS  Weekly Limit Remaining[░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 0.00%Refreshes in 27h 24m  Five Hour Limit RemainingDisabled: You have hit your weekly limit, the 5-hour limit does not currently apply. Your weekly limit will fully re  │Within each group, models share a weekly limit and a 5-hour limit. Quota is
+  │consumed proportionally to the cost of the tokens. Thus, limits will last
+  │longer with shorter tasks or using more cost-effective models. The 5-hour
+  │limit smooths out aggregate demand to fairly distribute global capacity
+  │across all users, while your weekly limit is tied directly to your individual
+  │tier.  ↑/↓ Scroll · pgup/pgdown Page · ctrl+end Bottom · ctrl+home Top · esc Close Gemini 3.8 Flash · hig
