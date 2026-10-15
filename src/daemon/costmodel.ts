@@ -78,6 +78,12 @@ export interface CostModelFile {
      * a substring of none of them.
      */
     pool?: string
+    /**
+     * Set once the vendor's own CLI stops listing this model. ⛔ Still *priced* and still accepted by
+     * name (`modelIds`) - history, stored defaults and Statistics keep reading it - but no longer
+     * offered by a picker or to the controller (`offeredModelIds`). The value says when and how it was seen.
+     */
+    retired?: string
   }>
   /**
    * A model this file cannot list but will accept: one whose id is decided by a server at run time.
@@ -401,6 +407,11 @@ export class CostModel {
    */
   modelIds(): string[] {
     return this.data.models?.map((m) => m.id) ?? []
+  }
+
+  /** `modelIds` minus the models the vendor has stopped listing: what a picker may offer. */
+  offeredModelIds(): string[] {
+    return this.data.models?.filter((m) => !m.retired).map((m) => m.id) ?? []
   }
 
   /** The prefix a dynamic id must carry, or null where every model is listed by name. */

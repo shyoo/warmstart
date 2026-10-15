@@ -236,7 +236,7 @@ const info: AdapterInfo = {
     // WARMSTART_SESSION_ID is how the MCP server knows who it is speaking for.
     mcp: false,
     // ⚠️ Selectable reasoning effort: Antigravity supports `--effort low|medium|high` on base models
-    // (gemini-3.8-flash, gemini-3.7-flash, gemini-3.6-flash, gemini-3.5-flash, gemini-3.1-pro, gpt-oss-120b).
+    // (gemini-3.8-flash, gpt-oss-120b; agy 1.3.5 no longer lists 3.7/3.6/3.5 Flash or 3.1 Pro).
     // Models without effort options (e.g. claude-sonnet-4-6) declare empty effort_levels in the cost model.
     // Base models are used without baked-in effort suffix so effort is chosen via `--effort`.
     selectableEffort: true,

@@ -19,7 +19,7 @@
     "This file becomes useful the moment somebody measures it. Until then its honesty is its value:",
     "an invented multiplier would be indistinguishable from a measured one at the point of use.",
     "",
-    "MODELS: read from `agy models` on 2026-08-25 (agy 1.1.20) and updated 2026-09-23.",
+    "MODELS: read from `agy models` on 2026-08-25 (agy 1.1.20) and updated 2026-09-23. Re-read 2026-10-14 (agy 1.3.5, run in a PTY): only gemini-3.8-flash (low|medium|high), claude-sonnet-4-6, claude-opus-4-6-thinking and gpt-oss-120b are listed, so gemini-3.7/3.6/3.5-flash and gemini-3.1-pro carry `retired` - kept for pricing and history, no longer offered.",
     "Effort is separated into `effort_levels` and passed via `--effort` (low|medium|high) rather than",
     "being blended into model identifiers. Antigravity serves Claude and GPT-OSS models alongside Gemini",
     "— so 'this task needs Claude' does NOT imply 'this task needs a claude-code worker', and",
@@ -70,6 +70,7 @@
     },
     {
       "id": "gemini-3.7-flash",
+      "retired": "2026-10-14: absent from `agy models` on agy 1.3.5 (Gemini 3.8 Flash, Claude Sonnet/Opus 4.6 and GPT-OSS 120B only)",
       "context_window": 1000000,
       "input_per_mtok": null,
       "output_per_mtok": null,
@@ -84,6 +85,7 @@
     },
     {
       "id": "gemini-3.6-flash",
+      "retired": "2026-10-14: absent from `agy models` on agy 1.3.5 (Gemini 3.8 Flash, Claude Sonnet/Opus 4.6 and GPT-OSS 120B only)",
       "context_window": null,
       "input_per_mtok": null,
       "output_per_mtok": null,
@@ -99,6 +101,7 @@
     },
     {
       "id": "gemini-3.5-flash",
+      "retired": "2026-10-14: absent from `agy models` on agy 1.3.5 (Gemini 3.8 Flash, Claude Sonnet/Opus 4.6 and GPT-OSS 120B only)",
       "context_window": null,
       "input_per_mtok": null,
       "output_per_mtok": null,
@@ -114,6 +117,7 @@
     },
     {
       "id": "gemini-3.1-pro",
+      "retired": "2026-10-14: absent from `agy models` on agy 1.3.5 (Gemini 3.8 Flash, Claude Sonnet/Opus 4.6 and GPT-OSS 120B only)",
       "context_window": 1000000,
       "input_per_mtok": null,
       "output_per_mtok": null,

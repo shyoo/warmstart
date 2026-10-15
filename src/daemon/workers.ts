@@ -453,7 +453,7 @@ export function defaultSummarisingModel(adapterId: string): string | null {
  */
 export function knownModelIds(adapterId: string, workerId?: string | null): string[] {
   const cm = costModel(adapter(adapterId).info.policy.costModelId)
-  const ids = new Set(cm.modelIds())
+  const ids = new Set(cm.offeredModelIds())
   // ⛔ One worker's own picker is narrowed to what its plan offers; the adapter-wide list stays the
   // union a task's model constraint reads, and `checkConstraints` refuses the pairing that fails.
   const offeredTo = workerId ? getWorker(workerId) : null

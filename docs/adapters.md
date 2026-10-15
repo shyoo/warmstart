@@ -542,8 +542,7 @@ behaviour falls out of it:
     unlike `claude-haiku-4-5` (none): run on 2.1.293 (2026-10-07, t984) at `low`, `xhigh` and `max`,
     all answered, `contextWindow: 1000000`; an unknown level is ignored with a warning, not an error.
   - **`antigravity-cli`: true (promoted 2026-09-23, t645).** Antigravity CLI supports
-    `--effort low|medium|high` on base models (`gemini-3.8-flash`, `gemini-3.7-flash`,
-    `gemini-3.6-flash`, `gemini-3.5-flash`, `gemini-3.1-pro`, `gpt-oss-120b`). The cost model
+    `--effort low|medium|high` on base models (`gemini-3.8-flash`, `gpt-oss-120b`; `gemini-3.7/3.6/3.5-flash` and `gemini-3.1-pro` are `retired` in the cost model since agy 1.3.5 stopped listing them, 2026-10-14, measured with `agy models` in a PTY — still priced, no longer offered by `offeredModelIds`). The cost model
     now lists unblended base model identifiers and declares `effort_levels` explicitly. Models
     without selectable effort (e.g. `claude-sonnet-4-6`) declare empty `effort_levels`. Effort is
     selected per line in the Routable Models table and passed via `--effort` at spawn.

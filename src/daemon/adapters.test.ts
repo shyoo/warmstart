@@ -231,6 +231,18 @@ describe('capability consequences, not capability fields', () => {
   })
 })
 
+describe('a model the vendor stopped listing', () => {
+  it('stays priced and accepted by name but is no longer offered', () => {
+    // `agy models`, agy 1.3.5, 2026-10-14: Gemini 3.1 Pro and 3.7/3.6/3.5 Flash are gone.
+    const agy = costModel('google.antigravity.2026-08')
+    for (const id of ['gemini-3.1-pro', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash']) {
+      expect(agy.modelIds()).toContain(id)
+      expect(agy.offeredModelIds()).not.toContain(id)
+    }
+    expect(agy.offeredModelIds()).toContain('gemini-3.8-flash')
+  })
+})
+
 describe('a cost model may say it does not know', () => {
   it('offers the Codex CLI models verified in its refreshed model cache', () => {
     // Measured 2026-09-03 and 2026-09-20 from codex-cli's `$CODEX_HOME/models_cache.json`:
