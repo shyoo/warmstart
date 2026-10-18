@@ -23,6 +23,7 @@ describe('local-llm adapter unit tests', () => {
       manualCompact: false,
       resumeSession: false,
       mcp: false,
+      agentCli: false,
       quotaProbe: 'none',
       // Nothing to bill: the model runs on the operator's own machine.
       spendProbe: 'none',

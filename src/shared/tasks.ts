@@ -2044,6 +2044,14 @@ export interface QuestionResolution {
   status: 'answered' | 'parked' | 'void'
   reply: string
   answer: QuestionAnswer | null
+  /**
+   * The question was filed without waiting, and the run that asked has already ended.
+   *
+   * ⚠️ Only for a `warmstart-agent` helper call, which a shell cannot hold open on a person for an
+   * hour. `status` is `parked` — nothing is waiting — and the answer arrives the way every parked
+   * answer does, in the next run. Callers that would say *"nobody answered"* say what happened instead.
+   */
+  deferred?: { questionId: string }
 }
 
 /**

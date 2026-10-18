@@ -50,6 +50,8 @@ const info: AdapterInfo = {
     nativeWorktree: true,
     imageInput: 'inline',
     mcp: true,
+    // Not needed: the same tools arrive over MCP. See `AdapterCapabilities.agentCli`.
+    agentCli: false,
     // ⭐ **A flag exists as of claude 2.1.250**, which the note here promised to watch for: `--effort
     // <level>` taking `low, medium, high, xhigh, max` — the same five this cost model lists for
     // opus-5(-5) and sonnet-5(-5), and none for haiku-4-5, which takes no effort at all.

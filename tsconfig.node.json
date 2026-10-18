@@ -16,6 +16,6 @@
     "baseUrl": ".",
     "paths": { "@shared/*": ["src/shared/*"] }
   },
-  "include": ["src/main/**/*", "src/preload/**/*", "src/daemon/**/*", "src/mcp/**/*", "src/shared/**/*",
+  "include": ["src/main/**/*", "src/preload/**/*", "src/daemon/**/*", "src/mcp/**/*", "src/agentcli/**/*", "src/shared/**/*",
               "electron.vite.config.ts", "vite.mobile.config.ts", "vitest.config.ts"]
 }

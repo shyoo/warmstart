@@ -6,6 +6,10 @@
 > **Authority for:** the tier contract and the tool inventory.
 > The RPC surface it calls is in [`architecture.md`](architecture.md).
 
+⚠️ **The worker tier is defined in `workertools.ts`, not `index.ts`** (t1137): one table of names,
+descriptions, schemas and RPC calls, registered by the MCP server and served unchanged by the
+`warmstart-agent` shell helper (§6). A worker tool is added there, once.
+
 ⚠️ **Two files, and the split is what makes any of it testable.** `index.ts` is the wiring and ends by
 connecting a stdio transport at the top level — so importing it *starts a server*, and nothing in it
 could ever be loaded by a check. `payload.ts` is the pure half: what a tool result looks like, and how
@@ -156,7 +160,8 @@ recovering an argument the model demonstrably sent, not guessing choices out of 
 still refused (see `needsDecisionIn`) — and `options` accepts a bare JSON string as well as an array,
 because rejecting the call only teaches the model to flatten its choices into the question instead.
 
-⚠️ **An adapter with no MCP has no `ask_human`.** Its prompt asks it to end with a `NEEDS DECISION:`
+⚠️ **An adapter with no MCP has no `ask_human` over MCP** — one with `agentCli` has it as a shell command
+(§6), and keeps the line below as its fallback. Its prompt asks it to end with a `NEEDS DECISION:`
 line plus one `- option — detail` bullet per choice, and the daemon files a real `Question` row from
 it. Multiple choices are indicated with `NEEDS DECISION: [multi] <question>` or `(select all that apply)`.
 The operator UI also includes a `+ select multiple` mode toggle on question cards.
@@ -190,7 +195,8 @@ can act on. Ending a run over a mistyped path would throw work away over a typo.
 *already granted* is refused **without raising a second card** — the resumed run arrives holding a
 conversation in which it asked for this directory, and re-asking is the loop AGENTS.md names.
 
-⚠️ **MCP-capable adapters only, which today is `claude-code` alone.** Every other adapter is told in
+⚠️ **MCP-capable adapters, and `agentCli` ones through the helper** (§6: a deferred grant is applied
+when the operator answers, so the run that answer starts has the directory). Every other adapter is told in
 its prompt to name the absolute path after `NEEDS DECISION:` and stop; the operator attaches that
 folder to the question's answer with the card's [+] menu (a folder alone counts as an answer) and
 the next run has it — the attachment rides the answer's own thread message, so `grantedDirsFor`
@@ -262,9 +268,48 @@ check the age before reasoning about it ([`cost-model.md`](cost-model.md) §5).
 
 ## 5. Adding a tool
 
-1. Register it inside the correct `if (TIER === …)` block.
+1. A worker tool goes in `workertools.ts` (both transports pick it up); a controller tool inside
+   `index.ts`'s `if (TIER === 'controller')` block. ⛔ A worker tool that waits on a person must wait
+   through `askQuestion`, which is where a helper call is deferred (§6).
 2. It must reach the daemon over `rpc()` and hold no state of its own.
 3. ⛔ It may not delete anything, widen a mandate, or reach outside the caller's project.
 4. Say in the description what the tool is *for*, not what it does — these strings are the only
    documentation the agent ever reads, and they are how the fleet's contract is actually expressed.
 5. Update the table above, and note that the prefix change invalidates every cached prompt.
+
+## 6. `warmstart-agent`: the worker tier without MCP (t1137)
+
+An adapter with `mcp: false` and `capabilities.agentCli` gets the same worker tools as a **shell
+command**. `agentcli.ts` (daemon) mints a per-session token at spawn and puts four variables in the
+CLI's environment — `WARMSTART_AGENT_TOKEN`, `_URL`, `_NODE`, `_SCRIPT` — and the `<dataDir>/agent-bin`
+shims (`warmstart-agent.cmd`, and an `sh` one for Git Bash) at the front of its PATH. The shim runs
+`out/main/warmstart-agent.js` (`src/agentcli`) under the app's own binary with
+`ELECTRON_RUN_AS_NODE` set **inside the shim only** — inherited, it would turn every Electron launch in
+the agent's shell into bare Node. ⭐ Measured 2026-10-17, agy 1.4.0, Windows 11: agy's shell ran a
+`.cmd` from a parent-prepended PATH entry, saw a parent-set variable, kept quoted arguments whole, and
+reached 127.0.0.1. Only agy declares it; muse is unmeasured and stays `false`.
+
+⛔ **The token is not the daemon's and opens one door.** `POST /agent` takes only agent tokens (the
+daemon's is refused there, and an agent token is refused on `/rpc`), only `AGENT_METHODS`, only
+`question.ask` as `ask_human`/`checkpoint` (an agent-worded card must not carry a grant), only while
+the session has an **open run**, and at most `AGENT_CALLS_PER_MINUTE` (30, chosen) per session.
+`sessionId` is written from the token. Revoked when the session exits; in memory, so a daemon
+restart (which ends its PTYs) voids every one.
+
+⛔ **A wait on a person is deferred, not held.** A vendor's shell tool kills a command long before an
+operator's hour, so under `runAsHelper` `askQuestion` files the card **already parked** and ends the run
+`blocked` (`parkForHuman`, quiet) — the reply says STOP — and the answer resumes the task like any
+parked answer. `request_directory` stores `{path, why}` on the card (`questions.action_json`) and the
+grant is applied **at answer time**; `task_split` stores its pieces and the resumed agent files them
+with `task_split --approval <card>` (once: `consumedAt`); a converged `debate_round` takes the existing
+parked-debate path. `task_complete` and `land_work` still block on the checks — the daemon finishes
+them whether or not the shell is still listening.
+
+⛔ **The turn end must not overrule the helper.** On an MCP-less adapter `onStreamResult` reads a turn
+with no contract line as complete; after a helper call ended the run that reading reopens the task
+through `resumeIdleConversation` and finishes work waiting on a person. `helperEndedLastRun` returns
+early (`agentcli.test.ts` goes red without it). The `TASK COMPLETE:` / `NEEDS DECISION:` lines stay in
+the prompt as the fallback (`agentCliClause`).
+
+⚠️ The shims sit in the data directory and are **executed by agents, never loaded by the app**; their
+text is fixed (no path, no token) and rewritten on every spawn that finds it changed.

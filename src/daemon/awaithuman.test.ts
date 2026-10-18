@@ -201,12 +201,17 @@ describe('the MCP bundle', () => {
   // ⚠️ Read from source rather than imported: importing it would start a server on stdio.
   const src = (): string =>
     readFileSync(join(import.meta.dirname, '..', 'mcp', 'index.ts'), 'utf8')
+  // ⚠️ The worker tier's definitions live beside the server since t1137, shared with the
+  //    `warmstart-agent` helper; the server registers that table inside its worker block.
+  const workerSrc = (): string =>
+    readFileSync(join(import.meta.dirname, '..', 'mcp', 'workertools.ts'), 'utf8')
 
   it('registers await_human in the worker tier, alongside the other terminal contract', () => {
     const text = src()
-    const worker = text.slice(text.indexOf("if (TIER === 'worker')"), text.indexOf('} // end worker tier'))
-    expect(worker).toContain("'await_human'")
-    expect(worker).toContain("'task_complete'")
+    const worker = text.slice(text.indexOf("if (TIER === 'worker')"), text.indexOf("if (TIER === 'controller')"))
+    expect(worker).toContain('workerTools(io)')
+    expect(workerSrc()).toContain("'await_human'")
+    expect(workerSrc()).toContain("'task_complete'")
   })
 
   it('does not hand it to the controller tier, which owns no run to end', () => {
@@ -218,7 +223,7 @@ describe('the MCP bundle', () => {
   it('says in its description that it is not a way to finish early', () => {
     // ⛔ These strings are the only documentation an agent ever reads. If the description stops
     //    drawing the line against `task_complete`, the tool becomes a quieter one.
-    const text = src()
+    const text = workerSrc()
     const at = text.indexOf("'await_human'")
     const tool = text.slice(at, at + 2000)
     expect(tool).toContain('NOT a way to finish early')

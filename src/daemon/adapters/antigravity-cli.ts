@@ -235,6 +235,12 @@ const info: AdapterInfo = {
     // agentyard does not use it: one shared registration cannot carry a per-session identity, and
     // WARMSTART_SESSION_ID is how the MCP server knows who it is speaking for.
     mcp: false,
+    // ⭐ Measured 2026-10-17, agy 1.4.0 on Windows 11, `--dangerously-skip-permissions -p`: asked to
+    // run a `.cmd` shim from a directory only the parent had prepended to PATH, its shell ran it, the
+    // shim saw an environment variable only the parent had set, both quoted arguments arrived whole,
+    // and its HTTP POST to a server on 127.0.0.1 was answered. That is everything `warmstart-agent`
+    // needs, so this agent gets the worker tools through the helper instead of through MCP.
+    agentCli: true,
     // ⚠️ Selectable reasoning effort: Antigravity supports `--effort low|medium|high` on base models
     // (gemini-3.8-flash, gpt-oss-120b; agy 1.3.5 no longer lists 3.7/3.6/3.5 Flash or 3.1 Pro).
     // Models without effort options (e.g. claude-sonnet-4-6) declare empty effort_levels in the cost model.

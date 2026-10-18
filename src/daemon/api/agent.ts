@@ -1,7 +1,8 @@
 /** The worker RPCs an agent reaches through MCP, and the only ones it can. */
 import { addMessage, createTask, getTask, getTaskBySeq, messagesFor, requireTask, runForSession, runsFor, setTaskHandoff } from '../tasks.js'
 import { landConversationWork } from '../conversationland.js'
-import { askQuestion } from '../questions.js'
+import { approvedSplit, askQuestion, markSplitFiled } from '../questions.js'
+import { AGENT_CLI_COMMAND } from '../agentcli.js'
 import { addSplitDependency, applySplit, isDelegation, splitApprovalFor, validateSplit } from '../split.js'
 import { pendingDelegateRequest } from '../delegation.js'
 import {
@@ -216,7 +217,16 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
         return { ok: false, reply: 'This session is not working on a task, so it cannot split one.' }
       }
 
-      const pieces = p.pieces ?? []
+      // ⭐ An approval already answered, named by its card: the pieces are the ones the operator saw,
+      //    read back from the card rather than re-sent. See `approvedSplit`.
+      let pieces = p.pieces ?? []
+      let approvedCard: Extract<ReturnType<typeof approvedSplit>, { ok: true }> | null = null
+      if (p.approval) {
+        const found = approvedSplit(parent.id, p.approval)
+        if (!found.ok) return { ok: false, reply: `Nothing was filed: ${found.reason}` }
+        approvedCard = found
+        pieces = found.pieces
+      }
       const precheck = validateSplit(parent, pieces)
       if (!precheck.ok) {
         return { ok: false, reply: `That split was not filed: ${precheck.reason}` }
@@ -232,14 +242,34 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
       const requested = delegating && pendingDelegateRequest(parent.id)
       const resolution = requested
         ? null
-        : await askQuestion({
-          sessionId: p.sessionId,
-          origin: 'task_split',
-          kind: 'choice',
-          header: approval.header,
-          question: approval.question,
-          options: approval.options
-        })
+        : approvedCard
+          ? approvedCard.resolution
+          : await askQuestion({
+            sessionId: p.sessionId,
+            origin: 'task_split',
+            kind: 'choice',
+            header: approval.header,
+            question: approval.question,
+            options: approval.options,
+            // ⭐ Kept with the card, so an answer that arrives after this call has gone can still be
+            //    filed by naming it. See `QuestionAction`.
+            action: { kind: 'split', pieces }
+          })
+
+      if (resolution?.deferred) {
+        // ⛔ The helper's shape: the card is filed and this run has already ended. Nothing is filed
+        //    until the operator approves *and* the resumed agent names the card.
+        const card = resolution.deferred.questionId.slice(0, 8)
+        return {
+          ok: true,
+          reply:
+            `The pieces are with the operator for approval as card ${card}. This run has ended — STOP ` +
+            'HERE and do none of that work yourself. You are started again when they answer. If they ' +
+            `approved, run \`${AGENT_CLI_COMMAND} task_split --approval ${card}\` to file exactly the ` +
+            'pieces they saw (do not send the pieces again); if they did not, revise the plan from what ' +
+            'they said.'
+        }
+      }
 
       const approved =
         resolution === null ||
@@ -266,6 +296,7 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
         { requested }
       )
       if (!result.ok) return { ok: false, reply: `That split was not filed: ${result.reason}` }
+      if (approvedCard) markSplitFiled(approvedCard.questionId)
 
       const seqs = result.children.map((c) => c.seq)
       const named = seqs.map((s) => `t${s}`).join(', ')
@@ -418,6 +449,18 @@ ${agreement}
           detail: DEBATE_VERDICT_DETAILS[v]
         }))
       })
+
+      if (resolution.deferred) {
+        // ⚠️ The verdict is applied when the operator answers — the parked-debate path `answerQuestion`
+        //    already takes for an MCP-less organizer — so there is nothing left for this call to do.
+        return {
+          ok: true,
+          reply:
+            'Your agreement is on the thread and the operator has the five-way card. This run has ' +
+            'ended — STOP HERE. Their verdict is applied when they answer, and you are started again ' +
+            'if there is more for you to do.'
+        }
+      }
 
       const chosen = resolution.status === 'answered' ? verdictFromAnswer(resolution.answer) : null
       const words = resolution.answer?.text?.trim()

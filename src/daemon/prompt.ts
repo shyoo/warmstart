@@ -23,6 +23,7 @@ import {
 import { resolveFinishPolicy } from './finish.js'
 import { settings } from './settings.js'
 import { lastCompactionLandedAt } from './compaction.js'
+import { AGENT_CLI_COMMAND } from './agentcli.js'
 
 /**
  * A prompt and the images that go with it.
@@ -176,6 +177,38 @@ const HAND_BACK_CLAUSE =
   ' If the rest genuinely needs a person — a step only they can take, or work they have said they ' +
   'will close out themselves — call `await_human` with the reason instead of simply stopping. ' +
   'Ending your turn without calling one of these leaves the task reading as still running.'
+
+/**
+ * The `warmstart-agent` helper, named to an agent that has no MCP but can run it.
+ *
+ * ⛔ **Beside the text contracts, never instead of them.** The lines stay the agent's fallback, and
+ * stay the thing `turnend` reads: a helper that cannot reach the daemon (an unbuilt checkout, a
+ * sandbox that changed under us) must leave an agent that can still finish and still ask. So this
+ * says *you may run X where you were told to write Y*, inheriting every condition Y was given — a
+ * conversation's "only when asked to finish" included.
+ *
+ * ⚠️ `AGENT_CLI_COMMAND` is the shim's name, and the shim is what `agentCliEnv` puts on PATH.
+ * ⚠️ Cold prompts only, like `task_read`'s sentence for MCP agents: it describes the session, and a
+ * session that holds the prompt already holds this.
+ */
+export function agentCliClause(hasProject: boolean): string {
+  const cmd = AGENT_CLI_COMMAND
+  return (
+    `Warmstart also gives you a shell command, \`${cmd}\`, with the same tools other agents reach ` +
+    `over MCP; \`${cmd} help\` lists them and \`${cmd} help <tool>\` shows a tool's flags. ` +
+    `Run \`${cmd} task_read\` to read this task's recorded thread and prior runs (add \`--task t12\` ` +
+    'for another task in this project) when an earlier reference or result matters' +
+    (hasProject
+      ? `, and \`${cmd} project_settings\` to see how this project lands work instead of asking. `
+      : '. ') +
+    'Wherever you are told to end with a `TASK COMPLETE: ` line you may instead run ' +
+    `\`${cmd} task_complete "<one-line summary>"\`, and wherever you would write \`NEEDS DECISION:\` ` +
+    `you may instead run \`${cmd} ask_human "<question>" --option "<choice>" --option "<choice>"\`; ` +
+    `\`${cmd} await_human "<reason>"\` hands the task back to a person. A call that needs a person ` +
+    'files a card and ENDS this run — when it says STOP, end your turn at once. If the command is ' +
+    'missing or cannot reach Warmstart, use the lines instead.'
+  )
+}
 
 /**
  * Check the branch against its landing target *before* saying the work is done.
@@ -1163,6 +1196,10 @@ export function promptFor(
         'If multiple options can be chosen (checkboxes), indicate that with `NEEDS DECISION: [multi] <question>` ' +
         'or include `(multi-select)` / `(select all that apply)` in the question.'
       )
+    }
+    // ⛔ `capabilities.agentCli`, never an adapter name. See `agentCliClause`.
+    if (adapter(adapterId).info.capabilities.agentCli && !holdsPrompt) {
+      parts.push(agentCliClause(Boolean(project)))
     }
   }
 

@@ -27,6 +27,7 @@ import { getWorker, refreshIdentity, requireWorker, watchReadiness } from './wor
 import { log } from './log.js'
 import { ensureDir, paths } from './paths.js'
 import { removeMcpConfig, writeMcpConfig } from './mcpconfig.js'
+import { agentCliEnv, revokeAgentToken } from './agentcli.js'
 import { StreamParser, describeStream, renderForHuman, stripAnsi, type SpawnAsked, type StreamEvent } from './stream.js'
 import { settings } from './settings.js'
 import { clearIdleForSession } from './idlestate.js'
@@ -1123,6 +1124,14 @@ export function spawnSession(opts: SpawnOptions): Session {
     ...(forking ? { forkFrom: forking.vendorSessionId ?? forking.id } : {})
   })
 
+  // ⛔ The worker tier for an agent with no MCP: a per-session token and the `warmstart-agent` shim on
+  // its PATH, in the environment its shell commands inherit. `work` only, for the reason `mcpConfig`
+  // above gives — and only where MCP is absent, or the model would be shown every tool twice.
+  if (purpose === 'work' && !ad.info.capabilities.mcp && ad.info.capabilities.agentCli) {
+    const env = agentCliEnv(id, plan.env)
+    if (env) plan.env = env
+  }
+
   // Stopped from handleExit, whichever way the session ends. Declared here so both closures see it.
   let stopReadinessWatch: (() => void) | null = null
 
@@ -1197,6 +1206,7 @@ export function spawnSession(opts: SpawnOptions): Session {
     // the CLI said *while* settling a session that has just died, which is the one moment it matters.
     retainDiagnostics(id)
     removeMcpConfig(id)
+    revokeAgentToken(id)
     for (const listener of endListeners.get(id) ?? []) listener(exitCode)
     streamListeners.delete(id)
     endListeners.delete(id)

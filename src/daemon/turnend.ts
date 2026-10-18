@@ -26,6 +26,7 @@ import { backgroundTasksOf, forgetBackground, noteBackgroundTasks } from './back
 import { clearIdleForSession, markTaskIdle, onIdleCleared } from './idlestate.js'
 import { emit } from './events.js'
 import { log } from './log.js'
+import { helperEndedLastRun } from './agentcli.js'
 import {
   completeTask,
   completing,
@@ -384,6 +385,13 @@ export async function onStreamResult(
   // all for. See `sendPrompt`'s `housekeeping` option.
   clearHousekeepingPrompt(session.id)
   const mcpLess = Boolean(session.adapterId && !adapter(session.adapterId).info.capabilities.mcp)
+  // ⛔ **Unless the agent already said how the run ended, through `warmstart-agent`.** Everything
+  // below reads an MCP-less turn's end as its completion when no contract line overrides it — right
+  // when a line is the only channel there is, and wrong once the helper has completed the task,
+  // parked it on a question or handed it to a person. That run is closed; this `result` is only the
+  // tail of the turn that closed it, and completing "it" would reopen the task through
+  // `resumeIdleConversation` and finish work that is waiting on a person.
+  if (mcpLess && helperEndedLastRun(session.id)) return
   // An MCP-less adapter cannot call task_complete, so its prompt gives it two deliberately exact
   // terminal contracts. Codex streams its prose as `assistant_text` and emits a bare `turn.completed`
   // with `text: null`, so inspect the session's backscroll when `result.text` carries no terminal contract.

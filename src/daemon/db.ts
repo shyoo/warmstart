@@ -2440,7 +2440,19 @@ const MIGRATIONS: Migration[] = [
      ok integer not null,
      reason text not null,
      checked_at integer not null
-   );`
+   );`,
+  // 92 - what answering a question should *do*, kept with the question (t1137).
+  //
+  // A `warmstart-agent` helper call cannot wait on a person, so its approval cards are filed and
+  // the run ends: a `request_directory` grant is applied when the operator answers, and an approved
+  // `task_split` is filed when the resumed agent names the card. Both need what was asked for —
+  // the path, the pieces — after the call that asked has gone. ⚠️ Nullable, and null on every
+  // ordinary question. Guarded by `hasColumn`: `versionBefore` replays.
+  (conn) => {
+    if (!hasColumn(conn, 'questions', 'action_json')) {
+      conn.exec(`alter table questions add column action_json text`)
+    }
+  }
 ]
 
 /**

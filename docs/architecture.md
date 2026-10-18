@@ -265,6 +265,7 @@ same function so both agree.
   attachments/                     image bytes; metadata is a row
   scratch/                         where a session with no project runs
   scratchpads/<project id>.md      a project's prompt scratchpad, unless re-pointed into the project
+  agent-bin/                       the warmstart-agent shims; run by agents, never loaded by the app
 ```
 
 ⛔ **`scratch/` is not the user's home and not a credential root.** A CLI asks whether it may trust
@@ -317,6 +318,7 @@ no supported install predates 2026-09-09.
 | `WARMSTART_DATA_DIR` | everything | override the data directory. What tests use |
 | `WARMSTART_TIER` | `src/mcp` | `worker` (default) or `controller`. ⛔ Written **only** by the daemon into the session's MCP config; an agent cannot promote itself |
 | `WARMSTART_SESSION_ID` | `src/mcp` | which session a tool call belongs to |
+| `WARMSTART_AGENT_TOKEN` / `_URL` / `_NODE` / `_SCRIPT` | `src/agentcli` and its shims | the `warmstart-agent` helper's per-session token, its `/agent` door, and what the shim runs. ⛔ Written **only** by the daemon into an `agentCli` session's environment; the token opens nothing but that session's worker tier while it has an open run (mcp.md §6) |
 | `WARMSTART_HEADLESS` | `main/showwindow.ts` | suites set it; `createWindow` skips both `show()` paths |
 | `WARMSTART_LOG_LEVEL` / `_LOG_STDOUT` | `log.ts` | daemon log verbosity and destination |
 | `WARMSTART_E2E` | `test/e2e.test.mjs` | the only gate on the only suite that spends tokens |
@@ -471,6 +473,12 @@ left `quotaRisk` with no reachable trigger and quota vanished from routing for t
   executing a file anything on the machine can write would put all of that behind a file permission.
   A declaration also cannot grant itself MCP tools, a mintable session id, metering or a quota probe —
   each is refused with a test.
+- ⛔ **An agent's helper gets a per-session token, never the daemon's** (t1137). `/agent` refuses the
+  daemon token and `/rpc` refuses an agent token; an agent token reaches only the worker tier, only
+  for its own session (`sessionId` is written from the token), only while that session has an open
+  run, and 30 times a minute. The `agent-bin/` shims are the one file in the data directory anything
+  *executes* — agents run them, the app never loads them — so their text is fixed and carries no path
+  or token. See mcp.md §6.
 - ⛔ **A spawned CLI gets `spawnEnv()`, never a copy of `process.env`.** It denies the whole
   `CLAUDE*` / `ANTHROPIC_*` namespace **by prefix**, because a Claude Code session's environment
   carries ~20 such variables and a daemon started inside one would hand every worker the operator's

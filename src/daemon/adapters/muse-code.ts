@@ -104,6 +104,11 @@ const info: AdapterInfo = {
     // have. What a muse run *can* do is end its reply `NEEDS DECISION:`, which `turnend` parses
     // back into a Question.
     mcp: false,
+    // ⚠️ Unmeasured, so `false` — conservative is the cheap direction. Muse runs shell commands, but
+    // whether its sandbox passes our environment through and allows a loopback connection has not
+    // been tried on a real binary. The spike that set agy's to `true` (antigravity-cli.ts) is the
+    // one to repeat; until then a muse run keeps the `TASK COMPLETE:` / `NEEDS DECISION:` lines.
+    agentCli: false,
     // ⭐ `--reasoning-effort` is a real flag on `exec`, and the catalogue lists which tiers each
     // model accepts.
     selectableEffort: true,

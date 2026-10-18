@@ -130,6 +130,8 @@ const info: AdapterInfo = {
     // a per-session identity (WARMSTART_SESSION_ID, WARMSTART_TIER) is passed cleanly without
     // touching global config, enabling native debate_round, task_complete, and controller tools.
     mcp: true,
+    // Not needed: the same tools arrive over MCP. See `AdapterCapabilities.agentCli`.
+    agentCli: false,
     /**
      * ⭐ Promoted 2026-09-15, on a real spawn rather than `--help`. `-c model_reasoning_effort=high`
      * against a signed-in ChatGPT account (codex-cli 0.151.0) ran clean and the rollout's

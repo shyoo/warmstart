@@ -5,8 +5,9 @@ import { samePath, withinPath } from './fspath.js'
 import { log } from './log.js'
 import { askQuestion } from './questions.js'
 import { resumeWithGrant } from './scheduler.js'
-import { addMessage, getTask, runForSession } from './tasks.js'
+import { addMessage, getTask, runForSession, setTaskHandoff } from './tasks.js'
 import { getSession } from './sessions.js'
+import { isHelperCall } from './agentcli.js'
 
 /**
  * An agent asking for a directory outside its workspace, and the operator answering with something
@@ -35,7 +36,7 @@ import { getSession } from './sessions.js'
  */
 
 /** What the operator's two buttons are called. Read back off the answer, so they are ids, not prose. */
-const GRANT = 'grant'
+export const GRANT = 'grant'
 const REFUSE = 'refuse'
 
 export interface DirectoryRequest {
@@ -109,9 +110,19 @@ export async function requestDirectory(
   }
 
   const why = (request.reason ?? '').trim() || 'the work needs it'
+  // ⛔ Write the state down first when the ask is deferred (`warmstart-agent`): that ends this run
+  // inside `askQuestion`, and whatever the agent worked out is lost unless it is recorded before.
+  const deferring = isHelperCall()
+  if (deferring && request.state?.trim()) {
+    setTaskHandoff(task.id, request.state.trim())
+    addMessage(task.id, 'agent', `Where things stand:\n${request.state.trim()}`, run.id)
+  }
   const resolution = await askQuestion({
     sessionId: request.sessionId,
     origin: 'request_directory',
+    // ⭐ Kept with the card, so a `Grant` answered after the asker has gone still grants: see
+    // `grantFromAnswer`. That covers a deferred helper call and an MCP wait that parked alike.
+    action: { kind: 'directory', path, why },
     kind: 'choice',
     header: 'Directory access',
     question:
@@ -137,6 +148,16 @@ export async function requestDirectory(
     ]
   })
 
+  if (resolution.deferred) {
+    return {
+      ok: true,
+      reply:
+        `Asked the operator for ${path}. This run has ended — a sandbox cannot be widened mid-process, ` +
+        'so a grant only ever reaches the next one. STOP HERE: end your turn and do no more work. If ' +
+        'they grant it, the next run starts with it writable; if they refuse, you are told so.'
+    }
+  }
+
   // ⚠️ Parked or void: nobody answered before the session stopped paying for itself, and the task
   // is already resting at `awaiting_human` with the question still open. The agent gets the
   // question layer's own words, which tell it to stop rather than guess.
@@ -153,14 +174,28 @@ export async function requestDirectory(
     }
   }
 
+  recordGrant(task.id, run.id, path, why)
+  log.info(`t${task.seq}: operator granted ${path}; restarting the run to pick it up`)
+
+  // ⚠️ A deferred ask recorded `state` before the card was raised; it is not written twice.
+  return await resumeWithGrant(request.sessionId, path, deferring ? undefined : request.state)
+}
+
+/**
+ * Attach a granted directory to a task, and tell its next run.
+ *
+ * ⚠️ Shared by the live answer above and by `grantFromAnswer`, which applies a `Grant` answered
+ * after the asker had gone — so the two cannot word the grant, or bind it, differently.
+ */
+export function recordGrant(taskId: string, runId: string | null, path: string, why: string): void {
   // ⭐ The same row the composer's *Attach a folder* writes, bound to this task by the message that
   // records it. From here `grantedDirsFor` does the rest, on every run and down every lineage.
   const attachment = createFolderAttachment(path)
   addMessage(
-    task.id,
+    taskId,
     'system',
     `Granted \`${path}\` to this task`,
-    run.id,
+    runId,
     [attachment.id],
     {
       detail:
@@ -169,18 +204,14 @@ export async function requestDirectory(
         'pick it up, because a sandbox cannot be widened once its process has started.'
     }
   )
-  log.info(`t${task.seq}: operator granted ${path}; restarting the run to pick it up`)
-
   // ⛔ **Also on the thread as an undelivered instruction, and that is not a duplicate of the
   // handoff.** The next run is a resume, and a resumed prompt does not restate the task — so the
   // one thing the agent must be told on arrival is what changed and what to do about it.
   addMessage(
-    task.id,
+    taskId,
     'human',
     `\`${path}\` is now granted to you and writable. Pick up where the last turn stopped: it had ` +
       'already done the work that did not need this directory, so re-read what is there before ' +
       'redoing any of it, then finish the part that was blocked.'
   )
-
-  return await resumeWithGrant(request.sessionId, path, request.state)
 }

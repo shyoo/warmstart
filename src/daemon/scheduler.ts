@@ -3977,7 +3977,12 @@ export async function parkForHuman(
   reason: string,
   state?: string,
   /** What the task reads as waiting on, where the reason is more than a glance (default: the start of it). */
-  hold?: string
+  hold?: string,
+  /**
+   * `quiet`: write no "Over to you" line. ⚠️ For a deferred question (`deferQuestion`), whose card is
+   * already on the thread in the agent's own words — saying it twice reads as two asks.
+   */
+  opts?: { quiet?: boolean }
 ): Promise<{ ok: boolean; reply: string }> {
   const run = runForSession(sessionId)
   if (!run?.taskId || run.outcome) {
@@ -4000,7 +4005,7 @@ export async function parkForHuman(
   const why = reason.trim() || 'the agent stopped and asked for a person'
   log.info(`t${task.seq} handed to a person by the agent: ${why.slice(0, 200)}`)
 
-  addMessage(task.id, 'agent', `Over to you: ${why}`, run.id)
+  if (!opts?.quiet) addMessage(task.id, 'agent', `Over to you: ${why}`, run.id)
   // ⭐ Recorded as the handoff too when the agent wrote one, so a successor run does not pay to
   //    rediscover the state of the branch. Same note, two places, one call.
   if (state?.trim()) {

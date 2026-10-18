@@ -1263,6 +1263,18 @@ export interface AdapterCapabilities {
   imageInput: 'inline' | 'spawn-flag' | 'none'
   mcp: boolean
   /**
+   * Can this CLI's agent reach the worker tools through the `warmstart-agent` shell helper?
+   *
+   * ⛔ For an adapter with `mcp: false` whose agent runs shell commands that **inherit the
+   * environment the daemon spawned it with** and may open a loopback HTTP connection — the helper
+   * finds orchestratord and its own per-session token there and nowhere else. A sandbox that strips
+   * the environment or the network makes this false whatever the vendor documents.
+   *
+   * ⚠️ Read only where `mcp` is false: an MCP adapter already has the same tools natively, and
+   * giving it both would put two copies of every tool in front of the model.
+   */
+  agentCli: boolean
+  /**
    * Can this CLI be told an effort level when the process starts?
    *
    * ⛔ False on all three built-ins as of 2026-08-27, and that is a measurement rather than an
@@ -3085,6 +3097,14 @@ export interface RpcMap {
         model?: string
         effort?: string
       }>
+      /**
+       * File the pieces of an approval the operator has already answered, instead of `pieces`.
+       *
+       * ⚠️ The id an earlier, deferred `task_split` was given — the `warmstart-agent` helper cannot
+       * hold a call open on a person, so its approval card is filed, the run ends, and the resumed
+       * agent names the card rather than re-sending every instruction word for word.
+       */
+      approval?: string
     }
     result: { ok: boolean; reply: string; seqs?: number[] }
   }

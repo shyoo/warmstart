@@ -31,6 +31,10 @@ import {
 import { getAttachment } from './attachments.js'
 import { becomeConversation, recordVerdict, verdictFromAnswer } from './debate.js'
 import { cancelTask } from './cancel.js'
+import { AGENT_CLI_COMMAND, isHelperCall } from './agentcli.js'
+import { parkForHuman } from './scheduler.js'
+import { GRANT, recordGrant } from './dirgrants.js'
+import type { RpcParams } from '@shared/protocol.js'
 
 /**
  * Questions.
@@ -95,6 +99,7 @@ interface QuestionRow {
   answer_json: string | null
   answered_by: string | null
   parked_at: number | null
+  action_json?: string | null
 }
 
 function toQuestion(r: QuestionRow): Question {
@@ -155,7 +160,28 @@ export interface QuestionRequest {
   question: string
   header?: string
   options?: QuestionOption[]
+  /**
+   * What an answer to this card should do, kept with the question. ⛔ Daemon-written only: no RPC
+   * accepts it, because an action is authority and a card an agent could word itself must not carry
+   * one. See `QuestionAction`.
+   */
+  action?: QuestionAction
 }
+
+/**
+ * The deed behind an approval card, for when the call that raised it is no longer there to do it.
+ *
+ *  - `directory` — granted at the moment the operator answers `Grant` (`grantFromAnswer`), so the
+ *    run their answer starts already has the directory on its argv.
+ *  - `split` — filed when the resumed agent calls `task_split` again naming the card
+ *    (`approvedSplit`). ⚠️ Not at answer time: what a split does next — stop a planner, complete a
+ *    Plan & Execute, tell a conversation it delegated — belongs to a run, and the run that asked has
+ *    ended. `consumedAt` makes a second filing of one approval impossible.
+ */
+export type QuestionAction =
+  | { kind: 'directory'; path: string; why: string }
+  | { kind: 'split'; pieces: RpcParams<'agent.split'>['pieces']; consumedAt?: number }
+
 
 /**
  * Ask, and wait.
@@ -183,6 +209,9 @@ export async function askQuestion(request: QuestionRequest): Promise<QuestionRes
     fileParkedQuestion(request)
     return parkedResolution()
   }
+
+  // ⛔ **A shell cannot hold a call open on a person.** See `deferQuestion`.
+  if (isHelperCall() && run && task) return await deferQuestion(request)
 
   const deadlineAt = session
     ? costModel(adapter(session.adapterId).info.policy.costModelId).cacheExpiryFor(session)
@@ -220,6 +249,124 @@ export async function askQuestion(request: QuestionRequest): Promise<QuestionRes
 }
 
 /**
+ * File the card, end the run, and say so — the `warmstart-agent` shape of asking.
+ *
+ * ⛔ **Why the run ends rather than waits.** The helper is a command in a vendor's shell tool, and
+ * those kill a command long before an operator's hour is up; a wait that dies half way is an answer
+ * delivered into nothing, which is t708 again. So the question is filed **already parked** — exactly
+ * what `NEEDS DECISION:` files — and the run ends `blocked` the way `await_human` ends one, with the
+ * session kept warm. The answer then travels as every parked answer does: `question.answer` sees the
+ * task resting at `awaiting_human` and `continueTask` carries the reply into the next run.
+ *
+ * ⚠️ The reply must say STOP and mean it. The agent is still mid-turn when it reads this, and work it
+ * does now belongs to no run.
+ */
+async function deferQuestion(request: QuestionRequest): Promise<QuestionResolution> {
+  const question = insertQuestion(request, { deadlineAt: null, parkedAt: Date.now() })
+  emit({ type: 'question.parked', question })
+  const short = question.question.slice(0, 300)
+  const parked = await parkForHuman(
+    request.sessionId,
+    `the agent asked: ${short}`,
+    undefined,
+    `the agent asked and is waiting on you: ${short}`,
+    { quiet: true }
+  )
+  log.info(`question ${question.id.slice(0, 8)} filed by ${AGENT_CLI_COMMAND}; the run ended to wait for it`)
+  return {
+    status: 'parked',
+    answer: null,
+    deferred: { questionId: question.id },
+    reply: parked.ok
+      ? `Filed for the operator as card ${question.id.slice(0, 8)}. This run has ended so they can answer ` +
+        'in their own time. STOP HERE: end your turn now and do no more work. When they answer you are ' +
+        'started again with their answer in front of you.'
+      : `Filed for the operator as card ${question.id.slice(0, 8)}, but this run could not be parked: ` +
+        `${parked.reply} Stop here rather than guessing.`
+  }
+}
+
+/** What answering this question should do, if anything. A malformed blob reads as nothing. */
+export function questionAction(id: string): QuestionAction | null {
+  const r = row<{ action_json: string | null }>(
+    db().prepare('select action_json from questions where id = ?').get(id)
+  )
+  if (!r?.action_json) return null
+  try {
+    return JSON.parse(r.action_json) as QuestionAction
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The pieces of a split the operator approved on a card, for the resumed agent that names it.
+ *
+ * ⛔ Every way this could be the wrong card is refused with the reason: one on another task, one that
+ * was not a split approval, one nobody has answered, and one already filed — the last is the loop
+ * guard, because a resumed agent re-running the same command must not file the pieces twice.
+ */
+export function approvedSplit(
+  taskId: string,
+  ref: string
+):
+  | { ok: true; questionId: string; pieces: RpcParams<'agent.split'>['pieces']; resolution: QuestionResolution }
+  | { ok: false; reason: string } {
+  const wanted = ref.trim().toLowerCase()
+  if (!/^[0-9a-f-]{8,36}$/.test(wanted)) {
+    return { ok: false, reason: `'${ref}' is not an approval card id. Use the id the earlier task_split reply gave.` }
+  }
+  const candidates = rows<QuestionRow>(
+    db()
+      .prepare(`select * from questions where task_id = ? and origin = 'task_split' and id like ? order by asked_at desc`)
+      .all(taskId, `${wanted}%`)
+  ).map(toQuestion)
+  const question = candidates[0]
+  if (!question) return { ok: false, reason: `no task_split approval ${wanted} was raised on this task.` }
+  const action = questionAction(question.id)
+  if (action?.kind !== 'split') {
+    return { ok: false, reason: `approval ${wanted} carries no pieces to file. Call task_split with the pieces.` }
+  }
+  if (action.consumedAt) {
+    return { ok: false, reason: `approval ${wanted} has already been filed. Do not file it again.` }
+  }
+  if (!question.answeredAt || !question.answer) {
+    return {
+      ok: false,
+      reason: `approval ${wanted} has not been answered yet. STOP HERE; you are started again when it is.`
+    }
+  }
+  return {
+    ok: true,
+    questionId: question.id,
+    pieces: action.pieces,
+    resolution: { status: 'answered', reply: renderAnswer(question), answer: question.answer }
+  }
+}
+
+/** Record that an approved split has been filed, so naming its card again files nothing. */
+export function markSplitFiled(questionId: string): void {
+  const action = questionAction(questionId)
+  if (action?.kind !== 'split') return
+  db()
+    .prepare('update questions set action_json = ? where id = ?')
+    .run(JSON.stringify({ ...action, consumedAt: Date.now() }), questionId)
+}
+
+/**
+ * Apply a directory grant the operator gave on a card nobody was waiting on.
+ *
+ * ⚠️ Before `question.answer` restarts the work, which is what makes the grant reach the next run's
+ * argv: `grantedDirsFor` reads the attachment this writes.
+ */
+function grantFromAnswer(question: Question): void {
+  if (!question.taskId || !question.answer?.optionIds.includes(GRANT)) return
+  const action = questionAction(question.id)
+  if (action?.kind !== 'directory') return
+  recordGrant(question.taskId, question.runId, action.path, action.why)
+}
+
+/**
  * Write the row, tell everyone, and put the question on the thread.
  *
  * ⛔ Shared with `fileParkedQuestion` so that a question asked through a tool call and a question
@@ -250,8 +397,8 @@ function insertQuestion(
     .prepare(
       `insert into questions (id, session_id, run_id, task_id, project_id, origin, kind, question,
                               header, options_json, asked_at, deadline_at, answered_at, answer_json,
-                              answered_by, parked_at)
-       values (?,?,?,?,?,?,?,?,?,?,?,?,null,null,null,?)`
+                              answered_by, parked_at, action_json)
+       values (?,?,?,?,?,?,?,?,?,?,?,?,null,null,null,?,?)`
     )
     .run(
       id,
@@ -266,7 +413,8 @@ function insertQuestion(
       options.length > 0 ? JSON.stringify(options) : null,
       Date.now(),
       timing.deadlineAt,
-      timing.parkedAt
+      timing.parkedAt,
+      request.action ? JSON.stringify(request.action) : null
     )
 
   const question = requireQuestion(id)
@@ -442,6 +590,8 @@ export function answerQuestion(id: string, answer: QuestionAnswer, by: 'human' =
       if (task?.status === 'awaiting_human') {
         setStatus(answered.taskId, 'running', { assignee: 'agent', holdReason: null })
       }
+    } else if (answered.origin === 'request_directory') {
+      grantFromAnswer(answered)
     } else if (answered.origin === 'debate') {
       // ⭐ A typed reply that begins with a verdict's label is that verdict (t957, `verdictFromAnswer`).
       const chosen = verdictFromAnswer(answered.answer)

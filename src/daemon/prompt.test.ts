@@ -501,7 +501,9 @@ describe('promptFor prompt construction', () => {
     // a card with buttons on it. An agent that was not told this writes its choices into the
     // sentence, which arrives answerable only in prose (t63).
     expect(prompt).toContain('— <what choosing it means>')
-    expect(prompt).not.toContain('task_complete')
+    // ⚠️ Named only as the helper's command (`agentCliClause`), never as an MCP tool to call.
+    expect(prompt).toContain('`warmstart-agent task_complete')
+    expect(prompt.split('warmstart-agent task_complete').join('')).not.toContain('task_complete')
   })
 
   it('prepends handoff notes from previous sessions', () => {
@@ -1633,7 +1635,8 @@ describe('the pre-completion rebase check', () => {
 
     expect(text).toContain('Immediately before you write the `TASK COMPLETE: ` line')
     expect(text).toContain('Do not write the `TASK COMPLETE: ` line while a conflict is unresolved')
-    expect(text).not.toContain('task_complete')
+    // ⚠️ Named only as the helper's command (`agentCliClause`), never as an MCP tool to call.
+    expect(text.split('warmstart-agent task_complete').join('')).not.toContain('task_complete')
     // ⛔ The rest of that adapter's contract survives.
     expect(text).toContain('`NEEDS DECISION:`')
   })

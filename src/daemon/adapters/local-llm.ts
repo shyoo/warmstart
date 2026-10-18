@@ -57,6 +57,8 @@ const info: AdapterInfo = {
     // The bridge registers `task_complete` and `ask_human` as OpenAI-format tool definitions and
     // translates the calls to stream events. The daemon handles them from there.
     mcp: false,
+    // ⛔ The bridge has no shell tool to run the helper with; its tools are its own function calls.
+    agentCli: false,
     selectableEffort: false,
     // Local — no quota to probe. The worker is always eligible from a quota perspective.
     quotaProbe: 'none',

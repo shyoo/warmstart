@@ -6,6 +6,16 @@ import { buildApi, type ApiContext } from './api.js'
 import { log } from './log.js'
 import { errorMessage } from '@shared/errors.js'
 import { daemonTimings, monitorPerformance } from './performance.js'
+import {
+  AGENT_ASK_ORIGINS,
+  AGENT_CLI_COMMAND,
+  AGENT_METHODS,
+  rateLimitRefusal,
+  runAsHelper,
+  sessionForAgentToken,
+  setAgentCliPort
+} from './agentcli.js'
+import { runForSession } from './tasks.js'
 
 /**
  * The daemon's front door.
@@ -50,6 +60,10 @@ export async function startServer(token: string, ctx: Omit<ApiContext, 'port'>):
       res.end(payload)
       return bytes
     }
+
+    // ⛔ Before the daemon's own token is checked, and never accepting it: `/agent` takes only a
+    // per-session agent token, and an agent token opens nothing else. See `serveAgent`.
+    if (req.url === '/agent') return serveAgent(req, send, api)
 
     if (!authorized(req, token)) return send(401, { error: 'unauthorized' })
 
@@ -125,6 +139,7 @@ export async function startServer(token: string, ctx: Omit<ApiContext, 'port'>):
   try { port = await listen(server) }
   catch (err) { stopMonitor(); wss.close(); throw err }
   context.port = port
+  setAgentCliPort(port)
   log.info(`orchestratord listening on 127.0.0.1:${port}`)
 
   return {
@@ -197,6 +212,88 @@ function listen(server: Server): Promise<number> {
       if (address && typeof address === 'object') resolve(address.port)
       else reject(new Error('server did not bind to a port'))
     })
+  })
+}
+
+/**
+ * The `warmstart-agent` helper's door: the worker tier, for one session, while it has a run.
+ *
+ * ⛔ **Four refusals before any handler runs**, each answered in a sentence the agent can act on:
+ * a token minted for no live session; a session with no open run (the run already ended, by
+ * `task_complete`, `await_human` or a deferred question, so the token is spent until the next
+ * run); a method outside `AGENT_METHODS`; and too many calls this minute. Then `sessionId` is
+ * written from the token — whatever the caller put there is discarded — and the handler runs inside
+ * `runAsHelper`, which is how a wait on a person becomes a deferred card. See `agentcli.ts`.
+ */
+function serveAgent(
+  req: IncomingMessage,
+  send: (status: number, body: unknown) => number,
+  api: ReturnType<typeof buildApi>
+): void {
+  const refuse = (id: unknown, message: string, status = 200): void => {
+    send(status, { id, ok: false, error: { message } })
+  }
+  if (req.method !== 'POST') return refuse(null, 'not found', 404)
+  const header = req.headers.authorization
+  const sessionId = header?.startsWith('Bearer ') ? sessionForAgentToken(header.slice(7)) : null
+  if (!sessionId) {
+    return refuse(
+      null,
+      `${AGENT_CLI_COMMAND} is not authorised here: its token belongs to no live Warmstart session. ` +
+        'It works only inside the session Warmstart started it in.',
+      401
+    )
+  }
+
+  const chunks: Buffer[] = []
+  let size = 0
+  req.on('data', (c: Buffer) => {
+    size += c.length
+    if (size > MAX_BODY_BYTES) {
+      send(413, { error: 'request too large' })
+      req.destroy()
+      return
+    }
+    chunks.push(c)
+  })
+  req.on('end', () => {
+    void (async () => {
+      let request: RpcRequest
+      try {
+        request = JSON.parse(Buffer.concat(chunks).toString('utf8')) as RpcRequest
+      } catch {
+        return refuse(null, 'malformed json', 400)
+      }
+      const method = String(request.method) as RpcMethod
+      if (!AGENT_METHODS.has(method)) {
+        return refuse(request.id, `${method} is not a worker tool and is not reachable from ${AGENT_CLI_COMMAND}.`)
+      }
+      if (!runForSession(sessionId)) {
+        return refuse(
+          request.id,
+          'This session has no open run, so there is nothing to act for: the run already ended — by ' +
+            'task_complete, await_human, or a question filed for a person. STOP HERE; you will be started ' +
+            'again if there is more to do.'
+        )
+      }
+      const params: Record<string, unknown> = { ...((request.params ?? {}) as Record<string, unknown>), sessionId }
+      if (method === 'question.ask' && !AGENT_ASK_ORIGINS.has(String(params.origin))) {
+        return refuse(request.id, `A question from ${AGENT_CLI_COMMAND} may only be an ask_human or a checkpoint.`)
+      }
+      const limited = rateLimitRefusal(sessionId)
+      if (limited) return refuse(request.id, limited)
+
+      const handler = (api as Record<string, (p: unknown) => unknown>)[method]
+      if (typeof handler !== 'function') return refuse(request.id, `unknown method '${method}'`, 404)
+      try {
+        const result = await runAsHelper(sessionId, () => handler(params))
+        send(200, { id: request.id, ok: true, result } satisfies RpcResponse)
+      } catch (err) {
+        const message = errorMessage(err)
+        log.warn(`agent rpc ${method} failed: ${message}`)
+        send(200, { id: request.id, ok: false, error: { message } } satisfies RpcResponse)
+      }
+    })()
   })
 }
 

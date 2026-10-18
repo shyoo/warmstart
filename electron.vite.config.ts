@@ -22,6 +22,8 @@ export default defineConfig({
           orchestratord: resolve('src/daemon/index.ts'),
           // Spawned by the agent CLI, not by us - it is the target of --permission-prompt-tool.
           'agentyard-mcp': resolve('src/mcp/index.ts'),
+          // Run by an agent whose CLI has no MCP, through a shim on its PATH - the same worker tools.
+          'warmstart-agent': resolve('src/agentcli/index.ts'),
           // Spawned by the local-llm adapter to bridge to OpenAI-compatible HTTP endpoints.
           'local-llm-bridge': resolve('src/daemon/adapters/local-llm-bridge.ts')
         },
