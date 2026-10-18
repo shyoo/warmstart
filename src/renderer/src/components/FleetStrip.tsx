@@ -72,14 +72,10 @@ export function FleetStrip({
 }): React.JSX.Element {
   const [collapsed, setCollapsed] = useState(readFleetCollapsed)
   const [density, setDensity] = useState(readFleetDensity)
-  const narrow = density === 'narrow'
 
-  const toggleDensity = () => {
-    setDensity((d) => {
-      const next: FleetDensity = d === 'narrow' ? 'wide' : 'narrow'
-      writeFleetDensity(next)
-      return next
-    })
+  const handleDensityChange = (next: FleetDensity) => {
+    setDensity(next)
+    writeFleetDensity(next)
   }
 
   const toggle = () => {
@@ -93,24 +89,14 @@ export function FleetStrip({
   const activeFleet = fleet.filter((entry) => entry.worker.enabled)
 
   return (
-    <div className={`fleet-wrap${collapsed ? ' fleet-wrap--collapsed' : ''}`}>
+    <div
+      className={`fleet-wrap${collapsed ? ' fleet-wrap--collapsed' : ''}${
+        density === 'single' ? ' fleet-wrap--single' : ''
+      }`}
+    >
       <div className="fleet">
         <div className="fleet-rail">
           <span className="fleet-label">Fleet</span>
-          {/* This changes the density of the cards; Hide remains the control below the strip. */}
-          <button
-            type="button"
-            className="fleet-density-btn"
-            onClick={toggleDensity}
-            aria-pressed={narrow}
-            title={
-              narrow
-                ? 'Show each gauge with its name again'
-                : 'Condense every card to bars and numbers, so more of the fleet fits on the strip'
-            }
-          >
-            {narrow ? 'Wide' : 'Narrow'}
-          </button>
         </div>
         <div className="fleet-content">
           {activeFleet.length === 0 ? (
@@ -124,12 +110,61 @@ export function FleetStrip({
                   key={entry.worker.id}
                   entry={entry}
                   now={now}
-                  narrow={narrow}
+                  density={density}
                   onProbe={onProbe}
                 />
               ))}
             </div>
           )}
+        </div>
+        <div className="fleet-actions">
+          <div className="fleet-density-toggle" role="group" aria-label="Fleet view density">
+            <button
+              type="button"
+              className={`fleet-density-btn${density === 'single' ? ' fleet-density-btn--active' : ''}`}
+              onClick={() => handleDensityChange('single')}
+              aria-pressed={density === 'single'}
+              data-density="single"
+              title="Single row: compact one-line view with stacked quota bars"
+              aria-label="Single row view"
+            >
+              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="1.5" y="5.5" width="13" height="5" rx="1" />
+                <line x1="4" y1="8" x2="6" y2="8" />
+                <line x1="8" y1="8" x2="12" y2="8" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={`fleet-density-btn${density === 'narrow' ? ' fleet-density-btn--active' : ''}`}
+              onClick={() => handleDensityChange('narrow')}
+              aria-pressed={density === 'narrow'}
+              data-density="narrow"
+              title="Narrow: condense cards to bars and numbers"
+              aria-label="Narrow view"
+            >
+              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="2" y="2.5" width="5" height="11" rx="1" />
+                <rect x="9" y="2.5" width="5" height="11" rx="1" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={`fleet-density-btn${density === 'wide' ? ' fleet-density-btn--active' : ''}`}
+              onClick={() => handleDensityChange('wide')}
+              aria-pressed={density === 'wide'}
+              data-density="wide"
+              title="Wide: show full cards with gauge names and sessions"
+              aria-label="Wide view"
+            >
+              <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <rect x="1.5" y="2.5" width="13" height="11" rx="1" />
+                <line x1="4" y1="5.5" x2="12" y2="5.5" />
+                <line x1="4" y1="8" x2="12" y2="8" />
+                <line x1="4" y1="10.5" x2="9" y2="10.5" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
       <div className="fleet-toggle-bar">
@@ -315,12 +350,12 @@ function RefreshIcon(): React.JSX.Element {
 function WorkerCard({
   entry,
   now,
-  narrow,
+  density,
   onProbe
 }: {
   entry: FleetEntry
   now: number
-  narrow: boolean
+  density: FleetDensity
   onProbe: (workerId: string) => Promise<unknown>
 }): React.JSX.Element {
   const { worker, quota, sessions, statusFacts } = entry
@@ -365,55 +400,65 @@ function WorkerCard({
     void onProbe(worker.id).finally(() => setProbing(false))
   }
 
+  const isNarrow = density === 'narrow'
+  const isSingle = density === 'single'
+
   return (
-    <div className={`wcard${worker.enabled ? '' : ' wcard--off'}${narrow ? ' wcard--narrow' : ''}`}>
+    <div
+      className={`wcard${worker.enabled ? '' : ' wcard--off'}${
+        isNarrow ? ' wcard--narrow' : isSingle ? ' wcard--single' : ''
+      }`}
+    >
       <div className="wcard-head">
-        <AgentIcon adapterId={worker.adapterId} className="wcard-icon" />
-        <span className="wcard-name">{worker.label}</span>
-        {worker.humanOccupied && <span className="tag tag--human">human</span>}
-        {!worker.enabled && <span className="tag">off</span>}
-        {/* ⛔ The corner, and the only place on this card where a *transient* fact is allowed to
-            appear. The head row is drawn whatever happens, so the age of a reading and the fact
-            that a probe is in flight cost nothing to say here and cannot resize the card the way
-            they did as rows of their own. ⚠️ Right-aligned by `margin-left: auto`, so it stays in
-            the corner however many tags precede it. */}
-        {status && (
-          <span
-            className={`wcard-status${status.kind === 'age' && status.failing ? ' wcard-status--failing' : ''}`}
-            title={status.title}
-            aria-label={status.label}
+        <div className="wcard-identity">
+          <AgentIcon adapterId={worker.adapterId} className="wcard-icon" />
+          <span className="wcard-name">{worker.label}</span>
+          {worker.humanOccupied && <span className="tag tag--human">human</span>}
+          {!worker.enabled && <span className="tag">off</span>}
+        </div>
+        <div className="wcard-meta">
+          {/* ⛔ The corner, and the only place on this card where a *transient* fact is allowed to
+              appear. The head row is drawn whatever happens, so the age of a reading and the fact
+              that a probe is in flight cost nothing to say here and cannot resize the card the way
+              they did as rows of their own. */}
+          {status && (
+            <span
+              className={`wcard-status${status.kind === 'age' && status.failing ? ' wcard-status--failing' : ''}`}
+              title={status.title}
+              aria-label={status.label}
+            >
+              {status.kind === 'pending' ? (
+                <Working />
+              ) : (
+                <>
+                  {status.failing && <span className="dot dot--down" />}
+                  <span className="num">{status.label}</span>
+                </>
+              )}
+            </span>
+          )}
+          {/* ⭐ The worker's status as a mark, not a word (t961): the strip asked for width back, and
+              the word, its age and its evidence are one hover away. It replaced the `expired` /
+              `sign in` / `no work` tag, which said less in more room — the glyph tells those three
+              apart too (`STATUS_GLYPH`), and the adapter still decides which, never a substring here.
+              ⚠️ In the right-hand cluster, beside the refresh button, not by the icon: it blinks, and a
+              blinking mark between the icon and the name pulls the eye off the name. */}
+          <WorkerStatusBadge status={workerStatus(worker, quota, sessions, now, statusFacts)} now={now} compact />
+          {/* ⛔ Drawn whether or not there is a status beside it, and never conditionally mounted: a
+              button that appeared only once a card went stale would add and remove itself from the
+              head row on a fifteen-minute timer, which is the strip-moving bug the corner exists to
+              avoid. */}
+          <button
+            type="button"
+            className="wcard-refresh"
+            onClick={probe}
+            disabled={probing}
+            aria-label={`Refresh usage for ${worker.label}`}
+            title="Read this account’s usage window now"
           >
-            {status.kind === 'pending' ? (
-              <Working />
-            ) : (
-              <>
-                {status.failing && <span className="dot dot--down" />}
-                <span className="num">{status.label}</span>
-              </>
-            )}
-          </span>
-        )}
-        {/* ⭐ The worker's status as a mark, not a word (t961): the strip asked for width back, and
-            the word, its age and its evidence are one hover away. It replaced the `expired` /
-            `sign in` / `no work` tag, which said less in more room — the glyph tells those three
-            apart too (`STATUS_GLYPH`), and the adapter still decides which, never a substring here.
-            ⚠️ In the right-hand cluster, beside the refresh button, not by the icon: it blinks, and a
-            blinking mark between the icon and the name pulls the eye off the name. */}
-        <WorkerStatusBadge status={workerStatus(worker, quota, sessions, now, statusFacts)} now={now} compact />
-        {/* ⛔ Drawn whether or not there is a status beside it, and never conditionally mounted: a
-            button that appeared only once a card went stale would add and remove itself from the
-            head row on a fifteen-minute timer, which is the strip-moving bug the corner exists to
-            avoid. */}
-        <button
-          type="button"
-          className="wcard-refresh"
-          onClick={probe}
-          disabled={probing}
-          aria-label={`Refresh usage for ${worker.label}`}
-          title="Read this account’s usage window now"
-        >
-          <RefreshIcon />
-        </button>
+            <RefreshIcon />
+          </button>
+        </div>
       </div>
 
       {/* ⛔ The *fact* outranks the quota gauges and still leads — burying it is how this fleet spent

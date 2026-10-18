@@ -197,17 +197,19 @@ export function writeFleetCollapsed(collapsed: boolean): void {
  * kept is whether anything is close to running out, which is what a glance is asking.
  *
  * ⚠️ Not a fleet setting. Like the collapsed state above it, this is a property of the person and
- * the display in front of them — a laptop wants narrow where a wide monitor does not — so it stays
+ * the display in front of them — a laptop wants narrow or single where a wide monitor does not — so it stays
  * in `localStorage` rather than syncing one operator's strip onto another's window.
  */
-export type FleetDensity = 'wide' | 'narrow'
+export type FleetDensity = 'wide' | 'narrow' | 'single'
 
 export function readFleetDensity(): FleetDensity {
   try {
     if (typeof window === 'undefined' || !window.localStorage) return 'wide'
-    // ⛔ Only the one value opts in. Anything else — absent, empty, a density that has since been
+    // ⛔ Only known condensed values opt in. Anything else — absent, empty, a density that has since been
     // renamed — reads as `wide`, because the default has to be the mode that shows everything.
-    return window.localStorage.getItem(FLEET_DENSITY_KEY) === 'narrow' ? 'narrow' : 'wide'
+    const stored = window.localStorage.getItem(FLEET_DENSITY_KEY)
+    if (stored === 'narrow' || stored === 'single') return stored
+    return 'wide'
   } catch {
     return 'wide'
   }

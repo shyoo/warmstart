@@ -3272,38 +3272,71 @@ try {
   )
 
   // ---- fleet density and hide / show controls -----------------------------------------
-  const densityBtn = `document.querySelector('.fleet-density-btn')`
-  check('fleet strip has a narrow/wide density button', (await evaluate(`!!(${densityBtn})`)) === true)
+  const densityToggle = `document.querySelector('.fleet-density-toggle')`
+  check('fleet strip has a pictogram density toggle', (await evaluate(`!!(${densityToggle})`)) === true)
+  const densityBtns = `document.querySelectorAll('.fleet-density-btn')`
+  check('fleet strip has 3 density buttons (single, narrow, wide)', (await evaluate(`${densityBtns}.length`)) === 3)
+
   const fleetControls = JSON.parse(
     await evaluate(`
       JSON.stringify((() => {
-        const label = document.querySelector('.fleet-label');
-        const density = document.querySelector('.fleet-density-btn');
-        const card = document.querySelector('.wcard');
-        if (!label || !density || !card) return { missing: true };
-        const l = label.getBoundingClientRect(), d = density.getBoundingClientRect(), c = card.getBoundingClientRect();
-        return { below: d.top >= l.bottom - 1, leftOfCards: d.right <= c.left + 1, sameRail: Math.abs(l.left - d.left) <= 1 };
+        const actions = document.querySelector('.fleet-actions');
+        const toggle = document.querySelector('.fleet-density-toggle');
+        const cards = document.querySelector('.fleet-cards');
+        if (!actions || !toggle || !cards) return { missing: true };
+        const a = actions.getBoundingClientRect(), c = cards.getBoundingClientRect();
+        return { rightOfCards: a.left >= c.left, containsToggle: actions.contains(toggle) };
       })())
     `)
   )
   check(
-    'Narrow sits below Fleet in the rail beside the worker cards',
-    fleetControls.below === true && fleetControls.leftOfCards === true && fleetControls.sameRail === true,
+    'the density toggle sits in fleet-actions to the right of the cards',
+    fleetControls.rightOfCards === true && fleetControls.containsToggle === true,
     JSON.stringify(fleetControls)
   )
+
+  const singleBtn = `document.querySelector('.fleet-density-btn[data-density="single"]')`
+  const narrowBtn = `document.querySelector('.fleet-density-btn[data-density="narrow"]')`
+  const wideBtn = `document.querySelector('.fleet-density-btn[data-density="wide"]')`
+
   check(
-    'the density button starts wide',
-    (await evaluate(`${densityBtn}?.getAttribute('aria-pressed')`)) === 'false' &&
-      /narrow/i.test(await evaluate(`${densityBtn}?.innerText ?? ''`))
+    'the density buttons start with wide active',
+    (await evaluate(`${wideBtn}?.getAttribute('aria-pressed')`)) === 'true' &&
+      (await evaluate(`${singleBtn}?.getAttribute('aria-pressed')`)) === 'false' &&
+      (await evaluate(`${narrowBtn}?.getAttribute('aria-pressed')`)) === 'false'
   )
-  await evaluate(`${densityBtn}?.click()`)
+
+  await evaluate(`${singleBtn}?.click()`)
+  await wait(300)
+  const singleCardMetrics = JSON.parse(
+    await evaluate(`
+      JSON.stringify((() => {
+        const card = document.querySelector('.wcard--single');
+        if (!card) return { missing: true };
+        const r = card.getBoundingClientRect();
+        const sessions = card.querySelector('.wcard-sessions');
+        const sessionsHidden = sessions ? getComputedStyle(sessions).display === 'none' : true;
+        return { hasSingleClass: true, height: r.height, sessionsHidden };
+      })())
+    `)
+  )
+  check(
+    'clicking single sets single density, compact 32px height, and hides sessions',
+    (await evaluate(`${singleBtn}?.getAttribute('aria-pressed')`)) === 'true' &&
+      singleCardMetrics.hasSingleClass === true &&
+      Math.abs(singleCardMetrics.height - 32) <= 2 &&
+      singleCardMetrics.sessionsHidden === true,
+    JSON.stringify(singleCardMetrics)
+  )
+
+  await evaluate(`${narrowBtn}?.click()`)
   await wait(300)
   check(
     'clicking Narrow condenses the cards',
-    (await evaluate(`${densityBtn}?.getAttribute('aria-pressed')`)) === 'true' &&
-      /wide/i.test(await evaluate(`${densityBtn}?.innerText ?? ''`)) &&
+    (await evaluate(`${narrowBtn}?.getAttribute('aria-pressed')`)) === 'true' &&
       (await evaluate(`!!document.querySelector('.wcard--narrow')`)) === true
   )
+
   // ⛔ `1 / 2` on the sessions divider (t549): slots in use against Max parallel instances, drawn
   // on every card whether or not it has a session, words in wide and the bare count in narrow.
   const instancesShown = `(() => {
@@ -3328,7 +3361,7 @@ try {
     /^\d+ \/ \d+$/.test(narrowInstances.count ?? '') && narrowInstances.countW > 0 && narrowInstances.wordW <= 1,
     JSON.stringify(narrowInstances)
   )
-  await evaluate(`${densityBtn}?.click()`)
+  await evaluate(`${wideBtn}?.click()`)
   await wait(300)
   const wideInstances = await evaluate(instancesShown)
   check('a wide card says N / M in use on its sessions divider', /^\d+ \/ \d+ in use$/i.test(wideInstances), wideInstances)

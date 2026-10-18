@@ -142,12 +142,15 @@ describe('how dense the fleet strip was left', () => {
     expect(readFleetDensity()).toBe('wide')
   })
 
-  it('remembers the one mode you have to ask for', () => {
+  it('remembers the mode you have asked for', () => {
     const store: Record<string, string> = {}
     stub(store)
     writeFleetDensity('narrow')
     expect(store['warmstart.fleetDensity']).toBe('narrow')
     expect(readFleetDensity()).toBe('narrow')
+    writeFleetDensity('single')
+    expect(store['warmstart.fleetDensity']).toBe('single')
+    expect(readFleetDensity()).toBe('single')
     writeFleetDensity('wide')
     expect(readFleetDensity()).toBe('wide')
   })
@@ -163,12 +166,12 @@ describe('how dense the fleet strip was left', () => {
   it('survives a localStorage that throws, in both directions', () => {
     stub({}, true)
     expect(readFleetDensity()).toBe('wide')
-    expect(() => writeFleetDensity('narrow')).not.toThrow()
+    expect(() => writeFleetDensity('single')).not.toThrow()
   })
 
   it('and a renderer with no window at all', () => {
     expect(readFleetDensity()).toBe('wide')
-    expect(() => writeFleetDensity('narrow')).not.toThrow()
+    expect(() => writeFleetDensity('single')).not.toThrow()
   })
 })
 

@@ -524,12 +524,20 @@ body {
   min-height: 52px;
 }
 
+.fleet-wrap--single .fleet {
+  min-height: 44px;
+  padding: var(--sp-1, 4px) var(--sp-4);
+  align-items: center;
+}
+
 .fleet-rail {
   display: flex;
-  flex: 0 0 64px;
-  flex-direction: column;
+  flex: 0 0 auto;
   align-items: flex-start;
-  gap: var(--sp-1);
+}
+
+.fleet-wrap--single .fleet-rail {
+  align-items: center;
 }
 
 .fleet-toggle-bar {
@@ -571,6 +579,20 @@ body {
   align-items: center;
 }
 
+.fleet-wrap--single .fleet-cards {
+  align-items: center;
+}
+
+.fleet-actions {
+  display: flex;
+  align-items: flex-start;
+  flex: 0 0 auto;
+}
+
+.fleet-wrap--single .fleet-actions {
+  align-items: center;
+}
+
 .fleet-toggle-btn:hover {
   color: var(--color-text);
   background: var(--color-surface-2);
@@ -591,35 +613,45 @@ body {
 }
 
 /*
- * Narrow / wide, beside the word Fleet.
+ * Segmented pictogram toggle: Single row / Narrow / Wide.
  *
- * ⚠️ Sized and coloured like the Hide button under the strip rather than like an app button. Neither
- * of these changes anything about the fleet — they change what this display shows of it — and a
- * control that looks like the ones that dispatch work invites being read as one.
+ * Sized and placed in .fleet-actions at the right edge of the fleet strip.
  */
-.fleet-density-btn {
-  align-self: flex-start;
-  padding: 1px var(--sp-2);
-  font-family: var(--font-ui);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--color-text-faint);
+.fleet-density-toggle {
+  display: inline-flex;
+  align-items: center;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
+  padding: 1px;
+  gap: 1px;
+}
+
+.fleet-density-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 20px;
+  padding: 0;
+  color: var(--color-text-faint);
+  background: transparent;
+  border: none;
+  border-radius: calc(var(--radius-sm) - 1px);
   cursor: pointer;
-  line-height: 1.4;
-  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease),
-    border-color var(--motion-fast) var(--ease);
+  transition: color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
   user-select: none;
 }
 
 .fleet-density-btn:hover {
   color: var(--color-text);
   background: var(--color-surface-2);
-  border-color: var(--color-border-strong);
+}
+
+.fleet-density-btn--active,
+.fleet-density-btn[aria-pressed="true"] {
+  color: var(--color-text);
+  background: var(--color-surface-2);
 }
 
 .fleet-density-btn:focus-visible {
@@ -821,6 +853,22 @@ body {
   margin-bottom: var(--sp-1);
 }
 
+.wcard-identity {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+  flex: 1;
+}
+
+.wcard-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
 .wcard-icon,
 .agent-icon {
   flex-shrink: 0;
@@ -987,16 +1035,16 @@ body {
  * column is gone rather than narrowed — without the `:not`, these longer selectors would win and
  * leave a card-wide gutter holding nothing.
  */
-.wcard:not(.wcard--narrow) .wcard-windows--terse .gauge,
-.wcard:not(.wcard--narrow) .wcard-windows--terse ~ .wcard-sessions .gauge {
+.wcard:not(.wcard--narrow):not(.wcard--single) .wcard-windows--terse .gauge,
+.wcard:not(.wcard--narrow):not(.wcard--single) .wcard-windows--terse ~ .wcard-sessions .gauge {
   grid-template-columns: 44px 1fr 34px 58px;
 }
 
-.wcard:not(.wcard--narrow) .wcard-windows--terse ~ .gauge--credits {
+.wcard:not(.wcard--narrow):not(.wcard--single) .wcard-windows--terse ~ .gauge--credits {
   grid-template-columns: 44px 1fr auto 58px;
 }
 
-.wcard:not(.wcard--narrow) .wcard-windows--terse ~ .wcard-sessions .gauge--session {
+.wcard:not(.wcard--narrow):not(.wcard--single) .wcard-windows--terse ~ .wcard-sessions .gauge--session {
   grid-template-columns: 44px 1fr 58px 58px;
 }
 
@@ -1223,6 +1271,160 @@ body {
 
 .wcard--narrow .wcard-instances {
   order: 0;
+}
+
+/*
+ * ---- the single row card ------------------------------------------------
+ *
+ * Single-line fleet quota view (density: 'single'). Condenses the worker card into a single compact row
+ * (~30-32px height) with the worker identity on the left, stacked quota bars in 11px rows that flow
+ * horizontally across columns for workers with multiple quota windows, and the status dot / refresh
+ * button on the right. Sessions divider and session gauges are hidden.
+ */
+.wcard--single {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
+  min-width: unset;
+  max-width: unset;
+  padding: 3px var(--sp-3);
+  flex: 0 0 auto;
+  box-sizing: border-box;
+}
+
+.wcard--single .wcard-head {
+  display: contents;
+}
+
+.wcard--single .wcard-identity {
+  order: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1-5, 6px);
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.wcard--single .wcard-name {
+  max-width: 130px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-dense);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.wcard--single .wcard-windows {
+  order: 2;
+  display: grid;
+  grid-template-rows: repeat(2, 11px);
+  grid-auto-flow: column;
+  column-gap: var(--sp-3);
+  row-gap: 2px;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+.wcard--single .wcard-windows .gauge,
+.wcard--single .gauge {
+  display: grid;
+  position: relative;
+  grid-template-columns: 36px 26px 44px;
+  gap: 4px;
+  align-items: center;
+  height: 11px;
+  line-height: 11px;
+  font-size: 10px;
+}
+
+.wcard--single .gauge-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.wcard--single .bar {
+  height: 3px;
+  width: 36px;
+  border-radius: 1.5px;
+}
+
+.wcard--single .bar-fill {
+  border-radius: 1.5px;
+}
+
+.wcard--single .gauge-value {
+  font-size: 10px;
+  line-height: 11px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.wcard--single .gauge-reset {
+  font-size: 10px;
+  line-height: 11px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.wcard--single .wcard-meta {
+  order: 3;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  height: 24px;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+.wcard--single .wcard-status {
+  display: none;
+}
+
+.wcard--single .wstatus--compact {
+  height: 11px;
+  line-height: 11px;
+  margin-left: 0;
+}
+
+.wcard--single .wstatus-glyph {
+  font-size: 10px;
+  line-height: 1;
+}
+
+.wcard--single .wcard-refresh {
+  height: 11px;
+  width: 11px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.wcard--single .wcard-unknown,
+.wcard--single .wcard-suspect {
+  order: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  white-space: nowrap;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.wcard--single .wcard-sessions,
+.wcard--single .wcard-credits {
+  display: none !important;
 }
 
 .tag--suspect {
