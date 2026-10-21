@@ -30,7 +30,7 @@ import { appEnv } from '@shared/env.js'
 import { APP_VERSION, RELEASE_REPOSITORY } from '@shared/version.js'
 import { UpdateManager } from './updates.js'
 import { applicationMenuTemplate } from './applicationmenu.js'
-import { hasActiveWork, PowerActionController, runPowerCommand } from './poweraction.js'
+import { hasActiveWork, PowerActionController, probePowerActions, runPowerCommand } from './poweraction.js'
 import { QuitConfirmation } from './quitconfirmation.js'
 
 const dirname = join(fileURLToPath(import.meta.url), '..')
@@ -400,6 +400,7 @@ void app.whenReady().then(() => {
     return powerAction.arm(action)
   })
   ipcMain.handle(IPC.powerCancel, () => powerAction.cancel())
+  void probePowerActions(process.platform).then((actions) => { if (actions) powerAction.restrict(actions) }, () => {})
   powerMonitor.on('resume', () => {
     powerTransition = false
     applyPreventSleep()

@@ -90,7 +90,11 @@ Live work, consult and review sessions also hold it. An empty fleet starts a 60 
 new work clears that countdown, and main reads both lists again before issuing the OS command.
 RPC failure cancels the action with an error. The action is one-shot and lives only as long as the
 Electron process. Sleep and hibernate temporarily release the idle-sleep blocker and restore it on
-resume. macOS offers shutdown and sleep; Windows and Linux also offer hibernate.
+resume. macOS offers shutdown and sleep; Windows and Linux also offer hibernate. On Windows, main asks
+powrprof at startup (`probePowerActions`) and drops sleep or hibernate when this computer refuses
+them. Sleep and hibernate go through `SetSuspendState`, not `shutdown /h`, which exits 0 when
+hibernation is disabled (measured 2026-10-21, t1186). A failure names the action and the OS's own
+sentence; a `shutdown.exe` output ending in `(<Windows error>)` is a failure whatever its exit code.
 
 Quit confirmation uses main → preload → `ConfirmationHost`, with a request id and a closed set of
 answers accepted only from the requested window. A renderer lost or reloaded cancels the request.

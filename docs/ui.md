@@ -192,7 +192,7 @@ operator has opened and written in, because rewriting it would discard their wor
 leaves the platform's own window buttons overlaid at one end of it; `.titlebar` in `App.tsx` draws the
 rest — panel toggle, back, forward, refresh, the two zooms with their reset badge, the app name,
 **When done** and the global **New task**. **When done** arms a one-time shutdown, sleep or hibernate
-for this computer. While armed it names the action beside **Cancel**; after work settles it shows a
+for this computer, offering only what this computer reports it can do. While armed it names the action beside **Cancel**; after work settles it shows a
 60-second countdown there. It is disabled while viewing a remote computer, though an already armed
 local action remains visible and cancellable. An empty queue cannot be armed. The action is lost if
 the app quits before it runs; a hidden tray window keeps it armed. ⚠️ Two halves make the strip work

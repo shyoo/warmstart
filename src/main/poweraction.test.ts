@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Task } from '../shared/tasks.js'
 import type { Session } from '../shared/protocol.js'
-import { hasActiveWork, POWER_GRACE_MS, PowerActionController, powerCommand } from './poweraction.js'
+import { hasActiveWork, parsePowerProbe, POWER_GRACE_MS, PowerActionController, powerCommand, powerFailure } from './poweraction.js'
 
 afterEach(() => vi.useRealTimers())
 
@@ -84,9 +84,43 @@ describe('one-time power action', () => {
 
   it('selects explicit platform actions without a shell', () => {
     expect(powerCommand('win32', 'shutdown')).toEqual({ file: 'shutdown.exe', args: ['/s', '/t', '0'] })
-    expect(powerCommand('win32', 'hibernate')).toEqual({ file: 'shutdown.exe', args: ['/h'] })
-    expect(powerCommand('win32', 'sleep')?.args.join(' ')).toContain('SetSuspendState($false')
+    // shutdown /h exits 0 when hibernation is disabled, so hibernate checks powrprof itself (t1186).
+    const hibernate = powerCommand('win32', 'hibernate')
+    expect(hibernate?.file).toBe('powershell.exe')
+    expect(hibernate?.args.join(' ')).toContain('IsPwrHibernateAllowed()) {')
+    expect(hibernate?.args.join(' ')).toContain('SetSuspendState($true')
+    const sleep = powerCommand('win32', 'sleep')?.args.join(' ')
+    expect(sleep).toContain('IsPwrSuspendAllowed()) {')
+    expect(sleep).toContain('SetSuspendState($false')
     expect(powerCommand('darwin', 'hibernate')).toBeNull()
     expect(powerCommand('linux', 'sleep')).toEqual({ file: 'systemctl', args: ['suspend'] })
+  })
+
+  it('names the action and what Windows said, including a refusal that exits 0', () => {
+    expect(powerFailure('shutdown', 'shutdown.exe', 0, '')).toBeNull()
+    expect(powerFailure('hibernate', 'shutdown.exe', 0,
+      'Hibernation is not enabled on this system. You must enable hibernation in order to use the -h option.(126)'))
+      .toBe('Hibernate failed: Hibernation is not enabled on this system. You must enable hibernation in order to use the -h option.(126)')
+    expect(powerFailure('shutdown', 'shutdown.exe', 1190, 'A system shutdown has already been scheduled.(1190)\r\n'))
+      .toBe('Shut down failed: A system shutdown has already been scheduled.(1190)')
+    expect(powerFailure('sleep', 'systemctl', 1, '')).toBe('Sleep failed: systemctl exited with code 1')
+  })
+
+  it('offers only what the computer says it can do', () => {
+    expect(parsePowerProbe('sleep=True hibernate=False')).toEqual(['shutdown', 'sleep'])
+    expect(parsePowerProbe('sleep=False hibernate=True')).toEqual(['shutdown', 'hibernate'])
+    expect(parsePowerProbe('Add-Type : error')).toBeNull()
+    const changed = vi.fn()
+    const controller = new PowerActionController('win32', async () => true, async () => {}, changed)
+    controller.restrict(['shutdown', 'sleep'])
+    expect(controller.state().available).toEqual(['shutdown', 'sleep'])
+    expect(changed).toHaveBeenCalledWith(expect.objectContaining({ available: ['shutdown', 'sleep'] }))
+    return expect(controller.arm('hibernate')).rejects.toThrow('unavailable')
+  })
+
+  it('never widens the platform list', () => {
+    const controller = new PowerActionController('darwin', async () => true, async () => {}, () => {})
+    controller.restrict(['shutdown', 'sleep', 'hibernate'])
+    expect(controller.state().available).toEqual(['shutdown', 'sleep'])
   })
 })
