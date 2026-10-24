@@ -211,6 +211,24 @@ export function agentCliClause(hasProject: boolean): string {
 }
 
 /**
+ * A split approval that reached nobody live, as the resumed agent receives it (t1232).
+ *
+ * ⛔ The card id is the whole point: it is the one argument that files exactly what the person saw,
+ * and the call that would have returned it is gone. ⚠️ Worded from `capabilities.mcp`, never from an
+ * adapter name — an MCP-less agent reaches the same filing through the helper.
+ */
+export function splitApprovedPrompt(text: string, card: string, mcp: boolean): string {
+  const file = mcp
+    ? `call \`task_split\` with \`approval: "${card}"\` and no pieces`
+    : `run \`${AGENT_CLI_COMMAND} task_split --approval ${card}\``
+  return (
+    `${text}\n\nThat answers the delegation card ${card}, and nothing has been filed yet. To file ` +
+    `exactly the pieces they approved, ${file} — do not send the pieces again — then do what its ` +
+    'reply says.'
+  )
+}
+
+/**
  * Check the branch against its landing target *before* saying the work is done.
  *
  * ⛔ **Completion is a claim about the branch, not about the working tree.** `task_complete` is the
@@ -894,7 +912,9 @@ export function promptFor(
           ? `From an earlier run: ${message.text}\n${message.detail}`
           : message.role === 'human' && message.event === 'command.delegate'
             ? delegateCommandPrompt(message.text, hasMcp)
-            : message.text
+            : message.role === 'human' && message.event === 'split.approved' && message.detail
+              ? splitApprovedPrompt(message.text, message.detail, hasMcp)
+              : message.text
   const withAttachments = (message: TaskMessage): string => {
     const named = message.attachments.map(describeAttachment)
     const source = message.role === 'controller' || message.role === 'system' ? '[Warmstart]\n' : ''

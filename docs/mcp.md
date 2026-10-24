@@ -305,6 +305,16 @@ with `task_split --approval <card>` (once: `consumedAt`); a converged `debate_ro
 parked-debate path. `task_complete` and `land_work` still block on the checks — the daemon finishes
 them whether or not the shell is still listening.
 
+⛔ **An MCP `task_split` can lose its call too, and its approval must still file** (t1232). On t1228
+(2026-10-24, codex-cli 0.162.1) codex ran the call in a background exec cell, ended its turn 86s later,
+and the approval reached it as a bare *The operator chose: …*. It re-sent the pieces, which raised a
+duplicate card, and that call died at codex's `timed out awaiting tools/call after 300s`. Two
+adapter-neutral repairs: an approval no live call took is written with event `split.approved` and the
+card id in `detail`, and the prompt appends how to file by it (`splitApprovedPrompt`, MCP or helper
+wording from `capabilities.mcp`). And `sameSplitCard` makes identical pieces the same card: an approved,
+unfiled card is filed through it, and an unanswered one in the same run is pointed at rather than
+duplicated. A refused card is not matched, so re-sending refused pieces asks again.
+
 ⛔ **The turn end must not overrule the helper.** On an MCP-less adapter `onStreamResult` reads a turn
 with no contract line as complete; after a helper call ended the run that reading reopens the task
 through `resumeIdleConversation` and finishes work waiting on a person. `helperEndedLastRun` returns

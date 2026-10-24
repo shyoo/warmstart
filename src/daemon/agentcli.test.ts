@@ -285,6 +285,83 @@ describe('an approved split, named by its card', () => {
     expect(questions.approvedSplit(other.id, id.slice(0, 8)).ok).toBe(false)
     expect(questions.approvedSplit(other.id, '%').ok).toBe(false)
   })
+
+  it('names its card in the approval, so an agent whose call has gone can file by it (t1232)', async () => {
+    // ⛔ t1228: codex's call died before the answer, and *The operator chose: Delegate all 2.* was
+    //    all it was told. With no card id it re-sent the pieces and raised a duplicate card.
+    const { task, id } = await deferredSplitCard()
+    questions.answerQuestion(id, { optionIds: ['approve'], text: null })
+    const answer = tasks.messagesFor(task.id).at(-1)
+    expect(answer?.role).toBe('human')
+    expect(answer?.event).toBe('split.approved')
+    expect(answer?.detail).toBe(id.slice(0, 8))
+    const text = prompt.promptFor(task, 'antigravity-cli', false, { markDelivered: false }).text
+    expect(text).toContain(`warmstart-agent task_split --approval ${id.slice(0, 8)}`)
+    expect(prompt.splitApprovedPrompt('ok', id.slice(0, 8), true)).toContain(
+      `\`task_split\` with \`approval: "${id.slice(0, 8)}"\``
+    )
+  })
+
+  it('names nothing when the operator refuses', async () => {
+    const { task, id } = await deferredSplitCard()
+    questions.answerQuestion(id, { optionIds: ['reject'], text: 'Do it yourself.' })
+    expect(tasks.messagesFor(task.id).at(-1)?.event).toBeNull()
+  })
+
+  it('is the same card when the same pieces are sent again, and never a second one (t1232)', async () => {
+    const { task, id } = await deferredSplitCard()
+    const pieces = [{ title: 'Write the parser', dependsOn: [] }]
+    expect(questions.sameSplitCard(task.id, pieces)).toEqual({ questionId: id, answered: false })
+    expect(questions.sameSplitCard(task.id, [{ title: 'Something else', dependsOn: [] }])).toBeNull()
+    questions.answerQuestion(id, { optionIds: ['approve'], text: null })
+    expect(questions.sameSplitCard(task.id, pieces)).toEqual({ questionId: id, answered: true })
+    questions.markSplitFiled(id)
+    expect(questions.sameSplitCard(task.id, pieces)).toBeNull()
+  })
+
+  it('is asked again after a refusal: re-sending refused pieces is a new question', async () => {
+    const { task, id } = await deferredSplitCard()
+    questions.answerQuestion(id, { optionIds: ['reject'], text: null })
+    expect(questions.sameSplitCard(task.id, [{ title: 'Write the parser', dependsOn: [] }])).toBeNull()
+  })
+
+  it('files an approved card when its pieces are sent again, instead of asking twice (t1228)', async () => {
+    const { task, id } = await deferredSplitCard()
+    questions.answerQuestion(id, { optionIds: ['approve'], text: null })
+    const sessionId = tasks.runsFor(task.id)[0]?.sessionId ?? ''
+    tasks.startRun({ taskId: task.id, workerId: agy.id, sessionId, projectId: null, quotaUnverified: true, costModelId: null })
+    tasks.setStatus(task.id, 'running', { assignee: agy.id })
+    const { body } = await call(agentcli.mintAgentToken(sessionId), 'agent.split', {
+      pieces: [{ title: 'Write the parser', dependsOn: [] }]
+    })
+    expect((body.result as { reply: string }).reply).toMatch(/^Delegated as t\d+/)
+    expect(questions.questionsForTask(task.id).filter((q) => q.origin === 'task_split')).toHaveLength(1)
+    expect(questions.approvedSplit(task.id, id).ok).toBe(false)
+  })
+
+  it('does not raise a duplicate card for pieces already waiting on the operator', async () => {
+    // ⚠️ Within one run, which is t1228's shape: codex's first call was still waiting in a background
+    //    cell when it called again. A new run voids open cards (`onRunStart`), so that is the only
+    //    time an unanswered one can be matched.
+    const { task, sessionId, token } = working()
+    const pieces = [{ title: 'Write the parser', dependsOn: [] }]
+    const waiting = questions.askQuestion({
+      sessionId,
+      origin: 'task_split',
+      kind: 'choice',
+      question: 'File these pieces?',
+      options: [{ id: 'approve', label: 'Approve' }, { id: 'reject', label: 'Reject' }],
+      action: { kind: 'split', pieces }
+    })
+    const card = questions.questionsForTask(task.id).find((q) => q.origin === 'task_split')
+    if (!card) throw new Error('no card')
+    const { body } = await call(token, 'agent.split', { pieces })
+    expect(body.ok).toBe(true)
+    expect((body.result as { reply: string }).reply).toContain(`already with the operator as card ${card.id.slice(0, 8)}`)
+    expect(questions.questionsForTask(task.id).filter((q) => q.origin === 'task_split')).toHaveLength(1)
+    questions.answerQuestion(card.id, { optionIds: ['reject'], text: null })
+    await waiting
+  })
 })
 
 describe('the helper is named only where it exists', () => {

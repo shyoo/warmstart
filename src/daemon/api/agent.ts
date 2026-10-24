@@ -1,7 +1,7 @@
 /** The worker RPCs an agent reaches through MCP, and the only ones it can. */
 import { addMessage, createTask, getTask, getTaskBySeq, messagesFor, requireTask, runForSession, runsFor, setTaskHandoff } from '../tasks.js'
 import { landConversationWork } from '../conversationland.js'
-import { approvedSplit, askQuestion, markSplitFiled } from '../questions.js'
+import { approvedSplit, askQuestion, markSplitFiled, sameSplitCard } from '../questions.js'
 import { AGENT_CLI_COMMAND } from '../agentcli.js'
 import { addSplitDependency, applySplit, isDelegation, splitApprovalFor, validateSplit } from '../split.js'
 import { pendingDelegateRequest } from '../delegation.js'
@@ -230,6 +230,21 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
       const precheck = validateSplit(parent, pieces)
       if (!precheck.ok) {
         return { ok: false, reply: `That split was not filed: ${precheck.reason}` }
+      }
+
+      // ⛔ The same pieces again are the same card, never a second one (t1228). See `sameSplitCard`.
+      const earlier = approvedCard ? null : sameSplitCard(parent.id, pieces)
+      if (earlier?.answered) {
+        const found = approvedSplit(parent.id, earlier.questionId)
+        if (found.ok) approvedCard = found
+      } else if (earlier) {
+        return {
+          ok: true,
+          reply:
+            `These pieces are already with the operator as card ${earlier.questionId.slice(0, 8)}, and ` +
+            'nothing was filed. STOP HERE and do none of that work yourself. You are started again when ' +
+            'they answer, and an approval names that card for you to file by.'
+        }
       }
 
       // The wording lives in `split.ts` beside the filing rules it has to agree with —

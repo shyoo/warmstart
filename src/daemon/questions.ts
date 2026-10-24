@@ -344,6 +344,34 @@ export function approvedSplit(
   }
 }
 
+/**
+ * A card already raised on this task for exactly these pieces, not filed and not refused.
+ *
+ * ⛔ **A re-sent split is the same split.** An agent whose call died before the answer (t1228) has
+ * only the pieces to go on, and raising a second card for them asks the person the same thing twice
+ * — and the first answer files nothing. So an approved card is filed by these pieces as if named,
+ * and an unanswered one is pointed at rather than duplicated. A refused card is not matched: sending
+ * the same pieces after a refusal is asking again, and that is the person's to answer.
+ */
+export function sameSplitCard(
+  taskId: string,
+  pieces: RpcParams<'agent.split'>['pieces']
+): { questionId: string; answered: boolean } | null {
+  const wanted = JSON.stringify(pieces)
+  const cards = rows<QuestionRow>(
+    db()
+      .prepare(`select * from questions where task_id = ? and origin = 'task_split' order by asked_at desc, rowid desc`)
+      .all(taskId)
+  ).map(toQuestion)
+  for (const card of cards) {
+    const action = questionAction(card.id)
+    if (action?.kind !== 'split' || action.consumedAt || JSON.stringify(action.pieces) !== wanted) continue
+    if (!card.answeredAt) return { questionId: card.id, answered: false }
+    if (card.answer?.optionIds.includes('approve')) return { questionId: card.id, answered: true }
+  }
+  return null
+}
+
 /** Record that an approved split has been filed, so naming its card again files nothing. */
 export function markSplitFiled(questionId: string): void {
   const action = questionAction(questionId)
@@ -573,7 +601,23 @@ export function answerQuestion(id: string, answer: QuestionAnswer, by: 'human' =
     // folder answered with is therefore granted exactly as one attached in the composer is — the
     // next run's argv carries it via `grantedDirsFor`, which is the whole route by which an
     // operator hands an MCP-less agent a directory it asked for with NEEDS DECISION.
-    addMessage(answered.taskId, 'human', reply, answered.runId, answer.attachmentIds ?? [])
+    // ⛔ **A split approved after its call has gone names its card**, or the resumed agent has nothing
+    //    to file by. t1228 (2026-10-24, codex-cli 0.162.1): codex ran `task_split` in a background
+    //    exec cell, ended its turn 86s later with the card still open, and the approval 7s after that
+    //    reached it as a bare *The operator chose: Delegate all 2.* It re-sent the pieces, raised a
+    //    duplicate card, and its MCP call timed out at 300s; nothing was filed until a `/delegate`.
+    const splitCard =
+      !consumedLive && answered.origin === 'task_split' && answer.optionIds.includes('approve')
+        ? answered.id.slice(0, 8)
+        : null
+    addMessage(
+      answered.taskId,
+      'human',
+      reply,
+      answered.runId,
+      answer.attachmentIds ?? [],
+      splitCard ? { event: 'split.approved', detail: splitCard } : {}
+    )
     if (consumedLive) {
       const written = messagesFor(answered.taskId)
       const last = written[written.length - 1]

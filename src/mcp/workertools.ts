@@ -755,8 +755,9 @@ export function workerTools(io: WorkerToolIo): WorkerTool[] {
           .string()
           .optional()
           .describe(
-            'Instead of `pieces`: the approval card id an earlier task_split reply gave you, once the ' +
-              'operator has answered it. Files exactly the pieces they approved; do not send them again.'
+            'Instead of `pieces`: the approval card id an earlier task_split reply or the operator’s ' +
+              'approval gave you, once they have answered it. Files exactly the pieces they approved; do ' +
+              'not send them again.'
           )
       }
     },

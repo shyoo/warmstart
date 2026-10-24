@@ -1112,6 +1112,12 @@ export type MessageEvent =
    * the text, and the prompt wraps the text in the delegation instruction.
    */
   | 'command.delegate'
+  /**
+   * A person's approval of a `task_split` card that no live call was waiting on (t1232). `detail` is
+   * the card id; the prompt appends how to file by it, because the asker's call is gone with the card
+   * id it would have read. See `answerQuestion`.
+   */
+  | 'split.approved'
   /** Pieces this task delegated with `task_split`, filed. */
   | 'delegation.filed'
   /** Every piece of one delegation has settled; the caller is asked to review and merge them. */
