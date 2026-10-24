@@ -233,13 +233,35 @@ describe('capability consequences, not capability fields', () => {
 
 describe('a model the vendor stopped listing', () => {
   it('stays priced and accepted by name but is no longer offered', () => {
-    // `agy models`, agy 1.3.5, 2026-10-14: Gemini 3.1 Pro and 3.7/3.6/3.5 Flash are gone.
+    // `agy models`: Gemini removals on 1.3.5 (2026-10-14), Claude 4.6 on 1.4.5 (2026-10-24).
     const agy = costModel('google.antigravity.2026-08')
-    for (const id of ['gemini-3.1-pro', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash']) {
+    for (const id of [
+      'gemini-3.1-pro', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash',
+      'claude-sonnet-4-6', 'claude-opus-4-6-thinking'
+    ]) {
       expect(agy.modelIds()).toContain(id)
       expect(agy.offeredModelIds()).not.toContain(id)
     }
     expect(agy.offeredModelIds()).toContain('gemini-3.8-flash')
+  })
+
+  it('offers exactly the model/effort pairs listed by agy 1.4.5 on 2026-10-24', () => {
+    const agy = costModel('google.antigravity.2026-08')
+    expect(agy.offeredModelIds().sort()).toEqual([
+      'claude-opus-5-5', 'claude-sonnet-5-5', 'gemini-3.8-flash', 'gemini-4-argon', 'gpt-oss-120b'
+    ])
+    for (const id of agy.offeredModelIds()) {
+      expect(agy.modelSpec(id)?.effort_levels).toEqual(
+        id === 'gpt-oss-120b' ? ['medium'] : ['low', 'medium', 'high']
+      )
+    }
+    for (const id of ['gemini-4-argon', 'claude-sonnet-5-5', 'claude-opus-5-5']) {
+      expect(agy.modelSpec(id)?.context_window).toBeNull()
+      expect(agy.modelSpec(id)?.input_per_mtok).toBeNull()
+    }
+    for (const id of Object.values(adapter('antigravity-cli').info.policy.defaultModels ?? {})) {
+      expect(agy.offeredModelIds()).toContain(id)
+    }
   })
 })
 

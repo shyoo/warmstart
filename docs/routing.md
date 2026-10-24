@@ -443,6 +443,9 @@ leaderboard scores this exact id, cited with a source and a retrieval date), `in
 neighbouring or predecessor model, with the mapping stated), or `unknown`. ⛔ **`null` is never
 coerced to 0** — the same rule an untrustworthy quota reading follows.
 
+Gemini 4 Argon's entry is explicitly unknown (`agentic: null`): its agy 1.4.5 catalog listing
+was measured on 2026-10-24, but no coding benchmark was evaluated for that update.
+
 This fleet's own **clean** peer reviews — single-author, blinded without a leak; see
 [`glossary.md`](glossary.md) › *Blinding* — are blended in, shrunk toward the prior in log space:
 

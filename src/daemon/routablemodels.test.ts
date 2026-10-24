@@ -281,11 +281,12 @@ describe('the model table column', () => {
     const reread = workers.requireWorker(w.id)
     expect(reread.defaultModel).toBe('gemini-3.7-flash')
     expect(reread.defaultEffort).toBe('medium')
-    expect(reread.defaultModels).toEqual({ gemini: 'gemini-3.7-flash', claude: 'claude-sonnet-4-6' })
+    // Reopening also runs migration 93, which replaces the retired Claude worker choice.
+    expect(reread.defaultModels).toEqual({ gemini: 'gemini-3.7-flash', claude: 'claude-sonnet-5-5' })
     // The tag was stored by the fixture from the blended name (`-high`); a migration never re-infers it.
     expect(reread.modelRoutes).toEqual([
       row('gemini-3.8-flash', 'high', true, ['High']),
-      row('claude-sonnet-4-6', null, true)
+      row('claude-sonnet-5-5', 'medium', true)
     ])
     expect(reread.gradingModel).toBe('gemini-3.8-flash')
     expect(reread.gradingEffort).toBe('low')

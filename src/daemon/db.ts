@@ -2452,6 +2452,55 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'questions', 'action_json')) {
       conn.exec(`alter table questions add column action_json text`)
     }
+  },
+  // 93 - replace rejected Antigravity Claude 4.6 worker choices (t1239).
+  // agy 1.4.5's model list (2026-10-24) offers Claude 5.5 with explicit effort.
+  // Only worker configuration moves; task pins and historical runs/sessions keep their evidence.
+  (conn) => {
+    const replacements = new Map([
+      ['claude-sonnet-4-6', 'claude-sonnet-5-5'],
+      ['claude-opus-4-6-thinking', 'claude-opus-5-5']
+    ])
+    for (const [oldModel, newModel] of replacements) {
+      for (const purpose of ['default', 'grading', 'summarising', 'judgment']) {
+        conn.prepare(`update workers
+          set ${purpose}_model = ?, ${purpose}_effort = coalesce(${purpose}_effort, 'medium')
+          where adapter_id = 'antigravity-cli' and ${purpose}_model = ?`).run(newModel, oldModel)
+      }
+    }
+    const rows = conn.prepare(`select id, default_models_json, model_routes_json
+      from workers where adapter_id = 'antigravity-cli'`).all() as Array<{
+      id: string; default_models_json: string | null; model_routes_json: string | null
+    }>
+    for (const row of rows) {
+      if (row.default_models_json) {
+        const defaults = JSON.parse(row.default_models_json) as Record<string, string | null>
+        let changed = false
+        for (const [pool, model] of Object.entries(defaults)) {
+          const replacement = model ? replacements.get(model) : undefined
+          if (replacement) {
+            defaults[pool] = replacement
+            changed = true
+          }
+        }
+        if (changed) conn.prepare('update workers set default_models_json = ? where id = ?')
+          .run(JSON.stringify(defaults), row.id)
+      }
+      if (row.model_routes_json) {
+        const routes = JSON.parse(row.model_routes_json) as Array<{ model: string; effort: string | null }>
+        let changed = false
+        for (const route of routes) {
+          const replacement = replacements.get(route.model)
+          if (replacement) {
+            route.model = replacement
+            route.effort ??= 'medium'
+            changed = true
+          }
+        }
+        if (changed) conn.prepare('update workers set model_routes_json = ? where id = ?')
+          .run(JSON.stringify(routes), row.id)
+      }
+    }
   }
 ]
 

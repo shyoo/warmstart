@@ -32,6 +32,13 @@
   ],
   "models": [
     {
+      "id": "gemini-4-argon",
+      "agentic": null,
+      "basis": "unknown",
+      "source": null,
+      "note": "Listed by agy 1.4.5 on 2026-10-24; no coding benchmark evaluated for this catalog update."
+    },
+    {
       "id": "claude-opus-5-5",
       "agentic": 0.868,
       "basis": "inferred",

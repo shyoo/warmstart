@@ -1197,6 +1197,11 @@ costOfKeepalive(session)   costOfCompact(session)   costOfColdStart(tokens)   ca
 `effective_from` is load-bearing: historical runs stay priced by the model in force at the time, so a
 price change does not silently rewrite the estimator's training data.
 
+Antigravity's model catalog was measured with `agy models` in a Windows PTY (1.4.5,
+2026-10-24): Gemini 4 Argon/3.8 Flash and Claude Sonnet/Opus 5.5 list low/medium/high;
+GPT-OSS 120B lists medium only. New entries carry null context windows and token prices:
+the CLI list publishes neither. Retired Claude 4.6 entries retain their historical specifications.
+
 ### 8a. A model the file cannot list: `dynamic_models` (t486, 2026-09-16)
 
 `models` is the list a file can price **by name**, and it is the only list a model id is accepted

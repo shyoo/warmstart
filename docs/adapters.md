@@ -543,10 +543,15 @@ behaviour falls out of it:
     unlike `claude-haiku-4-5` (none): run on 2.1.293 (2026-10-07, t984) at `low`, `xhigh` and `max`,
     all answered, `contextWindow: 1000000`; an unknown level is ignored with a warning, not an error.
   - **`antigravity-cli`: true (promoted 2026-09-23, t645).** Antigravity CLI supports
-    `--effort low|medium|high` on base models (`gemini-3.8-flash`, `gpt-oss-120b`; `gemini-3.7/3.6/3.5-flash` and `gemini-3.1-pro` are `retired` in the cost model since agy 1.3.5 stopped listing them, 2026-10-14, measured with `agy models` in a PTY — still priced, no longer offered by `offeredModelIds`). The cost model
-    now lists unblended base model identifiers and declares `effort_levels` explicitly. Models
-    without selectable effort (e.g. `claude-sonnet-4-6`) declare empty `effort_levels`. Effort is
-    selected per line in the Routable Models table and passed via `--effort` at spawn.
+    `--effort` on base models. Measured with `agy models` in a Windows PTY on **1.4.5,
+    2026-10-24**: `gemini-4-argon`, `gemini-3.8-flash`, `claude-sonnet-5-5` and
+    `claude-opus-5-5` each list low/medium/high; `gpt-oss-120b` lists medium only.
+    Claude Sonnet/Opus 4.6 join Gemini 3.7/3.6/3.5 Flash and 3.1 Pro as retired: retained
+    for history, absent from `offeredModelIds`. Migration 93 replaces saved worker Claude 4.6
+    choices with 5.5, preserving tags/Auto flags and explicit efforts; absent effort becomes medium.
+    Task pins and history stay as recorded. New models' context windows/prices remain unknown;
+    a live turn on these new pairs has not been measured. Effort is selected per model-table row
+    and passed via `--effort` at spawn.
     ⚠️ **Migration 82 unblended the `workers` config, not history.** A run dispatched before this
     date still has `gemini-3.8-flash-high` / `-medium` sitting in `runs.model` and
     `quality_reviews.subject_model`, with `sessions.effort` left null — nothing rewrote those rows.
