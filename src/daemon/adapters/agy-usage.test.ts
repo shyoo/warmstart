@@ -235,6 +235,52 @@ describe('the /usage panel as agy 1.3.5 draws it (rows by cursor address)', () =
   })
 })
 
+/** Live agy 1.4.7 /usage capture, Windows, 2026-10-24; account address anonymized. */
+describe('the /usage panel with a weekly-only Argon quota', () => {
+  const argonScreen = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '__fixtures__', 'agy-usage-screen-1.4.7.txt'),
+    'utf8'
+  )
+
+  it('shows three Gemini-side rows then two Claude/GPT rows, with independent quota identities', () => {
+    const windows = parseUsageScreen(argonScreen, NOW)
+    expect(windows?.map((w) => [w.label, w.group, w.percent])).toEqual([
+      ['Gemini 5h', 'gemini', 13.48],
+      ['Gemini 7d', 'gemini', 1.14],
+      ['Argon 4 7d', 'argon', 0.29],
+      ['Claude/GPT 5h', 'claude-and-gpt', 0],
+      ['Claude/GPT 7d', 'claude-and-gpt', 50.71]
+    ])
+    expect(windows?.find((w) => w.group === 'argon')).toMatchObject({
+      id: 'weekly:argon',
+      resetsAt: NOW + (166 * 60 + 39) * 60_000
+    })
+    expect(windows?.find((w) => w.id === '5h')?.group).toBe('gemini')
+  })
+
+  it('rejects an Argon heading whose weekly bar is clipped or missing', () => {
+    expect(parseUsageScreen(argonScreen.slice(0, argonScreen.indexOf('Gemini 4 Argon Weekly Limit')), NOW)).toBeNull()
+    for (const remaining of ['Quota ava…', '101%', 'unknown']) {
+      expect(parseUsageScreen(argonScreen.replace('99.71%', remaining), NOW)).toBeNull()
+    }
+  })
+
+  it('does not let Argon stand in for missing regular Gemini windows', () => {
+    const missingGemini = argonScreen.replace(/GEMINI MODELS[\s\S]*?(?=CLAUDE AND GPT MODELS)/, '')
+    expect(parseUsageScreen(missingGemini, NOW)).toBeNull()
+  })
+
+  it('deduplicates repaints and preserves a fully exhausted weekly-only quota', () => {
+    const exhausted = argonScreen.replace('99.71%', '0.00%')
+    const windows = parseUsageScreen(`${exhausted}\n${exhausted}`, NOW)
+    expect(windows).toHaveLength(5)
+    expect(windows?.filter((w) => w.group === 'argon')).toEqual([{
+      id: 'weekly:argon', label: 'Argon 4 7d', group: 'argon', percent: 100,
+      resetsAt: NOW + (166 * 60 + 39) * 60_000
+    }])
+  })
+})
+
 describe('parseTokenCount', () => {
   it('parses abbreviations and commas into exact numbers', () => {
     expect(parseTokenCount('28.9k')).toBe(28900)

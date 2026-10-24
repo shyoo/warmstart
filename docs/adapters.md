@@ -662,7 +662,7 @@ Live reading, 2026-08-27, agy 1.1.22, Google AI Pro: Gemini weekly 5.48% used ·
 
 - The panel reports **remaining**; `QuotaWindow.percent` is **used**. Inverted in the parser.
 - A clipped **`Quota ava…` does not prove `Quota available`**. The parser accepts only the complete
-  label and rejects any displayed group that does not provide both validated windows, so a damaged
+  label and rejects any displayed group missing a required window, so a damaged
   rendering becomes `n/a` rather than a false fresh 0% sample.
 - The panel is **taller than a default terminal and scrolls**. At 30 rows one group's five-hour
   window fell below the fold and three of four windows came back looking complete. The probe
@@ -690,6 +690,15 @@ Live reading, 2026-08-27, agy 1.1.22, Google AI Pro: Gemini weekly 5.48% used ·
   something is glued to one, so the 1.1.22 fixture is untouched. Capture: `__fixtures__/agy-usage-screen-1.3.5.txt`. ⚠️ The same build now
   opens with a dismissible *"Verbosity now defaults to medium"* notice. In two live captures the
   panel drew anyway.
+
+**Argon weekly quota (Windows, agy 1.4.7, 2026-10-24).** A free PTY `/usage` capture reports
+`GEMINI 4 ARGON` with `Gemini 4 Argon Weekly Limit`, 99.71% remaining and `Refreshes in 166h 39m`;
+there is no Argon five-hour row. The parser records `weekly:argon` with group `argon`, displayed as
+**Argon 4 7d** after the two Gemini rows, before Claude/GPT. A visible Argon heading requires a valid
+weekly bar; older two-group panels still parse. The anonymized capture is
+`__fixtures__/agy-usage-screen-1.4.7.txt`. The panel says paid Pro quota is separate; the operator's
+IDE tooltip says Ultra includes it in the larger Gemini bucket. Trial Pro sharing is unmeasured;
+this display change does not alter model routing pools or subscription allocation shares.
 
 What was tried before and does not work:
 

@@ -1160,9 +1160,10 @@ whose entire design is to be invisible.
   worker card the pool half is the card's own title repeated down the rows, paid for out of the
   column the bars need, so `shortWindowLabels` (`src/renderer/src/lib/fleetcard.ts`) drops it and
   `.wcard-windows--terse` narrows the label column to match. ⛔ Dropped only when what is left still
-  tells the rows apart: Antigravity meters two pools on one account, and `Claude/GPT 5h` beside
+  tells the rows apart: Antigravity displays multiple pools on one account, and `Claude/GPT 5h` beside
   `Gemini 5h` shortened would draw two bars claiming to be the same window. The full label is on
-  every row's tooltip in both cases.
+  every row's tooltip in both cases. Its weekly-only **Argon 4 7d** follows **Gemini 5h / Gemini 7d**,
+  before the two Claude/GPT rows; all five gauges remain present in wide, narrow and single density.
 - ⛔ **The sessions divider counts slots, not sessions (t549, 2026-09-19; word fixed t560).**
   Every worker card draws `sessions ──── 1 / 2 in use` (narrow: `──── 1 / 2 ────`): slots in use against *Max parallel
   instances* — open `work` sessions, a warm idle one included, plus `reservedSlots` the daemon serves

@@ -752,6 +752,9 @@ function splitPanelRows(screen: string): string {
       .replace(/(Limit Remaining|\][ \t]*(?:[\d.]+[ \t]*%|Quota available))(?=[ \t]*\S)/g, '$1\n')
       // The text a row starts with.
       .replace(/(\S)[ \t]*(?=(?:Weekly|Five Hour) Limit Remaining|Models within this group)/g, '$1\n')
+      // agy 1.4.7 (2026-10-24): Argon has its own heading and only a weekly row.
+      .replace(/(\S)[ \t]*(?=GEMINI 4 ARGON\b|Gemini 4 Argon Weekly Limit\b)/g, '$1\n')
+      .replace(/(Gemini 4 Argon Weekly Limit)(?=[ \t]*\[)/g, '$1\n')
       // A group heading glued to the reset above it. Never inside one: what precedes the split may be
       // neither a capital nor a space, so `CLAUDE AND GPT MODELS` is not cut at `LAUDE` or `GPT`.
       .replace(/(?<=[^\sA-Z])[ \t]*(?=[A-Z][A-Z0-9&/]*(?: [A-Z0-9&/]+)* MODELS\b)/g, '\n')
@@ -776,7 +779,13 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i] ?? ''
 
-      const heading = /^\s*([A-Z][A-Z0-9 &/]*?)\s+MODELS\s*$/.exec(line)
+      const heading = /^\s*(?:([A-Z][A-Z0-9 &/]*?)\s+MODELS|(GEMINI 4 ARGON))\s*$/.exec(line)
+      if (heading?.[2]) {
+        group = { id: 'argon', label: 'Argon 4' }
+        if (!groupOrder.has(group.id)) groupOrder.set(group.id, groupOrder.size)
+        kind = null
+        continue
+      }
       if (heading?.[1]) {
         const name = heading[1].trim()
         const groupId = name.toLowerCase().replace(/[^a-z0-9]+/g, '-')
@@ -788,7 +797,7 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
         continue
       }
 
-      if (/Weekly Limit Remaining/.test(line)) kind = 'weekly'
+      if (/Weekly Limit Remaining|Gemini 4 Argon Weekly Limit/.test(line)) kind = 'weekly'
       else if (/Five Hour Limit Remaining/.test(line)) kind = '5h'
 
       // ⭐ Measured 2026-09-03 on agy 1.1.25: once a model group's weekly pool is exhausted,
@@ -862,21 +871,24 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
     if (b.id === 'context') return -1
     const groupA = a.group ?? a.id.slice(a.id.indexOf(':') + 1)
     const groupB = b.group ?? b.id.slice(b.id.indexOf(':') + 1)
-    const orderA = groupOrder.get(groupA) ?? 0
-    const orderB = groupOrder.get(groupB) ?? 0
+    // Keep Argon's independent weekly reading beside Gemini for display, without assigning it
+    // to the Gemini pool (which would make every Flash/Pro task inherit Argon's quota).
+    const orderA = groupOrder.get(groupA === 'argon' ? 'gemini' : groupA) ?? 0
+    const orderB = groupOrder.get(groupB === 'argon' ? 'gemini' : groupB) ?? 0
     if (orderA !== orderB) return orderA - orderB
-    const rankA = a.id.startsWith('5h') ? 0 : 1
-    const rankB = b.id.startsWith('5h') ? 0 : 1
+    const rankA = groupA === 'argon' ? 2 : a.id.startsWith('5h') ? 0 : 1
+    const rankB = groupB === 'argon' ? 2 : b.id.startsWith('5h') ? 0 : 1
     return rankA - rankB
   })
   if (windows.length === 0) return null
 
-  // ⛔ BOTH known groups must contribute BOTH windows or the read is not trustworthy. This panel is
+  // ⛔ Gemini and Claude/GPT must contribute BOTH windows or the read is not trustworthy. This panel is
   // taller than a default terminal and scrolls - its own footer says "(1-27 of 30 lines)" - so a
   // viewport can cut off half a group or a whole one. t183 (2026-09-03) proved the second case: a
   // probe exposed only Claude/GPT at 100%, and its otherwise-complete pair was applied to a Gemini
   // run six seconds later. Antigravity's Google AI account exposes these two pools; there is no
   // measured one-pool panel, so accepting one would turn missing evidence into a preemption.
+  // Argon's separate section (agy 1.4.7) is weekly-only and required whenever its heading is shown.
   if (hasUsage) {
     const perGroup = new Map<string, number>()
     for (const w of windows) {
@@ -884,12 +896,12 @@ export function parseUsageScreen(screen: string, now = Date.now()): QuotaWindow[
       const group = w.id.slice(w.id.indexOf(':') + 1)
       perGroup.set(group, (perGroup.get(group) ?? 0) + 1)
     }
-    // A heading is evidence that the group was on screen. It must contribute both rows, even when
+    // A heading is evidence that the group was on screen. It must contribute its required rows, even when
     // neither malformed row made it through the bar parser; otherwise two clipped `Quota ava…`
     // strings look exactly like a missing group and the remaining old rows get stored as fresh.
     for (const group of groupOrder.keys()) {
       const count = perGroup.get(group) ?? 0
-      if (count < 2) {
+      if (group === 'argon' ? !windowsById.has('weekly:argon') : count < 2) {
         return null
       }
     }

@@ -1,0 +1,14 @@
+└ Models & Quota
+
+  Account: someone@example.com
+
+GEMINI MODELS
+  Models within this group: Gemini Flash, Gemini Pro  Weekly Limit Remaining
+    [█████████████████████████████████████████████████░] 98.86%Refreshes in 167h 47m  Five Hour Limit Remaining[███████████████████████████████████████████░░░░░░░] 86.52%Refreshes in 3h 10mCLAUDE AND GPT MODELS
+  Models within this group: Claude Opus, Claude Sonnet, GPT-OSS  Weekly Limit Remaining[█████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░] 49.29%Refreshes in 97h 18m  Five Hour Limit Remaining[██████████████████████████████████████████████████] 100.00%Quota availableGEMINI 4 ARGON
+  For paid Pro plans, Argon quota is separate. Higher Argon quota (included as part of the larger Gemini quota bucket) i  Gemini 4 Argon Weekly Limit[██████████████████████████████████████████████████] 99.71%Refreshes in 166h 39m  │Within each group, models share a weekly limit and a 5-hour limit. Quota is
+  │consumed proportionally to the cost of the tokens. Thus, limits will last
+  │longer with shorter tasks or using more cost-effective models. The 5-hour
+  │limit smooths out aggregate demand to fairly distribute global capacity
+  │across all users, while your weekly limit is tied directly to your individual
+  │tier.  ↑/↓ Scroll · pgup/pgdown Page · ctrl+end Bottom · ctrl+home Top · esc Close Gemini 4 Argon · medium
