@@ -23,13 +23,17 @@ describe('fleet quota rows', () => {
       quota: {
         workerId: 'agy', sampledAt: now, ageMs: 0, stale: false, source: 'cli',
         windows: labels.map((label, i) => ({
-          id: String(i), label, percent: 10 + i, resetsAt: now + 86_400_000
+          id: String(i), label, group: ['gemini', 'gemini', 'argon', 'claude', 'claude'][i],
+          percent: 10 + i, resetsAt: now + 86_400_000
         }))
       }
     }
     const html = renderToStaticMarkup(<FleetStrip fleet={[entry]} now={now} onProbe={async () => {}} />)
     const gauges = [...html.matchAll(/class="gauge"[^>]*title="([^"]+)"/g)].map((m) => m[1])
     expect(gauges).toEqual(labels)
+    const pools = [...html.matchAll(/class="wcard-window-pool">(.*?)<\/div><\/div>/g)]
+      .map((m) => [...m[1]!.matchAll(/title="([^"]+)"/g)].map((g) => g[1]))
+    expect(pools).toEqual([labels.slice(0, 2), [labels[2]], labels.slice(3)])
     expect(html).toContain('14%')
     expect(html).toContain('12%')
     expect(html).toContain('1d 0h')

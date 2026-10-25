@@ -1163,7 +1163,9 @@ whose entire design is to be invisible.
   tells the rows apart: Antigravity displays multiple pools on one account, and `Claude/GPT 5h` beside
   `Gemini 5h` shortened would draw two bars claiming to be the same window. The full label is on
   every row's tooltip in both cases. Its weekly-only **Argon 4 7d** follows **Gemini 5h / Gemini 7d**,
-  before the two Claude/GPT rows; all five gauges remain present in wide, narrow and single density.
+  before the two Claude/GPT rows. Single density groups columns by the window's declared pool:
+  Gemini 5h/7d, Argon 7d at the top with an empty cell below, then Claude/GPT 5h/7d.
+  All five gauges remain present at every density; wide and narrow retain their vertical rows.
 - ⛔ **The sessions divider counts slots, not sessions (t549, 2026-09-19; word fixed t560).**
   Every worker card draws `sessions ──── 1 / 2 in use` (narrow: `──── 1 / 2 ────`): slots in use against *Max parallel
   instances* — open `work` sessions, a warm idle one included, plus `reservedSlots` the daemon serves

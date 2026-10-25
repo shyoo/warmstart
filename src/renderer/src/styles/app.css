@@ -1318,15 +1318,24 @@ body {
   line-height: 1.2;
 }
 
+.wcard-window-pool {
+  display: contents;
+}
+
 .wcard--single .wcard-windows {
   order: 2;
+  display: flex;
+  gap: var(--sp-3);
+  flex: 0 0 auto;
+}
+
+.wcard--single .wcard-window-pool {
   display: grid;
   grid-template-rows: repeat(2, 11px);
   grid-auto-flow: column;
   column-gap: var(--sp-3);
   row-gap: 2px;
   align-items: center;
-  flex: 0 0 auto;
 }
 
 .wcard--single .wcard-windows .gauge,

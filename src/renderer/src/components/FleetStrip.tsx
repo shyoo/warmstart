@@ -368,6 +368,13 @@ function WorkerCard({
    */
   const { stale } = quotaFreshness(quota, now)
   const windows = quota?.windows ?? []
+  // Keep independently metered pools together, including weekly-only pools.
+  const windowPools = new Map<string | undefined, typeof windows>()
+  for (const w of windows) {
+    const pool = windowPools.get(w.group) ?? []
+    pool.push(w)
+    windowPools.set(w.group, pool)
+  }
   /**
    * ⚠️ The pool name comes off the rows when the rows are still telling apart without it, and the
    * label column narrows to match. On a one-pool account every row began with the card's own title
@@ -516,17 +523,21 @@ function WorkerCard({
         <div
           className={`wcard-windows${stale ? ' wcard-windows--stale' : ''}${shortLabels ? ' wcard-windows--terse' : ''}`}
         >
-          {windows.map((w, i) => (
-            <div className="gauge" key={w.id} title={w.label}>
-              <span className="gauge-label">{shortLabels ? shortLabels[i] : w.label}</span>
-              <span className="bar">
-                <span
-                  className={`bar-fill bar-fill--${quotaUrgency(w.percent)}`}
-                  style={{ width: `${Math.min(100, Math.max(2, w.percent))}%` }}
-                />
-              </span>
-              <span className="num gauge-value">{percent(w.percent)}</span>
-              <span className="num gauge-reset">{countdown(w.resetsAt, now)}</span>
+          {[...windowPools].map(([group, pool]) => (
+            <div className="wcard-window-pool" key={group ?? 'all'}>
+              {pool.map((w) => (
+                <div className="gauge" key={w.id} title={w.label}>
+                  <span className="gauge-label">{shortLabels ? shortLabels[windows.indexOf(w)] : w.label}</span>
+                  <span className="bar">
+                    <span
+                      className={`bar-fill bar-fill--${quotaUrgency(w.percent)}`}
+                      style={{ width: `${Math.min(100, Math.max(2, w.percent))}%` }}
+                    />
+                  </span>
+                  <span className="num gauge-value">{percent(w.percent)}</span>
+                  <span className="num gauge-reset">{countdown(w.resetsAt, now)}</span>
+                </div>
+              ))}
             </div>
           ))}
         </div>
