@@ -33,6 +33,9 @@ export const DEFAULT_MODEL_CLASSES: Record<string, ModelClass> = {
 
   // OpenAI Codex
   'gpt-6.1-sol': 'high',
+  // Inferred from the Terra tier, not measured: gpt-5.6-terra is med, and codex-cli 0.162.1 lists
+  // gpt-6.1-terra below 6.1 Sol and Astra but above 6 Sol (t1276). A worker row overrides it.
+  'gpt-6.1-terra': 'med',
   'gpt-6-astra': 'high',
   'gpt-6-sol': 'high',
   'gpt-6-luna': 'low',

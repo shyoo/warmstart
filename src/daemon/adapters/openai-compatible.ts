@@ -242,7 +242,8 @@ const info: AdapterInfo = {
       'against a signed-in ChatGPT account, on a fresh exec and on exec resume: both echoed the level ' +
       'back in the rollout turn_context, and an unsupported level failed the turn with the API’s ' +
       'own enum error rather than being silently dropped. codex-cli 0.162.1 (2026-10-10) lists ' +
-      'gpt-6.1-sol at priority 1 in `codex debug models`; it has not been driven through a turn.'
+      'gpt-6.1-sol at priority 1 in `codex debug models`, and on 2026-10-28 gpt-6.1-terra at ' +
+      'priority 3; neither has been driven through a turn.'
   }
 }
 

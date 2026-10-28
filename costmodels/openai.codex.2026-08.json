@@ -67,6 +67,7 @@
     "scope": "organization",
     "min_cacheable_tokens": {
       "gpt-6.1-sol": 1024,
+      "gpt-6.1-terra": 1024,
       "gpt-6-astra": 1024,
       "gpt-6-sol": 1024,
       "gpt-6-luna": 1024,
@@ -100,6 +101,23 @@
     {
       "id": "gpt-6.1-sol",
       "$comment": "Listed by codex-cli 0.162.1's model catalogue on 2026-10-10 (`codex debug models` against CodexFirst's CODEX_HOME, which also refreshed its models_cache.json): priority 1, visibility list, effort levels low through ultra. context_window is that catalogue's max_context_window (872000) - measured, where gpt-6-sol's 1050000 is a documented figure; the smaller number is the conservative one. Not driven through a turn. 0.156.0's cache did not list it.",
+      "context_window": 872000,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "o200k",
+      "context_awareness": false,
+      "effort_levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+        "ultra"
+      ]
+    },
+    {
+      "id": "gpt-6.1-terra",
+      "$comment": "Listed by codex-cli 0.162.1's model catalogue on 2026-10-28 (`codex debug models`, which also refreshed ~/.codex/models_cache.json; the cache fetched 2026-10-25 did not list it): priority 3 - below gpt-6.1-sol and gpt-6-astra, above gpt-6-sol - visibility list, effort levels low through ultra, default low, context_window 500000 and max_context_window 872000, the same figures as gpt-6.1-sol. context_window here is that max, as for gpt-6.1-sol. Not driven through a turn; unpriced like every Codex model.",
       "context_window": 872000,
       "input_per_mtok": null,
       "output_per_mtok": null,

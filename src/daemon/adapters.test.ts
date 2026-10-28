@@ -277,6 +277,10 @@ describe('a cost model may say it does not know', () => {
     expect(codex.modelSpec('gpt-6.1-sol')?.effort_levels).toEqual(codex.modelSpec('gpt-6-sol')?.effort_levels)
     expect(codex.modelSpec('gpt-6.1-sol')?.effort_levels).toContain('ultra')
     expect(codex.modelSpec('gpt-6.1-sol')?.context_window).toBe(872000)
+    // gpt-6.1-terra: the same CLI's catalogue, 2026-10-28 (t1276; priority 3, low through ultra, 872000).
+    expect(codex.modelIds()).toContain('gpt-6.1-terra')
+    expect(codex.modelSpec('gpt-6.1-terra')?.effort_levels).toEqual(codex.modelSpec('gpt-6.1-sol')?.effort_levels)
+    expect(codex.modelSpec('gpt-6.1-terra')?.context_window).toBe(872000)
     expect(codex.modelIds()).toContain('gpt-6-astra')
     expect(codex.modelSpec('gpt-6-astra')?.effort_levels).toEqual([
       'low',
