@@ -499,7 +499,10 @@ Five kinds of work that exists and is going nowhere, listed on **Overview**:
   when the branch of any open task holds every unlanded commit (by SHA, or by the t948 proofs). A row
   counts only what no open branch holds. Among finished branches, one whose every unlanded commit
   another holds is **folded** into that row (*also carries t1013, t1021*), so a chain draws one row;
-  two branches with the same commits fold into the later name, never both. ⚠️ The panel only: the
+  two branches with the same commits fold into the later name, never both. Containment checks
+  evaluate unlanded commit sets in memory in parallel rather than spawning $O(N^2)$ sequential git
+  calls (t1281); `taskBranches` pre-resolves target refs once, and `scanLooseEnds` coalesces in-flight
+  scans across concurrent callers. ⚠️ The panel only: the
   sweep and **Retire it** still delete a name on trunk proof alone, so if an open branch is rebased
   or reset the child's name is still there. Deleting the outer row leaves the folded names, which
   show up on the next scan.

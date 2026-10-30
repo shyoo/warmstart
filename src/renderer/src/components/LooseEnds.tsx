@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LooseEnd } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { errorMessage } from '@shared/errors.js'
@@ -35,18 +35,38 @@ export function LooseEnds(): React.JSX.Element | null {
   const [busy, setBusy] = useState<string | null>(null)
   const [note, setNote] = useState<string | null>(null)
 
+  const inFlightRef = useRef(false)
+  const queuedRef = useRef(false)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
+
   const refresh = useCallback(async () => {
+    if (inFlightRef.current) {
+      queuedRef.current = true
+      return
+    }
+    inFlightRef.current = true
     setLoading(true)
     try {
-      const next = await rpc('looseend.list')
-      previousEnds = next
-      setEnds(next)
+      do {
+        queuedRef.current = false
+        const next = await rpc('looseend.list')
+        previousEnds = next
+        if (mountedRef.current) setEnds(next)
+      } while (queuedRef.current && mountedRef.current)
     } catch {
       // ⚠️ Silent. A repository this cannot read is not a reason to take the Overview down, and the
       // scan runs against every project's whole pool on a page that is otherwise always available.
-      if (previousEnds === null) setEnds([])
+      if (previousEnds === null && mountedRef.current) setEnds([])
     } finally {
-      setLoading(false)
+      inFlightRef.current = false
+      if (mountedRef.current) setLoading(false)
     }
   }, [])
 

@@ -1604,13 +1604,19 @@ export async function commitsOnlyOn(
   cwd: string,
   branch: string,
   target: string,
-  also: readonly string[] = []
+  also: readonly string[] = [],
+  resolvedTargetRefs?: readonly string[]
 ): Promise<number> {
-  const refs: string[] = []
-  for (const ref of [target, `origin/${target}`]) {
-    if (await gitOk(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) refs.push(ref)
+  let refs: string[]
+  if (resolvedTargetRefs && resolvedTargetRefs.length > 0) {
+    refs = [...resolvedTargetRefs]
+  } else {
+    refs = []
+    for (const ref of [target, `origin/${target}`]) {
+      if (await gitOk(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) refs.push(ref)
+    }
+    if (refs.length === 0) throw new Error(`neither \`${target}\` nor \`origin/${target}\` resolves`)
   }
-  if (refs.length === 0) throw new Error(`neither \`${target}\` nor \`origin/${target}\` resolves`)
   refs.push(...(await resolvingRefs(cwd, also, branch)))
   const count = Number.parseInt(await git(cwd, ['rev-list', '--count', branch, '--not', ...refs]), 10)
   if (!Number.isFinite(count)) throw new Error(`git could not count the commits on \`${branch}\``)
@@ -1645,13 +1651,19 @@ export async function branchContentLanded(
   cwd: string,
   branch: string,
   target: string,
-  also: readonly string[] = []
+  also: readonly string[] = [],
+  resolvedTargetRefs?: readonly string[]
 ): Promise<boolean> {
-  const refs: string[] = []
-  for (const ref of [target, `origin/${target}`]) {
-    if (await gitOk(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) refs.push(ref)
+  let refs: string[]
+  if (resolvedTargetRefs && resolvedTargetRefs.length > 0) {
+    refs = [...resolvedTargetRefs]
+  } else {
+    refs = []
+    for (const ref of [target, `origin/${target}`]) {
+      if (await gitOk(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) refs.push(ref)
+    }
+    if (refs.length === 0) return false
   }
-  if (refs.length === 0) return false
   refs.push(...(await resolvingRefs(cwd, also, branch)))
   const ahead = await tryGit(cwd, ['rev-list', branch, '--not', ...refs])
   const aheadShas = (ahead ?? '')
@@ -1798,32 +1810,38 @@ export async function taskBranches(project: Project, target: string): Promise<Ta
   }
   if (names.length === 0) return []
 
-  const holders = await branchHolders(project.root)
-  const found: TaskBranch[] = []
-  for (const { branch, head } of names) {
-    // ⚠️ `null` ahead-count is not zero. A branch git cannot measure is left alone by everything
-    // downstream rather than being reported as safe to delete, so the failure is a `-1` nothing acts on.
-    // ⛔ Against the local target *and* its remote — see `commitsOnlyOn` for the three seats that
-    // were listed as carrying the trunk's own unpushed history.
-    let ahead: number
-    try {
-      ahead = await commitsOnlyOn(project.root, branch, target)
-    } catch {
-      ahead = -1
-    }
-    // ⚠️ Only where there is something to disprove. A branch at zero (or unmeasurable) needs no
-    // second reading, and the extra git costs nothing in the common clean case.
-    const contentLanded =
-      ahead > 0 ? await branchContentLanded(project.root, branch, target).catch(() => false) : false
-    found.push({
-      branch,
-      taskSeq: seqFromBranch(branch),
-      ahead: Number.isFinite(ahead) ? ahead : -1,
-      contentLanded,
-      heldBy: holders.get(branch) ?? null,
-      head
-    })
+  const targetRefs: string[] = []
+  for (const ref of [target, `origin/${target}`]) {
+    if (await gitOk(project.root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) targetRefs.push(ref)
   }
+
+  const holders = await branchHolders(project.root)
+  const found: TaskBranch[] = await Promise.all(
+    names.map(async ({ branch, head }) => {
+      // ⚠️ `null` ahead-count is not zero. A branch git cannot measure is left alone by everything
+      // downstream rather than being reported as safe to delete, so the failure is a `-1` nothing acts on.
+      // ⛔ Against the local target *and* its remote — see `commitsOnlyOn` for the three seats that
+      // were listed as carrying the trunk's own unpushed history.
+      let ahead: number
+      try {
+        ahead = await commitsOnlyOn(project.root, branch, target, [], targetRefs)
+      } catch {
+        ahead = -1
+      }
+      // ⚠️ Only where there is something to disprove. A branch at zero (or unmeasurable) needs no
+      // second reading, and the extra git costs nothing in the common clean case.
+      const contentLanded =
+        ahead > 0 ? await branchContentLanded(project.root, branch, target, [], targetRefs).catch(() => false) : false
+      return {
+        branch,
+        taskSeq: seqFromBranch(branch),
+        ahead: Number.isFinite(ahead) ? ahead : -1,
+        contentLanded,
+        heldBy: holders.get(branch) ?? null,
+        head
+      }
+    })
+  )
   return found
 }
 

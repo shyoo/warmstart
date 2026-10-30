@@ -1,5 +1,6 @@
 import type { Task } from '@shared/tasks.js'
-import { branchContentLanded, commitsOnlyOn, type TaskBranch } from './worktrees.js'
+import { branchContentLanded, type TaskBranch } from './worktrees.js'
+import { git, tryGit } from './git.js'
 
 /**
  * What the loose-ends panel does with a finished task's branch that the trunk does not hold (t1041).
@@ -64,7 +65,21 @@ export async function branchVerdicts(
     })
     .map((b) => `refs/heads/${b.branch}`)
 
-  const candidates: Array<{ branch: TaskBranch; count: number }> = []
+  const targetRefs: string[] = []
+  for (const ref of [target, `origin/${target}`]) {
+    if (await tryGit(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) {
+      targetRefs.push(ref)
+    }
+  }
+  const validOpenRefs: string[] = []
+  for (const ref of openRefs) {
+    if (await tryGit(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) {
+      validOpenRefs.push(ref)
+    }
+  }
+  const excludeRefs = [...targetRefs, ...validOpenRefs]
+
+  const candidateBranches: TaskBranch[] = []
   for (const branch of branches) {
     const task = branch.taskSeq === null ? undefined : tasks.get(branch.taskSeq)
     if (!task || taskIsOpen(task) || branch.ahead <= 0 || branch.contentLanded) continue
@@ -73,19 +88,49 @@ export async function branchVerdicts(
       verdicts.set(branch.branch, { kind: 'parent-open', parentSeq: parent.seq })
       continue
     }
-    let count = branch.ahead
-    if (openRefs.length > 0) {
-      try {
-        count = await commitsOnlyOn(root, branch.branch, target, openRefs)
-      } catch {
-        count = branch.ahead
+    candidateBranches.push(branch)
+  }
+
+  // Pre-fetch unlanded commit SHAs for candidate branches in parallel
+  const branchShas = await Promise.all(
+    candidateBranches.map(async (branch) => {
+      let shas = new Set<string>()
+      let count = branch.ahead
+      if (excludeRefs.length > 0) {
+        try {
+          const out = await git(root, ['rev-list', branch.branch, '--not', ...excludeRefs])
+          const list = out
+            .split(/\r?\n/)
+            .map((s) => s.trim().toLowerCase())
+            .filter(Boolean)
+          shas = new Set(list)
+          count = shas.size
+        } catch {
+          count = branch.ahead
+        }
       }
-      if (count === 0 || (await branchContentLanded(root, branch.branch, target, openRefs).catch(() => false))) {
-        verdicts.set(branch.branch, { kind: 'carried' })
-        continue
-      }
+      return { branch, count, shas }
+    })
+  )
+
+  const carriedResults = await Promise.all(
+    branchShas.map(async (item) => {
+      if (openRefs.length === 0) return { item, carried: false }
+      if (item.count === 0) return { item, carried: true }
+      const carried = await branchContentLanded(root, item.branch.branch, target, openRefs, targetRefs).catch(
+        () => false
+      )
+      return { item, carried }
+    })
+  )
+
+  const candidates: Array<{ branch: TaskBranch; count: number; shas: Set<string> }> = []
+  for (const { item, carried } of carriedResults) {
+    if (carried) {
+      verdicts.set(item.branch.branch, { kind: 'carried' })
+    } else {
+      candidates.push(item)
     }
-    candidates.push({ branch, count })
   }
 
   // ⭐ Fold A into B when B holds every commit of A that the trunk and open branches lack. Two branches
@@ -94,15 +139,18 @@ export async function branchVerdicts(
   const contains = new Map<string, Set<string>>()
   if (candidates.length > 1 && candidates.length <= FOLD_LIMIT) {
     for (const a of candidates) {
+      if (a.shas.size === 0) continue
       for (const b of candidates) {
         if (a === b) continue
-        let left: number
-        try {
-          left = await commitsOnlyOn(root, a.branch.branch, target, [...openRefs, `refs/heads/${b.branch.branch}`])
-        } catch {
-          continue
+        if (a.shas.size > b.shas.size) continue
+        let isSubset = true
+        for (const sha of a.shas) {
+          if (!b.shas.has(sha)) {
+            isSubset = false
+            break
+          }
         }
-        if (left === 0) {
+        if (isSubset) {
           const inside = contains.get(b.branch.branch) ?? new Set<string>()
           inside.add(a.branch.branch)
           contains.set(b.branch.branch, inside)

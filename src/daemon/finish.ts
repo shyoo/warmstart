@@ -848,8 +848,22 @@ export function branchLooseEnd(input: {
   }
 }
 
+let inFlightScan: Promise<LooseEnd[]> | null = null
+
 /** Scan every pool member of every project. ⚠️ Reads git only; it never writes and never cleans. */
 export async function scanLooseEnds(): Promise<LooseEnd[]> {
+  if (inFlightScan) return inFlightScan
+  inFlightScan = (async () => {
+    try {
+      return await scanLooseEndsInternal()
+    } finally {
+      inFlightScan = null
+    }
+  })()
+  return inFlightScan
+}
+
+async function scanLooseEndsInternal(): Promise<LooseEnd[]> {
   const dismissed = new Set(
     rows<{ id: string }>(db().prepare('select id from loose_end_dismissals').all()).map((r) => r.id)
   )
