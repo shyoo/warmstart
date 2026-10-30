@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LooseEnd } from '@shared/tasks'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { errorMessage } from '@shared/errors.js'
-import { mergedSweepNote } from '../lib/looseends'
+import { delegateNote, mergedSweepNote } from '../lib/looseends'
 import { confirmAction } from '../lib/confirmation'
 
 // The overview unmounts while another page is open. Keep the last confirmed scan at module scope so
@@ -117,6 +117,36 @@ export function LooseEnds(): React.JSX.Element | null {
             }
           >
             Check merged PRs
+          </button>
+          {/* ⭐ One click per row stopped scaling (t1282). This hands every row shown to an agent,
+              one triage task per project, which reads each item and lands, deletes or leaves it.
+              Confirmed, because the agent may delete branches that hold commits — the click is the
+              operator delegating that decision, and the agent records a SHA for every deletion. */}
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={busy !== null || !ends || ends.length === 0}
+            onClick={() =>
+              void act(async () => {
+                const shown = ends ?? []
+                const projects = new Set(shown.map((e) => e.projectId)).size
+                if (
+                  !(await confirmAction(
+                    `Hand all ${shown.length} open item(s) to an agent? This files one task per project ` +
+                      `(${projects}) that reads each item and decides whether to land it, delete it, or ` +
+                      'leave it for you. It may delete branches that hold commits; every deletion is ' +
+                      'listed on the task with the SHA that restores it.',
+                    'Hand them over',
+                    false
+                  ))
+                )
+                  return null
+                setBusy('delegate-all')
+                return delegateNote(await rpc('looseend.delegateAll', { ids: shown.map((e) => e.id) }))
+              })
+            }
+          >
+            Let an agent handle all
           </button>
         </div>
       </header>

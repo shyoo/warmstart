@@ -157,6 +157,7 @@ export const REMOTE_METHODS = {
   'looseend.list': 'deny',
   'looseend.dismiss': 'deny',
   'looseend.reclaim': 'deny',
+  'looseend.delegateAll': 'deny',
   'looseend.retire': 'deny',
   'looseend.delete': 'deny',
   'looseend.cleanup': 'deny',

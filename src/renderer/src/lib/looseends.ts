@@ -22,3 +22,20 @@ export function mergedSweepNote(r: {
   if (open > 0) parts.push(`${open} still open`)
   return `checked ${r.checked} pull request(s): ${parts.join(', ')}`
 }
+
+/**
+ * What the Loose ends panel says after **Let an agent handle all**. Names each filed task, and every
+ * project that was not handed over and why, so a second click never looks like it did nothing.
+ */
+export function delegateNote(r: {
+  filed: { seq: number; title: string }[]
+  skipped: { projectName: string; reason: string }[]
+  gone: number
+}): string {
+  const parts = [
+    ...(r.filed.length > 0 ? [`filed ${r.filed.map((t) => `t${t.seq}`).join(', ')} to work through them`] : []),
+    ...r.skipped.map((s) => `${s.projectName}: ${s.reason}`),
+    ...(r.gone > 0 ? [`${r.gone} already resolved since the list was drawn`] : [])
+  ]
+  return parts.length > 0 ? parts.join('; ') : 'nothing left to hand over'
+}

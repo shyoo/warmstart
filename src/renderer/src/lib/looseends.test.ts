@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergedSweepNote } from './looseends'
+import { delegateNote, mergedSweepNote } from './looseends'
 
 describe('the note after checking merged pull requests', () => {
   it('names every non-zero outcome, and counts what is left as still open', () => {
@@ -19,5 +19,21 @@ describe('the note after checking merged pull requests', () => {
     expect(mergedSweepNote({ ran: false, checked: 0, cleanedUp: 0, kept: 0, failed: 0 })).toContain(
       'already running'
     )
+  })
+})
+
+describe('the note after handing everything to an agent', () => {
+  it('names every filed task, every skipped project and the rows already gone', () => {
+    expect(
+      delegateNote({
+        filed: [{ seq: 4, title: 'a' }, { seq: 5, title: 'b' }],
+        skipped: [{ projectName: 'beta', reason: 't3 is already handling them' }],
+        gone: 2
+      })
+    ).toBe('filed t4, t5 to work through them; beta: t3 is already handling them; 2 already resolved since the list was drawn')
+  })
+
+  it('says so when there was nothing to hand over', () => {
+    expect(delegateNote({ filed: [], skipped: [], gone: 0 })).toBe('nothing left to hand over')
   })
 })

@@ -525,6 +525,21 @@ it still refuses), a panel-wide **Check merged PRs** that runs the sweep without
 **Make a task** — which files a normal task to go and deal with it — and **Dismiss**, which only
 hides the row.
 
+⭐ **Let an agent handle all** (t1282) is the bulk form of **Make a task**: one row at a time stopped
+scaling once a fleet left dozens behind. After a confirmation it calls `looseend.delegateAll` with
+the ids of every row shown; the daemon re-scans, drops rows that have since resolved (`gone`), and
+files **one task per project** (`looseendtriage.ts`) whose prompt lists every item and asks the agent
+to decide per item: **land** it by `git merge --no-ff` into its own branch (merge commits kept, so
+the original commits reach the trunk and the rows clear — and while that branch is open, t1041 hides
+what it holds), **delete** it after recording `git rev-parse` of the tip, or **leave** it for the
+person. Deleting needs a reason; *"cannot tell"* means leave. Another workspace's uncommitted files
+are never reset or cleaned. A project with an open triage task (title prefix `TRIAGE_TITLE_PREFIX`)
+is skipped, not given a rival one that would merge the same branches. ⛔ The confirmation is the
+operator delegating **Delete it**'s decision; the daemon itself still deletes nothing, and the
+agent's final message lists each deletion with the SHA that restores it. Not yet driven end to end
+against a real fleet — *inferred* from the parts: the prompt is unit-tested as text, the grouping
+and guard by `looseendtriage.test.ts`.
+
 ⭐ **Finishing a conversation releases its worktree before Finish reports success.** A conversation
 keeps a live session and workspace while it waits for another turn. When the operator finishes it,
 Warmstart asks that session to stop, waits up to 15 seconds for the process to exit, then parks and

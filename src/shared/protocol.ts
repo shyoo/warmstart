@@ -2804,6 +2804,17 @@ export interface RpcMap {
   /** File a task to go and deal with one. ⚠️ Creates work; it does not do the work. */
   'looseend.reclaim': { params: LooseEnd; result: Task }
   /**
+   * Hand every listed row to an agent: one triage task per project, which decides per item whether
+   * to land it (merge into its own branch), delete it, or leave it for the person (t1282).
+   *
+   * ⛔ Re-scanned; a row in `ids` that no longer exists is counted in `gone`, not handed over. A
+   * project that already has an open triage task is `skipped` rather than given a rival one.
+   */
+  'looseend.delegateAll': {
+    params: { ids: string[] }
+    result: { filed: Task[]; skipped: { projectName: string; reason: string }[]; gone: number }
+  }
+  /**
    * Delete a task branch that carries nothing the trunk does not already have.
    *
    * ⛔ The daemon re-derives that proof itself; this is a request, not an instruction. A branch that

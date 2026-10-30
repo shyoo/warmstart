@@ -37,6 +37,7 @@ import { log } from '../log.js'
 import { emit } from '../events.js'
 import { clockTime } from '../threadline.js'
 import { dismissLooseEnd, resolveFinishPolicy, scanLooseEnds } from '../finish.js'
+import { openTriageTask, triageGroups, triagePrompt, triageTitle } from '../looseendtriage.js'
 import { withTransient } from '../idlestate.js'
 import { resolveSessionSharing } from '../sharing.js'
 import type { Api, ApiContext } from './support.js'
@@ -56,7 +57,7 @@ type TaskMethod =
   | 'approval.request' | 'approval.answer' | 'approval.rules' | 'approval.addRule' | 'approval.removeRule'
   | 'question.ask' | 'question.list' | 'question.forTask' | 'question.answer' | 'resource.list'
   | 'conversation.list' | 'looseend.list' | 'looseend.retire' | 'looseend.delete' | 'looseend.dismiss'
-  | 'looseend.reclaim' | 'looseend.cleanup' | 'looseend.checkMerged' | 'delivery.pending'
+  | 'looseend.reclaim' | 'looseend.delegateAll' | 'looseend.cleanup' | 'looseend.checkMerged' | 'delivery.pending'
 
 /**
  * The tag requirement a call asks for, whichever spelling it used.
@@ -858,6 +859,36 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       })
       log.info(`t${task.seq} filed to reclaim ${end.workspacePath}`)
       return task
+    },
+    // ⛔ Re-scans rather than trusting the rows sent: an item that resolved since the panel drew it
+    // must not reach an agent as something to act on. See `looseendtriage.ts`.
+    'looseend.delegateAll': async (p) => {
+      const fresh = await scanLooseEnds()
+      const groups = triageGroups(fresh, p.ids)
+      const open = listTasks()
+      const filed: Task[] = []
+      const skipped: { projectName: string; reason: string }[] = []
+      const scannedAt = new Date()
+      for (const group of groups) {
+        const already = openTriageTask(open, group.projectId)
+        if (already) {
+          skipped.push({ projectName: group.projectName, reason: `t${already.seq} is already handling them` })
+          continue
+        }
+        const project = requireProject(group.projectId)
+        const task = createTask({
+          title: triageTitle(group.projectName, group.ends.length),
+          prompt: triagePrompt(group, policyFor(project).landingTarget, scannedAt),
+          projectId: group.projectId,
+          priority: 'P2',
+          createdBy: { kind: 'human' },
+          mergeDuplicates: false
+        })
+        log.info(`t${task.seq} filed to triage ${group.ends.length} loose end(s) in ${group.projectName}`)
+        filed.push(task)
+      }
+      const handed = groups.reduce((n, g) => n + g.ends.length, 0)
+      return { filed, skipped, gone: p.ids.length - handed }
     }
   }
 }
