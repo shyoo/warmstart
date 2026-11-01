@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { AGENT_CLI_COMMAND } from './agentcli.js'
 import { db, rows } from './db.js'
 import { emit } from './events.js'
 import { tryGit } from './git.js'
@@ -310,13 +311,18 @@ export async function delegationLandingBlocker(
 /**
  * What the agent is told about delegation in its opening contract, where it may delegate.
  *
- * ⚠️ One clause, named only where it applies — `task_split` is registered for every session, and
- * this is what makes a work task or a conversation aware it can use it.
+ * ⚠️ One clause, named only where it applies — `task_split` is registered for every session
+ * (either natively over MCP or through `warmstart-agent`), and this is what makes a work task
+ * or a conversation aware it can use it.
  */
-export function delegationClause(conversation: boolean): string {
+export function delegationClause(conversation: boolean, agentCli = false): string {
+  const callMethod = agentCli
+    ? `run \`${AGENT_CLI_COMMAND} task_split\` (with \`--pieces '<json>'\` or \`--args-file -\`) with a `
+    : 'call `task_split` with a '
   return (
     'You may delegate: if part of this work would be better done by another agent — in parallel, ' +
-    'or on a cheaper model — commit what the pieces will need, then call `task_split` with a ' +
+    'or on a cheaper model — commit what the pieces will need, then ' +
+    callMethod +
     'self-contained instruction for each piece (optionally target `worker`, `adapter`, `model`, `effort`, or `class`). The ' +
     'person approves the pieces before anything is filed. Each piece is committed and checked on ' +
     'its own branch, cut from yours, and nothing is merged for you: when every piece has settled ' +
@@ -331,31 +337,44 @@ export function delegationClause(conversation: boolean): string {
 /**
  * A person's `/delegate` message, as the agent receives it.
  *
- * ⚠️ Two versions, from `capabilities.mcp` and never from an adapter name. An agent with no MCP has
- * no `task_split`, so it is asked for the instructions in its reply instead — a channel it has.
+ * ⚠️ Three versions, from `capabilities.mcp` and `capabilities.agentCli`, and never from an adapter name.
+ * An agent with neither has no way to file splits by tool, so it is asked for the instructions in its reply
+ * instead — a channel it has. An agent with `agentCli` runs `warmstart-agent task_split`.
  */
-export function delegateCommandPrompt(text: string, mcp: boolean): string {
+export function delegateCommandPrompt(text: string, mcp: boolean, agentCli = false): string {
   const asked = text.trim() || '(what you and the person have just been discussing)'
   const lead =
     'The person used /delegate: they want the following handed to other agents rather than done by ' +
     'you in this session.\n\n' +
     asked +
     '\n\n'
-  if (!mcp) {
+  if (mcp) {
     return (
       lead +
-      'This CLI has no Warmstart tools for filing work, so write a self-contained instruction for ' +
-      'each piece in your reply — one piece if it is one job — so the person can file them. Do not ' +
-      'do the delegated work yourself.'
+      'Prepare the delegation: work out the pieces — one if it is one job, several with dependency ' +
+      'edges if it splits — commit anything they will need from your workspace, and call `task_split` ' +
+      'once with a self-contained instruction for each (optionally target worker, adapter, model, effort, or class), because the agent that runs a piece has not ' +
+      'read this conversation. Because the person asked, the pieces are filed without a further ' +
+      'approval card. Do not do the delegated work yourself; when `task_split` returns, do what its ' +
+      'reply says.'
+    )
+  }
+  if (agentCli) {
+    return (
+      lead +
+      'Prepare the delegation: work out the pieces — one if it is one job, several with dependency ' +
+      'edges if it splits — commit anything they will need from your workspace, and run ' +
+      `\`${AGENT_CLI_COMMAND} task_split --pieces '<json>'\` (or with \`--args-file -\` over stdin) ` +
+      'once with a self-contained instruction for each (optionally target worker, adapter, model, effort, or class), because the agent that runs a piece has not ' +
+      'read this conversation. Because the person asked, the pieces are filed without a further ' +
+      'approval card. Do not do the delegated work yourself; when the command returns, do what its ' +
+      'output says.'
     )
   }
   return (
     lead +
-    'Prepare the delegation: work out the pieces — one if it is one job, several with dependency ' +
-    'edges if it splits — commit anything they will need from your workspace, and call `task_split` ' +
-    'once with a self-contained instruction for each (optionally target worker, adapter, model, effort, or class), because the agent that runs a piece has not ' +
-    'read this conversation. Because the person asked, the pieces are filed without a further ' +
-    'approval card. Do not do the delegated work yourself; when `task_split` returns, do what its ' +
-    'reply says.'
+    'This CLI has no Warmstart tools for filing work, so write a self-contained instruction for ' +
+    'each piece in your reply — one piece if it is one job — so the person can file them. Do not ' +
+    'do the delegated work yourself.'
   )
 }

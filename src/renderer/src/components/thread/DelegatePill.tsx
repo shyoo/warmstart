@@ -23,21 +23,28 @@ export function delegationPillShown(task: Pick<Task, 'kind'>): boolean {
 export function DelegatePill({
   task,
   refresh,
-  hasMcp = null
+  hasMcp = null,
+  canToolSplit = null
 }: {
   task: Task
   refresh: () => Promise<void>
   /**
    * The next-dispatch worker's adapter MCP capability, or null while unknown (t706).
-   * Shown only when delegation is on and the worker is known to lack MCP tools — a
-   * delegation the agent cannot file by tool.
+   * Deprecated in favor of `canToolSplit` (t1289).
    */
   hasMcp?: boolean | null
+  /**
+   * Whether the worker can file splits by tool (via native MCP or CLI helper) (t706, t1289).
+   * Shown only when delegation is on and the worker is known to lack both — a delegation
+   * the agent cannot file by tool.
+   */
+  canToolSplit?: boolean | null
 }): React.JSX.Element | null {
   const [busy, setBusy] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
   if (!delegationPillShown(task)) return null
   const on = task.mandate.allowed.includes('spawn_tasks')
+  const canSplit = canToolSplit ?? hasMcp
   return (
     <>
       <div className="pill-wrap compose-assign-pill">
@@ -65,9 +72,9 @@ export function DelegatePill({
         </button>
       </div>
       {failure && <span className="compose-hint warn">{failure}</span>}
-      {on && hasMcp === false && (
+      {on && canSplit === false && (
         <span className="compose-hint warn">
-          This worker has no MCP tools: the agent cannot file splits by tool. Send /delegate and
+          This worker has no MCP or CLI tools: the agent cannot file splits by tool. Send /delegate and
           it writes each piece out for you to file.
         </span>
       )}

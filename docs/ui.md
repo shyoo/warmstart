@@ -728,8 +728,8 @@ typed:
   conversations. ⛔ Unlike the pills beside it, it is **authority applied at once**, not a next-run
   choice: `task.update { delegation }` writes the task's `spawn_tasks`, and turning it on past a
   parent that cannot delegate comes back as a refusal under the row. ⚠️ While it is on and the
-  next-dispatch worker's adapter has no MCP tools, a hint under the row says the agent cannot
-  file splits by tool and to send `/delegate` for written-out pieces instead (t706).
+  next-dispatch worker's adapter has neither MCP nor CLI tool helper (`agentCli`), a hint under the row
+  says the agent cannot file splits by tool and to send `/delegate` for written-out pieces instead (t706, t1289).
   See `docs/mcp.md` §3.1.
 - **Slash commands become a chip as they are typed** (`shared/commands.ts`, t704). A `/` at the
   start of the box opens the command menu (Enter or Tab picks the first); `/delegate ` turns into a

@@ -845,7 +845,9 @@ export function promptFor(
   //    switching delegation on or off. Delivery-tracked the same way, and sent as themselves —
   //    they are addressed to this agent, not reports "from an earlier run".
   const DELEGATION_EVENTS: readonly MessageEvent[] = ['delegation.settled', 'delegation.toggled']
-  const hasMcp = adapter(adapterId).info.capabilities.mcp
+  const caps = adapter(adapterId).info.capabilities
+  const hasMcp = caps.mcp
+  const hasAgentCli = Boolean(caps.agentCli)
   const thread = messagesFor(task.id).filter(
     (m, i) =>
       m.role === 'human' ||
@@ -911,7 +913,7 @@ export function promptFor(
         : message.role === 'system' && message.detail
           ? `From an earlier run: ${message.text}\n${message.detail}`
           : message.role === 'human' && message.event === 'command.delegate'
-            ? delegateCommandPrompt(message.text, hasMcp)
+            ? delegateCommandPrompt(message.text, hasMcp, hasAgentCli)
             : message.role === 'human' && message.event === 'split.approved' && message.detail
               ? splitApprovedPrompt(message.text, message.detail, hasMcp)
               : message.text
@@ -1216,6 +1218,9 @@ export function promptFor(
         'If multiple options can be chosen (checkboxes), indicate that with `NEEDS DECISION: [multi] <question>` ' +
         'or include `(multi-select)` / `(select all that apply)` in the question.'
       )
+      if (mayDelegate && adapter(adapterId).info.capabilities.agentCli) {
+        parts.push(delegationClause(isOpenConversation(task), true))
+      }
     }
     // ⛔ `capabilities.agentCli`, never an adapter name. See `agentCliClause`.
     if (adapter(adapterId).info.capabilities.agentCli && !holdsPrompt) {
@@ -1331,13 +1336,18 @@ export function upstreamClause(project: Project | null): string {
 export function commandPromptFor(taskId: string, command: ThreadCommandId, text: string): string {
   const adapterId = runsFor(taskId)[0]?.adapterId ?? null
   let mcp = true
+  let agentCli = false
   try {
-    if (adapterId) mcp = adapter(adapterId).info.capabilities.mcp
+    if (adapterId) {
+      const caps = adapter(adapterId).info.capabilities
+      mcp = caps.mcp
+      agentCli = Boolean(caps.agentCli)
+    }
   } catch {
     // An adapter this build no longer has: the tool wording is the conservative guess.
   }
   switch (command) {
     case 'delegate':
-      return delegateCommandPrompt(text, mcp)
+      return delegateCommandPrompt(text, mcp, agentCli)
   }
 }

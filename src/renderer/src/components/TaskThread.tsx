@@ -488,14 +488,17 @@ function TaskDetail({
   const assigned =
     fleet.find((e) => e.worker.id === (task.constraints.workerId || task.assignee))?.worker ?? null
   /**
-   * Whether the worker the next dispatch resolves to can file splits by tool (t706).
+   * Whether the worker the next dispatch resolves to can file splits by tool (t706, t1289).
    *
-   * ⛔ Read off the adapter's declared capability, never off its id — and `null` while the
-   * list has not answered or nothing is pinned, which stays silent rather than warning
-   * about a dispatch the scheduler has not resolved yet.
+   * ⛔ Read off the adapter's declared capabilities (native MCP or CLI tool helper `agentCli`),
+   * never off its id — and `null` while the list has not answered or nothing is pinned, which
+   * stays silent rather than warning about a dispatch the scheduler has not resolved yet.
    */
-  const delegateHasMcp: boolean | null = assigned
-    ? (adapters.find((a) => a.id === assigned.adapterId)?.capabilities.mcp ?? null)
+  const delegateCanToolSplit: boolean | null = assigned
+    ? (() => {
+        const caps = adapters.find((a) => a.id === assigned.adapterId)?.capabilities
+        return caps ? Boolean(caps.mcp || caps.agentCli) : null
+      })()
     : null
   const canSetEffort =
     modelOptions.find((o) => o.adapterId === assigned?.adapterId)?.selectableEffort ?? false
@@ -700,7 +703,7 @@ function TaskDetail({
               blocking={blocking}
               work={work}
               choice={choice}
-              delegateHasMcp={delegateHasMcp}
+              delegateCanToolSplit={delegateCanToolSplit}
             />
           )}
           {/* The mark the open-task jump scrolls to: the bottom of the thread, above nothing. */}
@@ -2302,7 +2305,7 @@ function Compose({
   blocking,
   work,
   choice,
-  delegateHasMcp
+  delegateCanToolSplit
 }: {
   task: Task
   refresh: () => Promise<void>
@@ -2311,8 +2314,8 @@ function Compose({
   blocking: number
   work: PendingWorkState
   choice: ReassignChoice
-  /** The next-dispatch worker's adapter MCP capability, or null while unknown. */
-  delegateHasMcp: boolean | null
+  /** Whether the worker can file splits by tool (via native MCP or CLI helper) (t706, t1289). */
+  delegateCanToolSplit: boolean | null
 }): React.JSX.Element {
   // ⭐ Seeded from the draft this task's box was left holding (t979): the box unmounts with its
   //    thread, and what was typed there is the person's until they send it or empty it themselves.
@@ -2622,7 +2625,7 @@ function Compose({
         choice={choice}
         disabled={running || sending}
         disabledReason="Reassign once this turn ends, or Stop it first — the choice decides the next run, not this one."
-        extra={<DelegatePill task={task} refresh={refresh} hasMcp={delegateHasMcp} />}
+        extra={<DelegatePill task={task} refresh={refresh} canToolSplit={delegateCanToolSplit} />}
       />
       {/*
         ⛔ This used to say "Nothing is running, so this waits… prepended to the prompt the next run

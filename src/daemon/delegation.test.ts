@@ -287,11 +287,21 @@ describe('what the agent is told', () => {
     expect(withTools).toContain('write the migration')
     expect(withTools).toContain('`task_split`')
     expect(withTools).toContain('without a further approval card')
+    const withCli = delegation.delegateCommandPrompt('write the migration', false, true)
+    expect(withCli).toContain('warmstart-agent task_split')
+    expect(withCli).toContain('without a further approval card')
     const without = delegation.delegateCommandPrompt('write the migration', false)
     expect(without).not.toContain('task_split')
     expect(without).toContain('self-contained instruction for each piece in your reply')
     // An empty chip means what was just being discussed.
     expect(delegation.delegateCommandPrompt('  ', true)).toContain('just been discussing')
+  })
+
+  it('formats delegation clause for agentCli', () => {
+    const mcpClause = delegation.delegationClause(false, false)
+    expect(mcpClause).toContain('call `task_split` with a')
+    const cliClause = delegation.delegationClause(false, true)
+    expect(cliClause).toContain('warmstart-agent task_split')
   })
 
   function gitProject(): string {

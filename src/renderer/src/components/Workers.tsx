@@ -675,19 +675,32 @@ export function Workers({
                         // ⛔ Read off the adapter's declared capability, never off its id: an
                         // adapter that gains MCP tools lights up with no UI change. `null` is
                         // the list not having answered yet — unknown, never "no".
-                        const mcp = adapters.find((a) => a.id === worker.adapterId)?.capabilities.mcp
-                        if (mcp == null) return <span className="dim">unknown</span>
-                        return mcp ? (
-                          <span
-                            className="tag"
-                            title="Native Warmstart MCP tools on this CLI: the agent asks questions with buttons, gets directory grants in one step, and can file splits and land by tool."
-                          >
-                            Supported
-                          </span>
-                        ) : (
+                        const caps = adapters.find((a) => a.id === worker.adapterId)?.capabilities
+                        if (!caps) return <span className="dim">unknown</span>
+                        if (caps.mcp) {
+                          return (
+                            <span
+                              className="tag"
+                              title="Native Warmstart MCP tools on this CLI: the agent asks questions with buttons, gets directory grants in one step, and can file splits and land by tool."
+                            >
+                              Supported
+                            </span>
+                          )
+                        }
+                        if (caps.agentCli) {
+                          return (
+                            <span
+                              className="tag"
+                              title="Warmstart CLI helper tools (warmstart-agent) on this CLI: the agent can file splits, land, read context, and ask questions by command."
+                            >
+                              CLI helper
+                            </span>
+                          )
+                        }
+                        return (
                           <span
                             className="tag tag--off"
-                            title="No Warmstart MCP tools on this CLI: the agent asks as plain text, folders are attached by hand, and it cannot file splits or land by tool — land from the thread instead."
+                            title="No Warmstart MCP or CLI tools on this CLI: the agent asks as plain text, folders are attached by hand, and it cannot file splits or land by tool — land from the thread instead."
                           >
                             Not supported
                           </span>
