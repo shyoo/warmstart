@@ -663,6 +663,32 @@ export async function branchExists(project: Project, branch: string): Promise<bo
 }
 
 /**
+ * Is this branch checked out in any worktree of the repository — pooled, trunk or the person's own?
+ *
+ * ⛔ **The measurement that lets a parked branch be read without a tree** (t1297, 2026-11-02).
+ * Uncommitted files live in a working tree, never on a branch, so a branch that no worktree has
+ * checked out holds none: everything it carries is committed and can be counted from the refs.
+ * t1271 rested after landing with its next numbered branch parked and no tree on it, and the card
+ * drew Commit under *"Could not read this task's workspace"* about a branch there was nothing
+ * uncommitted on.
+ *
+ * Returns `true` / `false`, or `null` when `git worktree list` could not be read — which is *no
+ * reading*, and every caller must keep its could-not-look answer for it.
+ */
+export async function branchCheckedOutAnywhere(project: Project, branch: string): Promise<boolean | null> {
+  if (project.vcs !== 'git') return null
+  let listing: string
+  try {
+    listing = await git(project.root, ['worktree', 'list', '--porcelain'])
+  } catch {
+    return null
+  }
+  return listing
+    .split(/\r?\n/)
+    .some((line) => line.startsWith('branch ') && line.slice('branch '.length).trim() === `refs/heads/${branch}`)
+}
+
+/**
  * The commits the trunk's target gained between two readings, newest first.
  *
  * ⚠️ Subjects only, and capped. This goes into a message a person reads; forty commit lines in a

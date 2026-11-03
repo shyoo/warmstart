@@ -125,13 +125,27 @@ describe('the summary', () => {
     expect(summary.files).toEqual([])
   })
 
-  it('reports an unreadable workspace as unknown, not as zero uncommitted files', async () => {
+  it('reads a branch no tree has checked out as zero uncommitted files, from its refs (t1297)', async () => {
     const { task } = projectWithBranch({ 'feature.ts': 'export const answer = 42\n' })
 
     const summary = await taskdiff.diffSummaryFor(task.id)
 
-    // No pooled worktree holds this branch, so the tree genuinely cannot be read. ⛔ That must not
-    // render as "nothing uncommitted here", which is the sentence that loses somebody's files.
+    // No worktree holds this branch, so nothing on it can be uncommitted: uncommitted files live in
+    // a tree. That is a reading, and its commit is counted.
+    expect(summary.workspaceReadable).toBe(true)
+    expect(summary.uncommittedFiles).toBe(0)
+    expect(summary.unlandedCommits).toBe(1)
+  })
+
+  it('reports an unreadable workspace as unknown, not as zero uncommitted files', async () => {
+    const { project, task } = projectWithBranch({ 'feature.ts': 'export const answer = 42\n' })
+    // A tree outside the pool holds the branch, and nothing here reads a tree it does not own.
+    kit.git(project.root, 'worktree', 'add', join(dir, `outside${seq}`), task.branch as string)
+
+    const summary = await taskdiff.diffSummaryFor(task.id)
+
+    // ⛔ That must not render as "nothing uncommitted here", which is the sentence that loses
+    // somebody's files.
     expect(summary.workspaceReadable).toBe(false)
     expect(summary.uncommittedFiles).toBe(0)
   })

@@ -735,15 +735,49 @@ describe('a conversation whose workspace went back to the pool', () => {
     expect(answer.unlandedCommits).toBe(1)
   })
 
-  it('still says it could not look when no workspace has the branch', async () => {
+  it('⛔ reads a branch no tree has checked out from its refs, rather than failing to look (t1297)', async () => {
+    // ⭐ **t1271, 2026-10-31.** Landed, rested, and its next numbered branch was parked with no
+    //    tree on it. The card drew Commit under *"Could not read this task's workspace"* — about a
+    //    branch nothing uncommitted could be on, because uncommitted files live in a tree.
     const { taskId, workspace } = await abandonedOn('parked-off', () => {})
     git(workspace, 'switch', '--detach', 'main')
+
+    const answer = await resolutions.pendingWorkFor(taskId)
+    expect(answer.reason).toBe('')
+    expect(answer.supported).toBe(true)
+    expect(answer.hasDiff).toBe(false)
+    expect(answer.unlandedCommits).toBe(0)
+    expect(answer.unclaimed).toBe(true)
+    expect(answer.branch).toContain('parked-off')
+  })
+
+  it('counts the commits on a parked branch, so the card can offer Land', async () => {
+    const { taskId, workspace } = await abandonedOn('parked-with-work', (ws) => {
+      writeFileSync(join(ws, 'done.txt'), 'committed\n')
+      git(ws, 'add', '-A')
+      git(ws, 'commit', '-m', 'the work')
+    })
+    git(workspace, 'switch', '--detach', 'main')
+
+    const answer = await resolutions.pendingWorkFor(taskId)
+    expect(answer.supported).toBe(true)
+    expect(answer.hasDiff).toBe(false)
+    expect(answer.unlandedCommits).toBe(1)
+  })
+
+  it('still says it could not look when a tree outside the pool has the branch', async () => {
+    // ⚠️ That tree may hold uncommitted files, and nothing here reads a tree it does not own.
+    const { taskId, workspace, branch } = await abandonedOn('elsewhere', () => {})
+    git(workspace, 'switch', '--detach', 'main')
+    const outside = join(dir, `outside-${repoSeq}`)
+    git(workspace, 'worktree', 'add', outside, branch)
+    writeFileSync(join(outside, 'theirs.txt'), 'not committed\n')
 
     const answer = await resolutions.pendingWorkFor(taskId)
     expect(answer.supported).toBe(false)
     expect(answer.reason).toContain('no workspace has')
     // ⚠️ And the branch is still named, so the card can say which one it went looking for.
-    expect(answer.branch).toContain('parked-off')
+    expect(answer.branch).toContain('elsewhere')
   })
 
   /**

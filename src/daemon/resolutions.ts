@@ -5,10 +5,12 @@ import { getProject, landingTargetFor, policyFor, reloadProjectIfPresent } from 
 import { decideFinish, landingLevel, resolveFinishPolicy } from './finish.js'
 import { landingBaseFor, hasRemote, landTask, localBaseNote, trunkNotReady, trunkOccupiedBy } from './landing.js'
 import {
+  branchCheckedOutAnywhere,
   branchExists,
   branchNameFor,
   branchTitleFor,
   claimWorkspace,
+  commitsOnlyOn,
   parkWorkspace,
   prepareWorkspace,
   releaseWorkspace,
@@ -410,6 +412,18 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
     }
     if (branch && !(await branchExists(project, branch))) {
       return { ...none, supported: true, branch, unclaimed: true }
+    }
+    // ⛔ **A branch no tree has checked out is read from its refs** (t1297 ← t1271, 2026-11-02).
+    // t1271 landed `.19`, its next numbered branch `.20` was parked with no tree on it, and the card
+    // drew Commit under *"Could not read this task's workspace"* — a warning with nothing behind it,
+    // because uncommitted files live in a tree and no tree held the branch. Everything on it is
+    // committed, so it is counted: zero draws nothing, more draws Land, which borrows a workspace.
+    // ⚠️ A listing that fails, or a count that throws, is still no reading and keeps the warning.
+    if (branch && (await branchCheckedOutAnywhere(project, branch)) === false) {
+      const unlanded = await commitsOnlyOn(project.root, branch, target).catch(() => null)
+      if (unlanded !== null) {
+        return { ...none, supported: true, branch, unclaimed: true, unlandedCommits: unlanded }
+      }
     }
     return {
       ...none,

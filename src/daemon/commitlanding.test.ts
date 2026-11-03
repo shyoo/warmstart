@@ -277,21 +277,23 @@ describe('t578: the second press', () => {
     expect(tasks.requireTask(taskId).landAfterTurn).toBeNull()
   })
 
-  it('⚠️ still asks when the workspace cannot be read, because that is not "nothing there"', async () => {
-    // ⛔ The distinction the card is built on, and the guard above must not erase it: an unreadable
-    // workspace is not an empty one, and committing checks the branch out again.
+  it('⛔ reads a parked branch from its refs, and names Land instead of asking (t1297)', async () => {
+    // A tree an adapter whose turn ends its process leaves behind (t481): parked off the branch,
+    // which the branch itself survives. No tree holds the branch, so nothing on it is uncommitted —
+    // this used to read as *could not look* and draw Commit over a commit that already existed.
     const { taskId, project, workspace } = await seedConversation('nowhere to look', 'muse-code')
     agentCommits(workspace, 'somewhere.txt')
-    // The tree an adapter whose turn ends its process leaves behind (t481): parked off the branch,
-    // which the branch itself survives. `pendingWorkFor` can no longer see what is uncommitted.
     await worktrees.parkWorkspace(project, workspace)
     const answer = await resolutions.pendingWorkFor(taskId)
-    expect(answer.supported).toBe(false)
-    expect(answer.unlandedCommits).toBe(0)
+    expect(answer.supported).toBe(true)
+    expect(answer.hasDiff).toBe(false)
+    expect(answer.unlandedCommits).toBe(1)
+    const before = humanMessages(taskId).length
 
-    const asked = await resolutions.commitConversation(taskId, 'commit-and-merge')
-    expect(asked).toEqual({ ok: true })
-    expect(humanMessages(taskId).at(-1)).toContain("commit this conversation's work")
+    const refused = await resolutions.commitConversation(taskId, 'commit-and-merge')
+    expect(refused.ok).toBe(false)
+    expect(refused.reason).toContain('**Land**')
+    expect(humanMessages(taskId)).toHaveLength(before)
   })
 
   it('⛔ refuses while the turn it already asked for is still running', async () => {

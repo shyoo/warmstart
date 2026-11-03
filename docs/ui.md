@@ -842,7 +842,10 @@ press leaves the thread open on the next numbered branch ([`landing.md`](landing
   worktree keeps the branch **and every uncommitted file on it** — so the pool member that still has
   the branch checked out is searched by name (`workspaceOnBranch`, `unclaimed: true` on the answer).
   Without it, t280 rested with eight uncommitted files in ws2 while its own hold reason said *"use
-  Finish, Stop or Commit below"* and no Commit was below.
+  Finish, Stop or Commit below"* and no Commit was below. ⭐ And a branch **no worktree** has checked
+  out is a reading, not a failed look (t1297 ← t1271): uncommitted files live in a tree, so it holds
+  none, and its commits are counted from the refs (`branchCheckedOutAnywhere`, `commitsOnlyOn`) —
+  zero draws nothing, more draws Land. Only a tree outside the pool, or git failing, still warns.
 
 ⛔ **A pill's menu is rendered into a portal at the document root, positioned by `lib/menuposition.ts`.**
 It used to be an absolutely positioned child of the pill, which every scroll container between it and the
