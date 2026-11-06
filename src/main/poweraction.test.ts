@@ -83,7 +83,8 @@ describe('one-time power action', () => {
   })
 
   it('selects explicit platform actions without a shell', () => {
-    expect(powerCommand('win32', 'shutdown')).toEqual({ file: 'shutdown.exe', args: ['/s', '/t', '0'] })
+    // ERROR_MACHINE_LOCKED (1271): an unattended shutdown must also work at the lock screen.
+    expect(powerCommand('win32', 'shutdown')).toEqual({ file: 'shutdown.exe', args: ['/s', '/f', '/t', '0'] })
     // shutdown /h exits 0 when hibernation is disabled, so hibernate checks powrprof itself (t1186).
     const hibernate = powerCommand('win32', 'hibernate')
     expect(hibernate?.file).toBe('powershell.exe')

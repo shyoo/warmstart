@@ -50,6 +50,7 @@ export function PowerActionControl({ remote }: { remote: boolean }): React.JSX.E
         When done ▾
       </button>
       {open && <div className="titlebar-power-menu" role="menu">
+        {state?.available.includes('shutdown') && <p>Save work in other apps first. Shutdown can close apps with unsaved work.</p>}
         {state?.available.map((choice) => <button key={choice} role="menuitem" onClick={() => void arm(choice)}>
           {LABEL[choice]} after tasks
         </button>)}

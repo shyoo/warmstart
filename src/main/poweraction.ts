@@ -26,7 +26,9 @@ const POWRPROF = `Add-Type -TypeDefinition 'using System.Runtime.InteropServices
 export function powerCommand(platform: NodeJS.Platform, action: PowerAction): { file: string; args: string[] } | null {
   if (!availablePowerActions(platform).includes(action)) return null
   if (platform === 'win32') {
-    if (action === 'shutdown') return { file: 'shutdown.exe', args: ['/s', '/t', '0'] }
+    // /t 0 does not imply /f: without it Windows refuses a locked computer (1271).
+    // The controller already waited for work and the cancel window; the menu warns about other apps.
+    if (action === 'shutdown') return { file: 'shutdown.exe', args: ['/s', '/f', '/t', '0'] }
     // ⚠️ Not `shutdown /h`: with hibernation disabled it prints "(126)" and exits 0 (measured, Windows 11,
     // 2026-10-21, t1186), so a refusal read as success. SetSuspendState(FALSE) requests sleep;
     // rundll32's no-argument call can hibernate instead.

@@ -224,6 +224,13 @@ body {
   cursor: pointer;
 }
 .titlebar-power-menu button:hover { background: var(--color-border); }
+.titlebar-power-menu p {
+  width: 240px;
+  margin: 0;
+  padding: 7px 9px;
+  white-space: normal;
+  color: var(--state-warn);
+}
 
 .sidebar,
 .resizer,

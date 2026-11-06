@@ -95,6 +95,10 @@ powrprof at startup (`probePowerActions`) and drops sleep or hibernate when this
 them. Sleep and hibernate go through `SetSuspendState`, not `shutdown /h`, which exits 0 when
 hibernation is disabled (measured 2026-10-21, t1186). A failure names the action and the OS's own
 sentence; a `shutdown.exe` output ending in `(<Windows error>)` is a failure whatever its exit code.
+Windows shutdown uses `shutdown.exe /s /f /t 0` after the final queue read: `/t 0` alone does not
+imply `/f`, and a locked workstation can refuse it with error 1271 ([Windows error codes](https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--1000-1299-)).
+`/f` closes applications with unsaved work; the menu warns before arming it. The 60 s countdown
+remains in Warmstart, so cancellation never needs to abort a Windows shutdown already scheduled.
 
 Quit confirmation uses main → preload → `ConfirmationHost`, with a request id and a closed set of
 answers accepted only from the requested window. A renderer lost or reloaded cancels the request.
