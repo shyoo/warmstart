@@ -235,34 +235,48 @@ describe('the /usage panel as agy 1.3.5 draws it (rows by cursor address)', () =
   })
 })
 
-/** Live agy 1.4.7 /usage capture, Windows, 2026-10-24; account address anonymized. */
-describe('the /usage panel with a weekly-only Argon quota', () => {
+/** Live agy 1.4.12 /usage capture, Windows, 2026-11-05; account address anonymized. Argon unified into Gemini quota. */
+describe('the /usage panel as agy 1.4.12 draws it (Argon unified into regular Gemini quota)', () => {
+  const unifiedScreen = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '__fixtures__', 'agy-usage-screen-1.4.12.txt'),
+    'utf8'
+  )
+
+  it('reads four standard windows across Gemini and Claude/GPT pools', () => {
+    const windows = parseUsageScreen(unifiedScreen, NOW)
+    expect(windows).toHaveLength(4)
+    expect(windows?.map((w) => [w.label, w.group, w.percent])).toEqual([
+      ['Gemini 5h', 'gemini', 2.14],
+      ['Gemini 7d', 'gemini', 0.79],
+      ['Claude/GPT 5h', 'claude-and-gpt', 26.33],
+      ['Claude/GPT 7d', 'claude-and-gpt', 13.17]
+    ])
+    // Busiest 5h window (Claude/GPT at 26.33%) gets bare '5h' id
+    expect(windows?.find((w) => w.id === '5h')?.group).toBe('claude-and-gpt')
+  })
+
+  it('still reads the account from its own line', () => {
+    expect(parseUsageScreenIdentity(unifiedScreen)?.account).toBe('someone@example.com')
+  })
+})
+
+/** Legacy agy 1.4.7 /usage capture with transitional Argon section; Argon now shares regular Gemini quota. */
+describe('legacy /usage panel with transitional Argon section', () => {
   const argonScreen = readFileSync(
     join(dirname(fileURLToPath(import.meta.url)), '__fixtures__', 'agy-usage-screen-1.4.7.txt'),
     'utf8'
   )
 
-  it('shows three Gemini-side rows then two Claude/GPT rows, with independent quota identities', () => {
+  it('parses four standard windows and ignores the separate Argon section', () => {
     const windows = parseUsageScreen(argonScreen, NOW)
+    expect(windows).toHaveLength(4)
     expect(windows?.map((w) => [w.label, w.group, w.percent])).toEqual([
       ['Gemini 5h', 'gemini', 13.48],
       ['Gemini 7d', 'gemini', 1.14],
-      ['Argon 4 7d', 'argon', 0.29],
       ['Claude/GPT 5h', 'claude-and-gpt', 0],
       ['Claude/GPT 7d', 'claude-and-gpt', 50.71]
     ])
-    expect(windows?.find((w) => w.group === 'argon')).toMatchObject({
-      id: 'weekly:argon',
-      resetsAt: NOW + (166 * 60 + 39) * 60_000
-    })
-    expect(windows?.find((w) => w.id === '5h')?.group).toBe('gemini')
-  })
-
-  it('rejects an Argon heading whose weekly bar is clipped or missing', () => {
-    expect(parseUsageScreen(argonScreen.slice(0, argonScreen.indexOf('Gemini 4 Argon Weekly Limit')), NOW)).toBeNull()
-    for (const remaining of ['Quota ava…', '101%', 'unknown']) {
-      expect(parseUsageScreen(argonScreen.replace('99.71%', remaining), NOW)).toBeNull()
-    }
+    expect(windows?.some((w) => w.group === 'argon')).toBe(false)
   })
 
   it('does not let Argon stand in for missing regular Gemini windows', () => {
@@ -270,14 +284,9 @@ describe('the /usage panel with a weekly-only Argon quota', () => {
     expect(parseUsageScreen(missingGemini, NOW)).toBeNull()
   })
 
-  it('deduplicates repaints and preserves a fully exhausted weekly-only quota', () => {
-    const exhausted = argonScreen.replace('99.71%', '0.00%')
-    const windows = parseUsageScreen(`${exhausted}\n${exhausted}`, NOW)
-    expect(windows).toHaveLength(5)
-    expect(windows?.filter((w) => w.group === 'argon')).toEqual([{
-      id: 'weekly:argon', label: 'Argon 4 7d', group: 'argon', percent: 100,
-      resetsAt: NOW + (166 * 60 + 39) * 60_000
-    }])
+  it('deduplicates repaints cleanly', () => {
+    const windows = parseUsageScreen(`${argonScreen}\n${argonScreen}`, NOW)
+    expect(windows).toHaveLength(4)
   })
 })
 

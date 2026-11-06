@@ -691,14 +691,14 @@ Live reading, 2026-08-27, agy 1.1.22, Google AI Pro: Gemini weekly 5.48% used ·
   opens with a dismissible *"Verbosity now defaults to medium"* notice. In two live captures the
   panel drew anyway.
 
-**Argon weekly quota (Windows, agy 1.4.7, 2026-10-24).** A free PTY `/usage` capture reports
-`GEMINI 4 ARGON` with `Gemini 4 Argon Weekly Limit`, 99.71% remaining and `Refreshes in 166h 39m`;
-there is no Argon five-hour row. The parser records `weekly:argon` with group `argon`, displayed as
-**Argon 4 7d** after the two Gemini rows, before Claude/GPT. A visible Argon heading requires a valid
-weekly bar; older two-group panels still parse. The anonymized capture is
-`__fixtures__/agy-usage-screen-1.4.7.txt`. The panel says paid Pro quota is separate; the operator's
-IDE tooltip says Ultra includes it in the larger Gemini bucket. Trial Pro sharing is unmeasured;
-this display change does not alter model routing pools or subscription allocation shares.
+**Argon quota unified into Gemini Pro/Flash (Windows, agy 1.4.12, 2026-11-05).** In agy 1.4.7
+(2026-10-24), a temporary separate `GEMINI 4 ARGON` section reported `Gemini 4 Argon Weekly Limit`
+while noting that higher Argon quota included as part of the larger Gemini bucket was coming. In
+agy 1.4.12 (measured 2026-11-05), Google unified Argon into the regular Gemini Pro/Flash quota:
+the separate Argon heading and weekly row are gone from `/usage`, and Argon tasks draw on the
+standard `gemini` pool (`5h:gemini` and `weekly:gemini`). The parser emits the standard four windows
+(`Gemini 5h`, `Gemini 7d`, `Claude/GPT 5h`, `Claude/GPT 7d`) and ignores legacy separate Argon rows.
+Captures: `__fixtures__/agy-usage-screen-1.4.12.txt` and legacy `agy-usage-screen-1.4.7.txt`.
 
 What was tried before and does not work:
 

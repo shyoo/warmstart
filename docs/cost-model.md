@@ -850,12 +850,11 @@ Measured on agy 1.1.22, Windows, Google AI Pro, 2026-08-27 — a live reading th
 | Claude and GPT (Opus, Sonnet, GPT-OSS) | weekly | 42.80% | 44h |
 | Claude and GPT (Opus, Sonnet, GPT-OSS) | 5-hour | 0% | — |
 
-**Argon adds a weekly-only reading.** A Windows PTY capture of agy 1.4.7 on 2026-10-24 reports
-`GEMINI 4 ARGON` separately: 99.71% remaining, resetting in 166h 39m, with no five-hour window.
-It is stored as `weekly:argon` / group `argon` and displayed after Gemini's two rows. It must not
-be folded into regular Gemini usage or create a synthetic five-hour reading. This does not establish
-trial Pro sharing or new subscription allocation shares; model routing pools remain unchanged.
-See [`adapters.md`](adapters.md) for the capture and completeness rule.
+**Argon shares the regular Gemini Pro/Flash quota.** In agy 1.4.7 (2026-10-24), a temporary
+`GEMINI 4 ARGON` weekly reading appeared separately. As of agy 1.4.12 (2026-11-05), Argon is
+part of the regular Pro/Flash quota bucket: the separate weekly reading is retired, and Argon tasks
+draw directly against the standard `gemini` pool (`5h:gemini` and `weekly:gemini`). See
+[`adapters.md`](adapters.md).
 
 ⭐ **The original two pools mean two answers to "how full is this account?", and the gate picks the right one
 (2026-08-29).** The parser has produced all four windows since the day above. What consumed them was
