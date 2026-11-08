@@ -5609,9 +5609,8 @@ try {
     `heading: ${afterHeading} · rows: ${JSON.stringify(sideRows)}`
   )
 
-  // (t908) Unfolded, the rows' own coloured pictograms say what the numbers would; the numbers are for
-  // the folded project. ⚠️ The row's count is read before folding and after, and the folded one must
-  // be non-empty: a project with no count at all would pass "absent when unfolded" for the wrong reason.
+  // (t908, t1319) Task counts appear beside the project name at all times (unfolded and folded).
+  // ⚠️ The row's count is read before folding and after, and both must be non-empty and carry numbers.
   const projectCount = `(() => {
     const row = [...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'));
     return row?.querySelector('.nav-count')?.innerText.trim() ?? '';
@@ -5639,24 +5638,24 @@ try {
     JSON.stringify(rowIconColour)
   )
 
-  // The fold: the toggle on the project row hides the list and remembers it.
+  // The fold: the colored triangle toggle on the project row hides the list and remembers it (t1319).
   await evaluate(
-    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.querySelector('.nav-fold')?.click()`
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.querySelector('.project-triangle')?.click()`
   )
   await wait(400)
   const foldedCountText = await evaluate(projectCount)
   check(
-    '⛔ the project’s numbers show only while it is folded',
-    unfoldedCount === '' && /\d/.test(foldedCountText),
+    'the project’s numbers show at all times, both unfolded and folded',
+    /\d/.test(unfoldedCount) && /\d/.test(foldedCountText),
     `unfolded: ${JSON.stringify(unfoldedCount)} · folded: ${JSON.stringify(foldedCountText)}`
   )
   const foldedRows = await sidebarRows()
-  const foldCount = await evaluate(
-    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.querySelector('.nav-fold')?.innerText.trim() ?? ''`
+  const isFolded = await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.querySelector('.project-triangle')?.classList.contains('project-triangle--folded') ?? false`
   )
-  check('the project row folds its conversations away and draws only the chevron', foldedRows.length === 0 && foldCount === '▸', `sideRows: ${foldedRows.length}, fold: ${foldCount}`)
+  check('the project row folds its conversations away and draws the folded triangle', foldedRows.length === 0 && isFolded, `sideRows: ${foldedRows.length}, folded: ${isFolded}`)
   await evaluate(
-    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.querySelector('.nav-fold')?.click()`
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.querySelector('.project-triangle')?.click()`
   )
   await wait(400)
   check('and unfolds them again', (await sidebarRows()).length === 1)
@@ -5762,7 +5761,8 @@ try {
     const dot = ${completedProjectRow}?.querySelector('.project-dot');
     if (!dot) return 'null';
     const css = getComputedStyle(dot);
-    return JSON.stringify({ state: dot.className, color: css.backgroundColor, animation: css.animationName,
+    const color = css.color || css.backgroundColor;
+    return JSON.stringify({ state: dot.className, color, animation: css.animationName,
       green: getComputedStyle(document.documentElement).getPropertyValue('--state-ok').trim(), title: dot.getAttribute('aria-label') });
   })()`))
   await waitFor(async () => (await completionDot())?.state.includes('project-dot--completed'), 'the completed project to show its green notification')

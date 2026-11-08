@@ -47,6 +47,7 @@ import {
   reassignmentModel,
   resolveRetryCauses,
   projectTaskCounts,
+  ProjectDot,
   ProjectTaskCount,
   projectWorkState,
   STATUS_TONE,
@@ -640,6 +641,59 @@ describe('ProjectTaskCount', () => {
     const markup = render(running, awaiting, failed, waiting)
     expect(markup).toContain(expected)
     expect(markup).not.toContain('>0</span>')
+  })
+})
+
+describe('ProjectDot', () => {
+  it('renders a plain dot indicator when folded is omitted (non-collapsible row)', () => {
+    const markup = renderToStaticMarkup(createElement(ProjectDot, { state: 'idle' }))
+    expect(markup).toContain('class="project-dot project-dot--idle"')
+    expect(markup).not.toContain('<svg')
+  })
+
+  it('renders an unfolded downward triangle when folded is false', () => {
+    const markup = renderToStaticMarkup(createElement(ProjectDot, { state: 'working', folded: false, collapsible: true }))
+    expect(markup).toContain('class="project-dot project-triangle project-dot--working project-triangle--unfolded"')
+    expect(markup).toContain('role="button"')
+    expect(markup).toContain('tabindex="0"')
+    expect(markup).toContain('aria-expanded="true"')
+    expect(markup).toContain('<svg')
+    expect(markup).toContain('d="M 1 2 L 7 2 L 4 6.5 Z"')
+    expect(markup).toContain('fill="currentColor"')
+  })
+
+  it('renders a folded rightward triangle when folded is true', () => {
+    const markup = renderToStaticMarkup(createElement(ProjectDot, { state: 'completed', folded: true, collapsible: true }))
+    expect(markup).toContain('class="project-dot project-triangle project-dot--completed project-triangle--folded"')
+    expect(markup).toContain('role="button"')
+    expect(markup).toContain('tabindex="0"')
+    expect(markup).toContain('aria-expanded="false"')
+    expect(markup).toContain('<svg')
+    expect(markup).toContain('d="M 2 1 L 6.5 4 L 2 7 Z"')
+    expect(markup).toContain('fill="currentColor"')
+  })
+
+  it('renders a hollow stroke triangle when state is idle', () => {
+    const unfolded = renderToStaticMarkup(createElement(ProjectDot, { state: 'idle', folded: false }))
+    expect(unfolded).toContain('fill="none"')
+    expect(unfolded).toContain('stroke="currentColor"')
+
+    const folded = renderToStaticMarkup(createElement(ProjectDot, { state: 'idle', folded: true }))
+    expect(folded).toContain('fill="none"')
+    expect(folded).toContain('stroke="currentColor"')
+  })
+
+  it.each([
+    ['working', 'Tasks in progress'],
+    ['needs_attention', 'Human action needed'],
+    ['paused', 'Parked — paused, blocked or quota-held; no action needed'],
+    ['pending_pr', 'Pending pull request — click to view'],
+    ['completed', 'Task completed — click the project to dismiss'],
+    ['idle', 'Idle']
+  ] as const)('preserves state class and accessible title for %s', (state, titlePrefix) => {
+    const markup = renderToStaticMarkup(createElement(ProjectDot, { state, folded: false, collapsible: true }))
+    expect(markup).toContain(`project-dot--${state}`)
+    expect(markup).toContain(`title="${titlePrefix} · Hide open tasks"`)
   })
 })
 

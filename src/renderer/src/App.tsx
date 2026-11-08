@@ -694,48 +694,34 @@ export function App({
                   >
                     <ProjectDot
                       state={state}
-                      onClick={
-                        state === 'pending_pr'
+                      folded={folded}
+                      collapsible={listedCount > 0}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (state === 'pending_pr') {
+                          setActivePrBadgeProjectId((cur) => (cur === project.id ? null : project.id))
+                        }
+                        if (listedCount > 0) {
+                          toggleProjectTasks(project.id)
+                        }
+                      }}
+                      onKeyDown={
+                        listedCount > 0
                           ? (e) => {
-                              e.stopPropagation()
-                              setActivePrBadgeProjectId((cur) => (cur === project.id ? null : project.id))
+                              if (e.key === 'Enter' || e.key === ' ') {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                if (state === 'pending_pr') {
+                                  setActivePrBadgeProjectId((cur) => (cur === project.id ? null : project.id))
+                                }
+                                toggleProjectTasks(project.id)
+                              }
                             }
                           : undefined
                       }
                     />
                     <span className="nav-project-name">{project.name}</span>
-                    {/* ⚠️ Only while the tasks are out of sight (t908): unfolded, each row's coloured
-                        pictogram already says the same thing. A project with nothing listed has no
-                        rows to say it, so it keeps its numbers. */}
-                    {(folded || listedCount === 0) && <ProjectTaskCount counts={counts} />}
-                    {/* ⚠️ Only where there is something to fold. A toggle on a project with no open
-                        task would be a control that does nothing. A `span` with a role, not a
-                        nested button: the row itself is already a button. */}
-                    {listedCount > 0 && (
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        className="nav-fold"
-                        aria-label={`${folded ? 'Show' : 'Hide'} ${listedCount} open ${listedCount === 1 ? 'task' : 'tasks'}`}
-                        aria-expanded={!folded}
-                        title={folded ? 'Show open tasks' : 'Hide open tasks'}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          toggleProjectTasks(project.id)
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            toggleProjectTasks(project.id)
-                          }
-                        }}
-                      >
-                        {/* No count when folded (t709): it read as a second bucket beside the
-                            project's running/awaiting/parked counts. */}
-                        {folded ? '▸' : '▾'}
-                      </span>
-                    )}
+                    <ProjectTaskCount counts={counts} />
                   </NavItem>
                   {!folded &&
                     listed.map((task) => (

@@ -19,7 +19,7 @@ import { tagsLabel } from '@shared/modeltags'
 import type { FleetEntry } from './daemon'
 import { duration } from './format'
 import { modelLabel } from './modelname'
-import { Fragment } from 'react'
+import { Fragment, type MouseEvent, type KeyboardEvent } from 'react'
 
 /**
  * How a task is drawn, shared by the list and the thread.
@@ -380,15 +380,29 @@ export function ProjectTaskCount({ counts }: { counts: ReturnType<typeof project
   )
 }
 
-/** Small indicator dot displayed before the project name in the navigation pane. */
+/** Small indicator dot or folding triangle displayed before the project name in the navigation pane. */
 export function ProjectDot({
   state,
+  folded,
+  collapsible,
   onClick,
-  title: customTitle
+  onKeyDown,
+  title: customTitle,
+  role,
+  tabIndex,
+  ariaLabel,
+  ariaExpanded
 }: {
   state: ProjectWorkState
-  onClick?: (e: React.MouseEvent) => void
+  folded?: boolean
+  collapsible?: boolean
+  onClick?: (e: MouseEvent) => void
+  onKeyDown?: (e: KeyboardEvent) => void
   title?: string
+  role?: string
+  tabIndex?: number
+  ariaLabel?: string
+  ariaExpanded?: boolean
 }): React.JSX.Element {
   const defaultTitle =
     state === 'working'
@@ -402,13 +416,72 @@ export function ProjectDot({
             : state === 'completed'
               ? 'Task completed — click the project to dismiss'
               : 'Idle'
-  const title = customTitle ?? defaultTitle
+  const actionTitle = collapsible
+    ? folded
+      ? 'Show open tasks'
+      : 'Hide open tasks'
+    : undefined
+  const title = customTitle ?? (actionTitle ? `${defaultTitle} · ${actionTitle}` : defaultTitle)
+  const resolvedAriaLabel = ariaLabel ?? title
+
+  if (folded !== undefined) {
+    const isIdle = state === 'idle'
+    return (
+      <span
+        role={role ?? (collapsible ? 'button' : undefined)}
+        tabIndex={tabIndex ?? (collapsible ? 0 : undefined)}
+        className={`project-dot project-triangle project-dot--${state} project-triangle--${folded ? 'folded' : 'unfolded'}`}
+        title={title}
+        aria-label={resolvedAriaLabel}
+        aria-expanded={ariaExpanded ?? (collapsible ? !folded : undefined)}
+        onClick={onClick}
+        onKeyDown={onKeyDown}
+      >
+        <svg
+          width="8"
+          height="8"
+          viewBox="0 0 8 8"
+          className="project-triangle-icon"
+          aria-hidden="true"
+        >
+          {folded ? (
+            isIdle ? (
+              <path
+                d="M 2 1 L 6.5 4 L 2 7 Z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.2"
+                strokeLinejoin="round"
+              />
+            ) : (
+              <path d="M 2 1 L 6.5 4 L 2 7 Z" fill="currentColor" />
+            )
+          ) : isIdle ? (
+            <path
+              d="M 1 2 L 7 2 L 4 6.5 Z"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinejoin="round"
+            />
+          ) : (
+            <path d="M 1 2 L 7 2 L 4 6.5 Z" fill="currentColor" />
+          )}
+        </svg>
+      </span>
+    )
+  }
+
   return (
     <span
+      role={role}
+      tabIndex={tabIndex}
       className={`project-dot project-dot--${state}`}
       title={title}
-      aria-label={title}
+      aria-label={resolvedAriaLabel}
+      aria-expanded={ariaExpanded}
       onClick={onClick}
+      onKeyDown={onKeyDown}
     />
   )
 }

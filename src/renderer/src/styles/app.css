@@ -1521,7 +1521,7 @@ body {
   box-shadow: inset 2px 0 0 var(--color-accent);
 }
 
-/* ---- project status dots ----------------------------------------------- */
+/* ---- project status dots & fold triangles (t1319) ---------------------- */
 
 .project-dot {
   display: inline-block;
@@ -1550,6 +1550,7 @@ body {
 .project-dot--completed {
   background: var(--state-ok);
   border: 1px solid var(--state-ok);
+  color: var(--state-ok);
 }
 
 .project-dot--working {
@@ -1557,6 +1558,7 @@ body {
   border: 1px solid var(--state-running);
   box-shadow: 0 0 5px var(--state-running);
   animation: project-dot-blink 1.2s ease-in-out infinite;
+  color: var(--state-running);
 }
 
 /* Awaiting human input: solid yellow - the one state that asks something of the person. */
@@ -1564,12 +1566,14 @@ body {
   background: var(--state-warn);
   border: 1px solid var(--state-warn);
   box-shadow: 0 0 5px var(--state-warn);
+  color: var(--state-warn);
 }
 
 /* Parked (paused, blocked, quota-held): solid grey, no glow - nobody is being waited on. */
 .project-dot--paused {
   background: var(--state-idle);
   border: 1px solid var(--state-idle);
+  color: var(--state-idle);
 }
 
 @keyframes project-dot-blink {
@@ -1584,7 +1588,8 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .project-dot--working {
+  .project-dot--working,
+  .project-triangle.project-dot--working {
     animation: none;
     opacity: 1;
   }
@@ -1594,6 +1599,102 @@ body {
   background: var(--state-pr);
   border: 1px solid var(--state-pr);
   box-shadow: 0 0 5px var(--state-pr);
+  color: var(--state-pr);
+  cursor: pointer;
+}
+
+/* Folding triangle indicator replaces the right-hand .nav-fold and left-hand .project-dot (t1319) */
+.project-triangle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin: -2px;
+  padding: 2px;
+  box-sizing: content-box;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-faint);
+  box-shadow: none;
+  line-height: 1;
+  user-select: none;
+}
+
+.project-triangle-icon {
+  display: block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+}
+
+.project-triangle[role="button"] {
+  cursor: pointer;
+}
+
+.project-triangle[role="button"]:hover {
+  background: var(--color-surface-hover, rgba(255, 255, 255, 0.08));
+}
+
+.project-triangle[role="button"]:focus-visible {
+  outline: 1px solid var(--color-accent);
+  outline-offset: 1px;
+}
+
+.project-triangle.project-dot--idle {
+  background: transparent;
+  border: none;
+  color: var(--color-text-faint);
+  opacity: 0.6;
+}
+
+.nav-item:hover .project-triangle.project-dot--idle {
+  opacity: 0.9;
+}
+
+.nav-item--active .project-triangle.project-dot--idle {
+  opacity: 1;
+  color: var(--color-text-dim);
+}
+
+.project-triangle.project-dot--completed {
+  background: transparent;
+  border: none;
+  color: var(--state-ok);
+  box-shadow: none;
+}
+
+.project-triangle.project-dot--working {
+  background: transparent;
+  border: none;
+  color: var(--state-running);
+  box-shadow: none;
+  filter: drop-shadow(0 0 3px var(--state-running));
+  animation: project-dot-blink 1.2s ease-in-out infinite;
+}
+
+.project-triangle.project-dot--needs_attention {
+  background: transparent;
+  border: none;
+  color: var(--state-warn);
+  box-shadow: none;
+  filter: drop-shadow(0 0 3px var(--state-warn));
+}
+
+.project-triangle.project-dot--paused {
+  background: transparent;
+  border: none;
+  color: var(--state-idle);
+  box-shadow: none;
+}
+
+.project-triangle.project-dot--pending_pr {
+  background: transparent;
+  border: none;
+  color: var(--state-pr);
+  box-shadow: none;
+  filter: drop-shadow(0 0 3px var(--state-pr));
   cursor: pointer;
 }
 
@@ -1778,9 +1879,7 @@ body {
   font-weight: 600;
 }
 
-/* ---- open conversations under a project (t479) ------------------------- */
-/* The project's name takes the row; the fold toggle sits at its right edge and is a span with a
-   role, because the row itself is already a button. */
+/* ---- open conversations under a project (t479, t1319) ----------------- */
 .nav-project-name {
   flex: 1;
   min-width: 0;
@@ -1789,41 +1888,13 @@ body {
   white-space: nowrap;
 }
 
-.nav-fold {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--sp-1);
-  margin-left: auto;
-  padding: 0 var(--sp-1);
-  border-radius: var(--radius-sm);
-  color: var(--color-text-faint);
-  font-size: var(--text-meta);
-  line-height: 1;
-  flex-shrink: 0;
-}
-
-.nav-count + .nav-fold {
-  margin-left: 0;
-}
-
-.nav-fold:hover,
-.nav-fold:focus-visible {
-  color: var(--color-text);
-  background: var(--color-border);
-  outline: none;
-}
-
-.nav-fold .nav-count {
-  margin-left: 0;
-}
-
 /* One row per unfinished task, under its project and a step smaller, so the list reads as the
    project's contents rather than as more projects. The pictogram starts exactly where the project
-   name does (padding + the 6px dot + the row gap), not a step past it (t904). t671 dropped a 💬 emoji here
+   name does (padding + the 12px triangle footprint + the row gap), not a step past it (t904, t1319). t671 dropped a 💬 emoji here
    because it ignored the theme and competed with the status dot; the type pictogram that replaced
    it (t901, operator's request) is drawn in the faint text colour, so it sits below the dot. */
 .nav-item--task {
-  padding-left: calc(var(--sp-2) + 6px + var(--sp-2));
+  padding-left: calc(var(--sp-2) + 12px + var(--sp-2));
   font-size: var(--text-dense);
 }
 
