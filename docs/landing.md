@@ -1002,7 +1002,10 @@ Five decisions were taken with the operator and each is enforced in code:
    self-blocks, and sweeps dead leases from settled tasks) or that is dirty or off-target. That refusal carries
    `trunkBusy`, and `landTask` rests the task at **`landing_queued`** — not `awaiting_human` — with one
    thread line. `retryQueuedLandings` on the tick re-runs the landing in the background once the trunk
-   is free. ⚠️ A conflict or a red check on that retry rests at `awaiting_human` as any landing would,
+   is free; settling a trunk task gives back its lease immediately (`onTaskSettled`) and triggers
+   `retryQueuedLandings` at once rather than waiting up to a tick (t1320). Queued retries are serialized
+   per project so parallel queued landings cannot contend or tie up multiple workspace pool members.
+   ⚠️ A conflict or a red check on that retry rests at `awaiting_human` as any landing would,
    with **Resolve & retry**; no agent is dispatched for a queue alone. Fatal trunk read errors also
    rest at `awaiting_human` instead of looping in queue.
 

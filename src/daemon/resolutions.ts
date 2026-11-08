@@ -18,7 +18,8 @@ import {
   workspaceOnBranch,
   workspaceState
 } from './worktrees.js'
-import { releaseAllFor } from './resources.js'
+import { releaseAllFor, landResourceId, openClaims } from './resources.js'
+import { isTaskLanding } from './landingstate.js'
 import {
   addMessage,
   finishRun,
@@ -921,6 +922,7 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
     // failed button press is one slot fewer for the fleet, permanently.
     await parkWorkspace(project, workspace.path)
     releaseWorkspace(workspace.claimId)
+    void retryQueuedLandings().catch((err) => log.warn('retryQueuedLandings after relandTask failed:', err))
   }
 }
 
@@ -1004,6 +1006,7 @@ const trunkHolds = new Map<string, { kind: string; since: number }>()
 /** Test seam: the ledger is process state, and a test that seeds a fleet needs it empty. */
 export function forgetTrunkHolds(): void {
   trunkHolds.clear()
+  queuedInFlight.clear()
 }
 
 /**
@@ -1061,6 +1064,11 @@ function handOverTrunkHold(task: Task, project: Project, reason: string, now: nu
  */
 export async function retryQueuedLandings(now = Date.now()): Promise<number> {
   let started = 0
+  const inFlightProjects = new Set<string>()
+  for (const taskId of queuedInFlight) {
+    const t = getTask(taskId)
+    if (t?.projectId) inFlightProjects.add(t.projectId)
+  }
   for (const task of listTasks().filter((t) => t.status === 'landing_queued')) {
     if (queuedInFlight.has(task.id)) continue
     const project = task.projectId ? getProject(task.projectId) : null
@@ -1069,6 +1077,16 @@ export async function retryQueuedLandings(now = Date.now()): Promise<number> {
         assignee: 'human',
         holdReason: 'this task was queued to land, but its project is no longer registered'
       })
+      continue
+    }
+    // Only one landing at a time per project: landing merges into the trunk, so multiple landings
+    // in the same project cannot merge concurrently anyway and would waste workspace pool members
+    // waiting behind the landing lock.
+    if (
+      inFlightProjects.has(project.id) ||
+      openClaims(landResourceId(project.id)).length > 0 ||
+      listTasks().some((t) => t.projectId === project.id && isTaskLanding(t.id))
+    ) {
       continue
     }
     const leased = trunkOccupiedBy(project, task.id)
@@ -1094,11 +1112,16 @@ export async function retryQueuedLandings(now = Date.now()): Promise<number> {
     }
     trunkHolds.delete(task.id)
     queuedInFlight.add(task.id)
+    inFlightProjects.add(project.id)
     started += 1
+    setHoldReason(task.id, null)
     log.info(`t${task.seq}: the trunk is free — landing the queued branch`)
     void relandTask(task.id)
       .catch((err) => log.warn(`queued landing of t${task.seq} failed:`, err))
-      .finally(() => queuedInFlight.delete(task.id))
+      .finally(() => {
+        queuedInFlight.delete(task.id)
+        void retryQueuedLandings().catch((err) => log.warn('retryQueuedLandings after flight failed:', err))
+      })
   }
   return started
 }

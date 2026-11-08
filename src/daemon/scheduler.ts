@@ -5127,6 +5127,7 @@ async function releaseWorkspaceNow(sessionId: string, retainForTaskId: string | 
         reassignClaim(held.workspace.claimId, owner.id)
       } else {
         releaseWorkspace(held.workspace.claimId)
+        void retryQueuedLandings().catch((err) => log.warn('retryQueuedLandings after trunk release failed:', err))
       }
       releaseAllFor(sessionId)
       return
@@ -5429,11 +5430,13 @@ export function sweepTrunkLeases(): number {
   let freed = 0
   for (const project of listProjects()) {
     for (const c of openClaims(trunkResourceId(project.id))) {
-      if (workspaces.has(c.holder)) continue
-      const task = getTask(c.holder.startsWith('reland:') ? c.holder.slice('reland:'.length) : c.holder)
-      const session = task ? null : getSession(c.holder)
+      const id = c.holder.startsWith('reland:') ? c.holder.slice('reland:'.length) : c.holder
+      const task = getTask(id) ?? taskOfSession(id)
+      const session = task ? getSession(c.holder) : getSession(id)
       const alive = task ? !TERMINAL_STATUSES.has(task.status) : session !== null && !sessionEnded(session.state)
+      if (alive && workspaces.has(c.holder)) continue
       if (alive) continue
+      workspaces.delete(c.holder)
       release(c.id)
       freed += 1
       log.info(`released the trunk lease of ${project.name} held by ${task ? `t${task.seq}` : c.holder.slice(0, 8)}`)
@@ -5717,10 +5720,19 @@ onTaskSettled((taskId) => {
 })
 
 onTaskSettled((taskId, _status) => {
+  // ⛔ When a task settles, any claims it holds directly (e.g. trunk lease, workspace, landing lock)
+  // must be given back immediately. A settled task will never run again, and waiting for the periodic
+  // tick to sweep them stalls queued landings (t1320).
+  releaseAllFor(taskId)
+  sweepTrunkLeases()
+  void retryQueuedLandings().catch((err) => log.warn('retryQueuedLandings after task settled failed:', err))
+
   for (const s of liveSessionsOfTask(taskId)) {
     void (async () => {
       if (await closeAndWait(s.id)) {
         await releaseWorkspaceOf(s.id)
+        sweepTrunkLeases()
+        void retryQueuedLandings().catch((err) => log.warn('retryQueuedLandings after workspace release failed:', err))
       }
     })()
   }

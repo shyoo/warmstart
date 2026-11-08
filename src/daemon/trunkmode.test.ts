@@ -150,6 +150,15 @@ describe('the trunk lease', () => {
     expect(worktrees.claimTrunk(project, resting.id)).not.toBeNull()
     expect(scheduler.sweepTrunkLeases()).toBe(0)
     tasks.setStatus(resting.id, 'cancelled')
+    // Settle immediately gives it back (t1320)
+    expect(worktrees.trunkHolder(project)).toBeNull()
+  })
+
+  it('sweepTrunkLeases sweeps a stale lease when the holder settled without an active listener (t1320)', () => {
+    const stale = tasks.createTask({ title: 'stale', projectId: project.id, workspaceMode: 'trunk' })
+    tasks.setStatus(stale.id, 'completed')
+    // Re-create an open claim directly to simulate an un-swept lease (e.g. from a crashed daemon)
+    expect(worktrees.claimTrunk(project, stale.id)).not.toBeNull()
     expect(scheduler.sweepTrunkLeases()).toBe(1)
     expect(worktrees.trunkHolder(project)).toBeNull()
   })
@@ -386,6 +395,91 @@ describe('a busy trunk queues a worktree landing', () => {
 
     const started = await resolutions.retryQueuedLandings()
     expect(started).toBe(1)
+  })
+
+  it('frees trunk lease and starts queued landings immediately when trunk task settles (t1320)', async () => {
+    resolutions.forgetTrunkHolds()
+    const testRepo = freshRepo()
+    const testProject = projects.addProject({ root: testRepo, name: 'trunky-t1320' })
+    const holder = tasks.createTask({ title: 'occupant', projectId: testProject.id, workspaceMode: 'trunk' })
+    worktrees.claimTrunk(testProject, holder.id)
+    expect(worktrees.trunkHolder(testProject)).not.toBeNull()
+
+    const queuedTask = tasks.createTask({
+      title: 'queued work 2',
+      projectId: testProject.id
+    })
+    tasks.setTaskBranch(queuedTask.id, 'warmstart/t-queued2', 1)
+    tasks.setStatus(queuedTask.id, 'landing_queued', {
+      holdReason: `the trunk is not ready to receive this: t${holder.seq} is working in the trunk. It will land by itself once the trunk is free.`
+    })
+
+    // Settle holder. WITHOUT waiting for tick:
+    tasks.setStatus(holder.id, 'completed')
+
+    // Lease must be freed immediately
+    expect(worktrees.trunkHolder(testProject)).toBeNull()
+
+    // Queued landing must have been retried immediately (it leaves the hold waiting for holder)
+    const deadline = Date.now() + 3000
+    let updated = tasks.getTask(queuedTask.id)!
+    while ((updated.holdReason ?? '').includes(`t${holder.seq} is working in the trunk`) && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 20))
+      updated = tasks.getTask(queuedTask.id)!
+    }
+    expect(updated.holdReason ?? '').not.toContain(`t${holder.seq} is working in the trunk`)
+  })
+
+  it('frees trunk lease held by session immediately when task settles (t1320)', () => {
+    const testRepo = freshRepo()
+    const testProject = projects.addProject({ root: testRepo, name: 'trunky-session-1320' })
+    const holder = tasks.createTask({ title: 'session holder', projectId: testProject.id, workspaceMode: 'trunk' })
+    const claim = worktrees.claimTrunk(testProject, holder.id)
+    expect(claim).not.toBeNull()
+    const sessionId = 'session-' + holder.id
+    tasks.startRun({ taskId: holder.id, projectId: testProject.id, sessionId, workerId: 'w1', quotaUnverified: false, costModelId: 'claude-3-5-sonnet' })
+    resources.reassignClaim(claim!.claimId, sessionId)
+
+    // Complete task
+    tasks.setStatus(holder.id, 'completed')
+
+    // Lease is freed immediately on settlement
+    expect(worktrees.trunkHolder(testProject)).toBeNull()
+  })
+
+  it('sweepTrunkLeases frees stale session lease even if task settled prior to daemon run (t1320)', () => {
+    const testRepo = freshRepo()
+    const testProject = projects.addProject({ root: testRepo, name: 'trunky-stale-1320' })
+    const holder = tasks.createTask({ title: 'session holder prior', projectId: testProject.id, workspaceMode: 'trunk' })
+    tasks.setStatus(holder.id, 'completed')
+    const claim = worktrees.claimTrunk(testProject, holder.id)
+    expect(claim).not.toBeNull()
+    const sessionId = 'session-prior-' + holder.id
+    resources.reassignClaim(claim!.claimId, sessionId)
+
+    // sweepTrunkLeases must recognize the task from the session ID and free it
+    expect(scheduler.sweepTrunkLeases()).toBe(1)
+    expect(worktrees.trunkHolder(testProject)).toBeNull()
+  })
+
+  it('serializes queued landings per project so pool members are not wasted (t1320)', async () => {
+    resolutions.forgetTrunkHolds()
+    const testRepo = freshRepo()
+    const testProject = projects.addProject({ root: testRepo, name: 'trunky-serialize-1320' })
+    const q1 = tasks.createTask({ title: 'q1', projectId: testProject.id })
+    tasks.setTaskBranch(q1.id, 'warmstart/t-q1', 1)
+    tasks.setStatus(q1.id, 'landing_queued')
+
+    const q2 = tasks.createTask({ title: 'q2', projectId: testProject.id })
+    tasks.setTaskBranch(q2.id, 'warmstart/t-q2', 1)
+    tasks.setStatus(q2.id, 'landing_queued')
+
+    // First call starts q1 only
+    const started = await resolutions.retryQueuedLandings()
+    expect(started).toBe(1)
+
+    // Second call while q1 is in flight starts 0
+    expect(await resolutions.retryQueuedLandings()).toBe(0)
   })
 
   /**
