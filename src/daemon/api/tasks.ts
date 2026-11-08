@@ -584,7 +584,7 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       // ⚠️ The id comes back from `addMessage` rather than from `lastMessageId`. This row now
       // binds attachments, and a second insert landing between the two calls would hand this
       // note's delivery — and its images — to somebody else's message.
-      deliverToLiveSession(p.id, id, command ? commandPromptFor(p.id, command.id, p.text) : p.text)
+      deliverToLiveSession(p.id, id, command ? commandPromptFor(p.id, command.id, p.text) : p.text, true)
       // ⛔ And a task that had stopped is started again — same task, same thread, a new run. Without
       // this the note reached a live process and produced nothing anybody could see: no run, no
       // metering, no status, no landing. See `continueTask`.

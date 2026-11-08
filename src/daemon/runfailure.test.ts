@@ -2066,32 +2066,23 @@ describe('resolveTask when a person marks a task as complete', () => {
  * so a person watching an Antigravity agent work on past it had no way to know it was waiting.
  */
 describe('a note written into a running turn', () => {
-  const queuedLines = (taskId: string) =>
-    tasks.messagesFor(taskId).filter((m) => m.role === 'system' && m.text === 'Message queued behind the current turn')
-
-  it('says it is queued while the turn runs, still counts it delivered, and stops saying so once the turn has ended', async () => {
+  it('stops a queued adapter before requeueing, preserving multiple replies for the next run', async () => {
     // One test, not two: this CLI allows one account per machine, so a second seeded worker is refused.
-    const { task, session, worker } = seedRunningTask({ adapterId: 'antigravity-cli' })
+    const { task, worker } = seedRunningTask({ adapterId: 'antigravity-cli' })
     const send = vi.spyOn(sessions, 'sendPrompt').mockImplementation(() => {})
+    let stopped!: (ok: boolean) => void
+    vi.spyOn(sessions, 'closeAndWait').mockReturnValue(new Promise((resolve) => { stopped = resolve }))
     const id = tasks.addMessage(task.id, 'human', 'Please wrap up')
 
-    expect(scheduler.deliverToLiveSession(task.id, id, 'Please wrap up')).toBe(true)
-
-    expect(send).toHaveBeenCalledTimes(1)
-    const lines = queuedLines(task.id)
-    expect(lines).toHaveLength(1)
-    expect(lines[0]?.detail).toContain('cannot interrupt')
-    // Still delivered: the CLI will run it, and an undelivered note is pasted into the next prompt too.
-    expect(tasks.messagesFor(task.id).find((m) => m.id === id)?.deliveredAt).toBeTruthy()
-
-    // The turn has ended: the next turn reads a note at once, so there is nothing to wait for.
-    const idlestate = await import('./idlestate.js')
-    idlestate.markTaskIdle(task.id, session.id, Date.now())
+    expect(scheduler.deliverToLiveSession(task.id, id, 'Please wrap up', true)).toBe(false)
     const later = tasks.addMessage(task.id, 'human', 'And another thing')
-    scheduler.deliverToLiveSession(task.id, later, 'And another thing')
-    expect(queuedLines(task.id)).toHaveLength(1)
-
-    idlestate.clearIdleForSession(session.id, false)
+    scheduler.deliverToLiveSession(task.id, later, 'And another thing', true)
+    expect(send).not.toHaveBeenCalled()
+    expect(tasks.requireTask(task.id).status).toBe('cancelling')
+    expect(tasks.messagesFor(task.id).filter((m) => m.id === id || m.id === later).every((m) => !m.deliveredAt)).toBe(true)
+    stopped(true)
+    await vi.waitFor(() => expect(tasks.requireTask(task.id).status).toBe('ready'))
+    expect(tasks.runsFor(task.id)[0]?.outcome).toBe('terminated')
     db.db().prepare('delete from sessions').run()
     db.db().prepare('delete from workers where id = ?').run(worker.id)
   })
@@ -2103,6 +2094,19 @@ describe('a note written into a running turn', () => {
 
     scheduler.deliverToLiveSession(task.id, id, 'Hello')
 
-    expect(queuedLines(task.id)).toHaveLength(0)
+    expect(tasks.messagesFor(task.id).find((m) => m.id === id)?.deliveredAt).toBeTruthy()
+  })
+
+  it('does not requeue while the process has failed to stop', async () => {
+    const { task, session, worker } = seedRunningTask({ adapterId: 'antigravity-cli' })
+    vi.spyOn(sessions, 'closeAndWait').mockResolvedValue(false)
+    const id = tasks.addMessage(task.id, 'human', 'Correction')
+    scheduler.deliverToLiveSession(task.id, id, 'Correction', true)
+    await vi.waitFor(() => expect(tasks.messagesFor(task.id).some((m) => m.text.includes('has not stopped'))).toBe(true))
+    expect(tasks.requireTask(task.id).status).toBe('cancelling')
+    expect(scheduler.continueTask(task.id)).toBe('queued')
+    expect(tasks.messagesFor(task.id).find((m) => m.id === id)?.deliveredAt).toBeNull()
+    db.db().prepare('delete from sessions where id = ?').run(session.id)
+    db.db().prepare('delete from workers where id = ?').run(worker.id)
   })
 })

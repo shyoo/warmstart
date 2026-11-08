@@ -96,6 +96,7 @@ import {
   TITLE_SUMMARY_THRESHOLD
 } from './judgment.js'
 import { escalateStale } from './approvals.js'
+import { openQuestions } from './questions.js'
 import { samePath } from './fspath.js'
 import {
   Contended,
@@ -147,6 +148,7 @@ import {
   listSessions,
   markClockMove,
   noteCurrentBranch,
+  onSessionEnd,
   reopenable,
   resumableSession,
   sendPrompt,
@@ -3676,28 +3678,47 @@ async function readTrunkMovement(
   return { before, after, commits: await trunkCommitsSince(project, before, after) }
 }
 
-/**
- * Say so on the thread when a note was written into a turn that will not read it until it ends.
- *
- * ⛔ **`delivered` meant *written*, and for `promptDuringTurn: 'queued'` that is not *heard*** (t1039
- * ← t1037). A reply sent 13 minutes into one Antigravity turn was marked delivered at once, nothing
- * on the thread said otherwise, and the agent worked on as if it had never been sent — which, until
- * the turn ended, it had not. The CLI does run it afterwards, so the note stays delivered (clearing
- * that would paste it into the next prompt a second time); what was missing is the sentence telling
- * the person to expect the wait, and that a reply cannot interrupt it.
- *
- * ⚠️ Said only while no *turn ended* mark is set: an idle session reads the note as its next turn at
- * once. `unmeasured` says nothing, because nobody has watched what it does.
- */
-function noteIfQueuedBehindTurn(taskId: string, session: { adapterId: string }): void {
-  const info = adapter(session.adapterId).info
-  if (info.capabilities.promptDuringTurn !== 'queued') return
-  if (idleSinceOf(taskId) !== null) return
-  addMessage(taskId, 'system', 'Message queued behind the current turn', null, [], {
-    detail:
-      `${info.label} reads its input one turn at a time, so this reply waits until the turn it is in ends ` +
-      'and cannot interrupt it. To stop the turn now, cancel the task and send the reply again.'
-  })
+/** Replies for a CLI that cannot steer a turn stay undelivered until its replacement run. */
+const restartingForReply = new Set<string>()
+
+async function restartForReply(taskId: string, session: Session, run: Run): Promise<void> {
+  restartingForReply.add(taskId)
+  completing.add(session.id)
+  setStatus(taskId, 'cancelling', { holdReason: 'Stopping the current turn to deliver your reply' })
+  addMessage(taskId, 'system', 'Stopping the current turn to deliver your reply')
+  let waitingForExit = false
+  try {
+    if (!(await closeAndWait(session.id))) {
+      waitingForExit = true
+      addMessage(taskId, 'system', 'The previous session has not stopped; your reply is still waiting')
+      onSessionEnd(session.id, () => {
+        restartingForReply.delete(taskId)
+        if (getTask(taskId)?.status === 'cancelling') {
+          setStatus(taskId, 'awaiting_human', { assignee: 'human', holdReason: 'The session stopped late. Resume to deliver the waiting reply.' })
+        }
+      })
+      return
+    }
+    finishRun(run.id, 'terminated', 'Stopped to deliver a new reply')
+    void captureQuotaAfter(requireRun(run.id))
+    await releaseWorkspaceOf(session.id)
+    await releaseFor(run.id, taskId, null)
+    const task = getTask(taskId)
+    if (task?.status !== 'cancelling') return
+    if (openQuestions().some((question) => question.taskId === taskId)) {
+      setStatus(taskId, 'awaiting_human', { assignee: 'human', holdReason: 'The agent asked a question before its turn stopped.' })
+      return
+    }
+    setStatus(taskId, 'ready', { assignee: null })
+  } catch (err) {
+    log.warn(`could not restart t${taskId.slice(0, 8)} for a reply:`, err)
+    if (getTask(taskId)?.status === 'cancelling') {
+      setStatus(taskId, 'awaiting_human', { assignee: 'human', holdReason: 'Could not restart the session; the reply is still waiting.' })
+    }
+  } finally {
+    completing.delete(session.id)
+    if (!waitingForExit) restartingForReply.delete(taskId)
+  }
 }
 
 /**
@@ -3708,13 +3729,20 @@ function noteIfQueuedBehindTurn(taskId: string, session: { adapterId: string }):
  * the successor has to rediscover. Returns false when there is nothing live, in which case the note
  * waits and is prepended to the next run's prompt instead.
  */
-export function deliverToLiveSession(taskId: string, messageId: number, text: string): boolean {
+export function deliverToLiveSession(taskId: string, messageId: number, text: string, restartIfQueued = false): boolean {
+  if (restartingForReply.has(taskId)) return false
   const session = sessionOf(taskId)
   if (!session || (session.state !== 'live' && session.state !== 'idle')) return false
+  if (restartIfQueued && adapter(session.adapterId).info.capabilities.promptDuringTurn === 'queued' && idleSinceOf(taskId) === null) {
+    const run = runForSession(session.id)
+    if (run && getTask(taskId)?.status === 'running' && !completing.has(session.id)) {
+      void restartForReply(taskId, session, run)
+    }
+    return false
+  }
   try {
     sendPrompt(session.id, text)
     markDelivered([messageId])
-    noteIfQueuedBehindTurn(taskId, session)
     return true
   } catch (err) {
     log.warn(`could not deliver a note into t${taskId.slice(0, 8)}'s session:`, err)
