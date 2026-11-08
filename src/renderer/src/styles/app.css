@@ -8164,8 +8164,8 @@ select:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 280px;
-  overflow-y: auto;
+  /* The portalled menu owns scrolling and measures the full list before choosing a side. */
+  flex-shrink: 0;
 }
 
 .pill-option {
