@@ -411,6 +411,7 @@ export function AssignPills({
       />
       <PillSelect
         className={cls}
+        menuClassName="pill-menu--model"
         label={choice.modelLabel}
         value={choice.model}
         options={choice.modelOptions}

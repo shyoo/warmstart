@@ -2070,6 +2070,13 @@ try {
     JSON.stringify(modelPillValues)
   )
   check(
+    'the model picker menu is fully expanded even when an account is pinned',
+    await evaluate(`(() => {
+      const menu = ${menuOf('Model')};
+      return menu?.classList.contains('pill-menu--model') && menu?.getBoundingClientRect().width === 380;
+    })()`)
+  )
+  check(
     'every offered model is one the daemon will accept',
     await evaluate(`
       (async () => {

@@ -8221,6 +8221,14 @@ select:focus-visible,
   gap: 4px;
 }
 
+/* ⚠️ The model picker lists model families, CLI IDs, and routing hints.
+   Under a pinned account with short names it used to collapse to min-width 200px,
+   squeezing model slugs and hints, while under Auto Worker it expanded to 380px.
+   Always keep the model menu fully expanded to the standard 380px width. */
+.pill-menu--model {
+  min-width: min(380px, calc(100vw - 16px));
+}
+
 /* ⚠️ Right-aligned for the pills near the right edge — worker, model, effort and the clock. Opening
    left from there puts half the menu outside the window. */
 /* ⚠️ Kept as a no-op hook: the *side* is decided in `menuPosition`, which has the window's width and

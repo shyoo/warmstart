@@ -618,6 +618,7 @@ whatever the router scored best — GPT 5.6 Terra, measured — with no screen a
 The two are answerable with no account pinned (each account then uses *its* default), which is why
 the pill stays live on **Auto Worker**. Manual options name their compatible worker and selecting
 one pins that worker atomically with its model; a pinned worker narrows the model list to its catalogue.
+The portalled dropdown menu for the Model pill uses `.pill-menu--model` (`min-width: min(380px, calc(100vw - 16px))`) so the picker stays fully expanded even when a pinned worker's models and hints have short labels that would otherwise collapse the menu to 200px (t1324).
 
 ⚠️ **An effort is not drawn beside a model that has no levels.** `resolveModelChoice` inherits the
 account's default effort independently of the model — right, and on `claude-haiku-4-5`, whose cost

@@ -32,6 +32,7 @@ export function Pill({
   disabled,
   align = 'left',
   className,
+  menuClassName,
   menu
 }: {
   /** What the button reads once the menu is shut. Short: this row has to stay on one line. */
@@ -51,6 +52,7 @@ export function Pill({
   /** `right` for pills near the right edge, so the menu opens inwards rather than off-screen. */
   align?: 'left' | 'right'
   className?: string
+  menuClassName?: string
   /** Called with a `close` it may use once it has taken an answer. */
   menu: (close: () => void) => React.ReactNode
 }): React.JSX.Element {
@@ -191,7 +193,7 @@ export function Pill({
           <div
             ref={menuRef}
             id={menuId}
-            className={`pill-menu${place ? ` pill-menu--${place.placement}` : ' pill-menu--measuring'}`}
+            className={`pill-menu${menuClassName ? ` ${menuClassName}` : ''}${place ? ` pill-menu--${place.placement}` : ' pill-menu--measuring'}`}
             role="presentation"
             style={
               place
@@ -233,7 +235,8 @@ export function PillSelect({
   muted,
   disabled,
   align,
-  className
+  className,
+  menuClassName
 }: {
   label: React.ReactNode
   value: string
@@ -245,6 +248,7 @@ export function PillSelect({
   disabled?: boolean
   align?: 'left' | 'right'
   className?: string
+  menuClassName?: string
 }): React.JSX.Element {
   return (
     <Pill
@@ -255,6 +259,7 @@ export function PillSelect({
       disabled={disabled}
       align={align}
       className={className}
+      menuClassName={menuClassName}
       menu={(close) => (
         <PillOptions
           options={options}

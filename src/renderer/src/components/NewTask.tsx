@@ -1428,6 +1428,7 @@ export function NewTask({
                     <PillSelect
                       ariaLabel="Model"
                       align="right"
+                      menuClassName="pill-menu--model"
                       muted={!model}
                       value={modelPillValue}
                       label={modelPillLabel}
@@ -1668,6 +1669,7 @@ export function NewTask({
             <PillSelect
               ariaLabel="Model"
               align="right"
+              menuClassName="pill-menu--model"
               title={
                 forAdapter
                   ? 'Only models supported by this account’s cost model are shown for quota and context estimation.'
@@ -1819,6 +1821,7 @@ export function NewTask({
                       <PillSelect
                         ariaLabel="Model"
                         align="right"
+                        menuClassName="pill-menu--model"
                         muted={!model}
                         value={modelPillValue}
                         label={modelPillLabel}
@@ -2279,6 +2282,7 @@ function ExecutorRouting({
       <PillSelect
         ariaLabel="Piece Model"
         align="right"
+        menuClassName="pill-menu--model"
         value={manual.length > 0 ? JSON.stringify([manual[0]!.id, selectedModels[manual[0]!.id]]) : policy}
         label={modelLabelText}
         muted={manual.length === 0}
