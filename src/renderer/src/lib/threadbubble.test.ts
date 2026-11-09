@@ -187,5 +187,57 @@ describe('thread bubbles', () => {
         { kind: 'activity', id: 'activity-live-2', lines: [lines[2]], isLiveTail: true }
       ])
     })
+
+    it('does not emit activity chunks before agent messages', () => {
+      const agentMsg = { id: 2, role: 'agent', text: 'Here is the fix', ts: 200 } as TaskMessage
+      const pastLine = { text: 'Running tests', ts: 150, afterMessageId: 1 }
+      const newLine = { text: 'Next turn started', ts: 250, afterMessageId: 2 }
+      const items = buildThreadItems([promptMsg, agentMsg], [pastLine, newLine], true)
+      expect(items).toEqual([
+        { kind: 'message', message: promptMsg },
+        { kind: 'message', message: agentMsg },
+        { kind: 'activity', id: 'activity-live-0', lines: [newLine], isLiveTail: true }
+      ])
+    })
+
+    it('does not emit past interim activity before a question or human answer to it', () => {
+      const questionMsg = {
+        id: 2,
+        role: 'system',
+        text: 'The agent stopped to ask you something: Which option?',
+        ts: 200
+      } as TaskMessage
+      const answerMsg = { id: 3, role: 'human', text: 'Option A', ts: 300 } as TaskMessage
+      const pastNarration = [
+        { text: '[Tool: read_file] src/index.ts', ts: 120, afterMessageId: 1 },
+        { text: 'Analyzing implementation plan', ts: 150, afterMessageId: 1 }
+      ]
+      const items = buildThreadItems([promptMsg, questionMsg, answerMsg], pastNarration, true)
+      expect(items).toEqual([
+        { kind: 'message', message: promptMsg },
+        { kind: 'message', message: questionMsg },
+        { kind: 'message', message: answerMsg },
+        { kind: 'activity', id: 'activity-live-0', lines: [], isLiveTail: true }
+      ])
+    })
+
+    it('places new words after a question answer into the live tail without resurrecting past narration', () => {
+      const questionMsg = {
+        id: 2,
+        role: 'system',
+        text: 'The agent stopped to ask you something: Which option?',
+        ts: 200
+      } as TaskMessage
+      const answerMsg = { id: 3, role: 'human', text: 'Option A', ts: 300 } as TaskMessage
+      const pastNarration = { text: 'Past interim steps', ts: 150, afterMessageId: 1 }
+      const newStep = { text: 'Continuing with Option A', ts: 350, afterMessageId: 3 }
+      const items = buildThreadItems([promptMsg, questionMsg, answerMsg], [pastNarration, newStep], true)
+      expect(items).toEqual([
+        { kind: 'message', message: promptMsg },
+        { kind: 'message', message: questionMsg },
+        { kind: 'message', message: answerMsg },
+        { kind: 'activity', id: 'activity-live-0', lines: [newStep], isLiveTail: true }
+      ])
+    })
   })
 })

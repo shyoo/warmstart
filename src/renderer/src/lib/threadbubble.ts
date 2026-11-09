@@ -102,7 +102,10 @@ export function buildThreadItems(
     if (!m) continue
     // ⛔ Do not emit activity before the first message of the thread — a task cannot have
     // activity before its opening prompt. For subsequent messages, emit any activity that
-    // began before the message was saved. Older rows without a message boundary use timestamps.
+    // began before the message was saved ONLY when breaking around mid-flight human replies.
+    // Narration before an agent or system message belongs to that completed turn and is
+    // already captured in its run activity disclosure; emitting it as a live bubble resurrects
+    // past activity above the message.
     if (i > 0) {
       const chunkLines: ActivityLine[] = []
       while (activityIdx < activity.length) {
@@ -116,7 +119,9 @@ export function buildThreadItems(
         chunkLines.push(line)
         activityIdx++
       }
-      if (chunkLines.length > 0) {
+      const prev = messages[i - 1]
+      const isMidFlightHumanReply = m.role === 'human' && prev?.role === 'human'
+      if (isMidFlightHumanReply && chunkLines.length > 0) {
         items.push({
           kind: 'activity',
           id: `activity-chunk-${chunkIdx++}`,

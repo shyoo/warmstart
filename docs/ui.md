@@ -42,6 +42,10 @@ The live task thread splits activity around saved replies. New activity rows car
 last saved thread message when they began; saving a reply closes any open streamed row before the next
 one starts. `lib/threadbubble.ts` uses that boundary to keep new narration below the reply, even if
 wall-clock timestamps tie or shift. Older activity events without the boundary use timestamps.
+Activity chunks break only between consecutive mid-flight human replies; activity preceding an agent or
+system message belongs to that completed turn and stays in its disclosure rather than drawing redundant
+live bubbles. Requeuing a task for continuation clears the live tail so a resumed turn starts with a clean
+pane.
 
 Durable thread messages use their database insertion order, not their wall-clock timestamp. A newly
 saved reply remains below the message it answers if the host clock moves backwards; the row id also

@@ -739,6 +739,10 @@ describe('a question filed with its asker already gone', () => {
     resources.upsertResource({ id: lease, kind: 'exclusive', label: 'conversation', meta: {} })
     expect(resources.claim(lease, task.id)).not.toBeNull()
 
+    const activity = await import('./activity.js')
+    activity.noteActivity(task.id, 'thinking before parking', 'delta')
+    expect(activity.activityFor(task.id).length).toBeGreaterThan(0)
+
     questions.parkQuestionsForSession(session.id)
     await pending
     const [parked] = questions.openQuestions()
@@ -746,6 +750,7 @@ describe('a question filed with its asker already gone', () => {
 
     expect(tasks.requireTask(task.id).status).toBe('ready')
     expect(resources.availability(lease)?.free).toBe(1)
+    expect(activity.activityFor(task.id)).toHaveLength(0)
   })
 
   it('does not overrule an operator who had already stopped the task', async () => {

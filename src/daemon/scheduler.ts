@@ -3907,6 +3907,7 @@ export function continueTask(taskId: string): 'delivered' | 'requeued' | 'queued
   for (const held of claimsForHolder(task.id)) {
     if (held.resourceId.startsWith('session:')) release(held.id)
   }
+  clearActivity(task.id)
   db().prepare('update tasks set not_before = null where id = ?').run(task.id)
   setStatus(task.id, 'ready', { assignee: null })
   return 'requeued'
