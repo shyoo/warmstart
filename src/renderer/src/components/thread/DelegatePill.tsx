@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { Task } from '@shared/tasks'
-import { BUILTIN_TAGS, cleanTags, tagDisplay, tagKey, tierSlug } from '@shared/modeltags'
+import { BUILTIN_TAGS, cleanTags, tagDisplay, tagKey } from '@shared/modeltags'
 import { errorMessage } from '@shared/errors.js'
 import { rpc } from '../../lib/daemon'
 import { modelLabel } from '../../lib/modelname'
@@ -44,6 +44,7 @@ export function DelegatePill({
   const [failure, setFailure] = useState<string | null>(null)
   const [availableTiers, setAvailableTiers] = useState<string[]>([...BUILTIN_TAGS])
   const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [modelTiers, setModelTiers] = useState<Record<string, string[]>>({})
 
   useEffect(() => {
     let cancelled = false
@@ -63,6 +64,13 @@ export function DelegatePill({
           for (const e of t.entries) models.add(e.model)
         }
         setAvailableModels([...models])
+        const tiersByModel: Record<string, string[]> = {}
+        for (const tier of s.autoModelTiers ?? []) {
+          for (const entry of tier.entries) {
+            tiersByModel[entry.model] = cleanTags([...(tiersByModel[entry.model] ?? []), tier.tag])
+          }
+        }
+        setModelTiers(tiersByModel)
       })
       .catch(() => {})
     return () => {
@@ -86,7 +94,7 @@ export function DelegatePill({
     summaryParts.push(`${allowedModels.length} model${allowedModels.length === 1 ? '' : 's'}`)
   }
   const summary = summaryParts.length > 0 ? ` (${summaryParts.join(' · ')})` : ''
-  const pillLabel = `${on ? 'Delegate on' : 'Delegate off'}${summary} ▾`
+  const pillLabel = `Delegation settings${summary} ▾`
 
   const updatePolicy = (next: { on: boolean; allowedTiers?: string[]; allowedModels?: string[] }): void => {
     setBusy(true)
@@ -97,7 +105,10 @@ export function DelegatePill({
       delegationPolicy: {
         on: next.on,
         allowedTiers: next.allowedTiers ?? allowedTiers,
-        allowedModels: nextModels.map((model) => ({ model, effort: null }))
+        allowedModels: nextModels.flatMap((model) => {
+          const existing = task.mandate.allowedModels?.filter((entry) => entry.model.trim() === model)
+          return existing?.length ? existing : [{ model, effort: null }]
+        })
       }
     })
       .then(() => refresh())
@@ -110,11 +121,14 @@ export function DelegatePill({
 
   return (
     <>
+      <button type="button" className={`pill${on ? '' : ' pill--muted'}`} aria-label="Toggle delegation"
+        aria-pressed={on} disabled={busy} onClick={() => updatePolicy({ on: !on })}>
+        {on ? 'Delegate on' : 'Delegate off'}
+      </button>
       <Pill
         className="compose-assign-pill"
         ariaLabel="Delegation"
         muted={!on}
-        disabled={busy}
         label={pillLabel}
         title={
           on
@@ -122,93 +136,38 @@ export function DelegatePill({
             : 'The agent does all of this work itself. /delegate switches this back on. Click to configure delegation.'
         }
         menu={() => (
-          <div className="tag-picker" role="group" aria-label="Delegation settings">
-            <div className="tag-picker-section">
-              <div className="tag-picker-heading">
-                <span>Delegation</span>
-                <span className="tag-picker-heading-hint">{on ? 'enabled' : 'disabled'}</span>
-              </div>
-              <div className="tag-picker-list">
-                <div className="tag-picker-row">
-                  <label className="tag-picker-item">
-                    <input
-                      type="checkbox"
-                      checked={on}
-                      disabled={busy}
-                      onChange={() => updatePolicy({ on: !on })}
-                    />
-                    <span className="tag-picker-label">Allow agent delegation (task_split)</span>
+          <div className="delegation-picker" role="group" aria-label="Delegation settings">
+            <div className="delegation-picker-section">
+              <div className="delegation-picker-heading">Allowed tiers</div>
+              {allTiers.map((tier) => {
+                const key = tagKey(tier)
+                const checked = allowedTiers.some((t) => tagKey(t) === key)
+                return (
+                  <label key={key} className="delegation-picker-row">
+                    <input type="checkbox" checked={checked} disabled={busy}
+                      onChange={() => updatePolicy({ on, allowedTiers: checked
+                        ? allowedTiers.filter((t) => tagKey(t) !== key) : [...allowedTiers, tier] })} />
+                    <span>{tagDisplay(tier)}</span>
                   </label>
-                </div>
-              </div>
+                )
+              })}
             </div>
-
-            <div className="tag-picker-section">
-              <div className="tag-picker-heading">
-                <span>Allowed capability tiers</span>
-                <span className="tag-picker-heading-hint">
-                  {allowedTiers.length === 0 ? 'all tiers' : `${allowedTiers.length} selected`}
-                </span>
-              </div>
-              <div className="tag-picker-list">
-                {allTiers.map((tier) => {
-                  const key = tagKey(tier)
-                  const checked = allowedTiers.some((t) => tagKey(t) === key)
-                  const slug = tierSlug(tier)
+            {allModels.length > 0 && (
+              <div className="delegation-picker-section">
+                <div className="delegation-picker-heading">Allowed models</div>
+                {allModels.map((modelId) => {
+                  const checked = allowedModels.includes(modelId)
+                  const tiers = modelTiers[modelId] ?? []
                   return (
-                    <div key={key} className="tag-picker-row">
-                      <label className="tag-picker-item">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={busy}
-                          onChange={() => {
-                            const nextTiers = checked
-                              ? allowedTiers.filter((t) => tagKey(t) !== key)
-                              : [...allowedTiers, tier]
-                            updatePolicy({ on: true, allowedTiers: nextTiers })
-                          }}
-                        />
-                        <span className="tag-picker-label">{tagDisplay(tier)}</span>
-                      </label>
-                      {slug && <span className="tag-picker-heading-hint">[{slug}]</span>}
-                    </div>
+                    <label key={modelId} className="delegation-picker-row">
+                      <input type="checkbox" checked={checked} disabled={busy}
+                        onChange={() => updatePolicy({ on, allowedModels: checked
+                          ? allowedModels.filter((m) => m !== modelId) : [...allowedModels, modelId] })} />
+                      <span>{modelLabel(modelId) ?? modelId}</span>
+                      {tiers.length > 0 && <span className="delegation-picker-tiers">{tiers.map(tagDisplay).join(', ')}</span>}
+                    </label>
                   )
                 })}
-              </div>
-            </div>
-
-            {allModels.length > 0 && (
-              <div className="tag-picker-section">
-                <div className="tag-picker-heading">
-                  <span>Allowed specific models</span>
-                  <span className="tag-picker-heading-hint">
-                    {allowedModels.length === 0 ? 'all in tier' : `${allowedModels.length} selected`}
-                  </span>
-                </div>
-                <div className="tag-picker-list">
-                  {allModels.map((modelId) => {
-                    const checked = allowedModels.includes(modelId)
-                    return (
-                      <div key={modelId} className="tag-picker-row">
-                        <label className="tag-picker-item">
-                          <input
-                            type="checkbox"
-                            checked={checked}
-                            disabled={busy}
-                            onChange={() => {
-                              const nextModels = checked
-                                ? allowedModels.filter((m) => m !== modelId)
-                                : [...allowedModels, modelId]
-                              updatePolicy({ on: true, allowedModels: nextModels })
-                            }}
-                          />
-                          <span className="tag-picker-label">{modelLabel(modelId) ?? modelId}</span>
-                        </label>
-                      </div>
-                    )
-                  })}
-                </div>
               </div>
             )}
           </div>

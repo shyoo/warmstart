@@ -737,10 +737,11 @@ typed:
   client cannot queue a task that no candidate can ever satisfy. ⛔ That rule needs an account: with
   the worker left on Auto the scheduler picks one, so no tier is refused (`unavailableAutoTags`,
   t899 — *Auto Model (Med)* on an Auto-worker task read "This account cannot run…"). ⭐ **Tags are a second control, not part of the model's value (t1042).** `__auto__:high` could not say "High and Audio", so Reassign, the quota handoff, the thread's next-model row and the composer all keep one `__auto__` model and a separate **Tags** pill, drawn only while the model is Auto and offering the tags this account's auto pairs carry (`routableTags`; the fleet's while no account is chosen). A requirement no *single* pair holds — `High` on one row and `Audio` on another — is refused with *Choose another model* (`tagsRoutable`), and a saved tag that has lost its last pair stays on the list, ticked, instead of being cleared. The composer's pill warns for a pinned account and never blocks: a spent account still files the task and holds it. A composer choice saved as `modelClass` is read back as that one tag (`readByWorker`).
-- **A Delegate ▾ pill at the end of that row** (`thread/DelegatePill.tsx`, t704, t1322), on work tasks and
-  conversations. Opening the `▾` menu lets the operator toggle delegation on/off and select which
-  capability tiers (`allowedTiers`) and specific models (`allowedModels`) the agent is allowed to use
-  when calling `task_split`. ⛔ Unlike the pills beside it, it is **authority applied at once**, not a next-run
+- **Delegation controls at the end of that row** (`thread/DelegatePill.tsx`), on work tasks and
+  conversations. A direct toggle changes delegation on/off; the settings menu selects which
+  capability tiers (`allowedTiers`) and specific models (`allowedModels`) the agent may use when calling
+  `task_split`, and shows each model's configured tiers. An empty selection allows all tiers or models
+  respectively. ⛔ Unlike the pills beside it, it is **authority applied at once**, not a next-run
   choice: `task.update { delegationPolicy }` writes the task's `spawn_tasks`, `allowedTiers`, `allowedModels`,
   and rotates `delegationToken`, and turning it on past a parent that cannot delegate comes back as a refusal
   under the row. ⚠️ While it is on and the next-dispatch worker's adapter has neither MCP nor CLI tool helper
