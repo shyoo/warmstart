@@ -1935,7 +1935,7 @@ function stampPlan(runId: string, windowIds: string[]): void {
       .get(runId)
   )
   if (!r || !r.cost_model_id) return
-  if (r.plan_source === 'window_shape') return
+  if (r.plan_source === 'window_shape' || r.plan_source === 'override') return
   let cm
   try {
     cm = costModel(r.cost_model_id)
@@ -2026,7 +2026,12 @@ export function startRun(input: {
       input.kind ?? 'work',
       input.trunkDirtyBefore ? JSON.stringify(input.trunkDirtyBefore) : null
     )
-  stampPlan(id, [])
+  const override = row<{ pricing_override_json: string | null }>(db().prepare('select pricing_override_json from workers where id = ?').get(input.workerId))?.pricing_override_json
+  if (override) {
+    db().prepare("update runs set pricing_override_json = ?, plan_source = 'override' where id = ?").run(override, id)
+  } else {
+    stampPlan(id, [])
+  }
   bumpPricingEpoch()
   for (const fn of runStartListeners) fn(input.taskId)
   const run = requireRun(id)

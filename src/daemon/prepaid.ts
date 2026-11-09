@@ -60,6 +60,7 @@ export interface PrepaidEvidenceInput {
   /** Null where the worker's cost model cannot be loaded — billing is unknown, never guessed. */
   costModel: CostModel | null
   subscriptionType: string | null
+  pricingOverride?: { label: string; monthlyUsd: number } | null
   /** The quota pool this (worker, model) pair draws on. See `poolFor`. */
   pool: string | null
   /** The windows the gate evaluated, or empty when there was nothing trustworthy to read. */
@@ -117,10 +118,9 @@ export function prepaidEvidence(input: PrepaidEvidenceInput): PrepaidRawRecord {
   if (!cm) return none('billing is unknown, so this scores 0')
   if (!cm.hasPlans()) return none('billing is unknown (no plans declared), so this scores 0')
   if (cm.plansPriced() === false) return none('no prepaid allowance (local / free plan)')
-  const plan = cm.resolvePlan({
-    subscriptionType,
-    windowIds: trustedWindows.map((w) => w.id)
-  })
+  const plan: PlanRef | null = input.pricingOverride
+    ? { id: 'custom', label: input.pricingOverride.label, monthlyUsd: input.pricingOverride.monthlyUsd, priced: true, source: 'override' }
+    : cm.resolvePlan({ subscriptionType, windowIds: trustedWindows.map((w) => w.id) })
   if (plan && (plan.priced === false || plan.monthlyUsd === 0)) {
     return none('no prepaid allowance (local / free plan)')
   }
@@ -196,8 +196,8 @@ function priceWindow(
   // ⛔ Clamped: a window read past full has no remainder to price, not a negative one.
   const remaining = cm.priceOfWindowUsage(plan.id, [
     { window: ref, percent: Math.max(0, 100 - win.percent) }
-  ])
-  const full = cm.priceOfWindowUsage(plan.id, [{ window: ref, percent: 100 }])
+  ], plan.source === 'override' ? plan : null)
+  const full = cm.priceOfWindowUsage(plan.id, [{ window: ref, percent: 100 }], plan.source === 'override' ? plan : null)
   if (!remaining || !full) {
     return skippedWindow(ref, win, 'plan has no price to divide')
   }

@@ -166,7 +166,7 @@ export interface PlanRef {
   source: PlanSource
 }
 
-export type PlanSource = 'window_shape' | 'identity' | 'neighbour' | 'default' | 'stored'
+export type PlanSource = 'window_shape' | 'identity' | 'neighbour' | 'default' | 'stored' | 'override'
 
 /** One billing window selected for a run, and the share of the subscription it carries. */
 export interface BillingWindowRef {
@@ -600,9 +600,10 @@ export class CostModel {
    */
   priceOfWindowUsage(
     planId: string,
-    usage: Array<{ window: BillingWindowRef; percent: number }>
+    usage: Array<{ window: BillingWindowRef; percent: number }>,
+    override?: { label: string; monthlyUsd: number } | null
   ): { usd: number; basis: string } | null {
-    const entry = this.data.plans?.catalog.find((p) => p.id === planId)
+    const entry = override ? { label: `${override.label} (experimental override)`, monthly_usd: override.monthlyUsd, priced: true } : this.data.plans?.catalog.find((p) => p.id === planId)
     if (!entry || entry.priced === false || !this.canPriceMoney() || usage.length === 0) return null
     let usd = 0
     const parts: string[] = []

@@ -9,6 +9,10 @@ The store, the migration contract, and every enum the rest of the system branche
 
 ---
 
+Workers may carry an operator-supplied `pricing_override_json` (label and monthly USD). A new run
+snapshots it in its own `pricing_override_json` and stamps `plan_source = override`; subsequent
+quota readings and worker edits do not replace that basis. Older runs retain their existing plan.
+
 ## 1. The store
 
 `node:sqlite`, WAL, `foreign_keys = on`, at `<dataDir>/warmstart.db` (`daemon/db.ts`).

@@ -92,6 +92,16 @@ describe('prepaid expiry pressure (v1.2)', () => {
     expect(max.rawPressure / pro.rawPressure).toBeCloseTo(10, 8)
   })
 
+  it('uses an operator price over the reported plan for routing', () => {
+    const now = Date.now()
+    const base = prepaidEvidence(input([weekly(20, now + 3600000)], { now, subscriptionType: 'pro' }))
+    const custom = prepaidEvidence(input([weekly(20, now + 3600000)], {
+      now, subscriptionType: 'pro', pricingOverride: { label: 'Custom', monthlyUsd: 100 }
+    }))
+    expect(custom.plan?.source).toBe('override')
+    expect(custom.rawPressure / base.rawPressure).toBeCloseTo(5)
+  })
+
   it('holds equal dollars per hour equal across different plans', () => {
     const now = Date.now()
     // $3.6797 left on Pro over 24h, and the same dollars left on Max 20x over 24h (8% of $45.996).

@@ -672,6 +672,7 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       return prepaidEvidence({
         costModel: cm,
         subscriptionType: c.worker.identity?.subscriptionType ?? null,
+        pricingOverride: c.worker.pricingOverride,
         pool: c.pool,
         trustedWindows: c.trustedWindows,
         inferredIds: new Set(c.inferredWindowIds),

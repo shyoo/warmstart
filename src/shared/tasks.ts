@@ -1864,7 +1864,7 @@ export interface RunPrice {
   planId: string | null
   planLabel: string | null
   /** How the plan was decided: from the run's own window shape, the vendor string, or a default. */
-  planSource: 'window_shape' | 'identity' | 'neighbour' | 'default' | 'stored' | null
+  planSource: 'window_shape' | 'identity' | 'neighbour' | 'default' | 'stored' | 'override' | null
   windowId: string | null
   /** Runs that held the same window at the same time. */
   parallelRunIds: string[]

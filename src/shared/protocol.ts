@@ -411,6 +411,8 @@ export interface Worker {
    */
   role: WorkerRole
   maxConcurrent: number
+  /** Operator-supplied subscription price for future runs. */
+  pricingOverride?: { label: string; monthlyUsd: number } | null
   /**
    * How much of this machine unattended work on this account may reach.
    *
@@ -1870,6 +1872,7 @@ export interface RpcMap {
         | 'enabled'
         | 'humanOccupied'
         | 'maxConcurrent'
+        | 'pricingOverride'
         | 'role'
         | 'defaultModel'
         | 'gradingModel'

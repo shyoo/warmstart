@@ -443,6 +443,7 @@ interface PricedRunRow {
   model: string | null
   plan_id: string | null
   plan_source: string | null
+  pricing_override_json: string | null
   quota_before_json: string | null
   quota_after_json: string | null
   /** ⛔ Carried, never summed into `usd`. What this run would have cost on a market-rated API. */
@@ -502,7 +503,7 @@ function build(out: Map<string, RunPrice>, taskOut: Map<string, TaskPrice>): voi
     db()
       .prepare(
         `select id, task_id, worker_id, started_at, ended_at, cost_model_id, model,
-                plan_id, plan_source, quota_before_json, quota_after_json,
+                plan_id, plan_source, pricing_override_json, quota_before_json, quota_after_json,
                 list_usd, on_overage
            from runs where kind = 'work' order by started_at asc`
       )
@@ -779,7 +780,8 @@ function subscriptionPart(r: PricedRunRow, cm: CostModel | null, ctx: PriceCtx):
   }
 
   const ownWindows = ctx.windowsOfRun.get(r.id) ?? []
-  const plan =
+  const override = r.pricing_override_json ? JSON.parse(r.pricing_override_json) as { label: string; monthlyUsd: number } : null
+  const plan = override ? { id: 'custom', label: override.label, monthlyUsd: override.monthlyUsd, priced: true, source: 'override' as const } :
     cm.planById(r.plan_id) ??
     cm.resolvePlan({
       subscriptionType: ctx.identities.get(r.worker_id) ?? null,
@@ -823,7 +825,7 @@ function subscriptionPart(r: PricedRunRow, cm: CostModel | null, ctx: PriceCtx):
       : na('no_reading', 'This run has no complete pair of window readings — one before it and one after it — so there is no difference to price.', plan)
   }
 
-  const priced = cm.priceOfWindowUsage(plan.id, usage)
+  const priced = cm.priceOfWindowUsage(plan.id, usage, override)
   if (!priced) return na('unpriced_plan', `${plan.label} has no subscription price to divide.`, plan)
 
   return {

@@ -70,7 +70,7 @@ function backfillRunPlans(conn: DatabaseSync, what: string): void {
   const pending = conn
     .prepare(
       `select id, worker_id, started_at, cost_model_id, quota_before_json, quota_after_json
-         from runs where plan_id is null order by started_at asc`
+         from runs where plan_id is null and coalesce(plan_source, '') != 'override' order by started_at asc`
     )
     .all() as unknown as Row[]
   if (pending.length === 0) return
@@ -2501,6 +2501,11 @@ const MIGRATIONS: Migration[] = [
           .run(JSON.stringify(routes), row.id)
       }
     }
+  },
+  // Operator-provided subscription price, snapshotted for each new run.
+  (conn) => {
+    if (!hasColumn(conn, 'workers', 'pricing_override_json')) conn.exec('alter table workers add column pricing_override_json text')
+    if (!hasColumn(conn, 'runs', 'pricing_override_json')) conn.exec('alter table runs add column pricing_override_json text')
   }
 ]
 

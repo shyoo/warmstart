@@ -15,6 +15,16 @@ edit. If a fact can no longer be verified, delete it rather than leaving it unso
 
 ---
 
+## Custom subscription pricing (experimental)
+
+Settings → Workers permits an optional per-worker plan label and monthly USD price when the
+provider's standard catalogue does not describe the account. The operator supplies the amount;
+Warmstart does not infer an employee plan or its price from the vendor's identity. The override
+uses the adapter's existing billing windows and pool shares for subscription-cost attribution and
+prepaid routing pressure. It does not change the provider's reported identity, quota readings,
+limits, or usage credits. New runs snapshot the override; changing or clearing it does not rewrite
+earlier runs. The pricing basis identifies the amount as an experimental override.
+
 ## 1. Prompt caching (Anthropic)
 
 Source: Claude docs, *Prompt caching* / *Context windows* / *Compaction* / *Context editing* /

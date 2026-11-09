@@ -298,6 +298,40 @@ describe('migration 35 — which subscription each run was billed against', () =
 })
 
 describe('what a stored run costs', () => {
+  it('validates worker pricing and snapshots it when a run starts', async () => {
+    const workers = await import('./workers.js')
+    const tasks = await import('./tasks.js')
+    expect(() => workers.updateWorker(CLAUDE, { pricingOverride: { label: 'bad', monthlyUsd: -1 } })).toThrow()
+    const setting = { label: 'Employee', monthlyUsd: 100 }
+    expect(workers.updateWorker(CLAUDE, { pricingOverride: setting }).pricingOverride).toEqual(setting)
+    seedRun({ id: 'placeholder', worker: CLAUDE, costModel: 'anthropic.subscription.2026-08',
+      startedAt: T0, endedAt: T0 + HOUR, taskId: 'snapshot-task' })
+    const run = tasks.startRun({ taskId: 'snapshot-task', workerId: CLAUDE, sessionId: null,
+      projectId: null, quotaUnverified: false, costModelId: 'anthropic.subscription.2026-08' })
+    workers.updateWorker(CLAUDE, { pricingOverride: null })
+    tasks.setRunQuota(run.id, 'before', { windows: [{ id: 'weekly_all', label: 'weekly', percent: 1 }], sampledAt: T0, stale: false })
+    const saved = db.db().prepare('select pricing_override_json, plan_source from runs where id = ?').get(run.id) as { pricing_override_json: string; plan_source: string }
+    expect(JSON.parse(saved.pricing_override_json)).toEqual(setting)
+    expect(saved.plan_source).toBe('override')
+  })
+
+  it('prices a run from its saved custom subscription, independently of the current worker setting', () => {
+    seedRun({ id: 'custom', worker: CLAUDE, costModel: 'anthropic.subscription.2026-08',
+      startedAt: T0, endedAt: T0 + HOUR,
+      before: quota(T0, [['weekly_all', 20]]), after: quota(T0 + HOUR, [['weekly_all', 25]]) })
+    db.db().prepare("update runs set pricing_override_json = ?, plan_source = 'override' where id = ?")
+      .run(JSON.stringify({ label: 'Custom plan', monthlyUsd: 100 }), 'custom')
+    db.db().prepare('update workers set pricing_override_json = ? where id = ?')
+      .run(JSON.stringify({ label: 'Changed', monthlyUsd: 200 }), CLAUDE)
+    price.bumpPricingEpoch()
+    const p = price.priceForRun('custom')!
+    expect(p.usd).toBeCloseTo(1.15, 2)
+    expect(p.planLabel).toBe('Custom plan')
+    expect(p.planSource).toBe('override')
+    expect(p.basis).toContain('experimental override')
+    db.db().prepare('update workers set pricing_override_json = null where id = ?').run(CLAUDE)
+  })
+
   it('prices a solo Claude run from the weekly window either side of it', () => {
     seedRun({
       id: 'solo',

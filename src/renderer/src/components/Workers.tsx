@@ -116,6 +116,25 @@ const UNATTENDED_AUTHORITY_HELP =
   '`--dangerously-bypass-approvals-and-sandbox`; on Claude Code and Antigravity it is what unattended ' +
   'work has always run as.'
 
+function PricingOverride({ worker, save }: { worker: Worker; save: (value: Worker['pricingOverride']) => Promise<void> }): React.JSX.Element {
+  const [label, setLabel] = useState(worker.pricingOverride?.label ?? '')
+  const [price, setPrice] = useState(worker.pricingOverride?.monthlyUsd.toString() ?? '')
+  useEffect(() => {
+    setLabel(worker.pricingOverride?.label ?? '')
+    setPrice(worker.pricingOverride?.monthlyUsd.toString() ?? '')
+  }, [worker.pricingOverride?.label, worker.pricingOverride?.monthlyUsd])
+  return (
+    <details>
+      <summary>Custom subscription pricing (experimental){worker.pricingOverride ? ' · active' : ''}</summary>
+      <p>Use only if this account has custom pricing. This changes future run cost estimates and routing; quota readings and limits stay as reported by the provider.</p>
+      <label>Plan label <input value={label} maxLength={100} onChange={(e) => setLabel(e.target.value)} /></label>{' '}
+      <label>Monthly price (USD) <input type="number" min="0.01" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} /></label>{' '}
+      <button type="button" disabled={!label.trim() || !Number.isFinite(Number(price)) || Number(price) <= 0} onClick={() => void save({ label: label.trim(), monthlyUsd: Number(price) })}>Save</button>{' '}
+      {worker.pricingOverride && <button type="button" onClick={() => void save(null)}>Use detected plan</button>}
+    </details>
+  )
+}
+
 /**
  * Settings → Workers, and the commissioning wizard.
  *
@@ -737,6 +756,11 @@ export function Workers({
                         {worker.identity?.subscriptionType && (
                           <span className="dim worker-account-plan">{worker.identity.subscriptionType}</span>
                         )}
+                        <PricingOverride worker={worker} save={async (pricingOverride) => {
+                          await guard(`pricing:${worker.id}`, async () => {
+                            applyWorker(await rpc('worker.update', { id: worker.id, pricingOverride }))
+                          }, false)
+                        }} />
                         {/* ⚠️ Inside the same grid item, on a line of its own (t906): the date is a
                             fact about the plan beside it. Read on a probe — *published* for Codex,
                             an *inferred* anniversary for Claude, and absent where nothing local says. */}

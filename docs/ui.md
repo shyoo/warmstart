@@ -10,6 +10,10 @@ conventions live.
 
 ---
 
+Settings → Workers exposes **Custom subscription pricing (experimental)** in each account row.
+A plan label and positive monthly USD amount apply to future runs and prepaid routing; clearing it
+restores automatic plan resolution. The provider's identity and quota readings remain visible.
+
 ## 1. What the renderer is allowed to be
 
 The shell shares one task snapshot with Attention and patches task/resource event rows. Project

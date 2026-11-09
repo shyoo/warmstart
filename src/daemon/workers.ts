@@ -33,6 +33,7 @@ interface WorkerRow {
   human_occupied: number
   role: string
   max_concurrent: number
+  pricing_override_json: string | null
   unattended_authority: string | null
   default_model: string | null
   grading_model: string | null
@@ -65,6 +66,7 @@ function toWorker(r: WorkerRow): Worker {
     humanOccupied: r.human_occupied === 1,
     role: (r.role as WorkerRole) ?? 'both',
     maxConcurrent: r.max_concurrent,
+    pricingOverride: r.pricing_override_json ? JSON.parse(r.pricing_override_json) as Worker['pricingOverride'] : null,
     // ⛔ `null` reaches here only for a row migration 77 somehow missed; `full-user` is the same
     // grandfather migration 77 applies to every non-Codex adapter, and the safer `sandboxed-only`
     // would silently restrict a running fleet, which is worse than the disclosure.
@@ -293,6 +295,7 @@ export function updateWorker(
       | 'enabled'
       | 'humanOccupied'
       | 'maxConcurrent'
+      | 'pricingOverride'
       | 'role'
       | 'defaultModel'
       | 'gradingModel'
@@ -310,6 +313,16 @@ export function updateWorker(
   >
 ): Worker {
   const current = requireWorker(id)
+  if (patch.pricingOverride !== undefined && patch.pricingOverride !== null) {
+    const v = patch.pricingOverride
+    if (typeof v.label !== 'string' || !v.label.trim() || v.label.trim().length > 100 ||
+        typeof v.monthlyUsd !== 'number' || !Number.isFinite(v.monthlyUsd) || v.monthlyUsd <= 0) {
+      throw new Error('Custom pricing needs a plan label and a positive monthly USD price')
+    }
+    const cm = costModel(adapter(current.adapterId).info.policy.costModelId)
+    if (!cm.hasBillingWindow() || !cm.canPriceMoney()) throw new Error('This worker does not support subscription pricing')
+    patch.pricingOverride = { label: v.label.trim(), monthlyUsd: v.monthlyUsd }
+  }
   // ⛔ `maxConcurrent` is an admission limit, never a preemption request. A worker can briefly be
   // above its newly lowered cap while its existing work finishes; terminating those sessions would
   // turn a harmless settings edit into lost work.
@@ -338,7 +351,7 @@ export function updateWorker(
                           default_model = ?, default_effort = ?, default_models_json = ?,
                           model_routes_json = ?, judgment_model = ?, judgment_effort = ?,
                           grading_model = ?, summarising_model = ?, summarising_effort = ?, grading_effort = ?, grading_enabled = ?,
-                          unattended_authority = ?
+                          unattended_authority = ?, pricing_override_json = ?
        where id = ?`
     )
     .run(
@@ -362,6 +375,7 @@ export function updateWorker(
       patch.gradingEffort === undefined ? (current.gradingEffort ?? null) : patch.gradingEffort,
       (patch.gradingEnabled ?? current.gradingEnabled) ? 1 : 0,
       patch.unattendedAuthority ?? current.unattendedAuthority,
+      (patch.pricingOverride === undefined ? current.pricingOverride : patch.pricingOverride) ? JSON.stringify(patch.pricingOverride === undefined ? current.pricingOverride : patch.pricingOverride) : null,
       id
     )
   // A lower limit is an admission gate, not a preemption order. Sessions already using the account
