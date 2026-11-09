@@ -1,12 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { AutoModelTier, AutoModelTierEntry, ModelOptions } from '@shared/protocol'
 import { samePair, tiersFromWorkers } from '@shared/modelroutes'
-import { MAX_TAG_LENGTH, TIER_PREFIX, asTierTag, cleanTags, tagKey, tierHeading, tierSlug } from '@shared/modeltags'
+import {
+  MAX_TAG_LENGTH,
+  TIER_PREFIX,
+  asTierTag,
+  cleanTags,
+  tagKey,
+  tierHeading,
+  tierSlug
+} from '@shared/modeltags'
 import { isLocalModelId, localModelLabel } from '@shared/localmodel'
 import { errorMessage } from '@shared/errors.js'
 import { rpc, type FleetEntry } from '../lib/daemon'
 import { effortLabel, modelLabel } from '../lib/modelname'
 import { seedEffort } from '../lib/modeltable'
+import { Pill } from './Pill'
 
 /**
  * Fleet-wide capability tiers for Auto Model routing and delegation (t1322).
@@ -156,9 +165,9 @@ export function AutoModelSettings({
         <div>
           <h2>Auto model</h2>
           <p className="panel-sub">
-            Assign models and efforts to capability tiers across the fleet. Tasks and delegated pieces pick at
-            most one tier (such as <code>[tier:high]</code>, <code>[tier:med]</code>, or <code>[tier:low]</code>),
-            while the same model may be placed in multiple tiers.
+            Assign models and efforts to capability tiers across the fleet. Tasks and delegated
+            pieces pick at most one tier (such as <code>[tier:high]</code>, <code>[tier:med]</code>,
+            or <code>[tier:low]</code>), while the same model may be placed in multiple tiers.
           </p>
         </div>
       </header>
@@ -169,7 +178,9 @@ export function AutoModelSettings({
         {tiers.length === 0 ? (
           <div className="empty-inline">
             <p>No capability tiers configured.</p>
-            <p className="dim">Add a tier below to group models for Auto Model routing and delegation.</p>
+            <p className="dim">
+              Add a tier below to group models for Auto Model routing and delegation.
+            </p>
           </div>
         ) : (
           tiers.map((tier) => {
@@ -177,7 +188,9 @@ export function AutoModelSettings({
             const slug = tierSlug(tier.tag)
             const draft = draftFor(tier.tag)
             const draftLevels = levelsFor(draft.model)
-            const alreadyInTier = Boolean(draft.model && tier.entries.some((e) => samePair(e, draft)))
+            const alreadyInTier = Boolean(
+              draft.model && tier.entries.some((e) => samePair(e, draft))
+            )
             return (
               <section
                 key={tagKey(tier.tag)}
@@ -203,21 +216,22 @@ export function AutoModelSettings({
                   </button>
                 </header>
 
-                <div className="auto-model-tier-entries">
+                <div className="auto-model-tier-entries auto-model-chips">
                   {tier.entries.length === 0 ? (
                     <span className="dim">No models in this tier yet.</span>
                   ) : (
-                    <span className="tag-chips auto-model-chips">
+                    <>
                       {tier.entries.map((entry, idx) => {
                         const label = entryChipLabel(entry)
                         return (
                           <span
                             key={`${entry.model}:${entry.effort ?? ''}`}
                             className="tag-chip auto-model-chip"
+                            title={`${entry.model}${entry.effort ? ` · ${entry.effort}` : ''}`}
                             data-model={entry.model}
                             data-effort={entry.effort ?? ''}
                           >
-                            <span>({label})</span>
+                            <span>{label}</span>
                             <button
                               type="button"
                               className="tag-picker-remove"
@@ -231,67 +245,83 @@ export function AutoModelSettings({
                           </span>
                         )
                       })}
-                    </span>
+                    </>
+                  )}
+                  {catalog.length > 0 && (
+                    <Pill
+                      label="+ Add model"
+                      ariaLabel={`Add model to ${heading}`}
+                      disabled={busy}
+                      className="auto-model-add-pill"
+                      menuClassName="auto-model-add-menu"
+                      menu={(close) => (
+                        <form
+                          className="auto-model-tier-add"
+                          aria-label={`Add model to ${heading}`}
+                          onSubmit={(e) => {
+                            e.preventDefault()
+                            if (busy || !draft.model || alreadyInTier) return
+                            addEntry(tier.tag)
+                            close()
+                          }}
+                        >
+                          <select
+                            className="worker-models-select"
+                            value={draft.model}
+                            disabled={busy}
+                            aria-label={`Model to add to ${heading}`}
+                            onChange={(e) => {
+                              const nextModel = e.target.value
+                              const nextLevels = levelsFor(nextModel)
+                              setDrafts((prev) => ({
+                                ...prev,
+                                [tagKey(tier.tag)]: {
+                                  model: nextModel,
+                                  effort: seedEffort(nextLevels, draft.effort)
+                                }
+                              }))
+                            }}
+                          >
+                            {catalog.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {nameOf(m.id)}
+                              </option>
+                            ))}
+                          </select>
+                          {draftLevels.length > 0 && (
+                            <select
+                              className="worker-models-select"
+                              value={draft.effort ?? ''}
+                              disabled={busy}
+                              aria-label={`Effort to add to ${heading}`}
+                              onChange={(e) =>
+                                setDrafts((prev) => ({
+                                  ...prev,
+                                  [tagKey(tier.tag)]: { ...draft, effort: e.target.value }
+                                }))
+                              }
+                            >
+                              {draftLevels.map((lvl) => (
+                                <option key={lvl} value={lvl}>
+                                  {effortLabel(lvl) ?? lvl}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+                          <button
+                            type="submit"
+                            className="btn"
+                            disabled={busy || !draft.model || alreadyInTier}
+                            aria-label={`Confirm model for ${heading}`}
+                            title={alreadyInTier ? 'Already in this tier' : `Add to ${heading}`}
+                          >
+                            + Add model
+                          </button>
+                        </form>
+                      )}
+                    />
                   )}
                 </div>
-
-                {catalog.length > 0 && (
-                  <div className="worker-models-add auto-model-tier-add">
-                    <select
-                      className="worker-models-select"
-                      value={draft.model}
-                      disabled={busy}
-                      aria-label={`Model to add to ${heading}`}
-                      onChange={(e) => {
-                        const nextModel = e.target.value
-                        const nextLevels = levelsFor(nextModel)
-                        setDrafts((prev) => ({
-                          ...prev,
-                          [tagKey(tier.tag)]: {
-                            model: nextModel,
-                            effort: seedEffort(nextLevels, draft.effort)
-                          }
-                        }))
-                      }}
-                    >
-                      {catalog.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {nameOf(m.id)}
-                        </option>
-                      ))}
-                    </select>
-                    {draftLevels.length > 0 && (
-                      <select
-                        className="worker-models-select"
-                        value={draft.effort ?? ''}
-                        disabled={busy}
-                        aria-label={`Effort to add to ${heading}`}
-                        onChange={(e) =>
-                          setDrafts((prev) => ({
-                            ...prev,
-                            [tagKey(tier.tag)]: { ...draft, effort: e.target.value }
-                          }))
-                        }
-                      >
-                        {draftLevels.map((lvl) => (
-                          <option key={lvl} value={lvl}>
-                            {effortLabel(lvl) ?? lvl}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                    <button
-                      type="button"
-                      className="btn"
-                      disabled={busy || !draft.model || alreadyInTier}
-                      aria-label={`Add model to ${heading}`}
-                      title={alreadyInTier ? 'Already in this tier' : `Add to ${heading}`}
-                      onClick={() => addEntry(tier.tag)}
-                    >
-                      + Add model
-                    </button>
-                  </div>
-                )}
               </section>
             )
           })

@@ -1,5 +1,9 @@
 # The renderer
 
+Settings → Auto model shows each model/effort pair as a wrapping, full-text pill without
+parentheses, with a visible × button to remove it from that tier. The **+ Add model** pill opens
+a portalled picker for model and effort; Add saves the pair, and Escape or an outside click dismisses it.
+
 React 19 under `src/renderer`. What it may and may not do, how it is routed, and where its
 conventions live.
 

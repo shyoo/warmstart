@@ -3711,6 +3711,18 @@ body {
   padding: 0 6px; border-radius: 999px; border: 1px solid var(--color-border-strong);
   background: var(--color-bg); color: var(--color-text); font-size: var(--text-meta); line-height: 1.5;
 }
+/* Auto model pairs wrap so their names, efforts and remove buttons stay visible. */
+.auto-model-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.auto-model-chip {
+  display: inline-flex; align-items: center; gap: 4px; flex: 0 1 auto;
+  max-width: 100%; overflow: visible; white-space: normal; overflow-wrap: anywhere;
+  padding: 2px 6px;
+}
+.auto-model-chip .tag-picker-remove { flex: 0 0 auto; padding: 4px; color: var(--color-text); }
+.auto-model-add-pill .pill { border-radius: 999px; }
+.auto-model-add-menu { width: min(380px, calc(100vw - 16px)); }
+.auto-model-tier-add { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-2); }
+.auto-model-tier-add .worker-models-select { width: 100%; max-width: none; }
 .tag-chip--more { flex: 0 0 auto; color: var(--color-text-dim); }
 .tag-chips-empty { color: var(--color-text-dim); }
 .tag-picker { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-1); min-width: 14rem; }

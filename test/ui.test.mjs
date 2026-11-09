@@ -4021,30 +4021,57 @@ try {
     effortOptions
   )
 
-  // ⭐ Settings > Auto model (t1322): fleet-wide capability tiers where models can be placed into
-  // High / Med / Low (including the same model in multiple tiers) and tiers can be added or removed.
+  // Auto model pills expose the whole pair and keep editing behind the add pill.
+  await evaluate(`window.agentyard.rpc('settings.set', { autoModelTiers: [
+    { tag: 'High', entries: [{ model: 'gpt-6.1-sol', effort: 'high' }] },
+    { tag: 'Med', entries: [] }, { tag: 'Low', entries: [] }
+  ] })`)
   await evaluate(
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim() === 'Auto model')?.click()`
   )
   await wait(400)
-  const tierCardsCount = Number(await evaluate(`String(document.querySelectorAll('.auto-model-tier-card').length)`))
-  check(
-    'Settings > Auto model renders the capability tier cards (High, Med, Low)',
-    tierCardsCount >= 3,
-    String(tierCardsCount)
-  )
-  await evaluate(
-    `[...document.querySelectorAll('.auto-model-tier-card button')].find(b => b.getAttribute('aria-label') === 'Add model to Low tier')?.click()`
-  )
+  check('Auto model renders three tier cards',
+    await evaluate(`document.querySelectorAll('.auto-model-tier').length === 3`))
+  check('model and effort pills show full text without parentheses or clipping',
+    await evaluate(`(() => {
+      const chip = document.querySelector('.auto-model-chip');
+      const label = chip?.querySelector('span');
+      const remove = chip?.querySelector('button');
+      if (!chip || !label || !remove) return false;
+      const c = chip.getBoundingClientRect(), r = remove.getBoundingClientRect();
+      return label.textContent === 'GPT 6.1 Sol High' && label.scrollWidth <= label.clientWidth
+        && remove.textContent.trim() === '×' && r.right <= c.right && r.width > 0;
+    })()`))
+  check('add controls stay hidden until the add pill opens',
+    await evaluate(`!document.querySelector('.auto-model-tier-add')`))
+  await evaluate(`document.querySelector('[aria-label="Add model to Low tier"]').click()`)
+  await wait(100)
+  check('add pill opens model and effort controls',
+    await evaluate(`!!document.querySelector('select[aria-label="Model to add to Low tier"]')
+      && !!document.querySelector('select[aria-label="Effort to add to Low tier"]')`))
+  await evaluate(`document.querySelector('[aria-label="Confirm model for Low tier"]').click()`)
   await wait(600)
-  const syncedTiers = await evaluate(
-    `window.agentyard.rpc('settings.get').then(s => JSON.stringify((s.autoModelTiers ?? []).map(t => t.tag)))`
-  )
-  check(
-    'adding a model to a tier in Settings > Auto model persists autoModelTiers in settings',
-    syncedTiers.includes('Low') && syncedTiers.includes('High'),
-    syncedTiers
-  )
+  check('adding persists a model and effort and closes the picker',
+    await evaluate(`window.agentyard.rpc('settings.get').then(s => {
+      const entries = s.autoModelTiers?.find(t => t.tag === 'Low')?.entries;
+      const chip = document.querySelector('[data-tier="tier:low"] .auto-model-chip');
+      return entries?.length === 1 && !!chip && entries[0].model === chip.dataset.model
+        && (entries[0].effort ?? '') === chip.dataset.effort
+        && !document.querySelector('.auto-model-tier-add');
+    })`))
+  await evaluate(`document.querySelector('[data-tier="tier:low"] .auto-model-chip button')?.click()`)
+  await wait(600)
+  check('the visible remove button deletes and persists the pair',
+    await evaluate(`window.agentyard.rpc('settings.get').then(s =>
+      s.autoModelTiers?.find(t => t.tag === 'Low')?.entries.length === 0
+        && document.querySelectorAll('[data-tier="tier:low"] .auto-model-chip').length === 0)`))
+  await evaluate(`document.querySelector('[aria-label="Add model to Low tier"]').click()`)
+  await wait(100)
+  await evaluate(`window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`)
+  await wait(100)
+  check('Escape dismisses the add picker and restores focus to its pill',
+    await evaluate(`!document.querySelector('.auto-model-tier-add')
+      && document.activeElement?.getAttribute('aria-label') === 'Add model to Low tier'`))
   await evaluate(
     `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Workers'))?.click()`
   )
