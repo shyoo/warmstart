@@ -21,9 +21,13 @@ export const MAX_TAGS = 12
 /** The three tags offered before an operator has made any: the old capability classes. */
 export const BUILTIN_TAGS: readonly string[] = MODEL_CLASSES.map((c) => classTag(c))
 
-/** A tag's identity: case-insensitive, whitespace-collapsed. `ZDR` and `zdr` are one tag. */
+/** A tag's identity: case-insensitive, whitespace-collapsed. `ZDR` and `zdr` are one tag; `tier:low` and `Low` are one tier. */
 export function tagKey(tag: string): string {
-  return tag.trim().replace(/\s+/g, ' ').toLowerCase()
+  const raw = tag.trim().replace(/\s+/g, ' ').toLowerCase()
+  const stripped = raw.startsWith('tier:') ? raw.slice('tier:'.length).trim() : raw
+  if (stripped === 'medium' || stripped === 'med') return 'med'
+  if (stripped === 'low' || stripped === 'high') return stripped
+  return raw
 }
 
 /** One tag as stored: trimmed, inner whitespace collapsed, spelling kept. Empty when nothing is left. */
@@ -84,25 +88,89 @@ function customTierName(tag: string): string | null {
   return name || null
 }
 
-/** `tag` as an operator's custom capability tier (`Ultra` → `Tier:Ultra`); built-in tiers are unchanged. */
+/** `tag` as an operator's custom capability tier (`Ultra` → `Tier:Ultra`); built-in tiers normalize to `High`/`Med`/`Low`. */
 export function asTierTag(tag: string): string {
   const t = cleanOne(tag)
-  return !t || isTierTag(t) ? t : `${TIER_PREFIX}${t}`
+  if (!t) return t
+  const cls = tagClass(t)
+  if (cls) return classTag(cls)
+  const custom = customTierName(t)
+  if (custom) return `${TIER_PREFIX}${custom}`
+  return `${TIER_PREFIX}${t}`
 }
 
-/** How a tag reads to a person: a custom tier loses its `Tier:` marker. */
+/** How a tag reads to a person: a custom tier loses its `Tier:` marker, built-in tiers read `High`/`Med`/`Low`. */
 export function tagDisplay(tag: string): string {
+  const cls = tagClass(tag)
+  if (cls) return classTag(cls)
   return customTierName(tag) ?? tag
+}
+
+/** A tier tag as its canonical slug: `tier:high`, `tier:med`, `tier:low`, `tier:ultra`. */
+export function tierSlug(tag: string): string {
+  const cls = tagClass(tag)
+  if (cls) return `tier:${cls}`
+  const name = (customTierName(tag) ?? cleanOne(tag)).toLowerCase()
+  return `tier:${name}`
+}
+
+/** How a tier reads in Settings > Auto model: `High tier`, `Med tier`, `Low tier`, `Ultra tier`. */
+export function tierHeading(tag: string): string {
+  return `${tagDisplay(tag)} tier`
 }
 
 /**
  * Is `tag` a capability tier: `Low`, `Med`, `High` (or their aliases), or a custom `Tier:<name>`?
  *
- * ⛔ Tiers match as OR, features as AND. The marker is stored in the tag itself so a custom tier
- * needs no catalogue, schema change or migration.
+ * ⛔ Tiers are mutually exclusive on a task requirement (`withExclusiveTier`), while a (model, effort)
+ * pair may belong to multiple tiers. Features match as AND. The marker is stored in the tag itself
+ * so a custom tier needs no catalogue, schema change or migration.
  */
 export function isTierTag(tag: string): boolean {
   return tagClass(tag) !== null || customTierName(tag) !== null
+}
+
+/**
+ * Enforce exclusive tier selection on a task's tag list: at most one capability tier tag may be
+ * selected (the last tier tag wins when replacing), while all orthogonal feature tags are kept in order.
+ */
+export function withExclusiveTier(tags: readonly string[] | null | undefined): string[] {
+  const cleaned = cleanTags(tags)
+  let lastTierIdx = -1
+  for (const [i, t] of cleaned.entries()) {
+    if (isTierTag(t)) lastTierIdx = i
+  }
+  const out: string[] = []
+  for (const [i, t] of cleaned.entries()) {
+    if (isTierTag(t)) {
+      if (i !== lastTierIdx) continue
+      const cls = tagClass(t)
+      out.push(cls ? classTag(cls) : asTierTag(t))
+    } else {
+      out.push(t)
+    }
+  }
+  return out
+}
+
+/**
+ * Toggle `tag` inside `selected` with exclusive tier semantics:
+ * - Toggling an already-selected tier removes it.
+ * - Selecting a different tier replaces any existing tier while preserving orthogonal feature tags.
+ * - Toggling a non-tier feature tag adds or removes it without disturbing the selected tier.
+ */
+export function toggleExclusiveTierTag(selected: readonly string[], tag: string): string[] {
+  const key = tagKey(tag)
+  const has = selected.some((t) => tagKey(t) === key)
+  if (has) {
+    return selected.filter((t) => tagKey(t) !== key)
+  }
+  if (isTierTag(tag)) {
+    const cls = tagClass(tag)
+    const canonical = cls ? classTag(cls) : asTierTag(tag)
+    return [canonical, ...selected.filter((t) => !isTierTag(t))]
+  }
+  return [...selected, tag]
 }
 
 /**

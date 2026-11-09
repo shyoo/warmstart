@@ -25,7 +25,7 @@ import {
   type TaskConstraints
 } from '@shared/tasks.js'
 import { MODEL_CLASSES, type ModelClass } from '@shared/modelclass.js'
-import { checkTags, classTag, cleanTags, tagClass, tagsFromLegacyClass, tagsLabel } from '@shared/modeltags.js'
+import { checkTags, classTag, isTierTag, tagClass, tagKey, tagsFromLegacyClass, tagsLabel, tierSlug, withExclusiveTier } from '@shared/modeltags.js'
 import { canWork, type Worker } from '@shared/protocol.js'
 import { errorMessage } from '@shared/errors.js'
 import { listWorkers } from './workers.js'
@@ -110,12 +110,12 @@ const AUTO_MODEL_RE = /^auto(?:[-_\s]*model)?(?:\s*\(([^)]+)\))?$/i
  */
 function autoTags(group: string | undefined): string[] {
   if (!group) return []
-  return cleanTags(group.split(/[+,|]/).map((t) => { const c = tagClass(t); return c ? classTag(c) : t }))
+  return withExclusiveTier(group.split(/[+,|]/).map((t) => { const c = tagClass(t); return c ? classTag(c) : t }))
 }
 
 /** The tags a piece asks for: `modelTags`, else the old `modelClass` as one tag. */
 function pieceTagsOf(piece: Pick<SplitPiece, 'modelTags' | 'modelClass'>): string[] {
-  if (piece.modelTags !== undefined) return cleanTags(piece.modelTags)
+  if (piece.modelTags !== undefined) return withExclusiveTier(piece.modelTags)
   return piece.modelClass ? tagsFromLegacyClass(piece.modelClass) : []
 }
 
@@ -351,6 +351,65 @@ function unknownModelReason(i: number, piece: SplitPiece, parentWorkerId: string
  * construction* rather than detectable afterwards. Agent-authored DAGs are exactly where cycles come
  * from, and a cycle discovered by the scheduler is a deadlock rather than an error message.
  */
+/**
+ * Check whether every delegated piece stays within `parent.mandate.allowedTiers` and
+ * `parent.mandate.allowedModels` when either restriction is configured on the parent task.
+ */
+export function delegationTargetRefusal(parent: Task, pieces: SplitPiece[]): string | null {
+  const allowedTiers = parent.mandate.allowedTiers ?? []
+  const allowedModels = parent.mandate.allowedModels ?? []
+  if (allowedTiers.length === 0 && allowedModels.length === 0) return null
+
+  const allowedTierKeys = new Set(allowedTiers.map(tagKey))
+  const allowedSummary = [
+    ...(allowedTiers.length > 0 ? [`tiers: ${allowedTiers.map((t) => `[${tierSlug(t)}]`).join(', ')}`] : []),
+    ...(allowedModels.length > 0 ? [`models: ${allowedModels.map((m) => (m.effort ? `${m.model} (${m.effort})` : m.model)).join(', ')}`] : [])
+  ].join('; ')
+
+  for (const [i, piece] of pieces.entries()) {
+    let pieceModel = piece.model?.trim()
+    let pieceTags = pieceTagsOf(piece)
+    if (pieceModel) {
+      const autoMatch = pieceModel.match(AUTO_MODEL_RE)
+      if (autoMatch) {
+        if (autoMatch[1]) pieceTags = autoTags(autoMatch[1])
+        pieceModel = undefined
+      }
+    }
+    const pieceTiers = pieceTags.filter(isTierTag)
+    const pieceEffort = piece.effort?.trim() || null
+
+    if (pieceModel) {
+      const matchesExplicitModel = allowedModels.some(
+        (m) => m.model === pieceModel && (!m.effort || !pieceEffort || m.effort === pieceEffort)
+      )
+      const matchesTierModel =
+        allowedModels.length === 0 &&
+        allowedTierKeys.size > 0 &&
+        listWorkers().some((w) =>
+          (w.modelRoutes ?? []).some(
+            (r) =>
+              r.model === pieceModel &&
+              (!pieceEffort || !r.effort || r.effort === pieceEffort) &&
+              r.tags.some((t) => allowedTierKeys.has(tagKey(t)))
+          )
+        )
+      if (!matchesExplicitModel && !matchesTierModel) {
+        return `piece ${i + 1} targets model '${pieceModel}', which is not in this session's allowed delegation set (${allowedSummary})`
+      }
+    } else if (pieceTiers.length > 0) {
+      if (allowedTierKeys.size === 0 || !pieceTiers.every((t) => allowedTierKeys.has(tagKey(t)))) {
+        return `piece ${i + 1} targets tier '${tagsLabel(pieceTiers)}', which is not in this session's allowed delegation set (${allowedSummary})`
+      }
+    } else if (allowedTiers.length === 0 && allowedModels.length > 0) {
+      return `piece ${i + 1} must specify one of this session's allowed delegation models (${allowedSummary})`
+    } else if (allowedTiers.length > 1) {
+      return `piece ${i + 1} must specify one of this session's allowed delegation tiers (${allowedSummary})`
+    }
+  }
+  return null
+}
+
 export function validateSplit(
   parent: Task,
   pieces: SplitPiece[]
@@ -366,6 +425,8 @@ export function validateSplit(
   if (delegating) {
     const refusal = delegationRefusal(parent)
     if (refusal) return { ok: false, reason: refusal }
+    const targetRefusal = delegationTargetRefusal(parent, pieces)
+    if (targetRefusal) return { ok: false, reason: targetRefusal }
   }
   // ⛔ **The floor is the plan's mode, not a constant.** A Plan & Execute wants exactly one piece and
   //    a Plan & Split wants at least two, and both refusals have to name the shape the operator
@@ -711,6 +772,16 @@ export function applySplit(
     for (const piece of pieces) {
       const resolvedTarget = pieceResolvedConstraints(piece, constraints, pinned)
       const childConstraints = resolvedTarget.constraints
+      if (
+        delegating &&
+        parent.mandate.allowedTiers?.length === 1 &&
+        (parent.mandate.allowedModels?.length ?? 0) === 0 &&
+        !childConstraints.model &&
+        !childConstraints.modelTags?.length
+      ) {
+        childConstraints.modelTags = [parent.mandate.allowedTiers[0]!]
+        childConstraints.modelPolicy = 'auto'
+      }
       const childAssigneeHint = resolvedTarget.assigneeHint
 
       const child = createTask({

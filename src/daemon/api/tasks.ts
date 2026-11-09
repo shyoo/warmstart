@@ -1,9 +1,9 @@
 /** Tasks and everything hanging off one - approvals, questions, attachments, loose ends. */
 import { commandById } from '@shared/commands.js'
-import { delegationOn, setDelegation } from '../delegation.js'
+import { delegationOn, setDelegation, setDelegationPolicy } from '../delegation.js'
 import { resolveAutoCompact, resolveWorkspaceMode, trunkPolicyConflict, windowHighWater } from '@shared/tasks.js'
 import type { Task, WorkspaceModeChoice } from '@shared/tasks.js'
-import { checkTags, tagsFromLegacyClass } from '@shared/modeltags.js'
+import { checkTags, tagsFromLegacyClass, withExclusiveTier } from '@shared/modeltags.js'
 import { modelOffered } from '@shared/modelroutes.js'
 import { resolveCompletionMode } from '@shared/policy.js'
 import { adapter } from '../adapters/index.js'
@@ -66,7 +66,7 @@ type TaskMethod =
  * wins; the old `modelClass` is still read for callers that have not moved.
  */
 function askedTags(p: { modelTags?: string[] | null; modelClass?: string | null }): string[] | undefined {
-  if (p.modelTags !== undefined) return p.modelTags === null ? [] : checkTags(p.modelTags, 'modelTags')
+  if (p.modelTags !== undefined) return p.modelTags === null ? [] : withExclusiveTier(checkTags(p.modelTags, 'modelTags'))
   if (p.modelClass !== undefined) return p.modelClass === null ? [] : tagsFromLegacyClass(p.modelClass)
   return undefined
 }
@@ -282,13 +282,14 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       return { attachment, dataBase64: bytes.toString('base64') }
     },
     'task.update': (p) => {
-      const { id, workspaceMode, delegation, ...patch } = p
+      const { id, workspaceMode, delegation, delegationPolicy, ...patch } = p
       if (patch.constraints) {
         patch.constraints = checkConstraints(patch.constraints, { switchedOn: true })
       }
       if (workspaceMode !== undefined) setWorkspaceModeChecked(id, workspaceMode)
       // ⚠️ Authority, not a preference column: it writes the task's `spawn_tasks`. See `setDelegation`.
       if (delegation !== undefined) setDelegation(id, delegation)
+      if (delegationPolicy !== undefined) setDelegationPolicy(id, delegationPolicy)
       return updateTask(id, patch)
     },
     /** ⛔ Refused once the task has run, and refused into the trunk beside a pull-request level. */

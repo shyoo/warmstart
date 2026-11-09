@@ -1,10 +1,10 @@
 import type { ManualReview, QualityReview } from './review.js'
 import type { ModelClass } from './modelclass.js'
 import type { ThreadCommandId } from './commands.js'
-import type { ModelRoute } from './modelroutes.js'
+import type { AutoModelTier, ModelRoute } from './modelroutes.js'
 import type { WorkerBilling } from './billing.js'
 import type { WorkerStatusFacts } from './workerstatus.js'
-export type { ModelRoute } from './modelroutes.js'
+export type { AutoModelTier, AutoModelTierEntry, ModelRoute } from './modelroutes.js'
 
 export type { ModelClass } from './modelclass.js'
 import type {
@@ -245,6 +245,12 @@ export interface Settings {
    * capability, and `streaming` is then the same as `summary` for that worker.
    */
   liveNarration: 'summary' | 'streaming'
+  /**
+   * Fleet-wide capability tiers configured in Settings > Auto model (`High`, `Med`, `Low`, and any
+   * custom `Tier:<name>`), each listing the `(model, effort)` pairs that belong to that tier.
+   * `null` / absent means no explicit tier list has been saved yet (derived from worker routes).
+   */
+  autoModelTiers?: AutoModelTier[] | null
 }
 
 /** The per-agent cost scale, as the Cost screen shows it. Mirrors `estimator.ts`'s own types. */
@@ -3119,8 +3125,26 @@ export interface RpcMap {
        * agent names the card rather than re-sending every instruction word for word.
        */
       approval?: string
+      /** Session delegation token issued by `delegation_status` to authorize and auto-approve this split. */
+      token?: string
     }
     result: { ok: boolean; reply: string; seqs?: number[] }
+  }
+  /**
+   * Look up available models per capability tier, whether delegation is enabled for this session,
+   * which tiers and models are allowed for delegation, and the session's delegation token.
+   */
+  'agent.delegationStatus': {
+    params: { sessionId: string }
+    result: {
+      ok: boolean
+      enabled: boolean
+      token: string | null
+      tiers: AutoModelTier[]
+      allowedTiers: string[]
+      allowedModels: Array<{ model: string; effort?: string | null }>
+      reply: string
+    }
   }
   'agent.depend': {
     params: { sessionId: string; taskSeq: number; dependsOnSeq: number }
@@ -3363,6 +3387,14 @@ export interface TaskUpdateParams {
    * never widens past the parent's own mandate — see `setDelegation`.
    */
   delegation?: boolean
+  /**
+   * Update this task's delegation policy: on/off plus optional allowed tiers and specific models.
+   */
+  delegationPolicy?: {
+    on?: boolean
+    allowedTiers?: string[]
+    allowedModels?: Array<{ model: string; effort?: string | null }>
+  }
 }
 
 export type RpcMethod = keyof RpcMap

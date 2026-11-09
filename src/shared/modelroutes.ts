@@ -1,5 +1,5 @@
 import { defaultModelClass, MODEL_CLASSES, type ModelClass } from './modelclass.js'
-import { classTag, cleanTags, inferredTags, matchesModelTags } from './modeltags.js'
+import { asTierTag, BUILTIN_TAGS, classTag, cleanTags, inferredTags, isTierTag, matchesModelTags, tagKey } from './modeltags.js'
 
 /**
  * One row of a worker's model table: a model, the effort it runs at, the tags the operator put on
@@ -308,4 +308,119 @@ export function tagsRoutable(worker: DefaultPairHolder, tags: readonly string[],
   if (!worker) return false
   if (autoRoutes(worker).length > 0) return autoCandidates(worker, tags).length > 0
   return !!inheritedModel && matchesModelTags(tagsOnWorker(worker, inheritedModel, worker.defaultEffort), tags)
+}
+
+/** One (model, effort) chip placed into a capability tier in Settings > Auto model. */
+export interface AutoModelTierEntry {
+  model: string
+  effort: string | null
+}
+
+/** A capability tier in Settings > Auto model (`High`, `Med`, `Low`, or custom `Tier:<name>`). */
+export interface AutoModelTier {
+  tag: string
+  entries: AutoModelTierEntry[]
+}
+
+/** Parse and normalize stored `autoModelTiers` JSON. */
+export function readAutoModelTiers(raw: unknown): AutoModelTier[] {
+  if (!Array.isArray(raw)) return []
+  const seenTiers = new Set<string>()
+  const out: AutoModelTier[] = []
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue
+    const row = item as { tag?: unknown; entries?: unknown }
+    if (typeof row.tag !== 'string' || !row.tag.trim()) continue
+    const tag = asTierTag(row.tag)
+    if (!tag) continue
+    const key = tagKey(tag)
+    if (seenTiers.has(key)) continue
+    seenTiers.add(key)
+    const entries: AutoModelTierEntry[] = []
+    if (Array.isArray(row.entries)) {
+      for (const e of row.entries) {
+        if (!e || typeof e !== 'object') continue
+        const entry = e as { model?: unknown; effort?: unknown }
+        if (typeof entry.model !== 'string' || !entry.model.trim()) continue
+        const model = entry.model.trim()
+        const effort = typeof entry.effort === 'string' && entry.effort.trim() ? entry.effort.trim() : null
+        if (entries.some((x) => samePair(x, { model, effort }))) continue
+        entries.push({ model, effort })
+      }
+    }
+    out.push({ tag, entries })
+  }
+  return out
+}
+
+/**
+ * Project fleet-wide `AutoModelTier[]` onto a worker's `ModelRoute[]`.
+ *
+ * A single `(model, effort)` pair placed in multiple tiers (e.g. `claude-opus-5-5` in both `Med` and
+ * `Low`) becomes one `ModelRoute` carrying both tier tags (`['Med', 'Low']`), plus any orthogonal
+ * non-tier feature tags it already carried on `existingRoutes`.
+ */
+export function routesFromAutoModelTiers(
+  tiers: readonly AutoModelTier[],
+  allowedModels?: ReadonlySet<string> | null,
+  existingRoutes?: readonly ModelRoute[] | null
+): ModelRoute[] {
+  const routes: ModelRoute[] = []
+  for (const tier of tiers) {
+    const tierTag = asTierTag(tier.tag)
+    if (!tierTag) continue
+    for (const entry of tier.entries) {
+      if (allowedModels && !allowedModels.has(entry.model)) continue
+      const existing = routes.find((r) => samePair(r, entry))
+      if (existing) {
+        existing.tags = cleanTags([...existing.tags, tierTag])
+      } else {
+        const prev = (existingRoutes ?? []).find((r) => samePair(r, entry))
+        const nonTierTags = (prev?.tags ?? []).filter((t) => !isTierTag(t))
+        routes.push({
+          model: entry.model,
+          effort: entry.effort,
+          tags: cleanTags([tierTag, ...nonTierTags]),
+          auto: true
+        })
+      }
+    }
+  }
+  return routes
+}
+
+/**
+ * Derive `AutoModelTier[]` from existing workers' `modelRoutes` when `autoModelTiers` has not yet been
+ * saved in Settings. Starts with the built-in `High`, `Med`, `Low` tiers followed by any custom tiers.
+ */
+export function tiersFromWorkers(
+  workers: ReadonlyArray<{ modelRoutes?: readonly ModelRoute[] | null } | null | undefined>,
+  extraTierTags: readonly string[] = []
+): AutoModelTier[] {
+  const tierMap = new Map<string, AutoModelTier>()
+  const ensureTier = (rawTag: string): AutoModelTier => {
+    const tag = asTierTag(rawTag)
+    const key = tagKey(tag)
+    let tier = tierMap.get(key)
+    if (!tier) {
+      tier = { tag, entries: [] }
+      tierMap.set(key, tier)
+    }
+    return tier
+  }
+  for (const b of BUILTIN_TAGS) ensureTier(b)
+  for (const t of extraTierTags) if (isTierTag(t)) ensureTier(t)
+  for (const w of workers) {
+    for (const r of w?.modelRoutes ?? []) {
+      if (!r.auto) continue
+      for (const t of r.tags ?? []) {
+        if (!isTierTag(t)) continue
+        const tier = ensureTier(t)
+        if (!tier.entries.some((e) => samePair(e, r))) {
+          tier.entries.push({ model: r.model, effort: r.effort })
+        }
+      }
+    }
+  }
+  return [...tierMap.values()]
 }

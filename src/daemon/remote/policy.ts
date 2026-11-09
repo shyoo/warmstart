@@ -184,6 +184,7 @@ export const REMOTE_METHODS = {
   // impersonate that identity, even to read a task.
   'agent.taskRead': 'deny',
   'agent.projectSettings': 'deny',
+  'agent.delegationStatus': 'deny',
   'agent.complete': 'deny',
   'agent.createTask': 'deny',
   'agent.handoff': 'deny',

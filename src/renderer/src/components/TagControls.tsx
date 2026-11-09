@@ -9,7 +9,9 @@ import {
   isTierTag,
   tagDisplay,
   tagKey,
-  tagsLabel
+  tagsLabel,
+  tierSlug,
+  toggleExclusiveTierTag
 } from '@shared/modeltags'
 import { Pill } from './Pill'
 
@@ -142,8 +144,14 @@ export function TagPicker({
       return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib)
     })
   const featureRows = rows.filter((t) => !isTierTag(t))
+  const tierSelected = selected.some(isTierTag)
 
   const toggle = (tag: string): void => {
+    if (isTierTag(tag) && !onAdd) {
+      const next = toggleExclusiveTierTag(selected, tag)
+      if (next.length <= MAX_TAGS) onChange(next)
+      return
+    }
     const key = tagKey(tag)
     if (chosen.has(key)) onChange(selected.filter((t) => tagKey(t) !== key))
     else if (!full) onChange([...selected, tag])
@@ -161,18 +169,21 @@ export function TagPicker({
 
   const renderRow = (tag: string, isFirst: boolean) => {
     const on = chosen.has(tagKey(tag))
+    const tier = isTierTag(tag)
+    const replacesTier = tier && !onAdd && tierSelected
     return (
       <li key={tagKey(tag)} className="tag-picker-row">
-        <label className="tag-picker-label" title={tag}>
+        <label className="tag-picker-label" title={tier ? `[${tierSlug(tag)}]` : tag}>
           <input
             ref={isFirst ? firstRef : undefined}
             type="checkbox"
             checked={on}
-            disabled={busy || (!on && full)}
+            disabled={busy || (!on && full && !replacesTier)}
             onChange={() => toggle(tag)}
           />
           <span className="tag-picker-name">{tagDisplay(tag)}</span>
         </label>
+        {tier && <span className="tag-picker-slug dim">[{tierSlug(tag)}]</span>}
         {onRemove && on && (
           <button
             type="button"
@@ -199,7 +210,9 @@ export function TagPicker({
             <>
               <li className="tag-picker-section">
                 <span className="tag-picker-section-title">Capability tier</span>
-                <span className="tag-picker-section-hint">any match (OR)</span>
+                <span className="tag-picker-section-hint">
+                  {onAdd ? 'any match (OR)' : 'select one (exclusive)'}
+                </span>
               </li>
               {tierRows.map((tag, i) => renderRow(tag, i === 0))}
             </>

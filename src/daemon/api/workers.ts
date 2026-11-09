@@ -1,5 +1,6 @@
 /** Accounts, adapters, sessions and the daemon's own housekeeping. */
-import type { AdapterInfo, DoctorReport, ModelOptions, Settings } from '@shared/protocol.js'
+import type { AdapterInfo, AutoModelTier, DoctorReport, ModelOptions, Settings } from '@shared/protocol.js'
+import { routesFromAutoModelTiers, tiersFromWorkers } from '@shared/modelroutes.js'
 import type { WorkerStatusFacts } from '@shared/workerstatus.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from '../adapters/index.js'
@@ -56,6 +57,45 @@ function statusFactsFor(adapterId: string): WorkerStatusFacts | undefined {
   }
 }
 
+/**
+ * Sync fleet-wide `autoModelTiers` onto a single worker's `modelRoutes`, filtering to models and
+ * effort levels that worker's adapter and cost model actually support.
+ */
+function syncAutoModelTiersForWorker(workerId: string, tiers: readonly AutoModelTier[]): void {
+  const w = requireWorker(workerId)
+  const info = adapter(w.adapterId).info
+  const cm = costModel(info.policy.costModelId)
+  const validIds = new Set(knownModelIds(w.adapterId, w.id))
+  const filteredTiers: AutoModelTier[] = tiers.map((tier) => ({
+    tag: tier.tag,
+    entries: tier.entries.filter((e) => {
+      if (!validIds.has(e.model)) return false
+      if (!e.effort) return true
+      if (!info.capabilities.selectableEffort) return false
+      const spec = cm.modelSpec(e.model)
+      return spec ? spec.effort_levels.includes(e.effort) : false
+    })
+  }))
+  const nextRoutes = routesFromAutoModelTiers(filteredTiers, validIds, w.modelRoutes)
+  updateWorker(w.id, { modelRoutes: nextRoutes })
+}
+
+export function syncAutoModelTiersToFleet(tiers: readonly AutoModelTier[]): void {
+  for (const w of listWorkers()) {
+    try {
+      syncAutoModelTiersForWorker(w.id, tiers)
+    } catch (err) {
+      log.warn(`could not sync autoModelTiers onto worker ${w.label}:`, err)
+    }
+  }
+}
+
+export function effectiveAutoModelTiers(): AutoModelTier[] {
+  const stored = settings().autoModelTiers
+  if (stored && stored.length > 0) return stored
+  return tiersFromWorkers(listWorkers())
+}
+
 export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
   const uptime = (): number => Date.now() - ctx.startedAt
 
@@ -94,6 +134,14 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
       }),
     'worker.create': async (p) => {
       const worker = createWorker(p)
+      const tiers = settings().autoModelTiers
+      if (tiers) {
+        try {
+          syncAutoModelTiersForWorker(worker.id, tiers)
+        } catch (err) {
+          log.warn(`could not sync autoModelTiers onto new worker ${worker.label}:`, err)
+        }
+      }
       // Identity is read back immediately so the UI can say whose account this is, or say plainly
       // that nobody is logged in yet - which is the normal state right after commissioning.
       return await refreshIdentity(worker.id)
@@ -429,6 +477,9 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
       //
       // ⚠️ Fire-and-forget, and only on the false → true edge: nothing here waits on it, a failed
       // probe records itself, and re-saving an unrelated setting must not re-probe the fleet.
+      if (p.autoModelTiers !== undefined && current.autoModelTiers) {
+        syncAutoModelTiersToFleet(current.autoModelTiers)
+      }
       if (current.spendCreditsPastLimit && !before.spendCreditsPastLimit) void refreshCreditStatus()
       return current
     },

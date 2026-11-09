@@ -4,7 +4,8 @@ import { landConversationWork } from '../conversationland.js'
 import { approvedSplit, askQuestion, markSplitFiled, sameSplitCard } from '../questions.js'
 import { AGENT_CLI_COMMAND } from '../agentcli.js'
 import { addSplitDependency, applySplit, isDelegation, splitApprovalFor, validateSplit } from '../split.js'
-import { pendingDelegateRequest } from '../delegation.js'
+import { delegationStatusFor, pendingDelegateRequest } from '../delegation.js'
+import { effectiveAutoModelTiers } from './workers.js'
 import {
   becomeConversation,
   nextRound,
@@ -33,7 +34,7 @@ import type { Api, ApiContext } from './support.js'
 import { admitAgentTask } from './support.js'
 
 type AgentMethod =
-  | 'agent.taskRead' | 'agent.projectSettings' | 'agent.complete' | 'agent.awaitHuman' | 'agent.createTask' | 'agent.split' | 'agent.depend'
+  | 'agent.taskRead' | 'agent.projectSettings' | 'agent.complete' | 'agent.awaitHuman' | 'agent.createTask' | 'agent.split' | 'agent.delegationStatus' | 'agent.depend'
   | 'agent.handoff' | 'agent.land' | 'agent.debateRound' | 'agent.requestDirectory'
 
 /**
@@ -108,6 +109,22 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
     },
     /** Read-only, and only the caller's own task's project. See `projectbrief.ts`. */
     'agent.projectSettings': (p) => readProjectBrief(p.sessionId),
+    'agent.delegationStatus': (p) => {
+      const run = runForSession(p.sessionId)
+      const own = run?.taskId ? getTask(run.taskId) : null
+      if (!own) {
+        return {
+          ok: false,
+          enabled: false,
+          token: null,
+          tiers: [],
+          allowedTiers: [],
+          allowedModels: [],
+          reply: 'This session is not working on a task.'
+        }
+      }
+      return delegationStatusFor(own, effectiveAutoModelTiers())
+    },
     'agent.complete': async (p) => {
       await completeTask(p.sessionId, p.summary, undefined, {
         ...(p.prTitle ? { prTitle: p.prTitle } : {}),
@@ -252,9 +269,34 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
       const approval = splitApprovalFor(parent, pieces)
       const handoff = isPlanExecute(parent)
       const delegating = isDelegation(parent)
-      // ⛔ **A person's `/delegate` is the approval, for the delegation it asked for and no other**
-      //    (t704, decision D1). An agent's own idea to delegate raises the card like any split.
-      const requested = delegating && pendingDelegateRequest(parent.id)
+      let tokenAuthorized = false
+      if (delegating && !approvedCard) {
+        if (p.token !== undefined) {
+          if (!parent.mandate.delegationToken || p.token !== parent.mandate.delegationToken) {
+            return {
+              ok: false,
+              reply:
+                'That split was not filed: invalid or expired delegation token. Call `delegation_status` to ' +
+                'check whether delegation is enabled, inspect allowed tiers/models, and obtain the current token.'
+            }
+          }
+          tokenAuthorized = true
+        } else if (
+          !pendingDelegateRequest(parent.id) &&
+          (parent.mandate.delegationToken ||
+            (parent.mandate.allowedTiers?.length ?? 0) > 0 ||
+            (parent.mandate.allowedModels?.length ?? 0) > 0)
+        ) {
+          return {
+            ok: false,
+            reply:
+              'That split was not filed: delegation requires a session token. Call `delegation_status` first ' +
+              'to inspect allowed tiers/models and pass its `token` to `task_split`.'
+          }
+        }
+      }
+      // ⛔ **A person's `/delegate` or a valid session delegation token is the approval.**
+      const requested = delegating && (pendingDelegateRequest(parent.id) || tokenAuthorized)
       const resolution = requested
         ? null
         : approvedCard

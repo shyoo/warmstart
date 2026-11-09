@@ -1,7 +1,7 @@
 /** The RPC types, the request context, and the validators every domain shares. */
 import type { RpcMethod, RpcParams, RpcResult, Worker } from '@shared/protocol.js'
 import { canWork } from '@shared/protocol.js'
-import { checkTags, inferredTags, tagsFromLegacyClass, tagsLabel } from '@shared/modeltags.js'
+import { checkTags, inferredTags, tagsFromLegacyClass, tagsLabel, withExclusiveTier } from '@shared/modeltags.js'
 import { modelOffered, notOffered, routeLabel, type ModelRoute } from '@shared/modelroutes.js'
 import type { ChildDefaults, Task, TaskConstraints } from '@shared/tasks.js'
 import { windowsForPool } from '@shared/tasks.js'
@@ -298,7 +298,7 @@ export function checkConstraints(c: TaskConstraints, opts: { switchedOn?: boolea
   // window, an agent's saved call, a script — and becomes one tag; nothing downstream sees it.
   const legacyClass = (checked as { modelClass?: string | null }).modelClass
   delete (checked as { modelClass?: unknown }).modelClass
-  const tags = checkTags(c.modelTags, 'modelTags')
+  const tags = withExclusiveTier(checkTags(c.modelTags, 'modelTags'))
   const required = tags.length > 0 ? tags : tagsFromLegacyClass(legacyClass)
   if (required.length > 0) checked.modelTags = required
   else delete checked.modelTags

@@ -1979,14 +1979,14 @@ try {
   )
   for (const wanted of ['High', 'Low']) {
     await evaluate(
-      `[...document.querySelectorAll('.pill-menu .tag-picker-label')].find(l => l.textContent.trim() === ${JSON.stringify(wanted)})?.querySelector('input')?.click()`
+      `[...document.querySelectorAll('.pill-menu .tag-picker-label')].find(l => l.textContent.trim() === ${JSON.stringify(wanted)})?.closest('label')?.querySelector('input')?.click()`
     )
     await wait(250)
   }
   const chosenName = await evaluate(`(${modelTagsPill})?.getAttribute('aria-label') ?? ''`)
   check(
-    'two ticked tags read on the pill and in its accessible name, and the model pill names the requirement',
-    chosenName.includes('High') && chosenName.includes('Low') &&
+    'selecting a second capability tier replaces the first (exclusive tiers), and the model pill names the requirement',
+    chosenName.includes('Low') && !chosenName.includes('High') &&
       (await pillLabel('Model')) === 'Auto Model (tags)',
     `${chosenName} / ${await pillLabel('Model')}`
   )
@@ -1997,8 +1997,8 @@ try {
     return key ? JSON.stringify(Object.values(JSON.parse(window.localStorage.getItem(key)).byWorker ?? {}).map((c) => c.modelTags ?? null)) : 'no composer key'
   })()`)
   check(
-    'the choice is remembered for the account, as tags',
-    rememberedTags.includes('["High","Low"]'),
+    'the exclusive tier choice is remembered for the account, as tags',
+    rememberedTags.includes('["Low"]'),
     rememberedTags
   )
   await closeMenus()
@@ -2011,19 +2011,17 @@ try {
   await openPill('Model')
   await pickInMenu('Model', 'policy:auto')
   check(
-    'and returns, with the tags last chosen for this account, when Auto Model is chosen again',
-    ((await evaluate(`(${modelTagsPill})?.getAttribute('aria-label') ?? ''`)).includes('High')) === true,
+    'and returns, with the tier last chosen for this account, when Auto Model is chosen again',
+    ((await evaluate(`(${modelTagsPill})?.getAttribute('aria-label') ?? ''`)).includes('Low')) === true,
     await evaluate(`(${modelTagsPill})?.getAttribute('aria-label') ?? ''`)
   )
-  // Leave the composer as found: untick both, so nothing later inherits a requirement.
+  // Leave the composer as found: untick Low, so nothing later inherits a requirement.
   await evaluate(`(${modelTagsPill})?.click()`)
   await wait(300)
-  for (const wanted of ['High', 'Low']) {
-    await evaluate(
-      `[...document.querySelectorAll('.pill-menu .tag-picker-label')].find(l => l.textContent.trim() === ${JSON.stringify(wanted)})?.querySelector('input')?.click()`
-    )
-    await wait(250)
-  }
+  await evaluate(
+    `[...document.querySelectorAll('.pill-menu .tag-picker-label')].find(l => l.textContent.trim() === 'Low')?.closest('label')?.querySelector('input')?.click()`
+  )
+  await wait(250)
   await closeMenus()
 
   await openPill('Model')
@@ -3995,29 +3993,27 @@ try {
   // so it is called out rather than quietly renumbered.
   const modelsCell = `document.querySelector('.tbl-workers > tbody > tr:not(.tbl-row--note) > td:nth-child(9)')`
   const firstWorkerRpc = `window.agentyard.rpc('fleet.list').then(f => f[0]?.worker)`
-  const modelRows = `${modelsCell}?.querySelectorAll('.worker-models-table tbody tr')`
-  const modelsDrawn = await evaluate(`String(${modelRows}?.length ?? 0)`)
+  const defaultModelSelect = `${modelsCell}?.querySelector('select[aria-label^="Default model for"]')`
   check(
-    'only configured or purpose models have a row, so removal does not regenerate it',
-    Number(modelsDrawn) > 0,
-    `drawn ${modelsDrawn}`
+    'each worker row in Settings > Workers shows a simplified Default model control (no per-worker tier matrix)',
+    (await evaluate(`!!(${defaultModelSelect}) && !(${modelsCell}?.querySelector('.worker-models-table'))`)) === true
   )
   check(
-    'the default starts unticked — the CLI default, not a model somebody has to undo',
-    (await evaluate(`String(${modelsCell}?.querySelectorAll('input[aria-label^="Default:"]:checked').length)`)) === '0',
-    'null means the vendor picks — the state every install ran in before this control existed'
+    'the retired role switches are not duplicated beside the worker model control',
+    (await evaluate(`String(document.querySelectorAll('.worker-role-checks').length)`)) === '0'
   )
-  // ⚠️ Since 11d285e only configured and purpose models are drawn, and this worker's are all
-  // `claude-haiku-4-5`, which has no effort levels — so every effort check below was checking an
-  // empty table. A judgment pick is a purpose line and stores no route, so the checks that the
-  // table starts inert still hold.
   await evaluate(
-    `${firstWorkerRpc}.then(w => window.agentyard.rpc('worker.update', { id: w.id, judgmentModel: 'claude-opus-5-5' }))`
+    `(() => { const el = ${defaultModelSelect}; if (!el) return; const set = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set; set.call(el, 'claude-opus-5-5'); el.dispatchEvent(new Event('change', { bubbles: true })); })()`
   )
-  await wait(800)
-  // ⛔ The operator's ask: an effort is a level, never "CLI default", wherever the model has levels.
+  await wait(600)
+  const defaultAfter = await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify([w?.defaultModel, w?.defaultEffort]))`)
+  check(
+    'choosing a Default model sets the account default model and effort together',
+    JSON.parse(defaultAfter)[0] === 'claude-opus-5-5' && JSON.parse(defaultAfter)[1] !== null,
+    defaultAfter
+  )
   const effortOptions = await evaluate(
-    `[...${modelsCell}?.querySelectorAll('select[aria-label^="Effort for"] option') ?? []].map(o => o.textContent.trim()).join('|')`
+    `[...${modelsCell}?.querySelectorAll('select[aria-label^="Default effort for"] option') ?? []].map(o => o.textContent.trim()).join('|')`
   )
   check(
     'no effort control offers "CLI default"',
@@ -4025,192 +4021,34 @@ try {
     effortOptions
   )
 
-  check(
-    'Default uses a radio control to make its one-choice meaning clear',
-    (await evaluate(`${modelsCell}?.querySelector('input[aria-label^="Default:"]')?.type`)) === 'radio'
+  // ⭐ Settings > Auto model (t1322): fleet-wide capability tiers where models can be placed into
+  // High / Med / Low (including the same model in multiple tiers) and tiers can be added or removed.
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim() === 'Auto model')?.click()`
   )
-  // ⚠️ React owns a radio's state; `.click()` is what a real click looks like from its side.
-  await evaluate(`${modelsCell}?.querySelector('input[aria-label^="Default:"]')?.click()`)
-  await wait(500)
-  const defaultAfter = await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify([w?.defaultModel, w?.defaultEffort]))`)
+  await wait(400)
+  const tierCardsCount = Number(await evaluate(`String(document.querySelectorAll('.auto-model-tier-card').length)`))
   check(
-    'ticking Default sets the account default model and effort together, as one pair',
-    JSON.parse(defaultAfter)[0] !== null,
-    defaultAfter
+    'Settings > Auto model renders the capability tier cards (High, Med, Low)',
+    tierCardsCount >= 3,
+    String(tierCardsCount)
   )
-  // ⭐ Auto-route: the opt-in allowlist. Its whole point is that leaving it alone is inert — the
-  // table is stored as null until somebody ticks — and that one tick actually reaches the daemon.
-  check(
-    'a table nobody has ticked is stored as nothing',
-    (await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify(w?.modelRoutes ?? null))`)) === 'null'
+  await evaluate(
+    `[...document.querySelectorAll('.auto-model-tier-card button')].find(b => b.getAttribute('aria-label') === 'Add model to Low tier')?.click()`
   )
-  await evaluate(`${modelsCell}?.querySelector('input[aria-label^="Auto-route:"]')?.click()`)
-  await wait(500)
-  const routesAfter = await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify(w?.modelRoutes ?? null))`)
-  check(
-    'ticking Auto-route on one line reaches the daemon, which is the only opinion that gates dispatch',
-    routesAfter !== 'null' && JSON.parse(routesAfter).filter((r) => r.auto).length === 1,
-    routesAfter
-  )
-
-  const summaryBoxes = await evaluate(`String(${modelsCell}?.querySelectorAll('input[aria-label^="Summary:"]').length ?? 0)`)
-  check('the ModelTable includes a Summary checkbox column', Number(summaryBoxes) > 0, summaryBoxes)
-  check(
-    'the retired role switches are not duplicated beside the model-purpose matrix',
-    (await evaluate(`String(document.querySelectorAll('.worker-role-checks').length)`)) === '0'
-  )
-  const tagsHeader = await evaluate(`[...${modelsCell}?.querySelectorAll('th') ?? []].find(h => h.textContent.trim() === 'Tags')?.getAttribute('title') ?? ''`)
-  check(
-    'Tags says what a tag is and that the operator, not Warmstart, vouches for it',
-    tagsHeader.includes('routing tags') && tagsHeader.includes('not something Warmstart verifies'),
-    tagsHeader
-  )
-
-  // ⭐ Tags (t1042): one multi-tag control per line, one line high however many tags it holds.
-  // ⛔ Asserted non-empty first. The UI worker has no credentials, so everything here is about the
-  // table and the stored rows, never about a run; an empty table would pass every height check.
-  const tagButtons = `${modelsCell}?.querySelectorAll('button.pill[aria-label^="Tags for"]')`
-  const tagButtonCount = Number(await evaluate(`String(${tagButtons}?.length ?? 0)`))
-  check('every drawn line has a Tags button', tagButtonCount > 0 && tagButtonCount === Number(await evaluate(`String(${modelRows}?.length ?? 0)`)), String(tagButtonCount))
-  const rowHeights = async () =>
-    JSON.parse(await evaluate(`JSON.stringify([...(${modelRows} ?? [])].map(r => [r.querySelector('.worker-models-name')?.textContent.trim(), Math.round(r.getBoundingClientRect().height)]))`))
-  const heightsBefore = await rowHeights()
-  const tagWidthBefore = Number(await evaluate(`String(${modelsCell}?.querySelector('button.pill[aria-label^="Tags for"]')?.getBoundingClientRect().width ?? 0)`))
-  const firstTagsLabel = `${modelsCell}?.querySelector('button.pill[aria-label^="Tags for"]')`
-  const setNative = (el, value) =>
-    `(() => { const el = ${el}; const set = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event('input', { bubbles: true })); })()`
-  // Opening it writes nothing: the table was not stored before, and still is not.
-  const routesBeforeOpen = await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify(w?.modelRoutes ?? null))`)
-  await evaluate(`${firstTagsLabel}?.click()`)
-  await wait(300)
-  check(
-    'the Tags popover opens as a group at the document root, out of the table’s scroller',
-    (await evaluate(`!!document.body.querySelector(':scope > .pill-menu .tag-picker[role="group"]')`)) === true
+  await wait(600)
+  const syncedTiers = await evaluate(
+    `window.agentyard.rpc('settings.get').then(s => JSON.stringify((s.autoModelTiers ?? []).map(t => t.tag)))`
   )
   check(
-    'opening the popover writes nothing',
-    (await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify(w?.modelRoutes ?? null))`)) === routesBeforeOpen,
-    routesBeforeOpen
+    'adding a model to a tier in Settings > Auto model persists autoModelTiers in settings',
+    syncedTiers.includes('Low') && syncedTiers.includes('High'),
+    syncedTiers
   )
-  const sixTags = ['Zeta1', 'Zeta2', 'Zeta3', 'Zeta4', 'Zeta5', 'Zeta6']
-  for (const tag of sixTags) {
-    await evaluate(setNative(`document.querySelector('.pill-menu .tag-picker-input')`, tag))
-    await evaluate(`document.querySelector('.pill-menu .tag-picker-add button[type="submit"]')?.click()`)
-    await wait(600)
-  }
-  const storedTags = JSON.parse(
-    await evaluate(`${firstWorkerRpc}.then(w => JSON.stringify((w?.modelRoutes ?? []).map(r => r.tags)))`)
+  await evaluate(
+    `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('Workers'))?.click()`
   )
-  check(
-    'six added tags reach the daemon on one pair, beside the built-in class tag it started with',
-    storedTags.some((t) => sixTags.every((z) => t.includes(z))),
-    JSON.stringify(storedTags)
-  )
-  await evaluate(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`)
-  await wait(300)
-  check(
-    'Escape closes the popover and focus returns to the Tags button',
-    (await evaluate(`!document.querySelector('.pill-menu .tag-picker') && (document.activeElement?.getAttribute('aria-label') ?? '').startsWith('Tags for')`)) === true,
-    await evaluate(`document.activeElement?.getAttribute('aria-label') ?? '(nothing focused)'`)
-  )
-  const heightsAfter = await rowHeights()
-  const tagWidthAfter = Number(await evaluate(`String(${firstTagsLabel}?.getBoundingClientRect().width ?? 0)`))
-  check('worker tag controls grow with their content', tagWidthBefore > 0 && tagWidthAfter > tagWidthBefore + 10,
-    JSON.stringify({ tagWidthBefore, tagWidthAfter }))
-  check(
-    'a line carrying seven tags is as tall as it was with one',
-    heightsBefore.length > 0 && heightsAfter.length === heightsBefore.length && heightsAfter.every(([n, h], i) => n === heightsBefore[i][0] && Math.abs(h - heightsBefore[i][1]) <= 2),
-    JSON.stringify({ heightsBefore, heightsAfter })
-  )
-  const fullName = await evaluate(`${firstTagsLabel}?.getAttribute('aria-label') ?? ''`)
-  const fullTitle = await evaluate(`${firstTagsLabel}?.getAttribute('title') ?? ''`)
-  check(
-    'the button’s accessible name and tooltip list every tag, though it draws two and +N',
-    sixTags.every((z) => fullName.includes(z) && fullTitle.includes(z)) &&
-      Number(await evaluate(`String(${firstTagsLabel}?.querySelectorAll('.tag-chip').length ?? 0)`)) === 3 &&
-      (await evaluate(`${firstTagsLabel}?.querySelector('.tag-chip--more')?.textContent ?? ''`)).startsWith('+'),
-    fullName
-  )
-  // Narrow: constrain the real scroll surface, as the routing-model check above does, rather than
-  // the browser viewport. The table must scroll sideways, and no line may wrap taller.
-  await evaluate(`(() => { const el = ${modelsCell}?.querySelector('.worker-models-scroll'); if (el) el.style.width = '420px' })()`)
-  await wait(200)
-  const narrow = JSON.parse(
-    await evaluate(`JSON.stringify((() => {
-      const el = ${modelsCell}?.querySelector('.worker-models-scroll')
-      return { scrolls: !!el && el.scrollWidth > el.clientWidth, heights: [...el.querySelectorAll('.worker-models-table > tbody > tr')].map(r => [r.querySelector('.worker-models-name')?.textContent.trim(), Math.round(r.getBoundingClientRect().height)]) }
-    })())`)
-  )
-  check(
-    'narrow, the matrix scrolls sideways and a seven-tag line does not wrap taller',
-    narrow.scrolls && narrow.heights.length === heightsBefore.length && narrow.heights.every(([n, h], i) => n === heightsBefore[i][0] && Math.abs(h - heightsBefore[i][1]) <= 2),
-    JSON.stringify({ narrow, heightsBefore })
-  )
-  await evaluate(`(() => { const el = ${modelsCell}?.querySelector('.worker-models-scroll'); if (el) el.style.width = '' })()`)
-  // The keyboard: type a tag into the focused add box and press Enter — the path that needs no mouse.
-  await evaluate(`${firstTagsLabel}?.click()`)
-  await wait(300)
-  await evaluate(`document.querySelector('.pill-menu .tag-picker-input')?.focus()`)
-  await send('Input.insertText', { text: 'Keyed' })
-  const typed = await evaluate(`document.querySelector('.pill-menu .tag-picker-input')?.value ?? '(no input)'`)
-  // ⚠️ A DOM key event, as the rest of this suite sends them: implicit form submission over raw CDP
-  // input is the one thing that is not deterministic here, and the box handles Enter itself.
-  await evaluate(`document.querySelector('.pill-menu .tag-picker-input')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))`)
-  await wait(900)
-  check(
-    'a tag typed and entered from the keyboard persists through fleet.list',
-    typed === 'Keyed' && (await evaluate(`${firstWorkerRpc}.then(w => (w?.modelRoutes ?? []).some(r => r.tags.includes('Keyed')))`)) === true,
-    `typed: ${typed}`
-  )
-  // Remove it from the same popover with the explicit action.
-  await evaluate(`document.querySelector('.pill-menu .tag-picker-remove[aria-label="Remove tag Keyed"]')?.click()`)
-  await wait(700)
-  check(
-    'Remove takes the tag off this pair and nothing else',
-    (await evaluate(`${firstWorkerRpc}.then(w => { const r = (w?.modelRoutes ?? []); return !r.some(x => x.tags.includes('Keyed')) && r.some(x => sixTags.every(z => x.tags.includes(z))) })`.replace('sixTags', JSON.stringify(sixTags)))) === true
-  )
-  await evaluate(`document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))`)
-  await wait(300)
-
-  // ⭐ + Add model/effort: a second line for a model that already has one, at another effort.
-  await evaluate(`[...${modelsCell}?.querySelectorAll('button') ?? []].find(b => b.textContent.includes('Add model/effort'))?.click()`)
-  await wait(200)
-  const addEffort = `${modelsCell}?.querySelector('select[aria-label^="Effort to add"]')`
-  const addModel = await evaluate(`${modelsCell}?.querySelector('select[aria-label^="Model to add"]')?.value ?? ''`)
-  // The first level this model has no line at yet — the Add button refuses a pair already drawn.
-  const freeLevel = await evaluate(
-    `(() => { const taken = [...${modelsCell}.querySelectorAll('select[aria-label^="Effort for ${addModel} ·"]')].map(s => s.value);` +
-      ` return [...(${addEffort}?.options ?? [])].map(o => o.value).find(v => !taken.includes(v)) ?? '' })()`
-  )
-  if (freeLevel) {
-    await evaluate(
-      `(() => { const el = ${addEffort}; const set = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;` +
-        ` set.call(el, ${JSON.stringify(freeLevel)}); el.dispatchEvent(new Event('change', { bubbles: true })); })()`
-    )
-    await wait(150)
-  }
-  await evaluate(`[...${modelsCell}?.querySelectorAll('.worker-models-add button') ?? []].find(b => b.textContent.trim() === 'Add')?.click()`)
-  await wait(500)
-  const added = await evaluate(
-    `${firstWorkerRpc}.then(w => String((w?.modelRoutes ?? []).filter(r => r.model === ${JSON.stringify(addModel)}).length))`
-  )
-  check(
-    'adding a model/effort stores a second line for the same model — the pairing the old maps could not hold',
-    !freeLevel || added === '2',
-    `${addModel} at ${freeLevel || '(no levels)'}: ${added} line(s)`
-  )
-
-  const removable = `${modelsCell}?.querySelector('.worker-models-remove-btn:not(:disabled)')`
-  const removedLabel = await evaluate(`${removable}?.getAttribute('aria-label') ?? ''`)
-  const routesBeforeRemove = await evaluate(`${firstWorkerRpc}.then(w => (w?.modelRoutes ?? []).length)`)
-  await evaluate(`${removable}?.click()`)
-  await wait(500)
-  const routesAfterRemove = await evaluate(`${firstWorkerRpc}.then(w => (w?.modelRoutes ?? []).length)`)
-  check(
-    'removing a model row removes it from the worker and the table',
-    removedLabel !== '' && routesAfterRemove === routesBeforeRemove - 1,
-    `${removedLabel}: ${routesBeforeRemove} -> ${routesAfterRemove}`
-  )
+  await wait(400)
 
   // ⭐ Ordering the fleet. The strip is a row of cards people learn the shape of, and until
   // 2026-08-29 that shape was the order the accounts were commissioned in, changeable only by

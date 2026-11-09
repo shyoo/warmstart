@@ -1,10 +1,12 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { AGENT_CLI_COMMAND } from './agentcli.js'
 import { db, rows } from './db.js'
 import { emit } from './events.js'
 import { tryGit } from './git.js'
 import { log } from './log.js'
 import { addMessage, getTask, isIntegrationParent, isSplitWork, messagesFor, requireTask, runsFor } from './tasks.js'
+import type { AutoModelTier } from '@shared/protocol.js'
+import { asTierTag, cleanTags, tierHeading, tierSlug } from '@shared/modeltags.js'
 import type { MandateOperation, Task, TaskStatus } from '@shared/tasks.js'
 
 /**
@@ -143,8 +145,36 @@ export function pendingDelegateRequest(taskId: string): boolean {
  * `delegation.toggled` message, which travels in the prompt like any undelivered note.
  */
 export function setDelegation(taskId: string, on: boolean): Task {
+  return setDelegationPolicy(taskId, { on })
+}
+
+export function mintDelegationToken(): string {
+  return `dlg_${randomBytes(12).toString('base64url')}`
+}
+
+export function ensureDelegationToken(taskId: string): string | null {
   const task = requireTask(taskId)
-  if (delegationOn(task) === on) return task
+  if (!delegationOn(task)) return null
+  if (task.mandate.delegationToken) return task.mandate.delegationToken
+  const token = mintDelegationToken()
+  const nextMandate = { ...task.mandate, delegationToken: token }
+  db()
+    .prepare('update tasks set mandate_json = ?, updated_at = ? where id = ?')
+    .run(JSON.stringify(nextMandate), Date.now(), task.id)
+  return token
+}
+
+export function setDelegationPolicy(
+  taskId: string,
+  policy: {
+    on?: boolean
+    allowedTiers?: string[]
+    allowedModels?: Array<{ model: string; effort?: string | null }>
+  }
+): Task {
+  const task = requireTask(taskId)
+  const wasOn = delegationOn(task)
+  const on = policy.on ?? wasOn
   if (on && task.parentTaskId) {
     const parent = getTask(task.parentTaskId)
     if (parent && !delegationOn(parent)) {
@@ -153,19 +183,110 @@ export function setDelegation(taskId: string, on: boolean): Task {
       )
     }
   }
-  const allowed = on ? [...task.mandate.allowed, SPAWN] : task.mandate.allowed.filter((op) => op !== SPAWN)
+  const hasTierChange = policy.allowedTiers !== undefined
+  const hasModelChange = policy.allowedModels !== undefined
+  if (wasOn === on && !hasTierChange && !hasModelChange) return task
+
+  const allowed = on
+    ? task.mandate.allowed.includes(SPAWN)
+      ? task.mandate.allowed
+      : [...task.mandate.allowed, SPAWN]
+    : task.mandate.allowed.filter((op) => op !== SPAWN)
+
+  const allowedTiers = hasTierChange
+    ? cleanTags((policy.allowedTiers ?? []).map(asTierTag))
+    : (task.mandate.allowedTiers ?? [])
+
+  const allowedModels = hasModelChange
+    ? (policy.allowedModels ?? [])
+        .filter((m) => m && typeof m.model === 'string' && m.model.trim())
+        .map((m) => ({ model: m.model.trim(), effort: typeof m.effort === 'string' && m.effort.trim() ? m.effort.trim() : null }))
+    : (task.mandate.allowedModels ?? [])
+
+  const delegationToken = on ? mintDelegationToken() : null
+
+  const nextMandate = {
+    ...task.mandate,
+    allowed,
+    ...(allowedTiers.length > 0 ? { allowedTiers } : { allowedTiers: undefined }),
+    ...(allowedModels.length > 0 ? { allowedModels } : { allowedModels: undefined }),
+    delegationToken
+  }
   db()
     .prepare('update tasks set mandate_json = ?, updated_at = ? where id = ?')
-    .run(JSON.stringify({ ...task.mandate, allowed }), Date.now(), task.id)
-  addMessage(task.id, 'system', on ? 'Delegation switched on' : 'Delegation switched off', null, [], {
-    event: 'delegation.toggled',
-    detail: on
-      ? 'The person switched delegation on for this thread: you may hand work to other agents with `task_split` again.'
-      : 'The person switched delegation off for this thread: do not call `task_split`; do the work yourself.'
-  })
+    .run(JSON.stringify(nextMandate), Date.now(), task.id)
+
+  if (wasOn !== on) {
+    addMessage(task.id, 'system', on ? 'Delegation switched on' : 'Delegation switched off', null, [], {
+      event: 'delegation.toggled',
+      detail: on
+        ? 'The person switched delegation on for this thread: you may hand work to other agents with `task_split` again.'
+        : 'The person switched delegation off for this thread: do not call `task_split`; do the work yourself.'
+    })
+  }
   const next = requireTask(task.id)
   emit({ type: 'task.changed', task: next })
   return next
+}
+
+export function delegationStatusFor(
+  task: Task,
+  tiers: readonly AutoModelTier[]
+): {
+  ok: boolean
+  enabled: boolean
+  token: string | null
+  tiers: AutoModelTier[]
+  allowedTiers: string[]
+  allowedModels: Array<{ model: string; effort?: string | null }>
+  reply: string
+} {
+  const refusal = delegationRefusal(task)
+  const enabled = refusal === null
+  const token = enabled ? ensureDelegationToken(task.id) : null
+  const allowedTiers = task.mandate.allowedTiers ?? []
+  const allowedModels = task.mandate.allowedModels ?? []
+
+  const tierLines = tiers.map((t) => {
+    const items =
+      t.entries.length > 0
+        ? t.entries.map((e) => (e.effort ? `(${e.model} · ${e.effort})` : `(${e.model})`)).join(', ')
+        : '(no models assigned)'
+    return `- ${tierHeading(t.tag)} [${tierSlug(t.tag)}]: ${items}`
+  })
+
+  const allowedTierText =
+    allowedTiers.length > 0 ? allowedTiers.map((t) => `[${tierSlug(t)}]`).join(', ') : 'all tiers'
+  const allowedModelText =
+    allowedModels.length > 0
+      ? allowedModels.map((m) => (m.effort ? `${m.model} (${m.effort})` : m.model)).join(', ')
+      : 'all models in allowed tiers'
+
+  const replyLines = [
+    enabled ? `Delegation: enabled for t${task.seq}` : `Delegation: disabled (${refusal})`,
+    ...(token ? [`Delegation token: ${token}`] : []),
+    `Allowed delegation tiers: ${allowedTierText}`,
+    `Allowed delegation models: ${allowedModelText}`,
+    '',
+    'Available models by capability tier:',
+    ...(tierLines.length > 0 ? tierLines : ['- (no tiers configured)']),
+    ...(enabled && token
+      ? [
+          '',
+          `Pass token "${token}" to \`task_split\` (or \`--token ${token}\` with \`${AGENT_CLI_COMMAND} task_split\`) along with an allowed tier or model to delegate immediately.`
+        ]
+      : [])
+  ]
+
+  return {
+    ok: true,
+    enabled,
+    token,
+    tiers: [...tiers],
+    allowedTiers,
+    allowedModels,
+    reply: replyLines.join('\n')
+  }
 }
 
 /** How a delegation's caller is woken. Passed in, so this module reads no scheduler binding. */

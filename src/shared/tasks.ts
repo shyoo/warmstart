@@ -1016,6 +1016,12 @@ export interface Mandate {
   projectIds: string[] | 'creator'
   maxLineageDepth: number
   maxChildren: number
+  /** Allowed capability tiers for delegated pieces (empty/absent = any tier allowed). */
+  allowedTiers?: string[]
+  /** Allowed specific (model, effort) pairs for delegated pieces (empty/absent = any model allowed). */
+  allowedModels?: Array<{ model: string; effort?: string | null }>
+  /** Session delegation token issued by `delegation_status` to authorize `task_split`. */
+  delegationToken?: string | null
 }
 
 export type MandateOperation = 'read' | 'write' | 'commit' | 'push' | 'spawn_tasks' | 'land'

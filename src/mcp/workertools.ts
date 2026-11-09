@@ -758,6 +758,13 @@ export function workerTools(io: WorkerToolIo): WorkerTool[] {
             'Instead of `pieces`: the approval card id an earlier task_split reply or the operator’s ' +
               'approval gave you, once they have answered it. Files exactly the pieces they approved; do ' +
               'not send them again.'
+          ),
+        token: z
+          .string()
+          .optional()
+          .describe(
+            'Session delegation token obtained from `delegation_status`. When delegation is enabled and ' +
+              'all pieces target allowed tiers or models, passing this token auto-approves the delegation.'
           )
       }
     },
@@ -767,6 +774,7 @@ export function workerTools(io: WorkerToolIo): WorkerTool[] {
         const result = await io.rpc('agent.split', {
           sessionId,
           ...(args.approval ? { approval: args.approval } : {}),
+          ...(args.token ? { token: args.token } : {}),
           pieces: (args.pieces ?? []).map((p) => ({
             title: p.instruction,
             ...(p.summary ? { summary: p.summary } : {}),
@@ -785,6 +793,36 @@ export function workerTools(io: WorkerToolIo): WorkerTool[] {
         }
       } catch (err) {
         return { content: [{ type: 'text' as const, text: String(err) }], isError: true }
+      }
+    }
+  )
+
+  /**
+   * Look up capability tiers (`High`, `Med`, `Low`, and any custom tiers) and their configured
+   * `(model, effort)` pairs, check whether delegation is enabled for this session, inspect which
+   * tiers and models are allowed for delegation, and obtain the session delegation token.
+   */
+  def(
+    'delegation_status',
+    {
+      title: 'Look up capability tiers, allowed delegation models, and the delegation token',
+      description:
+        'Look up the available models configured per capability tier ([tier:high], [tier:med], [tier:low], ' +
+        'and any custom tiers), check whether delegation is currently enabled for this session, inspect ' +
+        'which tiers or specific models are allowed for delegation, and obtain this session’s delegation ' +
+        'token. Pass the returned `token` to `task_split` along with an allowed tier or model to delegate.',
+      inputSchema: {}
+    },
+    async () => {
+      const sessionId = io.sessionId
+      try {
+        const result = await io.rpc('agent.delegationStatus', { sessionId })
+        return {
+          content: [{ type: 'text' as const, text: result.reply }],
+          ...(result.ok ? {} : { isError: true })
+        }
+      } catch (err) {
+        return failed(err)
       }
     }
   )

@@ -194,10 +194,10 @@ describe('the doors', () => {
     ).rejects.toThrow(/no Auto Model \(Med \+ ZDR\) route/)
   })
 
-  it('accepts multi-tier tags on a pinned worker when it has a pair matching any tier', async () => {
+  it('accepts exclusive tier replacement on a pinned worker and routes a model placed in multiple tiers (t1322)', async () => {
     const handlers = api.buildApi({ version: '1.0.0', startedAt: Date.now(), port: 8080 })
-    const w = account([route('claude-opus-5-5', 'medium', ['Med'])])
-    const task = tasks.createTask({ title: 'pinned, multi-tier matched' })
+    const w = account([route('claude-opus-5-5', 'medium', ['Med', 'Low'])])
+    const task = tasks.createTask({ title: 'pinned, exclusive tier' })
     const moved = await handlers['task.setWorker']({
       id: task.id,
       workerId: w.id,
@@ -205,7 +205,18 @@ describe('the doors', () => {
       modelPolicy: 'auto',
       modelTags: ['High', 'Med']
     })
-    expect(moved.constraints.modelTags).toEqual(['High', 'Med'])
+    expect(moved.constraints.modelTags).toEqual(['Med'])
+
+    // Syncing fleet autoModelTiers puts opus-5-5 medium into both Med and Low tiers
+    await handlers['settings.set']({
+      autoModelTiers: [
+        { tag: 'High', entries: [{ model: 'claude-opus-5-5', effort: 'high' }] },
+        { tag: 'Med', entries: [{ model: 'claude-opus-5-5', effort: 'medium' }] },
+        { tag: 'Low', entries: [{ model: 'claude-opus-5-5', effort: 'medium' }] }
+      ]
+    })
+    expect(choose(workers.requireWorker(w.id), { modelPolicy: 'auto', modelTags: ['Med'] }).effort).toBe('medium')
+    expect(choose(workers.requireWorker(w.id), { modelPolicy: 'auto', modelTags: ['Low'] }).effort).toBe('medium')
   })
 })
 

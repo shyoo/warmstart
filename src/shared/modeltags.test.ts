@@ -16,7 +16,11 @@ import {
   tagClass,
   tagsFromLegacyClass,
   tagsLabel,
-  upgradeLegacyClass
+  tierHeading,
+  tierSlug,
+  toggleExclusiveTierTag,
+  upgradeLegacyClass,
+  withExclusiveTier
 } from './modeltags.js'
 
 describe('tag normalization (t1042)', () => {
@@ -137,5 +141,18 @@ describe('the fleet’s tag suggestions', () => {
       { modelRoutes: null }
     ])
     expect(tags).toEqual(['High', 'Med', 'Low', 'ZDR', 'audio', 'XHigh'])
+  })
+
+  it('enforces exclusive tier selection while preserving orthogonal feature tags (t1322)', () => {
+    expect(withExclusiveTier(['High', 'Audio', 'Low'])).toEqual(['Audio', 'Low'])
+    expect(withExclusiveTier(['tier:high', 'tier:med', 'ZDR'])).toEqual(['Med', 'ZDR'])
+    expect(toggleExclusiveTierTag(['High', 'Audio'], 'Low')).toEqual(['Low', 'Audio'])
+    expect(toggleExclusiveTierTag(['High', 'Audio'], 'High')).toEqual(['Audio'])
+    expect(toggleExclusiveTierTag(['High', 'Audio'], 'ZDR')).toEqual(['High', 'Audio', 'ZDR'])
+    expect(tierSlug('High')).toBe('tier:high')
+    expect(tierSlug('tier:low')).toBe('tier:low')
+    expect(tierSlug('Tier:Ultra')).toBe('tier:ultra')
+    expect(tierHeading('High')).toBe('High tier')
+    expect(tierHeading('Tier:Ultra')).toBe('Ultra tier')
   })
 })

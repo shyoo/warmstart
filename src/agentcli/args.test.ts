@@ -38,6 +38,7 @@ describe('the tools', () => {
         'await_human',
         'checkpoint',
         'debate_round',
+        'delegation_status',
         'handoff',
         'land_work',
         'project_settings',

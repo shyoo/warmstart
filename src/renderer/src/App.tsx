@@ -24,6 +24,7 @@ import {
 } from './lib/zoom'
 import { FleetStrip } from './components/FleetStrip'
 import { Workers } from './components/Workers'
+import { AutoModelSettings } from './components/AutoModelSettings'
 import { Conversations } from './components/Conversations'
 import { Logs } from './components/Logs'
 import { FleetSettings } from './components/FleetSettings'
@@ -136,7 +137,7 @@ type Route =
    * than the one that is open — or to none. The thread renders here and Back returns to the list.
    */
   | { kind: 'history'; page: 'conversations' | 'logs'; taskId?: string }
-  | { kind: 'settings'; page: 'workers' | 'global' }
+  | { kind: 'settings'; page: 'workers' | 'auto-model' | 'global' }
 
 /** A notification click, for a task on the computer this App is showing. */
 export interface OpenTaskRequest {
@@ -851,6 +852,12 @@ export function App({
               </span>
             </NavItem>
             <NavItem
+              active={route.kind === 'settings' && route.page === 'auto-model'}
+              onClick={() => setRoute({ kind: 'settings', page: 'auto-model' })}
+            >
+              Auto model
+            </NavItem>
+            <NavItem
               active={route.kind === 'settings' && route.page === 'global'}
               onClick={() => setRoute({ kind: 'settings', page: 'global' })}
             >
@@ -987,6 +994,8 @@ export function App({
             <Logs now={now} />
           ) : route.kind === 'settings' && route.page === 'workers' ? (
             <Workers fleet={fleet} refresh={refresh} applyWorker={applyWorker} />
+          ) : route.kind === 'settings' && route.page === 'auto-model' ? (
+            <AutoModelSettings fleet={fleet} refresh={refresh} />
           ) : route.kind === 'settings' && route.page === 'global' ? (
             <GlobalSettings
               now={now}

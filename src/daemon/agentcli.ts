@@ -45,6 +45,7 @@ export const AGENT_CLI_COMMAND = 'warmstart-agent'
 export const AGENT_METHODS: ReadonlySet<RpcMethod> = new Set<RpcMethod>([
   'agent.taskRead',
   'agent.projectSettings',
+  'agent.delegationStatus',
   'agent.complete',
   'agent.awaitHuman',
   'agent.createTask',

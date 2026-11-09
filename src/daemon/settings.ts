@@ -1,4 +1,5 @@
 import type { Settings } from '@shared/protocol.js'
+import { readAutoModelTiers } from '@shared/modelroutes.js'
 import { DEFAULT_FLEET_COMPLETION, DEFAULT_FLEET_FINISH, DEFAULT_FLEET_SHARING } from '@shared/tasks.js'
 import { db, row } from './db.js'
 import { log } from './log.js'
@@ -194,7 +195,13 @@ export const DEFAULT_SETTINGS: Settings = {
    * token estimate, which arrives on `system/thinking_tokens` for free either way. Ten times the
    * parser traffic for a typing animation is a choice, not a default.
    */
-  liveNarration: 'summary'
+  liveNarration: 'summary',
+
+  /**
+   * Fleet-wide capability tiers configured in Settings > Auto model (`High`, `Med`, `Low`, and any
+   * custom `Tier:<name>`), or `null` until explicitly saved.
+   */
+  autoModelTiers: null
 }
 
 type SettingChangeListener = <K extends keyof Settings>(key: K, value: Settings[K]) => void
@@ -213,7 +220,13 @@ export function settings(): Settings {
 }
 
 export function setSetting<K extends keyof Settings>(key: K, value: Settings[K]): Settings {
-  const sanitized = (key === 'objective' ? (parseObjective(value) ?? DEFAULT_OBJECTIVE) : value) as Settings[K]
+  const sanitized = (
+    key === 'objective'
+      ? (parseObjective(value) ?? DEFAULT_OBJECTIVE)
+      : key === 'autoModelTiers'
+        ? (value === null || value === undefined ? null : readAutoModelTiers(value))
+        : value
+  ) as Settings[K]
   db()
     .prepare(
       `insert into settings (key, value, updated_at) values (?,?,?)
@@ -253,6 +266,8 @@ function read(): Partial<Settings> {
         } else {
           log.warn('setting objective is not valid - using the default')
         }
+      } else if (key === 'autoModelTiers') {
+        out.autoModelTiers = parsed === null || parsed === undefined ? null : readAutoModelTiers(parsed)
       } else {
         ;(out as Record<string, unknown>)[key] = parsed
       }

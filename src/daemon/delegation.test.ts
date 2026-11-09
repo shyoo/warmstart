@@ -336,3 +336,43 @@ describe('what the agent is told', () => {
     expect(tasks.messagesFor(task.id).at(-1)?.text).toBe('port the parser to Rust')
   })
 })
+
+describe('delegation policy, status lookup, and token-gated splits (t1322)', () => {
+  it('issues a delegation token via delegationStatusFor and enforces allowedTiers / allowedModels in validateSplit', () => {
+    const task = caller('work')
+    const status0 = delegation.delegationStatusFor(task, [
+      { tag: 'High', entries: [{ model: 'claude-opus-5-5', effort: 'high' }] },
+      { tag: 'Low', entries: [{ model: 'claude-haiku-4-5', effort: 'low' }] }
+    ])
+    expect(status0.enabled).toBe(true)
+    expect(status0.token).toMatch(/^dlg_[A-Za-z0-9_-]{16}$/)
+    expect(status0.reply).toContain('High tier [tier:high]')
+    expect(status0.reply).toContain('Low tier [tier:low]')
+
+    // Restrict delegation to Low tier and claude-haiku-4-5 only
+    const updated = delegation.setDelegationPolicy(task.id, {
+      on: true,
+      allowedTiers: ['tier:low'],
+      allowedModels: [{ model: 'claude-haiku-4-5', effort: null }]
+    })
+    expect(updated.mandate.allowedTiers).toEqual(['Low'])
+    expect(updated.mandate.allowedModels).toEqual([{ model: 'claude-haiku-4-5', effort: null }])
+    expect(updated.mandate.delegationToken).toMatch(/^dlg_[A-Za-z0-9_-]{16}$/)
+
+    // Disallowed tier is refused
+    const badTier = split.validateSplit(updated, [{ title: 'use high tier', dependsOn: [], modelTags: ['High'] }])
+    expect(badTier.ok).toBe(false)
+    if (!badTier.ok) expect(badTier.reason).toContain('allowed delegation set')
+
+    // Disallowed model is refused
+    const badModel = split.validateSplit(updated, [{ title: 'use opus', dependsOn: [], model: 'claude-opus-5-5' }])
+    expect(badModel.ok).toBe(false)
+    if (!badModel.ok) expect(badModel.reason).toContain('allowed delegation set')
+
+    // Allowed tier and model pass validation
+    const good = split.validateSplit(updated, [
+      { title: 'use low tier', dependsOn: [], modelTags: ['Low'], model: 'claude-haiku-4-5' }
+    ])
+    expect(good.ok).toBe(true)
+  })
+})

@@ -1,355 +1,182 @@
-import { useState } from 'react'
 import type { ModelOptions, RpcParams, Worker } from '@shared/protocol'
-import { modelOffered, notOffered, routeLabel, samePair } from '@shared/modelroutes'
-import { cleanTags, inferredTags } from '@shared/modeltags'
+import { modelOffered, notOffered } from '@shared/modelroutes'
 import { isLocalModelId, localModelLabel } from '@shared/localmodel'
 import { effortLabel, modelLabel } from '../lib/modelname'
-import { TagPicker, TagsPill } from './TagControls'
-import {
-  effortLevelsFor,
-  defaultSelectionPatch,
-  isDefaultRow,
-  isGradingRow,
-  isJudgmentRow,
-  isSummaryRow,
-  modelTableRows,
-  poolOf,
-  routesToStore,
-  seedEffort,
-  setRowTags,
-  type ModelTableRow
-} from '../lib/modeltable'
+import { defaultSelectionPatch, effectiveEffort, effortLevelsFor, seedEffort } from '../lib/modeltable'
 
 /**
- * The line under a worker's model table — what the tick columns mean, said once.
+ * The line under a worker's default model control in Settings → Workers (t1322).
  *
- * ⛔ **Auto-route is opt-in, and inert until ticked.** A table with nothing ticked is not a gap in
- * the fleet's model-aware routing — it is the honest default, because widening every worker to
- * every model it can price would hand a scorer dozens of candidates a tick that nobody chose.
- * ⚠️ It names the one-per-model rule, because two ticked efforts of one model do not both compete:
- * the router takes the first (strongest) of them, and a tag-scoped Auto picks among the matching lines first.
+ * ⭐ Auto-routable models and capability tiers moved to Settings → Auto model, so each worker row
+ * here sets only the account's own default model and effort (what Inherit resolves to).
  */
 export const MODEL_TABLE_HELP =
-  'Sets Auto Model and purpose models (grading, judgment, summaries). You can still choose a model and effort on each task.'
-
-const TAGS_HELP =
-  'Your own routing tags for this model and effort (Low, High, ZDR, Audio, anything). A task that asks for tags runs only on a line that has all of them. A tag is your assertion, not something Warmstart verifies.'
+  'Sets this account’s default model and effort. Auto-routable models and capability tiers are configured in Settings › Auto model.'
 
 export type WorkerPatch = Omit<RpcParams<'worker.update'>, 'id'>
 
-/**
- * One worker's models as a table: a line per (model, effort), and a tick for each thing it does
- * (t638). Replaces the default-model, routable-models and grading-model pickers, which were three
- * menus over one question — *what runs where on this account*.
- *
- * ⛔ **Default, Grading and Judgment are one line each; Auto-route is any number.** Default is a
- * radio choice (one per quota pool); a line holding a purpose cannot be removed because the setting
- * would survive with no line to show it.
- *
- * ⚠️ Every edit to a line sends the whole table back (`routesToStore`), in the order it is drawn.
- * That order is the router's order — see `modelTableRows`.
- */
 export function ModelTable({
   worker,
   options,
-  fleetTags,
   busy,
   onPatch
 }: {
   worker: Worker
   options: ModelOptions | null
-  /** Every tag any pair in the fleet carries, plus the built-ins — what the picker offers to tick. */
-  fleetTags: readonly string[]
+  fleetTags?: readonly string[]
   busy: boolean
   onPatch: (patch: WorkerPatch) => void
 }): React.JSX.Element {
-  const rows = modelTableRows(worker, options)
-  const [adding, setAdding] = useState<{ model: string; effort: string | null } | null>(null)
-
-  const write = (next: ModelTableRow[], extra: WorkerPatch = {}): void => {
-    const routes = routesToStore(next)
-    onPatch({ modelRoutes: routes.length > 0 ? routes : null, ...extra })
-  }
-  const withRow = (index: number, change: Partial<ModelTableRow>): ModelTableRow[] =>
-    rows.map((r, i) => (i === index ? { ...r, ...change, stored: true } : r))
+  const models = options?.models ?? []
+  const pools = options?.pools && options.pools.length >= 2 ? options.pools : null
   const name = (model: string): string =>
     isLocalModelId(model) ? localModelLabel(model) : (modelLabel(model) ?? model)
 
-  // ⚠️ The three single-line ticks write only their own fields, never the table: the line they point
-  // at is always drawn (`modelTableRows` ensures it), so ticking Default on a line nobody stored does
-  // not turn an untouched table into a stored one — which would switch model-aware scoring on.
-  const setDefault = (index: number): void => {
-    const r = rows[index]!
-    onPatch(defaultSelectionPatch(worker, options, r))
-  }
-  const toggleGrading = (index: number): void => {
-    const r = rows[index]!
-    const on = isGradingRow(worker, options, r)
-    onPatch(on ? { gradingModel: null, gradingEffort: null } : { gradingModel: r.model, gradingEffort: r.effort })
-  }
-  const toggleJudgment = (index: number): void => {
-    const r = rows[index]!
-    const on = isJudgmentRow(worker, options, r)
-    onPatch(on ? { judgmentModel: null, judgmentEffort: null } : { judgmentModel: r.model, judgmentEffort: r.effort })
-  }
-  const toggleSummary = (index: number): void => {
-    const r = rows[index]!
-    const on = isSummaryRow(worker, options, r)
-    onPatch(on ? { summarisingModel: null, summarisingEffort: null } : { summarisingModel: r.model, summarisingEffort: r.effort })
-  }
-  // ⛔ A line's effort is the effort of whatever it is ticked for, so the choice moves with it — the
-  // Default tick does not stay behind on a (model, effort) pair that no longer has a line.
-  const setEffort = (index: number, effort: string): void => {
-    const r = rows[index]!
-    const extra: WorkerPatch = {}
-    if (isDefaultRow(worker, options, r)) {
-      Object.assign(extra, { defaultModel: r.model, defaultEffort: effort })
-    }
-    if (isGradingRow(worker, options, r)) Object.assign(extra, { gradingModel: r.model, gradingEffort: effort })
-    if (isJudgmentRow(worker, options, r)) Object.assign(extra, { judgmentModel: r.model, judgmentEffort: effort })
-    if (isSummaryRow(worker, options, r)) Object.assign(extra, { summarisingModel: r.model, summarisingEffort: effort })
-    write(withRow(index, { effort }), extra)
-  }
-
-  const models = options?.models ?? []
-  const addLevels = adding ? effortLevelsFor(options, adding.model) : []
-  const addTaken = adding ? rows.some((r) => samePair(r, adding)) : false
-  const startAdding = (model: string): void =>
-    setAdding({ model, effort: seedEffort(effortLevelsFor(options, model), worker.defaultEffort) })
+  const currentModel = worker.defaultModel ?? ''
+  const levels = currentModel ? effortLevelsFor(options, currentModel) : []
+  const currentEffort = currentModel ? (effectiveEffort(options, currentModel, worker.defaultEffort) ?? '') : ''
+  const hasStoredUnknown = Boolean(currentModel && !models.some((m) => m.id === currentModel))
 
   return (
     <div className="worker-models">
-      <div className="worker-models-scroll">
-        <table className="worker-models-table">
-          <thead>
-            <tr>
-              <th>Model</th>
-              <th>Effort</th>
-              <th title={TAGS_HELP}>Tags</th>
-              <th className="worker-models-tick">Default</th>
-              <th className="worker-models-tick">Auto-route</th>
-              <th className="worker-models-tick">Grading</th>
-              <th className="worker-models-tick">Judgment</th>
-              <th className="worker-models-tick">Summary</th>
-              <th aria-label="Remove" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, index) => {
-              const levels = effortLevelsFor(options, r.model)
-              const isDefault = isDefaultRow(worker, options, r)
-              const isGrading = isGradingRow(worker, options, r)
-              const isJudgment = isJudgmentRow(worker, options, r)
-              const isSummary = isSummaryRow(worker, options, r)
-              const inUse = isDefault || isGrading || isJudgment || isSummary
-              const removePatch: WorkerPatch = {
-                ...(isGrading ? { gradingModel: null, gradingEffort: null } : {}),
-                ...(isJudgment ? { judgmentModel: null, judgmentEffort: null } : {}),
-                ...(isSummary ? { summarisingModel: null, summarisingEffort: null } : {})
-              }
-              const label = routeLabel(r)
-              // ⛔ A line the plan does not offer is drawn, so the setting stays visible and removable,
-              // but nothing new can be ticked on it: the router skips it and a run on it is a 400.
-              const unoffered = !modelOffered(worker, r.model)
-              const unofferedTitle = unoffered ? notOffered(worker, r.model) : undefined
-              return (
-                <tr
-                  key={`${r.model}:${r.effort ?? ''}`}
-                  className={`worker-models-row${r.stored || inUse ? '' : ' worker-models-row--idle'}${unoffered ? ' worker-models-row--unoffered' : ''}`}
-                  data-unoffered={unoffered ? 'true' : undefined}
+      {pools ? (
+        <div className="worker-models-pools">
+          {pools.map((pool) => {
+            const poolModel = worker.defaultModels?.[pool.id] ?? ''
+            const poolLevels = poolModel ? effortLevelsFor(options, poolModel) : []
+            const poolEffort =
+              poolModel && worker.defaultModel === poolModel
+                ? (effectiveEffort(options, poolModel, worker.defaultEffort) ?? '')
+                : (seedEffort(poolLevels, worker.defaultEffort) ?? '')
+            return (
+              <div key={pool.id} className="worker-models-default-row">
+                <span className="dim">{pool.label}</span>
+                <select
+                  className="worker-models-select"
+                  value={poolModel}
+                  disabled={busy}
+                  aria-label={`Default ${pool.label} model for ${worker.label}`}
+                  onChange={(e) => {
+                    const nextModel = e.target.value
+                    if (!nextModel) {
+                      const nextMap = { ...(worker.defaultModels ?? {}) }
+                      delete nextMap[pool.id]
+                      onPatch({
+                        defaultModels: Object.keys(nextMap).length > 0 ? nextMap : null,
+                        ...(worker.defaultModel === poolModel ? { defaultModel: null, defaultEffort: null } : {})
+                      })
+                      return
+                    }
+                    const nextEffort = seedEffort(effortLevelsFor(options, nextModel), worker.defaultEffort)
+                    onPatch(
+                      defaultSelectionPatch(worker, options, {
+                        model: nextModel,
+                        effort: nextEffort,
+                        tags: [],
+                        auto: false
+                      })
+                    )
+                  }}
                 >
-                  <td className="worker-models-name" title={unofferedTitle ?? r.model}>
-                    {name(r.model)}
-                    {unoffered && <span className="worker-models-unoffered"> · not on this plan</span>}
-                  </td>
-                  <td>
-                    {levels.length > 0 ? (
-                      <select
-                        className="worker-models-select"
-                        value={r.effort ?? ''}
-                        disabled={busy}
-                        aria-label={`Effort for ${label} on ${worker.label}`}
-                        onChange={(e) => setEffort(index, e.target.value)}
+                  <option value="">CLI default</option>
+                  {pool.models.map((id) => {
+                    const unoffered = !modelOffered(worker, id)
+                    return (
+                      <option
+                        key={id}
+                        value={id}
+                        disabled={unoffered && id !== poolModel}
+                        title={unoffered ? notOffered(worker, id) : undefined}
                       >
-                        {/* ⚠️ Only while unset, and never choosable back: a line written before
-                            efforts were per line says so rather than pretending to a level. */}
-                        {r.effort === null && (
-                          <option value="" disabled>
-                            not set
-                          </option>
-                        )}
-                        {levels.map((lvl) => (
-                          <option
-                            key={lvl}
-                            value={lvl}
-                            disabled={lvl !== r.effort && rows.some((o) => samePair(o, { model: r.model, effort: lvl }))}
-                          >
-                            {effortLabel(lvl) ?? lvl}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <span className="dim" title="This model, or this CLI, takes no effort setting">
-                        n/a
-                      </span>
-                    )}
-                  </td>
-                  <td>
-                    {/* ⛔ Opening it writes nothing: an untouched line still shows its built-in class as
-                        its one tag and stays unstored until a tag is changed (`withRow` stores just
-                        that line). */}
-                    <TagsPill
-                      className="worker-models-tags"
-                      tags={r.tags}
-                      ariaLabel={`Tags for ${label} on ${worker.label}`}
-                      title={TAGS_HELP}
-                      menu={() => (
-                        <TagPicker
-                          label={`${label} on ${worker.label}`}
-                          available={cleanTags([...fleetTags, ...rows.flatMap((o) => o.tags)])}
-                          selected={r.tags}
-                          busy={busy}
-                          onAdd
-                          onRemove
-                          onChange={(next) => write(setRowTags(rows, index, next))}
-                        />
-                      )}
-                    />
-                  </td>
-                  <td className="worker-models-tick">
-                    <input
-                      type="radio"
-                      name={`default:${worker.id}:${poolOf(options, r.model) ?? 'worker'}`}
-                      checked={isDefault}
-                      disabled={busy || (unoffered && !isDefault)}
-                      aria-label={`Default: ${label} on ${worker.label}`}
-                      title={
-                        poolOf(options, r.model)
-                          ? "The one default for this model's quota pool"
-                          : 'What tasks on this account run on unless they choose their own model.'
-                      }
-                      onChange={() => setDefault(index)}
-                    />
-                  </td>
-                  <td className="worker-models-tick">
-                    <input
-                      type="checkbox"
-                      checked={r.auto}
-                      disabled={busy || (unoffered && !r.auto)}
-                      title={unofferedTitle}
-                      aria-label={`Auto-route: ${label} on ${worker.label}`}
-                      onChange={() => write(withRow(index, { auto: !r.auto }))}
-                    />
-                  </td>
-                  <td className="worker-models-tick">
-                    <input
-                      type="checkbox"
-                      checked={isGrading}
-                      disabled={busy || (unoffered && !isGrading)}
-                      aria-label={`Grading: ${label} on ${worker.label}`}
-                      onChange={() => toggleGrading(index)}
-                    />
-                  </td>
-                  <td className="worker-models-tick">
-                    <input
-                      type="checkbox"
-                      checked={isJudgment}
-                      disabled={busy || (unoffered && !isJudgment)}
-                      aria-label={`Judgment: ${label} on ${worker.label}`}
-                      onChange={() => toggleJudgment(index)}
-                    />
-                  </td>
-                  <td className="worker-models-tick">
-                    <input
-                      type="checkbox"
-                      checked={isSummary}
-                      disabled={busy || (unoffered && !isSummary)}
-                      aria-label={`Summary: ${label} on ${worker.label}`}
-                      title="The model this account uses for optional, asynchronous task-title summaries. Untick to leave this worker out."
-                      onChange={() => toggleSummary(index)}
-                    />
-                  </td>
-                  <td className="worker-models-remove">
-                    <button
-                      type="button"
-                      className="worker-models-remove-btn"
-                      disabled={busy || isDefault}
-                      aria-label={`Remove ${label} from ${worker.label}`}
-                      title={
-                        isDefault
-                          ? 'Cannot remove the default model/effort pair'
-                          : inUse
-                            ? 'Remove this line and clear its grading, judgment or summary purpose'
-                          : 'Remove this line'
-                      }
-                      onClick={() => write(rows.filter((_, i) => i !== index), removePatch)}
-                    >
-                      ×
-                    </button>
-                  </td>
-                </tr>
+                        {name(id)}
+                        {unoffered ? ' · not on this plan' : ''}
+                      </option>
+                    )
+                  })}
+                </select>
+                {poolLevels.length > 0 && (
+                  <select
+                    className="worker-models-select"
+                    value={poolEffort}
+                    disabled={busy}
+                    aria-label={`Effort for ${poolModel} on ${worker.label}`}
+                    onChange={(e) =>
+                      onPatch(
+                        defaultSelectionPatch(worker, options, {
+                          model: poolModel,
+                          effort: e.target.value,
+                          tags: [],
+                          auto: false
+                        })
+                      )
+                    }
+                  >
+                    {poolLevels.map((lvl) => (
+                      <option key={lvl} value={lvl}>
+                        {effortLabel(lvl) ?? lvl}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      ) : (
+        <div className="worker-models-default-row">
+          <select
+            className="worker-models-select"
+            value={currentModel}
+            disabled={busy || (models.length === 0 && !currentModel)}
+            aria-label={`Default model for ${worker.label}`}
+            onChange={(e) => {
+              const nextModel = e.target.value
+              if (!nextModel) {
+                onPatch({ defaultModel: null, defaultEffort: null })
+                return
+              }
+              const nextLevels = effortLevelsFor(options, nextModel)
+              const nextEffort = nextLevels.length > 0 ? seedEffort(nextLevels, worker.defaultEffort) : null
+              onPatch({ defaultModel: nextModel, defaultEffort: nextEffort })
+            }}
+          >
+            <option value="">CLI default</option>
+            {hasStoredUnknown && (
+              <option value={currentModel}>{name(currentModel)}</option>
+            )}
+            {models.map((m) => {
+              const unoffered = !modelOffered(worker, m.id)
+              return (
+                <option
+                  key={m.id}
+                  value={m.id}
+                  disabled={unoffered && m.id !== currentModel}
+                  title={unoffered ? notOffered(worker, m.id) : undefined}
+                >
+                  {name(m.id)}
+                  {unoffered ? ' · not on this plan' : ''}
+                </option>
               )
             })}
-          </tbody>
-        </table>
-      </div>
-      <div className="worker-models-foot">
-        {adding ? (
-          <div className="worker-models-add">
+          </select>
+          {levels.length > 0 && (
             <select
               className="worker-models-select"
-              value={adding.model}
-              aria-label={`Model to add to ${worker.label}`}
-              onChange={(e) => startAdding(e.target.value)}
+              value={currentEffort}
+              disabled={busy}
+              aria-label={`Effort for ${currentModel} on ${worker.label}`}
+              onChange={(e) => onPatch({ defaultModel: currentModel, defaultEffort: e.target.value })}
             >
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {name(m.id)}
+              {levels.map((lvl) => (
+                <option key={lvl} value={lvl}>
+                  {effortLabel(lvl) ?? lvl}
                 </option>
               ))}
             </select>
-            {addLevels.length > 0 && (
-              <select
-                className="worker-models-select"
-                value={adding.effort ?? ''}
-                aria-label={`Effort to add to ${worker.label}`}
-                onChange={(e) => setAdding({ ...adding, effort: e.target.value })}
-              >
-                {addLevels.map((lvl) => (
-                  <option key={lvl} value={lvl}>
-                    {effortLabel(lvl) ?? lvl}
-                  </option>
-                ))}
-              </select>
-            )}
-            <button
-              type="button"
-              className="btn btn--primary"
-              disabled={busy || addTaken}
-              title={addTaken ? 'That model and effort already has a line' : undefined}
-              onClick={() => {
-                write([...rows, { ...adding, tags: inferredTags(adding.model), auto: false, stored: true }])
-                setAdding(null)
-              }}
-            >
-              Add
-            </button>
-            <button type="button" className="btn" onClick={() => setAdding(null)}>
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            className="btn worker-models-add-btn"
-            disabled={busy || models.length === 0}
-            onClick={() => startAdding(models[0]!.id)}
-          >
-            + Add model/effort
-          </button>
-        )}
-        <p className="worker-models-help">{MODEL_TABLE_HELP}</p>
-      </div>
+          )}
+        </div>
+      )}
+      <p className="worker-models-help">{MODEL_TABLE_HELP}</p>
     </div>
   )
 }
