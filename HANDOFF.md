@@ -1,4 +1,5 @@
 # Warmstart — Session Handoff
+**Larger project fold indicators (t1326).** Sidebar project triangles now render at 12 px instead of 8 px within the existing row footprint. docs/ui.md.
 **Experimental worker subscription pricing (t1325).** Settings → Workers accepts a custom plan label and monthly USD amount for future run pricing and prepaid routing; provider quota and identity stay unchanged. Each run snapshots its override. Focused pricing, persistence and routing tests pass; interactive UI has not been driven. `docs/cost-model.md`, `docs/ui.md`, `docs/data-model.md`.
 
 ## Current state — 2026-11-08
