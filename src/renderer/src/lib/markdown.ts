@@ -37,8 +37,10 @@
 export interface Inline {
   kind: 'text' | 'code' | 'strong' | 'em' | 'strike' | 'link' | 'artifact'
   text: string
-  /** Only on `link`, and only ever an `http`, `https` or `mailto` URL. */
+  /** Only on `link`, and only ever an `http`, `https`, `mailto`, `file` or `vscode` URL. */
   href?: string
+  /** Optional nested inline spans for formatted link text (e.g. code spans inside links). */
+  children?: Inline[]
   /** Only on `artifact`: the relative file path to view. */
   path?: string
 }
@@ -57,7 +59,7 @@ export type Block =
 export type TableAlign = 'left' | 'center' | 'right' | null
 
 /** ⛔ The whole of what a link may point at. Everything else stays literal text. */
-const SAFE_SCHEME = /^(https?:|mailto:)/i
+const SAFE_SCHEME = /^(https?:|mailto:|file:|vscode:)/i
 
 /** Whether a path string names a safe relative markdown artifact inside the repository. */
 export function isMarkdownFilePath(raw: string): boolean {
@@ -83,7 +85,7 @@ export function normalizeArtifactPath(raw: string): string {
  * an operator typed would otherwise swallow every line up to the next one.
  */
 const INLINE =
-  /(`[^`\n]+`)|(\*\*[^\n]+?\*\*)|(~~[^\n]+?~~)|(\*[^\s*][^\n]*?\*|_[^\s_][^\n]*?_)|(\[[^\]\n]*\]\([^)\s]+\))|(https?:\/\/[^\s<>"'`]+)|\b([a-zA-Z0-9_.-]+(?:[/\\][a-zA-Z0-9_.-]+)*\.md)\b/i
+  /(`[^`\n]+`)|(\*\*[^\n]+?\*\*)|(~~[^\n]+?~~)|(\*[^\s*][^\n]*?\*|_[^\s_][^\n]*?_)|(\[[^\]\n]*\]\((?:<[^>\n]+>|(?:[^\s()]+|\([^\s()]+\))+|[^)\n]+)\))|(https?:\/\/[^\s<>"'`]+)|\b([a-zA-Z0-9_.-]+(?:[/\\][a-zA-Z0-9_.-]+)*\.md)\b/i
 
 /**
  * ⭐ **A bare URL is a link.** *"Pull request opened for `…` into `main`: https://github.com/…/pull/141"*
@@ -106,7 +108,7 @@ function trimUrl(url: string): string {
  * ⛔ Total, like `codeSpans`: concatenating every `text` back, minus the fences, is the input. A
  * string with no markup in it returns one `text` run rather than an empty list.
  */
-export function inlineSpans(text: string): Inline[] {
+export function inlineSpans(text: string, withinLink = false): Inline[] {
   const out: Inline[] = []
   let rest = text
   while (rest.length > 0) {
@@ -123,7 +125,7 @@ export function inlineSpans(text: string): Inline[] {
       continue
     }
     if (match[7]) {
-      if (isMarkdownFilePath(token)) {
+      if (!withinLink && isMarkdownFilePath(token)) {
         out.push({ kind: 'artifact', text: token, path: normalizeArtifactPath(token) })
       } else {
         out.push({ kind: 'text', text: token })
@@ -133,7 +135,7 @@ export function inlineSpans(text: string): Inline[] {
     }
     if (token.startsWith('`')) {
       const inner = token.slice(1, -1)
-      if (isMarkdownFilePath(inner)) {
+      if (!withinLink && isMarkdownFilePath(inner)) {
         out.push({ kind: 'artifact', text: inner, path: normalizeArtifactPath(inner) })
       } else {
         out.push({ kind: 'code', text: inner })
@@ -145,13 +147,33 @@ export function inlineSpans(text: string): Inline[] {
     } else if (token.startsWith('[')) {
       const split = token.indexOf('](')
       const label = token.slice(1, split)
-      const href = token.slice(split + 2, -1)
+      let href = token.slice(split + 2, -1).trim()
+      if (href.startsWith('<') && href.endsWith('>')) {
+        href = href.slice(1, -1).trim()
+      }
+      const titleMatch = /^(\S+)\s+(?:"[^"]*"|'[^']*')\s*$/.exec(href)
+      if (titleMatch && titleMatch[1]) {
+        href = titleMatch[1]
+      }
+      if (href.startsWith('file:')) {
+        href = href.replace(/\\/g, '/')
+      }
       // ⛔ Whitelisted at the parse, not at the render: a scheme this does not know never becomes an
       // `href`, so no component downstream has to remember to check one.
       if (SAFE_SCHEME.test(href)) {
-        out.push({ kind: 'link', text: label || href, href })
-      } else if (isMarkdownFilePath(href)) {
-        out.push({ kind: 'artifact', text: label || href, path: normalizeArtifactPath(href) })
+        const text = label || href
+        const children = label ? inlineSpans(label, true) : undefined
+        const hasFormattedChildren = children && children.some((c) => c.kind !== 'text')
+        out.push({
+          kind: 'link',
+          text,
+          href,
+          ...(hasFormattedChildren ? { children } : {})
+        })
+      } else if (!withinLink && isMarkdownFilePath(href)) {
+        const cleanLabel =
+          label.startsWith('`') && label.endsWith('`') && label.length >= 2 ? label.slice(1, -1) : label
+        out.push({ kind: 'artifact', text: cleanLabel || href, path: normalizeArtifactPath(href) })
       } else {
         out.push({ kind: 'text', text: token })
       }

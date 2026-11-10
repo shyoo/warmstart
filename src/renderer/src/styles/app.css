@@ -6748,6 +6748,10 @@ select:focus-visible,
 
 .md-link:hover { text-decoration: underline; }
 
+.md-link .msg-code {
+  color: var(--color-accent);
+}
+
 .msg-prompt-box {
   margin-top: var(--sp-2);
 }

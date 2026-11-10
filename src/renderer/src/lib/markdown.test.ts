@@ -38,7 +38,7 @@ describe('inline runs', () => {
     expect(spans).toEqual([{ kind: 'text', text: '2 * 3 is not emphasis\nand nor is this' }])
   })
 
-  it('takes an http link and refuses every other scheme', () => {
+  it('takes safe links (http, https, mailto, file, vscode) and refuses unsafe schemes', () => {
     expect(inlineSpans('see [the docs](https://example.com/x)')).toEqual([
       { kind: 'text', text: 'see ' },
       { kind: 'link', text: 'the docs', href: 'https://example.com/x' }
@@ -48,7 +48,54 @@ describe('inline runs', () => {
     const unsafe = inlineSpans('[click](javascript:alert(1))')
     expect(unsafe.every((s) => s.kind === 'text')).toBe(true)
     expect(unsafe.map((s) => s.text).join('')).toBe('[click](javascript:alert(1))')
-    expect(inlineSpans('[x](file:///C:/secret)')[0]?.kind).toBe('text')
+    expect(inlineSpans('[click](data:text/html,evil)').every((s) => s.kind === 'text')).toBe(true)
+    expect(inlineSpans('[x](file:///C:/project/file.ts)')).toEqual([
+      { kind: 'link', text: 'x', href: 'file:///C:/project/file.ts' }
+    ])
+  })
+
+  it('parses formatted code labels and file links in agent replies (t1330)', () => {
+    expect(
+      inlineSpans(
+        '1. Root Cause 1: [`repoCandidatePrompt`](file:///C:/Users/Sunghwan%20Yoo/AppData/Local/warmstart/workspaces/interviewprep-1ec5d1eed89c/ws1/src/server/interview-demo.ts#L90-L115) Explicitly'
+      )
+    ).toEqual([
+      { kind: 'text', text: '1. Root Cause 1: ' },
+      {
+        kind: 'link',
+        text: '`repoCandidatePrompt`',
+        href: 'file:///C:/Users/Sunghwan%20Yoo/AppData/Local/warmstart/workspaces/interviewprep-1ec5d1eed89c/ws1/src/server/interview-demo.ts#L90-L115',
+        children: [{ kind: 'code', text: 'repoCandidatePrompt' }]
+      },
+      { kind: 'text', text: ' Explicitly' }
+    ])
+    expect(
+      inlineSpans('[InterviewService.runDemo()](file:///C:/path/file.ts#L10)')
+    ).toEqual([
+      {
+        kind: 'link',
+        text: 'InterviewService.runDemo()',
+        href: 'file:///C:/path/file.ts#L10'
+      }
+    ])
+    expect(
+      inlineSpans('[link with spaces](file:///C:/Users/Sunghwan Yoo/file.ts)')
+    ).toEqual([
+      {
+        kind: 'link',
+        text: 'link with spaces',
+        href: 'file:///C:/Users/Sunghwan Yoo/file.ts'
+      }
+    ])
+    expect(
+      inlineSpans('[link with parens](https://en.wikipedia.org/wiki/Foo_(bar))')
+    ).toEqual([
+      {
+        kind: 'link',
+        text: 'link with parens',
+        href: 'https://en.wikipedia.org/wiki/Foo_(bar)'
+      }
+    ])
   })
 
   it('makes a bare URL a link, without the punctuation that ends its sentence (t401)', () => {
@@ -253,8 +300,9 @@ describe('artifact paths and links', () => {
     ])
   })
 
-  it('refuses unsafe paths with traversal or absolute schemes', () => {
+  it('refuses unsafe paths with traversal or absolute schemes for artifacts', () => {
     expect(inlineSpans('[bad](../secret.md)')[0]?.kind).toBe('text')
-    expect(inlineSpans('[bad](file:///C:/secret.md)')[0]?.kind).toBe('text')
+    // Absolute file: URLs become links, not workspace artifacts
+    expect(inlineSpans('[doc](file:///C:/secret.md)')[0]?.kind).toBe('link')
   })
 })

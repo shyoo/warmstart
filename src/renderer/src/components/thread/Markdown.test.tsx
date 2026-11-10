@@ -19,3 +19,23 @@ describe('Markdown tables (t908)', () => {
     expect(html).not.toContain('<b>')
   })
 })
+
+describe('Markdown links (t1330)', () => {
+  it('renders file links with formatted code symbols inside anchor tags', () => {
+    const text = '[`repoCandidatePrompt`](file:///C:/project/file.ts#L90-L115)'
+    const html = renderToStaticMarkup(<Markdown text={text} />)
+    expect(html).toContain('<a class="md-link"')
+    expect(html).toContain('href="file:///C:/project/file.ts#L90-L115"')
+    expect(html).toContain('title="file:///C:/project/file.ts#L90-L115"')
+    expect(html).toContain('<code class="msg-code">repoCandidatePrompt</code>')
+    expect(html).not.toContain('`repoCandidatePrompt`')
+  })
+
+  it('renders standard plain text file links', () => {
+    const text = '[InterviewService.runDemo()](file:///C:/project/interviews.ts#L10)'
+    const html = renderToStaticMarkup(<Markdown text={text} />)
+    expect(html).toContain('<a class="md-link"')
+    expect(html).toContain('href="file:///C:/project/interviews.ts#L10"')
+    expect(html).toContain('InterviewService.runDemo()')
+  })
+})

@@ -215,7 +215,11 @@ function Spans({
                 rel="noreferrer"
                 title={span.href}
               >
-                {span.text}
+                {span.children && span.children.length > 0 ? (
+                  <Spans spans={span.children} onOpenFile={onOpenFile} />
+                ) : (
+                  span.text
+                )}
               </a>
             )
           default:

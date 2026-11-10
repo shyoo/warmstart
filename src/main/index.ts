@@ -378,9 +378,11 @@ function createWindow(): BrowserWindow {
     win.hide()
   })
 
-  // Never navigate the shell itself; external links go to the real browser.
+  // Never navigate the shell itself; external links go to the real browser or editor.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    void shell.openExternal(url)
+    // Strip URL hash from file: URLs because OS file associations fail when a fragment (like #L10-L20) is appended
+    const openUrl = url.startsWith('file:') ? url.split('#')[0] ?? url : url
+    void shell.openExternal(openUrl)
     return { action: 'deny' }
   })
 
