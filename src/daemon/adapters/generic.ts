@@ -1,11 +1,10 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot } from '@shared/protocol.js'
 import type { AgentAdapter, IdentityProbe, SpawnPlan, SpawnRequest } from './types.js'
 import { launchArgs, launchable, which } from '../which.js'
 import { errorMessage } from '@shared/errors.js'
+import { run } from '../spawn.js'
 
 /**
  * The driver behind a declarative adapter (`external.ts`).
@@ -19,8 +18,6 @@ import { errorMessage } from '@shared/errors.js'
  * adapter in this directory, where its quirks can be measured and written down. This exists so that
  * trying one out does not require a release.
  */
-
-const run = promisify(execFile)
 
 export interface GenericAdapterSpec {
   info: AdapterInfo
@@ -67,7 +64,7 @@ export function genericAdapter(spec: GenericAdapterSpec): AgentAdapter {
       }
       try {
         const probe = launchArgs(resolved, spec.versionArgs)
-        const { stdout } = await run(probe.command, probe.args, { timeout: 15_000 })
+        const { stdout } = await run(probe.command, probe.args, { timeout: 15_000, windowsHide: true })
         return {
           adapterId: info.id,
           found: true,

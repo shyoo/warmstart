@@ -133,7 +133,8 @@ export function detectVcs(root: string): Vcs {
     const out = execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
       cwd: root,
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
+      stdio: ['ignore', 'pipe', 'ignore'],
+      windowsHide: true
     })
     return out.trim() === 'true' ? 'git' : 'none'
   } catch {

@@ -29,7 +29,13 @@ export interface GitOptions { signal?: AbortSignal; timeout?: number }
 
 export async function git(cwd: string, args: string[], options: GitOptions = {}): Promise<string> {
   const binary = which('git') ?? 'git'
-  const { stdout } = await run(binary, args, { cwd, env: spawnEnv(), maxBuffer: GIT_MAX_BUFFER, ...options })
+  const { stdout } = await run(binary, args, {
+    cwd,
+    env: spawnEnv(),
+    maxBuffer: GIT_MAX_BUFFER,
+    windowsHide: true,
+    ...options
+  })
   return stdout.replace(/\s+$/, '')
 }
 

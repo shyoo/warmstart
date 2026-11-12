@@ -1,5 +1,3 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, extname, join, win32 } from 'node:path'
 import { homedir } from 'node:os'
@@ -13,8 +11,7 @@ import { spawnEnv, which } from '../which.js'
 import { paths } from '../paths.js'
 import { hostAt, hostPlan, type CliHost } from './clihost.js'
 import { errorMessage } from '@shared/errors.js'
-
-const run = promisify(execFile)
+import { run } from '../spawn.js'
 
 /**
  * Muse Code — Meta's terminal coding agent.

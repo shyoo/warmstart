@@ -1,5 +1,3 @@
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -13,6 +11,7 @@ import type {
   WrittenPermissions
 } from './types.js'
 import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
+import { run } from '../spawn.js'
 import { attachmentDirs } from '../attachments.js'
 import { grantedWritableRoots } from './grants.js'
 import { log } from '../log.js'
@@ -61,8 +60,6 @@ import { errorMessage } from '@shared/errors.js'
  * records *are* emitted there, so `metering: 'stream'` and the work is metered after all — just only
  * while agentyard is attached to the process, rather than reconstructable from a file afterwards.
  */
-
-const run = promisify(execFile)
 
 /** Measured: the root ~/.gemini directory, home of google_accounts.json, oauth_creds.json, etc. */
 export function geminiHome(): string {
@@ -1116,7 +1113,7 @@ export const antigravityCli: AgentAdapter = {
     }
     try {
       const probe = launchArgs(resolved, ['--version'])
-      const { stdout } = await run(probe.command, probe.args, { timeout: 15_000 })
+      const { stdout } = await run(probe.command, probe.args, { timeout: 15_000, windowsHide: true })
       const version = stdout.trim().split(/\s+/)[0] ?? stdout.trim()
       const onPath = which(info.command) !== null
       return {

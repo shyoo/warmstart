@@ -1,6 +1,5 @@
 import { attachmentDirs } from '../attachments.js'
-import { execFile, execFileSync, spawn } from 'node:child_process'
-import { promisify } from 'node:util'
+import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AdapterDetection, AdapterInfo, QuotaSnapshot, SpendSnapshot } from '@shared/protocol.js'
@@ -18,6 +17,7 @@ import { log } from '../log.js'
 import { formatCmdInvocation, launchArgs, launchable, spawnEnv, which } from '../which.js'
 import { errorMessage } from '@shared/errors.js'
 import { codexBilling, type WorkerBilling } from '@shared/billing.js'
+import { run } from '../spawn.js'
 
 /**
  * Codex CLI — the OpenAI-compatible adapter.
@@ -49,8 +49,6 @@ import { codexBilling, type WorkerBilling } from '@shared/billing.js'
  * scheduler, which is why it is a capability the scheduler can read rather than a paragraph in a
  * README.
  */
-
-const run = promisify(execFile)
 
 const info: AdapterInfo = {
   id: 'openai-compatible',
@@ -1308,7 +1306,7 @@ export const openaiCompatible: AgentAdapter = {
     }
     try {
       const probe = launchArgs(resolved, ['--version'])
-      const { stdout } = await run(probe.command, probe.args, { timeout: 15_000 })
+      const { stdout } = await run(probe.command, probe.args, { timeout: 15_000, windowsHide: true })
       return {
         adapterId: info.id,
         found: true,
@@ -1343,7 +1341,8 @@ export const openaiCompatible: AgentAdapter = {
         const probe = launchArgs(resolved, ['doctor', '--json'])
         const { stdout } = await run(probe.command, probe.args, {
           timeout: 60_000,
-          env: envFor(isolationRoot)
+          env: envFor(isolationRoot),
+          windowsHide: true
         })
         const report = JSON.parse(stdout) as {
           codexVersion?: string

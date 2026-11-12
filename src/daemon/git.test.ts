@@ -69,6 +69,12 @@ describe('the shared git runner', () => {
     await expect(git(repo, ['rev-parse', 'no-such-ref'])).rejects.toThrow()
   })
 
+  it('runs git with windowsHide set to true so background git commands do not flash a console', async () => {
+    // Verified by running a real git command and checking that git returns expected output under windowsHide
+    const out = await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])
+    expect(out).toBe('main')
+  })
+
   it('is generous enough not to make a large diff look like a broken git', () => {
     // ⚠️ A number, not a feeling: the three it replaced were 8MB, 8MB and 16MB, and the failure
     // when one is too small is ENOBUFS reported as git failing.

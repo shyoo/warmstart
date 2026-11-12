@@ -263,7 +263,8 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
       // landing that fails on its first task with a message about a ref that does not exist.
       execFileSync('git', ['init', '-b', landingTarget], {
         cwd: root,
-        stdio: ['ignore', 'ignore', 'pipe']
+        stdio: ['ignore', 'ignore', 'pipe'],
+        windowsHide: true
       })
       log.info(`git init -b ${landingTarget} in ${root}`)
     } catch (err) {

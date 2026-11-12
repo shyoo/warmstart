@@ -392,6 +392,13 @@ if one path traversed the symlink and the other was canonicalized. Always canoni
   old pipe close killed `cmd.exe` before `taskkill /T` could walk its descendants. A detached Codex
   child retaining the writer is inferred from that order and those errors. `openPipes` now runs the
   tree stop while the launcher still parents the CLI, then closes its own child handle.
+- ⛔ **Background and scheduled child processes on Windows must set `windowsHide: true`.** The
+  daemon is spawned detached and headless from Electron and has no console attached. In Windows, spawning
+  a console application (`git.exe`, `cmd.exe`, `powershell.exe`, or `.cmd` wrappers) without `windowsHide: true`
+  (or `CREATE_NO_WINDOW`) causes Windows to allocate a visible console window that pops up and immediately closes,
+  stealing focus from foreground and full-screen applications. `run` in `src/daemon/spawn.ts` defaults
+  `windowsHide: true` for all promise-based `execFile` calls, and adapters and periodic sweeps (quota probes,
+  identity checks, git sweeps) use `spawn.ts` rather than un-hidden private runners.
 - ⛔ **`node --experimental-strip-types` resolves no path aliases, and the failure is silent.**
   `local-llm.test.ts` spawns `adapters/local-llm-bridge.ts` as *source* that way rather than building
   it. Type stripping is not compilation: it knows nothing of `@shared`, so an import through the alias

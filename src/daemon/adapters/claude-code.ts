@@ -1,7 +1,5 @@
 import type { Attachment } from '@shared/tasks.js'
 import { attachmentBytes, attachmentDirs } from '../attachments.js'
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
@@ -30,8 +28,7 @@ import { APPROVE_TOOL } from '../mcpconfig.js'
 import { paths } from '../paths.js'
 import { errorMessage } from '@shared/errors.js'
 import { claudeBilling, nextMonthlyAnniversary, type WorkerBilling } from '@shared/billing.js'
-
-const run = promisify(execFile)
+import { run } from '../spawn.js'
 
 const info: AdapterInfo = {
   id: 'claude-code',
@@ -803,7 +800,7 @@ export const claudeCode: AgentAdapter = {
       // ⛔ Through launchArgs, not directly: this machine resolves a .EXE, but an npm global install
       // leaves a .cmd that Node will not execFile without a shell.
       const probe = launchArgs(resolved, ['--version'])
-      const { stdout } = await run(probe.command, probe.args, { timeout: 15_000 })
+      const { stdout } = await run(probe.command, probe.args, { timeout: 15_000, windowsHide: true })
       const version = stdout.trim().split(/\s+/)[0] ?? stdout.trim()
       return { adapterId: info.id, found: true, path: resolved, version }
     } catch (err) {
@@ -864,7 +861,8 @@ export const claudeCode: AgentAdapter = {
         await run(info.command, ['auth', 'status', '--json'], {
           timeout: 20_000,
           shell: true,
-          env: envFor(isolationRoot)
+          env: envFor(isolationRoot),
+          windowsHide: true
         })
       ).stdout
     } catch (err) {
