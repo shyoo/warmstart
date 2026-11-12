@@ -229,6 +229,46 @@ describe('Antigravity malformed tool call from a resumed conversation (t1015)', 
   })
 })
 
+describe('Antigravity 400 invalid argument from bloated resumed conversation (t1344)', () => {
+  const AGY_400_ERROR =
+    'The agent reported a failure (ERROR): INVALID_ARGUMENT (code 400): Request contains an invalid argument.'
+
+  it('discards the bloated conversation and restarts cold without benching the worker', async () => {
+    const { task, run, session, worker } = seedRunningTask({
+      adapterId: 'antigravity-cli', startedWarm: true, metered: 100, contextTokens: 50000
+    })
+
+    await scheduler.endUnfinishedRun(session, tasks.requireRun(run.id), AGY_400_ERROR, 'failed')
+
+    expect(tasks.requireRun(run.id).outcome).toBe('failed')
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+    expect(sessions.getSession(session.id)?.contextTokens).toBe(0)
+    expect(sessions.getSession(session.id)?.state).toBe('failed')
+    expect(workers.getWorker(worker.id)?.health?.state).not.toBe('suspect')
+    expect(tasks.messagesFor(task.id).some((m) => m.text.includes('restarting cold'))).toBe(true)
+    workers.retireWorker(worker.id)
+  })
+
+  it('rescues task completion from closingReply when stream result ends with a 400 error', async () => {
+    const { task, run, session, worker } = seedRunningTask({
+      adapterId: 'antigravity-cli', startedWarm: true, metered: 100, contextTokens: 50000
+    })
+    activity.noteReplyText(run.id, 'Here are the completed scenarios.\n\nTASK COMPLETE: add TY2025 NY resident scenarios\n', 'delta')
+
+    await turnend.onStreamResult(session, {
+      isError: true,
+      text: 'INVALID_ARGUMENT (code 400): Request contains an invalid argument.',
+      terminalReason: 'ERROR'
+    })
+
+    expect(tasks.requireRun(run.id).outcome).toBe('completed')
+    expect(tasks.requireTask(task.id).status).toBe('completed')
+    expect(sessions.getSession(session.id)?.contextTokens).toBe(0)
+    expect(['closed', 'failed']).toContain(sessions.getSession(session.id)?.state)
+    workers.retireWorker(worker.id)
+  })
+})
+
 describe('a cache-clock compaction that interrupts an open run', () => {
   it('closes the session at the boundary instead of holding the run open', async () => {
     const { task, run, session } = seedRunningTask({ adapterId: 'claude-code', metered: 1000 })

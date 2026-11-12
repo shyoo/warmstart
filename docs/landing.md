@@ -261,7 +261,8 @@ the agent's reply above is then the whole outcome. The hold reason is the short 
 whole under its one-line summary (`closingReply` / `completionMessage` in `activity.ts`; for an
 MCP-less adapter the final message minus its `TASK COMPLETE:` line, `replyBesideContract` — returning
 `undefined` when no contract line is present so the run falls back to `closingReply` instead of quoting
-a trailing vendor error, t986).
+a trailing vendor error, t986; in t1344, `closingReply` is also checked by `lastTerminalContract` so an
+MCP-less stream ending with a trailing error still rescues its `TASK COMPLETE:` completion).
 
 ### When the trunk moved while the branch stayed empty
 

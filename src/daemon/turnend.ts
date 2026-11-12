@@ -18,8 +18,10 @@ import {
   clearHousekeepingPrompt,
   closeSession,
   consumeStreamInterruptResult,
+  invalidateSessionContext,
   sessionDiagnostics
 } from './sessions.js'
+import { closingReply } from './activity.js'
 import { stripAnsi, stripFrames } from './stream.js'
 import { sampleProcessTree } from './stall.js'
 import { backgroundTasksOf, forgetBackground, noteBackgroundTasks } from './backgroundtasks.js'
@@ -392,21 +394,29 @@ export async function onStreamResult(
   // tail of the turn that closed it, and completing "it" would reopen the task through
   // `resumeIdleConversation` and finish work that is waiting on a person.
   if (mcpLess && helperEndedLastRun(session.id)) return
-  // An MCP-less adapter cannot call task_complete, so its prompt gives it two deliberately exact
-  // terminal contracts. Codex streams its prose as `assistant_text` and emits a bare `turn.completed`
-  // with `text: null`, so inspect the session's backscroll when `result.text` carries no terminal contract.
-  const sessionText = stripAnsi(backscroll(session.id)).trim() || null
-  // ⛔ The reply is what the agent said, so the daemon's own dim lines come out first — the session
-  // header and tool rows are pane furniture, and t481's thread quoted the header as the answer.
-  const effectiveText = result.text?.trim() ? result.text : stripAnsi(stripFrames(backscroll(session.id))).trim() || null
-  const terminal = mcpLess ? (lastTerminalContract(result.text) ?? lastTerminalContract(sessionText)) : null
-  const completion = terminal?.completion ?? null
-  const asked = terminal?.asked ?? null
-
   // ⚠️ Read once, above the branches, because a conversation's turn ends on *every* clean path
   // through them and each one used to be able to answer "which task is this" differently.
   const openRun = runForSession(session.id)
   const runTask = openRun?.taskId ? getTask(openRun.taskId) : null
+  const closingText = openRun ? closingReply(openRun.id).trim() || null : null
+
+  // An MCP-less adapter cannot call task_complete, so its prompt gives it two deliberately exact
+  // terminal contracts. Codex streams its prose as `assistant_text` and emits a bare `turn.completed`
+  // with `text: null`, so inspect the session's backscroll or closing reply when `result.text` carries
+  // no terminal contract.
+  const sessionText = stripAnsi(backscroll(session.id)).trim() || null
+  // ⛔ The reply is what the agent said, so the daemon's own dim lines come out first — the session
+  // header and tool rows are pane furniture, and t481's thread quoted the header as the answer.
+  const effectiveText = result.text?.trim()
+    ? result.text
+    : (closingText ?? (stripAnsi(stripFrames(backscroll(session.id))).trim() || null))
+  const terminal = mcpLess
+    ? (lastTerminalContract(result.text) ??
+       (closingText ? lastTerminalContract(closingText) : null) ??
+       lastTerminalContract(sessionText))
+    : null
+  const completion = terminal?.completion ?? null
+  const asked = terminal?.asked ?? null
 
   // ⛔ An adapter with no MCP has no `ask_human`, so the only channel left is the prompt
   // contract it was given: end with `NEEDS DECISION:` and stop. A run that did is **not**
@@ -515,7 +525,9 @@ export async function onStreamResult(
       await completeTask(
         session.id,
         completion ?? (result.text?.trim() || 'Completed'),
-        completion ? replyBesideContract(result.text) : undefined
+        completion
+          ? (replyBesideContract(result.text) ?? (closingText ? replyBesideContract(closingText) : undefined))
+          : undefined
       )
       return
     }
@@ -533,7 +545,22 @@ export async function onStreamResult(
     return
   }
   if (completion) {
-    await completeTask(session.id, completion, replyBesideContract(result.text))
+    if (result.isError) {
+      log.info(
+        `rescuing completed task ${runTask?.seq ?? session.id.slice(0, 8)}: ` +
+          `agent reported TASK COMPLETE before error: ${result.text ?? result.terminalReason ?? 'unknown error'}`
+      )
+      const ad = session.adapterId ? adapter(session.adapterId) : null
+      if (ad && (ad.corruptConversation?.(result.text ?? '') || ad.malformedToolCall?.(result.text ?? ''))) {
+        invalidateSessionContext(session.id)
+      }
+    }
+    await completeTask(
+      session.id,
+      completion,
+      replyBesideContract(result.text) ?? (closingText ? replyBesideContract(closingText) : undefined)
+    )
+    if (result.isError) closeSession(session.id)
     return
   }
   const run = runForSession(session.id)

@@ -297,10 +297,12 @@ export interface AgentAdapter {
   overloaded?: (reason: string) => boolean
 
   /**
-   * Did the CLI reject a malformed tool call from its own conversation? A warm conversation with
-   * this error may replay the same broken call on every resume. The scheduler may discard that
-   * conversation and try once cold; a cold failure still goes to the operator.
+   * Did the provider reject a corrupted or bloated conversation context (e.g. malformed tool call,
+   * payload limits exceeded like INVALID_ARGUMENT 400)? A warm conversation with this error will
+   * replay the same failure on every resume. The scheduler discards that conversation and tries
+   * once cold; a cold failure still goes to the operator.
    */
+  corruptConversation?: (reason: string) => boolean
   malformedToolCall?: (reason: string) => boolean
 
   /**

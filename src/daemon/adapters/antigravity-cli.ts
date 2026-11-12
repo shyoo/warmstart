@@ -1062,10 +1062,23 @@ export const antigravityCli: AgentAdapter = {
   // t1015, 2026-10-09: three resumes of one conversation returned this vendor error verbatim.
   // Match both the malformed-call diagnosis and empty-input detail so unrelated parse errors do
   // not discard a useful conversation.
+  // t1344, 2026-11-12: a heavily resumed conversation (4,900+ steps, 51 MB DB) exceeded provider payload/argument
+  // limits, causing Google CodeAssist to reject calls with INVALID_ARGUMENT (code 400).
+  // Resuming a warm session with this error will fail identically. Discard the bloated conversation
+  // so the task can restart in a fresh conversation.
+  corruptConversation: (reason: string): boolean => {
+    const said = reason.toLowerCase()
+    return (
+      (said.includes('improperly formatted function call') && said.includes('function call is empty - no input to parse')) ||
+      (said.includes('invalid_argument') && (said.includes('400') || said.includes('invalid argument')))
+    )
+  },
   malformedToolCall: (reason: string): boolean => {
     const said = reason.toLowerCase()
-    return said.includes('improperly formatted function call') &&
-      said.includes('function call is empty - no input to parse')
+    return (
+      (said.includes('improperly formatted function call') && said.includes('function call is empty - no input to parse')) ||
+      (said.includes('invalid_argument') && (said.includes('400') || said.includes('invalid argument')))
+    )
   },
 
   /**
