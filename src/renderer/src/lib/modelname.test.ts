@@ -26,6 +26,11 @@ describe('modelLabel', () => {
     expect(modelLabel('claude-haiku-5-5')).toBe('Haiku 5.5')
     expect(modelLabel('claude-haiku-4-5')).toBe('Haiku 4.5')
     // google.antigravity.2026-08
+    expect(modelLabel('gemini-4-hydrogen')).toBe('Gemini 4 Hydrogen')
+    expect(modelLabel('gemini-4-hydrogen', 'high')).toBe('Gemini 4 Hydrogen High')
+    expect(modelLabel('gemini-4-hydrogen', 'xhigh')).toBe('Gemini 4 Hydrogen XHigh')
+    expect(modelLabel('gemini-4-argon')).toBe('Gemini 4 Argon')
+    expect(modelLabel('gemini-4-argon', 'high')).toBe('Gemini 4 Argon High')
     expect(modelLabel('gemini-3.8-flash')).toBe('Gemini 3.8 Flash')
     expect(modelLabel('gemini-3.8-flash', 'high')).toBe('Gemini 3.8 Flash High')
     expect(modelLabel('gemini-3.1-pro')).toBe('Gemini 3.1 Pro')

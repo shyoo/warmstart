@@ -47,6 +47,12 @@ export const DEFAULT_MODEL_CLASSES: Record<string, ModelClass> = {
   'o3': 'high',
 
   // Google Antigravity
+  'gemini-4-hydrogen': 'high',
+  'gemini-4-hydrogen-high': 'high',
+  'gemini-4-hydrogen-xhigh': 'high',
+  'gemini-4-hydrogen-medium': 'med',
+  'gemini-4-hydrogen-low': 'low',
+  'gemini-4-argon': 'high',
   'gemini-3.1-pro': 'high',
   'gemini-3.8-flash': 'med',
   'gemini-3.7-flash': 'med',

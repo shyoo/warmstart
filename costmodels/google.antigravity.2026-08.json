@@ -19,7 +19,7 @@
     "This file becomes useful the moment somebody measures it. Until then its honesty is its value:",
     "an invented multiplier would be indistinguishable from a measured one at the point of use.",
     "",
-    "MODELS: `agy models` in a Windows PTY, agy 1.4.5, 2026-10-24: gemini-4-argon, gemini-3.8-flash, claude-opus-5-5 and claude-sonnet-5-5 each list low|medium|high; gpt-oss-120b lists medium only. Claude 4.6 is retired alongside the previously retired Gemini models, retained for history. New models have unknown context windows and token prices; no figures are copied from another provider.",
+    "MODELS: `agy models` in a Windows PTY, agy 1.5.7, 2026-11-12: gemini-4-hydrogen (low|medium|high|xhigh), gemini-4-argon, gemini-3.8-flash, claude-opus-5-5 and claude-sonnet-5-5 each list low|medium|high; gpt-oss-120b lists medium only. Claude 4.6 is retired alongside the previously retired Gemini models, retained for history. New models have unknown context windows and token prices; no figures are copied from another provider.",
     "Effort is separated into `effort_levels` and passed via `--effort` (low|medium|high) rather than",
     "being blended into model identifiers. Antigravity serves Claude and GPT-OSS models alongside Gemini",
     "— so 'this task needs Claude' does NOT imply 'this task needs a claude-code worker', and",
@@ -54,6 +54,21 @@
     "min_tokens_since_compact": 0
   },
   "models": [
+    {
+      "id": "gemini-4-hydrogen",
+      "context_window": null,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "unknown",
+      "context_awareness": false,
+      "effort_levels": [
+        "low",
+        "medium",
+        "high",
+        "xhigh"
+      ],
+      "pool": "gemini"
+    },
     {
       "id": "gemini-4-argon",
       "context_window": null,

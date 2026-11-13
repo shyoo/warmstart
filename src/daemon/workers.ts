@@ -195,7 +195,7 @@ export function createWorker(input: {
 
   const policy = adapter(input.adapterId).info.policy
   const defaultModel = policy.defaultModel ?? null
-  const defaultEffort = null
+  const defaultEffort = policy.defaultEffort ?? null
   const defaultModels = policy.defaultModels ?? null
   const defaultModelsJson = defaultModels ? JSON.stringify(defaultModels) : null
   const gradingModel = defaultGradingModel(input.adapterId)

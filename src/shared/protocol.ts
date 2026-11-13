@@ -1495,6 +1495,7 @@ export interface AdapterPolicy {
   /** Models with no injected token budget must be told their remaining budget explicitly. */
   needsExplicitBudget: boolean
   defaultModel?: string | null
+  defaultEffort?: string | null
   defaultModels?: Record<string, string | null> | null
 }
 

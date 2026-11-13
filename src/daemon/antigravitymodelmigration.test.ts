@@ -62,7 +62,8 @@ it('repairs rejected worker choices, preserves routing assertions and replays wi
   expect(worker.judgment_model).toBe('claude-opus-5-5')
   expect(worker.judgment_effort).toBe('medium')
   expect(JSON.parse(worker.default_models_json as string)).toEqual({
-    claude: 'claude-sonnet-5-5', gemini: 'gemini-3.8-flash', custom: null
+    // Reopening also runs migration 95, which replaces the Gemini 3.8 Flash default.
+    claude: 'claude-sonnet-5-5', gemini: 'gemini-4-hydrogen', custom: null
   })
   expect(JSON.parse(worker.model_routes_json as string)).toEqual([
     { ...routes[0], model: 'claude-sonnet-5-5', effort: 'medium' },

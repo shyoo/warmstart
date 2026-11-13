@@ -18,6 +18,12 @@ describe('modelclass', () => {
     expect(defaultModelClass('gpt-5.6-terra')).toBe('med')
     expect(defaultModelClass('gpt-5.6-mini')).toBe('low')
 
+    expect(defaultModelClass('gemini-4-hydrogen')).toBe('high')
+    expect(defaultModelClass('gemini-4-hydrogen-high')).toBe('high')
+    expect(defaultModelClass('gemini-4-hydrogen-xhigh')).toBe('high')
+    expect(defaultModelClass('gemini-4-hydrogen-medium')).toBe('med')
+    expect(defaultModelClass('gemini-4-hydrogen-low')).toBe('low')
+    expect(defaultModelClass('gemini-4-argon')).toBe('high')
     expect(defaultModelClass('gemini-3.1-pro')).toBe('high')
     expect(defaultModelClass('gemini-3.8-flash')).toBe('med')
     expect(defaultModelClass('gemini-3.7-flash')).toBe('med')

@@ -543,9 +543,12 @@ behaviour falls out of it:
     unlike `claude-haiku-4-5` (none): run on 2.1.293 (2026-10-07, t984) at `low`, `xhigh` and `max`,
     all answered, `contextWindow: 1000000`; an unknown level is ignored with a warning, not an error.
   - **`antigravity-cli`: true (promoted 2026-09-23, t645).** Antigravity CLI supports
-    `--effort` on base models. Measured with `agy models` in a Windows PTY on **1.4.5,
-    2026-10-24**: `gemini-4-argon`, `gemini-3.8-flash`, `claude-sonnet-5-5` and
-    `claude-opus-5-5` each list low/medium/high; `gpt-oss-120b` lists medium only.
+    `--effort` on base models (`low|medium|high|xhigh|max`). Measured with `agy models` in a
+    Windows PTY on **1.5.7, 2026-11-12**: `gemini-4-hydrogen` lists low/medium/high/xhigh;
+    `gemini-4-argon`, `gemini-3.8-flash`, `claude-sonnet-5-5` and `claude-opus-5-5` each list
+    low/medium/high; `gpt-oss-120b` lists medium only. `gemini-4-hydrogen` (effort `high`) is
+    the default model. Migration 95 replaces saved worker `gemini-3.8-flash` default choices with
+    `gemini-4-hydrogen` at `high` effort and updates the `gemini` pool default.
     Claude Sonnet/Opus 4.6 join Gemini 3.7/3.6/3.5 Flash and 3.1 Pro as retired: retained
     for history, absent from `offeredModelIds`. Migration 93 replaces saved worker Claude 4.6
     choices with 5.5, preserving tags/Auto flags and explicit efforts; absent effort becomes medium.

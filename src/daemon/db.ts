@@ -2506,6 +2506,30 @@ const MIGRATIONS: Migration[] = [
   (conn) => {
     if (!hasColumn(conn, 'workers', 'pricing_override_json')) conn.exec('alter table workers add column pricing_override_json text')
     if (!hasColumn(conn, 'runs', 'pricing_override_json')) conn.exec('alter table runs add column pricing_override_json text')
+  },
+  // 95 - Gemini 4 Hydrogen (High) replaces Gemini 3.8 Flash as Antigravity worker default model (t1346).
+  //
+  // agy 1.5.7 offers `gemini-4-hydrogen` with selectable effort (`low`|`medium`|`high`|`xhigh`).
+  // Hydrogen (High) is the new default model. Worker defaults on `gemini-3.8-flash` move to
+  // `gemini-4-hydrogen` with effort `high`, and `default_models_json` updates its `gemini` pool entry.
+  (conn) => {
+    conn.prepare(`update workers
+      set default_model = 'gemini-4-hydrogen', default_effort = 'high'
+      where adapter_id = 'antigravity-cli'
+        and default_effort is null
+        and (default_model = 'gemini-3.8-flash' or (default_model is null and default_models_json is not null))`).run()
+    const rows = conn.prepare(`select id, default_models_json
+      from workers where adapter_id = 'antigravity-cli' and default_models_json is not null`).all() as Array<{
+      id: string; default_models_json: string
+    }>
+    for (const row of rows) {
+      const defaults = JSON.parse(row.default_models_json) as Record<string, string | null>
+      if (defaults.gemini === 'gemini-3.8-flash') {
+        defaults.gemini = 'gemini-4-hydrogen'
+        conn.prepare('update workers set default_models_json = ? where id = ?')
+          .run(JSON.stringify(defaults), row.id)
+      }
+    }
   }
 ]
 

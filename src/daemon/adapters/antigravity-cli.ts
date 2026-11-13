@@ -238,9 +238,9 @@ const info: AdapterInfo = {
     // and its HTTP POST to a server on 127.0.0.1 was answered. That is everything `warmstart-agent`
     // needs, so this agent gets the worker tools through the helper instead of through MCP.
     agentCli: true,
-    // ⚠️ Selectable reasoning effort: Antigravity supports `--effort low|medium|high` on base models
-    // agy 1.4.5, 2026-10-24: Gemini 4 Argon, 3.8 Flash and Claude Sonnet/Opus 5.5
-    // list low/medium/high variants; GPT-OSS 120B lists medium only.
+    // ⚠️ Selectable reasoning effort: Antigravity supports `--effort low|medium|high|xhigh|max` on base models
+    // agy 1.5.7, 2026-11-12: Gemini 4 Hydrogen (low|medium|high|xhigh), Gemini 4 Argon, 3.8 Flash
+    // and Claude Sonnet/Opus 5.5 list low/medium/high variants; GPT-OSS 120B lists medium only.
     // Base models are used without baked-in effort suffix so effort is chosen via `--effort`.
     selectableEffort: true,
     // ⭐ It has one after all, as of 2026-08-27. `/usage` typed into the TUI is a client-side
@@ -284,8 +284,10 @@ const info: AdapterInfo = {
     // ⛔ Falls out of manualCompact: false. Preemption writes a handoff instead of compacting.
     wrapUpProtocol: 'handoff',
     needsExplicitBudget: true,
+    defaultModel: 'gemini-4-hydrogen',
+    defaultEffort: 'high',
     defaultModels: {
-      gemini: 'gemini-3.8-flash',
+      gemini: 'gemini-4-hydrogen',
       claude: 'claude-sonnet-5-5'
     }
   },
