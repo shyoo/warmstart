@@ -6,16 +6,21 @@ import { hasActiveWork, parsePowerProbe, POWER_GRACE_MS, PowerActionController, 
 afterEach(() => vi.useRealTimers())
 
 describe('one-time power action', () => {
-  it('counts queued, running, landing and resource-held work but ignores human and quota holds', () => {
-    const task = (status: Task['status']) => ({ status, deletedAt: null }) as Task
+  it('counts queued, running, landing and resource-held work but ignores human/quota holds and warm idle work sessions', () => {
+    const task = (status: Task['status'], extra: Partial<Task> = {}) => ({ status, deletedAt: null, ...extra }) as Task
     for (const status of ['ready', 'blocked', 'scheduled', 'assigned', 'running', 'landing_queued', 'cancelling'] as const) {
       expect(hasActiveWork([task(status)], [])).toBe(true)
     }
     for (const status of ['draft', 'awaiting_human', 'paused_quota', 'paused_user', 'completed', 'failed', 'cancelled'] as const) {
       expect(hasActiveWork([task(status)], [])).toBe(false)
     }
+    expect(hasActiveWork([task('awaiting_human', { landing: true })], [])).toBe(true)
     expect(hasActiveWork([{ ...task('running'), deletedAt: 1 }], [])).toBe(false)
-    expect(hasActiveWork([], [{ purpose: 'work', state: 'busy' } as unknown as Session])).toBe(true)
+    expect(hasActiveWork([], [{ purpose: 'work', state: 'live', idle: false } as unknown as Session])).toBe(true)
+    expect(hasActiveWork([task('awaiting_human')], [{ purpose: 'work', state: 'live', idle: true } as unknown as Session])).toBe(false)
+    expect(hasActiveWork([task('awaiting_human')], [{ purpose: 'work', state: 'idle', idle: false } as unknown as Session])).toBe(false)
+    expect(hasActiveWork([], [{ purpose: 'consult', state: 'live', idle: true } as unknown as Session])).toBe(true)
+    expect(hasActiveWork([], [{ purpose: 'review', state: 'live', idle: true } as unknown as Session])).toBe(true)
   })
 
   it('arms only with work, gives a cancel window, and rechecks before execution', async () => {

@@ -85,8 +85,10 @@ Events flow the other way over a WebSocket: `DaemonEvent` (`protocol.ts`) → ma
 Electron main owns the one-time **When done** power action (`main/poweraction.ts`). Only the local
 window may arm it; a paired desktop cannot order another computer to shut down. While armed, main
 reads `task.list` and `session.list` every 5 s without consulting a model. Ready, blocked, scheduled,
-assigned, running, landing-queued and cancelling tasks hold the action; human and quota holds do not.
-Live work, consult and review sessions also hold it. An empty fleet starts a 60 s cancel window;
+assigned, running, landing-queued and cancelling tasks (plus any task mid-landing via `task.landing`)
+hold the action; human and quota holds (`awaiting_human`, `paused_quota`, `paused_user`) do not.
+Work sessions with an open run (`!session.idle && session.state !== 'idle'`), as well as live consult
+and review sessions, hold it; warm idle work sessions kept open for a reply do not. An empty fleet starts a 60 s cancel window;
 new work clears that countdown, and main reads both lists again before issuing the OS command.
 RPC failure cancels the action with an error. The action is one-shot and lives only as long as the
 Electron process. Sleep and hibernate temporarily release the idle-sleep blocker and restore it on

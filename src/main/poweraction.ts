@@ -13,12 +13,18 @@ export function availablePowerActions(platform: NodeJS.Platform): PowerAction[] 
   return []
 }
 
-/** Human and quota holds have no work in flight; resource/dependency holds can resume on their own. */
+/**
+ * Human and quota holds have no work in flight; resource/dependency holds can resume on their own.
+ * A warm `work` session kept open for a reply (`state: 'idle'` or `idle: true`, i.e. no open run)
+ * holds a prefix for the next turn and runs nothing, so it does not block a power action.
+ */
 export function hasActiveWork(tasks: readonly Task[], sessions: readonly Session[]): boolean {
-  return tasks.some((task) => task.deletedAt === null && [
+  return tasks.some((task) => task.deletedAt === null && ([
     'ready', 'blocked', 'scheduled', 'assigned', 'running', 'landing_queued', 'cancelling'
-  ].includes(task.status)) || sessions.some((session) =>
-    ['work', 'consult', 'review'].includes(session.purpose) && !sessionEnded(session.state))
+  ].includes(task.status) || Boolean(task.landing))) || sessions.some((session) =>
+    ['work', 'consult', 'review'].includes(session.purpose) &&
+    !sessionEnded(session.state) &&
+    !(session.purpose === 'work' && (session.state === 'idle' || Boolean(session.idle))))
 }
 
 const POWRPROF = `Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public class Power { [DllImport("powrprof.dll", SetLastError=true)] public static extern bool SetSuspendState(bool hibernate, bool forceCritical, bool disableWakeEvent); [DllImport("powrprof.dll")] public static extern bool IsPwrHibernateAllowed(); [DllImport("powrprof.dll")] public static extern bool IsPwrSuspendAllowed(); }'`
