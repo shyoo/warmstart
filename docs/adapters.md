@@ -860,6 +860,27 @@ terminal record.** Codex and local-llm emit one terminal record each and take th
 unchanged. ⚠️ `input` and `cacheRead` are disjoint (session `f88c6fe8`: 1,384,180 input against
 23,169,687 cache reads over the same calls), so the window level is their sum.
 
+⛔ **The same whole-conversation slice in `agy` also poisons `result.status` and `result.error` on
+every turn after one historical error** (t1349 ← t1338, 2026-11-13, measured on `agy 1.5.7`
+disassembly and all 693 turns across 500 conversation DBs). In `printmode.(*session).runTurn`
+(`0x3ae7bc0`), `agy` slices `turnSteps = allSteps[prevStepCount:]` and checks
+`postResponseFailure(turnSteps)` (`0x3ae4600`), which looks only at steps after
+`LastResponseBearingStepIndex(turnSteps)`. When a turn finishes with a completed `agent_response`,
+`postResponseFailure` returns `nil`, the `--input-format stream-json` loop stays alive, and
+`runStreamTurn` calls `(*streamJSONEmitter).EmitFinal(s.Snapshot())` (`0x3ad2300`) with
+`status = "SUCCESS"`. However, `BeginTurn` (`0x3ad2100`) zeroes `e.turnStartStepIndex = 0` and
+nothing sets it to `prevStepCount`, so `EmitFinal` passes `allSteps[0:]` to
+`steps.BuildJSONOutput` (`0x3396a00`), which calls `steps.LastStepError(allSteps[0:])`
+(`0x3397d60`). `LastStepError` walks backwards to step 0 without stopping at a response or a user
+prompt, sets `out.Error` to any earlier turn's `CORTEX_STEP_TYPE_ERROR_MESSAGE`, and
+`buildResultOutput` (`0x3ad2bce`) refuses to overwrite `out.Status = "ERROR"` whenever
+`out.Error != ""`. Across 693 measured turns, 616/616 clean turns emitted a final `DONE`
+`agent_response` `step_update` before `result`, and 0/7 genuine error turns did (t527's mid-turn
+`RESOURCE_EXHAUSTED` emitted a `tool` step after its last `agent_response`, or no step at all).
+`decodeStream` in `antigravity-cli.ts` tracks whether the turn's own `step_update` stream ended on
+a completed `agent_response` / `finish` step and treats `status: "ERROR"` with a non-empty
+`result.response` on such a turn as `SUCCESS`.
+
 ⚠️ **`/context` exists in the agy TUI and cannot answer this.** agy 1.1.25 has a `/context` slash
 command (*"Visualize current context usage"*, drawing a `└ Context Usage` panel), and
 `parseContextScreen` in the adapter reads that panel. But a work session on this adapter is

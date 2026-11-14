@@ -1,4 +1,5 @@
 import { sessionEnded } from '@shared/protocol.js'
+import { helperEndedLastRun } from './agentcli.js'
 import { delegationsFor, reportDelegationIfSettled } from './delegation.js'
 import { grantedDirsFor } from './attachments.js'
 import { existsSync } from 'node:fs'
@@ -893,7 +894,7 @@ function runQuota(workerId: string): RunQuota | null {
  * Returns the sentence the operator reads on the task, or null to leave it parked.
  */
 export function quotaReleaseFor(task: Task): string | null {
-  const workerId = task.ranOn ?? task.assignee ?? null
+  const workerId = task.ranOn ?? task.assignee ?? task.constraints.workerId ?? task.assigneeHint ?? null
   if (!workerId) return null
   const worker = getWorker(workerId)
   if (!worker) return null
@@ -928,7 +929,8 @@ export function quotaReleaseFor(task: Task): string | null {
   if (quota.sampledAt <= task.updatedAt) return null
 
   const choice = resolveModelChoice(task.constraints, worker, false, quota)
-  const windows = windowsForPool(quota.windows, poolFor(worker, choice.model))
+  const model = task.constraints.model ? choice.model : (task.ranModel ?? choice.model)
+  const windows = windowsForPool(quota.windows, poolFor(worker, model))
   if (windows.length === 0) return null
 
   const blocking = windows.find((w) => !windowExpired(w) && w.percent >= windowHighWater(w))
@@ -5589,6 +5591,15 @@ export const RESUME_QUIET_MS = 5000
 export function resumeIdleConversation(session: Session, opts?: { ignoreQuiet?: boolean }): Run | null {
   if (sessionEnded(session.state)) return null
   if (isHousekeepingTurn(session.id)) return null
+  // ⛔ **A turn whose helper call just parked the task is still finishing that same turn**
+  // (t1349 ← t1338, 2026-11-13). When `warmstart-agent ask_human` or `await_human` runs inside a
+  // shell tool, `runAsHelper` closes the run and rests the task at `awaiting_human` *before* the
+  // shell command exits and returns `STOP HERE` to the CLI. Five to six seconds later — past
+  // `RESUME_QUIET_MS` — the model emits its closing `assistant_text` before `result`. Without this
+  // guard, `resumeIdleConversation` mistook that closing line for an unprompted wakeup, opened a
+  // phantom run, flipped the task back to `running`, and cleared `helperEndedLastRun` before
+  // `onStreamResult` could see it.
+  if (helperEndedLastRun(session.id)) return null
   if (runForSession(session.id)) return null
 
   const last = lastRunForSession(session.id)

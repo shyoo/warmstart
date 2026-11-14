@@ -729,15 +729,22 @@ describe('deciding to refresh rather than merely re-read', () => {
     expect(forced).toBeNull()
   })
 
-  it('takes an urgent request ahead of everything else', () => {
+  it('takes an urgent request ahead of everything else, at the one-minute floor rather than the active cadence (t1349 ← t1338)', () => {
+    settings.setSetting('probeIntervalMinutes', 5)
     const worker = seedWorker('warned')
     sample(worker, { ageMs: 10_000, percent: 40 })
     quota.requestUrgentProbe(worker, 'rate-limit rejected')
     const poller = new quota.QuotaPoller({ demand: demandOf({}) })
 
-    expect(poller.forcedRefresh(worker, { activeWorkerIds: [], releases: [] }, now())?.why).toMatch(
-      /rejected/
-    )
+    const forced = poller.forcedRefresh(worker, { activeWorkerIds: [], releases: [] }, now())
+    expect(forced?.why).toMatch(/rejected/)
+    expect(forced?.urgent).toBe(true)
+    expect(
+      (poller as unknown as { forcedGapMs: (f: NonNullable<typeof forced>, d: import('./quota.js').ProbeDemand) => number }).forcedGapMs(
+        forced!,
+        { activeWorkerIds: [], releases: [] }
+      )
+    ).toBe(quota.MIN_FORCED_GAP_MS)
   })
 
   it('refreshes an account nothing is happening on once its reading passes the idle interval', () => {

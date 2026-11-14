@@ -1166,7 +1166,7 @@ export const RELEASE_PROBE_GRACE_MS = 30_000
  * A live rate-limit warning and a run in flight are both real reasons to look now; neither is a
  * reason to look every ten seconds.
  */
-const MIN_FORCED_GAP_MS = 60_000
+export const MIN_FORCED_GAP_MS = 60_000
 
 /** Even a poller with something urgent to do does not spin. */
 const MIN_DELAY_MS = 1_000
@@ -1443,9 +1443,9 @@ export class QuotaPoller {
     workerId: string,
     demand: ProbeDemand,
     now: number
-  ): { why: string; release?: number; idle?: true } | null {
+  ): { why: string; release?: number; idle?: true; urgent?: true } | null {
     const urgent = urgentProbes.get(workerId)
-    if (urgent) return { why: urgent }
+    if (urgent) return { why: urgent, urgent: true }
 
     const due = this.pendingReleases(demand, now).find(
       (r) => r.workerId === workerId && r.at + RELEASE_PROBE_GRACE_MS <= now
@@ -1601,11 +1601,14 @@ export class QuotaPoller {
    * come due, a live warning — takes the floor: asking twice inside a minute cannot produce a
    * different answer.
    */
-  private forcedGapMs(forced: { release?: number; idle?: true }, demand: ProbeDemand): number {
+  private forcedGapMs(
+    forced: { release?: number; idle?: true; urgent?: true },
+    demand: ProbeDemand
+  ): number {
     // ⭐ An idle refresh is held to the age it is due at, so a refresh that changed nothing (the
     // vendor's own fetch failed, so the reading's timestamp did not move) is not retried every tick.
     if (forced.idle) return this.idleRefreshAfterMs(demand)
-    return forced.release === undefined ? this.activeMs() : MIN_FORCED_GAP_MS
+    return forced.urgent || forced.release !== undefined ? MIN_FORCED_GAP_MS : this.activeMs()
   }
 }
 

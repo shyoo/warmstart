@@ -109,13 +109,30 @@ function park(
   title: string,
   workerId: string,
   notBefore: number | null,
-  parkedAgoMs = 10 * MIN
+  parkedAgoMs = 10 * MIN,
+  model?: string
 ): Task {
+  const parkedAt = Date.now() - parkedAgoMs
   const task = tasks.createTask({ title, createdBy: { kind: 'human' } })
-  tasks.setStatus(task.id, 'paused_quota', { assignee: workerId })
+  // ⛔ Both `preempt` and `restForQuota` finish the run and clear `assignee: null` when parking a
+  // task at `paused_quota` — the account and model live on the closed run (`ranOn`, `ranModel`),
+  // never on `task.assignee` (t1349 ← t1338).
+  const run = tasks.startRun({
+    taskId: task.id,
+    workerId,
+    sessionId: null,
+    projectId: null,
+    quotaUnverified: true,
+    costModelId: null
+  })
+  tasks.finishRun(run.id, 'preempted')
+  tasks.setStatus(task.id, 'paused_quota', { assignee: null })
+  db.db()
+    .prepare('update runs set started_at = ?, ended_at = ?, model = coalesce(?, model) where id = ?')
+    .run(parkedAt - MIN, parkedAt, model ?? null, run.id)
   db.db()
     .prepare('update tasks set not_before = ?, updated_at = ? where id = ?')
-    .run(notBefore, Date.now() - parkedAgoMs, task.id)
+    .run(notBefore, parkedAt, task.id)
   return tasks.requireTask(task.id)
 }
 
@@ -423,6 +440,23 @@ describe('a park that ends because the window actually came back', () => {
     await scheduler.tick()
 
     expect(statusOf(task)).toBe('paused_quota')
+  })
+
+  it('reads the pool the task’s last run actually used (`ranModel`) when no model constraint is pinned (t1349 ← t1338)', async () => {
+    // ⛔ t1338 ran on `gemini-3.1-pro-high` without pinning `constraints.model`. Even if the worker's
+    // default model points at Claude/GPT (99%), the task's warm conversation is on Gemini (17%) and
+    // must be released against the pool its run used.
+    const worker = theAntigravityAccount('claude-sonnet-4-6')
+    const task = park('a gemini conversation with no pinned model', worker, Date.now() + 4 * HOUR, 10 * MIN, 'gemini-3.1-pro-high')
+    reading(worker, [
+      { id: '5h', label: 'Claude/GPT 5h', percent: 99, resetsIn: 2 * HOUR, group: 'claude-gpt' },
+      { id: '5h:gemini', label: 'Gemini 5h', percent: 17, resetsIn: 2 * HOUR, group: 'gemini' }
+    ])
+
+    await scheduler.tick()
+
+    expect(statusOf(task)).toBe('ready')
+    expect(resumeNotes(task)[0]).toMatch(/Gemini 5h/)
   })
 
   it('leaves a park with no account attached alone', async () => {

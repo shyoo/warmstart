@@ -192,12 +192,22 @@ describe('a question asked through the helper', () => {
   it('leaves the turn end alone, so the tail of that turn does not complete the task', async () => {
     // ⛔ On an MCP-less adapter, a turn that ends without a contract line is read as complete. After
     //    the helper parked the run, that reading would finish work that is waiting on a person.
-    const { task, sessionId, token } = working()
+    const { task, runId, sessionId, token } = working()
     await call(token, 'question.ask', { origin: 'ask_human', kind: 'text', question: 'Go ahead?' })
     expect(agentcli.helperEndedLastRun(sessionId)).toBe(true)
     const { getSession } = await import('./sessions.js')
+    const scheduler = await import('./scheduler.js')
     const session = getSession(sessionId)
     if (!session) throw new Error('no session')
+    // ⛔ t1349 ← t1338: the model's closing `assistant_text` arrives 6s after the `/agent` call
+    // closed the run (past `RESUME_QUIET_MS`). `resumeIdleConversation` must not mistake that closing
+    // line for an unprompted wakeup, or it opens a phantom run and clears `helperEndedLastRun` before
+    // `onStreamResult` arrives.
+    db.db()
+      .prepare('update runs set ended_at = ? where id = ?')
+      .run(Date.now() - scheduler.RESUME_QUIET_MS - 2000, runId)
+    expect(scheduler.resumeIdleConversation(session)).toBeNull()
+    expect(agentcli.helperEndedLastRun(sessionId)).toBe(true)
     await turnend.onStreamResult(session, { isError: false, text: 'Filed it; stopping.', terminalReason: null })
     expect(tasks.requireTask(task.id).status).toBe('awaiting_human')
     expect(tasks.runForSession(sessionId)).toBeNull()

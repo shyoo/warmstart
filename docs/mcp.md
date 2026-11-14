@@ -318,8 +318,12 @@ duplicated. A refused card is not matched, so re-sending refused pieces asks aga
 
 ⛔ **The turn end must not overrule the helper.** On an MCP-less adapter `onStreamResult` reads a turn
 with no contract line as complete; after a helper call ended the run that reading reopens the task
-through `resumeIdleConversation` and finishes work waiting on a person. `helperEndedLastRun` returns
-early (`agentcli.test.ts` goes red without it). The `TASK COMPLETE:` / `NEEDS DECISION:` lines stay in
+through `resumeIdleConversation` and finishes work waiting on a person. Both `onStreamResult` and
+`resumeIdleConversation` check `helperEndedLastRun` and return early (`agentcli.test.ts` goes red
+without it) — the latter because the model's closing `assistant_text` can arrive >5s after the
+`/agent` HTTP call closed the run (`RESUME_QUIET_MS`), and treating that closing line as an
+unprompted wakeup opened a phantom run and cleared `helperEndedLastRun` before `result` arrived
+(t1349 ← t1338, 2026-11-13). The `TASK COMPLETE:` / `NEEDS DECISION:` lines stay in
 the prompt as the fallback (`agentCliClause`).
 
 ⚠️ The shims sit in the data directory and are **executed by agents, never loaded by the app**; their

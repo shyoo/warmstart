@@ -288,6 +288,41 @@ describe('antigravity-cli', () => {
     expect(parse('antigravity-cli', [ok]).find((e) => e.kind === 'result')).toMatchObject({ text: 'done' })
   })
 
+  it('ignores a stale historical error on result when the turn’s own steps ended with a DONE agent_response (t1349 ← t1338)', () => {
+    // ⛔ agy 1.5.7 passes `allSteps[0:]` to `steps.BuildJSONOutput`, whose `steps.LastStepError`
+    // walks backwards across the entire conversation history without stopping at a response or a
+    // user prompt. Once a conversation has one old `CORTEX_STEP_TYPE_ERROR_MESSAGE`, every later
+    // clean turn receives `status: "ERROR"` and `error` from that historical step even though the
+    // turn's own `step_update` stream ended with a completed `agent_response`.
+    const doneResponse =
+      '{"event":"step_update","step_update":{"conversation_id":"ba43a97f","step_index":338,' +
+      '"state":"DONE","step_type":"agent_response","text_delta":"Here is the verification checklist."}}'
+    const poisonedResult =
+      '{"event":"result","result":{"conversation_id":"ba43a97f","status":"ERROR",' +
+      '"response":"Here is the verification checklist.",' +
+      '"error":"Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 5h0m0s."}}'
+    expect(
+      parse('antigravity-cli', [init, doneResponse, poisonedResult]).find((e) => e.kind === 'result')
+    ).toMatchObject({
+      isError: false,
+      terminalReason: 'SUCCESS',
+      text: 'Here is the verification checklist.'
+    })
+
+    // ⛔ And a turn that narrated a response, started a tool call, and then died mid-turn (t527)
+    // still reports the error, because the turn did not end on that completed response.
+    const toolStep =
+      '{"event":"step_update","step_update":{"conversation_id":"ba43a97f","step_index":339,' +
+      '"state":"ACTIVE","step_type":"tool","tool_name":"view_file"}}'
+    expect(
+      parse('antigravity-cli', [init, doneResponse, toolStep, poisonedResult]).find((e) => e.kind === 'result')
+    ).toMatchObject({
+      isError: true,
+      terminalReason: 'ERROR',
+      text: 'Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 5h0m0s.'
+    })
+  })
+
   it('reports an unknown cost as null, never as zero', () => {
     // ⛔ Zero would read as "this turn was free" everywhere downstream.
     expect(parse('antigravity-cli', [result]).find((e) => e.kind === 'result')).toMatchObject({

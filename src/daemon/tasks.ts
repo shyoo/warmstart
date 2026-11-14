@@ -1165,7 +1165,9 @@ export function admitDependents(taskId: string): void {
  */
 export function resumeQuotaPaused(released?: (task: Task) => string | null): number {
   const parked = rows<TaskRow>(
-    db().prepare("select * from tasks where status = 'paused_quota' order by created_at asc, seq asc").all()
+    db()
+      .prepare(`${TASK_SELECT} where t.status = 'paused_quota' order by t.created_at asc, t.seq asc`)
+      .all()
   )
   const now = Date.now()
   let resumed = 0
@@ -1218,7 +1220,11 @@ export function resumeQuotaPaused(released?: (task: Task) => string | null): num
 export function quotaParkedTasks(): Array<{ task: Task; workerId: string | null; at: number | null }> {
   return listTasks()
     .filter((t) => t.status === 'paused_quota')
-    .map((task) => ({ task, workerId: task.ranOn ?? task.assignee ?? null, at: task.notBefore ?? null }))
+    .map((task) => ({
+      task,
+      workerId: task.ranOn ?? task.assignee ?? task.constraints.workerId ?? task.assigneeHint ?? null,
+      at: task.notBefore ?? null
+    }))
 }
 
 /** The scheduler's clock tick: `scheduled` tasks whose `not_before` has arrived become `ready`. */

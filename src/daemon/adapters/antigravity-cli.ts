@@ -10,7 +10,7 @@ import type {
   SpawnRequest,
   WrittenPermissions
 } from './types.js'
-import { asRecord, num, type StreamEvent, type StreamUsage } from '../stream.js'
+import { asRecord, num, type DecodeContext, type StreamEvent, type StreamUsage } from '../stream.js'
 import { run } from '../spawn.js'
 import { attachmentDirs } from '../attachments.js'
 import { grantedWritableRoots } from './grants.js'
@@ -456,10 +456,11 @@ function formatToolActivity(step: Record<string, unknown>): string | null {
   return summary
 }
 
-function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEvent[] | null {
+function decodeStream(record: Record<string, unknown>, ctx?: DecodeContext): StreamEvent | StreamEvent[] | null {
   const event = typeof record.event === 'string' ? record.event : ''
 
   if (event === 'init') {
+    if (ctx?.state) ctx.state.lastStepCompletedResponse = false
     const init = asRecord(record.init)
     return {
       kind: 'init',
@@ -471,6 +472,22 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
 
   if (event === 'step_update') {
     const step = asRecord(record.step_update)
+    if (ctx?.state && step) {
+      const stepType = typeof step.step_type === 'string' ? step.step_type : ''
+      const stepState = typeof step.state === 'string' ? step.state : ''
+      if ((stepType === 'agent_response' || stepType === 'finish') && stepState === 'DONE') {
+        ctx.state.lastStepCompletedResponse = true
+      } else if (
+        stepType === 'agent_response' ||
+        stepType === 'finish' ||
+        stepType === 'tool' ||
+        stepType === 'subagent' ||
+        stepType === 'error_message' ||
+        stepState === 'ERROR'
+      ) {
+        ctx.state.lastStepCompletedResponse = false
+      }
+    }
     const events: StreamEvent[] = []
     let text = typeof step?.text_delta === 'string' ? step.text_delta : ''
     if (!text && typeof step?.text === 'string') text = step.text
@@ -502,12 +519,36 @@ function decodeStream(record: Record<string, unknown>): StreamEvent | StreamEven
 
   if (event === 'result') {
     const result = asRecord(record.result)
-    const status =
+    const rawStatus =
       typeof result?.status === 'string'
         ? result.status
         : typeof record.status === 'string'
           ? record.status
           : 'UNKNOWN'
+    // ⛔ **A historical trajectory error poisons every later `result` on the same conversation**
+    // (t1349 ← t1338, 2026-11-13, measured on agy 1.5.7 and all 693 turns across 500 conversation
+    // DBs). In `printmode.(*session).runTurn` (`0x3ae7bc0`), agy slices
+    // `turnSteps = allSteps[prevStepCount:]` and checks `postResponseFailure(turnSteps)` (`0x3ae4600`),
+    // which looks only at steps after `LastResponseBearingStepIndex(turnSteps)`. When a turn finishes
+    // with a completed `agent_response`, `postResponseFailure` returns `nil`, the stream loop stays
+    // alive, and `runStreamTurn` calls `(*streamJSONEmitter).EmitFinal(s.Snapshot())` (`0x3ad2300`)
+    // with `status = "SUCCESS"`. However, `BeginTurn` (`0x3ad2100`) zeroes `e.turnStartStepIndex = 0`
+    // and nothing sets it to `prevStepCount`, so `EmitFinal` passes `allSteps[0:]` — the *entire*
+    // conversation trajectory from step 0, the same slice bug that makes `result.usage` cumulative —
+    // to `steps.BuildJSONOutput` (`0x3396a00`), which calls `steps.LastStepError(allSteps[0:])`
+    // (`0x3397d60`). `LastStepError` walks backwards to step 0 without stopping at a response or a
+    // user prompt, sets `out.Error` to any earlier turn's `CORTEX_STEP_TYPE_ERROR_MESSAGE`, and
+    // `buildResultOutput` (`0x3ad2bce`) refuses to overwrite `out.Status = "ERROR"` whenever
+    // `out.Error != ""`. Across 693 measured turns, 616/616 clean turns emitted a final `DONE`
+    // `agent_response` `step_update` before `result`, and 0/7 genuine error turns did (t527's
+    // mid-turn `RESOURCE_EXHAUSTED` emitted a `tool` step after its last `agent_response`, or no
+    // step at all).
+    const completedThisTurn =
+      ctx?.state?.lastStepCompletedResponse === true &&
+      typeof result?.response === 'string' &&
+      result.response.trim().length > 0
+    if (ctx?.state) ctx.state.lastStepCompletedResponse = false
+    const status = rawStatus === 'ERROR' && completedThisTurn ? 'SUCCESS' : rawStatus
 
     let text: string | null = null
     if (status !== 'SUCCESS' && typeof result?.error === 'string' && result.error.trim()) {
