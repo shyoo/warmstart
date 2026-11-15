@@ -12,7 +12,7 @@ import { adapter } from './adapters/index.js'
 import { voidApprovalsForSession } from './approvals.js'
 import { fileParkedQuestion, parkQuestionsForSession, parkQuestionsForTurnEnd } from './questions.js'
 import { compactionsForTask } from './compaction.js'
-import { addMessage, creditRunListUsd, getTask, isIntegrationParent, runForSession, runsFor, taskOfSession } from './tasks.js'
+import { addMessage, creditRunListUsd, getTask, isIntegrationParent, lastRunForSession, messagesFor, runForSession, runsFor, taskOfSession } from './tasks.js'
 import {
   backscroll,
   clearHousekeepingPrompt,
@@ -393,7 +393,14 @@ export async function onStreamResult(
   // parked it on a question or handed it to a person. That run is closed; this `result` is only the
   // tail of the turn that closed it, and completing "it" would reopen the task through
   // `resumeIdleConversation` and finish work that is waiting on a person.
-  if (mcpLess && helperEndedLastRun(session.id)) return
+  if (mcpLess && helperEndedLastRun(session.id)) {
+    const endedRun = lastRunForSession(session.id)
+    if (!result.isError && endedRun?.taskId) {
+      const prose = proseFrom(result.text) ?? proseFrom(closingReply(endedRun.id))
+      postRunProse(endedRun.taskId, endedRun.id, prose)
+    }
+    return
+  }
   // ⚠️ Read once, above the branches, because a conversation's turn ends on *every* clean path
   // through them and each one used to be able to answer "which task is this" differently.
   const openRun = runForSession(session.id)
@@ -435,6 +442,11 @@ export async function onStreamResult(
       //
       // ⚠️ Before the run is wound up, so the thread reads in the order it happened: the
       // question, then what became of the run that asked it.
+      const decisionProse =
+        proseFrom(result.text) ?? proseFrom(closingText) ?? proseFrom(effectiveText)
+      if (run.taskId && decisionProse) {
+        postRunProse(run.taskId, run.id, decisionProse)
+      }
       fileParkedQuestion({
         sessionId: session.id,
         origin: 'ask_human',
@@ -600,37 +612,78 @@ export async function onStreamResult(
  * ⚠️ Capped at eight, and the em-dash separator is required for a detail. `- Use OAuth` is a label
  * with no detail; splitting on a bare hyphen would cut hyphenated labels in half.
  */
-export function needsDecisionIn(
-  text: string | null
-): { question: string; options: QuestionOption[]; kind: QuestionKind } | null {
-  if (!text) return null
-  const lines = stripAnsi(text).split(/\r?\n/)
+function decisionSpan(
+  lines: string[]
+): { at: number; rawQuestion: string; end: number; optionLines: string[] } | null {
   const at = lines.findLastIndex((line) => /^[ \t>*-]*NEEDS DECISION:/i.test(line))
   if (at === -1) return null
   const rawQuestion = (/^[ \t>*-]*NEEDS DECISION:[ \t]*(.*)$/i.exec(lines[at] ?? '')?.[1] ?? '').trim()
   if (!rawQuestion) return null
 
-  const question = cleanQuestionText(rawQuestion)
-
-  const options: QuestionOption[] = []
+  const optionLines: string[] = []
+  let end = at + 1
   for (const line of lines.slice(at + 1)) {
     const bullet = /^[ \t]*(?:[-*•]|\d+[.)])[ \t]+(.+)$/.exec(line)
     if (!bullet) break
     const body = (bullet[1] ?? '').trim()
     if (!body) break
+    optionLines.push(body)
+    end++
+    if (optionLines.length === 8) break
+  }
+  return { at, rawQuestion, end, optionLines }
+}
+
+export function needsDecisionIn(
+  text: string | null
+): { question: string; options: QuestionOption[]; kind: QuestionKind } | null {
+  if (!text) return null
+  const span = decisionSpan(stripAnsi(text).split(/\r?\n/))
+  if (!span) return null
+
+  const question = cleanQuestionText(span.rawQuestion)
+  const options: QuestionOption[] = span.optionLines.map((body, idx) => {
     const [label, ...rest] = body.split(/\s+[—–]\s+/)
     const detail = rest.join(' — ').trim()
-    options.push({
-      id: `opt${options.length + 1}`,
+    return {
+      id: `opt${idx + 1}`,
       label: (label ?? body).trim().slice(0, 200),
       ...(detail ? { detail: detail.slice(0, 500) } : {})
-    })
-    if (options.length === 8) break
-  }
+    }
+  })
 
-  const isMulti = isMultiSelectQuestion(rawQuestion, options)
+  const isMulti = isMultiSelectQuestion(span.rawQuestion, options)
   const kind: QuestionKind = options.length === 0 ? 'text' : isMulti ? 'multi' : 'choice'
   return { question, options, kind }
+}
+
+/**
+ * Everything written beside a `NEEDS DECISION:` block (explanations, tables, file links),
+ * mirroring `replyBesideContract` so prose is posted to the thread before the question card.
+ */
+export function replyBesideDecision(text: string | null | undefined): string | undefined {
+  if (!text?.trim()) return undefined
+  const lines = stripAnsi(text).split(/\r?\n/)
+  const span = decisionSpan(lines)
+  if (!span) return undefined
+  const body = [...lines.slice(0, span.at), ...lines.slice(span.end)].join('\n').trim()
+  return body || undefined
+}
+
+function proseFrom(text: string | null | undefined): string | undefined {
+  if (!text?.trim()) return undefined
+  if (needsDecisionIn(text)) return replyBesideDecision(text)
+  if (taskCompletionIn(text)) return replyBesideContract(text)?.trim() || undefined
+  return stripAnsi(text).trim() || undefined
+}
+
+function postRunProse(taskId: string, runId: string, text: string | null | undefined): void {
+  const trimmed = text?.trim()
+  if (!trimmed) return
+  const seen = messagesFor(taskId).some(
+    (m) => m.runId === runId && m.role === 'agent' && m.text.trim() === trimmed
+  )
+  if (!seen) addMessage(taskId, 'agent', trimmed, runId)
 }
 
 /**

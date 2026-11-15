@@ -211,6 +211,25 @@ describe('a question asked through the helper', () => {
     await turnend.onStreamResult(session, { isError: false, text: 'Filed it; stopping.', terminalReason: null })
     expect(tasks.requireTask(task.id).status).toBe('awaiting_human')
     expect(tasks.runForSession(sessionId)).toBeNull()
+    expect(tasks.messagesFor(task.id).some((m) => m.role === 'agent' && m.text === 'Filed it; stopping.')).toBe(true)
+  })
+
+  it('preserves closing prose without duplicating raw NEEDS DECISION contracts after a helper ends the run', async () => {
+    const { task, sessionId, token } = working()
+    await call(token, 'question.ask', { origin: 'ask_human', kind: 'text', question: 'Ready to apply?' })
+    const { getSession } = await import('./sessions.js')
+    const session = getSession(sessionId)
+    if (!session) throw new Error('missing session')
+
+    await turnend.onStreamResult(session, {
+      isError: false,
+      text: 'See transient_docs/plan.md for full details.\n\nNEEDS DECISION: Ready to apply?',
+      terminalReason: null
+    })
+
+    const agentMsgs = tasks.messagesFor(task.id).filter((m) => m.role === 'agent').map((m) => m.text)
+    expect(agentMsgs).toContain('See transient_docs/plan.md for full details.')
+    expect(agentMsgs).not.toContain('NEEDS DECISION: Ready to apply?')
   })
 
   it('does not change what an MCP caller gets: no helper context, no deferral', () => {

@@ -2069,7 +2069,7 @@ export async function workspaceState(path: string, target: string): Promise<Work
     // every modified file was reported with its first letter missing: `ept.txt`. Untracked files
     // start with `??` and were unaffected, which is why the loose-ends list looked correct — the
     // scan that found the t5 stash never had a modified file in it to get wrong.
-    for (const line of (await git(path, ['status', '--porcelain'])).split(/\r?\n/)) {
+    for (const line of (await git(path, ['status', '--porcelain', '--untracked-files=all'])).split(/\r?\n/)) {
       const entry = /^(\S{1,2})\s+(.+)$/.exec(line.trim())
       if (!entry) continue
       const [, status, file] = entry as unknown as [string, string, string]

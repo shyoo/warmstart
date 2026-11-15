@@ -256,34 +256,60 @@ function FileRow({
   )
 }
 
-export function DiffPanel({
-  taskId,
-  updatedAt,
-  atGate
-}: {
-  taskId: string
-  /** Re-read when the task moves: landing, committing and replying all change what is on the branch. */
-  updatedAt: number
-  /**
-   * Is this the screen that asks whether the change should land?
-   *
-   * ⛔ Decides whether an unresolvable change says so: only at the gate, because that is the one
-   * screen where *I could not look* answers the question being asked. On a finished task a refusal
-   * would be a red line under every task whose branch is long gone. ⚠️ It does **not** decide
-   * whether the panel is open — nothing does; see the `<details>` below.
-   */
-  atGate: boolean
-}): React.JSX.Element | null {
+export interface TaskDiffState {
+  summary: TaskDiffSummary | null
+  error: string | null
+}
+
+export interface TaskArtifactEntry {
+  path: string
+  added?: number
+  removed?: number
+  uncommitted: boolean
+}
+
+/** Combine committed `.md` files and dirty/untracked workspace `.md` files into clickable artifact chips. */
+export function artifactsOf(summary: TaskDiffSummary | null): TaskArtifactEntry[] {
+  if (!summary) return []
+  const byPath = new Map<string, TaskArtifactEntry>()
+  if (summary.ok) {
+    for (const f of summary.files) {
+      if (f.path.toLowerCase().endsWith('.md')) {
+        byPath.set(f.path, {
+          path: f.path,
+          added: f.added,
+          removed: f.removed,
+          uncommitted: false
+        })
+      }
+    }
+  }
+  for (const p of summary.uncommittedArtifacts ?? []) {
+    const existing = byPath.get(p)
+    if (existing) {
+      existing.uncommitted = true
+    } else {
+      byPath.set(p, { path: p, uncommitted: true })
+    }
+  }
+  return [...byPath.values()]
+}
+
+/** Fetch a task's diff summary when the view has a branch, commits, or trunk workspace to inspect. */
+export function useTaskDiffSummary(
+  taskId: string,
+  updatedAt: number,
+  enabled = true
+): TaskDiffState {
   const [summary, setSummary] = useState<TaskDiffSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const pane = useDiffPane()
-
-  const artifacts = useMemo(() => {
-    if (!summary?.ok) return []
-    return summary.files.filter((f) => f.path.toLowerCase().endsWith('.md'))
-  }, [summary])
 
   useEffect(() => {
+    if (!enabled) {
+      setSummary(null)
+      setError(null)
+      return
+    }
     let live = true
     void (async () => {
       try {
@@ -300,7 +326,84 @@ export function DiffPanel({
     return () => {
       live = false
     }
-  }, [taskId, updatedAt])
+  }, [taskId, updatedAt, enabled])
+
+  return enabled ? { summary, error } : { summary: null, error: null }
+}
+
+/** Visible chip strip for markdown documents created or changed in a task; opens each directly in Rendered view. */
+export function TaskArtifacts({
+  taskId,
+  artifacts
+}: {
+  taskId: string
+  artifacts: TaskArtifactEntry[]
+}): React.JSX.Element | null {
+  const pane = useDiffPane()
+  if (artifacts.length === 0) return null
+  return (
+    <div className="diff-panel-artifacts">
+      <div className="diff-artifacts-label">
+        <svg className="diff-artifact-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5">
+          <path d="M3 2.5A1.5 1.5 0 0 1 4.5 1h5l3.5 3.5v9A1.5 1.5 0 0 1 11.5 15h-7A1.5 1.5 0 0 1 3 13.5v-11z" />
+          <path d="M9.5 1v3.5H13" />
+        </svg>
+        <span>Artifacts ({artifacts.length})</span>
+      </div>
+      <div className="diff-artifacts-chips">
+        {artifacts.map((art) => (
+          <button
+            key={art.path}
+            type="button"
+            className="artifact-chip"
+            title={`View ${art.path} in Viewer pane`}
+            onClick={() =>
+              pane.open({
+                taskId,
+                source: { kind: 'file', path: art.path },
+                viewMode: 'rendered'
+              })
+            }
+          >
+            <span className="artifact-chip-name">{art.path}</span>
+            {art.added !== undefined && art.removed !== undefined && counts(art.added, art.removed)}
+            {art.uncommitted && <span className="artifact-chip-badge">uncommitted</span>}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+export function DiffPanel({
+  taskId,
+  updatedAt,
+  atGate,
+  summaryState,
+  hideArtifacts = false
+}: {
+  taskId: string
+  /** Re-read when the task moves: landing, committing and replying all change what is on the branch. */
+  updatedAt: number
+  /**
+   * Is this the screen that asks whether the change should land?
+   *
+   * ⛔ Decides whether an unresolvable change says so: only at the gate, because that is the one
+   * screen where *I could not look* answers the question being asked. On a finished task a refusal
+   * would be a red line under every task whose branch is long gone. ⚠️ It does **not** decide
+   * whether the panel is open — nothing does; see the `<details>` below.
+   */
+  atGate: boolean
+  /** Optional parent-owned summary fetch so `TaskArtifacts` and `DiffPanel` share one RPC call. */
+  summaryState?: TaskDiffState
+  /** Omit the nested artifacts block when the parent renders `TaskArtifacts` outside the disclosure. */
+  hideArtifacts?: boolean
+}): React.JSX.Element | null {
+  const fetched = useTaskDiffSummary(taskId, updatedAt, summaryState === undefined)
+  const { summary, error } = summaryState ?? fetched
+  const pane = useDiffPane()
+
+  const artifacts = useMemo(() => (hideArtifacts ? [] : artifactsOf(summary)), [hideArtifacts, summary])
 
   // `null` means not yet known, which is not the same as "nothing there" and draws nothing.
   if (!summary && !error) return null
@@ -360,37 +463,7 @@ export function DiffPanel({
           </p>
         )}
 
-        {artifacts.length > 0 && (
-          <div className="diff-panel-artifacts">
-            <div className="diff-artifacts-label">
-              <svg className="diff-artifact-icon" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5">
-                <path d="M3 2.5A1.5 1.5 0 0 1 4.5 1h5l3.5 3.5v9A1.5 1.5 0 0 1 11.5 15h-7A1.5 1.5 0 0 1 3 13.5v-11z" />
-                <path d="M9.5 1v3.5H13" />
-              </svg>
-              <span>Artifacts ({artifacts.length})</span>
-            </div>
-            <div className="diff-artifacts-chips">
-              {artifacts.map((art) => (
-                <button
-                  key={art.path}
-                  type="button"
-                  className="artifact-chip"
-                  title={`View ${art.path} in Viewer pane`}
-                  onClick={() =>
-                    pane.open({
-                      taskId,
-                      source: { kind: 'file', path: art.path },
-                      viewMode: 'rendered'
-                    })
-                  }
-                >
-                  <span className="artifact-chip-name">{art.path}</span>
-                  {counts(art.added, art.removed)}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {!hideArtifacts && <TaskArtifacts taskId={taskId} artifacts={artifacts} />}
 
         {summary?.ok && summary.files.length > 0 && (
           <div className="diff-panel-actions">

@@ -394,4 +394,29 @@ describe('taskdiff.fileContentFor', () => {
     expect(res.ok).toBe(false)
     expect(res.reason).toMatch(/binary/)
   })
+
+  it('surfaces uncommitted and untracked markdown artifacts separately from committed files', async () => {
+    seq += 1
+    const project = kit.makeProject({ dir, name: `trunk-${seq}` })
+    const task = tasks.createTask({
+      title: `trunk-${seq}`,
+      kind: 'conversation',
+      status: 'ready',
+      projectId: project.id,
+      workspaceMode: 'trunk'
+    })
+    const docPath = join(project.root, 'transient_docs', 'uncommitted-plan.md')
+    mkdirSync(join(docPath, '..'), { recursive: true })
+    writeFileSync(docPath, '# Uncommitted Plan\n\nSection 8\n')
+
+    const summary = await taskdiff.diffSummaryFor(task.id)
+    expect(summary.workspaceReadable).toBe(true)
+    expect(summary.files).toEqual([])
+    expect(summary.uncommittedFiles).toBe(1)
+    expect(summary.uncommittedArtifacts).toEqual(['transient_docs/uncommitted-plan.md'])
+
+    const content = await taskdiff.fileContentFor(task.id, 'transient_docs/uncommitted-plan.md')
+    expect(content.ok).toBe(true)
+    expect(content.content).toContain('# Uncommitted Plan')
+  })
 })

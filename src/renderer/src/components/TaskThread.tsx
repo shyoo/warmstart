@@ -88,7 +88,7 @@ import { CacheCost, Fact, ModelFact, SessionFact } from './thread/Facts'
 import { completeTitle, Decide, QuotaDecide, QuotaOverride, usePendingWork, type PendingWorkState } from './thread/Decide'
 import { AssignPills, useReassignChoice, type ReassignChoice } from './thread/Reassign'
 import { DelegatePill } from './thread/DelegatePill'
-import { counts, DiffPanel } from './thread/DiffPanel'
+import { artifactsOf, counts, DiffPanel, TaskArtifacts, useTaskDiffSummary } from './thread/DiffPanel'
 import { sameSource, useDiffPane } from '../lib/diffpane'
 import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
 import { DebateBoard } from './thread/DebateBoard'
@@ -429,6 +429,13 @@ function TaskDetail({
       .catch(() => setAdapters([]))
   }, [])
   const live = showsLiveOutput(task.status)
+  const hasDiffTarget = Boolean(
+    task.projectId &&
+      task.status !== 'draft' &&
+      (task.branch || commits.length > 0 || task.workspaceMode === 'trunk')
+  )
+  const diffState = useTaskDiffSummary(task.id, task.updatedAt, hasDiffTarget)
+  const artifacts = useMemo(() => artifactsOf(diffState.summary), [diffState.summary])
   const resolve = async () => {
     await rpc('task.resolve', { id: task.id })
     await refresh()
@@ -634,6 +641,10 @@ function TaskDetail({
 
           <Thread messages={messages} runs={runs} activity={activity} live={live} landing={Boolean(task.landing)} working={!turnEnded(task)} onOpenFile={onOpenFile} />
 
+          {/* ⛔ Above open questions and outside the collapsed `DiffPanel`, so markdown deliverables
+              and plans stay visible in the surface area when a run stops at a question gate. */}
+          <TaskArtifacts taskId={task.id} artifacts={artifacts} />
+
           {/* ⛔ Between the conversation and the box for replying, because that is what it is: the
               agent's turn to speak ended with a question, and this is where the answer goes. In the
               ledger on the right it would read as a fact about the task rather than a prompt. */}
@@ -675,11 +686,13 @@ function TaskDetail({
               having gone away (2026-09-13). A finished task still resolves: `resolveRange`'s first
               level is the recorded commits, which outlive the branch. The panel opens itself only at
               the gate and says nothing at all where there is no change to resolve. */}
-          {(task.branch || commits.length > 0) && (
+          {hasDiffTarget && (
             <DiffPanel
               taskId={task.id}
               updatedAt={task.updatedAt}
               atGate={task.status === 'awaiting_human'}
+              summaryState={diffState}
+              hideArtifacts
             />
           )}
           {resting && (

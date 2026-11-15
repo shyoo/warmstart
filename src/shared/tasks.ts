@@ -3179,6 +3179,8 @@ export interface PendingWork {
    * target, so the card says where the checkout is and who moves it.
    */
   trunkOffTarget?: { branch: string | null; target: string }
+  /** Dirty or untracked `.md` paths in the workspace. ⛔ Kept separate from committed files that land. */
+  uncommittedArtifacts?: string[]
 }
 
 /** One changed file in a task's diff. Counts always; contents only on request. */
@@ -3231,6 +3233,8 @@ export interface TaskDiffSummary {
   unlandedCommits: number
   /** Could the workspace be read at all? `false` means the two counts above are unknown, not zero. */
   workspaceReadable: boolean
+  /** Dirty or untracked `.md` paths in the workspace, kept separate from committed `files`. */
+  uncommittedArtifacts?: string[]
 }
 
 /** One file's patch text, capped. */

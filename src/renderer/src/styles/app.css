@@ -9562,6 +9562,13 @@ select:focus-visible,
   color: var(--color-accent);
 }
 
+.artifact-chip-badge {
+  font-size: var(--text-meta);
+  color: var(--state-warn);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 .viewer-file-view {
   display: flex;
   flex-direction: column;

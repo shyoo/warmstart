@@ -103,7 +103,12 @@ async function locate(taskId: string): Promise<
  */
 async function pendingFacts(
   taskId: string
-): Promise<Pick<TaskDiffSummary, 'uncommittedFiles' | 'unlandedCommits' | 'workspaceReadable'>> {
+): Promise<
+  Pick<
+    TaskDiffSummary,
+    'uncommittedFiles' | 'unlandedCommits' | 'workspaceReadable' | 'uncommittedArtifacts'
+  >
+> {
   try {
     const pending = await pendingWorkFor(taskId)
     if (!pending.supported) {
@@ -112,7 +117,8 @@ async function pendingFacts(
     return {
       uncommittedFiles: pending.dirtyFiles + pending.untrackedFiles,
       unlandedCommits: pending.unlandedCommits,
-      workspaceReadable: true
+      workspaceReadable: true,
+      ...(pending.uncommittedArtifacts?.length ? { uncommittedArtifacts: pending.uncommittedArtifacts } : {})
     }
   } catch {
     return { uncommittedFiles: 0, unlandedCommits: 0, workspaceReadable: false }
@@ -128,7 +134,10 @@ async function pendingFacts(
 function toSummary(
   entries: Array<{ path: string; added: number; removed: number; binary: boolean }>,
   head: { base: string | null; head: string; from: TaskDiffSummary['from']; separateCommits: number },
-  pending: Pick<TaskDiffSummary, 'uncommittedFiles' | 'unlandedCommits' | 'workspaceReadable'>
+  pending: Pick<
+    TaskDiffSummary,
+    'uncommittedFiles' | 'unlandedCommits' | 'workspaceReadable' | 'uncommittedArtifacts'
+  >
 ): TaskDiffSummary {
   // Biggest change first, the same order the grader reads them in: a truncated list should hold the
   // files where the work happened, not the first ones in the tree.

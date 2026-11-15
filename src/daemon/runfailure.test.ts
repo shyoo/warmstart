@@ -1153,6 +1153,48 @@ describe('a result that is not an error', () => {
     expect(tasks.requireRun(run.id).outcome).toBe('completed')
     expect(tasks.messagesFor(task.id).some((m) => m.text === 'docs: added troubleshooting section')).toBe(true)
   })
+
+  it('posts prose, tables, and links written above NEEDS DECISION: before filing the question card', async () => {
+    const { run, task, session } = seedRunningTask({ adapterId: 'muse-code', metered: 500 })
+    const prose =
+      'I created the implementation plan.\n\n' +
+      '| Option | Risk |\n|---|---|\n| A | Low |\n\n' +
+      'Review [plan.md](transient_docs/plan.md).'
+
+    await turnend.onStreamResult(session, {
+      isError: false,
+      text: `${prose}\n\nNEEDS DECISION: Should I adopt Section 8 of the plan?\n- Proceed — apply plan\n- Revise — adjust scope`,
+      terminalReason: null
+    })
+
+    expect(tasks.requireTask(task.id).status).toBe('awaiting_human')
+    const msgs = tasks.messagesFor(task.id).filter((m) => m.runId === run.id && m.role === 'agent')
+    expect(msgs.map((m) => m.text)).toEqual([
+      prose,
+      'Should I adopt Section 8 of the plan?\n  - Proceed - apply plan\n  - Revise - adjust scope'
+    ])
+  })
+
+  it('recovers prose above NEEDS DECISION: from backscroll when result.text is null, without duplicating bare questions', async () => {
+    const { run, task, session } = seedRunningTask({ adapterId: 'muse-code', metered: 500 })
+    vi.spyOn(sessions, 'backscroll').mockReturnValue(
+      'Here is the summary table.\n\nNEEDS DECISION: Which path?\n- Alpha — fast\n- Beta — thorough'
+    )
+
+    await turnend.onStreamResult(session, {
+      isError: false,
+      text: null,
+      terminalReason: 'turn.completed'
+    })
+
+    const msgs = tasks.messagesFor(task.id).filter((m) => m.runId === run.id && m.role === 'agent')
+    expect(msgs.map((m) => m.text)).toEqual([
+      'Here is the summary table.',
+      'Which path?\n  - Alpha - fast\n  - Beta - thorough'
+    ])
+
+    expect(turnend.replyBesideDecision('NEEDS DECISION: Only question?\n- Yes\n- No')).toBeUndefined()
+  })
 })
 
 /**

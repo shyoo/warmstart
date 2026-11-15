@@ -434,6 +434,11 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
         : 'this task is not holding a workspace and has no branch'
     }
   }
+  const uncommittedArtifacts = [
+    ...new Set(
+      [...state.dirtyFiles, ...state.untrackedFiles].filter((p) => p.toLowerCase().endsWith('.md'))
+    )
+  ].sort()
   return {
     supported: true,
     reason: '',
@@ -445,7 +450,8 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
     // ⛔ Uncommitted files only, and deliberately not `holdsWork`. An unlanded *commit* is work that
     // is already safe on the branch — Finish leaves it exactly where the agent put it, and warning
     // about it would be crying wolf on the ordinary end of every conversation that did commit.
-    hasDiff: state.dirtyFiles.length > 0 || state.untrackedFiles.length > 0
+    hasDiff: state.dirtyFiles.length > 0 || state.untrackedFiles.length > 0,
+    ...(uncommittedArtifacts.length > 0 ? { uncommittedArtifacts } : {})
   }
 }
 
