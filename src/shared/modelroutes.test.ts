@@ -12,6 +12,7 @@ import {
   routableTags,
   routeEffortFor,
   routesFromLegacy,
+  sessionMatchesTags,
   tagBoundEffort,
   tagsRoutable,
   tagsOnWorker,
@@ -311,5 +312,35 @@ describe('what a picker may offer (t1042)', () => {
     expect(tagsRoutable(bare, ['Low', 'ZDR'], 'claude-haiku-4-5')).toBe(false)
     expect(routableTags(bare, null)).toEqual([])
     expect(tagsRoutable(bare, ['Low'], null)).toBe(false)
+  })
+})
+
+describe('sessionMatchesTags (t1398)', () => {
+  const w = {
+    modelRoutes: [
+      row('claude-opus-5-5', 'high', true, ['High']),
+      row('claude-opus-5-5', 'medium', true, ['Med']),
+      row('gemini-4-hydrogen', 'high', true, ['Low']),
+      row('gpt-6-luna', null, true, ['Low'])
+    ]
+  }
+
+  it('requires the exact (model, effort) row when effort is fixed on a live session', () => {
+    expect(sessionMatchesTags(w, 'gemini-4-hydrogen', 'high', ['Low'])).toBe(true)
+    expect(sessionMatchesTags(w, 'gemini-4-hydrogen', 'medium', ['Low'])).toBe(false)
+    expect(sessionMatchesTags(w, 'claude-opus-5-5', 'medium', ['Med'])).toBe(true)
+    expect(sessionMatchesTags(w, 'claude-opus-5-5', 'medium', ['High'])).toBe(false)
+    expect(sessionMatchesTags(w, 'claude-opus-5-5', 'medium', ['Low'])).toBe(false)
+  })
+
+  it('matches effort:null wildcard rows and rejects null models when tags are required', () => {
+    expect(sessionMatchesTags(w, 'gpt-6-luna', 'medium', ['Low'])).toBe(true)
+    expect(sessionMatchesTags(w, null, null, ['Low'])).toBe(false)
+    expect(sessionMatchesTags(w, null, null, [])).toBe(true)
+  })
+
+  it('falls back to inferred model class when the worker lists no rows for that model', () => {
+    expect(sessionMatchesTags(w, 'claude-haiku-4-5', 'low', ['Low'])).toBe(true)
+    expect(sessionMatchesTags(w, 'claude-haiku-4-5', 'low', ['High'])).toBe(false)
   })
 })

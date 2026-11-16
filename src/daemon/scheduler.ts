@@ -44,6 +44,7 @@ import {
   getWorker,
   inheritedModelFor,
   recordDispatchFailure,
+  routableCandidatesFor,
   spendingCreditsOn
 } from './workers.js'
 import {
@@ -216,8 +217,8 @@ import { settings } from './settings.js'
 import { overrunFactor } from './estimator.js'
 import type { Objective } from '@shared/tasks.js'
 import { resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
-import { routeEffortFor, tagBoundEffort } from '@shared/modelroutes.js'
-import { tagsLabel } from '@shared/modeltags.js'
+import { isRoutableModel, pairWithTags, routeEffortFor, sessionMatchesTags, tagBoundEffort, tagsOnWorker } from '@shared/modelroutes.js'
+import { matchesModelTags, tagsLabel } from '@shared/modeltags.js'
 import {
   DEFAULT_OBJECTIVE,
   policy,
@@ -1168,6 +1169,10 @@ export function warmSessionFor(task: Task, workerId?: string): Session | null {
     // the task on the model it was started with and record the one it now asks for.
     const worker = session.workerId ? getWorker(session.workerId) : null
     if (mismatch(pinned(task, worker), session)) return null
+    // ⛔ A task with `modelTags` or `modelPolicy: 'auto'` cannot reuse a live session whose fixed
+    // `(model, effort)` disagrees with what the task routes on `worker` (`pinned()` only sees
+    // explicit model pins, t1398).
+    if (worker && !sessionFitsAutoOrTags(task, worker, session)) return null
     // ⛔ A `streamPrompts: 'once'` session is never warm, whatever its state says. Its CLI reads
     // one prompt from stdin, runs that turn and exits - there is no conversation still sitting there
     // to continue, and handing it a second prompt is a write into a pipe that closed when the first
@@ -1236,12 +1241,14 @@ function borrowCandidates(task: Task, workerId?: string): { offerable: Session[]
     const session = getSession(sessionId)
     if (!session || sessionEnded(session.state)) continue
     if (workerId && session.workerId !== workerId) continue
+    const intent = intentFor(task, session)
+    if (!intent) continue
     const refusal = whyNotShared(task, session, {
       hasWorkspace: true,
       // ⚠️ Asked of the runs and of the lease, because they answer different questions: a run says
       // somebody is mid-turn, a lease says somebody has been given the right to speak next.
       leased: hasOpenRun(sessionId) || leaseHeld(sessionId),
-      intent: intentFor(task, session),
+      intent,
       // These are processes that are still up, and borrowing one means writing a prompt into it.
       continuation: 'live'
     })
@@ -1264,17 +1271,81 @@ function borrowCandidates(task: Task, workerId?: string): { offerable: Session[]
 }
 
 /**
+ * All `(model, effort)` pairs `task` would legitimately dispatch on `worker`.
+ *
+ * ⛔ Explicit model pins and `modelPolicy: 'inherit'` stay on `resolveModelChoice` alone; every
+ * other task routes through `routableCandidatesFor` + `dispatchModelChoice` so tag-scoped tiers
+ * (e.g. `Auto (Low)`) never compare against an unrelated pool default (t1398).
+ */
+function taskIntentChoices(task: Task, worker: Worker): ResolvedModelChoice[] {
+  const canSetEffort = adapter(worker.adapterId).info.capabilities.selectableEffort
+  const tags = task.constraints.modelTags
+  const hasExplicitModel = Boolean(
+    task.constraints.model || task.constraints.modelsByWorker?.[worker.id]
+  )
+
+  if (hasExplicitModel) {
+    const choice = resolveModelChoice(task.constraints, worker, canSetEffort, lastQuota(worker.id))
+    if (tags?.length && !pairWithTags(worker, choice.model, choice.effort, tags)) return []
+    return [choice]
+  }
+  if (task.constraints.modelPolicy === 'inherit') {
+    const choice = resolveModelChoice(task.constraints, worker, canSetEffort, lastQuota(worker.id))
+    if (
+      tags?.length &&
+      !matchesModelTags(tagsOnWorker(worker, choice.model, worker.defaultEffort), tags)
+    ) {
+      return []
+    }
+    return [choice]
+  }
+
+  const candidates = routableCandidatesFor(worker, tags)
+  if (candidates.length === 0) return []
+  return candidates.map((c) => dispatchModelChoice(task, worker, c))
+}
+
+function sessionFitsAutoOrTags(task: Task, worker: Worker, session: Session): boolean {
+  const tags = task.constraints.modelTags
+  if (!tags?.length && task.constraints.modelPolicy !== 'auto') return true
+  const intents = taskIntentChoices(task, worker)
+  if (intents.length === 0) return false
+  // ⛔ An unroutable vendor recording (`t675`) falls back to the worker's configured model rather
+  // than discarding the task's own warm session; only a routable `(model, effort)` can conflict.
+  if (session.model && !isRoutableModel(worker, session.model)) return true
+  if (tags?.length && session.model && !sessionMatchesTags(worker, session.model, session.effort, tags)) {
+    return false
+  }
+  return intents.some((i) => mismatch(i, session) === null)
+}
+
+/**
  * What this task would be run as *in this conversation's account*.
  *
- * ⛔ The same `resolveModelChoice` the dispatch reaches, against the same worker, so the comparison
- * that decides whether a conversation may be borrowed is made against the answer a borrow would
- * actually produce rather than a second guess at it.
+ * ⛔ Resolves against the same routing candidates and `dispatchModelChoice` that dispatch reaches,
+ * returning `null` when `worker` has no routable pair satisfying the task's constraints. When
+ * multiple auto-routed pairs are valid, prefers one matching `session` so compatible sharing still
+ * succeeds while mismatched pairs (`claude-opus-5-5 · medium` vs `Auto (Low)`) fail `mismatch`.
  */
-function intentFor(task: Task, session: Session): ShareIntent {
+function intentFor(task: Task, session: Session): ShareIntent | null {
   const worker = getWorker(session.workerId)
-  const canSetEffort = adapter(session.adapterId).info.capabilities.selectableEffort
-  const choice = resolveModelChoice(task.constraints, worker, canSetEffort, lastQuota(session.workerId))
-  return { model: choice.model, effort: choice.effort }
+  if (!worker) {
+    const canSetEffort = adapter(session.adapterId).info.capabilities.selectableEffort
+    const choice = resolveModelChoice(task.constraints, null, canSetEffort, lastQuota(session.workerId))
+    return { model: choice.model, effort: choice.effort }
+  }
+  const intents = taskIntentChoices(task, worker)
+  if (intents.length === 0) return null
+  const tags = task.constraints.modelTags
+  if (tags?.length && session.model && !sessionMatchesTags(worker, session.model, session.effort, tags)) {
+    // Return a non-matching intent when possible so callers record `'wrong-model'`/`'wrong-effort'`,
+    // or `null` if even model/effort match happened to be null/wildcarded.
+    const mismatching = intents.find((i) => mismatch(i, session) !== null)
+    return mismatching ? { model: mismatching.model, effort: mismatching.effort } : null
+  }
+  const matching = intents.find((i) => mismatch(i, session) === null)
+  const picked = matching ?? intents[0]!
+  return { model: picked.model, effort: picked.effort }
 }
 
 /**
@@ -1304,11 +1375,13 @@ function lendableConversations(task: Task, workerId: string): Session[] {
   const own = new Set(pastSessionsFor(task).map((s) => s.id))
   const candidates = finishedConversationsIn(task.projectId, workerId).filter((session) => {
     if (own.has(session.id)) return false
+    const intent = intentFor(task, session)
+    if (!intent) return false
     return (
       whyNotShared(task, session, {
         hasWorkspace: true,
         leased: hasOpenRun(session.id),
-        intent: intentFor(task, session),
+        intent,
         // ⭐ `revive`, and this is what `codex exec resume` bought: these conversations are closed,
         // so reopening one spawns a fresh process and a one-shot CLI is as able to do that as any
         // other. Gating them `live` would refuse every codex prefix the fleet has ever built.

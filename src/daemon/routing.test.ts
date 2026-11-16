@@ -2628,3 +2628,278 @@ describe('model-aware routing', () => {
     expect(choice.reason).toMatch(/held out/i)
   })
 })
+
+describe('auto tier routing with live and resumable sessions (t1398)', () => {
+  async function antigravitySetup() {
+    const projects = await import('./projects.js')
+    const settingsModule = await import('./settings.js')
+    const { mkdirSync } = await import('node:fs')
+    const { execFileSync } = await import('node:child_process')
+
+    db.db().prepare('update workers set enabled = 0').run()
+    for (const existing of workers.listWorkers()) {
+      if (existing.adapterId === 'antigravity-cli') workers.retireWorker(existing.id)
+    }
+    const repo = join(dir, `repo-t1398-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+    mkdirSync(repo, { recursive: true })
+    execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' })
+    const ws1 = join(repo, '.ws1')
+    mkdirSync(ws1, { recursive: true })
+
+    const project = projects.addProject({ root: repo, name: 'warmstart-t1398' })
+    const agy = workers.createWorker({
+      adapterId: 'antigravity-cli',
+      label: 'Antigravity',
+      maxConcurrent: 4,
+      enabled: true
+    })
+    // Configure Gemini 4 Hydrogen (high) in Low tier while worker defaults remain claude-opus-5-5 medium
+    db.db()
+      .prepare('update workers set default_model = ?, default_effort = ?, default_models_json = ? where id = ?')
+      .run(
+        'claude-opus-5-5',
+        'medium',
+        JSON.stringify({ gemini: 'gemini-4-hydrogen', claude: 'claude-opus-5-5' }),
+        agy.id
+      )
+    workers.updateWorker(agy.id, {
+      modelRoutes: [
+        { model: 'claude-opus-5-5', effort: 'high', tags: ['High'], auto: true },
+        { model: 'gemini-4-argon', effort: 'high', tags: ['High'], auto: true },
+        { model: 'claude-opus-5-5', effort: 'medium', tags: ['Med'], auto: true },
+        { model: 'gemini-4-argon', effort: 'medium', tags: ['Med'], auto: true },
+        { model: 'gemini-4-hydrogen', effort: 'high', tags: ['Low'], auto: true }
+      ]
+    })
+    // Lower Claude/GPT utilization so pool balancing picks claude-opus-5-5 if consulted by resolveModelChoice.
+    const sampleAt = Date.now()
+    const insertQuota = db.db().prepare(
+      `insert or replace into quota_samples
+         (worker_id, window_id, label, percent, resets_at, source, error, sampled_at, window_group, vendor_silent)
+       values (?, ?, ?, ?, ?, 'cli', null, ?, ?, null)`
+    )
+    for (const [id, label, pct, grp] of [
+      ['5h:gemini', 'Gemini 5h', 19, 'gemini'],
+      ['weekly:gemini', 'Gemini 7d', 72, 'gemini'],
+      ['5h:claude', 'Claude/GPT 5h', 30, 'claude'],
+      ['weekly:claude', 'Claude/GPT 7d', 16, 'claude']
+    ] as const) {
+      insertQuota.run(agy.id, id, label, pct, sampleAt + 3_600_000, sampleAt, grp)
+    }
+    settingsModule.setSetting('sessionSharing', 'on')
+
+    const insertSession = (
+      id: string,
+      opts: { model: string; effort: string; state: 'live' | 'closed'; cwd?: string }
+    ) => {
+      const now = Date.now()
+      db.db()
+        .prepare(
+          `insert into sessions (id, worker_id, adapter_id, transport, project_id, cwd, model, effort, state,
+                                 started_at, closed_at, tokens_since_compact, purpose, context_tokens,
+                                 last_request_started_at, cache_expires_at, vendor_session_id)
+           values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        )
+        .run(
+          id,
+          agy.id,
+          'antigravity-cli',
+          'stream',
+          project.id,
+          opts.cwd ?? ws1,
+          opts.model,
+          opts.effort,
+          opts.state,
+          now - 60_000,
+          opts.state === 'closed' ? now - 10_000 : null,
+          0,
+          'work',
+          20_000,
+          now - 10_000,
+          now + 3_600_000,
+          `vendor-${id}`
+        )
+      db.db()
+        .prepare('insert into turns (session_id, request_id, ts, input_tokens) values (?,?,?,?)')
+        .run(id, `req-${id}`, now - 10_000, 100)
+    }
+
+    const bindResidentWorkspace = (sessionId: string, cwd = ws1) => {
+      scheduler.workspaces.set(sessionId, {
+        projectId: project.id,
+        workspace: {
+          claimId: `claim-${sessionId}`,
+          path: cwd,
+          index: 1,
+          kind: 'worktree'
+        }
+      })
+    }
+
+    return { project, agy: workers.requireWorker(agy.id), repo, ws1, insertSession, bindResidentWorkspace }
+  }
+
+  it('routes Auto(Low) to Gemini 4 Hydrogen High instead of holding on a borrowable claude-opus-5-5 Med session', async () => {
+    const { project, agy, insertSession, bindResidentWorkspace } = await antigravitySetup()
+
+    // Live idle session in the same project running claude-opus-5-5 · medium (like t1393 holding ws1)
+    insertSession('sess-opus-med', { model: 'claude-opus-5-5', effort: 'medium', state: 'live' })
+    bindResidentWorkspace('sess-opus-med')
+
+    try {
+      const lowTask = tasks.createTask({
+        title: 'Low tier delegated work',
+        projectId: project.id,
+        constraints: { modelPolicy: 'auto', modelTags: ['Low'] }
+      })
+
+      expect(scheduler.warmSessionFor(lowTask, agy.id)).toBeNull()
+
+      const choice = scoring.chooseTarget(lowTask)
+      expect(choice.reason ?? '').not.toContain('no routable model/effort pair with Low')
+      expect(choice.worker?.id).toBe(agy.id)
+      expect(choice.session).toBeNull()
+      expect(choice.model).toBe('gemini-4-hydrogen')
+      expect(choice.effort).toBe('high')
+    } finally {
+      scheduler.workspaces.delete('sess-opus-med')
+    }
+  })
+
+  it('still borrows a live session when its (model, effort) satisfies Auto(Low) or multi-model Auto(High)', async () => {
+    const { project, agy, insertSession, bindResidentWorkspace } = await antigravitySetup()
+
+    insertSession('sess-hydrogen-high', { model: 'gemini-4-hydrogen', effort: 'high', state: 'live' })
+    bindResidentWorkspace('sess-hydrogen-high')
+
+    try {
+      const lowTask = tasks.createTask({
+        title: 'Borrowable Low session',
+        projectId: project.id,
+        constraints: { modelPolicy: 'auto', modelTags: ['Low'] }
+      })
+      const borrowedLow = scheduler.warmSessionFor(lowTask, agy.id)
+      expect(borrowedLow?.id).toBe('sess-hydrogen-high')
+      const lowChoice = scoring.chooseTarget(lowTask)
+      expect(lowChoice.session?.id).toBe('sess-hydrogen-high')
+      expect([lowChoice.model, lowChoice.effort]).toEqual(['gemini-4-hydrogen', 'high'])
+    } finally {
+      scheduler.workspaces.delete('sess-hydrogen-high')
+    }
+
+    insertSession('sess-argon-high', { model: 'gemini-4-argon', effort: 'high', state: 'live' })
+    bindResidentWorkspace('sess-argon-high')
+
+    try {
+      const highTask = tasks.createTask({
+        title: 'Borrowable Argon High session under multi-model Auto(High)',
+        projectId: project.id,
+        constraints: { modelPolicy: 'auto', modelTags: ['High'] }
+      })
+      expect(scheduler.warmSessionFor(highTask, agy.id)?.id).toBe('sess-argon-high')
+      const highChoice = scoring.chooseTarget(highTask)
+      const argonCandidate = highChoice.scored?.find((c) => c.model === 'gemini-4-argon')
+      const opusCandidate = highChoice.scored?.find((c) => c.model === 'claude-opus-5-5')
+      expect(argonCandidate?.warm).toBe(true)
+      // Only the candidate matching the live session's model/effort inherits warm reuse.
+      expect(opusCandidate?.warm).toBe(false)
+      expect(highChoice.session?.id).toBe('sess-argon-high')
+      expect([highChoice.model, highChoice.effort]).toEqual(['gemini-4-argon', 'high'])
+    } finally {
+      scheduler.workspaces.delete('sess-argon-high')
+    }
+  })
+
+  it('does not trap a conversation on its previous Med session when switched to Auto(Low)', async () => {
+    const { project, agy, insertSession } = await antigravitySetup()
+
+    const task = tasks.createTask({
+      title: 'Conversation switching tier',
+      kind: 'conversation',
+      projectId: project.id,
+      constraints: { modelPolicy: 'auto', modelTags: ['Low'] }
+    })
+
+    // First check closed/reopenable prior session on claude-opus-5-5 · medium (even without explicit modelPolicy: 'auto')
+    insertSession('sess-own-med-closed', { model: 'claude-opus-5-5', effort: 'medium', state: 'closed' })
+    const runClosed = tasks.startRun({
+      taskId: task.id,
+      workerId: agy.id,
+      sessionId: 'sess-own-med-closed',
+      projectId: project.id,
+      quotaUnverified: false,
+      costModelId: 'google.antigravity.2026-08'
+    })
+    tasks.finishRun(runClosed.id, 'completed')
+
+    const noPolicyTask = tasks.updateTask(task.id, { constraints: { modelTags: ['Low'] } })
+    const closedChoice = scoring.chooseTarget(noPolicyTask)
+    expect(closedChoice.worker?.id).toBe(agy.id)
+    expect([closedChoice.model, closedChoice.effort]).toEqual(['gemini-4-hydrogen', 'high'])
+
+    // Now check live own idle session on claude-opus-5-5 · medium when constraints ask for Low
+    insertSession('sess-own-med-live', { model: 'claude-opus-5-5', effort: 'medium', state: 'live' })
+    const runLive = tasks.startRun({
+      taskId: task.id,
+      workerId: agy.id,
+      sessionId: 'sess-own-med-live',
+      projectId: project.id,
+      quotaUnverified: false,
+      costModelId: 'google.antigravity.2026-08'
+    })
+    tasks.finishRun(runLive.id, 'completed')
+
+    const autoLowTask = tasks.updateTask(task.id, { constraints: { modelPolicy: 'auto', modelTags: ['Low'] } })
+    expect(scheduler.warmSessionFor(autoLowTask, agy.id)).toBeNull()
+    const liveChoice = scoring.chooseTarget(autoLowTask)
+    expect(liveChoice.worker?.id).toBe(agy.id)
+    expect(liveChoice.session).toBeNull()
+    expect([liveChoice.model, liveChoice.effort]).toEqual(['gemini-4-hydrogen', 'high'])
+  })
+
+  it('refuses lending closed claude-opus-5-5 Med workspaces to Auto(Low) tasks while lending closed Hydrogen High ones', async () => {
+    const { project, agy, repo, insertSession } = await antigravitySetup()
+    const { mkdirSync } = await import('node:fs')
+    const wsMed = join(repo, '.ws-med')
+    const wsLow = join(repo, '.ws-low')
+    mkdirSync(wsMed, { recursive: true })
+    mkdirSync(wsLow, { recursive: true })
+
+    insertSession('sess-closed-med', { model: 'claude-opus-5-5', effort: 'medium', state: 'closed', cwd: wsMed })
+
+    const lowTask = tasks.createTask({
+      title: 'Fresh Low task',
+      projectId: project.id,
+      constraints: { modelPolicy: 'auto', modelTags: ['Low'] }
+    })
+
+    expect(await scheduler.priorWorkspacePathFor(lowTask, agy.id, project)).toBeUndefined()
+
+    insertSession('sess-closed-low', { model: 'gemini-4-hydrogen', effort: 'high', state: 'closed', cwd: wsLow })
+    expect(await scheduler.priorWorkspacePathFor(lowTask, agy.id, project)).toBe(wsLow)
+  })
+
+  it('excludes unrouted defaultModel sessions when modelPolicy is auto without tags', async () => {
+    const { project, agy, insertSession, bindResidentWorkspace } = await antigravitySetup()
+    workers.updateWorker(agy.id, {
+      modelRoutes: [{ model: 'gemini-4-hydrogen', effort: 'high', tags: ['Low'], auto: true }]
+    })
+    insertSession('sess-unrouted-default', { model: 'claude-opus-5-5', effort: 'medium', state: 'live' })
+    bindResidentWorkspace('sess-unrouted-default')
+
+    try {
+      const autoTask = tasks.createTask({
+        title: 'Plain Auto task',
+        projectId: project.id,
+        constraints: { modelPolicy: 'auto' }
+      })
+      expect(scheduler.warmSessionFor(autoTask, agy.id)).toBeNull()
+      const choice = scoring.chooseTarget(autoTask)
+      expect(choice.worker?.id).toBe(agy.id)
+      expect(choice.session).toBeNull()
+      expect([choice.model, choice.effort]).toEqual(['gemini-4-hydrogen', 'high'])
+    } finally {
+      scheduler.workspaces.delete('sess-unrouted-default')
+    }
+  })
+})

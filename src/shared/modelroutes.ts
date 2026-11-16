@@ -133,6 +133,30 @@ export function pairWithTags(
 }
 
 /**
+ * Does a live session already fixed at `(model, effort)` satisfy `tags` on this worker?
+ *
+ * ⛔ Unlike `pairWithTags` (which falls back to another effort of the same model because a fresh
+ * spawn passes `--effort`), a live process cannot change effort mid-session — when rows exist for
+ * `model` and `effort` is known, only a row matching that effort (or `effort: null`) satisfies `tags`.
+ */
+export function sessionMatchesTags(
+  worker: RoutesHolder,
+  model: string | null | undefined,
+  effort: string | null | undefined,
+  tags: readonly string[] | null | undefined
+): boolean {
+  if (!tags || tags.length === 0) return true
+  if (!model) return false
+  const rows = (worker?.modelRoutes ?? []).filter((r) => r.model === model)
+  if (rows.length === 0) {
+    return matchesModelTags(inferredTags(model), tags)
+  }
+  return rows.some(
+    (r) => (!effort || r.effort === null || r.effort === effort) && matchesModelTags(r.tags, tags)
+  )
+}
+
+/**
  * The effort `model` runs at when the task asked for Auto Model with `tags`.
  *
  * ⛔ **The tags name a (model, effort) row, so they own the effort too** (t811, 2026-09-28). t809

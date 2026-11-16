@@ -3,7 +3,7 @@ import type { QuotaWindow, Session, Worker } from '@shared/protocol.js'
 import type { Objective, Project, Task } from '@shared/tasks.js'
 import { projectTrunkOnly, resolveWorkspaceMode, windowHighWater, WINDOW_HIGH_WATER } from '@shared/tasks.js'
 import { WEIGHT_SIGNS } from '@shared/routing.js'
-import { isRoutableModel, modelOffered, notOffered, pairWithTags } from '@shared/modelroutes.js'
+import { autoRoutes, isRoutableModel, modelOffered, notOffered, pairWithTags, sessionMatchesTags } from '@shared/modelroutes.js'
 import { tagsLabel } from '@shared/modeltags.js'
 import { adapter } from './adapters/index.js'
 import { paceFactors, paceFor, paceValue, type PaceFactors } from './pace.js'
@@ -463,7 +463,10 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
       // the model the account uses, which is a different answer from *any of the models it may be
       // routed to* the moment somebody widens the worker's allowlist.
       candidateModels = inheritedModelFor(worker).map((model) => ({ model, effort: null }))
-    } else if (reuseModel) {
+    } else if (
+      reuseModel &&
+      (task.constraints.modelPolicy !== 'auto' || autoRoutes(worker).length === 0)
+    ) {
       // A live conversation is served by the process already running it: the model was fixed at spawn
       // and dispatchIntoWarmSession cannot change it.
       candidateModels = [{ model: reuseModel, effort: null }]
@@ -485,9 +488,21 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
         // a candidate continues ran at an effort of its own, and that is the row it is.
         const sessionEffort = reuseModel ? reuse?.effort : heldModel ? held?.effort : null
         candidateModels = candidateModels.flatMap((c) => {
+          if (reuseModel && !sessionMatchesTags(worker, c.model, sessionEffort, modelTags)) {
+            return []
+          }
           const pair = pairWithTags(worker, c.model, c.effort ?? sessionEffort, modelTags)
           return pair ? [pair] : []
         })
+        // ⛔ An earlier session on a different model/tier must not trap a non-pinned task into
+        // "no routable model/effort pair" when the worker has auto routes that satisfy the tags (t1398).
+        const explicitPin =
+          Boolean(task.constraints.model) ||
+          Boolean(task.constraints.modelsByWorker?.[worker.id]) ||
+          task.constraints.modelPolicy === 'inherit'
+        if (candidateModels.length === 0 && !explicitPin) {
+          candidateModels = routableCandidatesFor(worker, modelTags)
+        }
       }
       if (candidateModels.length === 0) {
         // ⛔ Names the requirement in full: a hold that says only "no match" cannot be acted on.
@@ -603,12 +618,21 @@ export function chooseTarget(task: Task, random = Math.random): WorkerChoice {
         inferredWindowIds = trustedWindows.map((w) => w.id)
       }
 
-      const session = reuse
-      const estimate = cachedEstimate(worker.adapterId, model, !!held)
+      // ⛔ A live session's configured model and effort were fixed at spawn; only attach it as
+      // warm reuse on a candidate running that same (model, effort) pair (while leaving an
+      // unroutable vendor recording `reuseModel = null` warm on the configured fallback, t675).
+      const session =
+        reuse &&
+        (!reuseModel ||
+          (reuseModel === model && (!reuse.effort || !effort || reuse.effort === effort)))
+          ? reuse
+          : null
+      const candidateHeld = session ?? resumable
+      const estimate = cachedEstimate(worker.adapterId, model, !!candidateHeld)
       rawCandidates.push({
         worker,
         session,
-        resumable,
+        resumable: session ? null : resumable,
         model,
         effort,
         quotaUnverified,
