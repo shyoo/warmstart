@@ -881,6 +881,16 @@ describe('retiring an empty branch a person accepted', () => {
     expect(await landing.retireEmptyBranch(project, 'main', 'main')).toBe(false)
     expect(await landing.retireEmptyBranch(project, 'warmstart/t0-never-cut', 'main')).toBe(false)
   })
+
+  it.each(['none', 'jj'] as const)(
+    'takes the same non-branching path for vcs=%s without deleting the branch',
+    async (vcs) => {
+      const { project, root, branch } = seedBranch()
+      const nonGitProject: Project = { ...project, vcs }
+      expect(await landing.retireEmptyBranch(nonGitProject, branch, 'main')).toBe(false)
+      expect(exists(root, branch)).toBe(true)
+    }
+  )
 })
 
 describe('a task that did commit something', () => {
@@ -2300,4 +2310,31 @@ describe('post-landing commands', () => {
     expect(result.ok, result.reason).toBe(true)
     expect(existsSync(join(root, 'deployed.txt'))).toBe(false)
   }, 30_000)
+})
+
+describe('non-git and jj projects take the same landing path', () => {
+  it.each(['none', 'jj'] as const)(
+    'refuses landing for vcs=%s with the same non-git outcome',
+    async (vcs) => {
+      const branch = `warmstart/t910-${vcs}`
+      const { project, taskId, root } = seedTask(branch)
+      const nonGitProject: Project = { ...project, vcs }
+
+      const result = await landing.landTask({
+        project: nonGitProject,
+        task: tasks.requireTask(taskId),
+        workspacePath: root,
+        branch,
+        policy: 'commit-and-merge'
+      })
+
+      expect(result).toEqual({
+        strategy: 'leave-branch',
+        ok: false,
+        branch,
+        reason: 'project is not a git repository'
+      })
+      expect(tasks.requireTask(taskId).status).toBe('awaiting_human')
+    }
+  )
 })

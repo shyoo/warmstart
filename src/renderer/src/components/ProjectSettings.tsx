@@ -25,11 +25,13 @@ import {
   WORKSPACE_MODE_LABELS,
   projectTrunkOnly,
   projectWorkspaceModeChoice,
-  type WorkspaceMode
+  type WorkspaceMode,
+  type PoolMemberSize
 } from '@shared/tasks'
 import { projectOrientationChoice, resolveCompletionMode, resolveFinishPolicy, resolveSessionSharing } from '@shared/policy'
 import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
+import { formatPoolMemberSize } from '../lib/format'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { SettingRow, SettingSwitch } from './SettingRow'
 import { deleteProject, toggleArchive } from './ProjectMenus'
@@ -387,6 +389,37 @@ function PolicyPanel({
   }
 
   const trunkOnly = projectTrunkOnly(project)
+  const [poolSizes, setPoolSizes] = useState<PoolMemberSize[]>([])
+  const [nowMs, setNowMs] = useState(() => Date.now())
+
+  useEffect(() => {
+    if (trunkOnly || project.vcs !== 'git') {
+      setPoolSizes([])
+      return
+    }
+    let cancelled = false
+    setPoolSizes([])
+    void rpc('project.poolSizes', { id: project.id })
+      .then((rows) => {
+        if (!cancelled) {
+          setPoolSizes(rows)
+          setNowMs(Date.now())
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPoolSizes([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [project.id, project.vcs, project.config.workspaces?.poolSize, trunkOnly])
+
+  useEffect(() => {
+    if (poolSizes.length === 0) return
+    const timer = setInterval(() => setNowMs(Date.now()), 60_000)
+    return () => clearInterval(timer)
+  }, [poolSizes.length])
+
   // ⚠️ What switching back restores. The operator's old pool size is a decision worth keeping
   // across a trunk-only interval; the default is only for projects that never had one.
   const [lastPool, setLastPool] = useState(3)
@@ -751,33 +784,66 @@ function PolicyPanel({
           }
         />
         {!trunkOnly && (
-          <SettingRow
-            title="Workspace pool"
-            description={
-              project.vcs === 'git'
-                ? `${project.config.workspaces?.poolSize ?? 3} parallel worktree${(project.config.workspaces?.poolSize ?? 3) === 1 ? '' : 's'}. A full pool holds new tasks.`
-                : 'One workspace — this project has no repository.'
-            }
-            control={
-              <input
-                className="num-input"
-                type="number"
-                min={1}
-                max={32}
-                disabled={busy || project.vcs !== 'git'}
-                aria-label="Workspace pool size"
-                defaultValue={project.config.workspaces?.poolSize ?? 3}
-                key={project.config.workspaces?.poolSize ?? 3}
-                onBlur={(e) => {
-                  const next = Number(e.target.value)
-                  if (Number.isFinite(next) && next !== (project.config.workspaces?.poolSize ?? 3)) {
-                    setLastPool(next)
-                    apply({ poolSize: next })
-                  }
-                }}
+          <>
+            <SettingRow
+              title="Workspace pool"
+              description={
+                project.vcs === 'git' ? (
+                  <>
+                    <div>
+                      {`${project.config.workspaces?.poolSize ?? 3} parallel worktree${(project.config.workspaces?.poolSize ?? 3) === 1 ? '' : 's'}. A full pool holds new tasks.`}
+                    </div>
+                    {poolSizes.length > 0 && (
+                      <div className="tbl-path mono">
+                        {poolSizes.map((m) => (
+                          <div key={m.path}>{formatPoolMemberSize(m, nowMs)}</div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  'One workspace — this project has no repository.'
+                )
+              }
+              control={
+                <input
+                  className="num-input"
+                  type="number"
+                  min={1}
+                  max={32}
+                  disabled={busy || project.vcs !== 'git'}
+                  aria-label="Workspace pool size"
+                  defaultValue={project.config.workspaces?.poolSize ?? 3}
+                  key={project.config.workspaces?.poolSize ?? 3}
+                  onBlur={(e) => {
+                    const next = Number(e.target.value)
+                    if (Number.isFinite(next) && next !== (project.config.workspaces?.poolSize ?? 3)) {
+                      setLastPool(next)
+                      apply({ poolSize: next })
+                    }
+                  }}
+                />
+              }
+            />
+            {project.vcs === 'git' && (
+              <TextPolicyRow
+                title="Prune on release"
+                value={(project.config.workspaces?.pruneOnRelease ?? []).join(', ')}
+                placeholder="release, out"
+                disabled={busy}
+                ariaLabel="Prune on release directories"
+                onSave={(val) =>
+                  apply({
+                    pruneOnRelease: val
+                      .split(',')
+                      .map((entry) => entry.trim())
+                      .filter(Boolean)
+                  })
+                }
+                description="Ignored build output to delete when a workspace is released. Tracked files are never deleted."
               />
-            }
-          />
+            )}
+          </>
         )}
         {note && <p className="note">{note}</p>}
       </div>

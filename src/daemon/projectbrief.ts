@@ -35,7 +35,7 @@ import { resolveSessionSharing } from './sharing.js'
 import { settings } from './settings.js'
 import { tryGit } from './git.js'
 import { landingTargetFound } from './worktrees.js'
-import { getTask, runForSession } from './tasks.js'
+import { getTask, projectUsesGitBranches, runForSession } from './tasks.js'
 
 export interface RemoteEntry {
   name: string
@@ -176,7 +176,7 @@ export function projectBrief(
         'refused. It is a branch name, not a role: a person sets it under Project Settings › Landing target.'
     )
   }
-  if (project.vcs === 'git' && remotes.length > 0 && !remotes.some((r) => r.name === 'origin')) {
+  if (projectUsesGitBranches(project) && remotes.length > 0 && !remotes.some((r) => r.name === 'origin')) {
     observations.push('There is no `origin` remote, so landings are measured against the local target only.')
   }
   if (!policyLands(level) && level !== 'report-only' && level !== 'custom') {
@@ -227,7 +227,7 @@ export async function readProjectBrief(sessionId: string): Promise<AgentProjectS
   // ⚠️ Fresh from disk, like the landing decision: a warm session can be hours past the last reload.
   const project = reloadProjectIfPresent(task.projectId)
   if (!project) return null
-  const remotes = project.vcs === 'git' ? parseRemotes(await tryGit(project.root, ['remote', '-v'])) : []
-  const targetFound = project.vcs === 'git' ? await landingTargetFound(project.root, landingTargetFor(task, project)) : null
+  const remotes = projectUsesGitBranches(project) ? parseRemotes(await tryGit(project.root, ['remote', '-v'])) : []
+  const targetFound = projectUsesGitBranches(project) ? await landingTargetFound(project.root, landingTargetFor(task, project)) : null
   return projectBrief(task, project, remotes, targetFound)
 }

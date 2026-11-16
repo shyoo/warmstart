@@ -15,7 +15,7 @@ import type {
   WorkspaceRootReport,
   WorkspaceRootState
 } from '@shared/tasks.js'
-import { PROJECT_DOC_NAMES, projectFinishChoice } from '@shared/tasks.js'
+import { PROJECT_DOC_NAMES, projectFinishChoice, projectUsesGitBranches } from '@shared/tasks.js'
 import { canonicalPath, samePath, withinPath } from './fspath.js'
 import { git, remoteUrl, tryGit } from './git.js'
 import { launchArgs, spawnEnv, which } from './which.js'
@@ -296,7 +296,7 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
   // untracked file in somebody else's repository. `local` is for a checkout of a repo the operator
   // does not own (t897): nothing is committed and no tracked file — not even `.gitignore` — changes.
   const local = request.scaffoldingGit === 'local'
-  if (local && project.vcs === 'git') await excludeLocally(project, warnings)
+  if (local && projectUsesGitBranches(project)) await excludeLocally(project, warnings)
 
   let configPath: string | null = null
   let configFreshlyWritten = false
@@ -340,7 +340,7 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
   // entry instead. Either way the trunk handed back is clean.
   if (local) {
     // Nothing to commit, by definition — `excludeLocally` already made the config invisible to git.
-  } else if (project.vcs === 'git') {
+  } else if (projectUsesGitBranches(project)) {
     if (request.scaffoldingGit === 'ignore') {
       await ignoreScaffolding(project, docsWritten, warnings)
     } else {
@@ -746,7 +746,7 @@ export async function swapToForkHome(
  */
 export async function makeForkHome(projectId: string): Promise<ForkHomeResult> {
   const project = requireProject(projectId)
-  if (project.vcs !== 'git') throw new Error('only a git project has remotes')
+  if (!projectUsesGitBranches(project)) throw new Error('only a git project has remotes')
   const policy = policyFor(project)
   if (policy.upstreamRemote) throw new Error(`the fork is already home: the upstream is \`${policy.upstreamRemote}\``)
   const forkRemote = policy.pushRemote ?? FORK_REMOTE
@@ -770,7 +770,7 @@ async function setProjectPolicyAndPool(
   policy: NonNullable<ProjectCreateRequest['policy']>
 ): Promise<Project> {
   const project = setProjectPolicy(id, policy)
-  if (policy.poolSize !== undefined && project.vcs === 'git') {
+  if (policy.poolSize !== undefined && projectUsesGitBranches(project)) {
     try {
       const { ensurePool } = await import('./worktrees.js')
       const members = await ensurePool(project)

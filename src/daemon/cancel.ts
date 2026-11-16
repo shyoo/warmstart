@@ -10,6 +10,7 @@ import {
   dependentsOf,
   finishRun,
   getTask,
+  projectUsesGitBranches,
   requireTask,
   runsFor,
   setStatus
@@ -142,7 +143,7 @@ export async function cancelTask(taskId: string, options: CancelOptions = {}): P
 async function retireCancelledBranch(task: Task): Promise<void> {
   if (task.status !== 'cancelled' || !task.branch || !task.projectId) return
   const project = getProject(task.projectId)
-  if (!project || project.vcs !== 'git') return
+  if (!project || !projectUsesGitBranches(project)) return
   try {
     const verdict = await retireStrandedBranch(project, task.branch, policyFor(project).landingTarget)
     if (!verdict.deleted) {

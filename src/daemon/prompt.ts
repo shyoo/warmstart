@@ -6,7 +6,7 @@ import { describeAttachment, grantedDirsFor } from './attachments.js'
 import { adapter } from './adapters/index.js'
 import { getProject, landingTargetFor, policyFor } from './projects.js'
 import { coldStartBlock } from './orientation.js'
-import { isIntegrationParent, markDelivered, messagesFor, runsFor } from './tasks.js'
+import { isIntegrationParent, markDelivered, messagesFor, projectUsesGitBranches, runsFor } from './tasks.js'
 import { delegateCommandPrompt, delegationClause, delegationRefusal } from './delegation.js'
 import { childrenOf as splitChildrenOf } from './split.js'
 import {
@@ -1081,9 +1081,9 @@ export function promptFor(
   // points at *the validation relevant to what you changed* rather than at a list somebody else runs.
   const toolRunsChecks = adapter(adapterId).info.capabilities.streamPrompts === 'once'
   const integration =
-    project?.vcs === 'git' && !reportsOnly && inTrunk
+    project && projectUsesGitBranches(project) && !reportsOnly && inTrunk
       ? trunkIntegrationClause(!adapter(adapterId).info.capabilities.mcp, trunkTarget ?? landingTargetFor(task, project))
-      : project?.vcs === 'git' && !reportsOnly
+      : project && projectUsesGitBranches(project) && !reportsOnly
       ? integrationClause(
           landingTargetFor(task, project),
           checks.length > 0 && !toolRunsChecks,
@@ -1099,7 +1099,7 @@ export function promptFor(
   // ⭐ Named only where it applies (t704): `task_split` is registered for every session, and this is
   //    what tells a work task or a conversation it may use it. ⚠️ A git project only — a delegated
   //    piece comes back as a branch to merge, and there is nothing to merge without one.
-  const mayDelegate = project?.vcs === 'git' && !isIntegrationParent(task) && delegationRefusal(task) === null
+  const mayDelegate = projectUsesGitBranches(project) && !isIntegrationParent(task) && delegationRefusal(task) === null
   // ⛔ Same rule, same reason: what kind of thing a task is is a domain fact, not a mode name. The
   // organizer arbitrates on `arbitrating` and does the work the operator chose on `executing`.
   const debatePhase = debatePhaseOf(task)
@@ -1304,7 +1304,7 @@ export function promptFor(
  * same sentence as the rest of how to commit. Empty on a project that is simply the operator's own.
  */
 export function upstreamClause(project: Project | null): string {
-  if (!project || project.vcs !== 'git') return ''
+  if (!project || !projectUsesGitBranches(project)) return ''
   const policy = policyFor(project)
   if (policy.upstreamRemote) {
     return (

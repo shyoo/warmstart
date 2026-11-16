@@ -22,7 +22,18 @@ export type { ModelClass } from './modelclass.js'
 
 // ---------------------------------------------------------------------------- project
 
-export type Vcs = 'git' | 'none'
+export type Vcs = 'git' | 'jj' | 'none'
+
+/**
+ * Whether this project uses git branches, worktrees, and git landing paths.
+ *
+ * ⚠️ A `'jj'` project returns `false` until the jj driver (plan §4.3 phase 2,
+ * `transient_docs/t1393-jj-vcs-and-disk-plan_2026-11-15.md`) exists, so a `'jj'` project
+ * behaves identically to `'none'` for now.
+ */
+export function projectUsesGitBranches(project: Pick<Project, 'vcs'> | null | undefined): boolean {
+  return project?.vcs === 'git'
+}
 
 /** Committed at `<project>/.warmstart/project.json`. Nothing secret goes in it. */
 export interface ProjectConfig {
@@ -38,8 +49,19 @@ export interface ProjectConfig {
    * pool at all, every task takes the trunk lease — see `projectTrunkOnly`. Absent means the
    * default pool, which is what every project did before trunk-only mode existed.
    */
-  /** `managed` is portable; absent preserves older sibling pools. */
-  workspaces?: { poolSize?: number; root?: string; location?: 'managed'; mode?: WorkspaceMode }
+  /**
+   * `managed` is portable; absent preserves older sibling pools.
+   *
+   * `pruneOnRelease` names repo-relative ignored directory paths (default empty: nothing pruned)
+   * to remove asynchronously from a pooled worktree when its claim ends.
+   */
+  workspaces?: {
+    poolSize?: number
+    root?: string
+    location?: 'managed'
+    mode?: WorkspaceMode
+    pruneOnRelease?: string[]
+  }
   prepare?: string[]
   check?: string[]
   /**
@@ -182,6 +204,8 @@ export interface ProjectPolicyPatch {
   workspaceRoot?: string
   /** New projects select one location. Existing configs without this key retain sibling pools. */
   workspaceLocation?: 'managed' | 'custom'
+  /** See `ProjectConfig.workspaces.pruneOnRelease`. Empty or null is written as no key. */
+  pruneOnRelease?: string[] | null
   /** See `ProjectConfig.prompt.orientation`. */
   promptOrientation?: OrientationChoice
   /**
@@ -286,6 +310,13 @@ export interface WorkspaceRootReport {
    * default and therefore written as no key at all.
    */
   relative: string | null
+}
+
+/** Disk size measured for one pooled workspace slot, paired with the timestamp it was measured at. */
+export interface PoolMemberSize {
+  path: string
+  bytes: number
+  measuredAt: number
 }
 
 /** The three orientation files, and the only names the scaffolder will write. */
@@ -3063,7 +3094,7 @@ export function projectWorkspaceModeChoice(project: Pick<Project, 'config'> | nu
  * directory, so there is nothing to remove; an absent `poolSize` is the default pool, not a choice.
  */
 export function projectTrunkOnly(project: Pick<Project, 'config' | 'vcs'> | null | undefined): boolean {
-  return !!project && project.vcs === 'git' && project.config?.workspaces?.poolSize === 0
+  return !!project && projectUsesGitBranches(project) && project.config?.workspaces?.poolSize === 0
 }
 
 /**
@@ -3078,7 +3109,7 @@ export function resolveWorkspaceMode(
   task: Pick<Task, 'workspaceMode'> | null | undefined,
   project: Pick<Project, 'config' | 'vcs'> | null | undefined
 ): ResolvedWorkspaceMode {
-  if (!project || project.vcs !== 'git') return { mode: 'worktree', source: 'default' }
+  if (!project || !projectUsesGitBranches(project)) return { mode: 'worktree', source: 'default' }
   if (task && task.workspaceMode && task.workspaceMode !== 'inherit') {
     return { mode: task.workspaceMode, source: 'task' }
   }

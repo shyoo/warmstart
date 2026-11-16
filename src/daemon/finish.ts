@@ -16,7 +16,7 @@ import { landingLevelFor as sharedLandingLevelFor, resolveFinishPolicy as shared
 import { db, rows } from './db.js'
 import { log } from './log.js'
 import { landingTargetFor, listProjects, policyFor } from './projects.js'
-import { listTasks, mandateAllows, runsFor } from './tasks.js'
+import { listTasks, mandateAllows, projectUsesGitBranches, runsFor } from './tasks.js'
 import { openClaims, trunkResourceId } from './resources.js'
 import type { MergeReading } from './landing.js'
 import { commitsOnlyOn, ensurePool, refreshTargetRef, taskBranches, workspaceState } from './worktrees.js'
@@ -870,7 +870,7 @@ async function scanLooseEndsInternal(): Promise<LooseEnd[]> {
   const found: LooseEnd[] = []
 
   for (const project of listProjects()) {
-    if (project.vcs !== 'git') continue
+    if (!projectUsesGitBranches(project)) continue
     const policy = policyFor(project)
     let members: string[]
     try {

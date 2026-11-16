@@ -6,7 +6,7 @@ import { getProject, landingTargetFor, policyFor } from './projects.js'
 import { diffSpecs, isGeneratedPath, numstatEntries, patchFor, resolveRange } from './review.js'
 import { pendingWorkFor } from './resolutions.js'
 import { taskCommitShas } from './taskcommits.js'
-import { getTask } from './tasks.js'
+import { getTask, projectUsesGitBranches } from './tasks.js'
 import { workspaceOnBranch } from './worktrees.js'
 
 /**
@@ -72,7 +72,7 @@ async function locate(taskId: string): Promise<
   if (!task) return { ok: false, reason: 'no such task' }
   const project = task.projectId ? getProject(task.projectId) : null
   if (!project) return { ok: false, reason: 'this task has no project, so there is no diff to show' }
-  if (project.vcs !== 'git') {
+  if (!projectUsesGitBranches(project)) {
     return { ok: false, reason: 'this project is not a git repository, so there is no diff to show' }
   }
 
@@ -203,7 +203,7 @@ async function locateCommit(
   if (!recorded) return { ok: false, reason: 'that commit is not one this task landed' }
   const project = task.projectId ? getProject(task.projectId) : null
   if (!project) return { ok: false, reason: 'this task has no project, so there is no diff to show' }
-  if (project.vcs !== 'git') {
+  if (!projectUsesGitBranches(project)) {
     return { ok: false, reason: 'this project is not a git repository, so there is no diff to show' }
   }
   const cwd = project.root

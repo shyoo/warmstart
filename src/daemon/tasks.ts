@@ -32,10 +32,14 @@ import {
   DERIVED_TASK_SORTS,
   hasPendingSchedule,
   projectTrunkOnly,
+  projectUsesGitBranches,
   type TaskSort,
   type TaskStatus,
-  type TaskView
+  type TaskView,
+  type Vcs
 } from '@shared/tasks.js'
+export { projectUsesGitBranches }
+export type { Vcs }
 import { upgradeLegacyClass } from '@shared/modeltags.js'
 import { timingForRuns, timingForTasks, ZERO_TIMING, type ActiveTiming } from './activetime.js'
 import { attachmentsFor, bindAttachments } from './attachments.js'
@@ -723,12 +727,12 @@ export function isSplitWork(task: Task): boolean {
 
 export function plannerBranchFor(project: Project, task: Task): string | null {
   if (isIntegrationParent(task)) {
-    return task.branch ?? (project.vcs === 'git' ? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit) : null)
+    return task.branch ?? (projectUsesGitBranches(project) ? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit) : null)
   }
   if (task.parentTaskId) {
     const parent = getTask(task.parentTaskId)
     if (isIntegrationParent(parent) && parent) {
-      return parent.branch ?? (project.vcs === 'git' ? branchNameFor(parent.seq, branchTitleFor(project, parent.title), parent.branchUnit) : null)
+      return parent.branch ?? (projectUsesGitBranches(project) ? branchNameFor(parent.seq, branchTitleFor(project, parent.title), parent.branchUnit) : null)
     }
   }
   return null
@@ -796,7 +800,7 @@ export function createTask(input: CreateTaskInput): Task {
   const effectiveLandingTarget =
     input.landingTarget ??
     (parent && integratesChildren(parent)
-      ? (parent.branch ?? (project && project.vcs === 'git' ? branchNameFor(parent.seq, branchTitleFor(project, parent.title), parent.branchUnit) : null))
+      ? (parent.branch ?? (projectUsesGitBranches(project) ? branchNameFor(parent.seq, branchTitleFor(project, parent.title), parent.branchUnit) : null))
       : null)
 
   // ⛔ **`task_split` is an MCP tool, and a plan task has no other route to file its pieces.**

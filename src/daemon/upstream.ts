@@ -27,7 +27,7 @@ import { git, remoteUrl, tryGit } from './git.js'
 import { landingTargetFor, policyFor, requireProject } from './projects.js'
 import { resolveFinishPolicy } from './finish.js'
 import { trunkNotReady, trunkOccupiedBy } from './landing.js'
-import { addMessage, requireTask } from './tasks.js'
+import { addMessage, projectUsesGitBranches, requireTask } from './tasks.js'
 import { taskCommitShas } from './taskcommits.js'
 import { pullRequestUrlIn } from './deliveries.js'
 import { launchArgs, spawnEnv, which } from './which.js'
@@ -311,7 +311,7 @@ export async function syncFromUpstream(projectId: string): Promise<UpstreamSyncR
   const project = requireProject(projectId)
   const policy = policyFor(project)
   const remote = policy.upstreamRemote
-  if (project.vcs !== 'git' || !remote) {
+  if (!projectUsesGitBranches(project) || !remote) {
     throw new Error('this project names no upstream. Sync works once your fork is home — Project settings → Make my fork home.')
   }
   const root = project.root

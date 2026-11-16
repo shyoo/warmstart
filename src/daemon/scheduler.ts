@@ -80,6 +80,7 @@ import {
   setTaskHandoff,
   markConflictAsked,
   markFinishAsked,
+  projectUsesGitBranches,
   setRunQuota,
   setStatus,
   startRun,
@@ -1181,7 +1182,7 @@ export function warmSessionFor(task: Task, workerId?: string): Session | null {
     // ⛔ **A conversation is in one kind of tree, and a task wants one kind.** A trunk task continued
     // in a worktree session would commit to a branch nobody lands; a worktree task continued in the
     // trunk would put its branch's work on the operator's checkout.
-    if (project && project.vcs === 'git' && samePath(session.cwd, project.root) !== trunkWanted) return null
+    if (project && projectUsesGitBranches(project) && samePath(session.cwd, project.root) !== trunkWanted) return null
     // A session with an open run is busy; only an idle one can take work.
     return hasOpenRun(session.id) ? null : session
   }
@@ -1454,7 +1455,7 @@ export async function priorWorkspacePathFor(
   const taskLast = past.find((s) => s.cwd)?.cwd
   if (taskLast) return taskLast
 
-  if (project && project.vcs === 'git') {
+  if (project && projectUsesGitBranches(project)) {
     const branch = task.branch ?? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit)
     const onBranch = await workspaceOnBranch(project, branch, landingTargetFor(task, project))
     if (onBranch?.path) return onBranch.path
@@ -1896,7 +1897,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
       }
     }
 
-    branch = project.vcs === 'git' ? (task.branch ?? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit)) : null
+    branch = projectUsesGitBranches(project) ? (task.branch ?? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit)) : null
     // ⛔ The task goes through, so a split child is cut from its **plan branch** rather than the
     //    project's trunk. Without it child 2 would be branched off `main`, would not contain child 1's
     //    work, and a `depends_on` edge between them would order the runs and deliver nothing.
@@ -1975,7 +1976,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   const trunkNotice =
     trunkSurvey && project ? trunkArrivalNotice(trunkSurvey, landingTargetFor(task, project)) : null
   const worktreeNotice =
-    !trunkMode && project && project.vcs === 'git' && workspace && !samePath(workspace.path, project.root)
+    !trunkMode && project && projectUsesGitBranches(project) && workspace && !samePath(workspace.path, project.root)
       ? worktreeArrivalNotice(workspace.path, project.root, branch, landingTargetFor(task, project))
       : null
   const rescueNotice = rescued
@@ -2395,7 +2396,7 @@ async function dispatchIntoWarmSession(
   // exact failure phase 2's switch-and-tell exists to prevent.
   const branch = trunkMode
     ? null
-    : (task.branch ?? (project && project.vcs === 'git' ? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit) : null))
+    : (task.branch ?? (project && projectUsesGitBranches(project) ? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit) : null))
 
   // Whose conversation this was, read **before** the switch moves the tree off their branch.
   const previousOccupant = session.currentBranch ? taskOnBranch(session.currentBranch) : null
@@ -2403,7 +2404,7 @@ async function dispatchIntoWarmSession(
   // ⚠️ Put the tree on this task's branch, and say so — to the task that was here, to the agent, and
   // in the log.
   let notice: string | null = null
-  if (project && project.vcs === 'git' && branch) {
+  if (project && projectUsesGitBranches(project) && branch) {
     const path = workspaces.get(session.id)?.workspace.path ?? session.cwd
     const moved = await switchBorrowedTree(project, session, path, task, branch)
     if (!moved.ok) {
@@ -4272,7 +4273,7 @@ async function landCompletion(
   // and its commit sat unpushed in another project. Measured before either ladder runs, and a hold
   // rather than an act: another repository's checks and remote are nobody's policy here.
   const strays =
-    project && held && project.vcs === 'git'
+    project && held && projectUsesGitBranches(project)
       ? await strayCommits({
           lines: runActivityFor(run.id).map((e) => e.text),
           since: run.startedAt,
@@ -4299,7 +4300,7 @@ async function landCompletion(
       detail: `${strayHold}\n\n${strayNote(strays)}`
     })
     setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: strayHold })
-  } else if (project && held && held.workspace.kind === 'trunk' && project.vcs === 'git') {
+  } else if (project && held && held.workspace.kind === 'trunk' && projectUsesGitBranches(project)) {
     // ⭐ **A trunk task's finish.** Its own ladder (`decideTrunkFinish`): there is no branch to read,
     // so everything below that measures one is skipped, and the acts are the same four — ask once,
     // hand to a person, verify-and-maybe-push, or done.
@@ -4368,7 +4369,7 @@ async function landCompletion(
       addMessage(task.id, 'system', `Finished — ${oneLine(why)}`, null, [], {})
       setStatus(task.id, 'completed')
     }
-  } else if (project && held && task.branch && project.vcs === 'git') {
+  } else if (project && held && task.branch && projectUsesGitBranches(project)) {
     // ⛔ One decision function, asked once, with the workspace read once. Everything below acts on
     // what it returns; nothing below decides anything for itself. See finish.ts for why the tool
     // never authors a commit here.

@@ -3,7 +3,7 @@ import { errorMessage } from '@shared/errors.js'
 import { emit } from './events.js'
 import { log } from './log.js'
 import { listProjects, policyFor } from './projects.js'
-import { addMessage, getTask, listTasks } from './tasks.js'
+import { addMessage, getTask, listTasks, projectUsesGitBranches } from './tasks.js'
 import { mergedDeliveryFor, openDeliveryFor } from './deliveries.js'
 import { stashesFrom } from './landing.js'
 import { retireStrandedBranch, taskBranches } from './worktrees.js'
@@ -36,7 +36,7 @@ export async function retireSettledBranches(): Promise<{ retired: string[] }> {
   const retired: string[] = []
   try {
     for (const project of listProjects()) {
-      if (project.vcs !== 'git') continue
+      if (!projectUsesGitBranches(project)) continue
       try {
         const done = await retireIn(project)
         if (done.length > 0) {

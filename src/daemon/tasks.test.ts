@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { narrowMandate } from './tasks.js'
+import { narrowMandate, projectUsesGitBranches } from './tasks.js'
 import { matchesPattern, parseRule } from './approvals.js'
 import { branchNameFor } from './worktrees.js'
 import { ROOT_MANDATE } from '@shared/tasks.js'
@@ -80,5 +80,15 @@ describe('branchNameFor', () => {
 
   it('survives a title made entirely of punctuation', () => {
     expect(branchNameFor(3, '!!!')).toBe('warmstart/t3')
+  })
+})
+
+describe('projectUsesGitBranches', () => {
+  it('returns true only for git and false for jj, none, null, and undefined', () => {
+    expect(projectUsesGitBranches({ vcs: 'git' })).toBe(true)
+    expect(projectUsesGitBranches({ vcs: 'jj' })).toBe(false)
+    expect(projectUsesGitBranches({ vcs: 'none' })).toBe(false)
+    expect(projectUsesGitBranches(null)).toBe(false)
+    expect(projectUsesGitBranches(undefined)).toBe(false)
   })
 })

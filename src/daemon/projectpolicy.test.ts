@@ -335,3 +335,32 @@ describe('a project configured by a pre-rename build', () => {
     expect(projects.policyFor(projects.reloadProject(project.id)).check).toEqual(['npm test'])
   })
 })
+
+describe('workspaces.pruneOnRelease', () => {
+  it('defaults to empty and round-trips normalized repo-relative directories', () => {
+    const project = makeProject()
+    expect(projects.policyFor(project).pruneOnRelease).toEqual([])
+
+    const updated = projects.setProjectPolicy(project.id, {
+      pruneOnRelease: ['  ./release/ ', 'out\\', 'release']
+    })
+    expect((configOnDisk(updated).workspaces as Record<string, unknown>).pruneOnRelease).toEqual([
+      'release',
+      'out'
+    ])
+    expect(projects.policyFor(updated).pruneOnRelease).toEqual(['release', 'out'])
+
+    const cleared = projects.setProjectPolicy(project.id, { pruneOnRelease: [] })
+    expect((configOnDisk(cleared).workspaces as Record<string, unknown>).pruneOnRelease).toBeUndefined()
+    expect(projects.policyFor(cleared).pruneOnRelease).toEqual([])
+  })
+
+  it('refuses paths escaping the repository or naming git internals', () => {
+    const project = makeProject()
+    for (const bad of ['../outside', '/abs/dir', 'C:/abs', '.git', '.git/objects', '.GIT', '.jj', '.jj/repo', '.JJ\\repo', '.']) {
+      expect(() => projects.setProjectPolicy(project.id, { pruneOnRelease: [bad] })).toThrow(
+        /repo-relative directory/
+      )
+    }
+  })
+})

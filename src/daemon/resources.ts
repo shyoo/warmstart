@@ -210,11 +210,30 @@ export function reassignClaim(claimId: string, holder: string): void {
   if (changed) log.debug(`claim ${claimId.slice(0, 8)} now held by ${holder}`)
 }
 
+const releaseListeners = new Set<(claim: ResourceClaim) => void>()
+
+/** Subscribe to synchronous claim-release notifications without coupling broker and pool modules. */
+export function onResourceReleased(listener: (claim: ResourceClaim) => void): () => void {
+  releaseListeners.add(listener)
+  return () => {
+    releaseListeners.delete(listener)
+  }
+}
+
 export function release(claimId: string): void {
   const r = row<ClaimRow>(db().prepare('select * from resource_claims where id = ?').get(claimId))
   if (!r || r.released_at) return
-  db().prepare('update resource_claims set released_at = ? where id = ?').run(Date.now(), claimId)
+  const releasedAt = Date.now()
+  db().prepare('update resource_claims set released_at = ? where id = ?').run(releasedAt, claimId)
   announce(r.resource_id)
+  const closed = toClaim({ ...r, released_at: releasedAt })
+  for (const listener of releaseListeners) {
+    try {
+      listener(closed)
+    } catch (err) {
+      log.warn(`release listener failed for claim ${claimId}:`, err)
+    }
+  }
 }
 
 export function claimsForHolder(holder: string): ResourceClaim[] {

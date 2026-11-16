@@ -49,9 +49,11 @@ import type {
   ProjectDocDraft,
   ProjectInspection,
   ProjectPolicyPatch,
+  PoolMemberSize,
   WorkspaceRootReport,
   WorkspaceMode,
   WorkspaceModeChoice,
+  Vcs,
   PendingWork,
   TaskDiffFile,
   TaskDiffSummary,
@@ -2095,6 +2097,11 @@ export interface RpcMap {
    * ⚠️ Read-only: it never builds the pool. A project that has never dispatched answers `[]`.
    */
   'project.flow': { params: { projectId: string }; result: FlowWorkspace[] }
+  /**
+   * Read-only disk size per pooled workspace member, walked with `fs` at most once per 10 minutes
+   * per project and cached in memory (`measuredAt` travels with every reading).
+   */
+  'project.poolSizes': { params: { id: string }; result: PoolMemberSize[] }
 
   'task.list': { params: { projectId?: string; includeDeleted?: boolean } | void; result: Task[] }
   /** The phone overview's bounded, reverse-chronological project timeline. */
@@ -3330,7 +3337,7 @@ export interface TaskCreateParams {
 
 /** What `project_settings` tells an agent about the project its task runs in. See `projectbrief.ts`. */
 export interface AgentProjectSettings {
-  project: { name: string; vcs: 'git' | 'none'; root: string; config: string | null }
+  project: { name: string; vcs: Vcs; root: string; config: string | null }
   task: { seq: number; kind: string }
   landing: {
     /** What `task_complete` does with this task's work, task → project → fleet. */

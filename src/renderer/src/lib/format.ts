@@ -1,5 +1,5 @@
 import type { Session, Worker } from '@shared/protocol'
-import { isWorkerSubscriptionExpired, type RunQuota } from '@shared/tasks'
+import { isWorkerSubscriptionExpired, type PoolMemberSize, type RunQuota } from '@shared/tasks'
 import { billingDate, type WorkerBilling } from '@shared/billing'
 /**
  * Formatting for numbers that update in place.
@@ -390,4 +390,31 @@ export function billingLine(
   const checked =
     billing.vendorCheckedAt !== null ? ` The vendor last confirmed the subscription ${age(now - billing.vendorCheckedAt)}.` : ''
   return { text, title: billing.source + checked, passed }
+}
+
+/** Human-readable byte size for one workspace slot. */
+export function formatPoolBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return 'unknown'
+  if (bytes < 1024) return `${Math.round(bytes)} B`
+  const kb = bytes / 1024
+  if (kb < 1024) return `${kb.toFixed(1)} KB`
+  const mb = kb / 1024
+  if (mb < 1024) return `${mb.toFixed(1)} MB`
+  return `${(mb / 1024).toFixed(1)} GB`
+}
+
+/** Format a disk-measurement timestamp as an explicit age (never render a size without one). */
+export function formatMeasuredAge(measuredAt: number, now = Date.now()): string {
+  const minutes = Math.max(0, Math.round((now - measuredAt) / 60_000))
+  if (minutes < 1) return 'measured just now'
+  if (minutes < 60) return `measured ${minutes} min ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 48) return `measured ${hours} h ago`
+  return `measured ${Math.round(hours / 24)} d ago`
+}
+
+/** Format one pool member's disk usage with its slot label and measurement age. */
+export function formatPoolMemberSize(member: PoolMemberSize, now = Date.now()): string {
+  const slot = member.path.replace(/\\/g, '/').split('/').filter(Boolean).at(-1) ?? member.path
+  return `${slot} · ${formatPoolBytes(member.bytes)} · ${formatMeasuredAge(member.measuredAt, now)}`
 }

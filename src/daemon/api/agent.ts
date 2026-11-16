@@ -1,5 +1,5 @@
 /** The worker RPCs an agent reaches through MCP, and the only ones it can. */
-import { addMessage, createTask, getTask, getTaskBySeq, messagesFor, requireTask, runForSession, runsFor, setTaskHandoff } from '../tasks.js'
+import { addMessage, createTask, getTask, getTaskBySeq, messagesFor, projectUsesGitBranches, requireTask, runForSession, runsFor, setTaskHandoff } from '../tasks.js'
 import { landConversationWork } from '../conversationland.js'
 import { approvedSplit, askQuestion, markSplitFiled, sameSplitCard } from '../questions.js'
 import { AGENT_CLI_COMMAND } from '../agentcli.js'
@@ -167,7 +167,7 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
         const project = parent.projectId ? getProject(parent.projectId) : null
         const branch =
           parent.branch ??
-          (project && project.vcs === 'git'
+          (project && projectUsesGitBranches(project)
             ? branchNameFor(parent.seq, branchTitleFor(project, parent.title), parent.branchUnit)
             : null)
         if (!branch) {

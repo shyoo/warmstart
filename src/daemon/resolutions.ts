@@ -27,6 +27,7 @@ import {
   listTasks,
   markResolveRetryAsked,
   messagesFor,
+  projectUsesGitBranches,
   runsFor,
   setHoldReason,
   setLandAfterTurn,
@@ -92,7 +93,7 @@ export async function resolveConflictOnTask(
   if (!task) return { ok: false, reason: 'no such task' }
   if (!task.branch) return { ok: false, reason: 'this task has no branch to rebase' }
   const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
-  if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+  if (!project || !projectUsesGitBranches(project)) return { ok: false, reason: 'not a git project' }
   if (task.status === 'running' || task.status === 'assigned') {
     // ⚠️ A live run will be asked by `decideFinish` when it reports, and that path can hand it the
     // conflict with the markers already in the tree. Cutting in here would be the worse version.
@@ -147,7 +148,7 @@ export async function resolveChecksOnTask(
   const task = getTask(taskId)
   if (!task) return { ok: false, reason: 'no such task' }
   const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
-  if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+  if (!project || !projectUsesGitBranches(project)) return { ok: false, reason: 'not a git project' }
   const branch = task.branch ?? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
   if (task.status === 'running' || task.status === 'assigned') {
@@ -195,7 +196,7 @@ export async function resolveCommitOnTask(
   const task = getTask(taskId)
   if (!task) return { ok: false, reason: 'no such task' }
   const project = task.projectId ? getProject(task.projectId) : null
-  if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+  if (!project || !projectUsesGitBranches(project)) return { ok: false, reason: 'not a git project' }
   const branch = task.branch ?? branchNameFor(task.seq, branchTitleFor(project, task.title), task.branchUnit)
   if (!branch) return { ok: false, reason: 'this task has no branch' }
   if (task.status === 'running' || task.status === 'assigned') {
@@ -232,7 +233,7 @@ export async function resolveTrunkMovedOnTask(
   const branch = task.branch
   if (!branch) return { ok: false, reason: 'task has no branch' }
   const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
-  if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+  if (!project || !projectUsesGitBranches(project)) return { ok: false, reason: 'not a git project' }
   if (task.status === 'running') {
     return { ok: false, reason: 'this task is already running; it will be asked when it reports' }
   }
@@ -357,7 +358,7 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
   const task = getTask(taskId)
   if (!task) return { ...none, reason: 'no such task' }
   const project = task.projectId ? getProject(task.projectId) : null
-  if (!project || project.vcs !== 'git') {
+  if (!project || !projectUsesGitBranches(project)) {
     return { ...none, reason: 'this task has no git project, so there is nothing to commit' }
   }
   const target = landingTargetFor(task, project)
@@ -488,7 +489,7 @@ export async function commitConversation(
   const task = getTask(taskId)
   if (!task) return { ok: false, reason: 'no such task' }
   const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
-  if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+  if (!project || !projectUsesGitBranches(project)) return { ok: false, reason: 'not a git project' }
   if (task.status === 'running' || task.status === 'assigned') {
     return { ok: false, reason: 'this task is already running; wait for the turn to end' }
   }
@@ -865,7 +866,7 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
   // ⛔ From disk, for the same reason the first completion does it — this button reaches the
   // identical `decideFinish`, and a stale `check` array would refuse the retry just as silently.
   const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
-  if (!project || project.vcs !== 'git') return didNotLand('not a git project')
+  if (!project || !projectUsesGitBranches(project)) return didNotLand('not a git project')
 
   // A task that stopped for a person may already be holding its own worktree. Reuse it for landing:
   // asking the pool for another member would either fail at capacity or try to check out the branch

@@ -696,6 +696,13 @@ produces a question nobody can reply to.
   trunk-only: no worktrees at all, every task takes the trunk lease serially, and the idle
   directories are removed from disk by operator-confirmed `prunePoolWorktrees` — parking never
   deletes, whatever the size.
+- ⭐ **Opt-in slot pruning and cached disk measurement** (`worktrees.ts`, `projects.ts`).
+  `workspaces.pruneOnRelease` defaults to empty; when declared as repo-relative directory names,
+  ending a pooled workspace claim via `release()` schedules an asynchronous prune that skips the
+  trunk, skips occupied or live-session slots, and deletes a directory only when `git check-ignore`
+  reports it ignored and `git ls-files` finds no tracked files inside. `measurePoolSizes` walks each
+  pool member asynchronously via `fs` (no shelling out), cached in memory per project for 10 minutes
+  and served read-only by `project.poolSizes` with `measuredAt` attached.
 
 ## 5. Layout
 
@@ -739,9 +746,12 @@ scripts/                ensure-electron, icons, build-mac.sh, build-win.ps1     
 | `approvals.ts` `questions.ts` | the two interrupt objects |
 | `resources.ts` | the broker: `exclusive`, `counted`, `rate_limited` |
 | `adapters/` | per-CLI integrations, capabilities as data → [`adapters.md`](adapters.md) |
+| `vcs/` | `VcsDriver` interface, `VcsCapabilities`, `gitDriver`, and `driverFor` (not yet wired to callers) |
 | `which.ts` `git.ts` `spawn.ts` | PATH resolution — node-pty does not do it; and the shared git / promise-based `execFile` runners |
 | `stats.ts` | shared medians: `null` is no series, never a measured zero |
 | `activetime.ts` `activity.ts` `log.ts` | agent time, the live peephole, the daily log |
 | `testkit.ts` | ⛔ test-only shared L1 fixtures — never bundled, never imported outside `*.test.ts` |
 | `../shared/policy.ts` | cross-process preference resolvers; task/project/fleet choices never widen a mandate |
 | `../shared/ansi.ts` | `stripAnsi`, for prose only — the daemon cleans check output as it writes it and the thread cleans what was written before; `resolveRetryCauses` in `../shared/tasks.ts` is the one classifier of a failed landing, read by the card and by `resolveRetryOnTask` |
+
+`src/daemon/vcs/` (`driver.ts`, `git.ts`, `index.ts`) defines the `VcsDriver` / `VcsCapabilities` contract, `gitDriver`, and `driverFor` as a pure seam in preparation for future VCS backends; no existing daemon module calls into it yet.

@@ -186,6 +186,14 @@ describe('inspecting a directory before adding it', () => {
     expect(found.suggestedName).toBe('not-created-yet')
   })
 
+  it('keeps colocated .git + .jj as git and does not auto-detect .jj alone', () => {
+    const colocated = repoDir({ '.jj/store/type': 'git' })
+    expect(setup.inspectProjectDirectory({ root: colocated }).vcs).toBe('git')
+
+    const jjOnly = plainDir({ '.jj/store/type': 'native' })
+    expect(setup.inspectProjectDirectory({ root: jjOnly }).vcs).toBe('none')
+  })
+
   it('names the project already at a root, so the wizard can refuse instead of reconfiguring it', () => {
     const root = repoDir({ 'README.md': '# taken' })
     const existing = projects.addProject({ root, name: 'Already Here' })

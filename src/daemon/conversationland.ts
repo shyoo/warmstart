@@ -3,7 +3,7 @@ import { resolveWorkspaceMode } from '@shared/tasks.js'
 import { decideFinish, landingLevel } from './finish.js'
 import { hasRemote, landTask, landingBaseFor } from './landing.js'
 import { landingTargetFor, policyFor, reloadProjectIfPresent } from './projects.js'
-import { addMessage, getTask, runsFor, setTaskBranch } from './tasks.js'
+import { addMessage, getTask, projectUsesGitBranches, runsFor, setTaskBranch } from './tasks.js'
 import { noteCurrentBranch } from './sessions.js'
 import { sessionOf } from './scheduler.js'
 import {
@@ -128,7 +128,7 @@ export async function landConversationWork(
   // cold dispatch, and a conversation is the longest-lived warm session there is — see
   // `reloadProjectIfPresent` and condition 4 in docs/landing.md.
   const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
-  if (!project || project.vcs !== 'git') return { ok: false, reason: 'not a git project' }
+  if (!project || !projectUsesGitBranches(project)) return { ok: false, reason: 'not a git project' }
 
   // ⛔ **Delegated pieces were cut from this branch, and landing retires it** (t704). Refused before
   // anything moves, whoever asked; the agent's own `land_work` also has its merges checked.

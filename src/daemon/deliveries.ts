@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { DeliveryState, Project, PullRequestDelivery } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { getProject, landingTargetFor } from './projects.js'
-import { addMessage, getTask } from './tasks.js'
+import { addMessage, getTask, projectUsesGitBranches } from './tasks.js'
 import { git, tryGit } from './git.js'
 import { launchArgs, spawnEnv, which } from './which.js'
 import * as spawn from './spawn.js'
@@ -195,7 +195,7 @@ export function holderVerdict(input: {
  */
 async function retireMergedBranch(delivery: PullRequestDelivery): Promise<RetireOutcome> {
   const project = getProject(delivery.projectId)
-  if (!project || project.vcs !== 'git') {
+  if (!project || !projectUsesGitBranches(project)) {
     return { retired: false, reason: 'the project is not a git project any more' }
   }
   const branch = (await taskBranches(project, delivery.target)).find((b) => b.branch === delivery.branch)
@@ -410,7 +410,7 @@ async function salvageAnnouncedDeliveries(): Promise<void> {
     if (exists) continue
     const task = getTask(message.task_id)
     const project = task?.projectId ? getProject(task.projectId) : null
-    if (!task?.branch || !project || project.vcs !== 'git') continue
+    if (!task?.branch || !project || !projectUsesGitBranches(project)) continue
     const headSha = (await tryGit(project.root, ['rev-parse', `refs/heads/${task.branch}`]))
       ?.trim().toLowerCase()
     if (!headSha || !/^[0-9a-f]{40}$/.test(headSha)) continue

@@ -1,21 +1,24 @@
 import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs'
+import { lstat, readdir, rm } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import type { FinishPolicy, Project, ResourceClaim, Task, WorkspaceMode } from '@shared/tasks.js'
+import type { FinishPolicy, PoolMemberSize, Project, ResourceClaim, Task, WorkspaceMode } from '@shared/tasks.js'
 import { landingLevelFor } from '@shared/policy.js'
+import { projectUsesGitBranches } from '@shared/tasks.js'
 import { landingBaseFor } from './landingbase.js'
-import { landingTargetFor, policyFor } from './projects.js'
+import { getProject, landingTargetFor, policyFor } from './projects.js'
 import { settings } from './settings.js'
 import {
   availability,
   claim,
   getResource,
+  onResourceReleased,
   openClaims,
   release,
   trunkResourceId,
   upsertResource,
   workspacePoolId
 } from './resources.js'
-import { samePath } from './fspath.js'
+import { canonicalPath, samePath, withinPath } from './fspath.js'
 import { listSessions } from './sessions.js'
 import { sessionEnded } from '@shared/protocol.js'
 import { log } from './log.js'
@@ -210,7 +213,7 @@ async function doEnsurePool(project: Project): Promise<string[]> {
   const policy = policyFor(project)
   const poolId = workspacePoolId(project.id)
 
-  if (project.vcs !== 'git') {
+  if (!projectUsesGitBranches(project)) {
     upsertResource({
       id: poolId,
       projectId: project.id,
@@ -310,7 +313,7 @@ export interface PruneResult {
 export async function prunePoolWorktrees(project: Project): Promise<PruneResult> {
   const removed: string[] = []
   const kept: Array<{ path: string; reason: string }> = []
-  if (project.vcs !== 'git') throw new Error(`${project.name} has no worktree pool to remove`)
+  if (!projectUsesGitBranches(project)) throw new Error(`${project.name} has no worktree pool to remove`)
   const policy = policyFor(project)
   const poolId = workspacePoolId(project.id)
   const base = await trunkBaseRef(project)
@@ -404,6 +407,8 @@ export async function claimWorkspace(
     if (taken) release(taken.id)
     return null
   }
+  const pendingPrune = inFlightPrunes.get(slotKey(taken.member))
+  if (pendingPrune) await pendingPrune
   const index = Number.parseInt(taken.member.replace(/^.*ws/, ''), 10)
   return { claimId: taken.id, path: taken.member, index: Number.isFinite(index) ? index : 1 }
 }
@@ -493,7 +498,7 @@ export interface TrunkSurvey {
  */
 export async function surveyTrunk(project: Project): Promise<TrunkSurvey> {
   const survey: TrunkSurvey = { branch: null, dirtyFiles: [], untrackedFiles: [], operation: null, conflicted: [], aheadOfTarget: 0 }
-  if (project.vcs !== 'git') return survey
+  if (!projectUsesGitBranches(project)) return survey
   const state = await workspaceState(project.root, policyFor(project).landingTarget)
   survey.branch = state.branch
   // ⚠️ `unlandedCommits` is what only the checked-out branch holds, so on the target it is not this.
@@ -528,6 +533,202 @@ export function releaseWorkspace(claimId: string): void {
   release(claimId)
 }
 
+const inFlightPrunes = new Map<string, Promise<void>>()
+
+/** A prune target whose first segment under the slot is VCS metadata (`.git`, `.jj`), however it was spelled. */
+function isVcsMetadataDir(workspacePath: string, target: string): boolean {
+  const first = relative(workspacePath, target).split(/[\\/]/)[0]?.toLowerCase()
+  return first === '.git' || first === '.jj'
+}
+
+function slotKey(path: string): string {
+  const canonical = canonicalPath(path)
+  return process.platform === 'win32' ? canonical.toLowerCase() : canonical
+}
+
+function isPoolSlotHeld(projectId: string, workspacePath: string): boolean {
+  if (openClaims(workspacePoolId(projectId)).some((c) => c.member && samePath(c.member, workspacePath))) {
+    return true
+  }
+  return listSessions().some((s) => !sessionEnded(s.state) && samePath(s.cwd, workspacePath))
+}
+
+async function runPruneOnRelease(projectId: string, workspacePath: string): Promise<void> {
+  // Yield a microtask so synchronous `releaseWorkspace` / `release` callers never wait on disk or git.
+  await Promise.resolve()
+  const project = getProject(projectId)
+  if (!project || !projectUsesGitBranches(project)) return
+  // ⛔ Never prune the trunk, under any circumstance.
+  if (samePath(workspacePath, project.root)) return
+
+  const dirs = policyFor(project).pruneOnRelease
+  if (dirs.length === 0 || !existsSync(workspacePath)) return
+  if (isPoolSlotHeld(project.id, workspacePath)) {
+    log.info(`skipping pruneOnRelease in ${workspacePath}: slot is claimed`)
+    return
+  }
+
+  for (const dir of dirs) {
+    if (isPoolSlotHeld(project.id, workspacePath)) {
+      log.info(`stopping pruneOnRelease in ${workspacePath}: slot was claimed`)
+      return
+    }
+    const target = resolve(workspacePath, dir)
+    if (samePath(target, workspacePath) || !withinPath(workspacePath, target) || isVcsMetadataDir(workspacePath, target)) {
+      log.info(`skipping prune of ${dir} in ${workspacePath}: unsafe path`)
+      continue
+    }
+    try {
+      const st = await lstat(target)
+      if (!st.isDirectory()) {
+        log.info(`skipping prune of ${dir} in ${workspacePath}: not a directory`)
+        continue
+      }
+    } catch {
+      continue
+    }
+
+    const ignored = await tryGit(workspacePath, ['check-ignore', '--no-index', '-q', '--', dir])
+    if (ignored === null) {
+      log.info(`skipping prune of ${dir} in ${workspacePath}: not git-ignored`)
+      continue
+    }
+
+    let tracked: string
+    try {
+      tracked = await git(workspacePath, ['ls-files', '--', dir])
+    } catch (err) {
+      log.warn(`skipping prune of ${dir} in ${workspacePath}: could not inspect tracked files:`, err)
+      continue
+    }
+    if (tracked.trim().length > 0) {
+      log.info(`skipping prune of ${dir} in ${workspacePath}: contains tracked files`)
+      continue
+    }
+
+    if (isPoolSlotHeld(project.id, workspacePath)) {
+      log.info(`skipping prune of ${dir} in ${workspacePath}: slot was claimed`)
+      return
+    }
+    await rm(target, { recursive: true, force: true })
+    log.info(`pruned ignored directory ${dir} in ${workspacePath}`)
+  }
+}
+
+function schedulePruneOnRelease(projectId: string, workspacePath: string): void {
+  const project = getProject(projectId)
+  if (!project || !projectUsesGitBranches(project) || samePath(workspacePath, project.root)) return
+  if (policyFor(project).pruneOnRelease.length === 0) return
+  if (isPoolSlotHeld(project.id, workspacePath)) return
+
+  const key = slotKey(workspacePath)
+  const prev = inFlightPrunes.get(key)
+  const task = (prev ?? Promise.resolve())
+    .catch(() => undefined)
+    .then(() => runPruneOnRelease(projectId, workspacePath))
+    .catch((err) => log.warn(`pruneOnRelease failed for ${workspacePath}:`, err))
+    .finally(() => {
+      if (inFlightPrunes.get(key) === task) inFlightPrunes.delete(key)
+    })
+  inFlightPrunes.set(key, task)
+}
+
+onResourceReleased((closed) => {
+  if (!closed.resourceId.startsWith('workspace:') || !closed.member) return
+  schedulePruneOnRelease(closed.resourceId.slice('workspace:'.length), closed.member)
+})
+
+/** Wait for any asynchronous slot-release prunes currently in flight to settle. */
+export async function awaitPoolPrunes(): Promise<void> {
+  while (inFlightPrunes.size > 0) {
+    await Promise.allSettled([...inFlightPrunes.values()])
+  }
+}
+
+const POOL_SIZE_CACHE_TTL_MS = 10 * 60_000
+const poolSizeCache = new Map<string, { measuredAt: number; members: PoolMemberSize[] }>()
+const inFlightPoolSizes = new Map<string, Promise<PoolMemberSize[]>>()
+
+/** Clear cached pool disk-size readings (all projects, or one project id). */
+export function clearPoolSizeCache(projectId?: string): void {
+  if (projectId) poolSizeCache.delete(projectId)
+  else poolSizeCache.clear()
+}
+
+async function directoryBytes(rootDir: string): Promise<number> {
+  let total = 0
+  const stack: string[] = [rootDir]
+  while (stack.length > 0) {
+    const current = stack.pop()!
+    let entries
+    try {
+      entries = await readdir(current, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue
+      const full = join(current, entry.name)
+      if (entry.isDirectory()) {
+        stack.push(full)
+      } else if (entry.isFile()) {
+        try {
+          total += (await lstat(full)).size
+        } catch {
+          // Ignore transient files deleted or locked mid-walk.
+        }
+      }
+    }
+  }
+  return total
+}
+
+/**
+ * Measure bytes on disk per pooled workspace slot via `fs` (no shelling out), computed at most
+ * once per 10 minutes per project and cached in memory.
+ */
+export async function measurePoolSizes(project: Project): Promise<PoolMemberSize[]> {
+  if (!projectUsesGitBranches(project)) return []
+  const policy = policyFor(project)
+  const resource = getResource(workspacePoolId(project.id))
+  if (policy.poolSize === 0 && (!resource || resource.members.length === 0)) return []
+
+  const now = Date.now()
+  const cached = poolSizeCache.get(project.id)
+  if (cached && now - cached.measuredAt < POOL_SIZE_CACHE_TTL_MS) {
+    return cached.members
+  }
+
+  const running = inFlightPoolSizes.get(project.id)
+  if (running) return running
+
+  const promise = (async (): Promise<PoolMemberSize[]> => {
+    const candidates =
+      resource && resource.members.length > 0
+        ? resource.members
+        : Array.from({ length: policy.poolSize }, (_, i) => join(policy.workspaceRoot, `ws${i + 1}`))
+    const measuredAt = Date.now()
+    const results: PoolMemberSize[] = []
+    for (const memberPath of candidates) {
+      if (samePath(memberPath, project.root)) continue
+      try {
+        const st = await lstat(memberPath)
+        if (!st.isDirectory()) continue
+      } catch {
+        continue
+      }
+      const bytes = await directoryBytes(memberPath)
+      results.push({ path: memberPath, bytes, measuredAt })
+    }
+    poolSizeCache.set(project.id, { measuredAt, members: results })
+    return results
+  })().finally(() => {
+    if (inFlightPoolSizes.get(project.id) === promise) inFlightPoolSizes.delete(project.id)
+  })
+  inFlightPoolSizes.set(project.id, promise)
+  return promise
+}
+
 /**
  * The pool member that still has this branch checked out, claimed or not.
  *
@@ -549,7 +750,7 @@ export async function workspaceOnBranch(
   branch: string,
   target: string
 ): Promise<WorkspaceState | null> {
-  if (project.vcs !== 'git') return null
+  if (!projectUsesGitBranches(project)) return null
   for (const path of availability(workspacePoolId(project.id))?.resource.members ?? []) {
     const state = await workspaceState(path, target)
     if (state.branch === branch) return state
@@ -630,7 +831,7 @@ export interface SwitchResult {
  * "cannot say" and never as "nothing changed", which is the direction this fails safe in.
  */
 export async function trunkTargetSha(project: Project, target: string): Promise<string | null> {
-  if (project.vcs !== 'git') return null
+  if (!projectUsesGitBranches(project)) return null
   try {
     const sha = await git(project.root, ['rev-parse', '--verify', `refs/heads/${target}`])
     return sha.trim() || null
@@ -653,7 +854,7 @@ export async function trunkTargetSha(project: Project, target: string): Promise<
  * and the trunk is the one that always exists.
  */
 export async function branchExists(project: Project, branch: string): Promise<boolean> {
-  if (project.vcs !== 'git') return false
+  if (!projectUsesGitBranches(project)) return false
   try {
     await git(project.root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
     return true
@@ -676,7 +877,7 @@ export async function branchExists(project: Project, branch: string): Promise<bo
  * reading*, and every caller must keep its could-not-look answer for it.
  */
 export async function branchCheckedOutAnywhere(project: Project, branch: string): Promise<boolean | null> {
-  if (project.vcs !== 'git') return null
+  if (!projectUsesGitBranches(project)) return null
   let listing: string
   try {
     listing = await git(project.root, ['worktree', 'list', '--porcelain'])
@@ -900,7 +1101,7 @@ export function worktreePointer(
  *     falls back to the hand rewrite.
  */
 export async function ensureWorktreePointer(project: Project, workspacePath: string): Promise<void> {
-  if (project.vcs !== 'git' || samePath(workspacePath, project.root)) return
+  if (!projectUsesGitBranches(project) || samePath(workspacePath, project.root)) return
   let pointer = worktreePointer(workspacePath)
   if (!pointer) return
   if (!existsSync(pointer.resolved)) {
@@ -979,7 +1180,7 @@ export function worktreeBackPointer(gitDir: string): string | null {
  * because its common config belongs to somebody else's checkout.
  */
 export function repairTrunkConfig(project: Pick<Project, 'root' | 'vcs'>): string | null {
-  if (project.vcs !== 'git') return null
+  if (!projectUsesGitBranches(project)) return null
   const gitDir = join(project.root, '.git')
   const file = join(gitDir, 'config')
   let text: string
@@ -1025,7 +1226,7 @@ export function repairTrunkConfig(project: Pick<Project, 'root' | 'vcs'>): strin
 }
 
 export async function ensurePlannerBranch(project: Project, branchName: string): Promise<void> {
-  if (project.vcs !== 'git') return
+  if (!projectUsesGitBranches(project)) return
   if (!(await gitOk(project.root, ['rev-parse', '--verify', `refs/heads/${branchName}`]))) {
     const base = await baseRef(project)
     await git(project.root, ['branch', branchName, base])
@@ -1050,7 +1251,7 @@ export async function prepareWorkspace(
   const policy = policyFor(project)
   const steps: PrepareResult['steps'] = []
 
-  if (project.vcs === 'git' && branch) {
+  if (projectUsesGitBranches(project) && branch) {
     try {
       // A repo with no remote has nothing to fetch; that is fine, not an error.
       if (await gitOk(project.root, ['remote', 'get-url', 'origin'])) {
@@ -1210,7 +1411,7 @@ export async function parkPooledHolders(
   branch: string,
   keepPath: string
 ): Promise<string[]> {
-  if (project.vcs !== 'git') return []
+  if (!projectUsesGitBranches(project)) return []
   const members = availability(workspacePoolId(project.id))?.resource.members ?? []
   if (members.length === 0) return []
   const pooled = new Set(members.map(normalise))
@@ -1489,7 +1690,7 @@ function normalise(p: string): string {
  * cannot be parked is still released, and the next claim re-prepares it.
  */
 export async function parkWorkspace(project: Project, path: string): Promise<Rescue | null> {
-  if (project.vcs !== 'git') return null
+  if (!projectUsesGitBranches(project)) return null
   // ⛔ **Never the trunk.** Parking aborts a rebase, stashes and detaches — three things that must
   // never happen to the operator's checkout, and a trunk task's claim reaches the same release paths
   // a pool member's does. Checked here, at the one function that does the damage, rather than
@@ -1742,7 +1943,7 @@ const TARGET_REFRESH_MS = 5 * 60_000
 const lastTargetRefresh = new Map<string, number>()
 
 export async function refreshTargetRef(project: Project, target: string): Promise<boolean> {
-  if (project.vcs !== 'git') return false
+  if (!projectUsesGitBranches(project)) return false
   const now = Date.now()
   if (now - (lastTargetRefresh.get(project.id) ?? 0) < TARGET_REFRESH_MS) return false
   lastTargetRefresh.set(project.id, now)
@@ -1817,7 +2018,7 @@ async function branchHolders(root: string): Promise<Map<string, string>> {
  * panel down with it.
  */
 export async function taskBranches(project: Project, target: string): Promise<TaskBranch[]> {
-  if (project.vcs !== 'git') return []
+  if (!projectUsesGitBranches(project)) return []
   let names: Array<{ branch: string; head: string }>
   try {
     names = (

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Worker } from '@shared/protocol'
 import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import { claudeBilling, codexBilling } from '@shared/billing'
-import { billingLine, cacheRemaining, countdown, money, quotaGap, quotaWindowDeltas, spendDeltas, timeRange, when, whenParts } from './format'
+import { billingLine, cacheRemaining, countdown, formatMeasuredAge, formatPoolBytes, formatPoolMemberSize, money, quotaGap, quotaWindowDeltas, spendDeltas, timeRange, when, whenParts } from './format'
 
 describe('countdown', () => {
   const NOW = Date.UTC(2026, 8, 2, 12, 0, 0)
@@ -495,5 +495,25 @@ describe('billingLine (t906)', () => {
     expect(billingLine(codexBilling(CODEX), Date.UTC(2026, 8, 20))?.text).not.toContain('passed')
     // Unknown is no line at all, never an empty date.
     expect(billingLine(null, now)).toBeNull()
+  })
+})
+
+describe('pool size formatting', () => {
+  it('formats member size together with its measurement age', () => {
+    const now = Date.UTC(2026, 10, 15, 12, 0, 0)
+    expect(formatPoolBytes(512)).toBe('512 B')
+    expect(formatPoolBytes(53 * 1024 * 1024)).toBe('53.0 MB')
+    expect(formatMeasuredAge(now - 20_000, now)).toBe('measured just now')
+    expect(formatMeasuredAge(now - 3 * 60_000, now)).toBe('measured 3 min ago')
+    expect(
+      formatPoolMemberSize(
+        {
+          path: 'C:\\Dev\\repo_workspaces\\ws1',
+          bytes: Math.round(1.9 * 1024 * 1024 * 1024),
+          measuredAt: now - 3 * 60_000
+        },
+        now
+      )
+    ).toBe('ws1 · 1.9 GB · measured 3 min ago')
   })
 })

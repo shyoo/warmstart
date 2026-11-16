@@ -6,7 +6,7 @@ import { proposeChecks } from './projectstack.js'
 import { execFileSync } from 'node:child_process'
 import type { LandingStrategyId, Project, ProjectConfig, Task, Vcs } from '@shared/tasks.js'
 import type { ProjectPolicyPatch } from '@shared/tasks.js'
-import { PROJECT_IDLE_STATUSES, readFinishPolicy, trunkPolicyConflict } from '@shared/tasks.js'
+import { PROJECT_IDLE_STATUSES, projectUsesGitBranches, readFinishPolicy, trunkPolicyConflict } from '@shared/tasks.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
@@ -128,6 +128,13 @@ export function readProjectConfig(root: string): { config: ProjectConfig; path: 
   }
 }
 
+/**
+ * Detect the version control backend for a project root.
+ *
+ * ⚠️ Do NOT auto-detect `.jj` yet: a colocated repository (containing both `.git` and `.jj`) stays
+ * `'git'`. Until the jj driver is implemented, the §6 VCS migration tool
+ * (`transient_docs/t1393-jj-vcs-and-disk-plan_2026-11-15.md` §6) is the only way a project becomes `'jj'`.
+ */
 export function detectVcs(root: string): Vcs {
   try {
     const out = execFileSync('git', ['rev-parse', '--is-inside-work-tree'], {
@@ -416,7 +423,7 @@ export function writeStarterConfig(id: string): string {
     name: project.name,
     vcs: project.vcs,
     objective: 'balanced',
-    ...(project.vcs === 'git'
+    ...(projectUsesGitBranches(project)
       ? {
           workspaces: { poolSize: DEFAULTS.poolSize },
           // ⚠️ `finish`, not the pre-2026-08-28 `strategy`. A starter file should be written in
@@ -612,7 +619,7 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
     }
     // ⛔ Checked after both halves of the patch are applied, so turning trunk mode on and the pull
     // request level off in one save is allowed, and either one alone into the conflict is not.
-    if (config.workspaces?.mode === 'trunk' && project.vcs === 'git') {
+    if (config.workspaces?.mode === 'trunk' && projectUsesGitBranches(project)) {
       const finish = config.landing?.finish ? readFinishPolicy(config.landing.finish) : null
       const conflict = finish && finish !== 'inherit' ? trunkPolicyConflict(finish) : null
       if (conflict) throw new Error(`this project defaults to the trunk: ${conflict}`)
@@ -641,6 +648,24 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
     } else if (patch.workspaceLocation === 'custom') {
       config.workspaces = { ...config.workspaces }
       delete config.workspaces.location
+    }
+    if (patch.pruneOnRelease !== undefined) {
+      const normalized: string[] = []
+      const bad: string[] = []
+      for (const raw of patch.pruneOnRelease ?? []) {
+        if (typeof raw !== 'string') continue
+        const trimmed = raw.trim()
+        if (!trimmed) continue
+        const clean = normalizePruneDir(trimmed)
+        if (!clean) bad.push(trimmed)
+        else if (!normalized.includes(clean)) normalized.push(clean)
+      }
+      if (bad.length > 0) {
+        throw new Error(`not a repo-relative directory inside the workspace: ${bad.join(', ')}`)
+      }
+      config.workspaces = { ...config.workspaces }
+      if (normalized.length > 0) config.workspaces.pruneOnRelease = normalized
+      else delete config.workspaces.pruneOnRelease
     }
     if (patch.prepare !== undefined) {
       config.prepare = patch.prepare.map((c) => c.trim()).filter(Boolean)
@@ -732,6 +757,8 @@ export function relativeWorkspaceRoot(projectRoot: string, chosen: string): stri
 export interface ProjectPolicy {
   poolSize: number
   workspaceRoot: string
+  /** Repo-relative ignored directory names pruned on pool slot release (empty by default). */
+  pruneOnRelease: string[]
   prepare: string[]
   check: string[]
   postLanding: string[]
@@ -807,6 +834,40 @@ export function readForkOnly(raw: unknown): string[] {
   return out
 }
 
+/** Normalize one repo-relative directory entry for `workspaces.pruneOnRelease`, or null if unsafe. */
+function normalizePruneDir(raw: string): string | null {
+  const path = raw
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^(\.\/)+/, '')
+    .replace(/\/+$/, '')
+  if (!path || path === '.' || path.startsWith(':') || path.startsWith('/') || /^[A-Za-z]:/.test(path)) {
+    return null
+  }
+  const parts = path.split('/').filter(Boolean)
+  if (parts.length === 0 || parts.includes('..') || parts.includes('.')) return null
+  // ⛔ Never delete VCS internals even if configured by mistake: `.git`, and `.jj` for a
+  // colocated jj project (t1393). Case-folded, because NTFS and APFS are case-insensitive.
+  const first = (parts[0] ?? '').toLowerCase()
+  if (first === '.git' || first === '.jj') return null
+  return parts.join('/')
+}
+
+/**
+ * `workspaces.pruneOnRelease` as validated repo-relative directory paths: forward-slashed,
+ * deduplicated, empty by default, never escaping the workspace or touching `.git`.
+ */
+export function readPruneOnRelease(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const item of raw) {
+    if (typeof item !== 'string') continue
+    const clean = normalizePruneDir(item)
+    if (clean && !out.includes(clean)) out.push(clean)
+  }
+  return out
+}
+
 export function policyFor(project: Project): ProjectPolicy {
   const c = project.config
   return {
@@ -814,7 +875,7 @@ export function policyFor(project: Project): ProjectPolicy {
     // ⛔ A git pool may be zero (trunk-only); only the fallback default is at least one, and the
     // non-git pool is always exactly one. Clamping here would silently resurrect a pool the operator
     // just removed.
-    poolSize: project.vcs === 'git' ? Math.max(0, c.workspaces?.poolSize ?? DEFAULTS.poolSize) : 1,
+    poolSize: projectUsesGitBranches(project) ? Math.max(0, c.workspaces?.poolSize ?? DEFAULTS.poolSize) : 1,
     // ⛔ Canonical, and note the two branches did not agree before it. `resolve` returns an absolute
     // config value in *its* case, while the fallback concatenates onto `project.root` in whatever
     // case that was stored — so adding a `workspaces.root` to a project.json silently changed the
@@ -825,6 +886,7 @@ export function policyFor(project: Project): ProjectPolicy {
       : c.workspaces?.root
       ? canonicalPath(resolve(project.root, c.workspaces.root))
       : defaultWorkspaceRoot(project.root),
+    pruneOnRelease: readPruneOnRelease(c.workspaces?.pruneOnRelease),
     prepare: c.prepare ?? [],
     check: c.check ?? [],
     postLanding: c.postLanding ?? [],

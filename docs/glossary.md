@@ -52,7 +52,7 @@ fleet strip draws only its glyph, Settings > Workers its word and age as well.
 
 ---
 
-**Project** — *a directory plus policy.* Git is **optional**: `vcs: git | none`. Branching,
+**Project** — *a directory plus policy.* Git is **optional**: `vcs: git | jj | none` (`jj` not yet functional (t1393)). Branching,
 committing and parallel workspaces are per-project **capabilities**, not universal assumptions, so a
 media-generation or research project is a first-class citizen with no repo fiction. Policy lives in a
 committed `.warmstart/project.json` — or untracked behind a committed `.gitignore` entry when the

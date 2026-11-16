@@ -1,10 +1,11 @@
 /** Projects: registration, configuration, checks and the flow view. */
 import type { Project } from '@shared/tasks.js'
+import { projectUsesGitBranches } from '@shared/tasks.js'
 import { addProject, archiveProject, archiveRefusal, deleteProject, deleteRefusal, listArchivedProjects, listProjects, relocateProject, reloadProject, renameProject, reorderProjects, requireProject, setProjectChecks, setProjectPolicy, setProjectPostLanding, unarchiveProject, writeStarterConfig } from '../projects.js'
 import { proposeChecks } from '../projectstack.js'
 import { cloneProject, cloneReadiness, createProject, inspectProjectDirectory, makeForkHome, proposeProjectDocs, workspaceRootReport } from '../projectsetup.js'
 import { flowWorkspaces } from '../flow.js'
-import { ensurePool, landingTargetRefusal, prunePoolWorktrees } from '../worktrees.js'
+import { ensurePool, landingTargetRefusal, measurePoolSizes, prunePoolWorktrees } from '../worktrees.js'
 import { log } from '../log.js'
 import { syncFromUpstream } from '../upstream.js'
 import { readScratchpad, saveScratchpad, setScratchpadPath } from '../scratchpad.js'
@@ -12,13 +13,13 @@ import type { Api, ApiContext } from './support.js'
 
 type ProjectMethod =
   | 'project.list' | 'project.add' | 'project.relocate' | 'project.inspect' | 'project.workspaceRoot' | 'project.docTemplates'
-  | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.makeForkHome' | 'project.syncUpstream' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.unarchive' | 'project.rename' | 'project.delete' | 'project.listArchived' | 'project.writeConfig' | 'project.flow'
+  | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.makeForkHome' | 'project.syncUpstream' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.unarchive' | 'project.rename' | 'project.delete' | 'project.listArchived' | 'project.writeConfig' | 'project.flow' | 'project.poolSizes'
   | 'project.proposeChecks' | 'project.setChecks' | 'project.setPostLanding' | 'project.setPolicy' | 'project.pruneWorktrees'
   | 'scratchpad.get' | 'scratchpad.save' | 'scratchpad.setPath'
 
 /** Idle managed worktrees go with an archived or deleted project; one with work in it is kept. */
 async function pruneManagedPool(project: Project, why: 'archive' | 'delete'): Promise<void> {
-  if (project.config.workspaces?.location !== 'managed' || project.vcs !== 'git') return
+  if (project.config.workspaces?.location !== 'managed' || !projectUsesGitBranches(project)) return
   try {
     const result = await prunePoolWorktrees(project)
     if (result.kept.length > 0) log.info(`${project.name}: kept ${result.kept.length} worktree(s) during ${why}`)
@@ -65,6 +66,7 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
     'project.writeConfig': (p) => ({ path: writeStarterConfig(p.id) }),
     // ⛔ Resolved here, never in the renderer — see the method's note in protocol.ts.
     'project.flow': (p) => flowWorkspaces(p.projectId),
+    'project.poolSizes': (p) => measurePoolSizes(requireProject(p.id)),
     'project.proposeChecks': (p) => ({ checks: proposeChecks(requireProject(p.id).root) }),
     'project.setChecks': (p) => setProjectChecks(p.id, p.checks),
     'project.setPostLanding': (p) => setProjectPostLanding(p.id, p.commands),
@@ -95,7 +97,7 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
       // ⛔ Here rather than in `setProjectPolicy`, which is synchronous: asking git is not. A target
       // that names no branch is refused before anything is written (t907).
       const before = requireProject(id)
-      if (patch.landingTarget !== undefined && patch.landingTarget.trim() && before.vcs === 'git') {
+      if (patch.landingTarget !== undefined && patch.landingTarget.trim() && projectUsesGitBranches(before)) {
         const refusal = await landingTargetRefusal(before.root, patch.landingTarget.trim())
         if (refusal) throw new Error(refusal)
       }

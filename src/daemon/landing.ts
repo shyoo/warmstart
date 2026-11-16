@@ -19,6 +19,7 @@ import {
   addMessage,
   getTask,
   mandateAllows,
+  projectUsesGitBranches,
   recordLandedRange,
   setStatus,
   taskOfSession
@@ -515,7 +516,7 @@ export async function retireEmptyBranch(
   branch: string,
   target: string
 ): Promise<boolean> {
-  if (project.vcs !== 'git' || branch === target) return false
+  if (!projectUsesGitBranches(project) || branch === target) return false
   const kept = (why: string): false => {
     log.info(`kept ${branch}: ${why}`)
     return false
@@ -745,7 +746,7 @@ export const verifyOnly: LandingStrategy = {
   id: 'verify-only',
 
   async canLand(ctx) {
-    if (ctx.project.vcs !== 'git') return { ok: false, reason: 'project is not a git repository' }
+    if (!projectUsesGitBranches(ctx.project)) return { ok: false, reason: 'project is not a git repository' }
     if (await treeBlocksLanding(ctx)) {
       return { ok: false, reason: UNCOMMITTED_REASON }
     }
@@ -800,7 +801,7 @@ export const mergeLocal: LandingStrategy = {
   id: 'merge-local',
 
   async canLand(ctx) {
-    if (ctx.project.vcs !== 'git') return { ok: false, reason: 'project is not a git repository' }
+    if (!projectUsesGitBranches(ctx.project)) return { ok: false, reason: 'project is not a git repository' }
     if (!mandateAllows(ctx.task, 'land')) {
       return { ok: false, reason: 'the task has no authority to land' }
     }
@@ -1022,7 +1023,7 @@ export const mergeBranch: LandingStrategy = {
   id: 'merge-branch',
 
   async canLand(ctx) {
-    if (ctx.project.vcs !== 'git') return { ok: false, reason: 'project is not a git repository' }
+    if (!projectUsesGitBranches(ctx.project)) return { ok: false, reason: 'project is not a git repository' }
     if (!mandateAllows(ctx.task, 'land')) {
       return { ok: false, reason: 'the task has no authority to land' }
     }
@@ -1469,7 +1470,7 @@ export const autoLand: LandingStrategy = {
   id: 'auto-land',
 
   async canLand(ctx) {
-    if (ctx.project.vcs !== 'git') return { ok: false, reason: 'project is not a git repository' }
+    if (!projectUsesGitBranches(ctx.project)) return { ok: false, reason: 'project is not a git repository' }
     if (!mandateAllows(ctx.task, 'land')) {
       return { ok: false, reason: 'the task has no authority to land' }
     }
@@ -1740,7 +1741,7 @@ export const pullRequest: LandingStrategy = {
   id: 'pull-request',
 
   async canLand(ctx) {
-    if (ctx.project.vcs !== 'git') return { ok: false, reason: 'project is not a git repository' }
+    if (!projectUsesGitBranches(ctx.project)) return { ok: false, reason: 'project is not a git repository' }
     if (!mandateAllows(ctx.task, 'push')) {
       // ⛔ `push`, not `land`. Opening a PR does not put anything on the trunk, so it needs the
       // narrower authority - and a task that may only push should be able to use this strategy.
@@ -1945,7 +1946,7 @@ export const trunkLanding: LandingStrategy = {
   id: 'trunk',
 
   async canLand(ctx) {
-    if (ctx.project.vcs !== 'git') return { ok: false, reason: 'project is not a git repository' }
+    if (!projectUsesGitBranches(ctx.project)) return { ok: false, reason: 'project is not a git repository' }
     if (ctx.policy === 'commit-and-push' && !mandateAllows(ctx.task, 'land')) {
       return { ok: false, reason: 'the task has no authority to push' }
     }
@@ -2150,7 +2151,7 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
   // ⚠️ Not for the trunk strategy: it has no branch to be empty, and `decideTrunkFinish` has already
   // established that the run committed something before a landing was chosen.
   if (
-    ctx.project.vcs === 'git' &&
+    projectUsesGitBranches(ctx.project) &&
     strategy.id !== 'trunk' &&
     ctx.task.verification !== 'required' &&
     !(await treeBlocksLanding(ctx))

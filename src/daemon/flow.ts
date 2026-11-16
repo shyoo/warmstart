@@ -6,7 +6,7 @@ import { samePath } from './fspath.js'
 import { getResource, landResourceId, openClaims, trunkResourceId, workspacePoolId } from './resources.js'
 import { getProject, policyFor } from './projects.js'
 import { getSession, listSessions } from './sessions.js'
-import { getTask, lastRunForSession, runForSession } from './tasks.js'
+import { getTask, lastRunForSession, projectUsesGitBranches, runForSession } from './tasks.js'
 import { getWorker } from './workers.js'
 import { isTaskLanding } from './landing.js'
 
@@ -128,7 +128,7 @@ export function flowWorkspaces(projectId: string): FlowWorkspace[] {
   const sessions = listSessions().filter((s) => s.purpose === 'work' && !sessionEnded(s.state))
   const allWorkSessions = listSessions(true).filter((s) => s.purpose === 'work')
   const project = getProject(projectId)
-  const trunk = project && project.vcs === 'git' ? [trunkRow(project.root, policyFor(project).landingTarget, projectWorkspaceModeChoice(project), projectId, sessions, allWorkSessions)] : []
+  const trunk = project && projectUsesGitBranches(project) ? [trunkRow(project.root, policyFor(project).landingTarget, projectWorkspaceModeChoice(project), projectId, sessions, allWorkSessions)] : []
 
   const resource = getResource(workspacePoolId(projectId))
   if (!resource) return trunk
