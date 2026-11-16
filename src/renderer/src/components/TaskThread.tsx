@@ -641,10 +641,6 @@ function TaskDetail({
 
           <Thread messages={messages} runs={runs} activity={activity} live={live} landing={Boolean(task.landing)} working={!turnEnded(task)} onOpenFile={onOpenFile} />
 
-          {/* ⛔ Above open questions and outside the collapsed `DiffPanel`, so markdown deliverables
-              and plans stay visible in the surface area when a run stops at a question gate. */}
-          <TaskArtifacts taskId={task.id} artifacts={artifacts} />
-
           {/* ⛔ Between the conversation and the box for replying, because that is what it is: the
               agent's turn to speak ended with a question, and this is where the answer goes. In the
               ledger on the right it would read as a fact about the task rather than a prompt. */}
@@ -677,24 +673,6 @@ function TaskDetail({
               "a decision is wanted from you" are the same kind of thing — finish it, park it, or say
               what you want next — and two of them living in a column of read-only facts made the
               third look like the only one. */}
-          {/* ⛔ Above the decision, not beside it: the card asks whether to land, and until this
-              existed the only answer available on this screen was a boolean. A person had to leave
-              the app and run git to see what pressing Land would move. */}
-          {/* ⛔ **Wherever there is a change, not only at the gate.** Drawn on `awaiting_human`
-              alone, the diff disappeared the second a task finished — which is exactly when somebody
-              opening the thread wants to know what it did, and the operator reported it as the panel
-              having gone away (2026-09-13). A finished task still resolves: `resolveRange`'s first
-              level is the recorded commits, which outlive the branch. The panel opens itself only at
-              the gate and says nothing at all where there is no change to resolve. */}
-          {hasDiffTarget && (
-            <DiffPanel
-              taskId={task.id}
-              updatedAt={task.updatedAt}
-              atGate={task.status === 'awaiting_human'}
-              summaryState={diffState}
-              hideArtifacts
-            />
-          )}
           {resting && (
             <Decide
               task={task}
@@ -1409,6 +1387,24 @@ function TaskDetail({
               />
             )}
           </div>
+
+          {/* ⛔ In the status pane, outside the collapsed `DiffPanel`, so markdown deliverables and
+              branch changes sit beside the thread rather than crowding between messages and compose. */}
+          <TaskArtifacts taskId={task.id} artifacts={artifacts} />
+
+          {/* ⛔ **Wherever there is a change, not only at the gate.** Drawn on `awaiting_human`
+              alone, the diff disappeared the second a task finished — which is exactly when somebody
+              opening the thread wants to know what it did. `resolveRange`'s first level is the
+              recorded commits, which outlive the branch. */}
+          {hasDiffTarget && (
+            <DiffPanel
+              taskId={task.id}
+              updatedAt={task.updatedAt}
+              atGate={task.status === 'awaiting_human'}
+              summaryState={diffState}
+              hideArtifacts
+            />
+          )}
 
           {commits.length > 0 && <CommitsBox taskId={task.id} commits={commits} />}
 

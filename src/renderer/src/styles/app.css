@@ -5235,6 +5235,7 @@ select:focus-visible,
   flex-direction: column;
   gap: var(--sp-3);
   font-size: var(--text-meta);
+  min-width: 0;
 }
 
 /* ⭐ The pane beside the thread is one of three states (t1011, `lib/threadside.ts`). ⚠️ The ledger is
@@ -9134,8 +9135,20 @@ select:focus-visible,
   background: var(--color-surface);
 }
 
+.detail-side .diff-panel,
+.detail-side .diff-panel-artifacts {
+  margin: 0;
+}
+
+.detail-side .diff-panel-artifacts {
+  padding: var(--sp-3);
+  background: var(--color-surface);
+  border-radius: var(--radius);
+}
+
 .diff-panel-summary {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3);
@@ -9541,7 +9554,9 @@ select:focus-visible,
 .artifact-chip {
   display: inline-flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--sp-2);
+  max-width: 100%;
   padding: var(--sp-1) var(--sp-2);
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -9549,6 +9564,7 @@ select:focus-visible,
   font-family: var(--font-mono);
   font-size: var(--text-meta);
   color: inherit;
+  text-align: left;
   cursor: pointer;
   transition: border-color var(--motion-fast) var(--ease), background var(--motion-fast) var(--ease);
 }
@@ -9560,6 +9576,8 @@ select:focus-visible,
 
 .artifact-chip-name {
   color: var(--color-accent);
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .artifact-chip-badge {

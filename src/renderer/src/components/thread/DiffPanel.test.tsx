@@ -112,16 +112,22 @@ describe('markdown artifact collection and visibility', () => {
   })
 })
 
-describe('TaskThread artifact surface placement (source level)', () => {
+describe('TaskThread artifact and diff surface placement (source level)', () => {
   const thread = readFileSync(new URL('../TaskThread.tsx', import.meta.url), 'utf8')
 
-  it('renders TaskArtifacts above TaskQuestions and DiffPanel with hideArtifacts', () => {
-    const threadPos = thread.indexOf('<Thread ')
+  it('renders TaskArtifacts above DiffPanel inside the right status pane, not in detail-main', () => {
+    const sideStart = thread.indexOf('<aside className="detail-side" hidden={side !== \'status\'}>')
+    const sideEnd = thread.indexOf('</aside>', sideStart)
     const artifactsPos = thread.indexOf('<TaskArtifacts ')
-    const questionsPos = thread.indexOf('<TaskQuestions ')
-    expect(threadPos).toBeGreaterThan(-1)
-    expect(artifactsPos).toBeGreaterThan(threadPos)
-    expect(questionsPos).toBeGreaterThan(artifactsPos)
+    const diffPanelPos = thread.indexOf('<DiffPanel')
+    expect(sideStart).toBeGreaterThan(-1)
+    expect(sideEnd).toBeGreaterThan(sideStart)
+    expect(artifactsPos).toBeGreaterThan(sideStart)
+    expect(artifactsPos).toBeLessThan(sideEnd)
+    expect(diffPanelPos).toBeGreaterThan(artifactsPos)
+    expect(diffPanelPos).toBeLessThan(sideEnd)
+    expect(thread.indexOf('<TaskArtifacts ', sideEnd)).toBe(-1)
+    expect(thread.indexOf('<DiffPanel', sideEnd)).toBe(-1)
     expect(thread).toContain('hideArtifacts')
   })
 })
