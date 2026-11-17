@@ -355,7 +355,22 @@ const info: AdapterInfo = {
   }
 }
 
-function envFor(): Record<string, string> {
+/**
+ * The environment every `agy` this app starts gets (exported for its test).
+ *
+ * ⛔ **`AGY_CLI_DISABLE_AUTO_UPDATE=true`, on every spawn** (t1400, operator's choice). Measured
+ * 2026-11-16 on agy 1.5.10 under Windows 11 with Windows Terminal as the default terminal: at most
+ * once per 15 minutes an `agy` launch logs `auto_updater.go:334] Spawned background update process`,
+ * and that process's console is handed to Windows Terminal, which *shows* it — a window logged visible
+ * at 22:05:50.549 and destroyed 164 ms later, titled with `agy.EXE`'s path, 0.5s after quota probe
+ * session `18c914d8` started. The probe runs every few minutes, so it usually won that race, and a
+ * full-screen application lost focus for it. Measured the same day in a throwaway profile: `true`
+ * logs `Auto-update disabled via environment variable AGY_CLI_DISABLE_AUTO_UPDATE` and spawns nothing;
+ * ⚠️ `1` is **not** accepted and the updater still ran. The check runs before the 15-minute throttle,
+ * so it holds on every launch. The cost: an `agy` only this app starts no longer updates itself — the
+ * person updates it by running `agy` themselves.
+ */
+export function antigravityEnv(): Record<string, string> {
   // ⛔ See `spawnEnv`. ⚠️ This adapter has no isolation root to set - Antigravity keeps
   // its credential in the OS keyring - which makes it the one that inherits the most and can correct
   // the least, so dropping the host session's namespace matters here rather than less.
@@ -365,8 +380,11 @@ function envFor(): Record<string, string> {
   delete env.GEMINI_API_KEY
   delete env.GOOGLE_API_KEY
   delete env.GOOGLE_GEMINI_BASE_URL
+  env.AGY_CLI_DISABLE_AUTO_UPDATE = 'true'
   return env
 }
+
+const envFor = antigravityEnv
 
 /**
  * Measured: the installer drops `agy.exe` in `%LOCALAPPDATA%\agy\bin` and only puts it on PATH when
@@ -1169,7 +1187,7 @@ export const antigravityCli: AgentAdapter = {
     }
     try {
       const probe = launchArgs(resolved, ['--version'])
-      const { stdout } = await run(probe.command, probe.args, { timeout: 15_000, windowsHide: true })
+      const { stdout } = await run(probe.command, probe.args, { timeout: 15_000, windowsHide: true, env: envFor() })
       const version = stdout.trim().split(/\s+/)[0] ?? stdout.trim()
       const onPath = which(info.command) !== null
       return {
