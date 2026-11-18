@@ -618,6 +618,16 @@ export function roleOf(work: boolean, judge: boolean): WorkerRole {
   return 'none'
 }
 
+/** One model a CLI listed of its own accord (`WorkerIdentity.discoveredModels`, t1401). */
+export interface DiscoveredModel {
+  /** The id the CLI takes as `--model`, with any effort suffix removed. */
+  id: string
+  /** The CLI's own display name, effort removed, or null where it gave none. */
+  label: string | null
+  /** The efforts it listed for this model, low to high; empty where it listed the model bare. */
+  effortLevels: string[]
+}
+
 export interface WorkerIdentity {
   /**
    * Is anybody signed in to this account?
@@ -686,6 +696,18 @@ export interface WorkerIdentity {
    * the cache is as fresh as the CLI's last run. Null means *unknown* and limits nothing.
    */
   availableModels?: string[] | null
+  /**
+   * Every model the CLI itself lists, as it names them, with the efforts it offers each (t1401).
+   *
+   * ⭐ This is how a model the vendor shipped after this release becomes pickable: the cost model's
+   * `discovered_models` template accepts each one it does not list (`syncDiscoveredModels`). Antigravity
+   * only: `agy models` prints `<id>\t<label>`, one line per model *and effort*, and costs no turn
+   * (measured 2026-11-18, agy 1.5.10). Null is *unknown* — the CLI was not asked or did not answer —
+   * and the last list read is kept rather than dropped (see `refreshIdentity`).
+   */
+  discoveredModels?: DiscoveredModel[] | null
+  /** When `discoveredModels` was read from the CLI, which is not when identity was last checked. */
+  discoveredAt?: number | null
   /**
    * The context window the endpoint reported (llama.cpp's `/props` → `n_ctx`), or null where the
    * server does not say. ⚠️ A measurement where present; the cost model's figure is the fallback.
@@ -1741,8 +1763,12 @@ export interface ModelOptions {
   costModelId: string
   /** ⚠️ False means this adapter takes no effort flag; the form offers no effort control for it. */
   selectableEffort: boolean
-  /** ⚠️ `contextWindow` is null where nobody has read the figure — unknown, never 0. */
-  models: Array<{ id: string; contextWindow: number | null; effortLevels: string[]; pool?: string }>
+  /**
+   * ⚠️ `contextWindow` is null where nobody has read the figure — unknown, never 0. `discovered` is
+   * set on a model this release's cost model does not list but the CLI does (t1401), and says when it
+   * was last seen; such a model has no list price and no known window until a cost model names it.
+   */
+  models: Array<{ id: string; contextWindow: number | null; effortLevels: string[]; pool?: string; discovered?: string }>
   /** Multi-pool definitions if this cost model partitions models into separately metered pools. */
   pools?: ModelPoolInfo[]
 }

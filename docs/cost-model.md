@@ -1251,6 +1251,39 @@ on the session that asked for none; a review filed without a model gets the same
 window) and stored as `identity.contextWindow`; a server that does not answer gets the template's
 32768, and the two are kept apart because one is a measurement and the other a default.
 
+### 8b. A model the CLI lists before the file does: `discovered_models` (t1401, 2026-11-18)
+
+Vendors ship models faster than this file is released. Measured 2026-11-18 on agy 1.5.10:
+`agy models` listed `gemini-4-neon` and `gemini-4-carbon`, which `google.antigravity.2026-08` did
+not know, so neither could be picked. A file that declares `discovered_models` accepts such a model
+**under its own id** (no prefix: it is the vendor's model, not a local alias) with that block's
+shape:
+
+```json
+"discovered_models": { "context_window": null, "input_per_mtok": null, "output_per_mtok": null,
+  "tokenizer": "unknown", "context_awareness": false,
+  "pool_by_prefix": { "gemini-": "gemini", "claude-": "claude", "gpt-": "gpt" } }
+```
+
+- **Where the list comes from.** An adapter's `probeIdentity` reports `identity.discoveredModels`.
+  Antigravity runs `agy models` (no turn spent, 1.8s, at most hourly; a person's Probe skips the
+  wait) and `parseAgyModels` folds its one-line-per-effort output into one model with its efforts.
+  The same ids become `identity.availableModels`, so the worker's picker shows what its CLI offers.
+- **How it enters the cost model.** `syncDiscoveredModels` (`workers.ts`) takes the union over each
+  adapter's live workers and calls `setDiscovered`. It runs at boot, from what the database last
+  recorded, and after every identity probe that read a list.
+  ⛔ It replaces the set rather than adding to it: a model the CLI stops listing leaves the picker.
+- ⛔ **A listed model always wins.** The file is the measurement; discovery is a sighting.
+- ⛔ **No price, no window.** `null` is *unknown*, so list price renders `unpriced` and context
+  percentages are not drawn. The subscription share still comes from the pool's quota windows.
+  A model that no `pool_by_prefix` entry places is **refused**, because quota gating reads the pool,
+  and a model gated against no window would be dispatched into an exhausted one.
+- ⚠️ **What it does not know.** It has no benchmark prior (`unknown`) and no tier tag until the
+  operator gives it one in Settings → Auto model. Adding it to `models` with measured figures
+  remains the way to make it a first-class entry.
+- A failed or empty `agy models` keeps the last list; it never empties the picker. The worker's
+  stored list is kept too (`refreshIdentity`), so a task pinned to a discovered model still resolves.
+
 ## 9. Auto mode's classifier — an unmeasured cost
 
 Claude Code's `auto` mode runs a second model (Claude Sonnet 5 by default) over each non-read action

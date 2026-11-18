@@ -19,7 +19,7 @@ import { creditsMismatchKind, creditsMismatchNote, creditsPurseEmpty } from '@sh
 import { db, row, rows } from './db.js'
 import { ensureDir, paths, slugify } from './paths.js'
 import { adapter, hasAdapter } from './adapters/index.js'
-import { costModel } from './costmodel.js'
+import { costModel, costModels, type DiscoveredModelInput } from './costmodel.js'
 import { lastQuota } from './quota.js'
 import { log } from './log.js'
 import { emit } from './events.js'
@@ -480,6 +480,44 @@ export function knownModelIds(adapterId: string, workerId?: string | null): stri
     }
   }
   return [...ids]
+}
+
+/**
+ * Hand every cost model the models its adapters' CLIs list that it does not (t1401).
+ *
+ * The union over each adapter's live workers, efforts merged, newest sighting kept. Called at boot
+ * (from what the database last recorded, before any probe has run — a task pinned to a discovered
+ * model must still resolve after a restart) and after every identity probe that read a list.
+ * ⛔ Adapter-neutral: an adapter takes part by reporting `discoveredModels`, a cost model by declaring
+ * `discovered_models`; neither is named here.
+ */
+export function syncDiscoveredModels(): void {
+  const byCostModel = new Map<string, Map<string, DiscoveredModelInput>>()
+  for (const w of listWorkers(true)) {
+    if (w.retiredAt || !hasAdapter(w.adapterId)) continue
+    const found = w.identity?.discoveredModels
+    if (!found?.length) continue
+    const cmId = adapter(w.adapterId).info.policy.costModelId
+    const into = byCostModel.get(cmId) ?? new Map<string, DiscoveredModelInput>()
+    const seenAt = w.identity?.discoveredAt ?? w.identity?.checkedAt ?? Date.now()
+    for (const m of found) {
+      const prior = into.get(m.id)
+      into.set(m.id, {
+        id: m.id,
+        effortLevels: [...new Set([...(prior?.effortLevels ?? []), ...m.effortLevels])],
+        seenAt: Math.max(prior?.seenAt ?? 0, seenAt)
+      })
+    }
+    byCostModel.set(cmId, into)
+  }
+  for (const cm of costModels()) {
+    if (!cm.acceptsDiscovered()) continue
+    const before = new Set(cm.discovered().keys())
+    const { accepted, refused } = cm.setDiscovered([...(byCostModel.get(cm.id)?.values() ?? [])])
+    const added = accepted.filter((id) => !before.has(id))
+    if (added.length > 0) log.info(`${cm.id}: the CLI lists model(s) this release does not: ${added.join(', ')}`)
+    for (const r of refused) log.warn(`${cm.id}: not offering discovered model ${r.id}: ${r.reason}`)
+  }
 }
 
 /**
@@ -951,11 +989,16 @@ export async function refreshIdentity(
     // What this plan offers out of the catalogue (Codex's models_cache.json) - a subset, null where
     // the CLI never said. See WorkerIdentity.availableModels.
     availableModels: probe.availableModels ?? null,
+    // ⭐ What the CLI itself lists (t1401). ⚠️ Kept from the last read when this probe has none: an
+    // `agy models` that failed once must not take a model off a task that is pinned to it.
+    discoveredModels: probe.discoveredModels ?? w.identity?.discoveredModels ?? null,
+    discoveredAt: probe.discoveredModels ? (probe.discoveredAt ?? Date.now()) : (w.identity?.discoveredAt ?? null),
     contextWindow: probe.contextWindow ?? null,
     raw: probe.raw,
     checkedAt: Date.now()
   }
   db().prepare('update workers set identity_json = ? where id = ?').run(JSON.stringify(identity), id)
+  if (identity.discoveredModels) syncDiscoveredModels()
 
   if (lift && getWorker(id)?.health) {
     const health = getWorker(id)!.health

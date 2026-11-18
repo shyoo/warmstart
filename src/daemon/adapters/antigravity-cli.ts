@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { AdapterDetection, AdapterInfo, QuotaSnapshot, QuotaWindow } from '@shared/protocol.js'
+import type { AdapterDetection, AdapterInfo, DiscoveredModel, QuotaSnapshot, QuotaWindow } from '@shared/protocol.js'
 import type {
   AgentAdapter,
   IdentityProbe,
@@ -405,6 +405,111 @@ function fallbackPaths(): string[] {
 
 function resolveCommand(): string | null {
   return which(info.command) ?? fallbackPaths().find((p) => existsSync(p)) ?? null
+}
+
+// ------------------------------------------------------------------------- model discovery (t1401)
+
+/** Efforts `agy` spells as an id suffix, low to high. ⚠️ Order is the picker's order. */
+const EFFORT_SUFFIXES = ['low', 'medium', 'high', 'xhigh', 'max'] as const
+
+/**
+ * Read `agy models` into one entry per model, its efforts folded together.
+ *
+ * Verbatim from agy 1.5.10, 2026-11-18 (1.8s, no turn spent):
+ *
+ * ```
+ * Fetching available models...
+ * gemini-4-neon-high	Gemini 4 Neon (High)
+ * gemini-4-neon-xhigh	Gemini 4 Neon (XHigh)
+ * gemini-pro-orchestrator	Orchestrator (Carbon)
+ * gpt-oss-120b-medium	GPT-OSS 120B (Medium)
+ * ```
+ *
+ * ⛔ An effort is split off only when **both** halves say so: the id ends `-<effort>` *and* the label
+ * ends `(<Effort>)`. `gemini-pro-orchestrator` ends in neither and stays whole; an id that merely
+ * happens to end in `-high` with a label that does not agree is not guessed at. ⚠️ A line without a
+ * tab is not a model (the *Fetching…* banner, or an error) and is skipped, never coerced.
+ */
+export function parseAgyModels(stdout: string): DiscoveredModel[] {
+  const byId = new Map<string, { label: string | null; efforts: Set<string> }>()
+  for (const raw of stdout.split(/\r?\n/)) {
+    const tab = raw.indexOf('\t')
+    if (tab <= 0) continue
+    const id = raw.slice(0, tab).trim()
+    const label = raw.slice(tab + 1).trim() || null
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) continue
+    let base = id
+    let effort: string | null = null
+    let baseLabel = label
+    for (const e of EFFORT_SUFFIXES) {
+      const labelled = label ? new RegExp(`\\s*\\(${e}\\)$`, 'i').exec(label) : null
+      if (id.endsWith(`-${e}`) && labelled) {
+        base = id.slice(0, -(e.length + 1))
+        effort = e
+        baseLabel = label!.slice(0, labelled.index).trim() || null
+        break
+      }
+    }
+    const entry = byId.get(base) ?? { label: baseLabel, efforts: new Set<string>() }
+    if (effort) entry.efforts.add(effort)
+    byId.set(base, entry)
+  }
+  return [...byId.entries()].map(([id, e]) => ({
+    id,
+    label: e.label,
+    effortLevels: EFFORT_SUFFIXES.filter((s) => e.efforts.has(s))
+  }))
+}
+
+/** How long one `agy models` answer is believed before it is asked again. A person's Probe skips it. */
+const DISCOVERY_TTL_MS = 60 * 60_000
+
+let lastDiscovery: { at: number; models: DiscoveredModel[] } | null = null
+let discovering: Promise<{ at: number; models: DiscoveredModel[] } | null> | null = null
+
+/**
+ * Ask the CLI which models it offers, at most once an hour unless `force`.
+ *
+ * ⛔ Costs no turn: `agy models` fetches the list and exits (measured 2026-11-18, agy 1.5.10, 1.8s).
+ * ⚠️ Through `envFor` (`antigravityEnv`) like every other launch, which turns agy's auto-updater off:
+ * it opens a visible window from any launch (t1400). ⚠️ A failure or an empty list returns the last good answer
+ * (or null), never an empty list: *the CLI said nothing* is not *the CLI offers nothing*, and an empty
+ * list here would empty the worker's model picker.
+ */
+async function discoverModels(force: boolean): Promise<{ at: number; models: DiscoveredModel[] } | null> {
+  if (!force && lastDiscovery && Date.now() - lastDiscovery.at < DISCOVERY_TTL_MS) return lastDiscovery
+  if (discovering) return discovering
+  const resolved = resolveCommand()
+  if (!resolved) return lastDiscovery
+  discovering = (async () => {
+    try {
+      const probe = launchArgs(resolved, ['models'])
+      const { stdout } = await run(probe.command, probe.args, {
+        timeout: 30_000,
+        windowsHide: true,
+        env: envFor()
+      })
+      const models = parseAgyModels(stdout)
+      if (models.length === 0) {
+        log.warn(`\`agy models\` listed nothing this adapter could read; keeping the last list`)
+        return lastDiscovery
+      }
+      lastDiscovery = { at: Date.now(), models }
+      return lastDiscovery
+    } catch (err) {
+      log.warn(`\`agy models\` failed; keeping the last list: ${errorMessage(err)}`)
+      return lastDiscovery
+    } finally {
+      discovering = null
+    }
+  })()
+  return discovering
+}
+
+/** For tests: forget what was discovered. */
+export function resetModelDiscovery(): void {
+  lastDiscovery = null
+  discovering = null
 }
 
 /**
@@ -1215,7 +1320,7 @@ export const antigravityCli: AgentAdapter = {
    *
    * ⛔ It must never spend a turn to find out. `agy -p "who am i"` would answer, and would bill.
    */
-  async probeIdentity(): Promise<IdentityProbe> {
+  async probeIdentity(_isolationRoot?: string, opts?: { forceTokenRefresh?: boolean }): Promise<IdentityProbe> {
     const home = cliHome()
     const { loggedIn, account, subscriptionType } = readAntigravityIdentity()
     if (loggedIn === null && !account) {
@@ -1226,6 +1331,8 @@ export const antigravityCli: AgentAdapter = {
           'and keeps nothing here - there is no way to tell the difference without spending a turn.'
       }
     }
+    // ⭐ What the CLI offers, read from the CLI (t1401). `forceTokenRefresh` is a person's Probe.
+    const discovery = await discoverModels(opts?.forceTokenRefresh === true)
 
     let setupComplete: boolean | null = null
     try {
@@ -1243,9 +1350,20 @@ export const antigravityCli: AgentAdapter = {
       ...(account ? { account } : {}),
       ...(subscriptionType ? { subscriptionType } : {}),
       setupComplete,
+      ...(discovery
+        ? {
+            discoveredModels: discovery.models,
+            discoveredAt: discovery.at,
+            // ⭐ The same list narrows this worker's picker to what its CLI offers, the way Codex's
+            // models_cache.json does (`modelOffered`): a catalogue model agy no longer lists is not
+            // offered to it.
+            availableModels: discovery.models.map((m) => m.id)
+          }
+        : {}),
       raw:
         `Antigravity CLI is configured at ${home}. Active account: ${account ?? 'none'}, ` +
-        `tier: ${subscriptionType ?? 'unknown'}.`
+        `tier: ${subscriptionType ?? 'unknown'}.` +
+        (discovery ? ` \`agy models\` listed ${discovery.models.length} model(s).` : '')
     }
   },
 

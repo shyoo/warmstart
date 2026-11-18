@@ -209,6 +209,19 @@
       "pool": "gpt"
     }
   ],
+  "discovered_models": {
+    "$comment": "t1401, 2026-11-18. A model `agy models` lists and the list above does not is accepted under its own id with this shape: no price and no window, because nobody has read either (null is unknown, never zero). Its subscription share still comes from its pool's quota windows. Measured on agy 1.5.10: the CLI listed gemini-4-neon and gemini-4-carbon, which this file did not know. Pools follow the /usage panel: Gemini apart from Claude/GPT; gpt-* draws on the Claude/GPT windows by the same containment rule `pool` documents.",
+    "context_window": null,
+    "input_per_mtok": null,
+    "output_per_mtok": null,
+    "tokenizer": "unknown",
+    "context_awareness": false,
+    "pool_by_prefix": {
+      "gemini-": "gemini",
+      "claude-": "claude",
+      "gpt-": "gpt"
+    }
+  },
   "$plans_comment": [
     "⚠️ TWO POOLS, ONE SUBSCRIPTION, AND THE SPLIT BETWEEN THEM IS A HEURISTIC.",
     "",

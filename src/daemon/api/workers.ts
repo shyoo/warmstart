@@ -287,7 +287,8 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
                 id,
                 contextWindow: spec?.context_window ?? null,
                 effortLevels: spec?.effort_levels ?? [],
-                ...(spec?.pool ? { pool: spec.pool } : {})
+                ...(spec?.pool ? { pool: spec.pool } : {}),
+                ...(spec?.discovered ? { discovered: spec.discovered } : {})
               }
             }),
             ...(pools.length > 0 ? { pools } : {})

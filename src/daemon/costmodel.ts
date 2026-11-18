@@ -84,6 +84,12 @@ export interface CostModelFile {
      * offered by a picker or to the controller (`offeredModelIds`). The value says when and how it was seen.
      */
     retired?: string
+    /**
+     * Set on a model this file does **not** list but the adapter's own CLI does (t1401): the spec
+     * was minted from `discovered_models` and says when the CLI was last seen listing it. Never
+     * written to a file — see `discovered_models`.
+     */
+    discovered?: string
   }>
   /**
    * A model this file cannot list but will accept: one whose id is decided by a server at run time.
@@ -102,6 +108,29 @@ export interface CostModelFile {
     tokenizer: string
     context_awareness: boolean
     effort_levels: string[]
+  }
+  /**
+   * The shape of a model the vendor's CLI lists and this file does not (t1401).
+   *
+   * ⭐ The case is a vendor shipping models faster than this file is released: Antigravity's
+   * `agy models` listed `gemini-4-neon` and `gemini-4-carbon` on 2026-11-18 while this file knew
+   * neither, and a model nobody can name is a model nobody can pick. A worker whose identity probe
+   * reports `discoveredModels` contributes them here, and each is accepted under its own id with this
+   * template — **no price, no window** (`null` is *unknown*, never zero; the run prices as
+   * `unpriced` for list price, and its subscription share still comes from the pool's windows).
+   *
+   * ⛔ Absent means the file accepts no discovered model at all. ⛔ A listed model always wins: the
+   * file is the measurement, discovery is a sighting. ⚠️ `pool_by_prefix` is how a discovered id
+   * finds its quota pool — longest matching prefix — and a model in a file with pools that matches
+   * none is refused rather than gated against no window.
+   */
+  discovered_models?: {
+    context_window: number | null
+    input_per_mtok: number | null
+    output_per_mtok: number | null
+    tokenizer: string
+    context_awareness: boolean
+    pool_by_prefix?: Record<string, string>
   }
   quota?: unknown
   /**
@@ -213,6 +242,21 @@ export interface RunUsage {
   cacheReadTokens: number
   cacheWriteTokens: number
 }
+
+/** One model a CLI listed, as an adapter reports it (`WorkerIdentity.discoveredModels`). */
+export interface DiscoveredModelInput {
+  id: string
+  effortLevels: string[]
+  /** When it was seen listed, for the spec's `discovered` field. */
+  seenAt: number
+}
+
+/**
+ * Discovered specs per cost model id (t1401). ⚠️ Module state, not an instance field: the registry
+ * can be rebuilt by `loadCostModels`, and a discovered model must not vanish because a pricing file
+ * was re-read — it vanishes when `setDiscovered` is next told the CLI stopped listing it.
+ */
+const discoveredByModel = new Map<string, Map<string, ModelSpec>>()
 
 export class CostModel {
   readonly id: string
@@ -379,11 +423,14 @@ export class CostModel {
       const { id_prefix: _prefix, ...template } = dynamic
       return { id, ...template }
     }
+    // A model the CLI listed and this file does not (t1401). After the file's own, never before it.
+    const discovered = this.discovered().get(id)
+    if (discovered) return discovered
     // Backward compatibility: if an id carried a legacy effort suffix (e.g. -high, -medium, -med, -low)
     // from before effort was separated into selectable levels, resolve against the base model id.
     const suffixMatch = /^(.*)-(high|medium|med|low)$/.exec(id)
     if (suffixMatch) {
-      const base = this.data.models?.find((m) => m.id === suffixMatch[1])
+      const base = this.data.models?.find((m) => m.id === suffixMatch[1]) ?? this.discovered().get(suffixMatch[1] ?? '')
       if (base) {
         return { ...base, id }
       }
@@ -403,15 +450,69 @@ export class CostModel {
    * Every model this file can price by name. ⛔ The only list agentyard will accept a model name
    * from - a model it cannot price is one it cannot gate, estimate for, or reason about the context
    * of - **plus** whatever a `dynamic_models` template admits, which is not a list: the served ids
-   * live on the workers (`knownModelIds`, `workers.ts`), and this stays the file's own.
+   * live on the workers (`knownModelIds`, `workers.ts`), and this stays the file's own. ⭐ Plus the
+   * models a CLI listed that the file does not (`discovered_models`, t1401), under their own ids.
    */
   modelIds(): string[] {
-    return this.data.models?.map((m) => m.id) ?? []
+    return [...(this.data.models?.map((m) => m.id) ?? []), ...this.discovered().keys()]
   }
 
   /** `modelIds` minus the models the vendor has stopped listing: what a picker may offer. */
   offeredModelIds(): string[] {
-    return this.data.models?.filter((m) => !m.retired).map((m) => m.id) ?? []
+    return [...(this.data.models?.filter((m) => !m.retired).map((m) => m.id) ?? []), ...this.discovered().keys()]
+  }
+
+  /** Does this file accept models a CLI discovered? See `discovered_models`. */
+  acceptsDiscovered(): boolean {
+    return Boolean(this.data.discovered_models)
+  }
+
+  /** The discovered specs currently accepted, by id. Empty where the file accepts none. */
+  discovered(): Map<string, ModelSpec> {
+    return discoveredByModel.get(this.id) ?? new Map<string, ModelSpec>()
+  }
+
+  /**
+   * Replace the discovered set with what the CLIs now list (t1401).
+   *
+   * ⛔ **Replace, not merge**: a model the CLI stopped listing leaves the picker the next time it is
+   * asked. A model this file lists is skipped — the file is the measurement and its spec wins. A model
+   * in a file with pools that no `pool_by_prefix` entry places is refused, because quota gating reads
+   * the pool and a model gated against no window would be dispatched into an exhausted one.
+   */
+  setDiscovered(models: DiscoveredModelInput[]): { accepted: string[]; refused: Array<{ id: string; reason: string }> } {
+    const template = this.data.discovered_models
+    const accepted: string[] = []
+    const refused: Array<{ id: string; reason: string }> = []
+    if (!template) {
+      discoveredByModel.delete(this.id)
+      return { accepted, refused: models.map((m) => ({ id: m.id, reason: `${this.id} accepts no discovered model` })) }
+    }
+    const listed = new Set(this.data.models?.map((m) => m.id) ?? [])
+    const hasPools = this.pools().length > 0
+    const prefixes = Object.entries(template.pool_by_prefix ?? {}).sort((a, b) => b[0].length - a[0].length)
+    const next = new Map<string, ModelSpec>()
+    const { pool_by_prefix: _byPrefix, ...withComment } = template as typeof template & { $comment?: string }
+    const { $comment: _comment, ...shape } = withComment
+    for (const m of models) {
+      if (!m.id || listed.has(m.id) || next.has(m.id)) continue
+      const pool = prefixes.find(([prefix]) => m.id.startsWith(prefix))?.[1]
+      if (hasPools && !pool) {
+        refused.push({ id: m.id, reason: `no pool_by_prefix entry in ${this.id} places '${m.id}' in a quota pool` })
+        continue
+      }
+      next.set(m.id, {
+        id: m.id,
+        ...shape,
+        effort_levels: [...m.effortLevels],
+        ...(pool ? { pool } : {}),
+        discovered: `listed by the CLI, last seen ${new Date(m.seenAt).toISOString()}`
+      })
+      accepted.push(m.id)
+    }
+    if (next.size > 0) discoveredByModel.set(this.id, next)
+    else discoveredByModel.delete(this.id)
+    return { accepted, refused }
   }
 
   /** The prefix a dynamic id must carry, or null where every model is listed by name. */
@@ -435,7 +536,7 @@ export class CostModel {
     }
 
     if (this.data.models) {
-      for (const m of this.data.models) {
+      for (const m of [...this.data.models, ...this.discovered().values()]) {
         if (m.pool) {
           const targetPool =
             m.pool === 'gpt' && poolMap.has('claude')
