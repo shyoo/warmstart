@@ -94,7 +94,7 @@ export function DelegatePill({
     summaryParts.push(`${allowedModels.length} model${allowedModels.length === 1 ? '' : 's'}`)
   }
   const summary = summaryParts.length > 0 ? ` (${summaryParts.join(' · ')})` : ''
-  const pillLabel = `Delegation settings${summary} ▾`
+  const toggleLabel = `${on ? 'Delegate on' : 'Delegate off'}${summary}`
 
   const updatePolicy = (next: { on: boolean; allowedTiers?: string[]; allowedModels?: string[] }): void => {
     setBusy(true)
@@ -121,20 +121,34 @@ export function DelegatePill({
 
   return (
     <>
-      <button type="button" className={`pill${on ? '' : ' pill--muted'}`} aria-label="Toggle delegation"
-        aria-pressed={on} disabled={busy} onClick={() => updatePolicy({ on: !on })}>
-        {on ? 'Delegate on' : 'Delegate off'}
-      </button>
-      <Pill
-        className="compose-assign-pill"
-        ariaLabel="Delegation"
-        muted={!on}
-        label={pillLabel}
-        title={
-          on
-            ? 'The agent may hand parts of this work to other agents using allowed tiers and models. Click to configure delegation.'
-            : 'The agent does all of this work itself. /delegate switches this back on. Click to configure delegation.'
-        }
+      <div className="delegate-split">
+        <button
+          type="button"
+          className={`pill delegate-split-main${on ? '' : ' pill--muted'}`}
+          aria-label="Toggle delegation"
+          aria-pressed={on}
+          disabled={busy}
+          title={
+            on
+              ? 'Delegation is on — click to turn it off.'
+              : 'Delegation is off — click to turn it on.'
+          }
+          onClick={() => updatePolicy({ on: !on })}
+        >
+          {toggleLabel}
+        </button>
+        <Pill
+          className="compose-assign-pill delegate-split-more"
+          ariaLabel="Delegation settings"
+          muted={!on}
+          disabled={busy}
+          align="right"
+          label={<span aria-hidden="true">▾</span>}
+          title={
+            on
+              ? 'The agent may hand parts of this work to other agents using allowed tiers and models. Click to configure delegation.'
+              : 'The agent does all of this work itself. /delegate switches this back on. Click to configure delegation.'
+          }
         menu={() => (
           <div className="delegation-picker" role="group" aria-label="Delegation settings">
             <div className="delegation-picker-section">
@@ -172,7 +186,8 @@ export function DelegatePill({
             )}
           </div>
         )}
-      />
+        />
+      </div>
       {failure && <span className="compose-hint warn">{failure}</span>}
       {on && canSplit === false && (
         <span className="compose-hint warn">

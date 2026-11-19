@@ -10050,3 +10050,6 @@ button.scratch-tag:hover {
 .delegation-picker-row { display: flex; align-items: center; gap: var(--sp-2); padding: 3px 4px; cursor: pointer; font-size: var(--text-dense); }
 .delegation-picker-row:hover { background: var(--color-surface); }
 .delegation-picker-tiers { margin-left: auto; color: var(--color-text-dim); }
+.delegate-split { display: inline-flex; align-items: stretch; }
+.delegate-split-main { border-radius: 999px 0 0 999px; }
+.delegate-split-more .pill { border-radius: 0 999px 999px 0; border-left: 0; padding: 2px 7px; }
