@@ -87,7 +87,7 @@ import { ProposeUpstream } from './thread/ProposeUpstream'
 import { CacheCost, Fact, ModelFact, SessionFact } from './thread/Facts'
 import { completeTitle, Decide, QuotaDecide, QuotaOverride, usePendingWork, type PendingWorkState } from './thread/Decide'
 import { AssignPills, useReassignChoice, type ReassignChoice } from './thread/Reassign'
-import { DelegatePill } from './thread/DelegatePill'
+import { DelegateNotice, DelegatePill } from './thread/DelegatePill'
 import { artifactsOf, counts, DiffPanel, TaskArtifacts, useTaskDiffSummary } from './thread/DiffPanel'
 import { sameSource, useDiffPane } from '../lib/diffpane'
 import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
@@ -2341,6 +2341,10 @@ function Compose({
   // ⛔ What the daemon refused. A rejected send used to vanish into `void send()` — t777's Reassign
   // to Antigravity was refused at the door, and the only trace was a WARN line in the daemon log.
   const [sendError, setSendError] = useState<string | null>(null)
+  const [delegateError, setDelegateError] = useState<string | null>(null)
+  useEffect(() => {
+    setDelegateError(null)
+  }, [task.id])
   // ⛔ The status the task was at when `outcome` was recorded, so the hint can tell *its own*
   // send apart from a later one. Without this, "Queued — same thread…" stayed on screen forever:
   // the requeue is resolved by a scheduler tick minutes later, off in daemon state this component
@@ -2634,7 +2638,8 @@ function Compose({
         choice={choice}
         disabled={running || sending}
         disabledReason="Reassign once this turn ends, or Stop it first — the choice decides the next run, not this one."
-        extra={<DelegatePill task={task} refresh={refresh} canToolSplit={delegateCanToolSplit} />}
+        extra={<DelegatePill task={task} refresh={refresh} onFailure={setDelegateError} />}
+        notices={<DelegateNotice task={task} canToolSplit={delegateCanToolSplit} failure={delegateError} />}
       />
       {/*
         ⛔ This used to say "Nothing is running, so this waits… prepended to the prompt the next run

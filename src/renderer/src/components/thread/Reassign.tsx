@@ -384,13 +384,16 @@ export function AssignPills({
   choice,
   disabled,
   disabledReason,
-  extra
+  extra,
+  notices
 }: {
   choice: ReassignChoice
   disabled: boolean
   disabledReason?: string
   /** Controls that sit in the same row but are not part of the next-run choice (the Delegate pill). */
   extra?: React.ReactNode
+  /** Notices rendered underneath the single-line pill row (for example delegation hints/errors). */
+  notices?: React.ReactNode
 }): React.JSX.Element {
   const hint = disabled
     ? disabledReason
@@ -398,66 +401,69 @@ export function AssignPills({
   const cls = choice.changed ? 'compose-assign-pill compose-assign-pill--changed' : 'compose-assign-pill'
   return (
     <div className={`compose-assign${choice.changed ? ' compose-assign--changed' : ''}`}>
-      <PillSelect
-        className={cls}
-        label={choice.workerLabel}
-        value={choice.selectedWorkerId}
-        options={choice.workerOptions}
-        onChange={choice.setWorker}
-        ariaLabel="Reassign worker"
-        title={hint}
-        muted={!choice.selectedWorkerId}
-        disabled={disabled}
-      />
-      <PillSelect
-        className={cls}
-        menuClassName="pill-menu--model"
-        label={choice.modelLabel}
-        value={choice.model}
-        options={choice.modelOptions}
-        onChange={choice.setModel}
-        ariaLabel="Reassign model"
-        title={choice.workerId ? hint : 'Pick a worker first — the model list is that account’s'}
-        muted={!choice.model || choice.model.startsWith('__auto__')}
-        disabled={disabled || !choice.workerId || choice.modelOptions.length <= 1}
-      />
-      {choice.showsTags && (
-        <TagsPill
-          className={cls}
-          tags={choice.tags}
-          empty="Any tags"
-          ariaLabel="Reassign tags"
-          title="Tags the chosen model and effort must all carry"
-          disabled={disabled}
-          menu={() => (
-            <TagPicker
-              label="the next run"
-              available={choice.tagOptions}
-              selected={choice.tags}
-              onChange={choice.setTags}
-            />
-          )}
-        />
-      )}
-      {(choice.effortOptions.length > 0 || choice.currentEffort) && (
+      <div className="compose-assign-row">
         <PillSelect
           className={cls}
-          label={choice.effortLabel}
-          value={choice.effort}
-          options={choice.effortOptions}
-          onChange={choice.setEffort}
-          ariaLabel="Reassign effort"
-          title={choice.effortOptions.length > 0 ? hint : 'Pick a worker first — the effort list is that account’s'}
-          muted={!choice.effort}
-          disabled={disabled || choice.effortOptions.length === 0}
+          label={choice.workerLabel}
+          value={choice.selectedWorkerId}
+          options={choice.workerOptions}
+          onChange={choice.setWorker}
+          ariaLabel="Reassign worker"
+          title={hint}
+          muted={!choice.selectedWorkerId}
+          disabled={disabled}
         />
-      )}
-      {choice.changed && !disabled && (
-        <button type="button" className="compose-assign-reset" onClick={choice.reset}>
-          undo
-        </button>
-      )}
-      {extra}
+        <PillSelect
+          className={cls}
+          menuClassName="pill-menu--model"
+          label={choice.modelLabel}
+          value={choice.model}
+          options={choice.modelOptions}
+          onChange={choice.setModel}
+          ariaLabel="Reassign model"
+          title={choice.workerId ? hint : 'Pick a worker first — the model list is that account’s'}
+          muted={!choice.model || choice.model.startsWith('__auto__')}
+          disabled={disabled || !choice.workerId || choice.modelOptions.length <= 1}
+        />
+        {choice.showsTags && (
+          <TagsPill
+            className={cls}
+            tags={choice.tags}
+            empty="Any tags"
+            ariaLabel="Reassign tags"
+            title="Tags the chosen model and effort must all carry"
+            disabled={disabled}
+            menu={() => (
+              <TagPicker
+                label="the next run"
+                available={choice.tagOptions}
+                selected={choice.tags}
+                onChange={choice.setTags}
+              />
+            )}
+          />
+        )}
+        {(choice.effortOptions.length > 0 || choice.currentEffort) && (
+          <PillSelect
+            className={cls}
+            label={choice.effortLabel}
+            value={choice.effort}
+            options={choice.effortOptions}
+            onChange={choice.setEffort}
+            ariaLabel="Reassign effort"
+            title={choice.effortOptions.length > 0 ? hint : 'Pick a worker first — the effort list is that account’s'}
+            muted={!choice.effort}
+            disabled={disabled || choice.effortOptions.length === 0}
+          />
+        )}
+        {choice.changed && !disabled && (
+          <button type="button" className="compose-assign-reset" onClick={choice.reset}>
+            undo
+          </button>
+        )}
+        {extra}
+      </div>
+      {notices}
       {choice.invalidModelMessage && <p className="compose-assign-error" role="alert">{choice.invalidModelMessage}</p>}
     </div>
   )

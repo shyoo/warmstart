@@ -6430,12 +6430,32 @@ select:focus-visible,
    column rather than one hugging the right edge and the other drifting wherever its own width put it. */
 .compose-assign {
   display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: var(--sp-1);
   margin-top: var(--sp-1);
   padding-left: calc(var(--compose-attach-w) + var(--sp-2));
+}
+
+/* Keep the worker/model/effort/Delegate pills on one row and ellipsize when narrow (t1402). */
+.compose-assign-row {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.compose-assign-pill {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 22ch;
+}
+
+.compose-assign-pill .pill {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .compose-assign-pill--changed .pill,
@@ -6445,6 +6465,7 @@ select:focus-visible,
 }
 
 .compose-assign-reset {
+  flex: 0 0 auto;
   background: none;
   border: none;
   padding: 0 var(--sp-1);
@@ -10050,6 +10071,7 @@ button.scratch-tag:hover {
 .delegation-picker-row { display: flex; align-items: center; gap: var(--sp-2); padding: 3px 4px; cursor: pointer; font-size: var(--text-dense); }
 .delegation-picker-row:hover { background: var(--color-surface); }
 .delegation-picker-tiers { margin-left: auto; color: var(--color-text-dim); }
-.delegate-split { display: inline-flex; align-items: stretch; }
-.delegate-split-main { border-radius: 999px 0 0 999px; }
-.delegate-split-more .pill { border-radius: 0 999px 999px 0; border-left: 0; padding: 2px 7px; }
+.delegate-split { display: inline-flex; align-items: stretch; flex: 0 1 auto; min-width: 0; max-width: 24ch; }
+.delegate-split-main { border-radius: 999px 0 0 999px; max-width: 100%; min-width: 0; padding: 2px 7px; }
+.delegate-split-more { flex: 0 0 auto; }
+.delegate-split-more .pill { border-radius: 0 999px 999px 0; border-left: 0; padding: 2px 5px; }

@@ -20,28 +20,46 @@ export function delegationPillShown(task: Pick<Task, 'kind'>): boolean {
   return task.kind === 'work' || task.kind === 'conversation'
 }
 
-export function DelegatePill({
+export function DelegateNotice({
   task,
-  refresh,
-  hasMcp = null,
-  canToolSplit = null
+  canToolSplit = null,
+  failure = null
 }: {
   task: Task
-  refresh: () => Promise<void>
-  /**
-   * The next-dispatch worker's adapter MCP capability, or null while unknown (t706).
-   * Deprecated in favor of `canToolSplit` (t1289).
-   */
-  hasMcp?: boolean | null
   /**
    * Whether the worker can file splits by tool (via native MCP or CLI helper) (t706, t1289).
    * Shown only when delegation is on and the worker is known to lack both — a delegation
    * the agent cannot file by tool.
    */
   canToolSplit?: boolean | null
+  failure?: string | null
+}): React.JSX.Element | null {
+  if (!delegationPillShown(task)) return null
+  const on = task.mandate.allowed.includes('spawn_tasks')
+  if (!failure && !(on && canToolSplit === false)) return null
+  return (
+    <>
+      {failure && <span className="compose-hint warn">{failure}</span>}
+      {on && canToolSplit === false && (
+        <span className="compose-hint warn">
+          This worker has no MCP or CLI tools: the agent cannot file splits by tool. Send /delegate and
+          it writes each piece out for you to file.
+        </span>
+      )}
+    </>
+  )
+}
+
+export function DelegatePill({
+  task,
+  refresh,
+  onFailure
+}: {
+  task: Task
+  refresh: () => Promise<void>
+  onFailure?: (err: string | null) => void
 }): React.JSX.Element | null {
   const [busy, setBusy] = useState(false)
-  const [failure, setFailure] = useState<string | null>(null)
   const [availableTiers, setAvailableTiers] = useState<string[]>([...BUILTIN_TAGS])
   const [availableModels, setAvailableModels] = useState<string[]>([])
   const [modelTiers, setModelTiers] = useState<Record<string, string[]>>({})
@@ -84,7 +102,6 @@ export function DelegatePill({
   const allowedModels = (task.mandate.allowedModels ?? [])
     .map((m) => m.model.trim())
     .filter((m) => m.length > 0)
-  const canSplit = canToolSplit ?? hasMcp
 
   const summaryParts: string[] = []
   if (on && allowedTiers.length > 0) {
@@ -98,7 +115,7 @@ export function DelegatePill({
 
   const updatePolicy = (next: { on: boolean; allowedTiers?: string[]; allowedModels?: string[] }): void => {
     setBusy(true)
-    setFailure(null)
+    onFailure?.(null)
     const nextModels = next.allowedModels ?? allowedModels
     void rpc('task.update', {
       id: task.id,
@@ -112,7 +129,7 @@ export function DelegatePill({
       }
     })
       .then(() => refresh())
-      .catch((err: unknown) => setFailure(errorMessage(err)))
+      .catch((err: unknown) => onFailure?.(errorMessage(err)))
       .finally(() => setBusy(false))
   }
 
@@ -120,35 +137,34 @@ export function DelegatePill({
   const allModels = [...new Set([...availableModels, ...allowedModels])]
 
   return (
-    <>
-      <div className="delegate-split">
-        <button
-          type="button"
-          className={`pill delegate-split-main${on ? '' : ' pill--muted'}`}
-          aria-label="Toggle delegation"
-          aria-pressed={on}
-          disabled={busy}
-          title={
-            on
-              ? 'Delegation is on — click to turn it off.'
-              : 'Delegation is off — click to turn it on.'
-          }
-          onClick={() => updatePolicy({ on: !on })}
-        >
-          {toggleLabel}
-        </button>
-        <Pill
-          className="compose-assign-pill delegate-split-more"
-          ariaLabel="Delegation settings"
-          muted={!on}
-          disabled={busy}
-          align="right"
-          label={<span aria-hidden="true">▾</span>}
-          title={
-            on
-              ? 'The agent may hand parts of this work to other agents using allowed tiers and models. Click to configure delegation.'
-              : 'The agent does all of this work itself. /delegate switches this back on. Click to configure delegation.'
-          }
+    <div className="delegate-split">
+      <button
+        type="button"
+        className={`pill delegate-split-main${on ? '' : ' pill--muted'}`}
+        aria-label="Toggle delegation"
+        aria-pressed={on}
+        disabled={busy}
+        title={
+          on
+            ? 'Delegation is on — click to turn it off.'
+            : 'Delegation is off — click to turn it on.'
+        }
+        onClick={() => updatePolicy({ on: !on })}
+      >
+        {toggleLabel}
+      </button>
+      <Pill
+        className="delegate-split-more"
+        ariaLabel="Delegation settings"
+        muted={!on}
+        disabled={busy}
+        align="right"
+        label={<span aria-hidden="true">▾</span>}
+        title={
+          on
+            ? 'The agent may hand parts of this work to other agents using allowed tiers and models. Click to configure delegation.'
+            : 'The agent does all of this work itself. /delegate switches this back on. Click to configure delegation.'
+        }
         menu={() => (
           <div className="delegation-picker" role="group" aria-label="Delegation settings">
             <div className="delegation-picker-section">
@@ -186,15 +202,7 @@ export function DelegatePill({
             )}
           </div>
         )}
-        />
-      </div>
-      {failure && <span className="compose-hint warn">{failure}</span>}
-      {on && canSplit === false && (
-        <span className="compose-hint warn">
-          This worker has no MCP or CLI tools: the agent cannot file splits by tool. Send /delegate and
-          it writes each piece out for you to file.
-        </span>
-      )}
-    </>
+      />
+    </div>
   )
 }

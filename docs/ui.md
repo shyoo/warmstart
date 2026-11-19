@@ -739,7 +739,9 @@ typed:
   t899 — *Auto Model (Med)* on an Auto-worker task read "This account cannot run…"). ⭐ **Tags are a second control, not part of the model's value (t1042).** `__auto__:high` could not say "High and Audio", so Reassign, the quota handoff, the thread's next-model row and the composer all keep one `__auto__` model and a separate **Tags** pill, drawn only while the model is Auto and offering the tags this account's auto pairs carry (`routableTags`; the fleet's while no account is chosen). A requirement no *single* pair holds — `High` on one row and `Audio` on another — is refused with *Choose another model* (`tagsRoutable`), and a saved tag that has lost its last pair stays on the list, ticked, instead of being cleared. The composer's pill warns for a pinned account and never blocks: a spent account still files the task and holds it. A composer choice saved as `modelClass` is read back as that one tag (`readByWorker`).
 - **Delegation controls at the end of that row** (`thread/DelegatePill.tsx`), on work tasks and
   conversations. Rendered as a compact split pill (`.delegate-split`: `Delegate on`/`Delegate off`
-  toggle beside a `▾` settings menu) so the composer row stays single-line; the settings menu selects which
+  toggle beside a `▾` settings menu) inside `.compose-assign-row` (`flex-wrap: nowrap`) so the
+  pill row stays single-line and ellipsizes when narrow, with errors/hints rendered below via
+  `DelegateNotice`; the settings menu selects which
   capability tiers (`allowedTiers`) and specific models (`allowedModels`) the agent may use when calling
   `task_split`, and shows each model's configured tiers. An empty selection allows all tiers or models
   respectively. ⛔ Unlike the pills beside it, it is **authority applied at once**, not a next-run
