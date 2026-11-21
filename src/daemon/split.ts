@@ -14,9 +14,6 @@ import { delegationRefusal, recordDelegation } from './delegation.js'
 import { getProject } from './projects.js'
 import {
   DEBATE_VERDICT_LABELS,
-  PLAN_EXECUTE_CHILDREN,
-  isPlanExecute,
-  planModeOf,
   projectTrunkOnly,
   type ChildDefaults,
   type Principal,
@@ -49,14 +46,9 @@ import { costModel } from './costmodel.js'
 export const MAX_SPLIT_PIECES = 8
 
 /**
- * ⛔ **Two, not one — in `split` mode.** A planner that concludes the work is a single task has not
- * found a split; the honest move there is `ask_human`, or just doing it. A split of one buys a round
- * trip, a second workspace and a second cold context, and delivers no parallelism at all.
- *
- * ⭐ **Plan & Execute is the operator answering that objection in advance** (`planModeOf`). It pays
- * the round trip and the cold context deliberately, because the point is to hand the work to a
- * *different, cheaper* model — and it stops paying the third turn for them, because one piece has no
- * seams to integrate. There the floor and the ceiling are both `PLAN_EXECUTE_CHILDREN`.
+ * ⛔ **Two, not one.** A planner that concludes the work is a single task has not found a split;
+ * the honest move there is `ask_human`, or just doing it. A split of one buys a round trip, a
+ * second workspace and a second cold context, and delivers no parallelism at all.
  */
 export const MIN_SPLIT_PIECES = 2
 
@@ -428,26 +420,11 @@ export function validateSplit(
     const targetRefusal = delegationTargetRefusal(parent, pieces)
     if (targetRefusal) return { ok: false, reason: targetRefusal }
   }
-  // ⛔ **The floor is the plan's mode, not a constant.** A Plan & Execute wants exactly one piece and
-  //    a Plan & Split wants at least two, and both refusals have to name the shape the operator
-  //    actually filed — "a split needs at least 2 pieces" sent to a planner that was told to file one
-  //    is a contradiction it has no way to resolve.
-  const mode = planModeOf(parent)
   const count = Array.isArray(pieces) ? pieces.length : 0
   if (delegating && count < MIN_DELEGATION_PIECES) {
     return { ok: false, reason: 'a delegation needs at least one piece' }
   }
-  if (!delegating && mode === 'execute' && count !== PLAN_EXECUTE_CHILDREN) {
-    return {
-      ok: false,
-      reason:
-        `t${parent.seq} is a Plan & Execute task, so it files exactly ${PLAN_EXECUTE_CHILDREN} piece; ` +
-        `got ${count}. Fold the whole job into one self-contained instruction for one agent. If it ` +
-        'genuinely has to be split, say so with `ask_human` rather than filing a plan this task ' +
-        'cannot carry — nothing here will come back to integrate the pieces.'
-    }
-  }
-  if (!delegating && mode === 'split' && count < MIN_SPLIT_PIECES) {
+  if (!delegating && count < MIN_SPLIT_PIECES) {
     return {
       ok: false,
       reason:
@@ -631,11 +608,7 @@ export function pieceConstraints(
  * message rather than a cleanup. `agent.split` prechecks with `validateSplit` before calling
  * this, and files with `applySplit` after the answer.
  *
- * ⛔ **A Plan & Execute approval carries the whole executor instruction, not its label.** The
- * piece's title is the executor's prompt verbatim, and this approval is the one and only time
- * a person sees it before it runs — there is no review turn behind it. t693: the card used to
- * show only the first line, so the operator approved a label while these bytes ran. A Plan &
- * Split approval stays one-line labels: the planner's resolution turn still reviews every
+ * A Plan & Split approval stays one-line labels: the planner's resolution turn still reviews every
  * piece before anything reaches the trunk.
  */
 export interface SplitApproval {
@@ -656,11 +629,6 @@ export function splitApprovalFor(parent: Task, pieces: SplitPiece[]): SplitAppro
     })
     .join('\n')
 
-  // ⛔ **The gate is the same gate; only the sentence about what happens next changes.** A Plan &
-  //    Execute approval is the one and only time a person sees the instruction before the
-  //    executor runs against it — there is no review turn behind it — and telling them it will be
-  //    reviewed would be describing a turn this shape does not have.
-  //
   // ⛔ **A delegation's card carries every piece's whole instruction too** (t704): those bytes run
   //    on other accounts, and this card is the person's one look at them before they do. The
   //    caller reviews what comes back, not what is sent.
@@ -684,26 +652,6 @@ export function splitApprovalFor(parent: Task, pieces: SplitPiece[]): SplitAppro
       options: [
         { id: 'approve', label: one ? 'Delegate it' : `Delegate all ${pieces.length}`, detail: 'Starts as soon as an account is free' },
         { id: 'refuse', label: 'Not like this', detail: 'Add a note and the agent revises or does it itself' }
-      ]
-    }
-  }
-
-  const handoff = isPlanExecute(parent)
-  if (handoff) {
-    const instruction = pieces.map((piece) => piece.title.trim()).join('\n')
-    return {
-      header: `Hand t${parent.seq} to an executor?`,
-      question:
-        `t${parent.seq} has finished planning and wants to hand the whole job to one executor:\n\n${listed}\n\n` +
-        'Approving files it and starts it as soon as an account is free. It lands on the ' +
-        'project’s own target when it is done — this plan does not come back to review it, which ' +
-        'is what makes this two turns instead of three, so this is your look at the ' +
-        'instruction. Refusing sends your note back to the planner so it can revise.\n\n' +
-        'The full instruction the executor will receive:\n\n' +
-        instruction,
-      options: [
-        { id: 'approve', label: 'Hand it over', detail: 'It starts as soon as an account is free' },
-        { id: 'refuse', label: 'Not like this', detail: 'Add a note and the planner revises the plan' }
       ]
     }
   }
@@ -733,12 +681,6 @@ export function splitApprovalFor(parent: Task, pieces: SplitPiece[]): SplitAppro
  * ⚠️ The parent is left `blocked` by this function and its run is ended by the caller. That ordering
  * matters: `endUnfinishedRun` only touches a task still `running` or `assigned`, so the `blocked`
  * written here survives the planner's process exiting.
- *
- * ⛔ **Plan & Execute writes neither of those two things**, and that is the whole of its difference
- * here: no `settled` edge back onto the planner and no `blocked`. There is nothing for the planner to
- * come back to — one piece has no seams — so it is *finished* at the handoff, and the caller completes
- * it through the ordinary completion path rather than ending its run at a wait. The executor is filed
- * with no `landingTarget` of its own, which resolves to the **project's**: see `integratesChildren`.
  */
 export function applySplit(
   parentTaskId: string,
@@ -765,7 +707,6 @@ export function applySplit(
     constraints.modelTags?.length
   )
   const delegating = isDelegation(parent)
-  const handoff = isPlanExecute(parent)
   const created: Task[] = []
 
   try {
@@ -802,12 +743,9 @@ export function applySplit(
         // ⛔ **The plan branch, so a later piece can see an earlier one's work.** This is what makes
         // `dependsOn` between two pieces mean anything: without it child 2 is cut from `main` and a
         // dependency would order the runs and deliver nothing.
-        // ⛔ **Except in Plan & Execute, where it is the project's own target.** `null` here is not
-        // "unset" — it is the answer `landingTargetFor` resolves to the project's, and it is the one
-        // thing that keeps this executor from merging into a plan branch nothing will ever land.
         // ⚠️ A delegated piece carries the caller's branch too, which is what cuts it from there;
         //    `commit-and-verify` means nothing is ever landed onto it.
-        landingTarget: handoff ? null : parent.branch,
+        landingTarget: parent.branch,
         // ⛔ Equal shares, never `shareBudget`'s halving — see `CreateTaskInput.budgetShare`.
         budgetShare: 1 / pieces.length,
         mergeDuplicates: false,
@@ -843,14 +781,11 @@ export function applySplit(
     for (const child of created) admit(child.id)
 
     // The parent waits on every piece, however each one ends.
-    // ⛔ Not in Plan & Execute. An edge there would park the planner at `blocked` waiting for a turn
-    //    that is never dispatched, which is the one state `admit` has no way out of.
     // ⭐ A delegating conversation gets the same edges (t713). It is still `running` here, which
     //    `admit` leaves alone; the edges park it at `blocked` from the end of this turn
     //    (`endConversationTurn`) and release it when the last piece settles, so it does not rest at
     //    `awaiting_human` asking a person for nothing. A person may still write to it meanwhile.
-    const waits = !handoff
-    if (waits) for (const child of created) addDependency(parent.id, child.id, 'settled')
+    for (const child of created) addDependency(parent.id, child.id, 'settled')
     if (delegating) recordDelegation(parent.id, created.map((c) => c.id), opts.requested === true)
   } catch (err) {
     // ⛔ Unwind rather than leave a partial split. A planner blocked on half a plan is worse than a
@@ -901,19 +836,6 @@ export function applySplit(
       admit(parent.id)
     }
     log.info(`t${parent.seq} delegated ${listed}`)
-    return { ok: true, children: created }
-  }
-  if (handoff) {
-    // ⚠️ The status is deliberately left alone. The caller completes the planner through the ordinary
-    // completion path — the finish policy, the run's end and the workspace release all belong to it —
-    // and a `blocked` or `completed` written here would be a second answer racing that one.
-    addMessage(parent.id, 'system', `Handed to ${listed}`, null, [], {
-      detail:
-        `${listed} carries the whole of this plan and lands it on the project's own target. This ` +
-        'task is finished at the handoff: there is one piece, so there are no seams between pieces ' +
-        'for a review turn to look at.'
-    })
-    log.info(`t${parent.seq} handed its plan to ${listed}`)
     return { ok: true, children: created }
   }
 

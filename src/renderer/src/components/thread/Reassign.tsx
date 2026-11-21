@@ -7,21 +7,29 @@
  * the old card had — one on the quota card, one on the decision card — and a pick in one was not a
  * pick in the other (t669).
  *
- * ⛔ **Auto Model is one option, and its tags are a second control** (t1042). The model pill used to
- * carry the tier in its own value (`__auto__:high`), which made "High and Audio" impossible to
- * say. Now `__auto__` means the scheduler chooses, and the Tags pill beside it — drawn only while
- * the model is Auto — says which tags the chosen pair must all carry.
+ * ⛔ **Three pills in the row (`Worker · Model · Effort`), never a bare tier pill.** Clicking the
+ * Model pill opens Auto Model capability tiers (`High`/`Med`/`Low`/custom), optional feature tags,
+ * Account default (when pinned), and concrete models (across enabled workers when on Auto worker).
  */
 import { canWork, type ModelOptions } from '@shared/protocol'
 import { routableTags, tagsRoutable, type ModelRoute } from '@shared/modelroutes'
-import { fleetTags, sameTags, tagsLabel } from '@shared/modeltags'
+import {
+  BUILTIN_TAGS,
+  cleanTags,
+  fleetTags,
+  isTierTag,
+  sameTags,
+  tagDisplay,
+  tagKey,
+  tagsLabel,
+  toggleExclusiveTierTag
+} from '@shared/modeltags'
 import { resolveModelChoice, type Task } from '@shared/tasks'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { rpc, type FleetEntry } from '../../lib/daemon'
 import { effortLabel, modelLabel } from '../../lib/modelname'
 import { effortLookupModel, filedReassignEffort, reassignmentModel } from '../../lib/taskview'
-import { PillSelect, type PillOption } from '../Pill'
-import { TagPicker, TagsPill } from '../TagControls'
+import { Pill, PillSelect, type PillOption } from '../Pill'
 
 export function initialSelectedModel(
   model?: string,
@@ -126,15 +134,15 @@ export function pillLabels(input: {
           ? 'Choose another model'
         : input.invalidConcreteModel
           ? `Invalid model: ${modelLabel(model) ?? model}`
+        : model.startsWith('__auto__') || (!workerId && Boolean(input.tags && input.tags.length > 0))
+          ? input.tags && input.tags.length > 0
+            ? `Auto Model · ${tagsLabel(input.tags)}`
+            : 'Auto Model'
         : !workerId
           ? 'Auto model'
-          : model.startsWith('__auto__')
-            ? input.tags && input.tags.length > 0
-              ? `Auto Model (${tagsLabel(input.tags)})`
-              : 'Auto Model'
-            : !model || model === '__inherit__'
-              ? input.inheritedLabel
-              : (modelLabel(model) ?? model),
+          : !model || model === '__inherit__'
+            ? input.inheritedLabel
+            : (modelLabel(model) ?? model),
     effortLabel: effort
       ? (effortLabel(effort) ?? effort)
       : currentEffort && current?.effort
@@ -142,6 +150,65 @@ export function pillLabels(input: {
         : defaultEffort,
     currentEffort,
     selectedWorkerId
+  }
+}
+
+export interface FleetModelChoice {
+  workerId: string
+  workerLabel: string
+  modelId: string
+  label: string
+}
+
+/** Order capability tier tags cleanly (`High`, `Med`, `Low`, then custom tiers alphabetically). */
+export function orderedAutoTierTags(
+  tagOptions: readonly string[],
+  selectedTags: readonly string[] = []
+): string[] {
+  return cleanTags([...tagOptions, ...selectedTags])
+    .filter(isTierTag)
+    .sort((a, b) => {
+      const ia = BUILTIN_TAGS.findIndex((t) => tagKey(t) === tagKey(a))
+      const ib = BUILTIN_TAGS.findIndex((t) => tagKey(t) === tagKey(b))
+      if (ia !== -1 || ib !== -1) {
+        return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib)
+      }
+      return tagDisplay(a).localeCompare(tagDisplay(b))
+    })
+}
+
+/** Update selected tags for an exclusive Auto Model tier pick, keeping orthogonal feature tags intact. */
+export function nextTagsForAutoTier(currentTags: readonly string[], tier: string | null): string[] {
+  if (tier === null) return currentTags.filter((t) => !isTierTag(t))
+  const key = tagKey(tier)
+  if (currentTags.some((t) => tagKey(t) === key)) return [...currentTags]
+  return toggleExclusiveTierTag(currentTags, tier)
+}
+
+/** Build the exact `task.setWorker` RPC payload for a Reassign selection. */
+export function reassignApplyPayload(input: {
+  taskId: string
+  workerId: string
+  model: string
+  tags: readonly string[]
+  filedEffort: string | null
+}): {
+  id: string
+  workerId: string | null
+  model?: string | null
+  modelPolicy?: 'auto' | 'inherit' | null
+  modelTags?: string[]
+  effort?: string | null
+} {
+  const { taskId, workerId, model, tags, filedEffort } = input
+  const isAuto = model.startsWith('__auto__')
+  const modelPolicy = isAuto ? 'auto' : !model || model === '__inherit__' ? 'inherit' : null
+  const modelTags = isAuto ? [...tags] : []
+  const pinned = isAuto || model === '__inherit__' ? null : model || null
+  return {
+    id: taskId,
+    workerId: workerId || null,
+    ...(workerId ? { model: pinned, modelPolicy, modelTags, effort: filedEffort } : { modelTags: [...tags] })
   }
 }
 
@@ -161,11 +228,18 @@ export interface ReassignChoice {
   setWorker: (workerId: string) => void
   setModel: (model: string) => void
   setEffort: (effort: string) => void
+  /** Pick Auto Model with an exclusive capability tier (or null for Any), preserving feature tags. */
+  pickAutoTier: (tier: string | null) => void
+  /** Atomically pick a worker and concrete model (used from Auto worker's combined model list). */
+  pickWorkerModel: (workerId: string, modelId: string) => void
   reset: () => void
   /** Writes the selection as the task's pin, in one RPC. Does not start a run. */
   apply: () => Promise<void>
   workerOptions: PillOption[]
   modelOptions: PillOption[]
+  concreteModelOptions: PillOption[]
+  fleetModelOptions: FleetModelChoice[]
+  inheritedModelLabel: string
   effortOptions: PillOption[]
   workerLabel: string
   modelLabel: string
@@ -177,9 +251,9 @@ export interface ReassignChoice {
   /** The tags Auto Model must find on one pair. Meaningful only while `model` is Auto. */
   tags: string[]
   setTags: (tags: string[]) => void
-  /** What the Tags pill offers to tick: this account's, or the fleet's while none is chosen. */
+  /** What the Model menu offers under Auto Model: this account's, or the fleet's while none is chosen. */
   tagOptions: string[]
-  /** Whether the Tags pill is drawn: only a router-chosen model has tags to ask for. */
+  /** Whether the selection is currently router-chosen (Auto Model). */
   showsTags: boolean
 }
 
@@ -218,7 +292,11 @@ export function useReassignChoice(
 
   const entry = fleet.find((e) => e.worker.id === workerId) ?? null
   const worker = entry?.worker ?? null
-  const adapter = options.find((o) => o.adapterId === worker?.adapterId)
+  const adapter = worker
+    ? (options.find((o) => o.workerId === worker.id) ??
+      options.find((o) => o.adapterId === worker.adapterId && !o.workerId) ??
+      options.find((o) => o.adapterId === worker.adapterId))
+    : undefined
   const offeredModels = adapter?.models ?? []
   const canSetEffort = adapter?.selectableEffort ?? false
   const inheritedModel = resolveModelChoice(null, worker, canSetEffort, entry?.quota).model
@@ -256,8 +334,12 @@ export function useReassignChoice(
       return
     }
     const w = fleet.find((e) => e.worker.id === next)?.worker
-    const offered = options.find((o) => o.adapterId === w?.adapterId)?.models ?? []
-    const nextAdapter = options.find((o) => o.adapterId === w?.adapterId)
+    const nextAdapter = w
+      ? (options.find((o) => o.workerId === w.id) ??
+        options.find((o) => o.adapterId === w.adapterId && !o.workerId) ??
+        options.find((o) => o.adapterId === w.adapterId))
+      : undefined
+    const offered = nextAdapter?.models ?? []
     const nextInherited = resolveModelChoice(null, w ?? null, nextAdapter?.selectableEffort ?? false, fleet.find((e) => e.worker.id === next)?.quota).model
     // ⚠️ Tags the new account cannot honour are *kept* and flagged (`unavailableTags`), never
     // cleared: dropping them would quietly turn a "ZDR + Audio" request into plain Auto.
@@ -268,20 +350,29 @@ export function useReassignChoice(
     }
   }
 
+  const pickAutoTier = (tier: string | null): void => {
+    setModel('__auto__')
+    setEffort('')
+    setTags((prev) => nextTagsForAutoTier(prev, tier))
+  }
+
+  const pickWorkerModel = (targetWorkerId: string, targetModelId: string): void => {
+    setUserPickedWorker(true)
+    setWorkerId(targetWorkerId)
+    setModel(targetModelId)
+    setEffort('')
+    setTags([])
+  }
+
   const apply = async (): Promise<void> => {
     if (unavailableTags) throw new Error('choose other tags or another model before reassigning')
     if (isInvalidConcreteModel) throw new Error('choose another model before reassigning')
-    const isAuto = model.startsWith('__auto__')
-    const modelPolicy = isAuto ? 'auto' : !model || model === '__inherit__' ? 'inherit' : null
-    const modelTags = isAuto ? tags : []
-    const pinned = isAuto || model === '__inherit__' ? null : model || null
     // ⛔ One write. The scheduler can dispatch after the worker write, so a following model write
     // is too late — it was how an explicit Opus reassignment resumed on the account's Haiku default.
-    await rpc('task.setWorker', {
-      id: task.id,
-      workerId: workerId || null,
-      ...(workerId ? { model: pinned, modelPolicy, modelTags, effort: filedEffort } : { modelTags: tags })
-    })
+    await rpc(
+      'task.setWorker',
+      reassignApplyPayload({ taskId: task.id, workerId, model, tags, filedEffort })
+    )
   }
 
   const inheritedLabel = inheritedModel ? (modelLabel(inheritedModel) ?? inheritedModel) : 'CLI default model'
@@ -304,6 +395,28 @@ export function useReassignChoice(
     tags
   })
 
+  const concreteModelOptions: PillOption[] = offeredModels.map((m) => ({
+    value: m.id,
+    label: modelLabel(m.id) ?? m.id
+  }))
+
+  const fleetModelOptions: FleetModelChoice[] = !workerId
+    ? fleet
+        .filter((e) => e.worker.enabled && canWork(e.worker.role))
+        .flatMap((e) => {
+          const workerOpts =
+            options.find((o) => o.workerId === e.worker.id) ??
+            options.find((o) => o.adapterId === e.worker.adapterId && !o.workerId) ??
+            options.find((o) => o.adapterId === e.worker.adapterId)
+          return (workerOpts?.models ?? []).map((m) => ({
+            workerId: e.worker.id,
+            workerLabel: e.worker.label,
+            modelId: m.id,
+            label: modelLabel(m.id) ?? m.id
+          }))
+        })
+    : []
+
   return {
     workerId,
     model,
@@ -317,11 +430,16 @@ export function useReassignChoice(
       // Tags belong to an Auto choice; a pin or the account default has none to ask for.
       if (!next.startsWith('__auto__')) setTags([])
     },
+    pickAutoTier,
+    pickWorkerModel,
     tags,
     setTags: (next) => {
       setTags(next)
-      // No account chosen: the model pill is locked, so the tags alone decide whether this is Auto.
       if (!workerId) setModel(next.length > 0 ? '__auto__' : '')
+      else if (next.length > 0 && !model.startsWith('__auto__')) {
+        setModel('__auto__')
+        setEffort('')
+      }
     },
     tagOptions: autoTagOptions,
     showsTags: model.startsWith('__auto__') || !workerId,
@@ -356,8 +474,11 @@ export function useReassignChoice(
         : []),
       { value: '', label: inheritedModel ? `account default (${inheritedLabel})` : 'CLI default model' },
       // ⚠️ The label is written for a person; the value stays the id the CLI and cost model use.
-      ...offeredModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
+      ...concreteModelOptions
     ],
+    concreteModelOptions,
+    fleetModelOptions,
+    inheritedModelLabel: inheritedLabel,
     effortOptions: offeredEfforts.length
       ? [
           { value: '', label: defaultEffort },
@@ -371,6 +492,221 @@ export function useReassignChoice(
         ? `This account cannot run model '${model}'. Choose another model.`
         : null
   }
+}
+
+/**
+ * Portalled Model popover combining Auto Model tiers, optional feature tags, Account default (when
+ * pinned), and concrete models (across enabled workers when on Auto worker).
+ */
+export function ReassignModelMenu({
+  choice,
+  close
+}: {
+  choice: ReassignChoice
+  close: () => void
+}): React.JSX.Element {
+  const listRef = useRef<HTMLDivElement>(null)
+  const isAuto = !choice.model || choice.model === '__auto__' || choice.model === '__inherit__'
+  const selectedTierTag = choice.tags.find(isTierTag) ?? null
+  const isAnyAutoActive =
+    (choice.model.startsWith('__auto__') || (!choice.workerId && !choice.model)) && !selectedTierTag
+  const tiers = orderedAutoTierTags(choice.tagOptions, choice.tags)
+  const features = cleanTags([...choice.tagOptions, ...choice.tags]).filter((t) => !isTierTag(t))
+
+  useEffect(() => {
+    const list = listRef.current
+    if (!list) return
+    const rows = [...list.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)')]
+    const current = rows.find((r) => r.getAttribute('aria-selected') === 'true')
+    ;(current ?? rows[0])?.focus()
+  }, [])
+
+  const move = (from: HTMLElement, delta: number): void => {
+    const list = listRef.current
+    if (!list) return
+    const rows = [...list.querySelectorAll<HTMLButtonElement>('[role="option"]:not(:disabled)')]
+    const at = rows.indexOf(from as HTMLButtonElement)
+    if (at < 0) return
+    rows[(at + delta + rows.length) % rows.length]?.focus()
+  }
+
+  return (
+    <div
+      ref={listRef}
+      className="pill-options reassign-model-menu"
+      role="listbox"
+      aria-label="Reassign model"
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault()
+          move(e.target as HTMLElement, e.key === 'ArrowDown' ? 1 : -1)
+        }
+      }}
+    >
+      {choice.invalidModelMessage && (
+        <div className="reassign-model-notice" role="status">
+          {choice.invalidModelMessage}
+        </div>
+      )}
+
+      <div className="reassign-model-section-title">Auto Model (by tier)</div>
+      <button
+        type="button"
+        role="option"
+        aria-selected={isAnyAutoActive}
+        className={`pill-option${isAnyAutoActive ? ' pill-option--on' : ''}`}
+        onClick={() => {
+          choice.pickAutoTier(null)
+          close()
+        }}
+      >
+        <span className="pill-option-text">
+          <span className="pill-option-label">Auto Model (Any)</span>
+        </span>
+        {isAnyAutoActive && (
+          <span className="pill-option-check" aria-hidden="true">
+            ✓
+          </span>
+        )}
+      </button>
+
+      {tiers.map((tier) => {
+        const active =
+          (choice.model.startsWith('__auto__') || (!choice.workerId && isAuto)) &&
+          selectedTierTag !== null &&
+          tagKey(selectedTierTag) === tagKey(tier)
+        return (
+          <button
+            key={tagKey(tier)}
+            type="button"
+            role="option"
+            aria-selected={active}
+            className={`pill-option${active ? ' pill-option--on' : ''}`}
+            onClick={() => {
+              choice.pickAutoTier(tier)
+              close()
+            }}
+          >
+            <span className="pill-option-text">
+              <span className="pill-option-label">{`Auto Model · ${tagDisplay(tier)}`}</span>
+            </span>
+            {active && (
+              <span className="pill-option-check" aria-hidden="true">
+                ✓
+              </span>
+            )}
+          </button>
+        )
+      })}
+
+      {features.length > 0 && (
+        <div className="reassign-model-features">
+          <div className="reassign-model-section-title">Feature tags</div>
+          <ul className="reassign-model-feature-list">
+            {features.map((tag) => {
+              const key = tagKey(tag)
+              const checked = choice.tags.some((t) => tagKey(t) === key)
+              return (
+                <li key={key} className="tag-picker-row">
+                  <label className="tag-picker-label">
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => {
+                        const next = checked
+                          ? choice.tags.filter((t) => tagKey(t) !== key)
+                          : [...choice.tags, tag]
+                        choice.setTags(next)
+                      }}
+                    />
+                    <span className="tag-picker-name">{tagDisplay(tag)}</span>
+                  </label>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+
+      {choice.workerId && (
+        <>
+          <div className="reassign-model-section-title">Account default</div>
+          <button
+            type="button"
+            role="option"
+            aria-selected={!choice.model || choice.model === '__inherit__'}
+            className={`pill-option${!choice.model || choice.model === '__inherit__' ? ' pill-option--on' : ''}`}
+            onClick={() => {
+              choice.setModel('')
+              close()
+            }}
+          >
+            <span className="pill-option-text">
+              <span className="pill-option-label">
+                {choice.inheritedModelLabel ? `Account default (${choice.inheritedModelLabel})` : 'CLI default model'}
+              </span>
+            </span>
+            {(!choice.model || choice.model === '__inherit__') && (
+              <span className="pill-option-check" aria-hidden="true">
+                ✓
+              </span>
+            )}
+          </button>
+        </>
+      )}
+
+      {(choice.workerId ? choice.concreteModelOptions.length > 0 : choice.fleetModelOptions.length > 0) && (
+        <div className="reassign-model-section-title">Models</div>
+      )}
+
+      {choice.workerId
+        ? choice.concreteModelOptions.map((opt) => {
+            const on = choice.model === opt.value
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                role="option"
+                aria-selected={on}
+                disabled={opt.disabled}
+                className={`pill-option${on ? ' pill-option--on' : ''}`}
+                onClick={() => {
+                  choice.setModel(opt.value)
+                  close()
+                }}
+              >
+                <span className="pill-option-text">
+                  <span className="pill-option-label">{opt.label}</span>
+                  {opt.hint && <span className="pill-option-hint">{opt.hint}</span>}
+                </span>
+                {on && (
+                  <span className="pill-option-check" aria-hidden="true">
+                    ✓
+                  </span>
+                )}
+              </button>
+            )
+          })
+        : choice.fleetModelOptions.map((opt) => (
+            <button
+              key={`${opt.workerId}:${opt.modelId}`}
+              type="button"
+              role="option"
+              aria-selected={false}
+              className="pill-option"
+              onClick={() => {
+                choice.pickWorkerModel(opt.workerId, opt.modelId)
+                close()
+              }}
+            >
+              <span className="pill-option-text">
+                <span className="pill-option-label">{opt.label}</span>
+                <span className="pill-option-hint">{opt.workerLabel}</span>
+              </span>
+            </button>
+          ))}
+    </div>
+  )
 }
 
 /**
@@ -413,36 +749,16 @@ export function AssignPills({
           muted={!choice.selectedWorkerId}
           disabled={disabled}
         />
-        <PillSelect
+        <Pill
           className={cls}
           menuClassName="pill-menu--model"
           label={choice.modelLabel}
-          value={choice.model}
-          options={choice.modelOptions}
-          onChange={choice.setModel}
           ariaLabel="Reassign model"
-          title={choice.workerId ? hint : 'Pick a worker first — the model list is that account’s'}
+          title={hint}
           muted={!choice.model || choice.model.startsWith('__auto__')}
-          disabled={disabled || !choice.workerId || choice.modelOptions.length <= 1}
+          disabled={disabled}
+          menu={(close) => <ReassignModelMenu choice={choice} close={close} />}
         />
-        {choice.showsTags && (
-          <TagsPill
-            className={cls}
-            tags={choice.tags}
-            empty="Any tags"
-            ariaLabel="Reassign tags"
-            title="Tags the chosen model and effort must all carry"
-            disabled={disabled}
-            menu={() => (
-              <TagPicker
-                label="the next run"
-                available={choice.tagOptions}
-                selected={choice.tags}
-                onChange={choice.setTags}
-              />
-            )}
-          />
-        )}
         {(choice.effortOptions.length > 0 || choice.currentEffort) && (
           <PillSelect
             className={cls}

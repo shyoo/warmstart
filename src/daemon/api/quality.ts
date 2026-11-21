@@ -140,8 +140,14 @@ export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
     'controller.report': (p) => controllerReport(p?.limit ?? 40, p?.offset ?? 0),
     // ⚠️ The one RPC that can spend tokens by being called. Nothing in a scheduler tick calls it.
     'controller.drain': () => drainConsults(),
-    'task.plan': (p) =>
-      createTask({
+    'task.plan': (p) => {
+      if (p.maxChildren !== undefined && p.maxChildren < 2) {
+        throw new Error('a plan must allow at least 2 pieces')
+      }
+      if (p.childDefaults?.maxChildren !== undefined && p.childDefaults.maxChildren < 2) {
+        throw new Error('a plan must allow at least 2 pieces')
+      }
+      return createTask({
         title: p.title,
         kind: 'plan',
         projectId: p.projectId ?? null,
@@ -168,7 +174,8 @@ export function apiQuality(_ctx: ApiContext): Pick<Api, QualityMethod> {
         ...(p.childDefaults
           ? { childDefaults: { ...p.childDefaults, ...checkedChildAccounts(p.childDefaults) } }
           : {})
-      }),
+      })
+    },
     'task.estimate': (p) => {
       // ⚠️ The worker is optional and the answer changes enormously with it. A caller that wants
       // "what will this cost" without saying where has asked a fleet-neutral question and gets a

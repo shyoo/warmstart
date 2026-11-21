@@ -73,23 +73,6 @@ function planner(
   return tasks.requireTask(task.id)
 }
 
-/**
- * A Plan & Execute planner: the same task with its child cap at one.
- *
- * ⛔ **The cap is the whole of the difference**, on both fields the daemon reads — the mandate
- * `createTask` enforces and the `childDefaults` `task_split` is handed. `planModeOf` derives the
- * shape from them, so a fixture that set only one would be testing a task this composer cannot file.
- */
-function handoffPlanner(
-  overrides: { childDefaults?: ChildDefaults; constraints?: TaskConstraints } = {}
-): ReturnType<typeof tasks.createTask> {
-  return planner({
-    maxChildren: 1,
-    ...overrides,
-    childDefaults: { ...(overrides.childDefaults ?? {}), maxChildren: 1 }
-  })
-}
-
 const piece = (title: string, dependsOn: number[] = []): { title: string; dependsOn: number[] } => ({
   title,
   dependsOn
@@ -102,24 +85,11 @@ describe('validateSplit', () => {
     expect(result.ok === false && result.reason).toMatch(/at least 2/)
   })
 
-  // ⛔ The same call, the same tool, the opposite answer — and that is the point of deriving the
-  //    floor from the plan's own cap rather than from a constant. A Plan & Execute planner told
-  //    "a split needs at least 2 pieces" has been handed a contradiction it cannot resolve: its own
-  //    instruction says to file exactly one.
-  it('accepts exactly one piece from a Plan & Execute, and refuses two', () => {
-    const parent = handoffPlanner()
-    expect(split.validateSplit(parent, [piece('do the whole job')]).ok).toBe(true)
-    const two = split.validateSplit(parent, [piece('a'), piece('b')])
-    expect(two.ok).toBe(false)
-    expect(two.ok === false && two.reason).toMatch(/exactly 1 piece/)
-    // ⚠️ And says what to do instead, because "refused" with no direction gets re-filed unchanged.
-    expect(two.ok === false && two.reason).toMatch(/ask_human/)
-  })
-
-  it('refuses a Plan & Execute that files nothing at all', () => {
-    const result = split.validateSplit(handoffPlanner(), [])
+  it('refuses a split of one even on a legacy plan row with maxChildren=1', () => {
+    const legacy = planner({ maxChildren: 1, childDefaults: { maxChildren: 1 } })
+    const result = split.validateSplit(legacy, [piece('do everything')])
     expect(result.ok).toBe(false)
-    expect(result.ok === false && result.reason).toMatch(/exactly 1 piece/)
+    expect(result.ok === false && result.reason).toMatch(/at least 2/)
   })
 
   // ⭐ t704: an ordinary task may split — that is delegation — but only while it holds
@@ -490,39 +460,7 @@ describe('pieceConstraints', () => {
     }
   })
 
-  /**
-   * ⛔ **The three things a handoff must not do**, and all three are silent when wrong.
-   *
-   * A `settled` edge back onto the planner parks it at `blocked` waiting for a resolution turn that
-   * is never dispatched — nothing in `admit` has a way out of that. A `landingTarget` of the plan
-   * branch merges the executor's work into a branch no third turn will ever carry to the trunk, so
-   * the work is done, verified and goes nowhere. And a `blocked` status would race the completion
-   * the caller performs through the ordinary finish path.
-   */
-  it('hands one executor the work, and neither waits for it nor keeps it off the trunk', () => {
-    const parent = handoffPlanner({ childDefaults: { workerIds: [CX] } })
-    const result = split.applySplit(parent.id, [piece('do the whole job')], AGENT, parent.childDefaults)
-    expect(result.ok).toBe(true)
-    if (!result.ok) return
-    expect(result.children).toHaveLength(1)
-
-    const executor = tasks.requireTask(result.children[0]!.id)
-    // ⛔ The project's own target, which is what `null` resolves to — never the plan branch.
-    expect(executor.landingTarget).toBeNull()
-    expect(executor.status).toBe('ready')
-    expect(executor.parentTaskId).toBe(parent.id)
-    expect(executor.constraints.workerIds).toEqual([CX])
-
-    const after = tasks.requireTask(parent.id)
-    expect(after.dependsOn).toEqual([])
-    // ⚠️ Left exactly as it was: the caller completes it through `completeTask`, and a status
-    //    written here would be a second answer racing that one.
-    expect(after.status).toBe(parent.status)
-  })
-
-  // ⛔ Beside the test above, because the contrast is the claim: the same function, the same
-  //    arguments, and a split *does* take the edge and the plan branch.
-  it('still parks a Plan & Split on its pieces and lands them onto its own branch', () => {
+  it('parks a Plan & Split on its pieces and lands them onto its own branch', () => {
     const parent = planner()
     const result = split.applySplit(parent.id, [piece('a'), piece('b')], AGENT, parent.childDefaults)
     expect(result.ok).toBe(true)
@@ -543,22 +481,6 @@ describe('pieceConstraints', () => {
 })
 
 describe('splitApprovalFor', () => {
-  const instruction = [
-    'Rework the retry loop in src/daemon/scheduler.ts.',
-    '',
-    'Change `backoffFor` to cap at 30s, leave everything else alone.',
-    'Done means the existing retry tests pass unchanged.'
-  ].join('\n')
-
-  it('hands the operator the whole executor instruction, not just its first line', () => {
-    const parent = handoffPlanner()
-    const approval = split.splitApprovalFor(parent, [piece(instruction)])
-    // ⛔ t693: the card approved a one-line label while this text became the executor's
-    // prompt verbatim. The approval has to carry the same bytes the executor will receive.
-    expect(approval.question).toContain(instruction)
-    expect(approval.header).toMatch(/Hand t\d+ to an executor/)
-  })
-
   it('leaves a Plan & Split approval as one-line labels', () => {
     const parent = planner()
     const approval = split.splitApprovalFor(parent, [piece('first piece'), piece('second piece')])

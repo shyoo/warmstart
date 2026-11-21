@@ -360,8 +360,8 @@ describe('ordering by a column the database cannot see', () => {
     tasks.createTask({ title: 'single', kind: 'work' })
     tasks.createTask({ title: 'conversation', kind: 'conversation' })
     tasks.createTask({ title: 'split', kind: 'plan' })
-    tasks.createTask({ title: 'execute', kind: 'plan', mandate: { maxChildren: 1 } })
-    const sorted = ['conversation', 'execute', 'split', 'single']
+    tasks.createTask({ title: 'debate', kind: 'debate' })
+    const sorted = ['conversation', 'debate', 'split', 'single']
     expect(tasks.pageTasks({ sort: 'kind', asc: true }).tasks.map((t) => t.title)).toEqual(sorted)
     expect(tasks.pageTasks({ sort: 'kind', asc: false }).tasks.map((t) => t.title)).toEqual([...sorted].reverse())
     expect(tasks.pageTasks({ sort: 'kind', asc: true, limit: 2, offset: 2 }).tasks.map((t) => t.title)).toEqual(sorted.slice(2))

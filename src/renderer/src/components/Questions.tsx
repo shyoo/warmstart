@@ -294,8 +294,8 @@ export function QuestionCard({
 }
 
 /**
- * A split-approval question body: the daemon's framing plus, for a Plan & Execute handoff,
- * the whole instruction the executor will receive (`splitApprovalFor`).
+ * A split-approval question body: the daemon's framing plus, for a delegation card carrying full
+ * piece instructions, the instructions behind an expander (`splitApprovalFor`).
  *
  * ⛔ **Collapsed past twelve lines, open by press — never by itself.** The head is the eight
  * framing lines the daemon writes (what is being approved and what each press does), so the

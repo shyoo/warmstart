@@ -5308,6 +5308,52 @@ select:focus-visible,
   padding: var(--sp-3);
 }
 
+.side-timeline-disclosure {
+  padding: 0;
+}
+
+.side-timeline-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-bottom: 0;
+  padding: var(--sp-2) var(--sp-3);
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+}
+
+.side-timeline-summary::-webkit-details-marker {
+  display: none;
+}
+
+.side-timeline-summary:hover {
+  color: var(--color-text-dim);
+}
+
+.side-timeline-caret {
+  display: inline-block;
+  flex-shrink: 0;
+  font-size: 8px;
+  line-height: 1;
+  transition: transform var(--motion-fast) var(--ease);
+}
+
+.side-timeline-disclosure[open] > .side-timeline-summary .side-timeline-caret {
+  transform: rotate(90deg);
+}
+
+.side-timeline-count {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--color-text-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.side-timeline-body {
+  padding: 0 var(--sp-3) var(--sp-2);
+}
+
 /* ⛔ Stretched to the row, although its boxes are shorter than the thread beside them. The peek
    below is `position: sticky`, and a sticky element stops at the bottom of its containing block —
    an aside as tall as its own content would let the peek follow the reader for the ledger's height
@@ -6490,6 +6536,32 @@ select:focus-visible,
 .compose-assign-error {
   flex-basis: 100%;
   margin: 0;
+  font-size: var(--text-meta);
+  color: var(--state-warn);
+}
+
+.reassign-model-section-title {
+  padding: var(--sp-1) var(--sp-2) 2px;
+  margin-top: var(--sp-1);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--text-meta);
+  font-weight: 600;
+  color: var(--color-text-dim);
+}
+.reassign-model-section-title:first-child {
+  margin-top: 0;
+  border-top: none;
+}
+.reassign-model-features {
+  padding-bottom: var(--sp-1);
+}
+.reassign-model-feature-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 var(--sp-1);
+}
+.reassign-model-notice {
+  padding: var(--sp-1) var(--sp-2);
   font-size: var(--text-meta);
   color: var(--state-warn);
 }
@@ -10071,7 +10143,74 @@ button.scratch-tag:hover {
 .delegation-picker-row { display: flex; align-items: center; gap: var(--sp-2); padding: 3px 4px; cursor: pointer; font-size: var(--text-dense); }
 .delegation-picker-row:hover { background: var(--color-surface); }
 .delegation-picker-tiers { margin-left: auto; color: var(--color-text-dim); }
-.delegate-split { display: inline-flex; align-items: stretch; flex: 0 1 auto; min-width: 0; max-width: 24ch; }
-.delegate-split-main { border-radius: 999px 0 0 999px; max-width: 100%; min-width: 0; padding: 2px 7px; }
-.delegate-split-more { flex: 0 0 auto; }
-.delegate-split-more .pill { border-radius: 0 999px 999px 0; border-left: 0; padding: 2px 5px; }
+/* Split-pill delegation control `[ON/OFF | Delegate ▼]` shared by NewTask and TaskThread. */
+.split-pill {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: stretch;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface-2);
+  overflow: hidden;
+}
+.split-pill--off {
+  background: transparent;
+}
+.split-pill-toggle {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  padding: 2px 8px;
+  color: var(--color-text-dim);
+  font: inherit;
+  font-size: var(--text-meta);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.split-pill-toggle:hover:not(:disabled) {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.split-pill-toggle--on {
+  background: rgba(122, 162, 247, 0.12);
+  color: var(--color-accent);
+  font-weight: 600;
+}
+.split-pill-toggle--on:hover:not(:disabled) {
+  background: rgba(122, 162, 247, 0.2);
+  color: var(--color-accent);
+}
+.split-pill-toggle:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+}
+.split-pill-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.split-pill-menu-trigger {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  border-left: 1px solid var(--color-border);
+}
+.split-pill-menu-trigger > .pill {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  max-width: 24ch;
+  min-width: 0;
+}
+.split-pill-menu-trigger > .pill:hover:not(:disabled) {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+.split-pill-menu-trigger > .pill--open,
+.split-pill-menu-trigger > .pill:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--color-accent);
+  color: var(--color-text);
+}

@@ -375,4 +375,44 @@ describe('delegation policy, status lookup, and token-gated splits (t1322)', () 
     ])
     expect(good.ok).toBe(true)
   })
+
+  it('creates tasks with initial delegationPolicy: strips spawn_tasks when off, normalizes restrictions and mints token when on', () => {
+    const offTask = tasks.createTask({
+      title: 'No delegation at creation',
+      kind: 'work',
+      delegationPolicy: { on: false }
+    })
+    expect(offTask.mandate.allowed).not.toContain('spawn_tasks')
+    expect(offTask.mandate.delegationToken).toBeUndefined()
+
+    const onTask = tasks.createTask({
+      title: 'Restricted delegation at creation',
+      kind: 'conversation',
+      delegationPolicy: {
+        on: true,
+        allowedTiers: ['tier:low'],
+        allowedModels: [
+          { model: '  claude-haiku-4-5  ', effort: '  low ' },
+          { model: '   ', effort: 'high' },
+          { model: 'gemini-4-hydrogen', effort: '' }
+        ]
+      }
+    })
+    expect(onTask.mandate.allowed).toContain('spawn_tasks')
+    expect(onTask.mandate.allowedTiers).toEqual(['Low'])
+    expect(onTask.mandate.allowedModels).toEqual([
+      { model: 'claude-haiku-4-5', effort: 'low' },
+      { model: 'gemini-4-hydrogen', effort: null }
+    ])
+    expect(onTask.mandate.delegationToken).toMatch(/^dlg_[A-Za-z0-9_-]{16}$/)
+
+    // Authority narrowing: a task whose mandate forbids spawn_tasks cannot be forced on via delegationPolicy
+    expect(() =>
+      tasks.createTask({
+        title: 'Cannot widen past mandate',
+        mandate: { allowed: ['read', 'write'] },
+        delegationPolicy: { on: true }
+      })
+    ).toThrow(/cannot enable delegation/)
+  })
 })

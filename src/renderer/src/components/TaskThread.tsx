@@ -94,6 +94,7 @@ import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
 import { DebateBoard } from './thread/DebateBoard'
 import { CompactionRow, ReviewRow, RunRow } from './thread/RunRow'
 import { LedgerPeek } from './thread/LedgerPeek'
+import { SideTimeline } from './thread/SideTimeline'
 import { TitleEditor } from './thread/TitleEditor'
 import { SideToggle } from './thread/SideToggle'
 import { effectiveSide, readThreadSide, toggleSide, writeThreadSide, type ThreadSide } from '../lib/threadside'
@@ -343,6 +344,11 @@ function TaskDetail({
   // re-observe when the node arrives. See `LedgerPeek`.
   const [ledgerBox, setLedgerBox] = useState<HTMLElement | null>(null)
   const [timelineBox, setTimelineBox] = useState<HTMLElement | null>(null)
+  const timelineDetailsRef = useRef<HTMLDetailsElement | null>(null)
+  const setTimelineRef = useCallback((node: HTMLDetailsElement | null) => {
+    timelineDetailsRef.current = node
+    setTimelineBox(node)
+  }, [])
   const diffPane = useDiffPane()
   const onOpenFile = useCallback(
     (filePath: string) => {
@@ -1383,7 +1389,10 @@ function TaskDetail({
                 sessions={sessions}
                 fleet={fleet}
                 onJumpToLedger={() => jumpTo(ledgerBox)}
-                onJumpToRun={() => jumpTo(timelineBox)}
+                onJumpToRun={() => {
+                  if (timelineDetailsRef.current) timelineDetailsRef.current.open = true
+                  jumpTo(timelineBox)
+                }}
               />
             )}
           </div>
@@ -1412,14 +1421,7 @@ function TaskDetail({
           <ManualReviewBox task={task} reviews={manualReviews} refresh={refresh} />
 
           {timeline.length > 0 && (
-            <div className="detail-side-box" ref={setTimelineBox}>
-              {/* ⚠️ The label carries the distinction: attempts and context compactions in chronological order. */}
-              <div
-                className="side-label"
-                title="Chronological timeline of task attempts and context compactions."
-              >
-                timeline · runs, compactions & reviews
-              </div>
+            <SideTimeline count={timeline.length} detailsRef={setTimelineRef}>
               {timeline.map((item, idx) =>
                 item.kind === 'run' ? (
                   <RunRow
@@ -1452,7 +1454,7 @@ function TaskDetail({
                   />
                 )
               )}
-            </div>
+            </SideTimeline>
           )}
         </aside>
         {side === 'scratchpad' && hasScratchpad && (

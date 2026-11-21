@@ -3207,6 +3207,31 @@ export interface RpcMap {
       reply: string
     }
   }
+  'agent.subtaskBrief': {
+    params: { sessionId: string; includeClosed?: boolean }
+    result: {
+      ok: boolean
+      reply: string
+      counts: {
+        total: number
+        open: number
+        running: number
+        waiting: number
+        completed: number
+        failed: number
+        cancelled: number
+      }
+      alarm: SubtaskBriefAlarmState | null
+    }
+  }
+  'agent.subtaskBriefAlarm': {
+    params: { sessionId: string; enabled?: boolean; intervalMinutes?: number; earlyOnSettle?: boolean }
+    result: {
+      ok: boolean
+      reply: string
+      alarm: SubtaskBriefAlarmState
+    }
+  }
   'agent.depend': {
     params: { sessionId: string; taskSeq: number; dependsOnSeq: number }
     result: { ok: boolean; reason?: string }
@@ -3357,6 +3382,12 @@ export interface RemoteStatus {
   projects: Array<{ id: string; name: string; enabled: boolean }>; devices: RemoteDevice[]
 }
 
+export interface DelegationPolicyInput {
+  on?: boolean
+  allowedTiers?: string[]
+  allowedModels?: Array<{ model: string; effort?: string | null }>
+}
+
 export interface TaskCreateParams {
   title: string
   projectId?: string | null
@@ -3386,6 +3417,8 @@ export interface TaskCreateParams {
   estTokens?: number | null
   /** Attachments already uploaded through `attachment.create`, bound to the task's first message. */
   attachmentIds?: string[]
+  /** Initial delegation policy (on/off plus optional allowed tiers and specific models). */
+  delegationPolicy?: DelegationPolicyInput
 }
 
 /** What `project_settings` tells an agent about the project its task runs in. See `projectbrief.ts`. */
@@ -3451,16 +3484,24 @@ export interface TaskUpdateParams {
   /**
    * Update this task's delegation policy: on/off plus optional allowed tiers and specific models.
    */
-  delegationPolicy?: {
-    on?: boolean
-    allowedTiers?: string[]
-    allowedModels?: Array<{ model: string; effort?: string | null }>
-  }
+  delegationPolicy?: DelegationPolicyInput
 }
 
 export type RpcMethod = keyof RpcMap
 export type RpcParams<M extends RpcMethod> = RpcMap[M]['params']
 export type RpcResult<M extends RpcMethod> = RpcMap[M]['result']
+
+export interface SubtaskBriefAlarmState {
+  taskId: string
+  enabled: boolean
+  intervalMinutes: number
+  earlyOnSettle: boolean
+  lastBriefAt: number | null
+  nextBriefAt: number
+  reportedSettledIds: string[]
+  createdAt: number
+  updatedAt: number
+}
 
 export interface RpcRequest {
   id: number

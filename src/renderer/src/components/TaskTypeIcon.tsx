@@ -26,13 +26,6 @@ const SHAPES: Record<TaskTypeKey, JSX.Element> = {
       <path d="m10.8 2.5 2 1.5-2 1.5M10.8 10.5l2 1.5-2 1.5" />
     </>
   ),
-  // A list, then play: a plan that runs itself.
-  'plan-execute': (
-    <>
-      <path d="M2.5 4H8M2.5 8H8M2.5 12h4" />
-      <path d="M10 5.5 14 8l-4 2.5Z" />
-    </>
-  ),
   // One speech bubble.
   conversation: (
     <path d="M3.5 2.5h9a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H7L4 14v-2.5h-.5a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2Z" />
@@ -51,7 +44,7 @@ export function TaskTypeIcon({
   size = 14,
   className = 'task-type-icon'
 }: {
-  task: Pick<Task, 'kind' | 'mandate' | 'childDefaults'>
+  task: Pick<Task, 'kind'>
   size?: number
   className?: string
 }): JSX.Element {

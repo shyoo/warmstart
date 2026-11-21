@@ -1499,21 +1499,11 @@ describe('a plan task, as its own page describes it', () => {
     ({
       kind: 'plan',
       priority: 'P2',
-      // ⚠️ The mandate is not decoration in this fixture: `planModeOf` reads the child cap off it to
-      //    tell a Plan & Split from a Plan & Execute, so a planner with no mandate would have no shape.
       mandate: { ...ROOT_MANDATE },
       childDefaults: null,
       constraints: {},
       ...over
     }) as Task
-
-  /** ⛔ What makes a plan an execute is the cap, on both fields — see `planModeOf`. */
-  const handoff = (over: Partial<Task> = {}): Task =>
-    planner({
-      mandate: { ...ROOT_MANDATE, maxChildren: 1 },
-      childDefaults: { maxChildren: 1 },
-      ...over
-    })
 
   /** ⚠️ Anything that is not a plan still has to answer, so it gets the ordinary root mandate. */
   const plain = (over: Partial<Task>): Task =>
@@ -1526,9 +1516,6 @@ describe('a plan task, as its own page describes it', () => {
 
   it('says which kind of task it is, in the composer’s own words', () => {
     expect(kindLabel(planner())).toBe('Plan & Split')
-    // ⛔ The same kind, a different shape, and the label has to say which: one of these is run
-    //    twice and lands its pieces' work itself, and the other is finished at the handoff.
-    expect(kindLabel(handoff())).toBe('Plan & Execute')
     expect(kindLabel(plain({}))).toBe('Single Task')
     // ⛔ Its own name, not "Task". A conversation's thread behaves differently at the end of every
     // turn — it rests instead of landing, and its finish policy is not the project's — and a header
@@ -1558,14 +1545,6 @@ describe('a plan task, as its own page describes it', () => {
     expect(workers).toMatch(/Antigravity · .+, CodexFirst · .+/)
     expect(rows.find((r) => r.label === 'priority')?.value).toBe('P3')
     expect(rows.find((r) => r.label === 'fan-out')?.value).toBe('up to 4 pieces')
-  })
-
-  // ⚠️ "up to 1 piece" is not a fan-out somebody chose; it is the shape of the task, which the
-  //    type row above already names. A row saying it twice invites somebody to try to change it.
-  it('says nothing about fan-out for a Plan & Execute', () => {
-    const rows = pieceSettings(handoff({ childDefaults: { maxChildren: 1, workerIds: ['w-cx'] } }), fleet)
-    expect(rows.find((r) => r.label === 'fan-out')).toBeUndefined()
-    expect(rows.find((r) => r.label === 'workers')?.value).toContain('CodexFirst')
   })
 
   it('reads the planner’s own pieceConstraints when childDefaults has no accounts', () => {

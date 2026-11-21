@@ -254,7 +254,8 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
       }
       return createTask({
         ...p,
-        ...(p.constraints ? { constraints: checkConstraints(p.constraints, { switchedOn: true }) } : {})
+        ...(p.constraints ? { constraints: checkConstraints(p.constraints, { switchedOn: true }) } : {}),
+        ...(p.delegationPolicy !== undefined ? { delegationPolicy: p.delegationPolicy } : {})
       })
     },
     /**

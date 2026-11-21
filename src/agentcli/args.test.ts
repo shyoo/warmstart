@@ -43,6 +43,8 @@ describe('the tools', () => {
         'land_work',
         'project_settings',
         'request_directory',
+        'subtask_brief',
+        'subtask_brief_alarm',
         'task_complete',
         'task_create',
         'task_depend',

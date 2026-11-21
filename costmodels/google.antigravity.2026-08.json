@@ -55,6 +55,16 @@
   },
   "models": [
     {
+      "id": "gemini-4-argon",
+      "context_window": null,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "unknown",
+      "context_awareness": false,
+      "effort_levels": ["low", "medium", "high"],
+      "pool": "gemini"
+    },
+    {
       "id": "gemini-4-hydrogen",
       "context_window": null,
       "input_per_mtok": null,
@@ -68,36 +78,6 @@
         "xhigh"
       ],
       "pool": "gemini"
-    },
-    {
-      "id": "gemini-4-argon",
-      "context_window": null,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "unknown",
-      "context_awareness": false,
-      "effort_levels": ["low", "medium", "high"],
-      "pool": "gemini"
-    },
-    {
-      "id": "claude-sonnet-5-5",
-      "context_window": null,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "unknown",
-      "context_awareness": false,
-      "effort_levels": ["low", "medium", "high"],
-      "pool": "claude"
-    },
-    {
-      "id": "claude-opus-5-5",
-      "context_window": null,
-      "input_per_mtok": null,
-      "output_per_mtok": null,
-      "tokenizer": "unknown",
-      "context_awareness": false,
-      "effort_levels": ["low", "medium", "high"],
-      "pool": "claude"
     },
     {
       "id": "gemini-3.8-flash",
@@ -175,8 +155,28 @@
       "pool": "gemini"
     },
     {
-      "id": "claude-sonnet-4-6",
-      "retired": "2026-10-24: absent from `agy models` on agy 1.4.5; replaced by Claude Sonnet 5.5",
+      "id": "claude-opus-5-5",
+      "context_window": null,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "unknown",
+      "context_awareness": false,
+      "effort_levels": ["low", "medium", "high"],
+      "pool": "claude"
+    },
+    {
+      "id": "claude-sonnet-5-5",
+      "context_window": null,
+      "input_per_mtok": null,
+      "output_per_mtok": null,
+      "tokenizer": "unknown",
+      "context_awareness": false,
+      "effort_levels": ["low", "medium", "high"],
+      "pool": "claude"
+    },
+    {
+      "id": "claude-opus-4-6-thinking",
+      "retired": "2026-10-24: absent from `agy models` on agy 1.4.5; replaced by Claude Opus 5.5",
       "context_window": 1000000,
       "input_per_mtok": null,
       "output_per_mtok": null,
@@ -186,8 +186,8 @@
       "pool": "claude"
     },
     {
-      "id": "claude-opus-4-6-thinking",
-      "retired": "2026-10-24: absent from `agy models` on agy 1.4.5; replaced by Claude Opus 5.5",
+      "id": "claude-sonnet-4-6",
+      "retired": "2026-10-24: absent from `agy models` on agy 1.4.5; replaced by Claude Sonnet 5.5",
       "context_window": 1000000,
       "input_per_mtok": null,
       "output_per_mtok": null,

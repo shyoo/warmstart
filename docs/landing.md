@@ -641,17 +641,6 @@ anywhere but the trunk and logs what it removed; the same repair runs before a d
 lookup, a prepare and a park. Only that one key: a `[user]` the same leak wrote is left for the
 operator to judge.
 
-⛔ **A Plan & Execute executor is the one child of a plan task that does not.** Where a child is cut
-from and where it lands are two questions, and this shape answers them differently: the executor is
-still cut from the planner's branch — that costs nothing, and anything the planner did leave behind
-travels with the work rather than being stranded — but its `landingTarget` is `null`, which resolves
-to the **project's** target. There is no resolution turn to carry a plan branch any further, and a
-piece that merged into a branch nobody will ever land is work that has quietly gone nowhere. So
-`plannerBranchFor` keeps asking `isIntegrationParent` (the base) and `createTask` asks
-`integratesChildren` (the target). ⭐ `strategyFor` then picks the project's ordinary strategy rather
-than `merge-branch`, without being told to — it chooses from **data**, the task's resolved target
-against the project's, and never from a task kind.
-
 ⭐ **Split work merges into the planner's branch, not the trunk.** When a task is a child of a plan task,
 its target ref is the planner's branch (`plannerBranchFor()`). Merging updates the planner branch directly
 via `git branch -f <planner-branch> <commit>` without touching the trunk, keeping `main` clean until the planner
@@ -659,7 +648,8 @@ or user merges the plan. A follow-up filed with `task_create`'s `aggregate` gets
 parent: it lands into the filing task's own branch for the filer to review and land. Without it the child
 is ordinary work landing onto the trunk — which is how t519 (2026-09-17) reached `main` despite five
 prompts each saying "do NOT land to main": prose in the child's prompt is read by an actor that never
-lands, so only the daemon-side target holds a branch off the trunk.
+lands, so only the daemon-side target holds a branch off the trunk. (`integratesChildren` in
+`src/daemon/tasks.ts` simply checks `isIntegrationParent`, matching `plannerBranchFor`.)
 
 ⛔ **A delegated piece (t704) is cut from its caller's branch and lands nowhere.** It is filed
 `commit-and-verify`, so it ends committed and checked on its own branch, and the caller merges it with

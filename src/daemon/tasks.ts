@@ -1,8 +1,7 @@
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import {
   PRIORITY_ORDER,
   ROOT_MANDATE,
-  isPlanExecute,
   taskTypeLabel,
   readDebateState,
   statusesForViews,
@@ -40,7 +39,8 @@ import {
 } from '@shared/tasks.js'
 export { projectUsesGitBranches }
 export type { Vcs }
-import { upgradeLegacyClass } from '@shared/modeltags.js'
+import { asTierTag, cleanTags, upgradeLegacyClass } from '@shared/modeltags.js'
+import type { DelegationPolicyInput } from '@shared/protocol.js'
 import { timingForRuns, timingForTasks, ZERO_TIMING, type ActiveTiming } from './activetime.js'
 import { attachmentsFor, bindAttachments } from './attachments.js'
 import { db, row, rows } from './db.js'
@@ -347,6 +347,17 @@ export function listTasks(opts: { includeDeleted?: boolean; projectId?: string }
   const where = clauses.length ? `where ${clauses.map((c) => `t.${c}`).join(' and ')}` : ''
   return toTasks(
     rows<TaskRow>(db().prepare(`${TASK_SELECT} ${where} order by t.created_at asc, t.seq asc`).all(...args))
+  )
+}
+
+/** All non-deleted direct child tasks of a parent, ordered by sequence number ascending. */
+export function childTasksOf(parentTaskId: string): Task[] {
+  return toTasks(
+    rows<TaskRow>(
+      db()
+        .prepare(`${TASK_SELECT} where t.parent_task_id = ? and t.deleted_at is null order by t.seq asc`)
+        .all(parentTaskId)
+    )
   )
 }
 
@@ -684,6 +695,27 @@ export interface CreateTaskInput {
   mergeDuplicates?: boolean
   /** Images already uploaded through `attachment.create`, bound to this task's first message. */
   attachmentIds?: string[]
+  /** Initial delegation policy (on/off plus optional allowed tiers and specific models). */
+  delegationPolicy?: DelegationPolicyInput
+}
+
+export function mintDelegationToken(): string {
+  return `dlg_${randomBytes(12).toString('base64url')}`
+}
+
+export function normalizeAllowedTiers(tiers: readonly string[]): string[] {
+  return cleanTags(tiers.map(asTierTag))
+}
+
+export function normalizeAllowedModels(
+  models: ReadonlyArray<{ model: string; effort?: string | null }>
+): Array<{ model: string; effort: string | null }> {
+  return models
+    .filter((m) => m && typeof m.model === 'string' && m.model.trim())
+    .map((m) => ({
+      model: m.model.trim(),
+      effort: typeof m.effort === 'string' && m.effort.trim() ? m.effort.trim() : null
+    }))
 }
 
 /**
@@ -700,24 +732,13 @@ export function isIntegrationParent(task: Pick<Task, 'kind'> | null | undefined)
 }
 
 /**
- * A parent whose children's work has to come back to **it** before it reaches the trunk.
- *
- * ⛔ **Where a child is cut from and where it lands are two questions, and Plan & Execute answers
- * them differently.** Its one executor is still cut from the planner's branch — that costs nothing,
- * and anything the planner did leave behind travels with the work instead of being stranded on a
- * branch nobody will ever land. But it lands onto the *project's* target, because there is no
- * resolution turn to carry a plan branch the rest of the way, and a piece that merged into a branch
- * no one will ever land is work that has quietly gone nowhere.
- *
- * ⚠️ So `plannerBranchFor` keeps asking `isIntegrationParent` (the base) and `createTask` asks this
- * one (the target). ⭐ `strategyFor` then picks the project's ordinary landing strategy rather than
- * `merge-branch`, because it chooses **from data** — the task's resolved target against the
- * project's — and never from a task kind. See `docs/landing.md`.
+ * A parent whose children's work has to come back to **it** before it reaches the trunk (`plan` or
+ * `debate`). See `docs/landing.md`.
  */
 export function integratesChildren(
-  task: Pick<Task, 'kind' | 'mandate' | 'childDefaults'> | null | undefined
+  task: Pick<Task, 'kind'> | null | undefined
 ): boolean {
-  return isIntegrationParent(task) && !isPlanExecute(task)
+  return isIntegrationParent(task)
 }
 
 export function isSplitWork(task: Task): boolean {
@@ -771,6 +792,32 @@ export function createTask(input: CreateTaskInput): Task {
     budget = { grantedTokens: input.budgetTokens ?? 0, spentTokens: 0 }
   }
 
+  if (input.delegationPolicy) {
+    const { on, allowedTiers: rawTiers, allowedModels: rawModels } = input.delegationPolicy
+    if (on === true && ((parent && !mandateAllows(parent, 'spawn_tasks')) || !mandate.allowed.includes('spawn_tasks'))) {
+      throw new Error(
+        parent
+          ? `task ${parent.seq} has no authority to delegate, so its child cannot be given that authority`
+          : 'cannot enable delegation when the task mandate forbids spawn_tasks'
+      )
+    }
+    const allowed = on === false ? mandate.allowed.filter((op) => op !== 'spawn_tasks') : mandate.allowed
+    const allowedTiers = rawTiers !== undefined ? normalizeAllowedTiers(rawTiers) : (mandate.allowedTiers ?? [])
+    const allowedModels = rawModels !== undefined ? normalizeAllowedModels(rawModels) : (mandate.allowedModels ?? [])
+    const canSpawn = allowed.includes('spawn_tasks')
+    const delegationToken =
+      canSpawn && (on === true || allowedTiers.length > 0 || allowedModels.length > 0)
+        ? mintDelegationToken()
+        : undefined
+    mandate = {
+      ...mandate,
+      allowed,
+      ...(allowedTiers.length > 0 ? { allowedTiers } : {}),
+      ...(allowedModels.length > 0 ? { allowedModels } : {}),
+      ...(delegationToken ? { delegationToken } : {})
+    }
+  }
+
   // Near-duplicate merge at admission. Agents re-file the same idea; two rows for one intent is
   // noise, and noise is what makes a task list stop being read.
   const duplicate = input.mergeDuplicates === false ? null : findNearDuplicate(title, input.projectId ?? null)
@@ -794,9 +841,6 @@ export function createTask(input: CreateTaskInput): Task {
         `raise the workspace pool in Project settings`
     )
   }
-  // ⛔ `integratesChildren`, not `isIntegrationParent`: a Plan & Execute executor is cut from its
-  //    planner's branch and lands onto the project's target, because no third turn exists to take a
-  //    plan branch any further. See that function.
   const effectiveLandingTarget =
     input.landingTarget ??
     (parent && integratesChildren(parent)

@@ -3,6 +3,7 @@ import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { join } from 'node:path'
 import { canWork } from '@shared/protocol.js'
 import { cleanTags, matchesModelTags } from '@shared/modeltags.js'
+import { modelFamily, sortModelIds } from '@shared/modelsort.js'
 import { autoCandidates, autoRoutes, modelOffered, readRoutes, tagsOnWorker, type ModelRoute } from '@shared/modelroutes.js'
 import type {
   CreditStatus,
@@ -479,7 +480,10 @@ export function knownModelIds(adapterId: string, workerId?: string | null): stri
       for (const id of w.identity?.servedModels ?? []) ids.add(id)
     }
   }
-  return [...ids]
+  return sortModelIds(
+    [...ids],
+    cm.offeredModelIds().map((id) => modelFamily(id))
+  )
 }
 
 /**

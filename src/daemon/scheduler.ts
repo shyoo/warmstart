@@ -1,6 +1,7 @@
 import { sessionEnded } from '@shared/protocol.js'
 import { helperEndedLastRun } from './agentcli.js'
 import { delegationsFor, reportDelegationIfSettled } from './delegation.js'
+import { checkSubtaskBriefAlarms, onSubtaskSettledForBrief } from './subtaskbrief.js'
 import { grantedDirsFor } from './attachments.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -579,6 +580,7 @@ export async function tick(): Promise<TickResult> {
   sweepTrunkLeases()
   await retryQueuedLandings()
   escalateStale()
+  checkSubtaskBriefAlarms({ deliver: deliverToLiveSession, requeue: continueTask })
   await sweepStaleSessions()
 
   // ⛔ Free: writes at most one consult row and returns. Nothing below waits on it, and nothing it
@@ -5803,6 +5805,7 @@ export async function sweepStaleSessions(): Promise<void> {
 // woken to review it (t704). The wake functions are passed in so `delegation.ts` reads no binding here.
 onTaskSettled((taskId) => {
   reportDelegationIfSettled(taskId, { deliver: deliverToLiveSession, requeue: continueTask })
+  onSubtaskSettledForBrief(taskId, { deliver: deliverToLiveSession, requeue: continueTask })
 })
 
 onTaskSettled((taskId, _status) => {

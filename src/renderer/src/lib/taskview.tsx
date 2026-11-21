@@ -1,7 +1,6 @@
 import {
   HOLD_GLANCE_CHARS,
   clipAtWord,
-  isPlanExecute,
   taskTypeLabel,
   isTrunkBlockedReason,
   resolveModelChoice,
@@ -826,9 +825,7 @@ export function pieceSettings(
   rows.push({ label: 'priority', value: defaults.priority ?? task.priority })
   if (defaults.finishPolicy) rows.push({ label: 'finish', value: defaults.finishPolicy })
   if (defaults.sessionSharing) rows.push({ label: 'conversation', value: defaults.sessionSharing })
-  // ⚠️ Absent in execute mode rather than reading "up to 1 piece". The cap there is not a fan-out
-  //    setting somebody chose — it is the shape of the task, and the type row above already says it.
-  if (defaults.maxChildren && !isPlanExecute(task)) {
+  if (defaults.maxChildren) {
     rows.push({ label: 'fan-out', value: `up to ${defaults.maxChildren} pieces` })
   }
   return rows

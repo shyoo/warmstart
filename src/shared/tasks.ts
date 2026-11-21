@@ -575,29 +575,7 @@ export interface ProjectCreateResult {
 export type TaskKind = 'work' | 'plan' | 'conversation' | 'debate'
 
 /**
- * The two shapes a `plan` task comes in.
- *
- * ⛔ **Plan & Execute is a plan that may file exactly one piece**, and every difference in its
- * behaviour follows from that one fact: with no fan-out there is nothing built by agents that could
- * not see each other, so there are no seams, so there is nothing for a third turn to integrate. The
- * planner therefore hands off and finishes, the executor lands onto the *project's* target rather
- * than onto a plan branch, and the resolution turn is never reached.
- *
- * ⛔ **Derived from the child cap, never stored beside it.** A `plan_mode` column would be a second
- * copy of a fact `mandate.maxChildren` already carries — and `mandate` is what `createTask` actually
- * enforces, so the two would disagree the first time somebody wrote one and not the other. This is
- * the rule `planPhaseOf`, `debatePhaseOf` and `isOpenConversation` already keep.
- *
- * ⚠️ Every plan task filed before this existed reads as `split`: the composer's fan-out pill has
- * never offered anything below `MIN_PIECES` (2), and `ROOT_MANDATE.maxChildren` is 5.
- */
-export type PlanMode = 'split' | 'execute'
-
-/** ⛔ One piece, not "at most one". A Plan & Execute that filed none delegated nothing. */
-export const PLAN_EXECUTE_CHILDREN = 1
-
-/**
- * The most children this task may file, reading the same two fields `validateSplit` resolves.
+ * The most children a split task may file, reading the same two fields `validateSplit` resolves.
  *
  * ⛔ **The mandate is the authority and `childDefaults` may only narrow it.** `createTask` enforces
  * the mandate; the composer's pill writes both. Taking the minimum is what makes the number on the
@@ -612,41 +590,25 @@ export function planChildCap(
   return caps.length ? Math.min(...caps) : ROOT_MANDATE.maxChildren
 }
 
-/** ⚠️ Answers `split` for anything that is not a plan task, because nothing else has a plan mode. */
-export function planModeOf(
-  task: Pick<Task, 'kind' | 'mandate' | 'childDefaults'> | null | undefined
-): PlanMode {
-  if (task?.kind !== 'plan') return 'split'
-  return planChildCap(task) <= PLAN_EXECUTE_CHILDREN ? 'execute' : 'split'
-}
-
-export function isPlanExecute(
-  task: Pick<Task, 'kind' | 'mandate' | 'childDefaults'> | null | undefined
-): boolean {
-  return planModeOf(task) === 'execute'
-}
-
 /** The task type shown in the composer, thread, and task list. */
-export function taskTypeLabel(task: Pick<Task, 'kind' | 'mandate' | 'childDefaults'>): string {
+export function taskTypeLabel(task: Pick<Task, 'kind'>): string {
   return TASK_TYPE_LABELS[taskTypeKey(task)]
 }
 
 /**
- * The five types a person picks between, as a closed key: what `TaskTypeIcon` draws (t901). ⚠️ One
- * function decides a plan's shape, so the label and the icon cannot disagree about it.
+ * The four types a person picks between, as a closed key: what `TaskTypeIcon` draws (t901).
  */
-export type TaskTypeKey = 'single' | 'plan-split' | 'plan-execute' | 'conversation' | 'debate'
+export type TaskTypeKey = 'single' | 'plan-split' | 'conversation' | 'debate'
 
 export const TASK_TYPE_LABELS: Readonly<Record<TaskTypeKey, string>> = {
   single: 'Single Task',
   'plan-split': 'Plan & Split',
-  'plan-execute': 'Plan & Execute',
   conversation: 'Conversation',
   debate: 'Debate'
 }
 
-export function taskTypeKey(task: Pick<Task, 'kind' | 'mandate' | 'childDefaults'>): TaskTypeKey {
-  if (task.kind === 'plan') return isPlanExecute(task) ? 'plan-execute' : 'plan-split'
+export function taskTypeKey(task: Pick<Task, 'kind'>): TaskTypeKey {
+  if (task.kind === 'plan') return 'plan-split'
   if (task.kind === 'conversation') return 'conversation'
   if (task.kind === 'debate') return 'debate'
   return 'single'
@@ -1157,6 +1119,8 @@ export type MessageEvent =
   | 'delegation.filed'
   /** Every piece of one delegation has settled; the caller is asked to review and merge them. */
   | 'delegation.settled'
+  /** Periodic or early subtask progress brief posted to a delegating conversation. */
+  | 'delegation.brief'
   /** A person switched this thread's Delegate setting; the agent is told on its next turn. */
   | 'delegation.toggled'
   | 'quota.parked'

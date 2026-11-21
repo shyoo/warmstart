@@ -11,15 +11,15 @@ const INSTRUCTION = [
   'Done means the existing retry tests pass unchanged.'
 ].join('\n')
 
-/** A Plan & Execute approval body the way `splitApprovalFor` builds one: framing, then bytes. */
+/** A delegation approval body the way `splitApprovalFor` builds one: framing, then full instructions. */
 const HANDOFF = [
-  't5 has finished planning and wants to hand the whole job to one executor:',
+  't5 wants to hand this to another agent:',
   '',
   '1. Rework the retry loop in `src/daemon/scheduler.ts`.',
   '',
   'Approving files it and starts it as soon as an account is free. Refusing sends it back.',
   '',
-  'The full instruction the executor will receive:',
+  'The full instruction:',
   '',
   INSTRUCTION
 ].join('\n')
@@ -34,15 +34,15 @@ const SHORT_SPLIT = [
 ].join('\n')
 
 /**
- * t693: the approval card showed the executor's instruction as a one-line label. The card now
- * carries the whole instruction behind an expander — `renderToStaticMarkup`, because the suites
- * run with `environment: 'node'` and there is no DOM to click one open (Statistics.test.tsx).
+ * t693/t704: the approval card used to show only a one-line label. The card now carries the full
+ * instruction behind an expander — `renderToStaticMarkup`, because the suites run with
+ * `environment: 'node'` and there is no DOM to click one open (Statistics.test.tsx).
  */
 describe('ApprovalBody', () => {
-  it('collapses a handoff past the framing and keeps the whole instruction in the card', () => {
+  it('collapses a long approval past the framing and keeps the whole instruction in the card', () => {
     const html = renderToStaticMarkup(<ApprovalBody text={HANDOFF} />)
     // The framing stays visible: the operator sees what they are approving without opening.
-    expect(html).toContain('The full instruction the executor will receive:')
+    expect(html).toContain('The full instruction:')
     // Collapsed by default, and honest about what is behind the press.
     expect(html).toContain('Show full instruction (6 more lines)')
     expect(html).toContain('aria-expanded="false"')

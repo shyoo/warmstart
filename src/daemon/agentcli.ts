@@ -46,6 +46,8 @@ export const AGENT_METHODS: ReadonlySet<RpcMethod> = new Set<RpcMethod>([
   'agent.taskRead',
   'agent.projectSettings',
   'agent.delegationStatus',
+  'agent.subtaskBrief',
+  'agent.subtaskBriefAlarm',
   'agent.complete',
   'agent.awaitHuman',
   'agent.createTask',

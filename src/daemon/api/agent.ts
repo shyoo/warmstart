@@ -5,6 +5,7 @@ import { approvedSplit, askQuestion, markSplitFiled, sameSplitCard } from '../qu
 import { AGENT_CLI_COMMAND } from '../agentcli.js'
 import { addSplitDependency, applySplit, isDelegation, splitApprovalFor, validateSplit } from '../split.js'
 import { delegationStatusFor, pendingDelegateRequest } from '../delegation.js'
+import { buildSubtaskBrief, setSubtaskBriefAlarm } from '../subtaskbrief.js'
 import { effectiveAutoModelTiers } from './workers.js'
 import {
   becomeConversation,
@@ -25,8 +26,7 @@ import { updateTask } from '../tasks.js'
 import {
   DEBATE_VERDICT_DETAILS,
   DEBATE_VERDICT_LABELS,
-  DEBATE_VERDICTS,
-  isPlanExecute
+  DEBATE_VERDICTS
 } from '@shared/tasks.js'
 import { verdictInstruction } from '../prompt.js'
 import { errorMessage } from '@shared/errors.js'
@@ -34,7 +34,7 @@ import type { Api, ApiContext } from './support.js'
 import { admitAgentTask } from './support.js'
 
 type AgentMethod =
-  | 'agent.taskRead' | 'agent.projectSettings' | 'agent.complete' | 'agent.awaitHuman' | 'agent.createTask' | 'agent.split' | 'agent.delegationStatus' | 'agent.depend'
+  | 'agent.taskRead' | 'agent.projectSettings' | 'agent.complete' | 'agent.awaitHuman' | 'agent.createTask' | 'agent.split' | 'agent.delegationStatus' | 'agent.subtaskBrief' | 'agent.subtaskBriefAlarm' | 'agent.depend'
   | 'agent.handoff' | 'agent.land' | 'agent.debateRound' | 'agent.requestDirectory'
 
 /**
@@ -124,6 +124,58 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
         }
       }
       return delegationStatusFor(own, effectiveAutoModelTiers())
+    },
+    'agent.subtaskBrief': (p) => {
+      const run = runForSession(p.sessionId)
+      const own = run?.taskId ? getTask(run.taskId) : null
+      if (!own) {
+        return {
+          ok: false,
+          reply: 'This session is not working on a task.',
+          counts: { total: 0, open: 0, running: 0, waiting: 0, completed: 0, failed: 0, cancelled: 0 },
+          alarm: null
+        }
+      }
+      const brief = buildSubtaskBrief(
+        own.id,
+        p.includeClosed !== undefined ? { includeClosed: p.includeClosed } : {}
+      )
+      return {
+        ok: true,
+        reply: brief.reply,
+        counts: brief.counts,
+        alarm: brief.alarm
+      }
+    },
+    'agent.subtaskBriefAlarm': (p) => {
+      const run = runForSession(p.sessionId)
+      const own = run?.taskId ? getTask(run.taskId) : null
+      if (!own) {
+        return {
+          ok: false,
+          reply: 'This session is not working on a task.',
+          alarm: {
+            taskId: '',
+            enabled: false,
+            intervalMinutes: 30,
+            earlyOnSettle: true,
+            lastBriefAt: null,
+            nextBriefAt: 0,
+            reportedSettledIds: [],
+            createdAt: 0,
+            updatedAt: 0
+          }
+        }
+      }
+      const alarm = setSubtaskBriefAlarm(own.id, {
+        ...(p.enabled !== undefined ? { enabled: p.enabled } : {}),
+        ...(p.intervalMinutes !== undefined ? { intervalMinutes: p.intervalMinutes } : {}),
+        ...(p.earlyOnSettle !== undefined ? { earlyOnSettle: p.earlyOnSettle } : {})
+      })
+      const reply = alarm.enabled
+        ? `Subtask brief alarm enabled for t${own.seq}: every ${alarm.intervalMinutes}m, early on settle: ${alarm.earlyOnSettle ? 'on' : 'off'}.`
+        : `Subtask brief alarm disabled for t${own.seq}.`
+      return { ok: true, reply, alarm }
     },
     'agent.complete': async (p) => {
       await completeTask(p.sessionId, p.summary, undefined, {
@@ -264,10 +316,8 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
         }
       }
 
-      // The wording lives in `split.ts` beside the filing rules it has to agree with —
-      // in particular the Plan & Execute card carries the whole executor instruction.
+      // The wording lives in `split.ts` beside the filing rules it has to agree with.
       const approval = splitApprovalFor(parent, pieces)
-      const handoff = isPlanExecute(parent)
       const delegating = isDelegation(parent)
       let tokenAuthorized = false
       if (delegating && !approvedCard) {
@@ -382,25 +432,6 @@ export function apiAgent(_ctx: ApiContext): Pick<Api, AgentMethod> {
             'STOP NOW — do not start that work yourself. You will be started again automatically ' +
             'with how each piece turned out; then review them, merge what you want into your ' +
             'branch, and finish the task.'
-        }
-      }
-
-      if (handoff) {
-        // ⛔ **Completed here, not asked for.** A planner told in its reply to call `task_complete`
-        //    can forget, and an agent that forgets leaves the run open, the task reading `running`
-        //    and the worker slot reserved for as long as the daemon lives — the t226 failure. This
-        //    goes through the ordinary completion path rather than writing a status, so the finish
-        //    policy, the run's end, the workspace release and the quota reading are the same ones
-        //    every other completed task gets. ⚠️ The planner's own policy is `report-only`: it wrote
-        //    no code, and there is nothing of its own to land.
-        await completeTask(p.sessionId, `Planned and handed to ${named}`)
-        return {
-          ok: true,
-          seqs,
-          reply:
-            `Filed ${named} and handed the work over. THIS TASK IS NOW COMPLETE — stop here, and do ` +
-            'not start any of the work yourself. You will not be started again on it: there is one ' +
-            'piece, so there is nothing for a review turn to integrate.'
         }
       }
 

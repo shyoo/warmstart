@@ -52,9 +52,8 @@ Use **New task** in the title bar. Its prompt, priority, dependencies, workspace
 
 | Kind | What it does |
 |---|---|
-| **Single Task** | Completes autonomously in one turn, including landing, and can ask a question. |
+| **Single Task** | Completes autonomously in one turn, including landing (and can split via `/delegate`), and can ask a question. |
 | **Conversation** | A thread you keep talking in; stops after each turn and commits when you say. |
-| **Plan & Execute** | One planner hands to one executor, with no review turn. |
 | **Plan & Split** | A planner files dependent pieces for several agents, then integrates them. |
 | **Debate** | Two to five seats answer blind; an organizer reports agreement with dissent. |
 

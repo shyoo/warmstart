@@ -1,24 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { ROOT_MANDATE, TASK_TYPE_LABELS, taskTypeKey, type Task, type TaskTypeKey } from '@shared/tasks'
+import { TASK_TYPE_LABELS, taskTypeKey, type Task, type TaskTypeKey } from '@shared/tasks'
 import { TaskTypeIcon } from './TaskTypeIcon'
 
-type Typed = Pick<Task, 'kind' | 'mandate' | 'childDefaults'>
+type Typed = Pick<Task, 'kind'>
 
-const base: Typed = { kind: 'work', mandate: { ...ROOT_MANDATE }, childDefaults: null }
+const base: Typed = { kind: 'work' }
 const tasks: Record<TaskTypeKey, Typed> = {
   single: base,
   'plan-split': { ...base, kind: 'plan' },
-  'plan-execute': { kind: 'plan', mandate: { ...ROOT_MANDATE, maxChildren: 1 }, childDefaults: { maxChildren: 1 } },
   conversation: { ...base, kind: 'conversation' },
   debate: { ...base, kind: 'debate' }
 }
 
 describe('TaskTypeIcon (t901)', () => {
-  it('tells all five types apart, by the same key the label uses', () => {
+  it('tells all four types apart, by the same key the label uses', () => {
     for (const [key, task] of Object.entries(tasks)) expect(taskTypeKey(task)).toBe(key)
     const drawn = Object.values(tasks).map((task) => renderToStaticMarkup(<TaskTypeIcon task={task} />))
-    expect(new Set(drawn).size).toBe(5)
+    expect(new Set(drawn).size).toBe(4)
   })
 
   it('names its type for a screen reader and on hover', () => {

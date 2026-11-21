@@ -681,7 +681,7 @@ export function workerTools(io: WorkerToolIo): WorkerTool[] {
       title: 'Delegate work to other agents, or break a plan into subtasks',
       description:
         'File work for other agents in one call, as concrete pieces each with its own full ' +
-        'instruction. A Plan & Split or Plan & Execute uses it to file its plan; any other task or ' +
+        'instruction. A Plan & Split uses it to file its plan; any other task or ' +
         'conversation uses it to delegate, when delegation is on for it (you are refused with the ' +
         'reason when it is not). The operator approves the pieces before anything is filed — unless ' +
         'they asked for this delegation with /delegate — so make each piece legible on a card. Each ' +
@@ -691,10 +691,9 @@ export function workerTools(io: WorkerToolIo): WorkerTool[] {
         'execution or landing, encode that order with depends_on; otherwise add an edge only where it ' +
         'is genuinely needed, because it costs a subtask’s wait. HOW MANY PIECES is decided by the ' +
         'task, not by you, and your own instructions say which: a Plan & Split files two or more and ' +
-        'you are woken again when every piece has settled; a Plan & Execute files exactly one and is ' +
-        'complete at the handoff; a delegation files one or more, each committed on its own branch ' +
-        'for you to review and merge when you are told they have settled. After this returns, do ' +
-        'what its reply says — the delegated work is no longer yours to do.',
+        'you are woken again when every piece has settled; a delegation files one or more, each ' +
+        'committed on its own branch for you to review and merge when you are told they have settled. ' +
+        'After this returns, do what its reply says — the delegated work is no longer yours to do.',
       inputSchema: {
         pieces: z
           .array(
@@ -748,8 +747,8 @@ export function workerTools(io: WorkerToolIo): WorkerTool[] {
           )
           .optional()
           .describe(
-            'As many pieces as this task allows: two or more for a Plan & Split, exactly one for a ' +
-              'Plan & Execute, one or more for a delegation. Anything else is refused with the reason.'
+            'As many pieces as this task allows: two or more for a Plan & Split, one or more for a ' +
+              'delegation. Anything else is refused with the reason.'
           ),
         approval: z
           .string()
@@ -817,6 +816,85 @@ export function workerTools(io: WorkerToolIo): WorkerTool[] {
       const sessionId = io.sessionId
       try {
         const result = await io.rpc('agent.delegationStatus', { sessionId })
+        return {
+          content: [{ type: 'text' as const, text: result.reply }],
+          ...(result.ok ? {} : { isError: true })
+        }
+      } catch (err) {
+        return failed(err)
+      }
+    }
+  )
+
+  /**
+   * Concise on-demand progress summary of all subtasks (delegated pieces or child tasks), plus
+   * configurable periodic and early-completion brief alarms for orchestrator conversations.
+   */
+  def(
+    'subtask_brief',
+    {
+      title: 'Read a concise progress summary of all subtasks',
+      description:
+        'Return a one-line-per-subtask progress brief for this task’s subtasks (status, elapsed ' +
+        'runtime, worker/model, branch/summary, or hold reason) along with summary counts and ' +
+        'current brief-alarm settings.',
+      inputSchema: {
+        include_closed: z
+          .boolean()
+          .optional()
+          .describe('Include completed, failed, and cancelled subtasks in the list (default true).')
+      }
+    },
+    async (args) => {
+      const sessionId = io.sessionId
+      try {
+        const result = await io.rpc('agent.subtaskBrief', {
+          sessionId,
+          ...(args.include_closed !== undefined ? { includeClosed: args.include_closed } : {})
+        })
+        return {
+          content: [{ type: 'text' as const, text: result.reply }],
+          ...(result.ok ? {} : { isError: true })
+        }
+      } catch (err) {
+        return failed(err)
+      }
+    }
+  )
+
+  def(
+    'subtask_brief_alarm',
+    {
+      title: 'Configure periodic or early-completion subtask progress briefs',
+      description:
+        'Enable, update, or disable automatic subtask progress briefs for this task. When enabled, ' +
+        'the daemon posts a brief every `interval_minutes` (default 30, clamped 5..1440) and, when ' +
+        '`early_on_settle` is true (default), posts an early brief as soon as any subtask settles ' +
+        'while others are still running so you can launch follow-up waves early.',
+      inputSchema: {
+        enabled: z
+          .boolean()
+          .optional()
+          .describe('Enable (true, default) or disable (false) the subtask brief alarm.'),
+        interval_minutes: z
+          .number()
+          .optional()
+          .describe('Periodic brief interval in minutes (default 30, clamped to 5..1440).'),
+        early_on_settle: z
+          .boolean()
+          .optional()
+          .describe('Post an early brief when a subtask settles while others are still running (default true).')
+      }
+    },
+    async (args) => {
+      const sessionId = io.sessionId
+      try {
+        const result = await io.rpc('agent.subtaskBriefAlarm', {
+          sessionId,
+          ...(args.enabled !== undefined ? { enabled: args.enabled } : {}),
+          ...(args.interval_minutes !== undefined ? { intervalMinutes: args.interval_minutes } : {}),
+          ...(args.early_on_settle !== undefined ? { earlyOnSettle: args.early_on_settle } : {})
+        })
         return {
           content: [{ type: 'text' as const, text: result.reply }],
           ...(result.ok ? {} : { isError: true })

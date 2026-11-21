@@ -81,13 +81,12 @@ Pair a phone by QR code to check quota, answer questions, and dispatch tasks fro
 
 Warmstart never commits on an agent's behalf without explicit instruction, and cancel never destroys work. Branches with unmerged work or uncommitted changes surface under *Loose ends*, where you can inspect, merge, or delete them on your own terms.
 
-## Five ways to file a task
+## Four ways to file a task
 
 | Kind | How it runs | Best for |
 |---|---|---|
-| **Single Task** | One autonomous turn including verification and landing. It can pause to ask questions when needed. | Bugs, features, and docs with a concrete outcome. |
+| **Single Task** | One autonomous turn including verification and landing (with optional `/delegate` to split work when needed). It can pause to ask questions when needed. | Bugs, features, and docs with a concrete outcome. |
 | **Conversation** | An ongoing thread. The agent pauses after each turn and commits only when you approve. | Ambiguous ideas, design discussions, and guided tasks. |
-| **Plan & Execute** | One planner hands a written instruction to one executor, with no review turn to pay for. | A strong model planning and a cheaper one implementing. |
 | **Plan & Split** | A planner breaks work into dependent tasks, multiple agents implement them in parallel, and the planner integrates at the end. | Large work with clear architectural seams. |
 | **Debate** | Two to five seats answer blind; an organizer exchanges positions across rounds and synthesizes consensus and dissent. | Hard or ambiguous problems. Mixed providers beat multiple models from one vendor. |
 

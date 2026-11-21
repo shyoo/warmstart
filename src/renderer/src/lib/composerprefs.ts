@@ -11,7 +11,7 @@ import {
   type Priority,
   type SessionSharingChoice
 } from '@shared/tasks'
-import { cleanTags, classTag } from '@shared/modeltags'
+import { asTierTag, cleanTags, classTag } from '@shared/modeltags'
 import { MODEL_CLASSES } from '@shared/modelclass'
 import { canWork, type WorkerRole } from '@shared/protocol'
 import { appKey } from './storagekeys'
@@ -41,26 +41,11 @@ const KEY = appKey('composer')
 /**
  * What the composer files, as far as the *shape* of the thing goes.
  *
- * ⚠️ Five. `plan` is the existing goal-decomposition path (`task.plan`) wearing its real name;
- * `execute` is the *same* call with the fan-out capped at one — one planner, one executor, no review
- * turn; `conversation` files an ordinary task of kind `conversation` — the same dispatch, with the
- * single-turn closing contract removed — and `debate` files one through `task.debate`, which seats
- * its roster in the same call. Multi-task is still deliberately not stubbed in here: an option that
- * files nothing is worse than a missing one, because somebody picks it.
+ * ⚠️ Four. `plan` is the goal-decomposition path (`task.plan`); `conversation` files an ordinary
+ * task of kind `conversation` — the same dispatch, with the single-turn closing contract removed —
+ * and `debate` files one through `task.debate`, which seats its roster in the same call.
  */
-export type ComposerKind = 'task' | 'plan' | 'execute' | 'conversation' | 'debate'
-
-/**
- * The two plan shapes this composer can file, and the **only** thing that separates them on the
- * wire.
- *
- * ⛔ **A Plan & Execute is a plan whose fan-out cap is one**, which is what `planModeOf` reads on
- * the other side. There is no second field saying so: the cap is already written into the task's
- * mandate and into `childDefaults`, it is what `createTask` enforces, and a flag beside it would be a
- * second copy of the same answer for the two to disagree about. ⚠️ So the fan-out pill is absent in
- * execute mode rather than set to 1 — a control offering one option is not a choice.
- */
-export const PLAN_EXECUTE_PIECES = 1
+export type ComposerKind = 'task' | 'plan' | 'conversation' | 'debate'
 
 /** Model and effort, as last chosen for one account. Empty string means *whatever it inherits*. */
 export interface ModelChoice {
@@ -170,6 +155,20 @@ export interface ComposerPrefs {
   pieces: PiecePrefs
   /** What the Debate row was left set to. ⚠️ Same last-selected rule as every row above it. */
   debate: DebatePrefs
+  /** Delegation toggle and tier/model restrictions for Single Task and Conversation filing. */
+  delegation?: DelegationPrefs
+}
+
+export interface DelegationPrefs {
+  on: boolean
+  allowedTiers: string[]
+  allowedModels: string[]
+}
+
+export const DEFAULT_DELEGATION_PREFS: DelegationPrefs = {
+  on: true,
+  allowedTiers: [],
+  allowedModels: []
 }
 
 /**
@@ -243,6 +242,35 @@ export const DEFAULT_COMPOSER_PREFS: ComposerPrefs = {
     // diminishing-return notice rather than being the default anybody lands on by accident.
     rounds: 3,
     exchange: 'full'
+  },
+  delegation: {
+    on: true,
+    allowedTiers: [],
+    allowedModels: []
+  }
+}
+
+function readDelegationPrefs(raw: unknown): DelegationPrefs {
+  const d = DEFAULT_DELEGATION_PREFS
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { on: d.on, allowedTiers: [], allowedModels: [] }
+  }
+  const p = raw as Record<string, unknown>
+  return {
+    on: typeof p.on === 'boolean' ? p.on : d.on,
+    allowedTiers: Array.isArray(p.allowedTiers)
+      ? cleanTags(p.allowedTiers.filter((t): t is string => typeof t === 'string').map(asTierTag))
+      : [],
+    allowedModels: Array.isArray(p.allowedModels)
+      ? Array.from(
+          new Set(
+            p.allowedModels
+              .filter((m): m is string => typeof m === 'string')
+              .map((m) => m.trim())
+              .filter((m) => m.length > 0)
+          )
+        )
+      : []
   }
 }
 
@@ -354,7 +382,6 @@ export function readComposerPrefs(): ComposerPrefs {
       kind:
         p.kind === 'plan' ||
         p.kind === 'task' ||
-        p.kind === 'execute' ||
         p.kind === 'conversation' ||
         p.kind === 'debate'
           ? p.kind
@@ -368,7 +395,8 @@ export function readComposerPrefs(): ComposerPrefs {
       workerId: typeof p.workerId === 'string' ? p.workerId : '',
       byWorker: readByWorker(p.byWorker),
       pieces: readPieces(p.pieces),
-      debate: readDebatePrefs(p.debate)
+      debate: readDebatePrefs(p.debate),
+      delegation: readDelegationPrefs(p.delegation)
     }
   } catch {
     return { ...DEFAULT_COMPOSER_PREFS }

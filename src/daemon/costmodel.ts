@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { paths } from './paths.js'
 import { log } from './log.js'
 import type { CostModelSummary, SpendMeter } from '@shared/protocol.js'
+import { modelFamily, sortModelIds } from '@shared/modelsort.js'
 import builtinAnthropic from '../../costmodels/anthropic.subscription.2026-08.json' with { type: 'json' }
 import builtinGoogle from '../../costmodels/google.antigravity.2026-08.json' with { type: 'json' }
 import builtinOpenai from '../../costmodels/openai.codex.2026-08.json' with { type: 'json' }
@@ -459,7 +460,9 @@ export class CostModel {
 
   /** `modelIds` minus the models the vendor has stopped listing: what a picker may offer. */
   offeredModelIds(): string[] {
-    return [...(this.data.models?.filter((m) => !m.retired).map((m) => m.id) ?? []), ...this.discovered().keys()]
+    const familyOrder = (this.data.models ?? []).map((m) => modelFamily(m.id))
+    const ids = [...(this.data.models?.filter((m) => !m.retired).map((m) => m.id) ?? []), ...this.discovered().keys()]
+    return sortModelIds(ids, familyOrder)
   }
 
   /** Does this file accept models a CLI discovered? See `discovered_models`. */

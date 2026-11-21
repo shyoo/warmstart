@@ -28,7 +28,6 @@ import { resolveFinishPolicy, resolveSessionSharing } from '@shared/policy'
 import type { AdapterInfo, DebatePreview, ModelOptions, Settings } from '@shared/protocol'
 import type { ModelReportRow } from '@shared/routing'
 import { debateNotices } from '../lib/debatenotice'
-import { executorNotices } from '../lib/executornotice'
 import { plannerMcpNotice } from '../lib/plannernotice'
 import { ImageChips, usePastedImages, type PastedImage } from '../lib/pasteimages.js'
 import { rpc, type FleetEntry } from '../lib/daemon'
@@ -37,13 +36,14 @@ import { candidatesFor, useTaskCandidates } from './Dependencies'
 import { effortLabel, modelLabel } from '../lib/modelname'
 import { statusLabel, STATUS_TONE, taskLabelShort } from '../lib/taskview'
 import { Pill, PillOptions, PillSelect, SegmentedControl, type PillOption } from './Pill'
+import { DelegateSplitPill } from './thread/DelegatePill'
 import { TagPicker, TagsPill } from './TagControls'
 import { routableTags, tagsRoutable } from '@shared/modelroutes'
 import { cleanTags, fleetTags, tagsLabel } from '@shared/modeltags'
 import {
+  DEFAULT_DELEGATION_PREFS,
   MAX_PIECES,
   MIN_PIECES,
-  PLAN_EXECUTE_PIECES,
   filedModelChoice,
   livePin,
   modelChoiceFor,
@@ -103,12 +103,12 @@ const PRIORITY_OPTIONS: PillOption[] = [
 ]
 
 /**
- * ⚠️ Five. Multi-task belongs here next and is deliberately not listed yet: an option that files
+ * ⚠️ Four. Multi-task belongs here next and is deliberately not listed yet: an option that files
  * nothing is worse than a missing one, because somebody picks it and nothing happens.
  */
 const KIND_OPTIONS: PillOption[] = [
   // ⚠️ Named for what it is *not*. Beside Plan&Split, which files several tasks, plain "Task"
-  // read as the category rather than as one of three shapes — "Single Task" says the difference the
+  // read as the category rather than as one of four shapes — "Single Task" says the difference the
   // option next to it is offering.
   {
     value: 'task',
@@ -119,11 +119,6 @@ const KIND_OPTIONS: PillOption[] = [
     value: 'conversation',
     label: 'Conversation',
     hint: 'Interactive multi-turn session. Pauses after each turn and commits only when requested.'
-  },
-  {
-    value: 'execute',
-    label: 'Plan&Execute',
-    hint: 'Generates an implementation plan, then executes it in a single focused run.'
   },
   {
     value: 'plan',
@@ -199,17 +194,15 @@ const ATTACH_OPTIONS: PillOption[] = [
 const KIND_SHORT: Record<ComposerKind, string> = {
   task: 'Single Task',
   plan: 'Plan&Split',
-  execute: 'Plan&Execute',
   conversation: 'Conversation',
   debate: 'Debate'
 }
 
-/** The five shapes {@link WorkflowShape} can draw, one per composer kind. */
-type WorkflowShapeMode = 'split' | 'execute' | 'task' | 'conversation' | 'debate'
+/** The four shapes {@link WorkflowShape} can draw, one per composer kind. */
+type WorkflowShapeMode = 'split' | 'task' | 'conversation' | 'debate'
 
 const WORKFLOW_SHAPE_LABEL: Record<WorkflowShapeMode, string> = {
   split: 'One planner fans out to several executors, which merge back into a second planner turn',
-  execute: 'One planner hands to one executor, which lands the work',
   task: 'One agent runs, verifies and lands the work in a single turn',
   conversation: 'You and the agent exchange turns; nothing lands until you commit',
   debate: 'Several seats propose independently, then the organizer resolves them into one answer'
@@ -261,17 +254,6 @@ function WorkflowShape({ mode }: { mode: WorkflowShapeMode }): React.JSX.Element
           <text x="28" y="62" className="composer-shape-tag" textAnchor="middle">plan</text>
           <text x="100" y="62" className="composer-shape-tag" textAnchor="middle">pieces</text>
           <text x="172" y="62" className="composer-shape-tag" textAnchor="middle">review</text>
-        </>
-      ) : mode === 'execute' ? (
-        <>
-          <path d="M34 32 H94" fill="none" stroke="var(--color-border-strong)" strokeWidth="1.5" />
-          <path d="M106 32 H166" fill="none" stroke="var(--color-border-strong)" strokeWidth="1.5" />
-          <path d="M160 27 l6 5 -6 5" fill="none" stroke="var(--color-border-strong)" strokeWidth="1.5" />
-          <circle cx="28" cy="32" r={R} fill="var(--color-accent)" />
-          <circle cx="100" cy="32" r={R} fill="var(--color-text-dim)" />
-          <text x="28" y="62" className="composer-shape-tag" textAnchor="middle">plan</text>
-          <text x="100" y="62" className="composer-shape-tag" textAnchor="middle">execute</text>
-          <text x="186" y="36" className="composer-shape-tag">lands</text>
         </>
       ) : mode === 'task' ? (
         <>
@@ -761,15 +743,7 @@ export function NewTask({
     ) : null
 
   const kind = prefs.kind
-  /**
-   * ⛔ **`isPlan` is "draws the two-row plan table and files through `task.plan`", which both plan
-   * shapes do**, and `isExecute` is the one thing that differs about the second: its fan-out is
-   * fixed at one, so it has no review turn to come back for. Every control below asks the broad
-   * question except the four that genuinely differ — the fan-out pill, the planner's finish policy,
-   * the notice and the diagram.
-   */
-  const isPlan = kind === 'plan' || kind === 'execute'
-  const isExecute = kind === 'execute'
+  const isPlan = kind === 'plan'
   /**
    * ⛔ A conversation's Finish and Conversation pills are not disabled, they are **absent**. Both
    * answers come from the kind — `resolveFinishPolicy` reads `await-human` and
@@ -780,6 +754,7 @@ export function NewTask({
    */
   const isConversation = kind === 'conversation'
   const isDebate = kind === 'debate'
+  const delegation = prefs.delegation ?? DEFAULT_DELEGATION_PREFS
   /**
    * Whether the planner can file its pieces by tool (t706).
    *
@@ -980,38 +955,22 @@ export function NewTask({
               }
             : undefined
 
-        /**
-         * ⛔ **The fan-out cap is what makes this a Plan & Execute**, on both fields the daemon
-         * reads — the mandate `createTask` enforces and the `childDefaults` `task_split` is handed.
-         * `planModeOf` derives the shape from it, so sending one and not the other would file a task
-         * whose prompt promised a review turn its mandate refuses to allow.
-         */
-        const filedLimit = isExecute ? PLAN_EXECUTE_PIECES : pieceLimit
-        /**
-         * ⛔ **A Plan & Execute planner reports; it never lands.** It writes no code — the executor
-         * is what reaches the trunk — and its branch is abandoned at the handoff, so any level above
-         * `report-only` would ask the daemon to verify and merge a branch with nothing on it and
-         * trip the empty-branch guard on a task that was never going to write a commit. Same reason
-         * a debate's seats are filed `report-only`, one level up.
-         */
-        const filedPlannerFinish = isExecute ? ('report-only' as const) : plannerFinishPolicy
-
         filedTask = await rpc('task.plan', {
           title: prompt.trim(),
           projectId: projectId || null,
           ...(paste.ids.length > 0 ? { attachmentIds: paste.ids } : {}),
           priority: prefs.priority,
-          finishPolicy: filedPlannerFinish,
+          finishPolicy: plannerFinishPolicy,
           sessionSharing: prefs.sessionSharing,
           status: targetStatus,
           ...(notBefore ? { notBefore } : {}),
           ...(dependsOn.length > 0 ? { dependsOn } : {}),
-          maxChildren: filedLimit,
+          maxChildren: pieceLimit,
           childDefaults: {
             priority: piecePriority,
             finishPolicy: pieceFinishPolicy,
             sessionSharing: pieceSessionSharing,
-            maxChildren: filedLimit,
+            maxChildren: pieceLimit,
             // ⛔ All of these, and they are what `applySplit` actually files each piece with. The
             // efforts used to be sent in `pieceConstraints` only, so a split read from
             // `childDefaults` — which is the field `task_split` is handed — silently lost them.
@@ -1028,7 +987,7 @@ export function NewTask({
             ...(pinId ? { workerId: pinId } : {}),
             ...filedModel,
             piecePriority,
-            pieceLimit: filedLimit,
+            pieceLimit,
             pieceFinishPolicy,
             pieceSessionSharing,
             ...(pieceConstraints ? { pieceConstraints } : {})
@@ -1108,7 +1067,12 @@ export function NewTask({
           // that pill the daemon cannot infer from silence, since silence is what `auto` means.
           ...(pinId || hasFiledModel
             ? { constraints: { ...(pinId ? { workerId: pinId } : {}), ...filedModel } }
-            : {})
+            : {}),
+          delegationPolicy: {
+            on: delegation.on,
+            allowedTiers: delegation.allowedTiers,
+            allowedModels: delegation.allowedModels.map((modelId) => ({ model: modelId, effort: null }))
+          }
         })
       }
       // ⚠️ The prompt and what belonged to it go; the pills stay exactly where they were. Filing one
@@ -1143,8 +1107,6 @@ export function NewTask({
       ? '…'
       : armed
           ? 'Schedule'
-          : isExecute
-            ? 'Plan & Execute'
           : isPlan
             ? 'Plan & Split'
           : isDebate
@@ -1212,15 +1174,13 @@ export function NewTask({
           value={prompt}
           aria-label="Prompt"
           placeholder={
-            isExecute
-              ? 'Describe the task. A planner will draft the implementation plan, then an executor will complete the work.'
-              : isPlan
+            isPlan
               ? 'Describe the goal. A planner will decompose it into subtasks for execution.'
               : isDebate
-              ? 'Enter question or design topic for multi-agent debate.'
-              : isConversation
-                ? 'Start an interactive session. Send messages to the agent and commit changes when ready.'
-                : 'Describe what needs to be done. You can paste images or attach files.'
+                ? 'Enter question or design topic for multi-agent debate.'
+                : isConversation
+                  ? 'Start an interactive session. Send messages to the agent and commit changes when ready.'
+                  : 'Describe what needs to be done. You can paste images or attach files.'
           }
           onChange={(e) => setPrompt(e.target.value)}
           onPaste={paste.onPaste}
@@ -1642,6 +1602,13 @@ export function NewTask({
               />
             )}
 
+            <DelegateSplitPill
+              on={delegation.on}
+              allowedTiers={delegation.allowedTiers}
+              allowedModels={delegation.allowedModels}
+              onChange={(next) => setPrefs({ ...prefs, delegation: next })}
+            />
+
             <span className="composer-gap" aria-hidden="true" />
             <PillSelect
               ariaLabel="Worker"
@@ -1774,15 +1741,7 @@ export function NewTask({
                       onChange={(v) => setPrefs({ ...prefs, sessionSharing: v as SessionSharingChoice })}
                     />
                   </td>
-                  {/*
-                    ⛔ **Absent, not disabled, in execute mode** — the rule a conversation's Finish
-                    pill already keeps. A Plan & Execute planner writes no code and its branch is
-                    abandoned at the handoff, so `report-only` is not one answer among six: it is
-                    the only one that describes what happens. A control offering the other five
-                    would be offering choices that are not on the table.
-                  */}
                   <td>
-                    {isExecute ? null : (
                     <PillSelect
                       ariaLabel="Finish policy"
                       title="Action taken when the agent completes."
@@ -1802,7 +1761,6 @@ export function NewTask({
                       ]}
                       onChange={(v) => setPlannerFinishPolicy(v as FinishPolicyChoice)}
                     />
-                    )}
                   </td>
                   <td>
                     <div style={{ display: 'inline-flex', gap: '4px', alignItems: 'center' }}>
@@ -1860,14 +1818,7 @@ export function NewTask({
                       onChange={(v) => setPiecePriority(v as ComposerPrefs['priority'])}
                     />
                   </td>
-                  {/*
-                    ⛔ **Absent in execute mode, never a pill reading `<=1`.** The cap there is not a
-                    setting somebody chose — it is what makes the task a Plan & Execute at all
-                    (`planModeOf`), and a control with one option is not a choice. Changing it is
-                    changing the kind, which is what the pill two columns to the left is for.
-                  */}
                   <td>
-                    {isExecute ? null : (
                     <PillSelect
                       ariaLabel="Piece Limit"
                       title="Maximum number of subtasks to generate."
@@ -1876,7 +1827,6 @@ export function NewTask({
                       options={FANOUT_OPTIONS}
                       onChange={(v) => setPieceLimit(Number(v))}
                     />
-                    )}
                   </td>
                   <td>
                     <PillSelect
@@ -1904,11 +1854,7 @@ export function NewTask({
                   <td>
                     <PillSelect
                       ariaLabel="Piece Finish Policy"
-                      title={
-                        isExecute
-                          ? 'Finish policy for the executor branch.'
-                          : 'Finish policy for each subtask branch. Changes merge into the planner branch.'
-                      }
+                      title="Finish policy for each subtask branch. Changes merge into the planner branch."
                       muted={pieceFinishPolicy === 'commit-and-merge'}
                       value={pieceFinishPolicy}
                       label={
@@ -1957,52 +1903,27 @@ export function NewTask({
       </div>
 
       {/*
-        ⛔ **Drawn, because the difference between the five kinds is a topology and a sentence has to
+        ⛔ **Drawn, because the difference between the four kinds is a topology and a sentence has to
         say a topology in the order the words come.** Somebody choosing a kind on this pill is
         choosing a dispatch shape — how many turns, whether they fan out, whether anything lands
         without being asked — and this says which one they are looking at before they read a word.
         ⚠️ It is a diagram of the dispatch and nothing else — no mockup of a screen, so nothing in it
-        goes stale when this composer changes. Every kind gets one now: Plan & Split and Plan &
-        Execute had it first because their difference is the least sentence-shaped, but Single Task,
-        Conversation and Debate are exactly as much a topology and were previously left to a sentence
-        alone.
+        goes stale when this composer changes.
       */}
       <figure className="composer-shape">
         <WorkflowShape
-          mode={isExecute ? 'execute' : isPlan ? 'split' : isDebate ? 'debate' : isConversation ? 'conversation' : 'task'}
+          mode={isPlan ? 'split' : isDebate ? 'debate' : isConversation ? 'conversation' : 'task'}
         />
         <figcaption>
-          {isExecute
-            ? 'Two turns: planner generates the instruction, executor completes and lands the work.'
-            : isPlan
-              ? 'Three steps: planner decomposes the goal, subtasks run in parallel and merge back, planner reviews.'
-              : isDebate
-                ? `${debatePrefs.seats.length} seats propose independently, then the organizer resolves them into one answer.`
-                : isConversation
-                  ? 'Interactive turns repeat until you commit; nothing lands automatically.'
-                  : 'One agent completes the task, verifies it and lands the work in a single run.'}
+          {isPlan
+            ? 'Three steps: planner decomposes the goal, subtasks run in parallel and merge back, planner reviews.'
+            : isDebate
+              ? `${debatePrefs.seats.length} seats propose independently, then the organizer resolves them into one answer.`
+              : isConversation
+                ? 'Interactive turns repeat until you commit; nothing lands automatically.'
+                : 'One agent completes the task, verifies it and lands the work in a single run.'}
         </figcaption>
       </figure>
-
-      {isExecute && (
-        /*
-          ⛔ **Every notice carries its basis**, and none of them is a gate — the rule the Debate row
-          below already keeps. What is different here is *what* is being advised about: the operator
-          is choosing how much capability to take out of the execution, and the published measurement
-          says that is the dominant lever on whether the work comes out right. See `executornotice.ts`.
-        */
-        <ul className="composer-notices" aria-label="What Plan &amp; Execute trades">
-          {executorNotices({
-            plannerModel: model,
-            executorWorkerIds: pieceWorkerIds,
-            executorModels: pieceModels
-          }).map((notice) => (
-            <li key={notice.id} className={`composer-notice composer-notice--${notice.tone}`}>
-              {notice.text}
-            </li>
-          ))}
-        </ul>
-      )}
 
       {plannerNote && (
         <ul className="composer-notices" aria-label="Planner tool notice">
@@ -2044,9 +1965,7 @@ export function NewTask({
       )}
 
       <p className="composer-hint">
-        {isExecute
-          ? 'A planner agent analyzes the workspace and formulates a plan with you. Once approved, a single executor run performs the work and lands the changes.'
-          : isPlan
+        {isPlan
           ? 'A planner agent analyzes the workspace and proposes subtasks. After your approval, subtasks execute on isolated branches and merge back into the plan branch.'
           : isDebate
             ? 'Candidate agents propose independent solutions in isolated sessions. An organizer synthesizes the findings and highlights points of consensus and disagreement.'

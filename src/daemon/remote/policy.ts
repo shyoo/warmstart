@@ -187,6 +187,8 @@ export const REMOTE_METHODS = {
   'agent.taskRead': 'deny',
   'agent.projectSettings': 'deny',
   'agent.delegationStatus': 'deny',
+  'agent.subtaskBrief': 'deny',
+  'agent.subtaskBriefAlarm': 'deny',
   'agent.complete': 'deny',
   'agent.createTask': 'deny',
   'agent.handoff': 'deny',

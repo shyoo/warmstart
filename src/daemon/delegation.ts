@@ -1,12 +1,24 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { AGENT_CLI_COMMAND } from './agentcli.js'
 import { db, rows } from './db.js'
 import { emit } from './events.js'
 import { tryGit } from './git.js'
 import { log } from './log.js'
-import { addMessage, getTask, isIntegrationParent, isSplitWork, messagesFor, requireTask, runsFor } from './tasks.js'
+import {
+  addMessage,
+  getTask,
+  isIntegrationParent,
+  isSplitWork,
+  messagesFor,
+  mintDelegationToken,
+  normalizeAllowedModels,
+  normalizeAllowedTiers,
+  requireTask,
+  runsFor
+} from './tasks.js'
+export { mintDelegationToken }
 import type { AutoModelTier } from '@shared/protocol.js'
-import { asTierTag, cleanTags, tierHeading, tierSlug } from '@shared/modeltags.js'
+import { tierHeading, tierSlug } from '@shared/modeltags.js'
 import type { MandateOperation, Task, TaskStatus } from '@shared/tasks.js'
 
 /**
@@ -148,10 +160,6 @@ export function setDelegation(taskId: string, on: boolean): Task {
   return setDelegationPolicy(taskId, { on })
 }
 
-export function mintDelegationToken(): string {
-  return `dlg_${randomBytes(12).toString('base64url')}`
-}
-
 export function ensureDelegationToken(taskId: string): string | null {
   const task = requireTask(taskId)
   if (!delegationOn(task)) return null
@@ -194,13 +202,11 @@ export function setDelegationPolicy(
     : task.mandate.allowed.filter((op) => op !== SPAWN)
 
   const allowedTiers = hasTierChange
-    ? cleanTags((policy.allowedTiers ?? []).map(asTierTag))
+    ? normalizeAllowedTiers(policy.allowedTiers ?? [])
     : (task.mandate.allowedTiers ?? [])
 
   const allowedModels = hasModelChange
-    ? (policy.allowedModels ?? [])
-        .filter((m) => m && typeof m.model === 'string' && m.model.trim())
-        .map((m) => ({ model: m.model.trim(), effort: typeof m.effort === 'string' && m.effort.trim() ? m.effort.trim() : null }))
+    ? normalizeAllowedModels(policy.allowedModels ?? [])
     : (task.mandate.allowedModels ?? [])
 
   const delegationToken = on ? mintDelegationToken() : null
@@ -449,7 +455,11 @@ export function delegationClause(conversation: boolean, agentCli = false): strin
     'its own branch, cut from yours, and nothing is merged for you: when every piece has settled ' +
     'you are told how each turned out and you merge what you want yourself. ' +
     (conversation
-      ? 'The conversation carries on while they run. '
+      ? 'The conversation carries on while they run — call ' +
+        (agentCli
+          ? `\`${AGENT_CLI_COMMAND} subtask_brief\` / \`${AGENT_CLI_COMMAND} subtask_brief_alarm\``
+          : '`subtask_brief` / `subtask_brief_alarm`') +
+        ' for on-demand, periodic (30m default), or early-completion progress briefs. '
       : 'This task waits while they run and you are started again when they settle. ') +
     'Do not delegate what you would finish sooner yourself.'
   )

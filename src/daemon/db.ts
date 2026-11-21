@@ -2544,6 +2544,21 @@ const MIGRATIONS: Migration[] = [
       detail_json text not null
     );
     create index if not exists vcs_migrations_project on vcs_migrations (project_id, finished_at desc);
+  `,
+  // 97: Subtask progress brief alarms (`subtaskbrief.ts`)
+  `
+    create table if not exists delegation_brief_alarms (
+      task_id text primary key references tasks(id) on delete cascade,
+      enabled integer not null default 1,
+      interval_minutes integer not null default 30,
+      early_on_settle integer not null default 1,
+      last_brief_at integer,
+      next_brief_at integer not null,
+      reported_settled_json text not null default '[]',
+      created_at integer not null,
+      updated_at integer not null
+    );
+    create index if not exists delegation_brief_alarms_due on delegation_brief_alarms (enabled, next_brief_at);
   `
 ]
 

@@ -146,12 +146,11 @@ describe('what the new-task composer was left set to', () => {
     expect(readComposerPrefs().kind).toBe('conversation')
   })
 
-  // ⚠️ The fifth kind, remembered on the same last-selected rule as the other four. A kind this
-  //    reader did not know would silently reset somebody to Single Task on the next open — which is
-  //    a different task than the one they meant to file, with no UI saying anything changed.
-  it('remembers Plan & Execute, which is the fifth kind', () => {
-    stub({ 'warmstart.composer': JSON.stringify({ kind: 'execute' }) })
-    expect(readComposerPrefs().kind).toBe('execute')
+  it('falls back legacy Plan & Execute preferences cleanly to Single Task', () => {
+    stub({ 'warmstart.composer': JSON.stringify({ kind: 'execute', priority: 'P1' }) })
+    const back = readComposerPrefs()
+    expect(back.kind).toBe('task')
+    expect(back.priority).toBe('P1')
   })
 
   it('drops only the field it cannot read, never the record around it', () => {
@@ -489,6 +488,49 @@ describe('a remembered worker pin that can no longer take work (t969)', () => {
       expect(source).toContain('const pinnable = pinnableOf(fleet.map((e) => e.worker))')
       expect(source.match(/\.\.\.\(pinId \? \{ workerId: pinId \} : \{\}\)/g)).toHaveLength(3)
       expect(source).toContain('organizerWorkerId: pinId || null')
+    })
+  })
+})
+
+describe('delegation preferences persistence', () => {
+  afterEach(() => {
+    delete (globalThis as { window?: unknown }).window
+  })
+
+  it('defaults delegation to on with empty tier/model lists and survives damaged entries', () => {
+    stub({})
+    expect(readComposerPrefs().delegation).toEqual({
+      on: true,
+      allowedTiers: [],
+      allowedModels: []
+    })
+
+    stub({
+      'warmstart.composer': JSON.stringify({
+        priority: 'P1',
+        delegation: 'corrupt'
+      })
+    })
+    const repaired = readComposerPrefs()
+    expect(repaired.priority).toBe('P1')
+    expect(repaired.delegation).toEqual({ on: true, allowedTiers: [], allowedModels: [] })
+  })
+
+  it('round-trips delegation on/off, allowedTiers, and allowedModels cleanly', () => {
+    const store: Record<string, string> = {}
+    stub(store)
+    writeComposerPrefs({
+      ...DEFAULT_COMPOSER_PREFS,
+      delegation: {
+        on: false,
+        allowedTiers: ['tier:low', 'High'],
+        allowedModels: ['  gemini-4-hydrogen  ', '', 'claude-opus-5-5', 'gemini-4-hydrogen']
+      }
+    })
+    expect(readComposerPrefs().delegation).toEqual({
+      on: false,
+      allowedTiers: ['Low', 'High'],
+      allowedModels: ['gemini-4-hydrogen', 'claude-opus-5-5']
     })
   })
 })

@@ -174,9 +174,9 @@ export interface QuestionRequest {
  *  - `directory` — granted at the moment the operator answers `Grant` (`grantFromAnswer`), so the
  *    run their answer starts already has the directory on its argv.
  *  - `split` — filed when the resumed agent calls `task_split` again naming the card
- *    (`approvedSplit`). ⚠️ Not at answer time: what a split does next — stop a planner, complete a
- *    Plan & Execute, tell a conversation it delegated — belongs to a run, and the run that asked has
- *    ended. `consumedAt` makes a second filing of one approval impossible.
+ *    (`approvedSplit`). ⚠️ Not at answer time: what a split does next — stop a planner or tell a
+ *    conversation it delegated — belongs to a run, and the run that asked has ended. `consumedAt`
+ *    makes a second filing of one approval impossible.
  */
 export type QuestionAction =
   | { kind: 'directory'; path: string; why: string }

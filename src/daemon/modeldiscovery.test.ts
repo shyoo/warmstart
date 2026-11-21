@@ -186,6 +186,22 @@ describe('what the daemon does with a discovered model', () => {
     expect(neon?.effortLevels).toEqual(['low', 'medium', 'high', 'xhigh'])
     expect(neon?.discovered).toBeTruthy()
     expect(mine?.models.find((m) => m.id === 'gemini-4-argon')?.discovered).toBeUndefined()
+
+    // Discovered Gemini 4 models sort contiguously with listed Gemini 4 models ahead of 3.8, orchestrators, Claude, and GPT.
+    const orderedIds = mine?.models.map((m) => m.id) ?? []
+    expect(orderedIds).toEqual([
+      'gemini-4-argon',
+      'gemini-4-carbon',
+      'gemini-4-hydrogen',
+      'gemini-4-neon',
+      'gemini-3.8-flash',
+      'gemini-pro-orchestrator',
+      'gemini-pro-orchestrator-argon',
+      'gemini-pro-orchestrator-neon',
+      'claude-opus-5-5',
+      'claude-sonnet-5-5',
+      'gpt-oss-120b'
+    ])
   })
 
   it('takes a model away once no live worker’s CLI lists it', () => {
