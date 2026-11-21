@@ -32,12 +32,18 @@ export interface VcsDriver {
 
   /** Create a detached pooled workspace at `path` checked out to `base`. */
   addWorkspace(project: Project, path: string, base: string): Promise<void>
-  /** Remove the workspace at `path` and prune stale workspace metadata. */
-  removeWorkspace(project: Project, path: string): Promise<void>
+  /** Remove the workspace at `path`, pruning stale workspace metadata unless `opts.prune === false`. */
+  removeWorkspace(project: Project, path: string, opts?: { prune?: boolean }): Promise<void>
+  /** Prune stale workspace metadata for `project`. */
+  pruneWorkspaces(project: Project): Promise<void>
   /** List registered workspaces for `project` along with any checked-out branch name. */
   listWorkspaces(project: Project): Promise<VcsWorkspaceEntry[]>
   /** Return the checked-out branch name at `path`, or `null` when detached. */
   currentBranch(path: string): Promise<string | null>
+  /** Switch `path` to `branch`, or create it from `createFromBase` and check it out. */
+  switchBranch(path: string, branch: string, createFromBase?: string): Promise<void>
+  /** Detach the workspace at `path` onto `target` so its previous branch is free. */
+  detachWorkspace(path: string, target: string): Promise<void>
   /** Report whether `branch` exists in `project`. */
   branchExists(project: Project, branch: string): Promise<boolean>
   /** Create `branch` at `base` (or the resolved trunk base ref) without switching trunk HEAD. */

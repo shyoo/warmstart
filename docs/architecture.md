@@ -746,7 +746,7 @@ scripts/                ensure-electron, icons, build-mac.sh, build-win.ps1     
 | `approvals.ts` `questions.ts` | the two interrupt objects |
 | `resources.ts` | the broker: `exclusive`, `counted`, `rate_limited` |
 | `adapters/` | per-CLI integrations, capabilities as data → [`adapters.md`](adapters.md) |
-| `vcs/` | `VcsDriver` interface, `VcsCapabilities`, `gitDriver`, and `driverFor` (not yet wired to callers) |
+| `vcs/` | `VcsDriver` interface, `VcsCapabilities`, `gitDriver`, `jjDriver` (`jjConflicted`; not yet returned by `driverFor`), and `driverFor` (pool lifecycle in `worktrees.ts` calls through it) |
 | `which.ts` `git.ts` `spawn.ts` | PATH resolution — node-pty does not do it; and the shared git / promise-based `execFile` runners |
 | `stats.ts` | shared medians: `null` is no series, never a measured zero |
 | `activetime.ts` `activity.ts` `log.ts` | agent time, the live peephole, the daily log |
@@ -754,4 +754,4 @@ scripts/                ensure-electron, icons, build-mac.sh, build-win.ps1     
 | `../shared/policy.ts` | cross-process preference resolvers; task/project/fleet choices never widen a mandate |
 | `../shared/ansi.ts` | `stripAnsi`, for prose only — the daemon cleans check output as it writes it and the thread cleans what was written before; `resolveRetryCauses` in `../shared/tasks.ts` is the one classifier of a failed landing, read by the card and by `resolveRetryOnTask` |
 
-`src/daemon/vcs/` (`driver.ts`, `git.ts`, `index.ts`) defines the `VcsDriver` / `VcsCapabilities` contract, `gitDriver`, and `driverFor` as a pure seam in preparation for future VCS backends; no existing daemon module calls into it yet.
+`src/daemon/vcs/` (`driver.ts`, `git.ts`, `index.ts`) defines the `VcsDriver` / `VcsCapabilities` contract, `gitDriver`, and `driverFor`. The workspace-pool lifecycle in `worktrees.ts` (`ensurePool`, `prunePoolWorktrees`, `branchExists`, `branchCheckedOutAnywhere`, `ensurePlannerBranch`, `prepareWorkspace`, `switchResidentBranch`, `parkOtherHolders`, `parkPooledHolders`, `taskBranches`, `retireStrandedBranch`, `deleteUnlandedBranch`) now calls through `driverFor(project)`, while landing (`landing.ts`) and the state/park/cost primitives that `gitDriver` itself wraps (`parkWorkspace`, `rescueAtTip`, `workspaceState`, `commitsOnlyOn`, `landedRef`, `refreshTargetRef`) remain untouched until later waves. `jj.ts` adds a colocated `jjDriver` (with `jjConflicted`, a `>= 0.46.0` version guard and the 106-character root guard from the t1393 spike); `driverFor` does not return it yet, so no project runs on it.

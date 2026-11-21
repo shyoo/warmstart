@@ -28,6 +28,13 @@ import { run } from './spawn.js'
 import { sweepAcls } from './acl.js'
 import { appEnvName } from '@shared/env.js'
 import { spawnEnv } from './which.js'
+import { driverFor, type VcsDriver } from './vcs/index.js'
+
+function requireDriver(project: Project): VcsDriver {
+  const driver = driverFor(project)
+  if (!driver) throw new Error(`no VCS driver for project '${project.name}' (${project.vcs})`)
+  return driver
+}
 
 /**
  * Workspaces: pooled git worktrees.
@@ -230,6 +237,7 @@ async function doEnsurePool(project: Project): Promise<string[]> {
   if (policy.poolSize > 0) mkdirSync(policy.workspaceRoot, { recursive: true })
   // ⚠️ `trunkBaseRef`, not `baseRef`: a pool member at rest belongs to no task, so there is no
   // parent branch to inherit and the trunk is the only sensible place to sit.
+  const driver = requireDriver(project)
   const base = await trunkBaseRef(project)
   const members: string[] = []
 
@@ -242,9 +250,7 @@ async function doEnsurePool(project: Project): Promise<string[]> {
     }
     try {
       // --detach: a pool member holds no branch at rest, so any task branch is free to be claimed.
-      await git(project.root, ['worktree', 'add', '--detach', path, base])
-      await ensureWorktreePointer(project, path)
-      cleanStaleGitLocks(path)
+      await driver.addWorkspace(project, path, base)
       log.info(`created worktree ${path} from ${base}`)
     } catch (err) {
       log.error(`could not create worktree ${path}:`, err)
@@ -314,6 +320,7 @@ export async function prunePoolWorktrees(project: Project): Promise<PruneResult>
   const removed: string[] = []
   const kept: Array<{ path: string; reason: string }> = []
   if (!projectUsesGitBranches(project)) throw new Error(`${project.name} has no worktree pool to remove`)
+  const driver = requireDriver(project)
   const policy = policyFor(project)
   const poolId = workspacePoolId(project.id)
   const base = await trunkBaseRef(project)
@@ -358,7 +365,7 @@ export async function prunePoolWorktrees(project: Project): Promise<PruneResult>
           continue
         }
       }
-      await git(project.root, ['worktree', 'remove', '--force', path])
+      await driver.removeWorkspace(project, path, { prune: false })
     } catch (err) {
       kept.push({ path, reason: `could not remove it: ${errorMessage(err)}` })
       continue
@@ -367,7 +374,7 @@ export async function prunePoolWorktrees(project: Project): Promise<PruneResult>
   }
 
   try {
-    await git(project.root, ['worktree', 'prune'])
+    await driver.pruneWorkspaces(project)
   } catch (err) {
     log.warn(`could not prune worktree metadata for ${project.name}:`, err)
   }
@@ -855,12 +862,7 @@ export async function trunkTargetSha(project: Project, target: string): Promise<
  */
 export async function branchExists(project: Project, branch: string): Promise<boolean> {
   if (!projectUsesGitBranches(project)) return false
-  try {
-    await git(project.root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
-    return true
-  } catch {
-    return false
-  }
+  return requireDriver(project).branchExists(project, branch)
 }
 
 /**
@@ -878,15 +880,12 @@ export async function branchExists(project: Project, branch: string): Promise<bo
  */
 export async function branchCheckedOutAnywhere(project: Project, branch: string): Promise<boolean | null> {
   if (!projectUsesGitBranches(project)) return null
-  let listing: string
   try {
-    listing = await git(project.root, ['worktree', 'list', '--porcelain'])
+    const entries = await requireDriver(project).listWorkspaces(project)
+    return entries.some((entry) => entry.branch === branch)
   } catch {
     return null
   }
-  return listing
-    .split(/\r?\n/)
-    .some((line) => line.startsWith('branch ') && line.slice('branch '.length).trim() === `refs/heads/${branch}`)
 }
 
 /**
@@ -931,6 +930,7 @@ export async function switchResidentBranch(
   }
 
   try {
+    const driver = requireDriver(project)
     // ⛔ The task's base, not the project's. A split child whose branch does not exist yet is cut
     // here, and cutting it from `main` would give it a workspace that cannot see its siblings' work —
     // the same defect `baseRef`'s own comment describes, one call site over.
@@ -938,11 +938,11 @@ export async function switchResidentBranch(
     // Git refuses to check one branch out into two worktrees, correctly. A leftover holder is parked.
     cleanStaleGitLocks(path)
     await parkOtherHolders(project, branch, path)
-    if (await gitOk(path, ['rev-parse', '--verify', branch])) {
-      await git(path, ['switch', branch])
+    if (await driver.branchExists(project, branch)) {
+      await driver.switchBranch(path, branch)
       await catchUpEmptyBranch(path, branch, base)
     } else {
-      await git(path, ['switch', '-c', branch, base])
+      await driver.switchBranch(path, branch, base)
     }
     return { ok: true, from: state.branch }
   } catch (err) {
@@ -1227,9 +1227,10 @@ export function repairTrunkConfig(project: Pick<Project, 'root' | 'vcs'>): strin
 
 export async function ensurePlannerBranch(project: Project, branchName: string): Promise<void> {
   if (!projectUsesGitBranches(project)) return
-  if (!(await gitOk(project.root, ['rev-parse', '--verify', `refs/heads/${branchName}`]))) {
+  const driver = requireDriver(project)
+  if (!(await driver.branchExists(project, branchName))) {
     const base = await baseRef(project)
-    await git(project.root, ['branch', branchName, base])
+    await driver.createBranch(project, branchName, base)
     log.info(`created planner branch ${branchName} from ${base}`)
   }
 }
@@ -1253,9 +1254,10 @@ export async function prepareWorkspace(
 
   if (projectUsesGitBranches(project) && branch) {
     try {
+      const driver = requireDriver(project)
       // A repo with no remote has nothing to fetch; that is fine, not an error.
       if (await gitOk(project.root, ['remote', 'get-url', 'origin'])) {
-        await git(workspace.path, ['fetch', 'origin', '--prune'])
+        await driver.fetch(workspace.path, 'origin', undefined, { prune: true })
       }
       const target = landingTargetFor(task, project)
       if (target && target !== policy.landingTarget) {
@@ -1274,12 +1276,12 @@ export async function prepareWorkspace(
       // ⛔ Not the trunk, whose rebase is the operator's (see `parkWorkspace`).
       if (!samePath(workspace.path, project.root)) await unwindAbandonedRebase(workspace.path, branch)
       await rescueDirt(workspace.path, branch)
-      if (await gitOk(workspace.path, ['rev-parse', '--verify', branch])) {
-        await git(workspace.path, ['switch', branch])
+      if (await driver.branchExists(project, branch)) {
+        await driver.switchBranch(workspace.path, branch)
         await catchUpEmptyBranch(workspace.path, branch, base)
       } else {
         // ⛔ Created inside the claimed worktree. The trunk is never switched.
-        await git(workspace.path, ['switch', '-c', branch, base])
+        await driver.switchBranch(workspace.path, branch, base)
       }
     } catch (err) {
       return {
@@ -1349,28 +1351,21 @@ export async function parkOtherHolders(
   branch: string,
   keepPath: string
 ): Promise<void> {
-  let listing: string
+  const driver = requireDriver(project)
+  let entries: Array<{ path: string; branch: string | null }>
   try {
-    listing = await git(project.root, ['worktree', 'list', '--porcelain'])
+    entries = await driver.listWorkspaces(project)
   } catch {
     return
   }
 
   // ⚠️ A worktree mid-rebase lists as `detached`, yet git still refuses to check its branch out
   // anywhere else — so a detached entry is asked what it is rebasing (t778).
-  const entries: { path: string; branch: string | null }[] = []
-  for (const line of listing.split(/\r?\n/)) {
-    if (line.startsWith('worktree ')) entries.push({ path: line.slice('worktree '.length).trim(), branch: null })
-    else if (line.startsWith('branch ') && entries.length > 0) {
-      entries[entries.length - 1]!.branch = line.slice('branch '.length).trim()
-    }
-  }
-
   const ref = `refs/heads/${branch}`
   for (const { path, branch: held } of entries) {
-    const samePath = normalise(path) === normalise(keepPath) || normalise(path) === normalise(project.root)
-    if (samePath) continue
-    if (held !== ref && (held !== null || (await rebasingBranch(path)) !== ref)) continue
+    const matchesPath = normalise(path) === normalise(keepPath) || normalise(path) === normalise(project.root)
+    if (matchesPath) continue
+    if (held !== branch && (held !== null || (await rebasingBranch(path)) !== ref)) continue
     try {
       // ⚠️ The trunk, not the caller's base. The caller may be cutting a subtask from its
       // parent's branch, and parking a stranger's worktree onto that would be nonsense.
@@ -1379,7 +1374,7 @@ export async function parkOtherHolders(
       await ensureWorktreePointer(project, path)
       await unwindAbandonedRebase(path, base)
       await rescueDirt(path, base)
-      await git(path, ['switch', '--detach', base])
+      await driver.detachWorkspace(path, base)
       log.info(`parked ${path}, which still held ${branch}`)
     } catch (err) {
       log.warn(`could not park ${path} off ${branch}:`, err)
@@ -1412,37 +1407,33 @@ export async function parkPooledHolders(
   keepPath: string
 ): Promise<string[]> {
   if (!projectUsesGitBranches(project)) return []
+  const driver = requireDriver(project)
   const members = availability(workspacePoolId(project.id))?.resource.members ?? []
   if (members.length === 0) return []
   const pooled = new Set(members.map(normalise))
   const stuck: string[] = []
 
-  let listing: string
+  let entries: Array<{ path: string; branch: string | null }>
   try {
-    listing = await git(project.root, ['worktree', 'list', '--porcelain'])
+    entries = await driver.listWorkspaces(project)
   } catch {
     return []
   }
 
-  let path: string | null = null
-  for (const line of listing.split(/\r?\n/)) {
-    if (line.startsWith('worktree ')) path = line.slice('worktree '.length).trim()
-    else if (line.startsWith('branch ') && path) {
-      const held = line.slice('branch '.length).trim()
-      if (held !== `refs/heads/${branch}`) continue
-      if (normalise(path) === normalise(keepPath)) continue
-      if (!pooled.has(normalise(path))) continue
-      try {
-        // ⚠️ Detached **at the branch's own tip**, so nothing the slot was holding is left behind and
-        // no work is moved: `rescueDirt` commits whatever it finds onto the branch first.
-        await ensureWorktreePointer(project, path)
-        await rescueDirt(path, branch)
-        await git(path, ['switch', '--detach', branch])
-        log.info(`parked pooled workspace ${path}, which still held ${branch}`)
-      } catch (err) {
-        stuck.push(path)
-        log.warn(`could not park ${path} off ${branch}:`, err)
-      }
+  for (const { path, branch: held } of entries) {
+    if (held !== branch) continue
+    if (normalise(path) === normalise(keepPath)) continue
+    if (!pooled.has(normalise(path))) continue
+    try {
+      // ⚠️ Detached **at the branch's own tip**, so nothing the slot was holding is left behind and
+      // no work is moved: `rescueDirt` commits whatever it finds onto the branch first.
+      await ensureWorktreePointer(project, path)
+      await rescueDirt(path, branch)
+      await driver.detachWorkspace(path, branch)
+      log.info(`parked pooled workspace ${path}, which still held ${branch}`)
+    } catch (err) {
+      stuck.push(path)
+      log.warn(`could not park ${path} off ${branch}:`, err)
     }
   }
   return stuck
@@ -1992,20 +1983,14 @@ export interface TaskBranch {
 }
 
 /** Which worktree, if any, has each branch checked out. */
-async function branchHolders(root: string): Promise<Map<string, string>> {
+async function branchHolders(project: Project): Promise<Map<string, string>> {
   const held = new Map<string, string>()
-  let listing: string
   try {
-    listing = await git(root, ['worktree', 'list', '--porcelain'])
+    for (const { path, branch } of await requireDriver(project).listWorkspaces(project)) {
+      if (branch) held.set(branch, path)
+    }
   } catch {
     return held
-  }
-  let path: string | null = null
-  for (const line of listing.split(/\r?\n/)) {
-    if (line.startsWith('worktree ')) path = line.slice('worktree '.length).trim()
-    else if (line.startsWith('branch ') && path) {
-      held.set(line.slice('branch refs/heads/'.length).trim(), path)
-    }
   }
   return held
 }
@@ -2042,7 +2027,7 @@ export async function taskBranches(project: Project, target: string): Promise<Ta
     if (await gitOk(project.root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])) targetRefs.push(ref)
   }
 
-  const holders = await branchHolders(project.root)
+  const holders = await branchHolders(project)
   const found: TaskBranch[] = await Promise.all(
     names.map(async ({ branch, head }) => {
       // ⚠️ `null` ahead-count is not zero. A branch git cannot measure is left alone by everything
@@ -2154,10 +2139,11 @@ export async function retireStrandedBranch(
 ): Promise<{ deleted: boolean; reason?: string }> {
   const state = (await taskBranches(project, target)).find((b) => b.branch === branch)
   if (!state) return { deleted: false, reason: `there is no branch called \`${branch}\`` }
+  const driver = requireDriver(project)
   if (state.heldBy) {
     const holder = await idlePoolHolder(project, state.heldBy)
     if (holder.poolMember && !holder.claimed && !holder.dirty) {
-      await git(state.heldBy, ['switch', '--detach', state.head])
+      await driver.detachWorkspace(state.heldBy, state.head)
     } else {
       return { deleted: false, reason: heldBranchReason(branch, state.heldBy, holder) }
     }
@@ -2174,7 +2160,7 @@ export async function retireStrandedBranch(
     }
   }
   try {
-    await git(project.root, ['branch', '-D', branch])
+    await driver.deleteBranch(project, branch)
     log.info(
       `retired ${branch}: ` +
         (state.contentLanded
@@ -2206,16 +2192,17 @@ export async function deleteUnlandedBranch(
 ): Promise<{ deleted: boolean; reason?: string }> {
   const state = (await taskBranches(project, target)).find((b) => b.branch === branch)
   if (!state) return { deleted: false, reason: `there is no branch called \`${branch}\`` }
+  const driver = requireDriver(project)
   if (state.heldBy) {
     const holder = await idlePoolHolder(project, state.heldBy)
     if (holder.poolMember && !holder.claimed && !holder.dirty) {
-      await git(state.heldBy, ['switch', '--detach', state.head])
+      await driver.detachWorkspace(state.heldBy, state.head)
     } else {
       return { deleted: false, reason: heldBranchReason(branch, state.heldBy, holder) }
     }
   }
   try {
-    await git(project.root, ['branch', '-D', branch])
+    await driver.deleteBranch(project, branch)
     log.info(`deleted ${branch} at the operator's request, discarding ${state.ahead} commit(s)`)
     return { deleted: true }
   } catch (err) {

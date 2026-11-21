@@ -2,7 +2,6 @@ import type { Project } from '@shared/tasks.js'
 import { git, tryGit } from '../git.js'
 import { numstatEntries, patchFor, type DiffFileEntry } from '../review.js'
 import {
-  branchExists,
   cleanStaleGitLocks,
   commitsOnlyOn,
   ensureWorktreePointer,
@@ -72,8 +71,12 @@ export const gitDriver: VcsDriver = {
     cleanStaleGitLocks(path)
   },
 
-  async removeWorkspace(project: Project, path: string): Promise<void> {
+  async removeWorkspace(project: Project, path: string, opts?: { prune?: boolean }): Promise<void> {
     await git(project.root, ['worktree', 'remove', '--force', path])
+    if (opts?.prune !== false) await git(project.root, ['worktree', 'prune'])
+  },
+
+  async pruneWorkspaces(project: Project): Promise<void> {
     await git(project.root, ['worktree', 'prune'])
   },
 
@@ -88,7 +91,26 @@ export const gitDriver: VcsDriver = {
     return trimmed.length > 0 ? trimmed : null
   },
 
-  branchExists,
+  async switchBranch(path: string, branch: string, createFromBase?: string): Promise<void> {
+    if (createFromBase !== undefined) {
+      await git(path, ['switch', '-c', branch, createFromBase])
+    } else {
+      await git(path, ['switch', branch])
+    }
+  },
+
+  async detachWorkspace(path: string, target: string): Promise<void> {
+    await git(path, ['switch', '--detach', target])
+  },
+
+  async branchExists(project: Project, branch: string): Promise<boolean> {
+    try {
+      await git(project.root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`])
+      return true
+    } catch {
+      return false
+    }
+  },
 
   async createBranch(project: Project, branch: string, base?: string): Promise<void> {
     const targetBase = base ?? (await trunkBaseRef(project))

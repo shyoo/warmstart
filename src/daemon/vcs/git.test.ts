@@ -109,8 +109,15 @@ describe('gitDriver workspaces, currentBranch, park, rescue, and workspaceState'
     expect(stateParked.untrackedFiles).toEqual([])
     expect(stateParked.unlandedCommits).toBe(1)
 
-    git(wsPath, 'switch', '--detach', 'main')
-    await gitDriver.removeWorkspace(project, wsPath)
+    await gitDriver.switchBranch(wsPath, 'task/t2', 'main')
+    expect(await gitDriver.currentBranch(wsPath)).toBe('task/t2')
+    await gitDriver.switchBranch(wsPath, 'task/t1')
+    expect(await gitDriver.currentBranch(wsPath)).toBe('task/t1')
+    await gitDriver.detachWorkspace(wsPath, 'main')
+    expect(await gitDriver.currentBranch(wsPath)).toBeNull()
+
+    await gitDriver.removeWorkspace(project, wsPath, { prune: false })
+    await gitDriver.pruneWorkspaces(project)
     const afterRemove = await gitDriver.listWorkspaces(project)
     expect(afterRemove.some((entry) => samePath(entry.path, wsPath))).toBe(false)
   })
