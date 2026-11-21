@@ -69,11 +69,18 @@ export function TerminalPane({
         // The pane can be measured mid-layout; the next resize corrects it.
       }
     }
+    let disposed = false
     const observer = new ResizeObserver(resize)
     observer.observe(host)
     resize()
+    void document.fonts?.ready.then(() => {
+      if (disposed) return
+      term.clearTextureAtlas()
+      resize()
+    })
 
     return () => {
+      disposed = true
       observer.disconnect()
       term.dispose()
       termRef.current = null

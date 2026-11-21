@@ -361,12 +361,14 @@ function staticFile(req: IncomingMessage, res: ServerResponse): void {
 }
 
 /** Vite emits module scripts; browsers refuse those unless the static response names JavaScript. */
-function staticContentType(file: string): string {
+export function staticContentType(file: string): string {
   const suffix = file.slice(file.lastIndexOf('.')).toLowerCase()
   if (suffix === '.js') return 'text/javascript; charset=utf-8'
   if (suffix === '.css') return 'text/css; charset=utf-8'
   if (suffix === '.json' || suffix === '.webmanifest') return 'application/manifest+json; charset=utf-8'
   if (suffix === '.svg') return 'image/svg+xml'
   if (suffix === '.png') return 'image/png'
+  if (suffix === '.woff2') return 'font/woff2'
+  if (suffix === '.woff') return 'font/woff'
   return 'text/html; charset=utf-8'
 }

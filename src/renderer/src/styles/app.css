@@ -19,6 +19,7 @@ body {
   font-family: var(--font-ui);
   font-size: var(--text-body);
   line-height: var(--leading-body);
+  font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
 }

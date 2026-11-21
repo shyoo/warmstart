@@ -5,8 +5,9 @@
  * three are avoidable: inconsistent spacing, saturated colour used decoratively, and type that is
  * too large and too varied. So: five type sizes, one accent, and colour reserved for STATE.
  *
- * Fonts are declared as stacks with system fallbacks. Inter and JetBrains Mono are both OFL and can
- * be vendored into the app bundle later (M6) without changing a single rule here.
+ * UI and monospace faces are bundled locally via `@fontsource-variable/google-sans-flex` (`opsz`
+ * variable, SIL OFL-1.1) and `@fontsource-variable/google-sans-code` (SIL OFL-1.1) — matching
+ * Antigravity's typography with zero network requests (`font-src 'self'`) and system fallbacks.
  */
 
 :root {
@@ -19,9 +20,10 @@
   color-scheme: dark;
 
   /* ---- type ------------------------------------------------------------ */
-  --font-ui: Inter, "Inter var", -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text",
-    "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+  --font-ui: "Google Sans Flex Variable", "Google Sans Flex", "Google Sans", Inter, -apple-system,
+    BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Google Sans Code Variable", "Google Sans Code", "JetBrains Mono", "Cascadia Code",
+    "SF Mono", Menlo, Consolas, monospace;
   /* The reading face for the two analytical pages (Routing Model, Statistics). System serifs only,
      nothing vendored, and ordered by width: a wide, large-x-height serif reads better on a screen
      than a book face. Sitka Text (Windows 8.1+) and Iowan Old Style (macOS) are each ~10% wider

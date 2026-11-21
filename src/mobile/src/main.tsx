@@ -1,5 +1,8 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import '@fontsource-variable/google-sans-flex/opsz.css'
+import '@fontsource-variable/google-sans-code'
+import '@fontsource-variable/google-sans-code/wght-italic.css'
 import { App } from './app.js'
 import './styles.css'
 

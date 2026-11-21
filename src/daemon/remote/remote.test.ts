@@ -6,6 +6,7 @@ import * as store from '../db.js'
 import { remoteConfig, remoteProjects, setRemoteConfig, setRemoteProject } from './config.js'
 import { listRemoteDevices, mintDevice, revokeDevice, verifyDevice } from './devices.js'
 import { issuePairingCode, redeemPairingCode } from './pairing.js'
+import { staticContentType } from './server.js'
 
 let dir = ''
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'remote-')); store.openDb(join(dir, 'remote.db')) })
@@ -65,5 +66,9 @@ describe('remote storage', () => {
     store.db().exec(`pragma user_version = ${store.versionBefore('create table if not exists remote_config')}`)
     store.closeDb()
     expect(() => store.openDb(join(dir, 'remote.db'))).not.toThrow()
+  })
+  it('serves bundled font assets with font MIME types', () => {
+    expect(staticContentType('assets/google-sans-flex-latin-opsz-normal.woff2')).toBe('font/woff2')
+    expect(staticContentType('assets/font.woff')).toBe('font/woff')
   })
 })

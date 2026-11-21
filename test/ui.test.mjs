@@ -2992,6 +2992,31 @@ try {
     (await evaluate(`getComputedStyle(document.documentElement).scrollbarColor`)) !== 'auto',
     await evaluate(`getComputedStyle(document.documentElement).scrollbarColor`)
   )
+  const uiFontInfo = await evaluate(`(async () => {
+    await document.fonts.ready;
+    await document.fonts.load('12px "Google Sans Code Variable"');
+    const loaded = [...document.fonts].filter((f) => f.status === 'loaded').map((f) => f.family.replace(/^['"]|['"]$/g, ''));
+    const body = getComputedStyle(document.body);
+    return {
+      fontFamily: body.fontFamily,
+      fontOpticalSizing: body.fontOpticalSizing,
+      monoToken: getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim(),
+      hasUiFont: loaded.includes('Google Sans Flex Variable'),
+      hasMonoFont: loaded.includes('Google Sans Code Variable')
+    };
+  })()`)
+  check(
+    'the UI uses bundled Google Sans Flex with optical sizing',
+    uiFontInfo.fontFamily.includes('Google Sans Flex Variable') &&
+      uiFontInfo.fontOpticalSizing === 'auto' &&
+      uiFontInfo.hasUiFont,
+    JSON.stringify(uiFontInfo)
+  )
+  check(
+    'and monospace elements use bundled Google Sans Code',
+    uiFontInfo.monoToken.includes('Google Sans Code Variable') && uiFontInfo.hasMonoFont,
+    JSON.stringify(uiFontInfo)
+  )
 
   // The sidebar is resizable, and the handle is keyboard-operable - `role="separator"` with a
   // tabindex promises arrow keys work, so the promise is tested.

@@ -10,6 +10,8 @@ html, body, #root { height: 100%; margin: 0; }
   background: var(--color-bg, #0e1013);
   color: var(--color-text, #e8e6e1);
   font-family: var(--font-ui, -apple-system, 'Segoe UI', system-ui, sans-serif);
+  font-optical-sizing: auto;
+  -webkit-font-smoothing: antialiased;
   overflow: hidden;
   background-image: radial-gradient(circle at 85% -10%, color-mix(in srgb, var(--color-accent) 13%, transparent), transparent 36%);
 }

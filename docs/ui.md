@@ -1121,8 +1121,10 @@ is too large and too varied.
 - ⛔ `color-scheme: dark` is load-bearing, not a formality. Without it the browser paints every
   UA-drawn surface light — scrollbars first and most visibly, but also over-scroll, form-control
   internals and the caret. Styling `::-webkit-scrollbar` alone leaves all of that.
-- Fonts are stacks with system fallbacks (Inter, JetBrains Mono; both OFL and vendorable later
-  without changing a rule).
+- UI (`--font-ui`) and monospace (`--font-mono`) faces bundle **Google Sans Flex** (`opsz` variable,
+  `@fontsource-variable/google-sans-flex`, `font-optical-sizing: auto`) and **Google Sans Code**
+  (`@fontsource-variable/google-sans-code`, normal + italic) locally under SIL OFL-1.1 with system
+  fallbacks (`font-src 'self'`, zero network requests; `staticContentType` serves `.woff2` for mobile).
 
 - **`.panel` caps at 1100px; `.panel--wide` does not.** The cap is a reading measure for prose and
   forms. A panel whose content is a *board* — Flow, the task table — opts out, because squeezing the
