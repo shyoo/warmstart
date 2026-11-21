@@ -59,6 +59,8 @@ export interface ProjectConfig {
     location?: 'managed'
     mode?: WorkspaceMode
     pruneOnRelease?: string[]
+    dependencyStore?: DependencyStoreConfig
+    cow?: CowCloneConfig
   }
   prepare?: string[]
   check?: string[]
@@ -204,6 +206,10 @@ export interface ProjectPolicyPatch {
   workspaceLocation?: 'managed' | 'custom'
   /** See `ProjectConfig.workspaces.pruneOnRelease`. Empty or null is written as no key. */
   pruneOnRelease?: string[] | null
+  /** See `ProjectConfig.workspaces.dependencyStore`. Null removes the key. */
+  dependencyStore?: DependencyStoreConfig | null
+  /** See `ProjectConfig.workspaces.cow`. Null (or `{ enabled: false }` with no seedPaths) removes the key. */
+  cow?: CowCloneConfig | null
   /** See `ProjectConfig.prompt.orientation`. */
   promptOrientation?: OrientationChoice
   /**
@@ -315,6 +321,46 @@ export interface PoolMemberSize {
   path: string
   bytes: number
   measuredAt: number
+}
+
+export type DependencyStoreMode = 'pnpm' | 'npm-cache' | 'hook'
+
+export interface DependencyStoreConfig {
+  mode: DependencyStoreMode
+  installCommand?: string
+  lockfiles?: string[]
+}
+
+export interface DependencyStoreStatus {
+  configured: boolean
+  mode: DependencyStoreMode | null
+  storeDir: string | null
+  bytes: number | null
+  measuredAt: number
+  reason: string
+}
+
+export type CowMechanism = 'refs-block-clone' | 'apfs-clonefile' | 'reflink' | 'none'
+
+export interface CowCapability {
+  supported: boolean
+  filesystem: string
+  mechanism: CowMechanism
+  reason: string
+  measuredAt: number
+  probedPath: string
+}
+
+export interface CowCloneConfig {
+  enabled: boolean
+  seedPaths?: string[]
+}
+
+/** Combined read-only disk report for a project's pool slots, volume CoW probe, and shared dependency store. */
+export interface PoolStorageReport {
+  members: PoolMemberSize[]
+  cow: CowCapability
+  dependencyStore: DependencyStoreStatus
 }
 
 /** The three orientation files, and the only names the scaffolder will write. */

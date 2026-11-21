@@ -4,9 +4,19 @@ import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { canonicalPath, samePath } from './fspath.js'
 import { proposeChecks } from './projectstack.js'
 import { execFileSync } from 'node:child_process'
-import type { LandingStrategyId, Project, ProjectConfig, Task, Vcs } from '@shared/tasks.js'
+import type {
+  CowCloneConfig,
+  DependencyStoreConfig,
+  LandingStrategyId,
+  Project,
+  ProjectConfig,
+  Task,
+  Vcs
+} from '@shared/tasks.js'
 import type { ProjectPolicyPatch } from '@shared/tasks.js'
 import { PROJECT_IDLE_STATUSES, projectUsesGitBranches, readFinishPolicy, trunkPolicyConflict } from '@shared/tasks.js'
+import { normalizeCowCloneConfig, readCowCloneConfig } from './cow.js'
+import { normalizeDependencyStoreConfig, readDependencyStoreConfig } from './depstore.js'
 import { db, row, rows } from './db.js'
 import { emit } from './events.js'
 import { log } from './log.js'
@@ -678,6 +688,21 @@ export function setProjectPolicy(id: string, patch: ProjectPolicyPatch): Project
       if (normalized.length > 0) config.workspaces.pruneOnRelease = normalized
       else delete config.workspaces.pruneOnRelease
     }
+    if (patch.dependencyStore !== undefined) {
+      const normalized = normalizeDependencyStoreConfig(patch.dependencyStore)
+      config.workspaces = { ...config.workspaces }
+      if (normalized) config.workspaces.dependencyStore = normalized
+      else delete config.workspaces.dependencyStore
+    }
+    if (patch.cow !== undefined) {
+      const normalized = normalizeCowCloneConfig(patch.cow)
+      config.workspaces = { ...config.workspaces }
+      if (normalized && (normalized.enabled || (normalized.seedPaths?.length ?? 0) > 0)) {
+        config.workspaces.cow = normalized
+      } else {
+        delete config.workspaces.cow
+      }
+    }
     if (patch.prepare !== undefined) {
       config.prepare = patch.prepare.map((c) => c.trim()).filter(Boolean)
     }
@@ -770,6 +795,10 @@ export interface ProjectPolicy {
   workspaceRoot: string
   /** Repo-relative ignored directory names pruned on pool slot release (empty by default). */
   pruneOnRelease: string[]
+  /** Optional shared dependency store config (`workspaces.dependencyStore`). */
+  dependencyStore: DependencyStoreConfig | null
+  /** Optional copy-on-write slot cloning config (`workspaces.cow`). */
+  cow: CowCloneConfig | null
   prepare: string[]
   check: string[]
   postLanding: string[]
@@ -898,6 +927,8 @@ export function policyFor(project: Project): ProjectPolicy {
       ? canonicalPath(resolve(project.root, c.workspaces.root))
       : defaultWorkspaceRoot(project.root),
     pruneOnRelease: readPruneOnRelease(c.workspaces?.pruneOnRelease),
+    dependencyStore: readDependencyStoreConfig(c.workspaces?.dependencyStore),
+    cow: readCowCloneConfig(c.workspaces?.cow),
     prepare: c.prepare ?? [],
     check: c.check ?? [],
     postLanding: c.postLanding ?? [],

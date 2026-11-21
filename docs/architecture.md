@@ -696,13 +696,18 @@ produces a question nobody can reply to.
   trunk-only: no worktrees at all, every task takes the trunk lease serially, and the idle
   directories are removed from disk by operator-confirmed `prunePoolWorktrees` — parking never
   deletes, whatever the size.
-- ⭐ **Opt-in slot pruning and cached disk measurement** (`worktrees.ts`, `projects.ts`).
-  `workspaces.pruneOnRelease` defaults to empty; when declared as repo-relative directory names,
-  ending a pooled workspace claim via `release()` schedules an asynchronous prune that skips the
-  trunk, skips occupied or live-session slots, and deletes a directory only when `git check-ignore`
-  reports it ignored and `git ls-files` finds no tracked files inside. `measurePoolSizes` walks each
-  pool member asynchronously via `fs` (no shelling out), cached in memory per project for 10 minutes
-  and served read-only by `project.poolSizes` with `measuredAt` attached.
+- ⭐ **Opt-in slot pruning, shared dependency stores, and CoW seeding** (`worktrees.ts`,
+  `projects.ts`, `depstore.ts`, `cow.ts`). `workspaces.pruneOnRelease` clears declared ignored
+  untracked directories on slot release. `workspaces.dependencyStore` (`pnpm`, `npm-cache`, `hook`)
+  directs installs to machine-local `<dataDir>/dep-stores/<label>-<hash>` via injected env vars
+  (`WARMSTART_DEPENDENCY_STORE`, `PNPM_STORE_DIR`/`npm_config_store_dir`, `npm_config_cache`) and
+  external fingerprint stamps (`stamps/`, excluded from measured store bytes) inside
+  `prepareWorkspace`, never runs on trunk, and never symlinks `node_modules`. `workspaces.cow`
+  probes volume CoW support (`ReFS` block clone, `APFS` `cp -c`, Linux `cp --reflink=always`) and
+  seeds new pool slots when supported, otherwise warning *"this volume cannot clone; slots are full
+  copies"* without falling back to byte copies. `measurePoolStorage` (extending `measurePoolSizes`,
+  10-minute slot-size cache) reports slot sizes, volume CoW capability, and store bytes (`null` when
+  unpopulated).
 
 ## 5. Layout
 
@@ -740,7 +745,7 @@ scripts/                ensure-electron, icons, build-mac.sh, build-win.ps1     
 | `reserve.ts` `objective.ts` `costmodel.ts` `estimator.ts` | the cost intelligence |
 | `quota.ts` `stream.ts` | the staleness ladder, the self-pacing poller, live rate-limit signals |
 | `controller.ts` `judgment.ts` `chat.ts` | the consult queue, the five events, the one tooled session |
-| `finish.ts` `landing.ts` `worktrees.ts` `conflict` paths | → [`landing.md`](landing.md) |
+| `finish.ts` `landing.ts` `worktrees.ts` `depstore.ts` `cow.ts` `conflict` paths | → [`landing.md`](landing.md) (worktree pool, disk track) |
 | `conversations.ts` `sharing.ts` | → [`sessions.md`](sessions.md) |
 | `split.ts` `debate.ts` `debatecost.ts` | the two fan-out shapes and their safety boundaries: `split.ts` files a Plan & Split atomically; `debate.ts` seats a debate, runs the round loop, checks citations, reports flips and validates the agreement; `debatecost.ts` prices one before it exists. ⛔ Both boundaries live here rather than in the MCP tool for the same reason — expensive to get wrong, cheap to test against a temp database with no agent, no prompt and no UI in the way |
 | `approvals.ts` `questions.ts` | the two interrupt objects |

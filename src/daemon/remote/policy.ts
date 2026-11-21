@@ -57,6 +57,7 @@ export const REMOTE_METHODS = {
   'project.writeConfig': 'deny',
   'project.flow': 'deny',
   'project.poolSizes': 'deny',
+  'project.poolStorage': 'deny',
   'task.list': 'read',
   'task.page': 'deny',
   'task.get': 'read',

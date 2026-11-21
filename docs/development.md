@@ -488,11 +488,14 @@ branch, so the finish logs `nothing-to-land` and every gate that runs *before a 
 skipped. Nothing detects this. If a task finishes `nothing-to-land` and the work plainly happened,
 read `git reflog` in the trunk before believing the agent did nothing.
 
-- **Concurrent pool expansion and stale lock handling.** `git worktree add` on large checkouts holds
+- **Concurrent pool expansion, stale lock handling, and Disk track probes.** `git worktree add` on large checkouts holds
   `index.lock` for tens of seconds while creating `.git` early. `ensurePool(project)` is
   serialized per project so concurrent dispatches wait for checkout completion, and `cleanStaleGitLocks`
   clears orphaned `.lock` files before preparing or switching a worktree. Reducing pool size is graceful:
-  idle extra slots are parked, while occupied slots run to completion.
+  idle extra slots are parked, while occupied slots run to completion. Volume CoW probing (`cow.ts`) avoids
+  `fsutil` (Error 5 unprivileged) and `COPYFILE_FICLONE_FORCE` (`ENOSYS` on Windows), using unprivileged
+  PowerShell `GetVolumeInformationW` on Windows (`robocopy` for cloning) and `cp -c` / `cp --reflink=always`
+  on POSIX, while `depstore.ts` keeps stamps under `<dataDir>/dep-stores/.../stamps/` so slots stay clean.
 
 ## 5. Working in a worktree
 

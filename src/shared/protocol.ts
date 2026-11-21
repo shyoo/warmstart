@@ -50,6 +50,7 @@ import type {
   ProjectInspection,
   ProjectPolicyPatch,
   PoolMemberSize,
+  PoolStorageReport,
   WorkspaceRootReport,
   WorkspaceMode,
   WorkspaceModeChoice,
@@ -2155,6 +2156,12 @@ export interface RpcMap {
    * per project and cached in memory (`measuredAt` travels with every reading).
    */
   'project.poolSizes': { params: { id: string }; result: PoolMemberSize[] }
+  /**
+   * Read-only workspace pool storage snapshot: per-slot disk usage, copy-on-write volume probe
+   * (with explicit filesystem/basis and age), and shared dependency store footprint (`bytes: null`
+   * when unconfigured or not yet populated).
+   */
+  'project.poolStorage': { params: { id: string; forceProbe?: boolean }; result: PoolStorageReport }
 
   'task.list': { params: { projectId?: string; includeDeleted?: boolean } | void; result: Task[] }
   /** The phone overview's bounded, reverse-chronological project timeline. */

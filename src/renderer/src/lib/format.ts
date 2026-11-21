@@ -1,5 +1,11 @@
 import type { Session, Worker } from '@shared/protocol'
-import { isWorkerSubscriptionExpired, type PoolMemberSize, type RunQuota } from '@shared/tasks'
+import {
+  isWorkerSubscriptionExpired,
+  type CowCapability,
+  type DependencyStoreStatus,
+  type PoolMemberSize,
+  type RunQuota
+} from '@shared/tasks'
 import { billingDate, type WorkerBilling } from '@shared/billing'
 /**
  * Formatting for numbers that update in place.
@@ -417,4 +423,19 @@ export function formatMeasuredAge(measuredAt: number, now = Date.now()): string 
 export function formatPoolMemberSize(member: PoolMemberSize, now = Date.now()): string {
   const slot = member.path.replace(/\\/g, '/').split('/').filter(Boolean).at(-1) ?? member.path
   return `${slot} · ${formatPoolBytes(member.bytes)} · ${formatMeasuredAge(member.measuredAt, now)}`
+}
+
+/** Format volume copy-on-write capability probe with explicit measurement age. */
+export function formatCowCapability(cow: CowCapability, now = Date.now()): string {
+  const summary = cow.supported ? `${cow.filesystem} (${cow.mechanism})` : cow.reason
+  return `${summary} · ${formatMeasuredAge(cow.measuredAt, now)}`
+}
+
+/** Format shared dependency store status without turning unpopulated stores into 0 B. */
+export function formatDependencyStoreStatus(status: DependencyStoreStatus, now = Date.now()): string {
+  if (!status.configured || !status.mode) return 'Not configured'
+  if (status.bytes === null) {
+    return `${status.mode} store · not populated yet · ${formatMeasuredAge(status.measuredAt, now)}`
+  }
+  return `${status.mode} store · ${formatPoolBytes(status.bytes)} · ${formatMeasuredAge(status.measuredAt, now)}`
 }

@@ -1,9 +1,11 @@
 import { closeSync, existsSync, ftruncateSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, unlinkSync, writeSync } from 'node:fs'
 import { lstat, readdir, rm } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import type { FinishPolicy, PoolMemberSize, Project, ResourceClaim, Task, WorkspaceMode } from '@shared/tasks.js'
+import type { FinishPolicy, PoolMemberSize, PoolStorageReport, Project, ResourceClaim, Task, WorkspaceMode } from '@shared/tasks.js'
 import { landingLevelFor } from '@shared/policy.js'
 import { projectUsesGitBranches } from '@shared/tasks.js'
+import { probeCowSupport, seedWorkspaceCow } from './cow.js'
+import { dependencyStoreEnv, ensureWorkspaceDependencies, measureDependencyStore } from './depstore.js'
 import { landingBaseFor } from './landingbase.js'
 import { getProject, landingTargetFor, policyFor } from './projects.js'
 import { settings } from './settings.js'
@@ -252,6 +254,27 @@ async function doEnsurePool(project: Project): Promise<string[]> {
       // --detach: a pool member holds no branch at rest, so any task branch is free to be claimed.
       await driver.addWorkspace(project, path, base)
       log.info(`created worktree ${path} from ${base}`)
+      if (policy.cow?.enabled) {
+        try {
+          const seeded = await seedWorkspaceCow(project.root, path, policy.cow)
+          if (!seeded.capability.supported) {
+            log.warn(`copy-on-write seeding skipped for ${path}: ${seeded.capability.reason}`)
+          } else {
+            if (seeded.cloned.length > 0) {
+              log.info(
+                `seeded ${path} via copy-on-write (${seeded.capability.mechanism}): ${seeded.cloned.join(', ')}`
+              )
+            }
+            if (seeded.errors.length > 0) {
+              log.warn(
+                `copy-on-write seeding errors in ${path}: ${seeded.errors.map((e) => `${e.path}: ${e.error}`).join('; ')}`
+              )
+            }
+          }
+        } catch (err) {
+          log.warn(`copy-on-write seeding failed for ${path}:`, err)
+        }
+      }
     } catch (err) {
       log.error(`could not create worktree ${path}:`, err)
       members.pop()
@@ -743,6 +766,20 @@ export async function measurePoolSizes(project: Project): Promise<PoolMemberSize
   })
   inFlightPoolSizes.set(project.id, promise)
   return promise
+}
+
+/**
+ * Combined read-only pool storage snapshot: slot disk sizes, copy-on-write volume probe, and
+ * shared dependency store footprint (`bytes: null` when unconfigured or not yet populated).
+ */
+export async function measurePoolStorage(project: Project, forceProbe?: boolean): Promise<PoolStorageReport> {
+  const policy = policyFor(project)
+  const [members, cow, dependencyStore] = await Promise.all([
+    measurePoolSizes(project),
+    probeCowSupport(policy.workspaceRoot, project.root, { force: forceProbe }),
+    measureDependencyStore(project.root, policy.dependencyStore)
+  ])
+  return { members, cow, dependencyStore }
 }
 
 /**
@@ -1304,12 +1341,37 @@ export async function prepareWorkspace(
     }
   }
 
+  const depEnv =
+    policy.dependencyStore && !samePath(workspace.path, project.root)
+      ? dependencyStoreEnv(project.root, policy.dependencyStore)
+      : {}
+
+  if (policy.dependencyStore && !samePath(workspace.path, project.root)) {
+    const depRes = await ensureWorkspaceDependencies(
+      project.root,
+      workspace.path,
+      policy.dependencyStore,
+      workspaceEnv(workspace, policy.env)
+    )
+    if (depRes.ran && depRes.command) {
+      steps.push({ command: depRes.command, ok: depRes.ok, output: depRes.output })
+    }
+    if (!depRes.ok) {
+      return {
+        ok: false,
+        branch,
+        steps,
+        error: depRes.error ?? 'dependency store setup failed'
+      }
+    }
+  }
+
   for (const command of policy.prepare) {
     try {
       const { stdout, stderr } = await run(command, {
         cwd: workspace.path,
         shell: true,
-        env: workspaceEnv(workspace, policy.env),
+        env: { ...workspaceEnv(workspace, policy.env), ...depEnv },
         maxBuffer: 8 * 1024 * 1024,
         timeout: 15 * 60 * 1000
       } as never)

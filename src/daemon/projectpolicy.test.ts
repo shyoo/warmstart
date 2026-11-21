@@ -364,3 +364,107 @@ describe('workspaces.pruneOnRelease', () => {
     }
   })
 })
+
+describe('workspaces.dependencyStore', () => {
+  it('defaults to null, normalizes and persists valid configs, and removes key on null', () => {
+    const project = makeProject()
+    expect(projects.policyFor(project).dependencyStore).toBeNull()
+
+    const pnpm = projects.setProjectPolicy(project.id, {
+      dependencyStore: {
+        mode: 'pnpm',
+        installCommand: '   ',
+        lockfiles: ['.\\pnpm-lock.yaml', 'packages\\app\\pnpm-lock.yaml', 'packages/app/pnpm-lock.yaml']
+      }
+    })
+    expect((configOnDisk(pnpm).workspaces as Record<string, unknown>).dependencyStore).toEqual({
+      mode: 'pnpm',
+      lockfiles: ['pnpm-lock.yaml', 'packages/app/pnpm-lock.yaml']
+    })
+    expect(projects.policyFor(pnpm).dependencyStore).toEqual({
+      mode: 'pnpm',
+      lockfiles: ['pnpm-lock.yaml', 'packages/app/pnpm-lock.yaml']
+    })
+
+    const hook = projects.setProjectPolicy(project.id, {
+      dependencyStore: { mode: 'hook', installCommand: '  node scripts/setup.mjs  ' }
+    })
+    expect((configOnDisk(hook).workspaces as Record<string, unknown>).dependencyStore).toEqual({
+      mode: 'hook',
+      installCommand: 'node scripts/setup.mjs'
+    })
+    expect(projects.policyFor(hook).dependencyStore).toEqual({
+      mode: 'hook',
+      installCommand: 'node scripts/setup.mjs'
+    })
+
+    const cleared = projects.setProjectPolicy(project.id, { dependencyStore: null })
+    expect((configOnDisk(cleared).workspaces as Record<string, unknown>).dependencyStore).toBeUndefined()
+    expect(projects.policyFor(cleared).dependencyStore).toBeNull()
+  })
+
+  it('rejects invalid modes, empty hook installCommand, and unsafe lockfiles', () => {
+    const project = makeProject()
+    expect(() =>
+      projects.setProjectPolicy(project.id, { dependencyStore: { mode: 'yarn' as never } })
+    ).toThrow(/mode/i)
+    expect(() =>
+      projects.setProjectPolicy(project.id, { dependencyStore: { mode: 'hook' } })
+    ).toThrow(/installCommand/i)
+    for (const bad of ['../lock', '/abs/lock', 'C:\\lock', '.git/HEAD', '.jj/state', '.']) {
+      expect(() =>
+        projects.setProjectPolicy(project.id, { dependencyStore: { mode: 'pnpm', lockfiles: [bad] } })
+      ).toThrow(/lockfile/i)
+    }
+  })
+})
+
+describe('workspaces.cow', () => {
+  it('defaults to null, persists enabled/custom seedPaths, and removes key when disabled without seedPaths or null', () => {
+    const project = makeProject()
+    expect(projects.policyFor(project).cow).toBeNull()
+
+    const enabled = projects.setProjectPolicy(project.id, {
+      cow: {
+        enabled: true,
+        seedPaths: ['.\\node_modules\\', 'packages\\web\\node_modules/', 'node_modules']
+      }
+    })
+    expect((configOnDisk(enabled).workspaces as Record<string, unknown>).cow).toEqual({
+      enabled: true,
+      seedPaths: ['node_modules', 'packages/web/node_modules']
+    })
+    expect(projects.policyFor(enabled).cow).toEqual({
+      enabled: true,
+      seedPaths: ['node_modules', 'packages/web/node_modules']
+    })
+
+    // Disabled with no seedPaths clears the key from project.json cleanly.
+    const disabledDefault = projects.setProjectPolicy(project.id, { cow: { enabled: false } })
+    expect((configOnDisk(disabledDefault).workspaces as Record<string, unknown>).cow).toBeUndefined()
+    expect(projects.policyFor(disabledDefault).cow).toBeNull()
+
+    // Disabled WITH explicit seedPaths stays persisted, and null clears it explicitly.
+    const disabledWithPaths = projects.setProjectPolicy(project.id, {
+      cow: { enabled: false, seedPaths: ['node_modules'] }
+    })
+    expect((configOnDisk(disabledWithPaths).workspaces as Record<string, unknown>).cow).toEqual({
+      enabled: false,
+      seedPaths: ['node_modules']
+    })
+    const nulled = projects.setProjectPolicy(project.id, { cow: null })
+    expect((configOnDisk(nulled).workspaces as Record<string, unknown>).cow).toBeUndefined()
+  })
+
+  it('rejects malformed or unsafe cow seedPaths', () => {
+    const project = makeProject()
+    expect(() =>
+      projects.setProjectPolicy(project.id, { cow: { enabled: 'yes' as never } })
+    ).toThrow(/boolean/i)
+    for (const bad of ['../nm', '/abs/nm', 'C:\\nm', '.git', '.jj/store', '.']) {
+      expect(() =>
+        projects.setProjectPolicy(project.id, { cow: { enabled: true, seedPaths: [bad] } })
+      ).toThrow(/seedPath/i)
+    }
+  })
+})

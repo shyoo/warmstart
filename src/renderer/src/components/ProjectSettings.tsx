@@ -27,12 +27,13 @@ import {
   projectTrunkOnly,
   projectWorkspaceModeChoice,
   type WorkspaceMode,
-  type PoolMemberSize
+  type DependencyStoreMode,
+  type PoolStorageReport
 } from '@shared/tasks'
 import { projectOrientationChoice, resolveCompletionMode, resolveFinishPolicy, resolveSessionSharing } from '@shared/policy'
 import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
-import { formatPoolMemberSize } from '../lib/format'
+import { formatCowCapability, formatDependencyStoreStatus, formatPoolMemberSize } from '../lib/format'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { SettingRow, SettingSwitch } from './SettingRow'
 import { deleteProject, toggleArchive } from './ProjectMenus'
@@ -59,11 +60,13 @@ import { confirmAction } from '../lib/confirmation'
 export function ProjectSettings({
   project,
   resources,
-  refreshProjects
+  refreshProjects,
+  initialPoolStorage
 }: {
   project: ProjectRecord
   resources: ResourceAvailability[]
   refreshProjects: () => Promise<void>
+  initialPoolStorage?: PoolStorageReport | null
 }): React.JSX.Element {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -108,6 +111,7 @@ export function ProjectSettings({
         fleetSharing={fleetSharing}
         setPolicy={setPolicy}
         refreshProjects={refreshProjects}
+        initialPoolStorage={initialPoolStorage}
       />
       <RemoteProjectAccess project={project} />
       <ColdStartPanel project={project} setPolicy={setPolicy} />
@@ -405,56 +409,102 @@ function PolicyPanel({
   fleetFinish,
   fleetSharing,
   setPolicy,
-  refreshProjects
+  refreshProjects,
+  initialPoolStorage
 }: {
   project: ProjectRecord
   fleetFinish: Settings['finishPolicy']
   fleetSharing: Settings['sessionSharing']
   setPolicy: (patch: ProjectPolicyPatch) => Promise<void>
   refreshProjects: () => Promise<void>
+  initialPoolStorage?: PoolStorageReport | null
 }): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<string | null>(null)
 
-  const apply = (patch: ProjectPolicyPatch): void => {
-    setBusy(true)
-    void setPolicy(patch)
-      .catch(() => undefined)
-      .finally(() => setBusy(false))
-  }
-
   const trunkOnly = projectTrunkOnly(project)
   const hasBranches = projectUsesGitBranches(project)
-  const [poolSizes, setPoolSizes] = useState<PoolMemberSize[]>([])
+  const [poolStorage, setPoolStorage] = useState<PoolStorageReport | null>(initialPoolStorage ?? null)
+  const [probingStorage, setProbingStorage] = useState(false)
   const [nowMs, setNowMs] = useState(() => Date.now())
 
   useEffect(() => {
+    if (initialPoolStorage !== undefined) setPoolStorage(initialPoolStorage)
+  }, [initialPoolStorage])
+
+  const storedDep = project.config.workspaces?.dependencyStore ?? null
+  const storedDepKey = JSON.stringify(storedDep)
+  const storedCow = project.config.workspaces?.cow ?? null
+  const storedCowKey = JSON.stringify(storedCow)
+
+  const [depModeDraft, setDepModeDraft] = useState<DependencyStoreMode | 'off'>(storedDep?.mode ?? 'off')
+  const [depCmdDraft, setDepCmdDraft] = useState(storedDep?.installCommand ?? '')
+  const [depLockDraft, setDepLockDraft] = useState((storedDep?.lockfiles ?? []).join(', '))
+
+  useEffect(() => {
+    setDepModeDraft(storedDep?.mode ?? 'off')
+    setDepCmdDraft(storedDep?.installCommand ?? '')
+    setDepLockDraft((storedDep?.lockfiles ?? []).join(', '))
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed by serialized config so unchanged refreshes keep edits
+  }, [project.id, storedDepKey])
+
+  const reloadStorage = useCallback(
+    async (forceProbe = false): Promise<void> => {
+      if (trunkOnly || !hasBranches) {
+        setPoolStorage(null)
+        return
+      }
+      if (forceProbe) setProbingStorage(true)
+      try {
+        const report = await rpc(
+          'project.poolStorage',
+          forceProbe ? { id: project.id, forceProbe: true } : { id: project.id }
+        )
+        setPoolStorage(report)
+        setNowMs(Date.now())
+      } catch {
+        if (!forceProbe) setPoolStorage(null)
+      } finally {
+        if (forceProbe) setProbingStorage(false)
+      }
+    },
+    [hasBranches, project.id, trunkOnly]
+  )
+
+  useEffect(() => {
     if (trunkOnly || !hasBranches) {
-      setPoolSizes([])
+      setPoolStorage(null)
       return
     }
     let cancelled = false
-    setPoolSizes([])
-    void rpc('project.poolSizes', { id: project.id })
-      .then((rows) => {
+    void rpc('project.poolStorage', { id: project.id })
+      .then((report) => {
         if (!cancelled) {
-          setPoolSizes(rows)
+          setPoolStorage(report)
           setNowMs(Date.now())
         }
       })
       .catch(() => {
-        if (!cancelled) setPoolSizes([])
+        if (!cancelled) setPoolStorage(null)
       })
     return () => {
       cancelled = true
     }
-  }, [project.id, project.vcs, hasBranches, project.config.workspaces?.poolSize, trunkOnly])
+  }, [project.id, project.vcs, hasBranches, project.config.workspaces?.poolSize, storedDepKey, storedCowKey, trunkOnly])
 
   useEffect(() => {
-    if (poolSizes.length === 0) return
+    if (!poolStorage) return
     const timer = setInterval(() => setNowMs(Date.now()), 60_000)
     return () => clearInterval(timer)
-  }, [poolSizes.length])
+  }, [poolStorage])
+
+  const apply = (patch: ProjectPolicyPatch): void => {
+    setBusy(true)
+    void setPolicy(patch)
+      .then(() => reloadStorage())
+      .catch(() => undefined)
+      .finally(() => setBusy(false))
+  }
 
   // ⚠️ What switching back restores. The operator's old pool size is a decision worth keeping
   // across a trunk-only interval; the default is only for projects that never had one.
@@ -551,6 +601,42 @@ function PolicyPanel({
     { value: 'inherit', label: `inherit (${finishLabel(fleetFinish, target)})` },
     ...FINISH_ORDER.map((p) => ({ value: p, label: finishLabel(p, target) }))
   ]
+
+  const parseCsv = (raw: string): string[] =>
+    raw
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+
+  const cowEnabled = storedCow?.enabled === true
+  const cowSeedPaths = storedCow?.seedPaths ?? []
+  const poolMembers = poolStorage?.members ?? []
+
+  const saveDependencyStore = (mode: DependencyStoreMode, rawCmd: string, rawLocks: string): void => {
+    const installCommand = rawCmd.trim()
+    const lockfiles = parseCsv(rawLocks)
+    if (mode === 'hook' && !installCommand) return
+    apply({
+      dependencyStore: {
+        mode,
+        ...(installCommand ? { installCommand } : {}),
+        ...(lockfiles.length > 0 ? { lockfiles } : {})
+      }
+    })
+  }
+
+  const depCmdClean = depCmdDraft.trim()
+  const depLocksNormalized = parseCsv(depLockDraft).join(', ')
+  const savedLocksNormalized = (storedDep?.lockfiles ?? []).join(', ')
+  const depHookMissingCmd = depModeDraft === 'hook' && !depCmdClean
+  const depCmdDirty =
+    depModeDraft !== 'off' &&
+    !depHookMissingCmd &&
+    (depCmdClean !== (storedDep?.installCommand ?? '') || depModeDraft !== (storedDep?.mode ?? 'off'))
+  const depLockDirty =
+    depModeDraft !== 'off' &&
+    !depHookMissingCmd &&
+    (depLocksNormalized !== savedLocksNormalized || depModeDraft !== (storedDep?.mode ?? 'off'))
 
   return (
     <div className="panel">
@@ -829,9 +915,9 @@ function PolicyPanel({
                     <div>
                       {`${project.config.workspaces?.poolSize ?? 3} parallel worktree${(project.config.workspaces?.poolSize ?? 3) === 1 ? '' : 's'}. A full pool holds new tasks.`}
                     </div>
-                    {poolSizes.length > 0 && (
+                    {poolMembers.length > 0 && (
                       <div className="tbl-path mono">
-                        {poolSizes.map((m) => (
+                        {poolMembers.map((m) => (
                           <div key={m.path}>{formatPoolMemberSize(m, nowMs)}</div>
                         ))}
                       </div>
@@ -862,22 +948,195 @@ function PolicyPanel({
               }
             />
             {hasBranches && (
-              <TextPolicyRow
-                title="Prune on release"
-                value={(project.config.workspaces?.pruneOnRelease ?? []).join(', ')}
-                placeholder="release, out"
-                disabled={busy}
-                ariaLabel="Prune on release directories"
-                onSave={(val) =>
-                  apply({
-                    pruneOnRelease: val
-                      .split(',')
-                      .map((entry) => entry.trim())
-                      .filter(Boolean)
-                  })
-                }
-                description="Ignored build output to delete when a workspace is released. Tracked files are never deleted."
-              />
+              <>
+                <TextPolicyRow
+                  title="Prune on release"
+                  value={(project.config.workspaces?.pruneOnRelease ?? []).join(', ')}
+                  placeholder="release, out"
+                  disabled={busy}
+                  ariaLabel="Prune on release directories"
+                  onSave={(val) => apply({ pruneOnRelease: parseCsv(val) })}
+                  description="Ignored build output to delete when a workspace is released. Tracked files are never deleted."
+                />
+
+                <SettingRow
+                  title="Shared dependency store"
+                  description={
+                    <>
+                      <div>
+                        {poolStorage
+                          ? formatDependencyStoreStatus(poolStorage.dependencyStore, nowMs)
+                          : 'Measuring dependency store…'}
+                      </div>
+                      {poolStorage?.dependencyStore.storeDir && (
+                        <div className="tbl-path mono" title={poolStorage.dependencyStore.storeDir}>
+                          {poolStorage.dependencyStore.storeDir}
+                        </div>
+                      )}
+                      {depHookMissingCmd && (
+                        <div className="note">
+                          Enter an install command below and click Save to enable Hook mode.
+                        </div>
+                      )}
+                    </>
+                  }
+                  control={
+                    <SettingButtonSelect
+                      className="finish-picker setting-row-control-select"
+                      value={depModeDraft}
+                      options={[
+                        { value: 'off', label: 'Off' },
+                        { value: 'pnpm', label: 'pnpm' },
+                        { value: 'npm-cache', label: 'npm cache' },
+                        { value: 'hook', label: 'Hook' }
+                      ]}
+                      disabled={busy}
+                      ariaLabel="Shared dependency store"
+                      title="Share a package store or cache across pooled slots to cut workspace disk usage and install time."
+                      onChange={(val) => {
+                        const mode = val as DependencyStoreMode | 'off'
+                        setDepModeDraft(mode)
+                        if (mode === 'off') {
+                          if (storedDep) apply({ dependencyStore: null })
+                          return
+                        }
+                        if (mode === 'hook' && !depCmdDraft.trim()) {
+                          return
+                        }
+                        saveDependencyStore(mode, depCmdDraft, depLockDraft)
+                      }}
+                    />
+                  }
+                />
+
+                {depModeDraft !== 'off' && (
+                  <>
+                    <SettingRow
+                      title="Dependency install command"
+                      description={
+                        depModeDraft === 'hook'
+                          ? 'Required in Hook mode. Executed when preparing a pooled slot whose lockfiles changed.'
+                          : 'Optional override run inside prepared slots using the shared package store.'
+                      }
+                      control={
+                        <div className="project-setting-text-control">
+                          <input
+                            className="text-input"
+                            value={depCmdDraft}
+                            placeholder={
+                              depModeDraft === 'pnpm'
+                                ? 'pnpm install --frozen-lockfile --prefer-offline'
+                                : depModeDraft === 'npm-cache'
+                                  ? 'npm ci --prefer-offline'
+                                  : 'node scripts/setup-deps.mjs'
+                            }
+                            disabled={busy}
+                            aria-label="Dependency store install command"
+                            onChange={(e) => setDepCmdDraft(e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn--primary"
+                            disabled={busy || !depCmdDirty}
+                            onClick={() => saveDependencyStore(depModeDraft, depCmdDraft, depLockDraft)}
+                          >
+                            Save
+                          </button>
+                        </div>
+                      }
+                    />
+                    <SettingRow
+                      title="Dependency lockfiles"
+                      description="Comma-separated repo-relative lockfiles watched before reusing cached dependencies."
+                      control={
+                        <div className="project-setting-text-control">
+                          <input
+                            className="text-input"
+                            value={depLockDraft}
+                            placeholder="pnpm-lock.yaml, package-lock.json"
+                            disabled={busy}
+                            aria-label="Dependency store lockfiles"
+                            onChange={(e) => setDepLockDraft(e.target.value)}
+                          />
+                          <button
+                            type="button"
+                            className="btn btn--primary"
+                            disabled={busy || !depLockDirty}
+                            onClick={() => saveDependencyStore(depModeDraft, depCmdDraft, depLockDraft)}
+                          >
+                            Save
+                          </button>
+                        </div>
+                      }
+                    />
+                  </>
+                )}
+
+                <SettingRow
+                  title="Copy-on-write slot cloning"
+                  description={
+                    <>
+                      <div>
+                        {poolStorage
+                          ? formatCowCapability(poolStorage.cow, nowMs)
+                          : 'Probing volume copy-on-write support…'}
+                      </div>
+                      {cowEnabled && poolStorage && !poolStorage.cow.supported && (
+                        <div className="warn">
+                          Copy-on-write is enabled, but {poolStorage.cow.reason}.
+                        </div>
+                      )}
+                    </>
+                  }
+                  control={
+                    <div className="tbl-actions">
+                      <button
+                        type="button"
+                        className="btn btn--ghost"
+                        disabled={busy || probingStorage}
+                        title="Re-probe volume copy-on-write support."
+                        onClick={() => void reloadStorage(true)}
+                      >
+                        {probingStorage ? 'Probing…' : 'Re-probe'}
+                      </button>
+                      <SettingSwitch
+                        label="Copy-on-write slot cloning"
+                        on={cowEnabled}
+                        busy={busy}
+                        title="Seed pooled slots with copy-on-write clones when supported by this volume."
+                        onToggle={() =>
+                          apply({
+                            cow: {
+                              enabled: !cowEnabled,
+                              ...(cowSeedPaths.length > 0 ? { seedPaths: cowSeedPaths } : {})
+                            }
+                          })
+                        }
+                      />
+                    </div>
+                  }
+                />
+
+                {cowEnabled && (
+                  <TextPolicyRow
+                    title="CoW seed paths"
+                    value={cowSeedPaths.join(', ')}
+                    placeholder="node_modules"
+                    disabled={busy}
+                    ariaLabel="Copy-on-write seed paths"
+                    onSave={(val) => {
+                      const seedPaths = parseCsv(val)
+                      apply({
+                        cow: {
+                          enabled: true,
+                          ...(seedPaths.length > 0 ? { seedPaths } : {})
+                        }
+                      })
+                    }}
+                    description="Comma-separated repo-relative paths to copy-on-write clone into prepared slots."
+                  />
+                )}
+              </>
             )}
           </>
         )}

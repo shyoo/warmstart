@@ -1,7 +1,7 @@
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { existsSync } from 'node:fs'
-import { spawn } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { createRequire } from 'node:module'
 import {
@@ -1510,6 +1510,10 @@ try {
   }
   check('turning it off closes the listener', stopped)
 
+  // ---------------------------------------------------------------- colocated jj & VCS migration
+  section('colocated jj project and VCS migration (t1393)')
+  await checkColocatedJjProject(daemon)
+
   // ---------------------------------------------------------------- it can be asked to stop
   //
   // ⛔ Last, because it ends the daemon every check above needed. This is the mechanism behind the
@@ -2007,6 +2011,213 @@ async function runApprovalChecks(d) {
     )
   } finally {
     client.close()
+  }
+}
+
+async function checkColocatedJjProject(d) {
+  let versionOut
+  try {
+    versionOut = execFileSync('jj', ['--version'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    }).trim()
+  } catch (err) {
+    skip('colocated jj project and VCS migration (t1393)', `jj is not available: ${err instanceof Error ? err.message : String(err)}`)
+    return
+  }
+
+  const verMatch = versionOut.match(/(\d+)\.(\d+)\.(\d+)/)
+  if (!verMatch) {
+    skip('colocated jj project and VCS migration (t1393)', `unrecognized jj --version output: ${versionOut}`)
+    return
+  }
+  const major = Number(verMatch[1])
+  const minor = Number(verMatch[2])
+  const patch = Number(verMatch[3])
+  const supported = major > 0 || (major === 0 && (minor > 46 || (minor === 46 && patch >= 0)))
+  if (!supported) {
+    skip('colocated jj project and VCS migration (t1393)', `jj ${major}.${minor}.${patch} is below 0.46.0`)
+    return
+  }
+
+  let shortTempDir = null
+  let projId = null
+  try {
+    shortTempDir = realpathSync.native(mkdtempSync(join(tmpdir(), 'djj-')))
+    if (shortTempDir.length > 88) {
+      skip('colocated jj project and VCS migration (t1393)', `temp path exceeds 88-char jj 0.46 Windows root limit: ${shortTempDir}`)
+      return
+    }
+
+    const root = join(shortTempDir, 'repo')
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
+    git(root, 'init', '--initial-branch=main')
+    git(root, 'config', 'user.name', 'agentyard test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    writeFileSync(
+      join(root, '.warmstart', 'project.json'),
+      `${JSON.stringify(
+        {
+          schema_version: 1,
+          name: 'daemon-jj',
+          vcs: 'git',
+          workspaces: { poolSize: 1 },
+          check: ['node -e "process.exit(0)"'],
+          landing: { strategy: 'merge-local', target: 'main' }
+        },
+        null,
+        2
+      )}\n`
+    )
+    writeFileSync(join(root, 'base.txt'), 'base\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'initial')
+
+    const proj = await d.rpc('project.add', { root })
+    projId = proj.id
+    check('project.add registers git repo with vcs === git', proj.vcs === 'git', proj.vcs)
+
+    writeFileSync(join(root, 'dirty.tmp'), 'untracked\n')
+    const dirtyRes = await d.rpcResult('project.migrateVcs', { id: proj.id, to: 'jj' })
+    check(
+      'project.migrateVcs refuses an untracked file on the trunk',
+      !dirtyRes.ok && /uncommitted|untracked|dirty/i.test(dirtyRes.message ?? ''),
+      dirtyRes.message
+    )
+    rmSync(join(root, 'dirty.tmp'), { force: true })
+
+    const toJj = await d.rpc('project.migrateVcs', { id: proj.id, to: 'jj' })
+    check(
+      'project.migrateVcs converts git -> colocated jj and rebuilds workspace pool',
+      toJj.project.vcs === 'jj' &&
+        toJj.migration.status === 'completed' &&
+        existsSync(join(root, '.jj')) &&
+        existsSync(join(root, '.git')) &&
+        toJj.rebuiltWorkspaces >= 1,
+      JSON.stringify({ vcs: toJj.project.vcs, status: toJj.migration.status, rebuilt: toJj.rebuiltWorkspaces })
+    )
+
+    const reloaded = await d.rpc('project.reload', { id: proj.id })
+    check(
+      'project.reload preserves local vcs === jj while project.json says git',
+      reloaded.vcs === 'jj',
+      reloaded.vcs
+    )
+
+    const jjTask = await d.rpc('task.create', {
+      title: 'jj live flow',
+      kind: 'conversation',
+      projectId: proj.id,
+      status: 'draft'
+    })
+    const jjBranch = `warmstart/t${jjTask.seq}-jj-live-flow`
+
+    const sqlite = await import('node:sqlite')
+    const db = new sqlite.DatabaseSync(join(d.dataDir, 'warmstart.db'))
+    try {
+      db.exec('PRAGMA busy_timeout = 5000')
+      db.prepare('update tasks set branch = ? where id = ?').run(jjBranch, jjTask.id)
+    } finally {
+      db.close()
+    }
+
+    const jj = (...args) =>
+      execFileSync('jj', ['--no-pager', ...args], {
+        cwd: root,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true
+      }).trim()
+    jj('-R', root, 'new', 'main', '-m', 'live jj change')
+    writeFileSync(join(root, 'jj-live.md'), '# Live jj change\nhello colocated jj\n')
+    jj('-R', root, 'bookmark', 'create', jjBranch, '-r', '@')
+    jj('-R', root, 'new', 'main')
+
+    const diffSummary = await d.rpc('task.diffSummary', { id: jjTask.id })
+    check(
+      'task.diffSummary succeeds and lists jj-live.md',
+      diffSummary.ok === true && diffSummary.files.some((f) => f.path === 'jj-live.md'),
+      JSON.stringify(diffSummary)
+    )
+
+    const diffFile = await d.rpc('task.diffFile', { id: jjTask.id, path: 'jj-live.md' })
+    check(
+      'task.diffFile returns the patch for jj-live.md',
+      diffFile.ok === true && diffFile.patch.includes('Live jj change'),
+      diffFile.reason || diffFile.patch
+    )
+
+    const fileContent = await d.rpc('task.fileContent', { id: jjTask.id, path: 'jj-live.md' })
+    check(
+      'task.fileContent reads jj-live.md from the jj bookmark',
+      fileContent.ok === true && fileContent.content.includes('# Live jj change'),
+      fileContent.reason
+    )
+
+    const dotJjContent = await d.rpc('task.fileContent', { id: jjTask.id, path: '.jj/repo/store/x' })
+    check(
+      'task.fileContent rejects .jj/ paths with invalid file path',
+      dotJjContent.ok === false && dotJjContent.reason === 'invalid file path',
+      JSON.stringify(dotJjContent)
+    )
+
+    const landed = await d.rpc('task.landConversation', {
+      id: jjTask.id,
+      finishPolicy: 'commit-and-merge'
+    })
+    check(
+      'task.landConversation lands jj bookmark onto main and rotates to .2',
+      landed.ok === true,
+      JSON.stringify(landed)
+    )
+    check(
+      'jj-live.md is present in trunk root after conversation landing',
+      existsSync(join(root, 'jj-live.md')) && readFileSync(join(root, 'jj-live.md'), 'utf8').includes('# Live jj change')
+    )
+
+    const afterLand = await d.rpc('task.get', { id: jjTask.id })
+    check(
+      'task.get shows branchUnit === 2 and warmstart/t<seq>.2- branch after landing',
+      afterLand.task.branchUnit === 2 && Boolean(afterLand.task.branch?.startsWith(`warmstart/t${jjTask.seq}.2-`)),
+      JSON.stringify({ branchUnit: afterLand.task.branchUnit, branch: afterLand.task.branch })
+    )
+
+    const toGitKeep = await d.rpc('project.migrateVcs', { id: proj.id, to: 'git' })
+    check(
+      'project.migrateVcs jj -> git keeps .jj by default',
+      toGitKeep.project.vcs === 'git' && toGitKeep.keptJjDir === true && existsSync(join(root, '.jj')),
+      JSON.stringify({ vcs: toGitKeep.project.vcs, keptJjDir: toGitKeep.keptJjDir })
+    )
+
+    const backToJj = await d.rpc('project.migrateVcs', { id: proj.id, to: 'jj' })
+    check(
+      'project.migrateVcs round-trips git -> jj with existing .jj',
+      backToJj.project.vcs === 'jj' && backToJj.migration.status === 'completed',
+      JSON.stringify({ vcs: backToJj.project.vcs, status: backToJj.migration.status })
+    )
+
+    const toGitRemove = await d.rpc('project.migrateVcs', { id: proj.id, to: 'git', removeJjDir: true })
+    check(
+      'project.migrateVcs jj -> git with removeJjDir deletes .jj and preserves trunk files',
+      toGitRemove.project.vcs === 'git' &&
+        toGitRemove.keptJjDir === false &&
+        !existsSync(join(root, '.jj')) &&
+        existsSync(join(root, 'jj-live.md')),
+      JSON.stringify({ vcs: toGitRemove.project.vcs, keptJjDir: toGitRemove.keptJjDir })
+    )
+  } finally {
+    if (projId) {
+      await d.rpcResult('project.delete', { id: projId })
+    }
+    if (shortTempDir) {
+      destroyProject(join(shortTempDir, 'repo'))
+      try {
+        rmSync(shortTempDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      } catch {
+        // Windows may briefly hold git/jj pack files; temp cleanup is best-effort.
+      }
+    }
   }
 }
 

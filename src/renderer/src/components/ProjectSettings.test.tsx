@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
-import type { Project } from '@shared/tasks'
+import type { PoolStorageReport, Project } from '@shared/tasks'
 import type { VcsMigrationResult } from '@shared/protocol'
 import { ProjectSettings } from './ProjectSettings'
 import {
@@ -43,6 +43,8 @@ describe('ProjectSettings VCS capability gating', () => {
     expect(html).toContain('Change version control…')
     expect(html).toContain('Default workspace')
     expect(html).toContain('Prune on release')
+    expect(html).toContain('Shared dependency store')
+    expect(html).toContain('Copy-on-write slot cloning')
     expect(html).toContain('The branch or bookmark new tasks start from and land onto')
     expect(html).not.toContain('this project has no repository')
 
@@ -69,6 +71,8 @@ describe('ProjectSettings VCS capability gating', () => {
     expect(html).toContain('this project has no repository')
     expect(html).not.toContain('Default workspace')
     expect(html).not.toContain('Prune on release')
+    expect(html).not.toContain('Shared dependency store')
+    expect(html).not.toContain('Copy-on-write slot cloning')
 
     const poolInputMatch = html.match(/<input[^>]*aria-label="Workspace pool size"[^>]*>/)
     expect(poolInputMatch?.[0]).toContain('disabled=""')
@@ -163,5 +167,200 @@ describe('VcsMigrationModal and migration helpers', () => {
     expect(formatMigrationSummary(forwardResult)).toBe(
       'Switched Demo to jj; rebuilt 2 pool workspace(s).'
     )
+  })
+})
+
+describe('ProjectSettings pool storage, CoW, and dependency store', () => {
+  const now = Date.now()
+  const baseStorage: PoolStorageReport = {
+    members: [
+      {
+        path: 'C:/dev/demo_workspaces/ws1',
+        bytes: 53 * 1024 * 1024,
+        measuredAt: now - 3 * 60_000
+      }
+    ],
+    cow: {
+      supported: false,
+      filesystem: 'NTFS',
+      mechanism: 'none',
+      reason: 'this volume cannot clone; slots are full copies',
+      measuredAt: now - 2 * 60_000,
+      probedPath: 'C:/dev/demo_workspaces'
+    },
+    dependencyStore: {
+      configured: false,
+      mode: null,
+      storeDir: null,
+      bytes: null,
+      measuredAt: now,
+      reason: 'not configured'
+    }
+  }
+
+  it('shows both storage controls for git and jj projects and renders poolStorage members', () => {
+    for (const vcs of ['git', 'jj'] as const) {
+      const html = renderToStaticMarkup(
+        <ProjectSettings
+          project={makeProject({ vcs })}
+          resources={[]}
+          refreshProjects={async () => undefined}
+          initialPoolStorage={baseStorage}
+        />
+      )
+      expect(html).toContain('Shared dependency store')
+      expect(html).toContain('Copy-on-write slot cloning')
+      expect(html).toContain('Re-probe')
+      expect(html).toContain('ws1 · 53.0 MB · measured 3 min ago')
+      expect(html).toContain('Not configured')
+    }
+  })
+
+  it('shows unsupported NTFS CoW reason, age, and warning when CoW is enabled', () => {
+    const html = renderToStaticMarkup(
+      <ProjectSettings
+        project={makeProject({
+          vcs: 'git',
+          config: {
+            schema_version: 1,
+            name: 'Demo',
+            workspaces: { poolSize: 2, cow: { enabled: true } }
+          }
+        })}
+        resources={[]}
+        refreshProjects={async () => undefined}
+        initialPoolStorage={baseStorage}
+      />
+    )
+
+    expect(html).toContain('this volume cannot clone; slots are full copies · measured 2 min ago')
+    expect(html).toContain('class="warn"')
+    expect(html).toContain('Copy-on-write is enabled, but this volume cannot clone; slots are full copies.')
+    expect(html).toContain('CoW seed paths')
+    expect(html).toContain('placeholder="node_modules"')
+  })
+
+  it('shows ReFS (refs-block-clone) + age without unsupported warning and renders seed paths when supported and enabled', () => {
+    const html = renderToStaticMarkup(
+      <ProjectSettings
+        project={makeProject({
+          vcs: 'jj',
+          config: {
+            schema_version: 1,
+            name: 'Demo',
+            workspaces: {
+              poolSize: 2,
+              cow: { enabled: true, seedPaths: ['node_modules', '.next/cache'] }
+            }
+          }
+        })}
+        resources={[]}
+        refreshProjects={async () => undefined}
+        initialPoolStorage={{
+          ...baseStorage,
+          cow: {
+            supported: true,
+            filesystem: 'ReFS',
+            mechanism: 'refs-block-clone',
+            reason: 'ReFS block cloning supported',
+            measuredAt: now - 4 * 60_000,
+            probedPath: 'C:/dev/demo_workspaces'
+          }
+        }}
+      />
+    )
+
+    expect(html).toContain('ReFS (refs-block-clone) · measured 4 min ago')
+    expect(html).not.toContain('this volume cannot clone; slots are full copies')
+    expect(html).not.toContain('Copy-on-write is enabled, but')
+    expect(html).toContain('CoW seed paths')
+    expect(html).toContain('value="node_modules, .next/cache"')
+  })
+
+  it('shows unpopulated dependency store as not populated yet (never 0 B) and populated store with bytes, age, and storeDir', () => {
+    const unpopulatedHtml = renderToStaticMarkup(
+      <ProjectSettings
+        project={makeProject({
+          config: {
+            schema_version: 1,
+            name: 'Demo',
+            workspaces: { poolSize: 2, dependencyStore: { mode: 'pnpm' } }
+          }
+        })}
+        resources={[]}
+        refreshProjects={async () => undefined}
+        initialPoolStorage={{
+          ...baseStorage,
+          dependencyStore: {
+            configured: true,
+            mode: 'pnpm',
+            storeDir: 'C:/dev/demo_workspaces/.store/pnpm',
+            bytes: null,
+            measuredAt: now - 2 * 60_000,
+            reason: 'not populated yet'
+          }
+        }}
+      />
+    )
+
+    expect(unpopulatedHtml).toContain('pnpm store · not populated yet · measured 2 min ago')
+    expect(unpopulatedHtml).not.toContain('0 B')
+    expect(unpopulatedHtml).toContain('C:/dev/demo_workspaces/.store/pnpm')
+    expect(unpopulatedHtml).toContain('Dependency install command')
+    expect(unpopulatedHtml).toContain('Dependency lockfiles')
+
+    const populatedHtml = renderToStaticMarkup(
+      <ProjectSettings
+        project={makeProject({
+          config: {
+            schema_version: 1,
+            name: 'Demo',
+            workspaces: {
+              poolSize: 2,
+              dependencyStore: {
+                mode: 'npm-cache',
+                lockfiles: ['package-lock.json']
+              }
+            }
+          }
+        })}
+        resources={[]}
+        refreshProjects={async () => undefined}
+        initialPoolStorage={{
+          ...baseStorage,
+          dependencyStore: {
+            configured: true,
+            mode: 'npm-cache',
+            storeDir: 'C:/dev/demo_workspaces/.store/npm-cache',
+            bytes: 128 * 1024 * 1024,
+            measuredAt: now - 5 * 60_000,
+            reason: 'measured'
+          }
+        }}
+      />
+    )
+
+    expect(populatedHtml).toContain('npm-cache store · 128.0 MB · measured 5 min ago')
+    expect(populatedHtml).toContain('C:/dev/demo_workspaces/.store/npm-cache')
+    expect(populatedHtml).toContain('value="package-lock.json"')
+  })
+
+  it('shows Hook install-command helper note when Hook mode is configured without a command yet', () => {
+    const html = renderToStaticMarkup(
+      <ProjectSettings
+        project={makeProject({
+          config: {
+            schema_version: 1,
+            name: 'Demo',
+            workspaces: { poolSize: 2, dependencyStore: { mode: 'hook' } }
+          }
+        })}
+        resources={[]}
+        refreshProjects={async () => undefined}
+        initialPoolStorage={baseStorage}
+      />
+    )
+
+    expect(html).toContain('Enter an install command below and click Save to enable Hook mode.')
   })
 })

@@ -4939,6 +4939,132 @@ try {
     decidedRow.split('\n')[0]
   )
 
+  // t1393 Wave 6: Disk track Steps 2 & 3 (shared dependency store + Copy-on-write volume probe & cloning).
+  {
+    const storageSettled = await until(
+      () =>
+        evaluate(`
+          (() => {
+            const text = document.querySelector('.content')?.innerText ?? '';
+            return text.includes('Shared dependency store') &&
+              text.includes('Copy-on-write slot cloning') &&
+              !text.includes('Probing volume copy-on-write support') &&
+              !text.includes('Measuring dependency store');
+          })()
+        `),
+      10000
+    )
+    const storageJson = await evaluate(`
+      window.agentyard
+        .rpc('project.list')
+        .then((ps) => {
+          const p = ps.find((x) => x.name === 'ui project');
+          return p ? window.agentyard.rpc('project.poolStorage', { id: p.id }) : null;
+        })
+        .then((r) => JSON.stringify(r))
+    `)
+    const storageReport = storageJson ? JSON.parse(storageJson) : null
+    const settingsText = await evaluate(`document.querySelector('.content')?.innerText ?? ''`)
+    check(
+      'Disk track controls and measured volume CoW basis render in Project settings',
+      storageSettled &&
+        storageReport !== null &&
+        typeof storageReport.cow?.supported === 'boolean' &&
+        settingsText.includes('Shared dependency store') &&
+        settingsText.includes('Not configured') &&
+        settingsText.includes('Copy-on-write slot cloning') &&
+        settingsText.includes('Re-probe') &&
+        settingsText.includes('measured ') &&
+        (storageReport.cow.supported
+          ? settingsText.includes(storageReport.cow.filesystem)
+          : settingsText.includes('this volume cannot clone; slots are full copies')),
+      storageJson ?? settingsText.slice(0, 300)
+    )
+
+    try {
+      await evaluate(`document.querySelector('button[aria-label="Copy-on-write slot cloning"]')?.click()`)
+      const cowEnabledSettled = await until(async () => {
+        const hasSeedInput = await evaluate(
+          `!!document.querySelector('input[aria-label="Copy-on-write seed paths"]')`
+        )
+        const cfg = JSON.parse(readFileSync(join(projectRoot, '.warmstart', 'project.json'), 'utf8'))
+        return hasSeedInput && cfg.workspaces?.cow?.enabled === true
+      }, 5000)
+      const cowRowText = await evaluate(
+        `[...document.querySelectorAll('.setting-row')].find(r => r.innerText.includes('Copy-on-write slot cloning'))?.innerText ?? ''`
+      )
+      const cowWarnText = await evaluate(
+        `[...document.querySelectorAll('.setting-row')].find(r => r.innerText.includes('Copy-on-write slot cloning'))?.querySelector('.warn')?.innerText ?? ''`
+      )
+      check(
+        'enabling Copy-on-write slot cloning persists workspaces.cow and surfaces explicit unsupported warning or seed paths',
+        cowEnabledSettled &&
+          (storageReport?.cow?.supported
+            ? cowWarnText === ''
+            : cowWarnText.includes('this volume cannot clone; slots are full copies')),
+        cowRowText
+      )
+    } finally {
+      const stillOn = await evaluate(
+        `document.querySelector('button[aria-label="Copy-on-write slot cloning"]')?.getAttribute('aria-checked') === 'true'`
+      )
+      if (stillOn) {
+        await evaluate(`document.querySelector('button[aria-label="Copy-on-write slot cloning"]')?.click()`)
+        await until(async () => {
+          const hasSeedInput = await evaluate(
+            `!!document.querySelector('input[aria-label="Copy-on-write seed paths"]')`
+          )
+          const cfg = JSON.parse(readFileSync(join(projectRoot, '.warmstart', 'project.json'), 'utf8'))
+          return !hasSeedInput && cfg.workspaces?.cow === undefined
+        }, 5000)
+      }
+    }
+
+    try {
+      await evaluate(`document.querySelector('button[aria-label="Shared dependency store"]')?.click()`)
+      await wait(300)
+      await evaluate(`
+        (() => {
+          const opts = [...document.querySelectorAll('.setting-btn-select-option')];
+          opts.find(o => o.innerText.trim() === 'pnpm')?.click();
+        })()
+      `)
+      const pnpmSettled = await until(async () => {
+        const cfg = JSON.parse(readFileSync(join(projectRoot, '.warmstart', 'project.json'), 'utf8'))
+        const rowText = await evaluate(
+          `[...document.querySelectorAll('.setting-row')].find(r => r.innerText.includes('Shared dependency store'))?.innerText ?? ''`
+        )
+        return cfg.workspaces?.dependencyStore?.mode === 'pnpm' && rowText.includes('pnpm store · not populated yet')
+      }, 5000)
+      const depRowText = await evaluate(
+        `[...document.querySelectorAll('.setting-row')].find(r => r.innerText.includes('Shared dependency store'))?.innerText ?? ''`
+      )
+      check(
+        'selecting pnpm shared dependency store persists config and reports unpopulated store without 0 B',
+        pnpmSettled && depRowText.includes('pnpm store · not populated yet') && !depRowText.includes('0 B'),
+        depRowText
+      )
+    } finally {
+      const btnText = await evaluate(
+        `document.querySelector('button[aria-label="Shared dependency store"]')?.innerText?.trim() ?? ''`
+      )
+      if (btnText && btnText !== 'Off') {
+        await evaluate(`document.querySelector('button[aria-label="Shared dependency store"]')?.click()`)
+        await wait(300)
+        await evaluate(`
+          (() => {
+            const opts = [...document.querySelectorAll('.setting-btn-select-option')];
+            opts.find(o => o.innerText.trim() === 'Off')?.click();
+          })()
+        `)
+        await until(() => {
+          const cfg = JSON.parse(readFileSync(join(projectRoot, '.warmstart', 'project.json'), 'utf8'))
+          return cfg.workspaces?.dependencyStore === undefined
+        }, 5000)
+      }
+    }
+  }
+
   // t1393 Wave 4: Change version control… modal for git and colocated jj capability parity in Project settings.
   {
     await evaluate(

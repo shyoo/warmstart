@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { Worker } from '@shared/protocol'
 import { QUOTA_STALE_AFTER_MS, quotaFreshness } from '@shared/tasks'
 import { claudeBilling, codexBilling } from '@shared/billing'
-import { billingLine, cacheRemaining, countdown, formatMeasuredAge, formatPoolBytes, formatPoolMemberSize, money, quotaGap, quotaWindowDeltas, spendDeltas, timeRange, when, whenParts } from './format'
+import { billingLine, cacheRemaining, countdown, formatCowCapability, formatDependencyStoreStatus, formatMeasuredAge, formatPoolBytes, formatPoolMemberSize, money, quotaGap, quotaWindowDeltas, spendDeltas, timeRange, when, whenParts } from './format'
 
 describe('countdown', () => {
   const NOW = Date.UTC(2026, 8, 2, 12, 0, 0)
@@ -515,5 +515,81 @@ describe('pool size formatting', () => {
         now
       )
     ).toBe('ws1 · 1.9 GB · measured 3 min ago')
+  })
+
+  it('formats CoW capability for supported and unsupported volumes with measurement age', () => {
+    const now = Date.UTC(2026, 10, 21, 12, 0, 0)
+    expect(
+      formatCowCapability(
+        {
+          supported: true,
+          filesystem: 'ReFS',
+          mechanism: 'refs-block-clone',
+          reason: 'ReFS block cloning supported',
+          measuredAt: now - 20_000,
+          probedPath: 'C:/dev/demo_workspaces'
+        },
+        now
+      )
+    ).toBe('ReFS (refs-block-clone) · measured just now')
+
+    expect(
+      formatCowCapability(
+        {
+          supported: false,
+          filesystem: 'NTFS',
+          mechanism: 'none',
+          reason: 'this volume cannot clone; slots are full copies',
+          measuredAt: now - 5 * 60_000,
+          probedPath: 'C:/dev/demo_workspaces'
+        },
+        now
+      )
+    ).toBe('this volume cannot clone; slots are full copies · measured 5 min ago')
+  })
+
+  it('formats dependency store status without equating unpopulated stores to 0 B', () => {
+    const now = Date.UTC(2026, 10, 21, 12, 0, 0)
+    expect(
+      formatDependencyStoreStatus(
+        {
+          configured: false,
+          mode: null,
+          storeDir: null,
+          bytes: null,
+          measuredAt: now,
+          reason: 'not configured'
+        },
+        now
+      )
+    ).toBe('Not configured')
+
+    expect(
+      formatDependencyStoreStatus(
+        {
+          configured: true,
+          mode: 'pnpm',
+          storeDir: 'C:/dev/demo/.warmstart-store/pnpm',
+          bytes: null,
+          measuredAt: now - 2 * 60_000,
+          reason: 'store directory not created yet'
+        },
+        now
+      )
+    ).toBe('pnpm store · not populated yet · measured 2 min ago')
+
+    expect(
+      formatDependencyStoreStatus(
+        {
+          configured: true,
+          mode: 'npm-cache',
+          storeDir: 'C:/dev/demo/.warmstart-store/npm-cache',
+          bytes: 42 * 1024 * 1024,
+          measuredAt: now - 120 * 60_000,
+          reason: 'measured'
+        },
+        now
+      )
+    ).toBe('npm-cache store · 42.0 MB · measured 2 h ago')
   })
 })

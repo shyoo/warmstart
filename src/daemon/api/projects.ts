@@ -5,7 +5,7 @@ import { addProject, archiveProject, archiveRefusal, deleteProject, deleteRefusa
 import { proposeChecks } from '../projectstack.js'
 import { cloneProject, cloneReadiness, createProject, inspectProjectDirectory, makeForkHome, proposeProjectDocs, workspaceRootReport } from '../projectsetup.js'
 import { flowWorkspaces } from '../flow.js'
-import { ensurePool, landingTargetRefusal, measurePoolSizes, prunePoolWorktrees } from '../worktrees.js'
+import { ensurePool, landingTargetRefusal, measurePoolSizes, measurePoolStorage, prunePoolWorktrees } from '../worktrees.js'
 import { log } from '../log.js'
 import { syncFromUpstream } from '../upstream.js'
 import { readScratchpad, saveScratchpad, setScratchpadPath } from '../scratchpad.js'
@@ -14,7 +14,7 @@ import type { Api, ApiContext } from './support.js'
 
 type ProjectMethod =
   | 'project.list' | 'project.add' | 'project.relocate' | 'project.inspect' | 'project.workspaceRoot' | 'project.docTemplates'
-  | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.makeForkHome' | 'project.syncUpstream' | 'project.reload' | 'project.migrateVcs' | 'project.reorder' | 'project.archive' | 'project.unarchive' | 'project.rename' | 'project.delete' | 'project.listArchived' | 'project.writeConfig' | 'project.flow' | 'project.poolSizes'
+  | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.makeForkHome' | 'project.syncUpstream' | 'project.reload' | 'project.migrateVcs' | 'project.reorder' | 'project.archive' | 'project.unarchive' | 'project.rename' | 'project.delete' | 'project.listArchived' | 'project.writeConfig' | 'project.flow' | 'project.poolSizes' | 'project.poolStorage'
   | 'project.proposeChecks' | 'project.setChecks' | 'project.setPostLanding' | 'project.setPolicy' | 'project.pruneWorktrees'
   | 'scratchpad.get' | 'scratchpad.save' | 'scratchpad.setPath'
 
@@ -73,6 +73,7 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
     // ⛔ Resolved here, never in the renderer — see the method's note in protocol.ts.
     'project.flow': (p) => flowWorkspaces(p.projectId),
     'project.poolSizes': (p) => measurePoolSizes(requireProject(p.id)),
+    'project.poolStorage': (p) => measurePoolStorage(requireProject(p.id), p.forceProbe),
     'project.proposeChecks': (p) => ({ checks: proposeChecks(requireProject(p.id).root) }),
     'project.setChecks': (p) => setProjectChecks(p.id, p.checks),
     'project.setPostLanding': (p) => setProjectPostLanding(p.id, p.commands),
