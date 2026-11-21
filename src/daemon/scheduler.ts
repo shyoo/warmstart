@@ -102,6 +102,7 @@ import {
 import { escalateStale } from './approvals.js'
 import { openQuestions } from './questions.js'
 import { samePath } from './fspath.js'
+import { driverFor, type VcsCapabilities } from './vcs/index.js'
 import {
   Contended,
   availability,
@@ -1975,16 +1976,18 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
       }
     )
   }
+  const vcsCaps = project ? (driverFor(project)?.capabilities ?? null) : null
   const trunkNotice =
-    trunkSurvey && project ? trunkArrivalNotice(trunkSurvey, landingTargetFor(task, project)) : null
+    trunkSurvey && project ? trunkArrivalNotice(trunkSurvey, landingTargetFor(task, project), vcsCaps) : null
   const worktreeNotice =
     !trunkMode && project && projectUsesGitBranches(project) && workspace && !samePath(workspace.path, project.root)
-      ? worktreeArrivalNotice(workspace.path, project.root, branch, landingTargetFor(task, project))
+      ? worktreeArrivalNotice(workspace.path, project.root, branch, landingTargetFor(task, project), vcsCaps)
       : null
+  const rescueInspectCmd = vcsCaps?.autoSnapshot ? 'jj show' : 'git show HEAD'
   const rescueNotice = rescued
     ? `⚠️ The tip of \`${branch}\` is commit ${rescued.sha.slice(0, 8)}, holding ${rescued.files} ` +
       'file(s) an interrupted earlier run left uncommitted. This tool made that commit, not you: ' +
-      'nothing in it has been compiled or checked. **Read it first** (`git show HEAD`) — it is very ' +
+      `nothing in it has been compiled or checked. **Read it first** (\`${rescueInspectCmd}\`) — it is very ` +
       'likely most of the work you are about to be asked for. Amend it or build on top of it; it ' +
       'will not be allowed to land as it stands.'
     : null
@@ -5430,7 +5433,57 @@ function holderLabel(holder: string): string {
  * `git switch <target>`, never forced. It destroys nothing — git refuses a switch that would
  * overwrite an uncommitted file, and the branch left behind keeps every commit it had.
  */
-export function trunkArrivalNotice(survey: TrunkSurvey, target: string): string {
+export function trunkArrivalNotice(
+  survey: TrunkSurvey,
+  target: string,
+  caps?: VcsCapabilities | null
+): string {
+  if (caps?.autoSnapshot) {
+    const lines: string[] = [
+      `⚠️ You are working **directly in this project's colocated Jujutsu (\`jj\`) trunk checkout**, not ` +
+        `in a pooled workspace. A detached git \`HEAD\` is normal in colocated mode. There is no separate ` +
+        `task bookmark: target bookmark \`${target}\` is yours — use \`jj new ${target}\`, ` +
+        `\`jj describe -m "<message>"\`, and \`jj bookmark set ${target} -r @\` rather than ` +
+        `\`git switch ${target}\`. Do not create extra bookmarks, \`jj abandon\` existing target commits, ` +
+        'stash, force-push, or reset — other people and other agents rely on this checkout.'
+    ]
+    if (survey.branch !== target && !survey.operation) {
+      const where = survey.branch ? `\`${survey.branch}\`` : 'off the target bookmark'
+      const ahead =
+        survey.branch && survey.aheadOfTarget > 0
+          ? ` \`${survey.branch}\` has ${survey.aheadOfTarget} commit(s) that \`${target}\` does not. ` +
+            `Moving onto \`${target}\` leaves them on \`${survey.branch}\`; bring them onto \`${target}\` ` +
+            'only if your task needs them, and never rewrite or abandon target history.'
+          : ''
+      lines.push(
+        `⚠️ The trunk working copy is currently ${where}, not on \`${target}\`. Start cleanly on \`${target}\` ` +
+          `with \`jj new ${target}\` before editing (never force or \`jj abandon\`).` +
+          ahead
+      )
+    } else if (survey.branch !== target) {
+      lines.push(
+        `⚠️ The trunk working copy is ${survey.branch ? `on \`${survey.branch}\`` : 'off the target bookmark'}, ` +
+          `not \`${target}\`, during the operation below. Resolve or complete it before switching; if ` +
+          'finishing it is not your task, stop and ask.'
+      )
+    }
+    if (survey.operation) {
+      lines.push(
+        `⚠️ A ${survey.operation} is in progress here` +
+          (survey.conflicted.length ? `, with stored conflicts in ${survey.conflicted.slice(0, 10).join(', ')}` : '') +
+          '. Resolve any stored conflicts in the working files directly (no `git add`; check `jj log -r \'conflicts()\'`) only if that is what your task asks for; never abandon in-flight commits.'
+      )
+    }
+    const loose = [...survey.dirtyFiles, ...survey.untrackedFiles]
+    if (loose.length > 0) {
+      lines.push(
+        `⚠️ ${loose.length} file(s) were already uncommitted in \`@\` when you arrived and are not yours: ` +
+          `${loose.slice(0, 10).join(', ')}${loose.length > 10 ? ', …' : ''}. Leave them as they are and ` +
+          'do not include them in your described change unless your task is about them.'
+      )
+    }
+    return lines.join('\n\n')
+  }
   const lines: string[] = [
     `⚠️ You are working **directly in this project's trunk checkout**, not in a worktree. There is no ` +
       `task branch: \`${target}\` is your branch and you commit on it directly. Do not create or delete ` +
@@ -5487,7 +5540,29 @@ export function trunkArrivalNotice(survey: TrunkSurvey, target: string): string 
  * that a *different* directory is where `target` actually lives, or that nothing here is visible
  * there until something lands.
  */
-export function worktreeArrivalNotice(cwd: string, root: string, branch: string | null, target: string): string {
+export function worktreeArrivalNotice(
+  cwd: string,
+  root: string,
+  branch: string | null,
+  target: string,
+  caps?: VcsCapabilities | null
+): string {
+  if (caps?.autoSnapshot) {
+    const bookmark = branch ?? '<branch>'
+    return (
+      `You are working in a colocated Jujutsu (\`jj\`) workspace at \`${cwd}\` — a separate checkout ` +
+      `of this project, not its main checkout, which lives at \`${root}\`. ` +
+      (branch ? `Bookmark \`${branch}\` lands` : 'Your work lands') +
+      ` onto \`${target}\` in that main checkout when the finish policy runs. Nothing changed here is ` +
+      'visible there, or the reverse, until that landing happens.\n\n' +
+      'Jujutsu (`jj`) workspace contract:\n' +
+      '- Working-copy edits auto-snapshot into `@` on every `jj` command (no staging index).\n' +
+      `- Before finishing, describe your change (\`jj describe -m "<message>"\`) and point your task bookmark (\`jj bookmark set ${bookmark} -r @\`, or \`jj commit -m "<message>"\` then \`jj bookmark set ${bookmark} -r @-\`).\n` +
+      `- Commands: \`jj status\`, \`jj diff\`, \`jj log\`, \`jj rebase -b ${bookmark} -d ${target}\`, \`jj squash\`, \`jj op log\`.\n` +
+      `- Completion evidence: a described non-empty commit on bookmark \`${bookmark}\` with zero stored conflicts (\`jj log -r 'conflicts()'\`).\n` +
+      `- Colocated \`.git\` is present alongside \`.jj\`, so read-only git inspection works as a fallback. Never \`jj abandon\` commits already on \`${target}\` or force-push.`
+    )
+  }
   return (
     `You are working in a pooled git worktree at \`${cwd}\` — a separate checkout of this project, ` +
     `not its main checkout, which lives at \`${root}\`. ` +

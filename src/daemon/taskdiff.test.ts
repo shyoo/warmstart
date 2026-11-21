@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { Project, Task } from '@shared/tasks.js'
 
@@ -384,6 +385,10 @@ describe('taskdiff.fileContentFor', () => {
     const dotGit = await taskdiff.fileContentFor(task.id, '.git/config')
     expect(dotGit.ok).toBe(false)
     expect(dotGit.reason).toBe('invalid file path')
+
+    const dotJj = await taskdiff.fileContentFor(task.id, '.jj/repo/store/x')
+    expect(dotJj.ok).toBe(false)
+    expect(dotJj.reason).toBe('invalid file path')
   })
 
   it('refuses binary files', async () => {
@@ -419,4 +424,151 @@ describe('taskdiff.fileContentFor', () => {
     expect(content.ok).toBe(true)
     expect(content.content).toContain('# Uncommitted Plan')
   })
+
+  it('returns structured failures instead of throwing when jj binary is missing', async () => {
+    const projectsMod = await import('./projects.js')
+    const { which } = await import('./which.js')
+    const { _resetJjDriverCachesForTest } = await import('./vcs/jj.js')
+
+    seq += 1
+    const fakeRoot = join(dir, `jj-missing-${seq}`)
+    mkdirSync(join(fakeRoot, '.warmstart'), { recursive: true })
+    kit.git(fakeRoot, 'init', '--initial-branch=main')
+    kit.git(fakeRoot, 'config', 'user.name', 'agentyard test')
+    kit.git(fakeRoot, 'config', 'user.email', 'test@example.invalid')
+    writeFileSync(join(fakeRoot, 'a.txt'), 'v1\n')
+    kit.git(fakeRoot, 'add', '-A')
+    kit.git(fakeRoot, 'commit', '-m', 'init')
+    kit.git(fakeRoot, 'switch', '-c', 'warmstart/t99-jj-missing')
+    writeFileSync(join(fakeRoot, 'a.txt'), 'v2\n')
+    kit.git(fakeRoot, 'add', '-A')
+    kit.git(fakeRoot, 'commit', '-m', 'change')
+    const missingSha = kit.git(fakeRoot, 'rev-parse', 'HEAD')
+    kit.git(fakeRoot, 'switch', 'main')
+    writeFileSync(join(fakeRoot, '.warmstart', 'project.json'), JSON.stringify({ schema_version: 1, name: `jjm-${seq}`, vcs: 'jj' }))
+    const missingProj = projectsMod.addProject({ root: fakeRoot })
+    const missingTask = kit.makeTask({ projectId: missingProj.id })
+    tasks.setTaskBranch(missingTask.id, 'warmstart/t99-jj-missing', 1)
+
+    const prevPath = process.env.PATH
+    const gitBin = which('git')
+    _resetJjDriverCachesForTest()
+    process.env.PATH = gitBin ? dirname(gitBin) : ''
+    try {
+      const sumRes = await taskdiff.diffSummaryFor(missingTask.id)
+      expect(sumRes.ok).toBe(false)
+      expect(sumRes.reason).toMatch(/jj is not installed/i)
+
+      const fileRes = await taskdiff.diffFileFor(missingTask.id, 'a.txt')
+      expect(fileRes.ok).toBe(false)
+      expect(fileRes.reason).toMatch(/jj is not installed/i)
+
+      const commitsMod = await import('./taskcommits.js')
+      commitsMod.recordTaskCommits(missingTask.id, [{ sha: missingSha, subject: 'change', authoredAt: Date.now() }], 'main')
+      const commitRes = await taskdiff.commitDiffFor(missingTask.id, missingSha)
+      expect(commitRes.ok).toBe(false)
+      expect(commitRes.reason).toMatch(/jj is not installed/i)
+
+      const commitFileRes = await taskdiff.commitFileFor(missingTask.id, missingSha, 'a.txt')
+      expect(commitFileRes.ok).toBe(false)
+      expect(commitFileRes.reason).toMatch(/jj is not installed/i)
+
+      const contentRes = await taskdiff.fileContentFor(missingTask.id, 'a.txt', missingSha)
+      expect(contentRes.ok).toBe(false)
+      expect(contentRes.reason).toMatch(/jj is not installed/i)
+    } finally {
+      process.env.PATH = prevPath
+      _resetJjDriverCachesForTest()
+    }
+  })
+})
+
+async function probeJjForDiff(): Promise<{ available: boolean; reason: string; binary: string | null }> {
+  const { which, launchArgs, spawnEnv } = await import('./which.js')
+  const { compareSemver, JJ_MIN_VERSION, parseJjVersion } = await import('./vcs/jj.js')
+  const binary = which('jj')
+  if (!binary) return { available: false, reason: 'jj executable not found on PATH', binary: null }
+  try {
+    const launched = launchArgs(binary, ['--version'])
+    const out = execFileSync(launched.command, launched.args, {
+      env: spawnEnv(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    }).trim()
+    const parsed = parseJjVersion(out)
+    if (!parsed) return { available: false, reason: `unrecognized jj --version output: ${out}`, binary: null }
+    if (compareSemver(parsed, JJ_MIN_VERSION) < 0) {
+      return { available: false, reason: `jj ${parsed} is below minimum ${JJ_MIN_VERSION}`, binary: null }
+    }
+    return { available: true, reason: `jj ${parsed} available`, binary }
+  } catch (err) {
+    return { available: false, reason: `jj failed: ${err instanceof Error ? err.message : String(err)}`, binary: null }
+  }
+}
+
+const jjDiffProbe = await probeJjForDiff()
+
+describe.skipIf(!jjDiffProbe.available)(`taskdiff colocated jj integration (${jjDiffProbe.reason})`, () => {
+  it('routes diffSummaryFor, diffFileFor, and fileContentFor through driverFor(project)', async () => {
+    const projectsMod = await import('./projects.js')
+    const { launchArgs, spawnEnv } = await import('./which.js')
+    const binary = jjDiffProbe.binary!
+
+    const shortDir = realpathSync.native(mkdtempSync(join(tmpdir(), 'tdjj-')))
+    if (shortDir.length > 88) {
+      rmSync(shortDir, { recursive: true, force: true })
+      throw new Error(`Temp directory too long for jj 0.46 106-char limit fixture: ${shortDir}`)
+    }
+    try {
+      const root = join(shortDir, 'repo')
+      mkdirSync(join(root, '.warmstart'), { recursive: true })
+      kit.git(root, 'init', '--initial-branch=main')
+      kit.git(root, 'config', 'user.name', 'agentyard test')
+      kit.git(root, 'config', 'user.email', 'test@example.invalid')
+      writeFileSync(join(root, '.warmstart', 'project.json'), JSON.stringify({ schema_version: 1, name: 'td-jj', vcs: 'jj' }))
+      writeFileSync(join(root, 'note.md'), '# Initial\n')
+      kit.git(root, 'add', '-A')
+      kit.git(root, 'commit', '-m', 'initial')
+
+      const runJj = (cwd: string, ...args: string[]): string => {
+        const l = launchArgs(binary, ['--no-pager', ...args])
+        return execFileSync(l.command, l.args, {
+          cwd,
+          env: spawnEnv(),
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true
+        }).trim()
+      }
+      runJj(root, 'git', 'init', '--colocate', root)
+      runJj(root, '-R', root, 'new', 'main', '-m', 'jj change')
+      writeFileSync(join(root, 'note.md'), '# Updated in jj\nsecond line\n')
+      const branch = 'warmstart/t100-jj-diff'
+      runJj(root, '-R', root, 'bookmark', 'create', branch, '-r', '@')
+      runJj(root, '-R', root, 'new', 'main')
+
+      const jjProject = projectsMod.addProject({ root })
+      const jjTask = kit.makeTask({ projectId: jjProject.id })
+      tasks.setTaskBranch(jjTask.id, branch, 1)
+
+      const summary = await taskdiff.diffSummaryFor(jjTask.id)
+      expect(summary.ok).toBe(true)
+      expect(summary.files.map((f) => f.path)).toContain('note.md')
+
+      const patch = await taskdiff.diffFileFor(jjTask.id, 'note.md')
+      expect(patch.ok).toBe(true)
+      expect(patch.patch).toContain('Updated in jj')
+
+      const file = await taskdiff.fileContentFor(jjTask.id, 'note.md')
+      expect(file.ok).toBe(true)
+      expect(file.content).toContain('# Updated in jj')
+    } finally {
+      try {
+        rmSync(shortDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      } catch {
+        // Best-effort cleanup
+      }
+    }
+  }, 60_000)
 })

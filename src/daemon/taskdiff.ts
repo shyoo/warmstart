@@ -1,12 +1,14 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { TaskDiffFile, TaskDiffFileEntry, TaskDiffSummary, TaskFileContent } from '@shared/tasks.js'
+import { errorMessage } from '@shared/errors.js'
+import type { Project, TaskDiffFile, TaskDiffFileEntry, TaskDiffSummary, TaskFileContent } from '@shared/tasks.js'
 import { tryGit } from './git.js'
 import { getProject, landingTargetFor, policyFor } from './projects.js'
-import { diffSpecs, isGeneratedPath, numstatEntries, patchFor, resolveRange } from './review.js'
+import { diffSpecs, isGeneratedPath, resolveRange } from './review.js'
 import { pendingWorkFor } from './resolutions.js'
 import { taskCommitShas } from './taskcommits.js'
 import { getTask, projectUsesGitBranches } from './tasks.js'
+import { driverFor } from './vcs/index.js'
 import { workspaceOnBranch } from './worktrees.js'
 
 /**
@@ -65,7 +67,16 @@ const NO_SUMMARY = {
  * the second one is not an error.
  */
 async function locate(taskId: string): Promise<
-  | { ok: true; cwd: string; specs: string[]; base: string; head: string; from: 'commits' | 'landed' | 'branch'; separateCommits: number }
+  | {
+      ok: true
+      project: Project
+      cwd: string
+      specs: string[]
+      base: string
+      head: string
+      from: 'commits' | 'landed' | 'branch'
+      separateCommits: number
+    }
   | { ok: false; reason: string }
 > {
   const task = getTask(taskId)
@@ -83,6 +94,7 @@ async function locate(taskId: string): Promise<
   const specs = await diffSpecs(range.cwd, range.base, range.head, range.commits)
   return {
     ok: true,
+    project,
     cwd: range.cwd,
     specs,
     base: range.base,
@@ -171,12 +183,18 @@ export async function diffSummaryFor(taskId: string): Promise<TaskDiffSummary> {
   const at = await locate(taskId)
   if (!at.ok) return { ...NO_SUMMARY, ...pending, reason: at.reason }
 
-  const entries = await numstatEntries(at.cwd, at.specs)
-  return toSummary(
-    entries,
-    { base: at.base, head: at.head, from: at.from, separateCommits: at.separateCommits },
-    pending
-  )
+  const driver = driverFor(at.project)
+  if (!driver) return { ...NO_SUMMARY, ...pending, reason: 'this project has no VCS driver' }
+  try {
+    const entries = await driver.diff(at.cwd, at.specs)
+    return toSummary(
+      entries,
+      { base: at.base, head: at.head, from: at.from, separateCommits: at.separateCommits },
+      pending
+    )
+  } catch (err) {
+    return { ...NO_SUMMARY, ...pending, reason: errorMessage(err) }
+  }
 }
 
 /**
@@ -192,7 +210,7 @@ async function locateCommit(
   taskId: string,
   sha: string
 ): Promise<
-  | { ok: true; cwd: string; spec: string; base: string | null; head: string }
+  | { ok: true; project: Project; cwd: string; spec: string; base: string | null; head: string }
   | { ok: false; reason: string }
 > {
   const task = getTask(taskId)
@@ -213,6 +231,7 @@ async function locateCommit(
   if (!head) return { ok: false, reason: 'that commit no longer resolves in this repository' }
   return {
     ok: true,
+    project,
     cwd,
     spec: `${head}^!`,
     base: await tryGit(cwd, ['rev-parse', `${head}^`]),
@@ -230,12 +249,18 @@ async function locateCommit(
 export async function commitDiffFor(taskId: string, sha: string): Promise<TaskDiffSummary> {
   const at = await locateCommit(taskId, sha)
   if (!at.ok) return { ...NO_SUMMARY, reason: at.reason }
-  const entries = await numstatEntries(at.cwd, [at.spec])
-  return toSummary(
-    entries,
-    { base: at.base, head: at.head, from: 'commit', separateCommits: 0 },
-    { uncommittedFiles: 0, unlandedCommits: 0, workspaceReadable: false }
-  )
+  const driver = driverFor(at.project)
+  if (!driver) return { ...NO_SUMMARY, reason: 'this project has no VCS driver' }
+  try {
+    const entries = await driver.diff(at.cwd, [at.spec])
+    return toSummary(
+      entries,
+      { base: at.base, head: at.head, from: 'commit', separateCommits: 0 },
+      { uncommittedFiles: 0, unlandedCommits: 0, workspaceReadable: false }
+    )
+  } catch (err) {
+    return { ...NO_SUMMARY, reason: errorMessage(err) }
+  }
 }
 
 /** One file's patch, capped and cut at a line boundary. */
@@ -243,20 +268,26 @@ export async function diffFileFor(taskId: string, path: string): Promise<TaskDif
   const none = { ok: false, path, patch: '', truncated: false, bytes: 0 }
   const at = await locate(taskId)
   if (!at.ok) return { ...none, reason: at.reason }
+  const driver = driverFor(at.project)
+  if (!driver) return { ...none, reason: 'this project has no VCS driver' }
 
-  // ⛔ Asked of the same entry list the summary drew, so a path the panel cannot have shown cannot
-  // be read through this method either. It takes a path from the renderer, and the renderer is the
-  // one process here that does not get to name a file on disk.
-  const entries = await numstatEntries(at.cwd, at.specs)
-  const entry = entries.find((e) => e.path === path)
-  if (!entry) return { ...none, reason: 'that file is not part of this task’s change' }
-  if (entry.binary) return { ...none, reason: 'this file is binary, so there is nothing to show' }
-  if (isGeneratedPath(path)) {
-    return { ...none, reason: 'this file is generated, so it is counted but not shown' }
+  try {
+    // ⛔ Asked of the same entry list the summary drew, so a path the panel cannot have shown cannot
+    // be read through this method either. It takes a path from the renderer, and the renderer is the
+    // one process here that does not get to name a file on disk.
+    const entries = await driver.diff(at.cwd, at.specs)
+    const entry = entries.find((e) => e.path === path)
+    if (!entry) return { ...none, reason: 'that file is not part of this task’s change' }
+    if (entry.binary) return { ...none, reason: 'this file is binary, so there is nothing to show' }
+    if (isGeneratedPath(path)) {
+      return { ...none, reason: 'this file is generated, so it is counted but not shown' }
+    }
+
+    const full = await driver.diff(at.cwd, at.specs, path)
+    return cutPatch(path, full)
+  } catch (err) {
+    return { ...none, reason: errorMessage(err) }
   }
-
-  const full = await patchFor(at.cwd, at.specs, path)
-  return cutPatch(path, full)
 }
 
 /** One file's patch out of one recorded commit, capped and cut at a line boundary. */
@@ -264,19 +295,25 @@ export async function commitFileFor(taskId: string, sha: string, path: string): 
   const none = { ok: false, path, patch: '', truncated: false, bytes: 0 }
   const at = await locateCommit(taskId, sha)
   if (!at.ok) return { ...none, reason: at.reason }
+  const driver = driverFor(at.project)
+  if (!driver) return { ...none, reason: 'this project has no VCS driver' }
 
-  // ⛔ The same double gate as `diffFileFor`: the sha is this task's recorded commit and the path
-  // is one that commit changed, so a renderer holding a row cannot reach sideways into the repo.
-  const entries = await numstatEntries(at.cwd, [at.spec])
-  const entry = entries.find((e) => e.path === path)
-  if (!entry) return { ...none, reason: 'that file is not part of this commit' }
-  if (entry.binary) return { ...none, reason: 'this file is binary, so there is nothing to show' }
-  if (isGeneratedPath(path)) {
-    return { ...none, reason: 'this file is generated, so it is counted but not shown' }
+  try {
+    // ⛔ The same double gate as `diffFileFor`: the sha is this task's recorded commit and the path
+    // is one that commit changed, so a renderer holding a row cannot reach sideways into the repo.
+    const entries = await driver.diff(at.cwd, [at.spec])
+    const entry = entries.find((e) => e.path === path)
+    if (!entry) return { ...none, reason: 'that file is not part of this commit' }
+    if (entry.binary) return { ...none, reason: 'this file is binary, so there is nothing to show' }
+    if (isGeneratedPath(path)) {
+      return { ...none, reason: 'this file is generated, so it is counted but not shown' }
+    }
+
+    const full = await driver.diff(at.cwd, [at.spec], path)
+    return cutPatch(path, full)
+  } catch (err) {
+    return { ...none, reason: errorMessage(err) }
   }
-
-  const full = await patchFor(at.cwd, [at.spec], path)
-  return cutPatch(path, full)
 }
 
 function cutPatch(path: string, full: string): TaskDiffFile {
@@ -305,7 +342,7 @@ function sanitizePath(raw: string): string | null {
   if (!normalized || normalized.startsWith('/') || /^[a-zA-Z]:/.test(normalized)) return null
   const parts = normalized.split('/')
   if (parts.some((p) => p === '..' || p === '')) return null
-  if (parts[0] === '.git') return null
+  if (parts[0] === '.git' || parts[0] === '.jj') return null
   return normalized
 }
 
@@ -342,9 +379,15 @@ export async function fileContentFor(
   if (sha) {
     const at = await locateCommit(taskId, sha)
     if (!at.ok) return { ...none, reason: at.reason }
-    const full = await tryGit(at.cwd, ['show', `${at.head}:${cleanPath}`])
-    if (full === null) return { ...none, reason: 'could not read that file from this commit' }
-    return cutContent(cleanPath, full)
+    const driver = driverFor(at.project)
+    if (!driver) return { ...none, reason: 'this project has no VCS driver' }
+    try {
+      const full = await driver.fileAt(at.cwd, at.head, cleanPath)
+      if (full === null) return { ...none, reason: 'could not read that file from this commit' }
+      return cutContent(cleanPath, full)
+    } catch (err) {
+      return { ...none, reason: errorMessage(err) }
+    }
   }
 
   const task = getTask(taskId)
@@ -355,18 +398,22 @@ export async function fileContentFor(
   // 1. Try reading from the live workspace on disk if available (e.g. uncommitted/active files).
   if (task.branch) {
     const target = landingTargetFor(task, project)
-    const ws = await workspaceOnBranch(project, task.branch, target)
-    if (ws?.path) {
-      const absPath = path.resolve(ws.path, cleanPath)
-      const wsRoot = path.resolve(ws.path)
-      if (absPath.startsWith(wsRoot + path.sep)) {
-        try {
-          const content = await fs.readFile(absPath, 'utf8')
-          return cutContent(cleanPath, content)
-        } catch {
-          // File may not exist on disk yet or unreadable; fall back to git
+    try {
+      const ws = await workspaceOnBranch(project, task.branch, target)
+      if (ws?.path) {
+        const absPath = path.resolve(ws.path, cleanPath)
+        const wsRoot = path.resolve(ws.path)
+        if (absPath.startsWith(wsRoot + path.sep)) {
+          try {
+            const content = await fs.readFile(absPath, 'utf8')
+            return cutContent(cleanPath, content)
+          } catch {
+            // File may not exist on disk yet or unreadable; fall back to revision object
+          }
         }
       }
+    } catch (err) {
+      return { ...none, reason: errorMessage(err) }
     }
   } else if (task.workspaceMode === 'trunk' || project.root) {
     const absPath = path.resolve(project.root, cleanPath)
@@ -376,17 +423,24 @@ export async function fileContentFor(
         const content = await fs.readFile(absPath, 'utf8')
         return cutContent(cleanPath, content)
       } catch {
-        // Fall back to git
+        // Fall back to revision object
       }
     }
   }
 
-  // 2. Try git show HEAD / resolved head.
+  // 2. Try reading from the revision object at resolved head via the VCS driver.
   const at = await locate(taskId)
   if (at.ok && at.head) {
-    const full = await tryGit(at.cwd, ['show', `${at.head}:${cleanPath}`])
-    if (full !== null) {
-      return cutContent(cleanPath, full)
+    const driver = driverFor(at.project)
+    if (driver) {
+      try {
+        const full = await driver.fileAt(at.cwd, at.head, cleanPath)
+        if (full !== null) {
+          return cutContent(cleanPath, full)
+        }
+      } catch (err) {
+        return { ...none, reason: errorMessage(err) }
+      }
     }
   }
 

@@ -17,6 +17,8 @@ import {
   runsFor
 } from './tasks.js'
 export { mintDelegationToken }
+import { getProject } from './projects.js'
+import { driverFor } from './vcs/index.js'
 import type { AutoModelTier } from '@shared/protocol.js'
 import { tierHeading, tierSlug } from '@shared/modeltags.js'
 import type { MandateOperation, Task, TaskStatus } from '@shared/tasks.js'
@@ -367,15 +369,25 @@ export function delegationReport(caller: Task, pieces: Task[]): { headline: stri
     return `  t${p.seq} · ${p.status}${where}${why}: ${label}`
   })
   const conversation = caller.kind === 'conversation'
+  const project = caller.projectId ? getProject(caller.projectId) : null
+  const autoSnapshot = Boolean(project && driverFor(project)?.capabilities.autoSnapshot)
+  const mergeClause = autoSnapshot
+    ? 'Review what came back before relying on it — `task_read` with a piece’s t-number shows its ' +
+      'thread. Each completed piece was committed and checked on its own bookmark, cut from yours, and ' +
+      'nothing has been merged for you: combine each one you want into your own change with ' +
+      '`jj new @ <branch>` (then `jj describe` and `jj bookmark set <your-branch> -r @`), or in colocated mode ' +
+      'with `git merge <branch>`, resolve any conflict, and re-run the checks. Do not ' +
+      'redo a failed piece yourself unless the person asks; say what failed.'
+    : 'Review what came back before relying on it — `task_read` with a piece’s t-number shows its ' +
+      'thread. Each completed piece was committed and checked on its own branch, cut from yours, and ' +
+      'nothing has been merged for you: merge each one you want into your own branch with ' +
+      '`git merge <branch>` in your workspace, resolve any conflict, and re-run the checks. Do not ' +
+      'redo a failed piece yourself unless the person asks; say what failed.'
   const body = [
     'How each piece turned out:',
     ...lines,
     '',
-    'Review what came back before relying on it — `task_read` with a piece’s t-number shows its ' +
-      'thread. Each completed piece was committed and checked on its own branch, cut from yours, and ' +
-      'nothing has been merged for you: merge each one you want into your own branch with ' +
-      '`git merge <branch>` in your workspace, resolve any conflict, and re-run the checks. Do not ' +
-      'redo a failed piece yourself unless the person asks; say what failed.',
+    mergeClause,
     conversation
       ? 'Then tell the person what came back and what you merged. If you decide not to use a ' +
         'completed piece, say why; when you later land, name it in `land_work`’s `set_aside`.'
@@ -428,6 +440,17 @@ export async function delegationLandingBlocker(
     if (inHead === null) unmerged.push(piece)
   }
   if (unmerged.length === 0) return null
+  const task = getTask(taskId)
+  const project = task?.projectId ? getProject(task.projectId) : null
+  const autoSnapshot = Boolean(project && driverFor(project)?.capabilities.autoSnapshot)
+  if (autoSnapshot) {
+    return (
+      `the work of ${unmerged.map((p) => `t${p.seq} (\`${p.branch}\`)`).join(', ')} is not in this ` +
+      'branch. Combine each with `jj new @ <branch>` (then `jj describe` and point your bookmark) ' +
+      'or colocated `git merge <branch>` and re-run the checks, or — if you reviewed it and ' +
+      'chose not to use it — pass its number in `set_aside`.'
+    )
+  }
   return (
     `the work of ${unmerged.map((p) => `t${p.seq} (\`${p.branch}\`)`).join(', ')} is not in this ` +
     'branch. Merge each with `git merge <branch>` and re-run the checks, or — if you reviewed it and ' +

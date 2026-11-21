@@ -41,7 +41,7 @@ function commit(root: string, message: string): string {
   return git(root, 'rev-parse', 'HEAD')
 }
 
-function makeProject(): { id: string; root: string } {
+function makeProject(vcs: 'git' | 'jj' = 'git'): { id: string; root: string } {
   seq += 1
   const id = `disown-p${seq}`
   const root = join(dir, `repo${seq}`)
@@ -54,9 +54,9 @@ function makeProject(): { id: string; root: string } {
     .db()
     .prepare(
       `insert into projects (id, name, root, vcs, config_json, config_path, created_at)
-       values (?, ?, ?, 'git', '{}', null, ?)`
+       values (?, ?, ?, ?, '{}', null, ?)`
     )
-    .run(id, `repo${seq}`, root, Date.now())
+    .run(id, `repo${seq}`, root, vcs, Date.now())
   return { id, root }
 }
 
@@ -288,5 +288,15 @@ describe('recording commits a task has been shown not to own', () => {
     const written = commits.recordTaskCommits(task, [{ sha: foreign }, { sha: mine }], 'main')
     expect(written).toBe(1)
     expect(shasOf(task)).toEqual([mine])
+  })
+
+  it('inspects vcs: jj projects in alreadyThere()', async () => {
+    const project = makeProject('jj')
+    const before = commit(project.root, 'already in jj repo')
+    const task = landedTask(project.id, { trunkBefore: before })
+    await record(task, [before])
+    const report = await disown.disownForeignCommits({ ancestry: true })
+    expect(report.tasks).toBe(1)
+    expect(shasOf(task)).toEqual([])
   })
 })

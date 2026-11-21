@@ -7,6 +7,7 @@ import {
   FINISH_LABELS,
   FINISH_ORDER,
   SHARING_LABELS,
+  projectUsesGitBranches,
   verificationWarning,
   type CompletionModeChoice,
   type FinishPolicyChoice,
@@ -197,7 +198,7 @@ export function NewProject({
       // ⚠️ Offered, not assumed, and only where it is the obvious answer: an *empty* directory with
       // no repository is a project that would otherwise get one workspace and no branches, which is
       // almost never what somebody adding an empty project meant. Anything else starts unticked.
-      gitInit: inspection.vcs !== 'git' && inspection.empty,
+      gitInit: !projectUsesGitBranches({ vcs: inspection.vcs }) && inspection.empty,
       landingTarget: inspection.config?.landing?.target ?? current.landingTarget,
       finish: inspection.config?.landing?.finish ?? current.finish,
       sessionShare: inspection.config?.session?.share ?? current.sessionShare,
@@ -668,7 +669,7 @@ function DirectoryStep({
             </div>
             <div>
               <dt>Repository</dt>
-              <dd>{inspection.vcs === 'git' ? <span className="ok">git</span> : <span className="dim">none</span>}</dd>
+              <dd>{projectUsesGitBranches({ vcs: inspection.vcs }) ? <span className="ok">{inspection.vcs}</span> : <span className="dim">none</span>}</dd>
             </div>
             <div>
               <dt>Stack</dt>
@@ -717,7 +718,7 @@ function DirectoryStep({
             />
           )}
 
-          {inspection.vcs !== 'git' && (
+          {!projectUsesGitBranches({ vcs: inspection.vcs }) && (
             <Checkbox
               label="Initialise a git repository"
               hint="Initializes a git repository for worktree branching and landing."

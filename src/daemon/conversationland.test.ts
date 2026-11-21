@@ -596,3 +596,112 @@ describe('the tripwire and a task’s own landings', () => {
 function landingTargetSha(project: Project): string {
   return git(project.root, 'rev-parse', 'main')
 }
+
+async function probeJjAvailability(): Promise<{ available: boolean; reason: string; binary: string | null }> {
+  const { which, launchArgs, spawnEnv } = await import('./which.js')
+  const { compareSemver, JJ_MIN_VERSION, parseJjVersion } = await import('./vcs/jj.js')
+  const binary = which('jj')
+  if (!binary) return { available: false, reason: 'jj executable not found on PATH', binary: null }
+  try {
+    const launched = launchArgs(binary, ['--version'])
+    const out = execFileSync(launched.command, launched.args, {
+      env: spawnEnv(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    }).trim()
+    const parsed = parseJjVersion(out)
+    if (!parsed) return { available: false, reason: `unrecognized jj --version output: ${out}`, binary: null }
+    if (compareSemver(parsed, JJ_MIN_VERSION) < 0) {
+      return { available: false, reason: `jj ${parsed} is below minimum ${JJ_MIN_VERSION}`, binary: null }
+    }
+    return { available: true, reason: `jj ${parsed} available`, binary }
+  } catch (err) {
+    return { available: false, reason: `jj failed: ${err instanceof Error ? err.message : String(err)}`, binary: null }
+  }
+}
+
+const jjProbe = await probeJjAvailability()
+
+describe.skipIf(!jjProbe.available)(`conversation landing on colocated jj (${jjProbe.reason})`, () => {
+  it('rotates cleanly to the .2 bookmark after landing', async () => {
+    const { launchArgs, spawnEnv } = await import('./which.js')
+    const { jjDriver } = await import('./vcs/jj.js')
+    const binary = jjProbe.binary!
+
+    const shortDir = realpathSync.native(mkdtempSync(join(tmpdir(), 'cljj-')))
+    if (shortDir.length > 88) {
+      rmSync(shortDir, { recursive: true, force: true })
+      throw new Error(`Temp directory too long for jj 0.46 106-char limit fixture: ${shortDir}`)
+    }
+    try {
+      const root = join(shortDir, 'repo')
+      mkdirSync(join(root, '.warmstart'), { recursive: true })
+      git(root, 'init', '--initial-branch=main')
+      git(root, 'config', 'user.name', 'agentyard test')
+      git(root, 'config', 'user.email', 'test@example.invalid')
+      writeFileSync(
+        join(root, '.warmstart', 'project.json'),
+        JSON.stringify({
+          schema_version: 1,
+          name: 'convo-jj',
+          vcs: 'jj',
+          workspaces: { poolSize: 1 },
+          check: ['node -e "process.exit(0)"'],
+          landing: { strategy: 'merge-local', target: 'main' }
+        })
+      )
+      writeFileSync(join(root, 'base.txt'), 'v1\n')
+      git(root, 'add', '-A')
+      git(root, 'commit', '-m', 'base')
+
+      const runJj = (cwd: string, ...args: string[]): string => {
+        const l = launchArgs(binary, ['--no-pager', ...args])
+        return execFileSync(l.command, l.args, {
+          cwd,
+          env: spawnEnv(),
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+          windowsHide: true
+        }).trim()
+      }
+      runJj(root, 'git', 'init', '--colocate', root)
+      runJj(root, '--ignore-working-copy', '-R', root, 'config', 'set', '--repo', 'revset-aliases."trunk()"', '"main"')
+
+      const project = projects.addProject({ root })
+      expect(project.vcs).toBe('jj')
+
+      const [ws] = await worktrees.ensurePool(project)
+      expect(ws).toBeTruthy()
+      const task = tasks.createTask({
+        title: 'jj chat',
+        kind: 'conversation',
+        projectId: project.id,
+        status: 'ready'
+      })
+      const branch = worktrees.branchNameFor(task.seq, worktrees.branchTitleFor(project, task.title))
+      tasks.setTaskBranch(task.id, branch, 1)
+      tasks.setStatus(task.id, 'awaiting_human', { branch })
+      await worktrees.prepareWorkspace(project, { index: 1, path: ws!, claimId: 'holder-jj' }, branch, task)
+
+      writeFileSync(join(ws!, 'jj-chat.txt'), 'round 1\n')
+      runJj(ws!, '-R', ws!, 'describe', '-r', '@', '-m', 'round 1')
+      runJj(ws!, '-R', ws!, 'bookmark', 'set', branch, '-r', '@')
+
+      const landed = await conversationland.landConversationWork(task.id)
+      expect(landed.ok).toBe(true)
+      expect(landed.branch).toBe(branch)
+      expect(landed.nextBranch).toMatch(new RegExp(`^warmstart/t${task.seq}\\.2-`))
+      expect(tasks.requireTask(task.id).branch).toBe(landed.nextBranch)
+      expect(tasks.requireTask(task.id).branchUnit).toBe(2)
+      expect(await jjDriver.currentBranch(ws!)).toBe(landed.nextBranch)
+      expect(readFileSync(join(root, 'jj-chat.txt'), 'utf8')).toBe('round 1\n')
+    } finally {
+      try {
+        rmSync(shortDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      } catch {
+        // Windows handle cleanup
+      }
+    }
+  }, 60_000)
+})

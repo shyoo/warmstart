@@ -1,4 +1,4 @@
-import type { Project, ResourceAvailability } from '@shared/tasks'
+import { projectUsesGitBranches, type Project, type ResourceAvailability } from '@shared/tasks'
 import { rpc } from '../lib/daemon'
 
 /**
@@ -98,7 +98,7 @@ export function Projects({
                     {project.config.landing?.target ?? 'main'}
                   </td>
                   <td className="num">
-                    {project.config.workspaces?.poolSize === 0 && project.vcs === 'git'
+                    {project.config.workspaces?.poolSize === 0 && projectUsesGitBranches(project)
                       ? 'trunk only'
                       : pool
                         ? `${pool.free}/${pool.resource.capacity} free`

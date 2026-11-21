@@ -11,7 +11,6 @@ import {
   branchNameFor,
   branchTitleFor,
   claimWorkspace,
-  gitIn as git,
   parkWorkspace,
   prepareWorkspace,
   releaseWorkspace,
@@ -19,6 +18,7 @@ import {
   workspaceOnBranch,
   workspaceState
 } from './worktrees.js'
+import { driverFor } from './vcs/index.js'
 import { log } from './log.js'
 import { delegationLandingBlocker } from './delegation.js'
 import { errorMessage } from '@shared/errors.js'
@@ -294,7 +294,9 @@ async function landIn(
   const nextBranch = branchNameFor(task.seq, branchTitleFor(project, task.title), nextUnit)
   const base = landingBaseFor(project, level, await hasRemote(project.root), task)
   try {
-    await git(state.path, ['switch', '-c', nextBranch, base])
+    const driver = driverFor(project)
+    if (!driver) throw new Error(`project ${project.name} has no VCS driver for branch rotation`)
+    await driver.switchBranch(state.path, nextBranch, base)
   } catch (err) {
     // ⚠️ The landing itself succeeded and is not undone by this: the commits are on the target and
     // recorded. What failed is the fresh branch, so say which half happened rather than reporting

@@ -20,6 +20,7 @@ import {
   WORKSPACE_MODE_LABELS,
   projectLandingTarget,
   projectTrunkOnly,
+  projectUsesGitBranches,
   projectWorkspaceModeChoice,
   resolveModelChoice,
 } from '@shared/tasks'
@@ -1507,7 +1508,7 @@ export function NewTask({
             />
 
             <span className="composer-gap" aria-hidden="true" />
-            {selectedProject?.vcs === 'git' &&
+            {projectUsesGitBranches(selectedProject) &&
               (() => {
                 // ⛔ No worktree pill on a trunk-only project: filing one would be refused at the
                 // door (`createTask`), so offering it is offering an error. The pill collapses to

@@ -24,6 +24,7 @@ import { resolveFinishPolicy } from './finish.js'
 import { settings } from './settings.js'
 import { lastCompactionLandedAt } from './compaction.js'
 import { AGENT_CLI_COMMAND } from './agentcli.js'
+import { driverFor } from './vcs/index.js'
 
 /**
  * A prompt and the images that go with it.
@@ -213,8 +214,16 @@ export function splitApprovedPrompt(text: string, card: string, mcp: boolean): s
  * in progress, or a change left uncommitted, blocks whoever uses this checkout next — and the finish
  * (`decideTrunkFinish`) will ask about both.
  */
-function trunkIntegrationClause(mcpLess: boolean, target: string): string {
+function trunkIntegrationClause(mcpLess: boolean, target: string, autoSnapshot = false): string {
   const declare = mcpLess ? 'write the `TASK COMPLETE: ` line' : 'call `task_complete`'
+  if (autoSnapshot) {
+    return (
+      `Immediately before you ${declare}, make sure your change sits cleanly on \`${target}\`, that ` +
+      "`jj log -r 'conflicts()'` shows no unresolved stored conflicts, and that your work is described " +
+      `on bookmark \`${target}\` (\`jj describe\` + \`jj bookmark set ${target} -r @\`). Do not push ` +
+      'unless your task says to — the finish policy decides that, and verifies the trunk first.'
+    )
+  }
   return (
     `Immediately before you ${declare}, make sure the trunk is on \`${target}\`, that no merge, rebase or ` +
     'cherry-pick is left in progress there, and that every change of yours is committed. Do not push unless your task says to — the ' +
@@ -222,8 +231,29 @@ function trunkIntegrationClause(mcpLess: boolean, target: string): string {
   )
 }
 
-function integrationClause(target: string, hasChecks: boolean, mcpLess: boolean): string {
+function integrationClause(
+  target: string,
+  hasChecks: boolean,
+  mcpLess: boolean,
+  autoSnapshot = false,
+  branch: string | null = null
+): string {
   const declare = mcpLess ? 'write the `TASK COMPLETE: ` line' : 'call `task_complete`'
+  if (autoSnapshot) {
+    const bookmark = branch ?? '<branch>'
+    return (
+      `Immediately before you ${declare}, check whether bookmark \`${bookmark}\` has fallen behind or ` +
+      `diverged from \`${target}\` as it exists in this checkout (\`jj log\`). Do not fetch or otherwise ` +
+      'contact a remote for this check: the landing tool refreshes and measures its own target. If it ' +
+      `has diverged, rebase onto the current \`${target}\` (\`jj rebase -b ${bookmark} -d ${target}\`), ` +
+      "resolve every stored conflict (`jj log -r 'conflicts()'`), ensure your change is described on " +
+      `\`${bookmark}\` (\`jj describe\` + \`jj bookmark set ${bookmark} -r @\`), and re-run ` +
+      (hasChecks ? "this project's checks" : 'the validation relevant to what you changed') +
+      ' on the rebased revision: a result from before the rebase does not answer for the code after it. ' +
+      `Do not ${declare} with unresolved stored conflicts or an undescribed change — that signal says ` +
+      'the bookmark is ready to land, and a bookmark with conflicts or uncaptured edits is not.'
+    )
+  }
   return (
     `Immediately before you ${declare}, check whether this branch has fallen behind or diverged from ` +
     `\`${target}\` as it exists in this checkout. Do not fetch or otherwise contact a remote for this ` +
@@ -480,20 +510,37 @@ export function verdictInstruction(verdict: DebateVerdict, checkLead: string, co
  * background and report back cannot land — the resting task waits for the person. A `conversation`
  * session stays open, where a command left running in it is the one thing that can (t369).
  */
-function conversationInstruction(mcpLess: boolean, trunk: string | null = null, oneShot = false): string {
+function conversationInstruction(
+  mcpLess: boolean,
+  trunk: string | null = null,
+  oneShot = false,
+  autoSnapshot = false
+): string {
   // ⛔ **A trunk conversation has no branch of its own** (t649). It commits straight onto the target
   // in the operator's checkout, so "your own branch" names something that does not exist, and a
   // landing there verifies and pushes rather than rebasing and handing out a next branch.
   // ⛔ **And the target is its to switch back to** (t788): "never switch branches" left t786 unable
   // to reach `main` from a checkout someone had left on `trailer-recut`.
-  const commits = trunk
-    ? `You work directly on \`${trunk}\` in the trunk, with no branch of your own: you may commit your own ` +
-      'changes there whenever it helps — never files that were already uncommitted when you arrived. ' +
-      `If the checkout is on another branch, \`git switch ${trunk}\` back to it (never forced) before you ` +
-      'change anything; that switch is yours to make. Never create branches, switch to any other branch, ' +
-      'rewrite existing commits, or push by hand — a push is the landing’s, below. '
-    : 'You may commit on your own branch whenever it helps — a commit is how work survives between ' +
-      'turns — but never merge or push to the landing target yourself. '
+  const commits = autoSnapshot
+    ? trunk
+      ? `You work directly on \`${trunk}\` in this colocated jj trunk checkout (a detached git \`HEAD\` ` +
+        'is normal here), with no separate bookmark of your own: describe your changes ' +
+        `(\`jj describe -m "<message>"\` and \`jj bookmark set ${trunk} -r @\`) whenever it helps — never ` +
+        'files that were already modified in `@` when you arrived. If working copy `@` is off ' +
+        `\`${trunk}\`, start cleanly with \`jj new ${trunk}\` before changing anything; never force or ` +
+        'create extra bookmarks, `jj abandon` target commits, or push by hand — a push is the landing’s, below. '
+      : 'Working-copy edits in this colocated jj workspace auto-snapshot into `@`: describe your work ' +
+        '(`jj describe -m "<message>"` and `jj bookmark set <branch> -r @`) whenever it helps — a ' +
+        'described commit on your bookmark is how work survives between turns — but never merge or ' +
+        'push to the landing target yourself. '
+    : trunk
+      ? `You work directly on \`${trunk}\` in the trunk, with no branch of your own: you may commit your own ` +
+        'changes there whenever it helps — never files that were already uncommitted when you arrived. ' +
+        `If the checkout is on another branch, \`git switch ${trunk}\` back to it (never forced) before you ` +
+        'change anything; that switch is yours to make. Never create branches, switch to any other branch, ' +
+        'rewrite existing commits, or push by hand — a push is the landing’s, below. '
+      : 'You may commit on your own branch whenever it helps — a commit is how work survives between ' +
+        'turns — but never merge or push to the landing target yourself. '
   const landing = trunk
     ? 'it runs this project’s checks in the trunk and pushes if the policy pushes, and you carry on ' +
       'in the trunk afterwards. '
@@ -505,7 +552,9 @@ function conversationInstruction(mcpLess: boolean, trunk: string | null = null, 
     'need to leave the work in a shippable state at the end of every turn. ' +
     commits +
     (mcpLess
-      ? 'Commit when you are asked to, and say in your reply that the work is ready; the person ' +
+      ? (autoSnapshot
+          ? 'Describe your changes and point your bookmark when you are asked to, and say in your reply that the work is ready; the person '
+          : 'Commit when you are asked to, and say in your reply that the work is ready; the person ') +
         'lands it from this thread. ' +
         'Do not end a reply with a line beginning `TASK COMPLETE: ` on your own judgement — that ' +
         'line reports the whole task finished, so write it only if you are told the work is done. ' +
@@ -513,7 +562,9 @@ function conversationInstruction(mcpLess: boolean, trunk: string | null = null, 
         'followed by the question, and stop rather than guessing. If you are choosing between ' +
         'specific options, put each one on its own line directly under it as ' +
         '`- <the option> — <what choosing it means>`, so they can be offered as buttons.'
-      : 'When the person asks you to land the work, commit it and then call the MCP tool ' +
+      : (autoSnapshot
+          ? 'When the person asks you to land the work, describe your changes onto your bookmark and then call the MCP tool '
+          : 'When the person asks you to land the work, commit it and then call the MCP tool ') +
         '`land_work`: ' +
         landing +
         'Landing does not end this task. ' +
@@ -1006,11 +1057,18 @@ export function promptFor(
   // ⛔ **A trunk task has no branch, so the branch clauses are the wrong instructions.** Squashing
   // "commits ahead of this task branch's landing target" and rebasing onto it would, in the trunk, be
   // rewriting the target itself. `trunkArrivalNotice` says where it is; this says how to finish there.
+  const autoSnapshot = Boolean(project && driverFor(project)?.capabilities.autoSnapshot)
   const inTrunk = project !== null && resolveWorkspaceMode(task, project).mode === 'trunk'
   const trunkTarget = inTrunk ? landingTargetFor(task, project) : null
   const commitHygiene = (inTrunk
     ? reportsOnly
       ? 'This task reports on its thread and changes nothing: do not commit, and leave the trunk exactly as you found it.'
+      : autoSnapshot
+      ? `You are working directly on \`${trunkTarget}\` in a colocated jj trunk checkout (a detached git \`HEAD\` is normal here). ` +
+        `If \`@\` is off \`${trunkTarget}\`, start cleanly with \`jj new ${trunkTarget}\`. Describe your own changes ` +
+        `(\`jj describe -m "<message>"\` and \`jj bookmark set ${trunkTarget} -r @\`), never files already uncommitted ` +
+        'when you arrived. Do not create extra bookmarks, rewrite or squash target commits, `jj abandon` target history, ' +
+        'force-push, stash or reset.'
       : `You are committing directly on \`${trunkTarget}\` in the trunk. If the checkout is on another ` +
         `branch, \`git switch ${trunkTarget}\` first, never forced. Commit only your own changes, never files ` +
         'that were already uncommitted when you arrived. Do not create branches, switch to any other ' +
@@ -1018,6 +1076,11 @@ export function promptFor(
     : reportsOnly
     ? 'This task reports on its thread and lands nothing: do not commit, and leave the branch and ' +
       'the working tree exactly as you found them.'
+    : autoSnapshot
+    ? 'Working-copy edits in this colocated jj workspace auto-snapshot into `@`. Before finishing, describe your change ' +
+      '(`jj describe -m "<message>"`) and ensure your task bookmark points to it (`jj bookmark set <branch> -r @`, or ' +
+      '`jj commit -m "<message>"` then `jj bookmark set <branch> -r @-`); collapse multi-commit task work with `jj squash` ' +
+      'where safe. Do not `jj abandon` or rewrite commits already on the landing target, force-push, or use a destructive reset.'
     : 'When committing, if two or more commits ahead of this task branch’s landing target all belong ' +
       'to this task, squash them into one coherent commit where safe. Do not rewrite commits already ' +
       'on the landing target, force-push, or use a destructive reset.'
@@ -1038,12 +1101,18 @@ export function promptFor(
   const toolRunsChecks = adapter(adapterId).info.capabilities.streamPrompts === 'once'
   const integration =
     project && projectUsesGitBranches(project) && !reportsOnly && inTrunk
-      ? trunkIntegrationClause(!adapter(adapterId).info.capabilities.mcp, trunkTarget ?? landingTargetFor(task, project))
+      ? trunkIntegrationClause(
+          !adapter(adapterId).info.capabilities.mcp,
+          trunkTarget ?? landingTargetFor(task, project),
+          autoSnapshot
+        )
       : project && projectUsesGitBranches(project) && !reportsOnly
       ? integrationClause(
           landingTargetFor(task, project),
           checks.length > 0 && !toolRunsChecks,
-          !adapter(adapterId).info.capabilities.mcp
+          !adapter(adapterId).info.capabilities.mcp,
+          autoSnapshot,
+          task.branch
         )
       : ''
 
@@ -1097,7 +1166,8 @@ export function promptFor(
           conversationInstruction(
             false,
             trunkTarget,
-            adapter(adapterId).info.capabilities.streamPrompts === 'once'
+            adapter(adapterId).info.capabilities.streamPrompts === 'once',
+            autoSnapshot
           )
         )
         if (mayDelegate) parts.push(delegationClause(true))
@@ -1158,10 +1228,15 @@ export function promptFor(
         ? conversationInstruction(
             true,
             trunkTarget,
-            adapter(adapterId).info.capabilities.streamPrompts === 'once'
+            adapter(adapterId).info.capabilities.streamPrompts === 'once',
+            autoSnapshot
           )
         : checkLead +
-        (reportsOnly ? 'When the work is finished, end' : 'When the work is finished, commit what you have and end') +
+        (reportsOnly
+          ? 'When the work is finished, end'
+          : autoSnapshot
+            ? 'When the work is finished, describe your changes onto your bookmark and end'
+            : 'When the work is finished, commit what you have and end') +
         ' with a line beginning `TASK COMPLETE: ` ' +
         'followed by a one-line summary of what changed. ' + commitHygiene +
         (integration ? ' ' + integration : '') +
@@ -1217,6 +1292,15 @@ export function promptFor(
     // ⚠️ And a task that lands nothing is not told to commit here either — see `reportsOnly`.
     const plain = reportsOnly
       ? commitHygiene + ' Nothing will ask you again.'
+      : autoSnapshot
+      ? 'Describe every change you made' +
+        (task.branch ? ` and point bookmark \`${task.branch}\` at it (\`jj describe -m "<message>"\` and \`jj bookmark set ${task.branch} -r @\`)` : ' (`jj describe -m "<message>"`)') +
+        ' before your turn ends. ' +
+        commitHygiene +
+        ' ' +
+        (pushes
+          ? 'Then push it (`jj git push` / `git push`) — nothing will do that for you afterwards.'
+          : 'Do not push; the tool takes it from there. Nothing will ask you again.')
       : 'Commit everything you change' +
         (task.branch ? ` on \`${task.branch}\`` : '') +
         ' before your turn ends. ' +

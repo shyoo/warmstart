@@ -40,6 +40,7 @@ import { STANDING_HOLD_GRACE_MS, continueTask, releaseFor, sessionOf } from './s
 import { landConversationWork } from './conversationland.js'
 import { adapter } from './adapters/index.js'
 import { getWorker } from './workers.js'
+import { driverFor } from './vcs/index.js'
 
 /**
  * RPC-driven actions, not scheduling: every "Resolve & retry" and "Land/Commit" button on a
@@ -114,24 +115,38 @@ export async function resolveConflictOnTask(
   // identical conflict. A loop with no converging state. See `landingLevelFor`.
   const level = landingLevel(task, project)
   const base = landingBaseFor(project, level, await hasRemote(project.root), task)
+  const autoSnapshot = Boolean(driverFor(project)?.capabilities.autoSnapshot)
   const checks = policyVerifies(level) ? (project.config.check ?? []) : []
   const checkStep =
     checks.length > 0
       ? `Run every project check (${checks.map((check) => `\`${check}\``).join(', ')}) after the final commit state is ready, and fix any failure before reporting complete. `
       : 'Run the relevant project checks after the final commit state is ready, and fix any failure before reporting complete. '
-  const instruction =
-    `The landing failed because \`${task.branch}\` does not rebase cleanly onto \`${base}\`. ` +
-    `Run \`git rebase ${base}\`, resolve every conflict, and finish the rebase. ` +
-    // ⛔ The measured gap, where there is one. Naming `main` did not stop t578's agent rebasing
-    // onto `origin/main` and calling it clean; being told the two are nine commits apart would have.
-    (await localBaseNote(project.root, base)) +
-    'Keep both sides of the change wherever they are compatible — the other side is work that has ' +
-    'already landed, so discarding it is never the answer. ' +
-    `Once the rebase is clean, if two or more commits ahead of \`${base}\` all belong to this task, ` +
-    `squash them into one coherent commit (for example, \`git rebase -i ${base}\`). ` +
-    'Do not rewrite commits already on the landing target, force-push, or use a destructive reset. ' +
-    checkStep +
-    'Confirm there are no conflict markers and the tree is clean, commit or amend any fixes, then report the task complete again.'
+  const baseGapNote = await localBaseNote(project.root, base)
+  const instruction = autoSnapshot
+    ? `The landing failed because \`${task.branch}\` does not rebase cleanly onto \`${base}\`. ` +
+      `Run \`jj rebase -b ${task.branch} -d ${base}\`, resolve every stored conflict in the working files, ` +
+      "and confirm `jj log -r 'conflicts()'` is empty. " +
+      baseGapNote +
+      'Keep both sides of the change wherever they are compatible — the other side is work that has ' +
+      'already landed, so discarding it is never the answer. ' +
+      `Once conflicts are resolved, make sure your work on \`${task.branch}\` is described as one ` +
+      `coherent commit (\`jj describe -m "<message>"\` and \`jj bookmark set ${task.branch} -r @\`, using ` +
+      '`jj squash` if helpful). ' +
+      'Do not `jj abandon` commits already on the landing target, force-push, or use a destructive reset. ' +
+      checkStep +
+      'Confirm zero stored conflicts remain and your change is described on your bookmark, then report the task complete again.'
+    : `The landing failed because \`${task.branch}\` does not rebase cleanly onto \`${base}\`. ` +
+      `Run \`git rebase ${base}\`, resolve every conflict, and finish the rebase. ` +
+      // ⛔ The measured gap, where there is one. Naming `main` did not stop t578's agent rebasing
+      // onto `origin/main` and calling it clean; being told the two are nine commits apart would have.
+      baseGapNote +
+      'Keep both sides of the change wherever they are compatible — the other side is work that has ' +
+      'already landed, so discarding it is never the answer. ' +
+      `Once the rebase is clean, if two or more commits ahead of \`${base}\` all belong to this task, ` +
+      `squash them into one coherent commit (for example, \`git rebase -i ${base}\`). ` +
+      'Do not rewrite commits already on the landing target, force-push, or use a destructive reset. ' +
+      checkStep +
+      'Confirm there are no conflict markers and the tree is clean, commit or amend any fixes, then report the task complete again.'
 
   addMessage(task.id, 'human', instruction)
   const outcome = continueTask(task.id)
@@ -210,14 +225,23 @@ export async function resolveCommitOnTask(
   const msgs = messagesFor(task.id)
   const lastSystem = [...msgs].reverse().find((m) => m.role === 'system' && /uncommitted|cannot be asked after its turn ends|rescue|stash/i.test(messageBody(m)))
   const failureDetail = lastSystem ? messageBody(lastSystem) : (task.holdReason ?? 'Uncommitted changes remain')
+  const autoSnapshot = Boolean(driverFor(project)?.capabilities.autoSnapshot)
 
-  const instruction =
-    `The landing could not proceed because changes on \`${branch}\` are uncommitted:\n\n` +
-    `${failureDetail}\n\n` +
-    'Please review your work. If two or more commits ahead of this task branch’s landing target all ' +
-    'belong to this task, squash them into one coherent commit where safe; do not rewrite commits ' +
-    'already on the landing target, force-push, or use a destructive reset. ' +
-    `Commit all intended changes on \`${branch}\`, then report the task complete again.`
+  const instruction = autoSnapshot
+    ? `The landing could not proceed because changes on \`${branch}\` are undescribed or uncommitted:\n\n` +
+      `${failureDetail}\n\n` +
+      'Working-copy edits in jj auto-snapshot into `@`, but undescribed work cannot land. ' +
+      `Please review your changes, describe them (\`jj describe -m "<message>"\`), and point bookmark \`${branch}\` ` +
+      '(`jj bookmark set ' +
+      `${branch} -r @\`, using \`jj squash\` to collapse multi-commit task work where safe). ` +
+      'Do not `jj abandon` commits already on the landing target, force-push, or use a destructive reset. ' +
+      `Ensure all intended changes are described on \`${branch}\`, then report the task complete again.`
+    : `The landing could not proceed because changes on \`${branch}\` are uncommitted:\n\n` +
+      `${failureDetail}\n\n` +
+      'Please review your work. If two or more commits ahead of this task branch’s landing target all ' +
+      'belong to this task, squash them into one coherent commit where safe; do not rewrite commits ' +
+      'already on the landing target, force-push, or use a destructive reset. ' +
+      `Commit all intended changes on \`${branch}\`, then report the task complete again.`
 
   addMessage(task.id, 'human', instruction)
   const outcome = continueTask(task.id)
@@ -260,23 +284,35 @@ export async function resolveTrunkMovedOnTask(
   // identical conflict. A loop with no converging state. See `landingLevelFor`.
   const level = landingLevel(task, project)
   const base = landingBaseFor(project, level, await hasRemote(project.root), task)
+  const autoSnapshot = Boolean(driverFor(project)?.capabilities.autoSnapshot)
   const checks = policyVerifies(level) ? (project.config.check ?? []) : []
   const checkStep =
     checks.length > 0
       ? `Run every project check (${checks.map((check) => `\`${check}\``).join(', ')}) after the final commit state is ready, and fix any failure before reporting complete. `
       : 'Run the relevant project checks after the final commit state is ready, and fix any failure before reporting complete. '
+  const baseGapNote = await localBaseNote(project.root, base)
 
-  const instruction =
-    `The landing could not proceed because \`${base}\` moved while your run was in flight and \`${branch}\` carries no commits:\n\n` +
-    `${failureDetail}\n\n` +
-    `If you made commits directly to \`${base}\`, or if changes need to be rebased onto \`${base}\`, ` +
-    `rebase \`${branch}\` onto \`${base}\`, ensure all intended changes are committed on \`${branch}\`. ` +
-    (await localBaseNote(project.root, base)) +
-    'If two or more commits ahead of this task branch’s landing target all belong to this task, squash ' +
-    'them into one coherent commit where safe; do not rewrite commits already on the landing target, ' +
-    'force-push, or use a destructive reset. ' +
-    checkStep +
-    'Confirm the tree is clean, then report the task complete again.'
+  const instruction = autoSnapshot
+    ? `The landing could not proceed because \`${base}\` moved while your run was in flight and \`${branch}\` carries no described commits:\n\n` +
+      `${failureDetail}\n\n` +
+      `If you made changes directly on \`${base}\`, or need to move changes onto \`${base}\`, run ` +
+      `\`jj rebase -b ${branch} -d ${base}\`, describe your changes (\`jj describe -m "<message>"\`), and ` +
+      `point bookmark \`${branch}\` at your commit (\`jj bookmark set ${branch} -r @\`). ` +
+      baseGapNote +
+      'Collapse multi-commit task work with `jj squash` where safe; do not `jj abandon` commits already ' +
+      'on the landing target, force-push, or use a destructive reset. ' +
+      checkStep +
+      'Confirm zero stored conflicts remain, then report the task complete again.'
+    : `The landing could not proceed because \`${base}\` moved while your run was in flight and \`${branch}\` carries no commits:\n\n` +
+      `${failureDetail}\n\n` +
+      `If you made commits directly to \`${base}\`, or if changes need to be rebased onto \`${base}\`, ` +
+      `rebase \`${branch}\` onto \`${base}\`, ensure all intended changes are committed on \`${branch}\`. ` +
+      baseGapNote +
+      'If two or more commits ahead of this task branch’s landing target all belong to this task, squash ' +
+      'them into one coherent commit where safe; do not rewrite commits already on the landing target, ' +
+      'force-push, or use a destructive reset. ' +
+      checkStep +
+      'Confirm the tree is clean, then report the task complete again.'
 
   addMessage(task.id, 'human', instruction)
   const outcome = continueTask(task.id)

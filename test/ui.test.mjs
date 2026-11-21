@@ -4914,6 +4914,153 @@ try {
     decidedRow.split('\n')[0]
   )
 
+  // t1393 Wave 4: Change version control… modal for git and colocated jj capability parity in Project settings.
+  {
+    await evaluate(
+      `[...document.querySelectorAll('.tbl-actions button')].find(b => b.innerText.includes('Change version control'))?.click()`
+    )
+    const gitModalOpen = await until(
+      () => evaluate(`!!document.querySelector('.vcs-migration-modal')`),
+      5000
+    )
+    const gitModalText = await evaluate(`document.querySelector('.vcs-migration-modal')?.innerText ?? ''`)
+    const gitModalChecks = await evaluate(
+      `JSON.stringify([...document.querySelectorAll('.vcs-migration-modal input[type="checkbox"]')].map(c => c.checked))`
+    )
+    check(
+      'Change version control… opens the git -> jj modal with dirty-trunk unchecked and no removeJjDir',
+      gitModalOpen &&
+        gitModalText.includes('Change version control to colocated jj') &&
+        gitModalText.includes('Allow uncommitted changes in the trunk') &&
+        !gitModalText.includes('Remove .jj directory') &&
+        gitModalChecks === '[false]',
+      gitModalText
+    )
+    await evaluate(
+      `[...document.querySelectorAll('.vcs-migration-modal .modal-actions button')].find(b => b.innerText.trim() === 'Cancel')?.click()`
+    )
+    check(
+      'cancelling closes the git -> jj migration modal',
+      await until(() => evaluate(`!document.querySelector('.vcs-migration-modal')`), 5000)
+    )
+
+    const jjProjectRoot = mkdtempSync(join(tmpdir(), 'agentyard-ui-jj-'))
+    let jjAdded = null
+    try {
+      mkdirSync(join(jjProjectRoot, '.warmstart'), { recursive: true })
+      writeFileSync(
+        join(jjProjectRoot, '.warmstart', 'project.json'),
+        JSON.stringify({ schema_version: 1, name: 'ui jj project', vcs: 'jj', workspaces: { poolSize: 2 } })
+      )
+      jjAdded = JSON.parse(
+        await evaluate(
+          `window.agentyard.rpc('project.add', { root: ${JSON.stringify(jjProjectRoot)}, name: 'ui jj project' }).then((p) => JSON.stringify(p))`
+        )
+      )
+      await waitFor(
+        () =>
+          evaluate(
+            `[...document.querySelectorAll('.nav-item')].some(b => b.innerText.trim().startsWith('ui jj project'))`
+          ),
+        'ui jj project in sidebar'
+      )
+      await evaluate(
+        `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui jj project'))?.click()`
+      )
+      await waitFor(
+        () => evaluate(`[...document.querySelectorAll('.tab')].some(b => b.innerText.trim() === 'Settings')`),
+        'ui jj project tabs'
+      )
+      await evaluate(
+        `[...document.querySelectorAll('.tab')].find(b => b.innerText.trim() === 'Settings')?.click()`
+      )
+      await waitFor(
+        () =>
+          evaluate(
+            `!!document.querySelector('.setting-row') && (document.querySelector('.content .tbl')?.innerText ?? '').includes('jj')`
+          ),
+        'ui jj project settings to render'
+      )
+
+      const jjSettingsState = JSON.parse(
+        await evaluate(`
+          (() => {
+            const content = document.querySelector('.content')?.innerText ?? '';
+            const topo = document.querySelector('button[aria-label="Workspace topology"]');
+            const pool = document.querySelector('input[aria-label="Workspace pool size"]');
+            const hasMigrateBtn = [...document.querySelectorAll('.tbl-actions button')].some(b => b.innerText.includes('Change version control'));
+            return JSON.stringify({
+              hasJjVcs: content.includes('jj'),
+              hasMigrateBtn,
+              hasDefaultWorkspace: content.includes('Default workspace'),
+              hasPruneOnRelease: content.includes('Prune on release'),
+              hasNoRepoCopy: content.includes('this project has no repository'),
+              topoDisabled: topo ? topo.hasAttribute('disabled') : null,
+              poolDisabled: pool ? pool.hasAttribute('disabled') : null
+            });
+          })()
+        `)
+      )
+      check(
+        'colocated jj project enables branching, workspace pool, and Change version control… in Project settings',
+        jjSettingsState.hasJjVcs &&
+          jjSettingsState.hasMigrateBtn &&
+          jjSettingsState.hasDefaultWorkspace &&
+          jjSettingsState.hasPruneOnRelease &&
+          !jjSettingsState.hasNoRepoCopy &&
+          jjSettingsState.topoDisabled === false &&
+          jjSettingsState.poolDisabled === false,
+        JSON.stringify(jjSettingsState)
+      )
+
+      await evaluate(
+        `[...document.querySelectorAll('.tbl-actions button')].find(b => b.innerText.includes('Change version control'))?.click()`
+      )
+      const jjModalOpen = await until(
+        () => evaluate(`!!document.querySelector('.vcs-migration-modal')`),
+        5000
+      )
+      const jjModalText = await evaluate(`document.querySelector('.vcs-migration-modal')?.innerText ?? ''`)
+      const jjModalChecks = await evaluate(
+        `JSON.stringify([...document.querySelectorAll('.vcs-migration-modal input[type="checkbox"]')].map(c => c.checked))`
+      )
+      check(
+        'Change version control… on a jj project opens the jj -> git modal with both checkboxes unchecked',
+        jjModalOpen &&
+          jjModalText.includes('Change version control back to git') &&
+          jjModalText.includes('Allow uncommitted changes in the trunk') &&
+          jjModalText.includes('Remove .jj directory after switching to git') &&
+          jjModalChecks === '[false,false]',
+        jjModalText
+      )
+      await evaluate(
+        `[...document.querySelectorAll('.vcs-migration-modal .modal-actions button')].find(b => b.innerText.trim() === 'Cancel')?.click()`
+      )
+      await until(() => evaluate(`!document.querySelector('.vcs-migration-modal')`), 5000)
+    } finally {
+      if (jjAdded?.id) {
+        await evaluate(
+          `window.agentyard.rpc('project.delete', { id: ${JSON.stringify(jjAdded.id)} }).catch(() => null)`
+        )
+      }
+      try {
+        rmSync(jjProjectRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+      } catch {
+        // Best-effort cleanup
+      }
+      await evaluate(
+        `[...document.querySelectorAll('.nav-item')].find(b => b.innerText.trim().startsWith('ui project'))?.click()`
+      )
+      await waitFor(
+        () =>
+          evaluate(
+            `[...document.querySelectorAll('.tabs .tab')].some(t => t.innerText.trim() === 'Conversations')`
+          ),
+        'ui project tabs after jj settings check'
+      )
+    }
+  }
+
   section('project tabs')
   // ⛔ **Two nouns, two tabs.** The tab that draws a live agent's terminal was called `Sessions`,
   // which read as "this project's sessions" — a real and different thing that now has its own tab

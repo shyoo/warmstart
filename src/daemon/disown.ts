@@ -78,7 +78,7 @@ async function alreadyThere(): Promise<Foreign[]> {
            from task_commits c
            join tasks t on t.id = c.task_id
            join projects p on p.id = t.project_id
-          where p.vcs = 'git'`
+          where p.vcs in ('git', 'jj')`
       )
       .all()
   )

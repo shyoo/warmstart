@@ -143,8 +143,9 @@ describe('leaving the setup step', () => {
 })
 
 describe('whether the project ends up with a repository', () => {
-  it('is true for one that already has it, and for one the wizard will initialise', () => {
+  it('is true for git or colocated jj repositories, and for one the wizard will initialise', () => {
     expect(willHaveRepo(inspection(), draft())).toBe(true)
+    expect(willHaveRepo(inspection({ vcs: 'jj' }), draft())).toBe(true)
     expect(willHaveRepo(inspection({ vcs: 'none' }), draft({ gitInit: true }))).toBe(true)
     expect(willHaveRepo(inspection({ vcs: 'none' }), draft())).toBe(false)
   })
@@ -158,6 +159,12 @@ describe('what Create will do', () => {
       'Write .warmstart/project.json with these policies — a new file in the repository.'
     )
     expect(plan).toContain('Record 2 check commands.')
+  })
+
+  it('treats colocated jj repositories as existing repositories without re-running git init', () => {
+    const jjPlan = creationPlan(draft({ gitInit: true }), inspection({ vcs: 'jj' }))
+    expect(jjPlan.join('\n')).not.toContain('Run git init')
+    expect(jjPlan).toContain('Commit the scaffolding so the trunk starts clean.')
   })
 
   it('says an existing committed config is being updated, not created', () => {

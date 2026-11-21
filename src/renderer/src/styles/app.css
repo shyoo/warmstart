@@ -9845,6 +9845,25 @@ select:focus-visible,
   overflow-wrap: anywhere;
 }
 
+/* Local VCS migration modal (git <-> colocated jj). */
+.vcs-migration-modal {
+  max-width: 560px;
+  padding: var(--sp-4);
+}
+.vcs-migration-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.vcs-migration-body p {
+  margin: 0;
+}
+.vcs-migration-checks {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
 /* Scratchpad (t994): a project's prompt drafts as cards over one markdown file. */
 .scratchpad {
   display: flex;

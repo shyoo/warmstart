@@ -13,6 +13,7 @@ import {
   projectFinishChoice,
   projectLandingTarget,
   projectSharingChoice,
+  projectUsesGitBranches,
   SHARING_LABELS,
   verificationWarning,
   type CompletionModeChoice,
@@ -35,6 +36,7 @@ import { formatPoolMemberSize } from '../lib/format'
 import { SettingButtonSelect, type SettingOption } from './SettingButtonSelect'
 import { SettingRow, SettingSwitch } from './SettingRow'
 import { deleteProject, toggleArchive } from './ProjectMenus'
+import { formatMigrationSummary, migrationTargetVcs, VcsMigrationModal } from './VcsMigrationModal'
 import { errorMessage } from '@shared/errors.js'
 import { confirmAction } from '../lib/confirmation'
 
@@ -188,6 +190,13 @@ function ProjectIdentity({
 
   const [renaming, setRenaming] = useState(false)
   const [nameDraft, setNameDraft] = useState(project.name)
+  const [migrating, setMigrating] = useState(false)
+  const [migrationNote, setMigrationNote] = useState<string | null>(null)
+  const migrationTarget = migrationTargetVcs(project.vcs)
+  useEffect(() => {
+    setMigrating(false)
+    setMigrationNote(null)
+  }, [project.id])
   const rename = async (): Promise<void> => {
     const next = nameDraft.trim()
     if (!next || next === project.name) return setRenaming(false)
@@ -210,8 +219,8 @@ function ProjectIdentity({
         <div>
           <h2>Project settings</h2>
           <p className="panel-sub">
-            A directory plus policy. Git is optional — branching and parallel workspaces are
-            capabilities a project declares, not assumptions this app makes.
+            A directory plus policy. Branching and parallel workspaces are capabilities a project
+            declares, not assumptions this app makes.
           </p>
         </div>
         <div className="tbl-actions">
@@ -223,6 +232,20 @@ function ProjectIdentity({
           >
             Reload
           </button>
+          {migrationTarget !== null && (
+            <button
+              type="button"
+              className="btn btn--ghost"
+              disabled={busy}
+              title="Switch this project locally between git and colocated jj."
+              onClick={() => {
+                setMigrationNote(null)
+                setMigrating(true)
+              }}
+            >
+              Change version control…
+            </button>
+          )}
           {!project.configPath && (
             <button
               className="btn btn--ghost"
@@ -297,6 +320,7 @@ function ProjectIdentity({
         </form>
       )}
       {archiveNote && <div className="alert">{archiveNote}</div>}
+      {migrationNote && <p className="note">{migrationNote}</p>}
 
       <table className="tbl">
         <thead>
@@ -352,6 +376,17 @@ function ProjectIdentity({
           file is committed, so the policy travels with the repo rather than living in this install.
         </p>
       )}
+      {migrating && (
+        <VcsMigrationModal
+          project={project}
+          onClose={() => setMigrating(false)}
+          onMigrated={async (result) => {
+            await refreshProjects()
+            setMigrating(false)
+            setMigrationNote(formatMigrationSummary(result))
+          }}
+        />
+      )}
     </div>
   )
 }
@@ -389,11 +424,12 @@ function PolicyPanel({
   }
 
   const trunkOnly = projectTrunkOnly(project)
+  const hasBranches = projectUsesGitBranches(project)
   const [poolSizes, setPoolSizes] = useState<PoolMemberSize[]>([])
   const [nowMs, setNowMs] = useState(() => Date.now())
 
   useEffect(() => {
-    if (trunkOnly || project.vcs !== 'git') {
+    if (trunkOnly || !hasBranches) {
       setPoolSizes([])
       return
     }
@@ -412,7 +448,7 @@ function PolicyPanel({
     return () => {
       cancelled = true
     }
-  }, [project.id, project.vcs, project.config.workspaces?.poolSize, trunkOnly])
+  }, [project.id, project.vcs, hasBranches, project.config.workspaces?.poolSize, trunkOnly])
 
   useEffect(() => {
     if (poolSizes.length === 0) return
@@ -435,7 +471,7 @@ function PolicyPanel({
    * default workspace as it is.
    */
   const switchTopology = async (toTrunkOnly: boolean): Promise<void> => {
-    if (toTrunkOnly === trunkOnly || busy || project.vcs !== 'git') return
+    if (toTrunkOnly === trunkOnly || busy || !hasBranches) return
     if (!toTrunkOnly) {
       apply({ poolSize: Math.min(32, Math.max(1, Math.trunc(lastPool) || 3)) })
       return
@@ -552,7 +588,7 @@ function PolicyPanel({
           disabled={busy}
           ariaLabel="Landing target branch"
           onSave={(val) => apply({ landingTarget: val })}
-          description={`The branch new tasks start from and land onto, as git names it${project.config.landing?.upstreamRemote ? ` — your fork’s branch, which is also the base a Propose upstream pull request targets on ${project.config.landing.upstreamRemote}` : ''}. It must exist here or on origin; existing branches do not move.`}
+          description={`The branch or bookmark new tasks start from and land onto, as the repository names it${project.config.landing?.upstreamRemote ? ` — your fork’s branch, which is also the base a Propose upstream pull request targets on ${project.config.landing.upstreamRemote}` : ''}. It must exist here or on origin; existing branches do not move.`}
         />
 
         {/* ⛔ t903: with the fork home, origin is the operator's own and the original is reached
@@ -579,7 +615,7 @@ function PolicyPanel({
           />
         )}
         {/* ⛔ t907: what is the fork's own, and the way upstream's new commits reach the fork's home. */}
-        {project.vcs === 'git' && project.config.landing?.upstreamRemote && (
+        {hasBranches && project.config.landing?.upstreamRemote && (
           <>
             <TextPolicyRow
               title="Fork-only paths"
@@ -622,7 +658,7 @@ function PolicyPanel({
             />
           </>
         )}
-        {project.vcs === 'git' && !project.config.landing?.upstreamRemote && project.config.landing?.pushRemote && (
+        {hasBranches && !project.config.landing?.upstreamRemote && project.config.landing?.pushRemote && (
           <SettingRow
             title="Make my fork home"
             description={`Rename the remotes so ${project.config.landing.pushRemote} becomes origin and today’s origin becomes upstream. Tasks then land into your fork, and the original is reached only by Propose upstream on a task. Remote renames only — no branch or commit is touched.`}
@@ -713,7 +749,7 @@ function PolicyPanel({
           }
         />
 
-        {project.vcs === 'git' && (
+        {hasBranches && (
           <SettingRow
             title="Default workspace"
             description={
@@ -752,7 +788,7 @@ function PolicyPanel({
         <SettingRow
           title="Workspace topology"
           description={
-            project.vcs !== 'git' ? (
+            !hasBranches ? (
               'One workspace — this project has no repository.'
             ) : trunkOnly ? (
               <>
@@ -776,7 +812,7 @@ function PolicyPanel({
                 { value: 'pooled', label: 'Trunk + worktrees' },
                 { value: 'trunk-only', label: 'Trunk only' }
               ]}
-              disabled={busy || project.vcs !== 'git'}
+              disabled={busy || !hasBranches}
               ariaLabel="Workspace topology"
               title="Trunk + worktrees runs tasks in parallel in isolated checkouts; trunk-only keeps no worktrees and runs every task serially in the project checkout."
               onChange={(val) => void switchTopology(val === 'trunk-only')}
@@ -788,7 +824,7 @@ function PolicyPanel({
             <SettingRow
               title="Workspace pool"
               description={
-                project.vcs === 'git' ? (
+                hasBranches ? (
                   <>
                     <div>
                       {`${project.config.workspaces?.poolSize ?? 3} parallel worktree${(project.config.workspaces?.poolSize ?? 3) === 1 ? '' : 's'}. A full pool holds new tasks.`}
@@ -811,7 +847,7 @@ function PolicyPanel({
                   type="number"
                   min={1}
                   max={32}
-                  disabled={busy || project.vcs !== 'git'}
+                  disabled={busy || !hasBranches}
                   aria-label="Workspace pool size"
                   defaultValue={project.config.workspaces?.poolSize ?? 3}
                   key={project.config.workspaces?.poolSize ?? 3}
@@ -825,7 +861,7 @@ function PolicyPanel({
                 />
               }
             />
-            {project.vcs === 'git' && (
+            {hasBranches && (
               <TextPolicyRow
                 title="Prune on release"
                 value={(project.config.workspaces?.pruneOnRelease ?? []).join(', ')}

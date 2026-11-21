@@ -280,7 +280,7 @@ export function relocateProject(id: string, newRoot: string): Project {
   const { config, path } = readProjectConfig(root)
   db()
     .prepare('update projects set root = ?, config_json = ?, config_path = ?, vcs = ? where id = ?')
-    .run(root, JSON.stringify(config), path, config.vcs ?? project.vcs, id)
+    .run(root, JSON.stringify(config), path, reloadedVcs(project.vcs, config.vcs), id)
   const updated = requireProject(id)
   emit({ type: 'project.changed', project: updated })
   return updated

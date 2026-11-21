@@ -2168,3 +2168,220 @@ describe('a cold successor is given the conversation it is joining', () => {
     expect(text).not.toContain('[earlier turn')
   })
 })
+
+describe('Jujutsu (jj) prompt contract', () => {
+  function seedProject(vcs: 'git' | 'jj', name: string): string {
+    const projects = join(dir, 'vcs-projects')
+    const root = join(projects, name)
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
+    writeFileSync(join(root, '.warmstart', 'project.json'), JSON.stringify({ schema_version: 1, name, vcs }))
+    const id = `proj-${name}`
+    db.db()
+      .prepare(
+        `insert into projects (id, name, root, vcs, config_json, config_path, created_at)
+         values (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(id, name, root, vcs, JSON.stringify({ schema_version: 1, name, vcs }), join(root, '.warmstart', 'project.json'), Date.now())
+    return id
+  }
+
+  it('emits jj-native commit hygiene and integration instructions when autoSnapshot is true', () => {
+    const jjProj = seedProject('jj', 'jj-work')
+    const gitProj = seedProject('git', 'git-work')
+
+    const jjTask = tasks.createTask({
+      title: 'Implement jj work',
+      prompt: 'Do the jj change.',
+      projectId: jjProj,
+      status: 'ready'
+    })
+    tasks.setTaskBranch(jjTask.id, 'warmstart/t10-jj-work', 1)
+
+    const gitTask = tasks.createTask({
+      title: 'Implement git work',
+      prompt: 'Do the git change.',
+      projectId: gitProj,
+      status: 'ready'
+    })
+    tasks.setTaskBranch(gitTask.id, 'warmstart/t11-git-work', 1)
+
+    const jjOut = promptText(tasks.requireTask(jjTask.id), claude.adapterId, false, { markDelivered: false })
+    expect(jjOut).toContain('jj describe')
+    expect(jjOut).toContain('jj bookmark set')
+    expect(jjOut).toContain('jj rebase -b warmstart/t10-jj-work -d main')
+    expect(jjOut).toContain("jj log -r 'conflicts()'")
+    expect(jjOut).toContain('`jj abandon`')
+
+    const gitOut = promptText(tasks.requireTask(gitTask.id), claude.adapterId, false, { markDelivered: false })
+    expect(gitOut).toContain('squash them into one coherent commit')
+    expect(gitOut).not.toContain('jj describe')
+    expect(gitOut).not.toContain('jj bookmark set')
+  })
+
+  it('adapts conversation, trunk mode, and streamPrompts:once plain fallback for jj vs git', () => {
+    const jjProj = seedProject('jj', 'jj-modes')
+    const gitProj = seedProject('git', 'git-modes')
+
+    const jjConvo = tasks.createTask({
+      title: 'Convo jj',
+      prompt: 'Discuss it.',
+      kind: 'conversation',
+      projectId: jjProj,
+      status: 'ready'
+    })
+    const gitConvo = tasks.createTask({
+      title: 'Convo git',
+      prompt: 'Discuss it.',
+      kind: 'conversation',
+      projectId: gitProj,
+      status: 'ready'
+    })
+    expect(promptText(jjConvo, claude.adapterId, false, { markDelivered: false })).toContain('jj bookmark set')
+    const gitConvoOut = promptText(gitConvo, claude.adapterId, false, { markDelivered: false })
+    expect(gitConvoOut).toContain('You may commit on your own branch whenever it helps')
+    expect(gitConvoOut).not.toContain('jj bookmark set')
+
+    const jjTrunk = tasks.createTask({
+      title: 'Trunk jj',
+      prompt: 'Fix trunk.',
+      projectId: jjProj,
+      workspaceMode: 'trunk',
+      status: 'ready'
+    })
+    const gitTrunk = tasks.createTask({
+      title: 'Trunk git',
+      prompt: 'Fix trunk.',
+      projectId: gitProj,
+      workspaceMode: 'trunk',
+      status: 'ready'
+    })
+    const jjTrunkOut = promptText(jjTrunk, claude.adapterId, false, { markDelivered: false })
+    expect(jjTrunkOut).toContain('detached git `HEAD` is normal')
+    expect(jjTrunkOut).toContain('jj new main')
+    expect(jjTrunkOut).toContain("jj log -r 'conflicts()'")
+    const gitTrunkOut = promptText(gitTrunk, claude.adapterId, false, { markDelivered: false })
+    expect(gitTrunkOut).toContain('`git switch main`')
+    expect(gitTrunkOut).not.toContain('jj new main')
+
+    const jjOnce = tasks.createTask({
+      title: 'Once jj',
+      prompt: 'One shot.',
+      projectId: jjProj,
+      status: 'ready'
+    })
+    tasks.setTaskBranch(jjOnce.id, 'warmstart/t20-once-jj', 1)
+    const onceOut = promptText(tasks.requireTask(jjOnce.id), 'openai-compatible', false, { markDelivered: false })
+    expect(onceOut).toContain('Describe every change you made and point bookmark `warmstart/t20-once-jj`')
+
+    const gitOnce = tasks.createTask({
+      title: 'Once git',
+      prompt: 'One shot.',
+      projectId: gitProj,
+      status: 'ready'
+    })
+    tasks.setTaskBranch(gitOnce.id, 'warmstart/t21-once-git', 1)
+    const gitOnceOut = promptText(tasks.requireTask(gitOnce.id), 'openai-compatible', false, { markDelivered: false })
+    expect(gitOnceOut).toContain('Commit everything you change on `warmstart/t21-once-git`')
+
+    const agyConvoOut = promptText(jjConvo, agy.adapterId, false, { markDelivered: false })
+    expect(agyConvoOut).toContain('Describe your changes and point your bookmark when you are asked to')
+
+    const jjAgyWork = tasks.createTask({
+      title: 'Agy jj work',
+      prompt: 'Fix it.',
+      projectId: jjProj,
+      status: 'ready'
+    })
+    const gitAgyWork = tasks.createTask({
+      title: 'Agy git work',
+      prompt: 'Fix it.',
+      projectId: gitProj,
+      status: 'ready'
+    })
+    expect(promptText(jjAgyWork, agy.adapterId, false, { markDelivered: false })).toContain(
+      'describe your changes onto your bookmark and end'
+    )
+    expect(promptText(gitAgyWork, agy.adapterId, false, { markDelivered: false })).toContain(
+      'commit what you have and end'
+    )
+  })
+
+  it('switches arrival notices, resolution prompts, and delegation reports on vcs capabilities', async () => {
+    const { trunkArrivalNotice, worktreeArrivalNotice } = await import('./scheduler.js')
+    const { driverFor } = await import('./vcs/index.js')
+    const { delegationReport } = await import('./delegation.js')
+
+    const jjProj = seedProject('jj', 'jj-notices')
+    const gitProj = seedProject('git', 'git-notices')
+    const jjCaps = driverFor({ vcs: 'jj' })?.capabilities ?? null
+    const gitCaps = driverFor({ vcs: 'git' })?.capabilities ?? null
+
+    const jjWt = worktreeArrivalNotice('C:\\ws1', 'C:\\repo', 'warmstart/t1-x', 'main', jjCaps)
+    const gitWt = worktreeArrivalNotice('C:\\ws1', 'C:\\repo', 'warmstart/t1-x', 'main', gitCaps)
+    expect(jjWt).toContain('colocated Jujutsu (`jj`) workspace')
+    expect(jjWt).toContain('jj bookmark set warmstart/t1-x -r @')
+    expect(jjWt).toContain("jj log -r 'conflicts()'")
+    expect(gitWt).toContain('pooled git worktree')
+    expect(gitWt).not.toContain('jj bookmark set')
+
+    const jjTr = trunkArrivalNotice(
+      { branch: null, dirtyFiles: [], untrackedFiles: [], operation: null, conflicted: [], aheadOfTarget: 0 },
+      'main',
+      jjCaps
+    )
+    const gitTr = trunkArrivalNotice(
+      { branch: null, dirtyFiles: [], untrackedFiles: [], operation: null, conflicted: [], aheadOfTarget: 0 },
+      'main',
+      gitCaps
+    )
+    expect(jjTr).toContain('detached git `HEAD` is normal in colocated mode')
+    expect(jjTr).toContain('jj new main')
+    expect(gitTr).toContain('git switch main')
+    expect(gitTr).not.toContain('jj new main')
+
+    const jjTask = tasks.createTask({
+      title: 'Conflict jj',
+      prompt: 'Fix.',
+      projectId: jjProj,
+      status: 'ready'
+    })
+    tasks.setTaskBranch(jjTask.id, 'warmstart/t30-jj-c', 1)
+    tasks.setStatus(jjTask.id, 'awaiting_human')
+    const gitTask = tasks.createTask({
+      title: 'Conflict git',
+      prompt: 'Fix.',
+      projectId: gitProj,
+      status: 'ready'
+    })
+    tasks.setTaskBranch(gitTask.id, 'warmstart/t31-git-c', 1)
+    tasks.setStatus(gitTask.id, 'awaiting_human')
+
+    await resolutions.resolveConflictOnTask(jjTask.id)
+    await resolutions.resolveConflictOnTask(gitTask.id)
+    expect(tasks.messagesFor(jjTask.id).at(-1)?.text).toContain('jj rebase -b warmstart/t30-jj-c -d main')
+    expect(tasks.messagesFor(gitTask.id).at(-1)?.text).toContain('git rebase main')
+
+    tasks.setStatus(jjTask.id, 'awaiting_human')
+    tasks.setStatus(gitTask.id, 'awaiting_human')
+    await resolutions.resolveCommitOnTask(jjTask.id)
+    await resolutions.resolveCommitOnTask(gitTask.id)
+    expect(tasks.messagesFor(jjTask.id).at(-1)?.text).toContain('jj describe')
+    expect(tasks.messagesFor(gitTask.id).at(-1)?.text).toContain('Commit all intended changes')
+
+    tasks.setStatus(jjTask.id, 'awaiting_human')
+    tasks.setStatus(gitTask.id, 'awaiting_human')
+    await resolutions.resolveTrunkMovedOnTask(jjTask.id)
+    await resolutions.resolveTrunkMovedOnTask(gitTask.id)
+    expect(tasks.messagesFor(jjTask.id).at(-1)?.text).toContain('jj rebase -b warmstart/t30-jj-c -d main')
+    expect(tasks.messagesFor(gitTask.id).at(-1)?.text).toContain('rebase `warmstart/t31-git-c` onto `main`')
+
+    const piece = tasks.createTask({ title: 'Piece', projectId: jjProj, status: 'ready' })
+    tasks.setStatus(piece.id, 'completed')
+    tasks.setTaskBranch(piece.id, 'warmstart/t32-piece', 1)
+    const jjReport = delegationReport(tasks.requireTask(jjTask.id), [tasks.requireTask(piece.id)])
+    const gitReport = delegationReport(tasks.requireTask(gitTask.id), [tasks.requireTask(piece.id)])
+    expect(jjReport.body).toContain('jj new @ <branch>')
+    expect(gitReport.body).toContain('git merge <branch>')
+    expect(gitReport.body).not.toContain('jj new @ <branch>')
+  })
+})

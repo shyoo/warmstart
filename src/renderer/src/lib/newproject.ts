@@ -1,11 +1,12 @@
-import type {
-  CompletionModeChoice,
-  FinishPolicyChoice,
-  ProjectCloneResult,
-  ProjectDocName,
-  ProjectInspection,
-  ScaffoldingGitChoice,
-  SessionSharingChoice
+import {
+  projectUsesGitBranches,
+  type CompletionModeChoice,
+  type FinishPolicyChoice,
+  type ProjectCloneResult,
+  type ProjectDocName,
+  type ProjectInspection,
+  type ScaffoldingGitChoice,
+  type SessionSharingChoice
 } from '@shared/tasks'
 import { cloneDirectoryName } from '@shared/github'
 
@@ -185,7 +186,7 @@ export function willHaveRepo(
   inspection: ProjectInspection | null,
   draft: Pick<NewProjectDraft, 'gitInit'>
 ): boolean {
-  if (inspection?.vcs === 'git') return true
+  if (projectUsesGitBranches(inspection)) return true
   return draft.gitInit
 }
 
@@ -258,7 +259,7 @@ export function creationPlan(
   const root = inspection?.root ?? draft.root
 
   if (inspection && !inspection.exists && draft.createDirectory) plan.push(`Create ${root}.`)
-  if (draft.gitInit && inspection?.vcs !== 'git') {
+  if (draft.gitInit && !projectUsesGitBranches(inspection)) {
     plan.push(`Run git init -b ${draft.landingTarget.trim() || 'main'} in ${root}.`)
   }
   plan.push(`Add “${draft.name.trim()}” as a project.`)
