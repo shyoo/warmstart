@@ -747,7 +747,7 @@ async function trunkLooseEnd(project: Project, target: string): Promise<LooseEnd
     .filter((x): x is { task: Task; run: NonNullable<typeof x.run> } => !!x.run)
     .sort((a, b) => b.run.startedAt - a.run.startedAt)[0]
   if (!last || (last.task.status !== 'cancelled' && last.task.status !== 'failed')) return null
-  const state = await workspaceState(project.root, target)
+  const state = await workspaceState(project.root, target, project)
   const before = new Set(last.run.trunkDirtyBefore ?? [])
   const left = [...state.dirtyFiles, ...state.untrackedFiles].filter((f) => !before.has(f))
   if (left.length === 0) return null
@@ -934,7 +934,7 @@ async function scanLooseEndsInternal(): Promise<LooseEnd[]> {
       new Map(projectTasks.map((task) => [task.seq, task]))
     ).catch(() => new Map<string, BranchVerdict>())
     for (const path of members) {
-      const state = await workspaceState(path, policy.landingTarget)
+      const state = await workspaceState(path, policy.landingTarget, project)
       const taskSeq = taskSeqFromBranch(state.branch)
       const closedStashes = (state.stashBranches ?? []).filter((branch) => {
         const stashTaskSeq = taskSeqFromBranch(branch)
@@ -971,7 +971,7 @@ async function scanLooseEndsInternal(): Promise<LooseEnd[]> {
       let ahead = known && known.ahead >= 0 ? known.ahead : -1
       if (ahead < 0 && state.branch) {
         try {
-          ahead = await commitsOnlyOn(path, state.branch, policy.landingTarget)
+          ahead = await commitsOnlyOn(path, state.branch, policy.landingTarget, [], undefined, project)
         } catch {
           ahead = state.unlandedCommits
         }

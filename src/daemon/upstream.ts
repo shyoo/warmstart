@@ -324,7 +324,7 @@ export async function syncFromUpstream(projectId: string): Promise<UpstreamSyncR
   if ((await tryGit(root, ['rev-parse', '--verify', '--quiet', `refs/remotes/${from}`])) === null) {
     throw new Error(`\`${from}\` does not exist, so there is nothing to sync from`)
   }
-  const notReady = await trunkNotReady(root, target)
+  const notReady = await trunkNotReady(root, target, project)
   if (notReady) throw new Error(`${notReady}. Nothing was merged`)
   // ⚠️ A merge on top of a local branch behind its own fork would push as a non-fast-forward, or bury
   // the fork's newer commits under one more merge. Bringing the fork in first is a person's call.

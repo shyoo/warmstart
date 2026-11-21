@@ -1951,7 +1951,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // writing will either ignore it or, worse, treat the branch as somebody else's and start again —
   // which is precisely what t91 and t92 did on 2026-09-01, at 13.3M tokens for one of them, back when
   // the work went to a stash instead and nothing mentioned that either.
-  const rescued = branch ? await rescueAtTip(cwd) : null
+  const rescued = branch ? await rescueAtTip(cwd, project ?? undefined) : null
   // ⚠️ The agent is always told (`rescueNotice` below); the thread only when `announceRescue` has
   // not already said it. t753 (2026-09-26) read the same *"Rescued 22 uncommitted file(s) as
   // 802d4885"* twice, 50 seconds apart — once when the slot was parked, once when it was claimed.
@@ -4380,7 +4380,7 @@ async function landCompletion(
     // each read as 15 commits with none of their own) until t731 showed the same miscount on
     // `commit-and-merge`: an answer-only branch read as the trunk's 5 unpushed commits, was "landed",
     // and was reported as landing t729's commit.
-    const state = await workspaceState(held.workspace.path, landingTargetFor(task, project))
+    const state = await workspaceState(held.workspace.path, landingTargetFor(task, project), project)
     // ⛔ Read **before** anything lands. `landTask` fast-forwards the trunk itself on a project with
     // no remote, so a reading taken afterwards would report the tool's own push as the movement it
     // is looking for — a tripwire that fires on its own footsteps is worse than none.
@@ -4507,7 +4507,7 @@ async function landCompletion(
       //    aborts on conflict — correctly, because nobody holds that workspace — and an agent handed
       //    an aborted rebase has to reproduce it before it can begin. This one finds the markers
       //    already in its tree.
-      const begun = await beginConflictResolution(held.workspace.path, decision.base)
+      const begun = await beginConflictResolution(held.workspace.path, decision.base, project, task.branch)
       if (begun.resolved) {
         // ⭐ Another task landed between the probe and here and took the conflict with it. Nothing to
         //    ask, and ⛔ nothing to *mark* — a task that was never asked keeps its one ask.
@@ -4533,7 +4533,7 @@ async function landCompletion(
           //    refuses — so a slot abandoned in this state is one slot fewer for the fleet until
           //    somebody notices by hand.
           log.warn(`could not send the conflict instruction for t${task.seq}:`, err)
-          await abortRebase(held.workspace.path)
+          await abortRebase(held.workspace.path, project)
           addMessage(task.id, 'system', 'Could not reach the session — rebase put back, over to you', null, [], {
             event: 'finish.held',
             detail:
@@ -4610,7 +4610,7 @@ async function landCompletion(
       //    for a task that never reached a workspace.
       // ⚠️ `state.landedRef`, not the local target: it is the ref `decideFinish` just compared
       //    against, and the message must name the same one the decision used.
-      const retired = await finishWithoutLanding(held.workspace.path, task.branch, state.landedRef)
+      const retired = await finishWithoutLanding(held.workspace.path, task.branch, state.landedRef, project)
       addMessage(task.id, 'system', 'Finished — nothing to land', null, [], {
         detail: `${decision.reason}${retired.note}`
       })
@@ -4624,7 +4624,7 @@ async function landCompletion(
       // nothing of its own and the tree is clean — the same licence `nothing-to-land` retires on.
       const retired =
         decision.kind === 'done' && finishPolicy === 'report-only'
-          ? await finishWithoutLanding(held.workspace.path, task.branch, landingTargetFor(task, project))
+          ? await finishWithoutLanding(held.workspace.path, task.branch, landingTargetFor(task, project), project)
           : null
       const said = `${why}${retired?.note ?? ''}`
       addMessage(task.id, 'system', `Finished — ${oneLine(why)}`, null, [], {

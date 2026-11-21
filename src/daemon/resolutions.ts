@@ -380,10 +380,10 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
   // about a checkout that was right there. Read only while the trunk is on the target: on any other
   // branch it is the operator's own work, not this conversation's.
   const trunk = held === null && resolveWorkspaceMode(task, project).mode === 'trunk'
-  const trunkState = trunk ? await workspaceState(project.root, target).catch(() => null) : null
+  const trunkState = trunk ? await workspaceState(project.root, target, project).catch(() => null) : null
   const state =
     held !== null
-      ? await workspaceState(held.path, target)
+      ? await workspaceState(held.path, target, project)
       : trunk
         ? trunkState?.branch === target
           ? trunkState
@@ -422,7 +422,7 @@ export async function pendingWorkFor(taskId: string): Promise<PendingWork> {
     // committed, so it is counted: zero draws nothing, more draws Land, which borrows a workspace.
     // ⚠️ A listing that fails, or a count that throws, is still no reading and keeps the warning.
     if (branch && (await branchCheckedOutAnywhere(project, branch)) === false) {
-      const unlanded = await commitsOnlyOn(project.root, branch, target).catch(() => null)
+      const unlanded = await commitsOnlyOn(project.root, branch, target, [], undefined, project).catch(() => null)
       if (unlanded !== null) {
         return { ...none, supported: true, branch, unclaimed: true, unlandedCommits: unlanded }
       }
@@ -885,7 +885,7 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
     if (!prepared.ok) return didNotLand(prepared.error ?? 'could not prepare a workspace')
 
     const policy = policyFor(project)
-    const state = await workspaceState(workspace.path, landingTargetFor(task, project))
+    const state = await workspaceState(workspace.path, landingTargetFor(task, project), project)
     // ⛔ The same decision as a first completion, not a shortcut past it. A branch reaching this by
     // a button press gets the identical bar: authority, checks, a clean tree, real commits.
     const decision = decideFinish({ task, project, state, hasChecks: policy.check.length > 0 })
@@ -1097,7 +1097,7 @@ export async function retryQueuedLandings(now = Date.now()): Promise<number> {
       continue
     }
     const leased = trunkOccupiedBy(project, task.id)
-    const busy = leased ?? (await trunkNotReady(project.root, landingTargetFor(task, project)))
+    const busy = leased ?? (await trunkNotReady(project.root, landingTargetFor(task, project), project))
     if (busy) {
       if (busy.startsWith('the trunk could not be read:')) {
         trunkHolds.delete(task.id)

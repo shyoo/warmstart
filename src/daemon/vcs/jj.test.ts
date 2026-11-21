@@ -340,5 +340,125 @@ describe.skipIf(!jjHost.available)(`jjDriver colocated integration (${jjHost.rea
     expect(existsSync(wsPath)).toBe(false)
     const afterRemove = await jjDriver.listWorkspaces(project)
     expect(afterRemove.some((w) => samePath(w.path, wsPath))).toBe(false)
-  })
+  }, 90_000)
+
+  it('supports empty-branch catching up, trunk checks, dirty rescue, reversible rebase, and fast-forward', async () => {
+    const bareRemote = join(shortDir, 'b2.git')
+    mkdirSync(bareRemote, { recursive: true })
+    git(bareRemote, 'init', '--bare', '--initial-branch=main')
+
+    const project = initColocatedProject('r2')
+    git(project.root, 'remote', 'add', 'origin', bareRemote)
+    git(project.root, 'push', '-u', 'origin', 'main')
+
+    // Put trunk @ on a clean empty undescribed child of main (how jj leaves a trunk working copy).
+    runJjSync(project.root, 'new', 'main')
+    expect(await jjDriver.currentBranch(project.root)).toBeNull()
+    expect(await jjDriver.trunkBranch(project.root, 'main')).toBe('main')
+    expect(await jjDriver.trunkNotReady(project.root, 'main')).toBeNull()
+
+    // Dirty undescribed trunk @ blocks trunkNotReady; switching trunk @ to another bookmark blocks too.
+    writeFileSync(join(project.root, 'scratch.txt'), 'uncommitted trunk edit\n')
+    const dirtyReason = await jjDriver.trunkNotReady(project.root, 'main')
+    expect(dirtyReason).toContain('uncommitted file(s)')
+    expect(dirtyReason).toContain('scratch.txt')
+    rmSync(join(project.root, 'scratch.txt'))
+    // Re-snapshot clean trunk before next check.
+    runJjSync(project.root, 'status')
+    expect(await jjDriver.trunkNotReady(project.root, 'main')).toBeNull()
+
+    // Secondary workspace with an untouched empty task bookmark reads 0 unlanded commits.
+    const wsPath = join(shortDir, 'w2-land')
+    await jjDriver.addWorkspace(project, wsPath, 'main')
+    await jjDriver.switchBranch(wsPath, 'warmstart/t-empty', 'main')
+    expect(await jjDriver.commitsOnlyOn(wsPath, 'warmstart/t-empty', 'main')).toBe(0)
+    expect(await jjDriver.hasUncommittedChanges(wsPath)).toBe(false)
+
+    // Advance main and verify catchUpEmptyBranch moves the empty task bookmark forward.
+    writeFileSync(join(project.root, 'main-move.txt'), 'main v1\n')
+    runJjSync(project.root, 'describe', '-m', 'advance main')
+    runJjSync(project.root, 'bookmark', 'set', 'main', '-r', '@')
+    runJjSync(project.root, 'new', 'main')
+    const movedMainSha = git(project.root, 'rev-parse', 'main')
+
+    await jjDriver.catchUpEmptyBranch(wsPath, 'warmstart/t-empty', 'main')
+    expect(git(wsPath, 'rev-parse', 'warmstart/t-empty^')).toBe(movedMainSha)
+    expect(existsSync(join(wsPath, 'main-move.txt'))).toBe(true)
+    expect(await jjDriver.commitsOnlyOn(wsPath, 'warmstart/t-empty', 'main')).toBe(0)
+
+    // Write work on wsPath without describing it: hasUncommittedChanges is true and rescueDirty
+    // stamps a RESCUE_TRAILER in-place; once described by the agent, hasUncommittedChanges is false.
+    writeFileSync(join(wsPath, 'work.txt'), 'uncommitted task work\n')
+    expect(await jjDriver.hasUncommittedChanges(wsPath)).toBe(true)
+    const rescuedInPlace = await jjDriver.rescueDirty(wsPath, 'warmstart/t-empty')
+    expect(rescuedInPlace).not.toBeNull()
+    expect(rescuedInPlace?.files).toBe(1)
+    expect(await jjDriver.rescue(wsPath)).toEqual({ sha: rescuedInPlace!.sha, files: 1 })
+    expect(await jjDriver.hasUncommittedChanges(wsPath)).toBe(false)
+
+    // Amend into a real agent commit without rescue trailer on warmstart/t-work.
+    await jjDriver.switchBranch(wsPath, 'warmstart/t-work', 'main')
+    writeFileSync(join(wsPath, 'feature.txt'), 'clean task work\n')
+    runJjSync(wsPath, 'describe', '-m', 'feat: add feature.txt')
+    expect(await jjDriver.rescue(wsPath)).toBeNull()
+    expect(await jjDriver.hasUncommittedChanges(wsPath)).toBe(false)
+    expect(await jjDriver.commitsOnlyOn(wsPath, 'warmstart/t-work', 'main')).toBe(1)
+
+    // Advance main non-conflictingly, rebase warmstart/t-work, then fastForwardTrunk.
+    writeFileSync(join(project.root, 'other.txt'), 'other main file\n')
+    runJjSync(project.root, 'describe', '-m', 'main unrelated')
+    runJjSync(project.root, 'bookmark', 'set', 'main', '-r', '@')
+    runJjSync(project.root, 'new', 'main')
+
+    const cleanRebase = await jjDriver.rebaseBranch(wsPath, 'warmstart/t-work', 'main')
+    expect(cleanRebase).toEqual({ ok: true })
+    const featureSha = git(wsPath, 'rev-parse', 'warmstart/t-work')
+    await jjDriver.fastForwardTrunk(project, 'main', 'warmstart/t-work', featureSha)
+    expect(git(project.root, 'rev-parse', 'main')).toBe(featureSha)
+    expect(existsSync(join(project.root, 'feature.txt'))).toBe(true)
+    expect(await jjDriver.trunkNotReady(project.root, 'main')).toBeNull()
+
+    // pushToTarget pushes a bookmark to origin/main and retireBranch removes it cleanly.
+    await jjDriver.switchBranch(wsPath, 'warmstart/t-push', 'main')
+    writeFileSync(join(wsPath, 'pushed.txt'), 'to remote main\n')
+    runJjSync(wsPath, 'describe', '-m', 'feat: push to main')
+    expect((await jjDriver.rebaseBranch(wsPath, 'warmstart/t-push', 'main')).ok).toBe(true)
+    const pushedSha = git(wsPath, 'rev-parse', 'warmstart/t-push')
+    await jjDriver.pushToTarget(wsPath, 'origin', 'warmstart/t-push', 'main')
+    expect(git(bareRemote, 'rev-parse', 'refs/heads/main')).toBe(pushedSha)
+    expect(await jjDriver.retireBranch(wsPath, project, 'warmstart/t-push')).toBe(true)
+    expect(await jjDriver.branchExists(project, 'warmstart/t-push')).toBe(false)
+
+    // Planner-branch fastForwardBranch + compare-and-swap check.
+    await jjDriver.createBranch(project, 'warmstart/plan', 'main')
+    const planOldSha = git(project.root, 'rev-parse', 'warmstart/plan')
+    await jjDriver.switchBranch(wsPath, 'warmstart/child', 'warmstart/plan')
+    writeFileSync(join(wsPath, 'child.txt'), 'child piece\n')
+    runJjSync(wsPath, 'describe', '-m', 'feat: child')
+    const childSha = git(wsPath, 'rev-parse', 'warmstart/child')
+    await expect(
+      jjDriver.fastForwardBranch(project, wsPath, 'warmstart/plan', childSha, '0'.repeat(40))
+    ).rejects.toThrow(/moved/)
+    await jjDriver.fastForwardBranch(project, wsPath, 'warmstart/plan', childSha, planOldSha)
+    expect(git(project.root, 'rev-parse', 'warmstart/plan')).toBe(childSha)
+
+    // Rebase conflict reverts via jj op revert and conflictedPaths reports stored conflict paths.
+    await jjDriver.switchBranch(wsPath, 'warmstart/conflict', 'main')
+    writeFileSync(join(wsPath, 'feature.txt'), 'branch side\n')
+    runJjSync(wsPath, 'describe', '-m', 'branch edit feature')
+    writeFileSync(join(project.root, 'feature.txt'), 'trunk side\n')
+    runJjSync(project.root, 'describe', '-m', 'trunk edit feature')
+    runJjSync(project.root, 'bookmark', 'set', 'main', '-r', '@')
+    runJjSync(project.root, 'new', 'main')
+
+    const conflictedRebase = await jjDriver.rebaseBranch(wsPath, 'warmstart/conflict', 'main')
+    expect(conflictedRebase.ok).toBe(false)
+    expect(await jjDriver.hasConflicts(wsPath, 'warmstart/conflict')).toBe(false)
+
+    // Re-describe before forcing a stored conflict so jj produces a distinct commit SHA even within the same second.
+    runJjSync(wsPath, 'describe', '-r', 'warmstart/conflict', '-m', 'branch edit feature (stored conflict)')
+    runJjSync(wsPath, 'rebase', '-b', 'warmstart/conflict', '-d', 'main')
+    expect(await jjDriver.hasConflicts(wsPath, 'warmstart/conflict')).toBe(true)
+    expect(await jjDriver.conflictedPaths(wsPath, 'warmstart/conflict')).toEqual(['feature.txt'])
+  }, 90_000)
 })

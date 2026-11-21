@@ -1,10 +1,12 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FinishPolicy, LandingResult, Project } from '@shared/tasks.js'
 import { messageBody } from './threadline.js'
+import { compareSemver, JJ_MIN_VERSION, jjDriver, parseJjVersion } from './vcs/jj.js'
+import { launchArgs, spawnEnv, which } from './which.js'
 
 /**
  * Landing a task that changed nothing.
@@ -882,15 +884,12 @@ describe('retiring an empty branch a person accepted', () => {
     expect(await landing.retireEmptyBranch(project, 'warmstart/t0-never-cut', 'main')).toBe(false)
   })
 
-  it.each(['none', 'jj'] as const)(
-    'takes the same non-branching path for vcs=%s without deleting the branch',
-    async (vcs) => {
-      const { project, root, branch } = seedBranch()
-      const nonGitProject: Project = { ...project, vcs }
-      expect(await landing.retireEmptyBranch(nonGitProject, branch, 'main')).toBe(false)
-      expect(exists(root, branch)).toBe(true)
-    }
-  )
+  it('takes the non-branching path for vcs=none without deleting the branch', async () => {
+    const { project, root, branch } = seedBranch()
+    const nonGitProject: Project = { ...project, vcs: 'none' }
+    expect(await landing.retireEmptyBranch(nonGitProject, branch, 'main')).toBe(false)
+    expect(exists(root, branch)).toBe(true)
+  })
 })
 
 describe('a task that did commit something', () => {
@@ -2312,29 +2311,316 @@ describe('post-landing commands', () => {
   }, 30_000)
 })
 
-describe('non-git and jj projects take the same landing path', () => {
-  it.each(['none', 'jj'] as const)(
-    'refuses landing for vcs=%s with the same non-git outcome',
-    async (vcs) => {
-      const branch = `warmstart/t910-${vcs}`
-      const { project, taskId, root } = seedTask(branch)
-      const nonGitProject: Project = { ...project, vcs }
+describe('non-git projects take the non-branching landing path', () => {
+  it('refuses landing for vcs=none with the non-git outcome', async () => {
+    const branch = 'warmstart/t910-none'
+    const { project, taskId, root } = seedTask(branch)
+    const nonGitProject: Project = { ...project, vcs: 'none' }
 
-      const result = await landing.landTask({
-        project: nonGitProject,
-        task: tasks.requireTask(taskId),
-        workspacePath: root,
-        branch,
-        policy: 'commit-and-merge'
-      })
+    const result = await landing.landTask({
+      project: nonGitProject,
+      task: tasks.requireTask(taskId),
+      workspacePath: root,
+      branch,
+      policy: 'commit-and-merge'
+    })
 
-      expect(result).toEqual({
-        strategy: 'leave-branch',
-        ok: false,
-        branch,
-        reason: 'project is not a git repository'
-      })
-      expect(tasks.requireTask(taskId).status).toBe('awaiting_human')
+    expect(result).toEqual({
+      strategy: 'leave-branch',
+      ok: false,
+      branch,
+      reason: 'project is not a git repository'
+    })
+    expect(tasks.requireTask(taskId).status).toBe('awaiting_human')
+  })
+})
+
+function probeJjHost(): { available: boolean; reason: string } {
+  const binary = which('jj')
+  if (!binary) return { available: false, reason: 'jj executable not found on PATH' }
+  try {
+    const launched = launchArgs(binary, ['--version'])
+    const out = execFileSync(launched.command, launched.args, {
+      env: spawnEnv(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    }).trim()
+    const parsed = parseJjVersion(out)
+    if (!parsed) return { available: false, reason: `unrecognized jj --version: ${out}` }
+    if (compareSemver(parsed, JJ_MIN_VERSION) < 0) {
+      return { available: false, reason: `jj ${parsed} < ${JJ_MIN_VERSION}` }
     }
-  )
+    return { available: true, reason: `jj ${parsed} available` }
+  } catch (err) {
+    return { available: false, reason: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+const jjHost = probeJjHost()
+
+describe.skipIf(!jjHost.available)(`colocated jj landing (${jjHost.reason})`, () => {
+  let jjDir: string
+
+  const jjExec = (cwd: string, ...args: string[]): string => {
+    const binary = which('jj')
+    if (!binary) throw new Error('jj binary unavailable')
+    const launched = launchArgs(binary, ['--no-pager', ...args])
+    return execFileSync(launched.command, launched.args, {
+      cwd,
+      env: spawnEnv(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    }).trim()
+  }
+
+  beforeAll(() => {
+    jjDir = realpathSync.native(mkdtempSync(join(tmpdir(), 'jjl-')))
+    if (jjDir.length > 88) {
+      throw new Error(`Temp directory too long for jj 0.46 106-char limit test fixture: ${jjDir}`)
+    }
+  })
+
+  afterAll(() => {
+    try {
+      rmSync(jjDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
+    } catch {
+      // Best-effort cleanup on Windows handles.
+    }
+  })
+
+  let jjSeq = 0
+  function makeJjProject(opts?: { withRemote?: boolean }): {
+    project: Project
+    root: string
+    bareRemote?: string
+  } {
+    jjSeq += 1
+    const name = `j${jjSeq}`
+    const root = join(jjDir, name)
+    mkdirSync(root, { recursive: true })
+    git(root, 'init', '--initial-branch=main')
+    git(root, 'config', 'user.name', 'agentyard test')
+    git(root, 'config', 'user.email', 'test@example.invalid')
+    mkdirSync(join(root, '.warmstart'), { recursive: true })
+    writeFileSync(
+      join(root, '.warmstart', 'project.json'),
+      JSON.stringify({
+        schema_version: 1,
+        name,
+        vcs: 'jj',
+        check: [],
+        landing: { strategy: opts?.withRemote ? 'auto-land' : 'merge-local', target: 'main' }
+      })
+    )
+    writeFileSync(join(root, 'README.md'), '# jj fixture\n')
+    git(root, 'add', '-A')
+    git(root, 'commit', '-m', 'initial')
+
+    let bareRemote: string | undefined
+    if (opts?.withRemote) {
+      bareRemote = join(jjDir, `b${jjSeq}.git`)
+      mkdirSync(bareRemote, { recursive: true })
+      git(bareRemote, 'init', '--bare', '--initial-branch=main')
+      git(root, 'remote', 'add', 'origin', bareRemote)
+      git(root, 'push', '-u', 'origin', 'main')
+    }
+
+    jjExec(root, 'git', 'init', '--colocate', root)
+    jjExec(root, 'config', 'set', '--repo', 'user.name', 'agentyard test')
+    jjExec(root, 'config', 'set', '--repo', 'user.email', 'test@example.invalid')
+    // Leave trunk @ as an empty undescribed child of main, matching colocated jj defaults.
+    jjExec(root, 'new', 'main')
+
+    const project = projects.addProject({ root })
+    return { project: { ...project, vcs: 'jj' }, root, bareRemote }
+  }
+
+  it('holds empty task bookmark via empty-commit guard and retires it cleanly on Human Complete', async () => {
+    const { project, root } = makeJjProject()
+    const ws = join(jjDir, `w${jjSeq}-empty`)
+    await jjDriver.addWorkspace(project, ws, 'main')
+    const branch = 'warmstart/t1-jj-empty'
+    await jjDriver.switchBranch(ws, branch, 'main')
+    const task = tasks.createTask({ title: 'jj empty', projectId: project.id, createdBy: { kind: 'human' } })
+
+    const res = await landing.landTask({
+      project,
+      task,
+      workspacePath: ws,
+      branch,
+      policy: 'commit-and-merge'
+    })
+    expect(res.ok).toBe(false)
+    expect(res.noCommits).toBe(true)
+
+    expect(await landing.retireEmptyBranch(project, branch, 'main')).toBe(true)
+    expect(await jjDriver.branchExists(project, branch)).toBe(false)
+    expect(existsSync(join(root, '.jj'))).toBe(true)
+  })
+
+  it('lands described @ work via merge-local onto detached trunk, and holds when trunk is dirty', async () => {
+    const { project, root } = makeJjProject()
+    const ws = join(jjDir, `w${jjSeq}-ml`)
+    await jjDriver.addWorkspace(project, ws, 'main')
+    const branch = 'warmstart/t2-jj-merge-local'
+    await jjDriver.switchBranch(ws, branch, 'main')
+    const task = tasks.createTask({ title: 'jj merge-local', projectId: project.id, createdBy: { kind: 'human' } })
+
+    writeFileSync(join(ws, 'Change.txt'), 'jj merge-local body\n')
+    jjExec(ws, 'describe', '-m', 'feat: Change.txt')
+
+    // Dirty trunk @ blocks with trunkBusy: true before moving anything.
+    writeFileSync(join(root, 'trunk-wip.txt'), 'dirty\n')
+    const busy = await landing.landTask({
+      project,
+      task,
+      workspacePath: ws,
+      branch,
+      policy: 'commit-and-merge'
+    })
+    expect(busy.ok).toBe(false)
+    expect(busy.trunkBusy).toBe(true)
+    expect(busy.reason).toContain('trunk-wip.txt')
+
+    rmSync(join(root, 'trunk-wip.txt'))
+    jjExec(root, 'status')
+
+    // Clean trunk (with colocated detached HEAD + empty @ over main) fast-forwards and retires branch.
+    const landed = await landing.landTask({
+      project,
+      task,
+      workspacePath: ws,
+      branch,
+      policy: 'commit-and-merge'
+    })
+    expect(landed.ok, landed.reason).toBe(true)
+    expect(landed.strategy).toBe('merge-local')
+    expect(landed.pushed).toBe(false)
+    expect(landed.branchDeleted).toBe(true)
+    expect(readFileSync(join(root, 'Change.txt'), 'utf8')).toBe('jj merge-local body\n')
+    expect(await jjDriver.branchExists(project, branch)).toBe(false)
+  })
+
+  it('pushes to origin via auto-land and fast-forwards planner branches via merge-branch', async () => {
+    const { project, root, bareRemote } = makeJjProject({ withRemote: true })
+    const ws1 = join(jjDir, `w${jjSeq}-auto`)
+    await jjDriver.addWorkspace(project, ws1, 'main')
+    const branch = 'warmstart/t3-jj-auto'
+    await jjDriver.switchBranch(ws1, branch, 'main')
+    const task = tasks.createTask({ title: 'jj auto-land', projectId: project.id, createdBy: { kind: 'human' } })
+
+    writeFileSync(join(ws1, 'Remote.txt'), 'auto-landed\n')
+    jjExec(ws1, 'describe', '-m', 'feat: Remote.txt')
+
+    const landed = await landing.landTask({
+      project,
+      task,
+      workspacePath: ws1,
+      branch,
+      policy: 'commit-and-push'
+    })
+    expect(landed.ok, landed.reason).toBe(true)
+    expect(landed.strategy).toBe('auto-land')
+    expect(landed.pushed).toBe(true)
+    expect(landed.branchDeleted).toBe(true)
+    expect(git(bareRemote!, 'rev-parse', 'refs/heads/main')).toBe(landed.commit)
+
+    // Planner branch via merge-branch when parked.
+    const planBranch = 'warmstart/plan-jj'
+    await jjDriver.createBranch(project, planBranch, 'main')
+    const wsChild = join(jjDir, `w${jjSeq}-child`)
+    await jjDriver.addWorkspace(project, wsChild, 'main')
+    const childBranch = 'warmstart/t4-jj-child'
+    await jjDriver.switchBranch(wsChild, childBranch, planBranch)
+    writeFileSync(join(wsChild, 'Child.txt'), 'piece\n')
+    jjExec(wsChild, 'describe', '-m', 'feat: child')
+    const childTask = tasks.createTask({
+      title: 'jj child',
+      projectId: project.id,
+      createdBy: { kind: 'human' },
+      landingTarget: planBranch
+    })
+
+    const childRes = await landing.landTask({
+      project,
+      task: childTask,
+      workspacePath: wsChild,
+      branch: childBranch,
+      policy: 'commit-and-merge'
+    })
+    expect(childRes.ok, childRes.reason).toBe(true)
+    expect(childRes.strategy).toBe('merge-branch')
+    expect(git(root, 'rev-parse', planBranch)).toBe(childRes.commit)
+    expect(await jjDriver.branchExists(project, childBranch)).toBe(false)
+  })
+
+  it('refuses stored conflicts before rebase and reverts conflicting rebases cleanly', async () => {
+    const { project, root } = makeJjProject()
+    const ws = join(jjDir, `w${jjSeq}-conflict`)
+    await jjDriver.addWorkspace(project, ws, 'main')
+    const branch = 'warmstart/t5-jj-conflict'
+    await jjDriver.switchBranch(ws, branch, 'main')
+    const task = tasks.createTask({ title: 'jj conflict', projectId: project.id, createdBy: { kind: 'human' } })
+
+    writeFileSync(join(ws, 'README.md'), '# branch edit\n')
+    jjExec(ws, 'describe', '-m', 'branch edit README')
+
+    writeFileSync(join(root, 'README.md'), '# trunk edit\n')
+    jjExec(root, 'describe', '-m', 'trunk edit README')
+    jjExec(root, 'bookmark', 'set', 'main', '-r', '@')
+    jjExec(root, 'new', 'main')
+
+    const failed = await landing.landTask({
+      project,
+      task,
+      workspacePath: ws,
+      branch,
+      policy: 'commit-and-merge'
+    })
+    expect(failed.ok).toBe(false)
+    expect(failed.reason).toMatch(/conflict/i)
+    // op revert restored ws clean without leaving stored conflicts behind.
+    expect(await jjDriver.hasConflicts(ws, branch)).toBe(false)
+
+    // Re-describe before forcing a stored conflict so jj creates a distinct commit hash even within the same second.
+    jjExec(ws, 'describe', '-r', branch, '-m', 'branch edit README (stored conflict)')
+    jjExec(ws, 'rebase', '-b', branch, '-d', 'main')
+    expect(await jjDriver.hasConflicts(ws, branch)).toBe(true)
+    const refused = await landing.landTask({
+      project,
+      task: tasks.requireTask(task.id),
+      workspacePath: ws,
+      branch,
+      policy: 'commit-and-merge'
+    })
+    expect(refused.ok).toBe(false)
+    expect(refused.reason).toContain('unresolved stored conflicts')
+    expect(refused.reason).toContain('README.md')
+  }, 60_000)
+
+  it('starts stored-conflict resolution by rebasing and cleanly reverts on abortRebase', async () => {
+    const { project, root } = makeJjProject()
+    const ws = join(jjDir, `w${jjSeq}-res`)
+    await jjDriver.addWorkspace(project, ws, 'main')
+    const branch = 'warmstart/t6-jj-resolve'
+    await jjDriver.switchBranch(ws, branch, 'main')
+
+    writeFileSync(join(ws, 'README.md'), '# branch side\n')
+    jjExec(ws, 'describe', '-m', 'branch edit README')
+
+    writeFileSync(join(root, 'README.md'), '# trunk side\n')
+    jjExec(root, 'describe', '-m', 'trunk edit README')
+    jjExec(root, 'bookmark', 'set', 'main', '-r', '@')
+    jjExec(root, 'new', 'main')
+
+    expect(await jjDriver.hasConflicts(ws, branch)).toBe(false)
+    const begun = await landing.beginConflictResolution(ws, 'main', project, branch)
+    expect(begun).toEqual({ resolved: false, paths: ['README.md'] })
+    expect(await jjDriver.hasConflicts(ws, branch)).toBe(true)
+
+    await landing.abortRebase(ws, project)
+    expect(await jjDriver.hasConflicts(ws, branch)).toBe(false)
+  }, 60_000)
 })

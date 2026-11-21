@@ -1223,6 +1223,15 @@ t903 their success went through the same sentence as a merge, and t902's thread 
 `auto-land` → `commit-and-push`, `leave-branch` → `await-human`, `pull-request` unchanged. Write
 `finish` in new files. Where both appear, `finish` wins.
 
+## Colocated Jujutsu (`jj`) projects
+
+Every strategy (`verify-only`, `merge-local`, `merge-branch`, `auto-land`, `pull-request`, `trunk`) and landing preflight (`readMergeability`, `beginConflictResolution`, `abortRebase`, `trunkNotReady`, `retireEmptyBranch`, `finishWithoutLanding`) routes VCS operations through `driverFor(project)` (`src/daemon/vcs/`), gating mechanics on `driver.capabilities` rather than branching on VCS names:
+
+- **Detached trunk `HEAD`:** Under colocated `jj`, the trunk working copy (`@`) sits as an empty, undescribed commit on top of the local target bookmark rather than pointing `HEAD` at `refs/heads/<target>`. `trunkBranch` resolves the effective target bookmark across `@` and `@-`, `trunkNotReady` treats undescribed non-empty files in trunk `@` as dirty (blocking `merge-local`), and `fastForwardTrunk` moves the target bookmark and refreshes the trunk working tree (`jj new <target>`) when `@` is empty and undescribed.
+- **Empty bookmark creation:** `switchBranch` cuts a fresh empty undescribed change with the task bookmark attached (`empty() & description(exact:"")`). Both `commitsOnlyOn` and `workspaceState` ignore empty undescribed commits so untouched task branches hit the empty-commit guard and `retireEmptyBranch` cleanly.
+- **Auto-snapshot & dirty protection:** Before running `rebaseBranch` or landing checks, `rescueDirty` describes an undescribed non-empty `@` in place with `Warmstart-Rescue`, which blocks landing just like git's uncommitted-change and rescue-tip guards. Already-described changes are real commits and are never re-stamped.
+- **Stored conflicts & reversible rebases:** `jjDriver.hasConflicts` / `conflictedPaths` detect first-class stored conflicts so `canLand` refuses conflicted commits before touching trunk or remotes (`storedConflicts`). On a conflicting `rebaseBranch`, `jjDriver` restores the pre-rebase operation via `jj op revert` (never blind `jj undo` or `reset --hard`), leaving the workspace clean and the task branch intact.
+
 ## Why it is built this way
 
 Measured on 2026-08-28, from one task (t5) that produced both failures this page exists to prevent:

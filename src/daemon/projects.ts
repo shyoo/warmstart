@@ -225,13 +225,24 @@ export function reorderProjects(ids: string[]): Project[] {
   return result
 }
 
+function isBranchVcs(vcs: Vcs | undefined): vcs is 'git' | 'jj' {
+  return vcs === 'git' || vcs === 'jj'
+}
+
+function reloadedVcs(current: Vcs, configured: Vcs | undefined): Vcs {
+  if (!configured) return current
+  // Local git <-> jj migrations keep `projects.vcs` per-machine without rewriting `.warmstart/project.json`.
+  if (isBranchVcs(current) && isBranchVcs(configured)) return current
+  return configured
+}
+
 /** Re-read the committed config from disk. Called on demand and before dispatching into a project. */
 export function reloadProject(id: string): Project {
   const project = requireProject(id)
   const { config, path } = readProjectConfig(project.root)
   db()
     .prepare('update projects set config_json = ?, config_path = ?, vcs = ? where id = ?')
-    .run(JSON.stringify(config), path, config.vcs ?? project.vcs, id)
+    .run(JSON.stringify(config), path, reloadedVcs(project.vcs, config.vcs), id)
   const updated = requireProject(id)
   emit({ type: 'project.changed', project: updated })
   return updated

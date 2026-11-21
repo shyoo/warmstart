@@ -25,14 +25,12 @@ export type { ModelClass } from './modelclass.js'
 export type Vcs = 'git' | 'jj' | 'none'
 
 /**
- * Whether this project uses git branches, worktrees, and git landing paths.
+ * Whether this project supports branches/bookmarks, workspace pools, and landing paths.
  *
- * ⚠️ A `'jj'` project returns `false` until the jj driver (plan §4.3 phase 2,
- * `transient_docs/t1393-jj-vcs-and-disk-plan_2026-11-15.md`) exists, so a `'jj'` project
- * behaves identically to `'none'` for now.
+ * Returns `true` for `'git'` and colocated `'jj'` projects (`VcsDriver` in `src/daemon/vcs/`).
  */
 export function projectUsesGitBranches(project: Pick<Project, 'vcs'> | null | undefined): boolean {
-  return project?.vcs === 'git'
+  return project?.vcs === 'git' || project?.vcs === 'jj'
 }
 
 /** Committed at `<project>/.warmstart/project.json`. Nothing secret goes in it. */

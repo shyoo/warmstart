@@ -26,7 +26,17 @@ import {
 } from './tasks.js'
 import { getSession } from './sessions.js'
 import { claimedByAnotherTask, landedCommits, recordTaskCommits } from './taskcommits.js'
-import { commitsOnlyOn, landedRef, parkOtherHolders, parkPooledHolders, repairTrunkConfig, rescueAtTip, trunkHolder, workspaceOnBranch } from './worktrees.js'
+import {
+  commitsOnlyOn,
+  landedRef,
+  parkOtherHolders,
+  parkPooledHolders,
+  rescueAtTip,
+  trunkHolder,
+  workspaceOnBranch,
+  workspaceState
+} from './worktrees.js'
+import { driverFor, gitDriver, type VcsDriver } from './vcs/index.js'
 import { launchArgs, spawnEnv, which } from './which.js'
 import { log } from './log.js'
 import { git, tryGit } from './git.js'
@@ -180,29 +190,43 @@ const UNCOMMITTED_REASON = 'the workspace has uncommitted changes'
  *
  * ⚠️ `keepsWorkspace` off is the old behaviour byte for byte: every line counts.
  */
-async function treeBlocksLanding(ctx: LandingContext): Promise<boolean> {
-  const status = await git(ctx.workspacePath, ['status', '--porcelain'])
-  if (status.length === 0) return false
-  if (!ctx.keepsWorkspace) return true
-  return status
-    .split(/\r?\n/)
-    .some((line) => line.trim().length > 0 && !line.startsWith('??'))
+function requireDriver(project: Project): VcsDriver {
+  const driver = driverFor(project)
+  if (!driver) throw new Error('project is not a git repository')
+  return driver
 }
 
-/**
- * Whether the branch tip is a commit **this tool** made, not one the agent wrote.
- *
- * ⛔ `rescueDirt` commits an interrupted run's uncommitted work onto its branch so the next run
- * inherits it (t91/t92, 2026-09-01). That is a rescue, not a result: nothing in it has been compiled,
- * and a clean working tree is exactly what it leaves behind — so `isClean` alone would wave it
- * through, and `auto-land` would push somebody's half-written afternoon onto the trunk.
- *
- * ⚠️ **Only the tip.** A rescue the agent then built on is ordinary history, and the checks that run
- * after the rebase are what judge the result. A tip that is *still* the rescue means the resumed run
- * added nothing of its own, and there is nothing here worth landing yet.
- */
-async function tipIsRescue(cwd: string): Promise<boolean> {
-  return (await rescueAtTip(cwd)) !== null
+async function resolveBranchTip(cwd: string, branch: string): Promise<string> {
+  return (
+    (await revParse(cwd, `refs/heads/${branch}`)) ??
+    (await revParse(cwd, branch)) ??
+    (await git(cwd, ['rev-parse', 'HEAD']))
+  )
+}
+
+async function storedConflictRefusal(ctx: LandingContext): Promise<{ ok: false; reason: string } | null> {
+  const driver = driverFor(ctx.project)
+  if (!driver?.capabilities.storedConflicts) return null
+  const rev = ctx.branch || landingTargetFor(ctx.task, ctx.project)
+  if (await driver.hasConflicts(ctx.workspacePath, rev)) {
+    const paths = await driver.conflictedPaths(ctx.workspacePath, rev)
+    const suffix = paths.length > 0 ? ` (${paths.join(', ')})` : ''
+    return {
+      ok: false,
+      reason: `\`${rev}\` has unresolved stored conflicts${suffix} — resolve them before landing`
+    }
+  }
+  return null
+}
+
+async function treeBlocksLanding(ctx: LandingContext): Promise<boolean> {
+  return requireDriver(ctx.project).hasUncommittedChanges(ctx.workspacePath, {
+    ignoreUntracked: ctx.keepsWorkspace
+  })
+}
+
+async function tipIsRescue(cwd: string, project?: Project): Promise<boolean> {
+  return (await rescueAtTip(cwd, project)) !== null
 }
 
 /**
@@ -291,19 +315,29 @@ export async function readMergeability(
   task?: Pick<Task, 'landingTarget'> | null
 ): Promise<MergeReading | null> {
   const target = landingTargetFor(task, project)
+  const driver = driverFor(project) ?? gitDriver
   try {
-    if (await rebaseInProgress(workspacePath)) {
+    if (driver.capabilities.storedConflicts) {
+      if (await driver.hasConflicts(workspacePath, branch)) {
+        return {
+          base: target,
+          clean: false,
+          conflictedPaths: await driver.conflictedPaths(workspacePath, branch),
+          rebaseInProgress: false
+        }
+      }
+    } else if (await rebaseInProgress(workspacePath)) {
       return {
         base: target,
         clean: false,
-        conflictedPaths: await conflictedPaths(workspacePath),
+        conflictedPaths: await conflictedPaths(workspacePath, project),
         rebaseInProgress: true
       }
     }
     const remote = await hasRemote(workspacePath)
     // ⚠️ Fetch first or this answers about a target from whenever the workspace was last updated,
     // which is the staleness that caused the conflict in the first place.
-    if (remote) await git(workspacePath, ['fetch', 'origin', '--prune'])
+    if (remote) await driver.fetch(workspacePath, 'origin', undefined, { prune: true })
     // ⛛ Through `landingBaseFor`, so this asks about the ref the landing will really use. Reading
     // `origin/<target>` under a policy that rebases onto the local one is how t59 was told a
     // conflicted branch was clean.
@@ -360,46 +394,43 @@ export function parseMergeTreeConflicts(stdout: string): string[] {
 }
 
 /** Paths git has marked unmerged in the index. */
-async function conflictedPaths(cwd: string): Promise<string[]> {
-  try {
-    const out = await git(cwd, ['diff', '--name-only', '--diff-filter=U'])
-    return out ? out.split('\n').map((l) => l.trim()).filter(Boolean) : []
-  } catch {
-    return []
-  }
+async function conflictedPaths(cwd: string, project?: Project, rev?: string): Promise<string[]> {
+  return ((project ? driverFor(project) : null) ?? gitDriver).conflictedPaths(cwd, rev)
 }
 
 /**
  * Start the rebase and **leave it conflicted** for the agent to finish.
- *
- * ⛔ This is the half of the fix that matters. `landTask` aborts on conflict — correctly, because
- * nobody is holding that workspace — and an agent asked to fix an aborted rebase has to reproduce it
- * before it can start. Here the session is still live and still holds the workspace, so the conflict
- * markers are left exactly where the agent will look for them and `git rebase --continue` finishes
- * the job.
- *
- * ⚠️ **Every caller must abort on every path that gives up.** A workspace left mid-rebase cannot be
- * parked — `git switch` refuses — so a slot abandoned in this state is a slot lost until somebody
- * notices. `abortRebase` below is that undo, and `parkWorkspace` calls it defensively too.
- *
- * ⭐ A rebase that unexpectedly *succeeds* is reported, not treated as an error: between the probe
- * and here another task can land and take the conflict with it.
  */
 export async function beginConflictResolution(
   workspacePath: string,
-  base: string
+  base: string,
+  project?: Project,
+  branch?: string
 ): Promise<{ resolved: boolean; paths: string[] }> {
+  const driver = (project ? driverFor(project) : null) ?? gitDriver
+  if (driver.capabilities.storedConflicts) {
+    const rev = branch ?? (await driver.currentBranch(workspacePath)) ?? '@'
+    if (await driver.hasConflicts(workspacePath, rev)) {
+      return { resolved: false, paths: await driver.conflictedPaths(workspacePath, rev) }
+    }
+    const res = await driver.rebaseBranch(workspacePath, rev, base, { keepOnConflict: true })
+    if (res.ok) return { resolved: true, paths: [] }
+    return {
+      resolved: false,
+      paths: res.conflictedPaths ?? (await driver.conflictedPaths(workspacePath, rev))
+    }
+  }
   try {
     await git(workspacePath, ['rebase', base])
     return { resolved: true, paths: [] }
   } catch {
-    return { resolved: false, paths: await conflictedPaths(workspacePath) }
+    return { resolved: false, paths: await conflictedPaths(workspacePath, project) }
   }
 }
 
 /** Undo `beginConflictResolution`, so the workspace can be parked again. Safe to call blind. */
-export async function abortRebase(workspacePath: string): Promise<void> {
-  await git(workspacePath, ['rebase', '--abort']).catch(() => undefined)
+export async function abortRebase(workspacePath: string, project?: Project): Promise<void> {
+  await ((project ? driverFor(project) : null) ?? gitDriver).abortRebase(workspacePath)
 }
 
 /**
@@ -450,18 +481,9 @@ function sameCommit(a: string, b: string): boolean {
   return x.length >= 7 && y.length >= 7 && (x.startsWith(y) || y.startsWith(x))
 }
 
-async function retireBranch(cwd: string, branch: string): Promise<boolean> {
-  try {
-    if ((await git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])) === branch) {
-      await git(cwd, ['switch', '--detach', await git(cwd, ['rev-parse', 'HEAD'])])
-    }
-    await git(cwd, ['branch', '-D', branch])
-    return true
-  } catch (err) {
-    // ⚠️ Still untidy rather than a failure, but said: t976's refusal left no trace at all (t977).
-    log.info(`kept ${branch}: ${errorMessage(err)}`)
-    return false
-  }
+async function retireBranch(cwd: string, branch: string, project?: Project): Promise<boolean> {
+  if (!project) return await gitDriver.retireBranch(cwd, { root: cwd } as Project, branch)
+  return await requireDriver(project).retireBranch(cwd, project, branch)
 }
 
 /**
@@ -484,9 +506,10 @@ async function retireBranch(cwd: string, branch: string): Promise<boolean> {
 export async function finishWithoutLanding(
   workspacePath: string,
   branch: string,
-  base: string
+  base: string,
+  project?: Project
 ): Promise<{ deleted: boolean; note: string }> {
-  const deleted = await retireBranch(workspacePath, branch)
+  const deleted = await retireBranch(workspacePath, branch, project)
   return {
     deleted,
     note: deleted
@@ -517,13 +540,14 @@ export async function retireEmptyBranch(
   target: string
 ): Promise<boolean> {
   if (!projectUsesGitBranches(project) || branch === target) return false
+  const driver = requireDriver(project)
   const kept = (why: string): false => {
     log.info(`kept ${branch}: ${why}`)
     return false
   }
   try {
     if (!(await tryGit(project.root, ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`]))) return false
-    const ahead = await commitsOnlyOn(project.root, branch, target)
+    const ahead = await commitsOnlyOn(project.root, branch, target, [], undefined, project)
     if (ahead !== 0) return kept(`it carries ${ahead} commit(s) the trunk does not have`)
     const stashes = await stashesFrom(project.root, branch)
     if (stashes > 0) return kept(`${stashes} stash(es) were taken off it`)
@@ -531,14 +555,13 @@ export async function retireEmptyBranch(
     if (holder) {
       const loose = holder.dirtyFiles.length + holder.untrackedFiles.length
       if (loose > 0) return kept(`${holder.path} has it checked out with ${loose} uncommitted file(s)`)
-      return await retireBranch(holder.path, branch)
+      return await retireBranch(holder.path, branch, project)
     }
     // ⚠️ The operator's own checkout is never switched: a trunk sitting on a task branch is theirs.
-    if ((await tryGit(project.root, ['rev-parse', '--abbrev-ref', 'HEAD'])) === branch) {
+    if ((await driver.trunkBranch(project.root, branch).catch(() => null)) === branch) {
       return kept('the project checkout itself has it checked out')
     }
-    await git(project.root, ['branch', '-D', branch])
-    return true
+    return await driver.retireBranch(project.root, project, branch)
   } catch (err) {
     log.warn(`could not retire the empty branch ${branch}: ${errorMessage(err)}`)
     return false
@@ -554,28 +577,40 @@ export async function retireEmptyBranch(
  * would have switched out from under. A branch name is not a location. A person reading this needs
  * to know whether their work survived and where to go and look for it.
  */
-async function whereTheWorkIs(cwd: string, branch: string, target: string): Promise<string> {
-  const dirty = porcelainNames(await git(cwd, ['status', '--porcelain']))
+async function whereTheWorkIs(
+  cwd: string,
+  branch: string,
+  target: string,
+  project?: Project
+): Promise<string> {
+  const state = await workspaceState(cwd, target, project)
+  const dirty = [...state.dirtyFiles, ...state.untrackedFiles]
   // ⛔ Not on a remote **and** not on the local target (t697). t691's notice said *"4 commit(s)"*
   // for a branch one commit ahead of `main`: local `main` was 3 unpushed commits ahead of
   // `origin/main`, and those read as the task's own — as if the branch had been cut from behind.
-  const carriedOn = async (exclude: string[]): Promise<string[]> =>
-    (await git(cwd, ['log', '--oneline', branch, '--not', '--remotes', ...exclude, '--']))
-      .split('\n')
-      .filter(Boolean)
-  const carried = await carriedOn([target]).catch(() => carriedOn([]))
+  const driver = (project ? driverFor(project) : null) ?? gitDriver
+  let carriedCount: number
+  if (!driver.capabilities.storedConflicts) {
+    const carriedOn = async (exclude: string[]): Promise<string[]> =>
+      (await git(cwd, ['log', '--oneline', branch, '--not', '--remotes', ...exclude, '--']))
+        .split('\n')
+        .filter(Boolean)
+    carriedCount = (await carriedOn([target]).catch(() => carriedOn([]))).length
+  } else {
+    carriedCount = await commitsOnlyOn(cwd, branch, target, [], undefined, project).catch(() => 0)
+  }
 
   if (dirty.length === 0) {
-    return carried.length > 0
-      ? `${carried.length} commit(s) are on \`${branch}\`, which is intact.`
+    return carriedCount > 0
+      ? `${carriedCount} commit(s) are on \`${branch}\`, which is intact.`
       : `⚠️ Nothing was committed and nothing is uncommitted — \`${branch}\` holds no work.`
   }
 
   const named = dirty.slice(0, 5).join(', ')
   const more = dirty.length > 5 ? `, +${dirty.length - 5} more` : ''
   const alsoCommitted =
-    carried.length > 0
-      ? ` \`${branch}\` does hold ${carried.length} earlier commit(s).`
+    carriedCount > 0
+      ? ` \`${branch}\` does hold ${carriedCount} earlier commit(s).`
       : ` \`${branch}\` holds no commits.`
 
   return (
@@ -747,6 +782,8 @@ export const verifyOnly: LandingStrategy = {
 
   async canLand(ctx) {
     if (!projectUsesGitBranches(ctx.project)) return { ok: false, reason: 'project is not a git repository' }
+    const conflicted = await storedConflictRefusal(ctx)
+    if (conflicted) return conflicted
     if (await treeBlocksLanding(ctx)) {
       return { ok: false, reason: UNCOMMITTED_REASON }
     }
@@ -808,10 +845,12 @@ export const mergeLocal: LandingStrategy = {
     if (ctx.task.verification === 'required') {
       return { ok: false, reason: 'task requires human verification before landing' }
     }
+    const conflicted = await storedConflictRefusal(ctx)
+    if (conflicted) return conflicted
     if (await treeBlocksLanding(ctx)) {
       return { ok: false, reason: UNCOMMITTED_REASON }
     }
-    if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
+    if (await tipIsRescue(ctx.workspacePath, ctx.project)) return { ok: false, reason: RESCUE_TIP_REASON }
     // ⛔ Preflight: refuse before the rebase and the project checks run when the trunk cannot
     // take the merge. t259 failed here: a dirty trunk was discovered only after both had run,
     // so the wait was spent and the reason named a count instead of the files.
@@ -820,7 +859,7 @@ export const mergeLocal: LandingStrategy = {
     if (landingTargetFor(ctx.task, ctx.project) === policyFor(ctx.project).landingTarget) {
       const blocked =
         trunkOccupiedBy(ctx.project, ctx.task.id) ??
-        (await trunkNotReady(ctx.project.root, landingTargetFor(ctx.task, ctx.project)))
+        (await trunkNotReady(ctx.project.root, landingTargetFor(ctx.task, ctx.project), ctx.project))
       if (blocked) {
         const isError = blocked.startsWith('the trunk could not be read:')
         return {
@@ -838,6 +877,7 @@ export const mergeLocal: LandingStrategy = {
 
   async land(ctx): Promise<LandingResult> {
     const target = landingTargetFor(ctx.task, ctx.project)
+    const driver = requireDriver(ctx.project)
 
     upsertResource({
       id: landResourceId(ctx.project.id),
@@ -868,7 +908,8 @@ export const mergeLocal: LandingStrategy = {
       // trunk can equally become dirty while the checks run.
       if (target === policyFor(ctx.project).landingTarget) {
         const blockedEarly =
-          trunkOccupiedBy(ctx.project, ctx.task.id) ?? (await trunkNotReady(ctx.project.root, target))
+          trunkOccupiedBy(ctx.project, ctx.task.id) ??
+          (await trunkNotReady(ctx.project.root, target, ctx.project))
         if (blockedEarly) {
           const isError = blockedEarly.startsWith('the trunk could not be read:')
           return {
@@ -890,15 +931,13 @@ export const mergeLocal: LandingStrategy = {
       // separate copies of this rule, disagreed on the default policy, and t59 was told its branch
       // was clean against `origin/main` and then failed rebasing onto `main`.
       const base = landingBaseFor(ctx.project, ctx.policy, false, ctx.task)
-      try {
-        await git(ctx.workspacePath, ['rebase', base])
-      } catch (err) {
-        await git(ctx.workspacePath, ['rebase', '--abort']).catch(() => undefined)
+      const rebased = await driver.rebaseBranch(ctx.workspacePath, ctx.branch, base)
+      if (!rebased.ok) {
         return {
           strategy: 'merge-local',
           ok: false,
           branch: ctx.branch,
-          reason: `rebase onto ${base} conflicted: ${errorMessage(err)}`
+          reason: rebased.reason
         }
       }
 
@@ -913,7 +952,7 @@ export const mergeLocal: LandingStrategy = {
         }
       }
 
-      const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
+      const commit = await resolveBranchTip(ctx.workspacePath, ctx.branch)
       // ⛔ Resolved *after* the rebase, which is the only moment it is the parent of what lands.
       // `runs.trunk_sha_before` is the same idea read at dispatch and is a different commit; the
       // whole point of recording this pair is that `retireBranch` below makes the branch unavailable
@@ -925,7 +964,8 @@ export const mergeLocal: LandingStrategy = {
         // branch with a sentence naming what is in the way, because the alternative is editing a
         // working tree somebody is using.
         const blocked =
-          trunkOccupiedBy(ctx.project, ctx.task.id) ?? (await trunkNotReady(ctx.project.root, target))
+          trunkOccupiedBy(ctx.project, ctx.task.id) ??
+          (await trunkNotReady(ctx.project.root, target, ctx.project))
         if (blocked) {
           const isError = blocked.startsWith('the trunk could not be read:')
           return {
@@ -942,7 +982,7 @@ export const mergeLocal: LandingStrategy = {
         }
 
         try {
-          await git(ctx.project.root, ['merge', '--ff-only', ctx.branch])
+          await driver.fastForwardTrunk(ctx.project, target, ctx.branch, commit)
         } catch (err) {
           return {
             strategy: 'merge-local',
@@ -958,7 +998,7 @@ export const mergeLocal: LandingStrategy = {
         // Landing into a non-trunk branch (such as the planner's branch)
         try {
           await parkOtherHolders(ctx.project, target, ctx.workspacePath)
-          await git(ctx.project.root, ['branch', '-f', target, commit])
+          await driver.fastForwardBranch(ctx.project, ctx.workspacePath, target, commit, null)
         } catch (err) {
           return {
             strategy: 'merge-local',
@@ -976,7 +1016,7 @@ export const mergeLocal: LandingStrategy = {
       // now on the target.
       // ⚠️ The answer is kept rather than discarded: a branch another worktree still holds is left
       // alone, and *"the branch was deleted"* is a claim the landing message makes out loud.
-      const branchDeleted = await retireBranch(ctx.workspacePath, ctx.branch)
+      const branchDeleted = await retireBranch(ctx.workspacePath, ctx.branch, ctx.project)
       log.info(`merged t${ctx.task.seq} (${commit.slice(0, 8)}) into ${target}, not pushed`)
       return {
         strategy: 'merge-local',
@@ -1030,15 +1070,18 @@ export const mergeBranch: LandingStrategy = {
     if (ctx.task.verification === 'required') {
       return { ok: false, reason: 'task requires human verification before landing' }
     }
+    const conflicted = await storedConflictRefusal(ctx)
+    if (conflicted) return conflicted
     if (await treeBlocksLanding(ctx)) {
       return { ok: false, reason: UNCOMMITTED_REASON }
     }
-    if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
+    if (await tipIsRescue(ctx.workspacePath, ctx.project)) return { ok: false, reason: RESCUE_TIP_REASON }
     return { ok: true }
   },
 
   async land(ctx): Promise<LandingResult> {
     const target = landingTargetFor(ctx.task, ctx.project)
+    const driver = requireDriver(ctx.project)
 
     // ⛔ Keyed on the **branch**, not the project. Two siblings finishing together contend for the
     // plan branch, and nothing else in the fleet does — while an ordinary task landing onto `main`
@@ -1084,15 +1127,13 @@ export const mergeBranch: LandingStrategy = {
 
       // ⚠️ The local ref always. A plan branch is never pushed — see `docs/landing.md` — so there is
       // no `origin/<target>` to prefer and asking for one would resolve to nothing.
-      try {
-        await git(ctx.workspacePath, ['rebase', target])
-      } catch (err) {
-        await git(ctx.workspacePath, ['rebase', '--abort']).catch(() => undefined)
+      const rebased = await driver.rebaseBranch(ctx.workspacePath, ctx.branch, target)
+      if (!rebased.ok) {
         return {
           strategy: 'merge-branch',
           ok: false,
           branch: ctx.branch,
-          reason: `rebase onto ${target} conflicted: ${errorMessage(err)}`
+          reason: rebased.reason
         }
       }
 
@@ -1107,12 +1148,12 @@ export const mergeBranch: LandingStrategy = {
         }
       }
 
-      const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
+      const commit = await resolveBranchTip(ctx.workspacePath, ctx.branch)
       const baseSha = await revParse(ctx.workspacePath, target)
 
       // ⛔ The precondition, checked rather than trusted. A branch checked out in *any* worktree of
       // this repository — the operator's trunk or another pooled slot — must not be moved under it.
-      const heldBy = await branchCheckedOutIn(ctx.workspacePath, target)
+      const heldBy = await branchCheckedOutIn(ctx.project, target)
       if (heldBy) {
         return {
           strategy: 'merge-branch',
@@ -1144,12 +1185,7 @@ export const mergeBranch: LandingStrategy = {
       try {
         // ⛔ Compare-and-swap: the third argument is the value read above, so a sibling that landed
         // in between makes this fail rather than lose its commits.
-        await git(ctx.workspacePath, [
-          'update-ref',
-          `refs/heads/${target}`,
-          commit,
-          ...(baseSha ? [baseSha] : [])
-        ])
+        await driver.fastForwardBranch(ctx.project, ctx.workspacePath, target, commit, baseSha)
       } catch (err) {
         return {
           strategy: 'merge-branch',
@@ -1162,7 +1198,7 @@ export const mergeBranch: LandingStrategy = {
         }
       }
 
-      const branchDeleted = await retireBranch(ctx.workspacePath, ctx.branch)
+      const branchDeleted = await retireBranch(ctx.workspacePath, ctx.branch, ctx.project)
       log.info(`merged t${ctx.task.seq} (${commit.slice(0, 8)}) into ${target} by ref, not pushed`)
       return {
         strategy: 'merge-branch',
@@ -1184,24 +1220,19 @@ export const mergeBranch: LandingStrategy = {
 /**
  * Which worktree has this branch checked out, or null if none does.
  *
- * ⚠️ Reads `git worktree list --porcelain`, which enumerates the trunk *and* every pooled slot from
+ * ⚠️ Reads the VCS driver's workspace list, which enumerates the trunk *and* every pooled slot from
  * any one of them — so asking from inside a child's workspace still sees the operator's checkout.
  * ⛔ A failure to answer reads as *held*, not as free: this gate exists to protect a branch, and the
- * safe direction when git cannot be asked is to decline the merge.
+ * safe direction when the VCS cannot be asked is to decline the merge.
  */
-async function branchCheckedOutIn(cwd: string, branch: string): Promise<string | null> {
-  let out: string
+async function branchCheckedOutIn(project: Project, branch: string): Promise<string | null> {
   try {
-    out = await git(cwd, ['worktree', 'list', '--porcelain'])
+    const workspaces = await requireDriver(project).listWorkspaces(project)
+    const holder = workspaces.find((entry) => entry.branch === branch)
+    return holder ? holder.path : null
   } catch {
     return 'an unreadable worktree list'
   }
-  let path: string | null = null
-  for (const line of out.split(/\r?\n/)) {
-    if (line.startsWith('worktree ')) path = line.slice('worktree '.length).trim()
-    else if (line.trim() === `branch refs/heads/${branch}`) return path ?? 'another worktree'
-  }
-  return null
 }
 
 async function isAncestorOf(cwd: string, ancestor: string, descendant: string): Promise<boolean> {
@@ -1254,25 +1285,6 @@ async function attributionBase(
  * tree, a detached HEAD, or a different branch checked out. None of them is an error, and none of
  * them is the tool's to fix.
  */
-/**
- * File names out of `git status --porcelain`.
- *
- * ⚠️ Parsed per line, never sliced at a fixed column off a trimmed buffer. The `git()` helper
- * above trims the whole stdout, so the first line's leading status column is already gone by the
- * time it arrives here — slicing it at index 3 turned `README.md` into `EADME.md` (t259).
- * A short status plus whitespace plus the path holds for every entry shape this tool names.
- */
-function porcelainNames(out: string): string[] {
-  const names: string[] = []
-  for (const line of out.split(/\r?\n/)) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const m = trimmed.match(/^\S{1,2}\s+(.+)$/)
-    const name = (m?.[1] ?? trimmed).trim()
-    if (name) names.push(name)
-  }
-  return names
-}
 
 /**
  * Who, other than `self`, has the trunk leased — as the sentence a hold reason carries — or null.
@@ -1300,34 +1312,12 @@ export function trunkOccupiedBy(project: Project, self: string): string | null {
   return task ? `t${task.seq} is working in the trunk` : 'a trunk task is working in the trunk'
 }
 
-export async function trunkNotReady(root: string, target: string): Promise<string | null> {
-  // ⛔ t446 and t447 both stopped here with *fatal: Invalid path '/mnt'*: a `core.worktree` a bridged
-  // agent's test run had written into the trunk's config. See `repairTrunkConfig`.
-  repairTrunkConfig({ root, vcs: 'git' })
-  try {
-    const head = await git(root, ['rev-parse', '--abbrev-ref', 'HEAD'])
-    if (head !== target) {
-      return head === 'HEAD'
-        ? `the trunk is on a detached HEAD rather than \`${target}\` — switch the trunk checkout back to \`${target}\` to let the merge run`
-        : `the trunk has \`${head}\` checked out rather than \`${target}\` — switch the trunk checkout back to \`${target}\` to let the merge run`
-    }
-    const dirty = await git(root, ['status', '--porcelain'])
-    const lines = dirty.split(/\r?\n/).filter((l) => l.trim() !== '')
-    if (lines.length > 0) {
-      const untracked = lines.filter((l) => l.trim().startsWith('??')).length
-      const tracked = lines.length - untracked
-      const names = porcelainNames(dirty).slice(0, 5).join(', ')
-      const more = lines.length > 5 ? `, +${lines.length - 5} more` : ''
-      return (
-        `the trunk has ${lines.length} uncommitted file(s) in it ` +
-        `(${tracked} modified/tracked, ${untracked} untracked): ${names}${more}. ` +
-        `Commit, stash, or clear them in the trunk checkout (${root}) so the merge can run`
-      )
-    }
-    return null
-  } catch (err) {
-    return `the trunk could not be read: ${errorMessage(err)}`
-  }
+export async function trunkNotReady(
+  root: string,
+  target: string,
+  project?: Project
+): Promise<string | null> {
+  return ((project ? driverFor(project) : null) ?? gitDriver).trunkNotReady(root, target)
 }
 
 export const leaveBranch: LandingStrategy = {
@@ -1477,10 +1467,12 @@ export const autoLand: LandingStrategy = {
     if (ctx.task.verification === 'required') {
       return { ok: false, reason: 'task requires human verification before landing' }
     }
+    const conflicted = await storedConflictRefusal(ctx)
+    if (conflicted) return conflicted
     if (await treeBlocksLanding(ctx)) {
       return { ok: false, reason: UNCOMMITTED_REASON }
     }
-    if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
+    if (await tipIsRescue(ctx.workspacePath, ctx.project)) return { ok: false, reason: RESCUE_TIP_REASON }
     const refused = await originRefusal(ctx, 'push')
     if (refused) return { ok: false, reason: refused }
     return { ok: true }
@@ -1488,6 +1480,7 @@ export const autoLand: LandingStrategy = {
 
   async land(ctx): Promise<LandingResult> {
     const target = landingTargetFor(ctx.task, ctx.project)
+    const driver = requireDriver(ctx.project)
 
     // ⛔ Exclusive for the whole of rebase-check-push. Released in `finally` without exception.
     upsertResource({
@@ -1516,7 +1509,7 @@ export const autoLand: LandingStrategy = {
 
     try {
       const remote = await hasRemote(ctx.workspacePath)
-      if (remote) await git(ctx.workspacePath, ['fetch', 'origin', '--prune'])
+      if (remote) await driver.fetch(ctx.workspacePath, 'origin', undefined, { prune: true })
       // ⛔ The same helper `readMergeability` asks, so the check and the act cannot disagree.
       // ⚠️ With the task, so a branch whose target is not the project's trunk is rebased onto the
       // target it will actually be merged into.
@@ -1526,16 +1519,13 @@ export const autoLand: LandingStrategy = {
       // remembers which commits the branch was already carrying. See `attributionBase`.
       const localTargetBefore = await revParse(ctx.workspacePath, `refs/heads/${target}`)
 
-      try {
-        await git(ctx.workspacePath, ['rebase', base])
-      } catch (err) {
-        // Leave nothing half-rebased for a person to discover later.
-        await git(ctx.workspacePath, ['rebase', '--abort']).catch(() => undefined)
+      const rebased = await driver.rebaseBranch(ctx.workspacePath, ctx.branch, base)
+      if (!rebased.ok) {
         return {
           strategy: 'auto-land',
           ok: false,
           branch: ctx.branch,
-          reason: `rebase onto ${base} conflicted: ${errorMessage(err)}`
+          reason: rebased.reason
         }
       }
 
@@ -1550,7 +1540,7 @@ export const autoLand: LandingStrategy = {
         }
       }
 
-      const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
+      const commit = await resolveBranchTip(ctx.workspacePath, ctx.branch)
       // ⛔ After the rebase, for the reason `mergeLocal` states: `retireBranch` below is about to
       // make this range unrecoverable any other way.
       const baseSha = await attributionBase(
@@ -1561,7 +1551,9 @@ export const autoLand: LandingStrategy = {
       )
 
       if (remote) {
-        await git(ctx.workspacePath, ['push', 'origin', `HEAD:${target}`])
+        await driver.pushToTarget(ctx.workspacePath, 'origin', ctx.branch, target)
+      } else if (driver.capabilities.storedConflicts) {
+        await driver.fastForwardTrunk(ctx.project, target, ctx.branch, commit)
       } else {
         // No remote: fast-forward the local target in the trunk instead. Same outcome, no invention.
         await git(ctx.project.root, ['fetch', ctx.workspacePath, `${ctx.branch}:${target}`])
@@ -1570,7 +1562,7 @@ export const autoLand: LandingStrategy = {
       // The push above is the proof `retireBranch` requires: every commit on the branch is now on
       // the target. ⚠️ HEAD is the landed commit here, so this detaches exactly where the two
       // hand-written lines it replaced did.
-      const branchDeleted = await retireBranch(ctx.workspacePath, ctx.branch)
+      const branchDeleted = await retireBranch(ctx.workspacePath, ctx.branch, ctx.project)
 
       log.info(`landed t${ctx.task.seq} (${commit.slice(0, 8)}) onto ${target}`)
       return {
@@ -1667,7 +1659,7 @@ export async function resolvePullRequestDetails(
   }
 
   // 2. Ask controller to summarize PR from commits and diff stat
-  const revisionRange = baseSha ? `${baseSha}..HEAD` : 'HEAD'
+  const revisionRange = baseSha ? `${baseSha}..${ctx.branch}` : ctx.branch
   const commits = await git(ctx.workspacePath, ['log', '--format=%h %s', revisionRange]).catch(() => '')
   const diffStat = await git(ctx.workspacePath, ['diff', '--stat', revisionRange]).catch(() => '')
 
@@ -1694,7 +1686,7 @@ export async function resolvePullRequestDetails(
   if (ctx.task.titleSummary?.trim()) {
     fallbackTitle = ctx.task.titleSummary.trim()
   } else {
-    const headSubject = await git(ctx.workspacePath, ['log', '-1', '--format=%s', 'HEAD']).catch(() => '')
+    const headSubject = await git(ctx.workspacePath, ['log', '-1', '--format=%s', ctx.branch]).catch(() => '')
     fallbackTitle = headSubject.trim() || `Pull request for ${ctx.branch}`
   }
 
@@ -1747,10 +1739,12 @@ export const pullRequest: LandingStrategy = {
       // narrower authority - and a task that may only push should be able to use this strategy.
       return { ok: false, reason: 'the task has no authority to push' }
     }
+    const conflicted = await storedConflictRefusal(ctx)
+    if (conflicted) return conflicted
     if (await treeBlocksLanding(ctx)) {
       return { ok: false, reason: UNCOMMITTED_REASON }
     }
-    if (await tipIsRescue(ctx.workspacePath)) return { ok: false, reason: RESCUE_TIP_REASON }
+    if (await tipIsRescue(ctx.workspacePath, ctx.project)) return { ok: false, reason: RESCUE_TIP_REASON }
     if (!(await hasRemote(ctx.workspacePath))) {
       return { ok: false, reason: 'no origin remote, so there is nowhere to open a pull request' }
     }
@@ -1780,6 +1774,7 @@ export const pullRequest: LandingStrategy = {
 
   async land(ctx): Promise<LandingResult> {
     try {
+      const driver = requireDriver(ctx.project)
       // ⛔ Push first and separately. If the PR call fails, the work is already safe on the remote
       // and the operator can open one by hand - which is a much better failure than a branch that
       // exists only on this machine.
@@ -1803,21 +1798,30 @@ export const pullRequest: LandingStrategy = {
       if (refused) return { strategy: 'pull-request', ok: false, branch: ctx.branch, reason: refused }
       const fork = await forkHead(ctx)
       const remote = fork?.remote ?? 'origin'
-      try {
-        await git(ctx.workspacePath, ['push', '--set-upstream', remote, ctx.branch])
-      } catch (err) {
-        if (!/rejected|non-fast-forward|fetch first/i.test(errorMessage(err))) throw err
-        await git(ctx.workspacePath, ['push', '--force-with-lease', '--set-upstream', remote, ctx.branch])
+      if (!driver.capabilities.autoSnapshot) {
+        try {
+          await git(ctx.workspacePath, ['push', '--set-upstream', remote, ctx.branch])
+        } catch (err) {
+          if (!/rejected|non-fast-forward|fetch first/i.test(errorMessage(err))) throw err
+          await git(ctx.workspacePath, ['push', '--force-with-lease', '--set-upstream', remote, ctx.branch])
+        }
+      } else {
+        try {
+          await driver.push(ctx.workspacePath, remote, ctx.branch, false)
+        } catch (err) {
+          if (!/rejected|non-fast-forward|fetch first/i.test(errorMessage(err))) throw err
+          await driver.push(ctx.workspacePath, remote, ctx.branch, true)
+        }
       }
       // ⚠️ How gh names this PR's head: the bare branch on origin, `<owner>:<branch>` from a fork.
       const head = fork ? `${fork.owner}:${ctx.branch}` : ctx.branch
       const repoArgs = fork ? ['--repo', fork.base] : []
 
-      const commit = await git(ctx.workspacePath, ['rev-parse', 'HEAD'])
+      const commit = await resolveBranchTip(ctx.workspacePath, ctx.branch)
       // ⚠️ A merge base rather than the target's tip: this strategy does not rebase, so the target
       // may carry commits this branch does not. The merge base is the commit the branch actually
       // diverged from, which is the range a reviewer wants either way.
-      const baseSha = await mergeBase(ctx.workspacePath, landingTargetFor(ctx.task, ctx.project), 'HEAD')
+      const baseSha = await mergeBase(ctx.workspacePath, landingTargetFor(ctx.task, ctx.project), ctx.branch)
       const { title, body } = await resolvePullRequestDetails(ctx, baseSha)
 
       const resolved = which('gh')
@@ -1951,13 +1955,25 @@ export const trunkLanding: LandingStrategy = {
       return { ok: false, reason: 'the task has no authority to push' }
     }
     const target = landingTargetFor(ctx.task, ctx.project)
-    const head = await git(ctx.project.root, ['rev-parse', '--abbrev-ref', 'HEAD']).catch(() => 'HEAD')
+    const driver = requireDriver(ctx.project)
+    const head = (await driver.trunkBranch(ctx.project.root, target).catch(() => null)) ?? 'HEAD'
     if (head !== target) {
+      const switchHint = driver.capabilities.autoSnapshot ? `jj new ${target}` : `git switch ${target}`
       return {
         ok: false,
         reason:
           `the trunk has ${head === 'HEAD' ? 'a detached HEAD' : `\`${head}\``} checked out rather than ` +
-          `\`${target}\` — switch it back with \`git switch ${target}\` and land again`
+          `\`${target}\` — switch it back with \`${switchHint}\` and land again`
+      }
+    }
+    if (
+      driver.capabilities.storedConflicts &&
+      ((await driver.hasConflicts(ctx.project.root, target)) || (await driver.hasConflicts(ctx.project.root, '@')))
+    ) {
+      return {
+        ok: false,
+        reason:
+          'the trunk has unresolved VCS conflicts — resolve the conflicts before landing'
       }
     }
     return { ok: true }
@@ -1966,6 +1982,7 @@ export const trunkLanding: LandingStrategy = {
   async land(ctx): Promise<LandingResult> {
     const target = landingTargetFor(ctx.task, ctx.project)
     const pushes = ctx.policy === 'commit-and-push'
+    const driver = requireDriver(ctx.project)
     upsertResource({
       id: landResourceId(ctx.project.id),
       projectId: ctx.project.id,
@@ -1987,7 +2004,7 @@ export const trunkLanding: LandingStrategy = {
       }
     }
     try {
-      const commit = await git(ctx.project.root, ['rev-parse', 'HEAD'])
+      const commit = await resolveBranchTip(ctx.project.root, target)
       const checks =
         policyFor(ctx.project).check.length > 0
           ? await runChecks(ctx.project, ctx.project.root)
@@ -2004,7 +2021,11 @@ export const trunkLanding: LandingStrategy = {
       }
       if (pushes) {
         try {
-          await git(ctx.project.root, ['push', 'origin', `${target}:${target}`])
+          if (driver.capabilities.autoSnapshot) {
+            await driver.pushToTarget(ctx.project.root, 'origin', target, target)
+          } else {
+            await git(ctx.project.root, ['push', 'origin', `${target}:${target}`])
+          }
         } catch (err) {
           return {
             strategy: 'trunk',
@@ -2157,13 +2178,13 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     !(await treeBlocksLanding(ctx))
   ) {
     const target = landingTargetFor(ctx.task, ctx.project)
-    const base = await landedRef(ctx.workspacePath, target)
+    const base = await landedRef(ctx.workspacePath, target, ctx.project)
     // ⛔ **What only this branch holds**, not `base..branch` (t731 ← t734). The branch is cut from the
     // local target, so on a trunk ahead of its remote `base..branch` is the trunk's unpushed backlog:
     // t731 committed nothing, read as 5 commits here, and was reported as landing t729's `ab96d6f5`.
     // ⚠️ A branch git cannot measure keeps the old count, which errs toward attempting the landing.
-    const own = await commitsOnlyOn(ctx.workspacePath, ctx.branch, target).catch(() =>
-      commitsAhead(ctx.workspacePath, ctx.branch, base)
+    const own = await commitsOnlyOn(ctx.workspacePath, ctx.branch, target, [], undefined, ctx.project).catch(
+      () => commitsAhead(ctx.workspacePath, ctx.branch, base)
     )
     if (own === 0) {
       // ⛔ **Asked before the verdict, because the verdict is otherwise unfalsifiable.** Everything
@@ -2192,7 +2213,7 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
       // because it is checkable and it checks out false.
       const behind = (await commitsAhead(ctx.workspacePath, base, target)) ?? 0
       if (behind > 0) {
-        const retired = await finishWithoutLanding(ctx.workspacePath, ctx.branch, base)
+        const retired = await finishWithoutLanding(ctx.workspacePath, ctx.branch, base, ctx.project)
         say(
           `Nothing to land: \`${base}\` already has it`,
           `\`${ctx.branch}\` carries no commits that \`${base}\` does not already have, and the ` +
@@ -2224,7 +2245,7 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
     const fallback = await leaveBranch.land(ctx)
     say(
       `Not landed: ${oneLine(allowed.reason ?? 'the landing was refused')}`,
-      `${allowed.reason ?? 'the landing was refused'}. ${await whereTheWorkIs(ctx.workspacePath, ctx.branch, landingTargetFor(ctx.task, ctx.project))}`,
+      `${allowed.reason ?? 'the landing was refused'}. ${await whereTheWorkIs(ctx.workspacePath, ctx.branch, landingTargetFor(ctx.task, ctx.project), ctx.project)}`,
       'landing.failed'
     )
     restForHuman(`the work is done but did not land: ${allowed.reason}`)

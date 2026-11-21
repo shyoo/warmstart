@@ -47,6 +47,7 @@ export const REMOTE_METHODS = {
   'project.makeForkHome': 'deny',
   'project.syncUpstream': 'deny',
   'project.reload': 'deny',
+  'project.migrateVcs': 'deny',
   'project.reorder': 'deny',
   'project.archive': 'deny',
   'project.unarchive': 'deny',

@@ -28,7 +28,7 @@ import { run } from './spawn.js'
 import { sweepAcls } from './acl.js'
 import { appEnvName } from '@shared/env.js'
 import { spawnEnv } from './which.js'
-import { driverFor, type VcsDriver } from './vcs/index.js'
+import { driverFor, gitDriver, type VcsDriver } from './vcs/index.js'
 
 function requireDriver(project: Project): VcsDriver {
   const driver = driverFor(project)
@@ -244,7 +244,7 @@ async function doEnsurePool(project: Project): Promise<string[]> {
   for (let i = 1; i <= policy.poolSize; i++) {
     const path = join(policy.workspaceRoot, `ws${i}`)
     members.push(path)
-    if (existsSync(join(path, '.git'))) {
+    if (driver.isWorkspace(path)) {
       cleanStaleGitLocks(path)
       continue
     }
@@ -267,10 +267,10 @@ async function doEnsurePool(project: Project): Promise<string[]> {
   while (existsSync(join(policy.workspaceRoot, `ws${extraIndex}`))) {
     const extraPath = join(policy.workspaceRoot, `ws${extraIndex}`)
     const isOccupied = activeClaims.some((c) => c.member && samePath(c.member, extraPath))
-    if (!isOccupied && existsSync(join(extraPath, '.git'))) {
+    if (!isOccupied && driver.isWorkspace(extraPath)) {
       cleanStaleGitLocks(extraPath)
       try {
-        const state = await workspaceState(extraPath, base)
+        const state = await workspaceState(extraPath, base, project)
         if (state.branch && state.branch !== base) {
           log.info(`gracefully parked retired workspace ${extraPath}, which held ${state.branch}`)
           await parkWorkspace(project, extraPath)
@@ -292,7 +292,7 @@ async function doEnsurePool(project: Project): Promise<string[]> {
     // Resources panel and in every gate that reads capacity instead of the policy.
     capacity: members.length,
     members,
-    meta: { vcs: 'git', root: policy.workspaceRoot }
+    meta: { vcs: project.vcs, root: policy.workspaceRoot }
   })
   return members
 }
@@ -341,8 +341,8 @@ export async function prunePoolWorktrees(project: Project): Promise<PruneResult>
   while (existsSync(join(policy.workspaceRoot, `ws${index}`))) {
     const path = join(policy.workspaceRoot, `ws${index}`)
     index++
-    if (!existsSync(join(path, '.git'))) {
-      // Not a worktree — something else the operator put here. Never ours to remove.
+    if (!driver.isWorkspace(path)) {
+      // Not a workspace — something else the operator put here. Never ours to remove.
       kept.push({ path, reason: 'not a git worktree' })
       continue
     }
@@ -358,7 +358,7 @@ export async function prunePoolWorktrees(project: Project): Promise<PruneResult>
     try {
       const parked = await parkWorkspace(project, path)
       if (parked === null) {
-        const state = await workspaceState(path, base)
+        const state = await workspaceState(path, base, project)
         const dirty = state.dirtyFiles.length + state.untrackedFiles.length
         if (dirty > 0) {
           kept.push({ path, reason: `holds ${dirty} uncommitted file(s) that could not be made safe` })
@@ -505,13 +505,22 @@ export interface TrunkSurvey {
  */
 export async function surveyTrunk(project: Project): Promise<TrunkSurvey> {
   const survey: TrunkSurvey = { branch: null, dirtyFiles: [], untrackedFiles: [], operation: null, conflicted: [], aheadOfTarget: 0 }
-  if (!projectUsesGitBranches(project)) return survey
-  const state = await workspaceState(project.root, policyFor(project).landingTarget)
-  survey.branch = state.branch
+  const driver = driverFor(project)
+  if (!driver || !projectUsesGitBranches(project)) return survey
+  const target = policyFor(project).landingTarget
+  const state = await workspaceState(project.root, target, project)
+  survey.branch = (await driver.trunkBranch(project.root, target)) ?? state.branch
   // ⚠️ `unlandedCommits` is what only the checked-out branch holds, so on the target it is not this.
-  survey.aheadOfTarget = state.branch === policyFor(project).landingTarget ? 0 : state.unlandedCommits
+  survey.aheadOfTarget = state.branch === target ? 0 : state.unlandedCommits
   survey.dirtyFiles = state.dirtyFiles
   survey.untrackedFiles = state.untrackedFiles
+  if (driver.capabilities.storedConflicts) {
+    if (await driver.hasConflicts(project.root, '@')) {
+      survey.operation = 'rebase'
+      survey.conflicted = await driver.conflictedPaths(project.root, '@')
+    }
+    return survey
+  }
   const marker = async (name: string): Promise<boolean> => {
     try {
       const path = await git(project.root, ['rev-parse', '--git-path', name])
@@ -759,7 +768,7 @@ export async function workspaceOnBranch(
 ): Promise<WorkspaceState | null> {
   if (!projectUsesGitBranches(project)) return null
   for (const path of availability(workspacePoolId(project.id))?.resource.members ?? []) {
-    const state = await workspaceState(path, target)
+    const state = await workspaceState(path, target, project)
     if (state.branch === branch) return state
   }
   return null
@@ -914,7 +923,7 @@ export async function switchResidentBranch(
   /** ⛔ The task the branch belongs to, so a subtask still borrows onto its parent's base. */
   task?: Task | null
 ): Promise<SwitchResult> {
-  const state = await workspaceState(path, landingTargetFor(task, project))
+  const state = await workspaceState(path, landingTargetFor(task, project), project)
   if (state.branch === branch) return { ok: true, from: branch }
 
   const loose = [...state.dirtyFiles, ...state.untrackedFiles]
@@ -940,7 +949,7 @@ export async function switchResidentBranch(
     await parkOtherHolders(project, branch, path)
     if (await driver.branchExists(project, branch)) {
       await driver.switchBranch(path, branch)
-      await catchUpEmptyBranch(path, branch, base)
+      await driver.catchUpEmptyBranch(path, branch, base)
     } else {
       await driver.switchBranch(path, branch, base)
     }
@@ -983,7 +992,7 @@ export interface PrepareResult {
  * ⚠️ Best-effort, silently. A branch that will not fast-forward is a branch with real work on it,
  * which is the normal case and not a problem to report.
  */
-async function catchUpEmptyBranch(path: string, branch: string, base: string): Promise<void> {
+export async function gitCatchUpEmptyBranch(path: string, branch: string, base: string): Promise<void> {
   try {
     const ahead = Number(await git(path, ['rev-list', '--count', `${base}..${branch}`]))
     if (ahead !== 0) return
@@ -1274,11 +1283,13 @@ export async function prepareWorkspace(
       // edits sitting in the slot, and the next task to claim that slot dies on `switch -c` with
       // git's "local changes would be overwritten" — an error about files it has never heard of.
       // ⛔ Not the trunk, whose rebase is the operator's (see `parkWorkspace`).
-      if (!samePath(workspace.path, project.root)) await unwindAbandonedRebase(workspace.path, branch)
-      await rescueDirt(workspace.path, branch)
+      if (!driver.capabilities.storedConflicts && !samePath(workspace.path, project.root)) {
+        await gitUnwindAbandonedRebase(workspace.path, branch)
+      }
+      await driver.rescueDirty(workspace.path, branch)
       if (await driver.branchExists(project, branch)) {
         await driver.switchBranch(workspace.path, branch)
-        await catchUpEmptyBranch(workspace.path, branch, base)
+        await driver.catchUpEmptyBranch(workspace.path, branch, base)
       } else {
         // ⛔ Created inside the claimed worktree. The trunk is never switched.
         await driver.switchBranch(workspace.path, branch, base)
@@ -1372,8 +1383,10 @@ export async function parkOtherHolders(
       const base = await trunkBaseRef(project)
       cleanStaleGitLocks(path)
       await ensureWorktreePointer(project, path)
-      await unwindAbandonedRebase(path, base)
-      await rescueDirt(path, base)
+      if (!driver.capabilities.storedConflicts) {
+        await gitUnwindAbandonedRebase(path, base)
+      }
+      await driver.rescueDirty(path, base)
       await driver.detachWorkspace(path, base)
       log.info(`parked ${path}, which still held ${branch}`)
     } catch (err) {
@@ -1428,7 +1441,7 @@ export async function parkPooledHolders(
       // ⚠️ Detached **at the branch's own tip**, so nothing the slot was holding is left behind and
       // no work is moved: `rescueDirt` commits whatever it finds onto the branch first.
       await ensureWorktreePointer(project, path)
-      await rescueDirt(path, branch)
+      await driver.rescueDirty(path, branch)
       await driver.detachWorkspace(path, branch)
       log.info(`parked pooled workspace ${path}, which still held ${branch}`)
     } catch (err) {
@@ -1473,7 +1486,7 @@ export const RESCUE_TRAILER = 'Multi-Agent-Controller-Rescue'
  *
  * ⚠️ Only the tip. A rescue the next run built on top of is ordinary history.
  */
-export async function rescueAtTip(path: string): Promise<{ sha: string; files: number } | null> {
+export async function gitRescueAtTip(path: string): Promise<{ sha: string; files: number } | null> {
   try {
     const body = await git(path, ['log', '-1', '--format=%B', 'HEAD'])
     const found = new RegExp(`^${RESCUE_TRAILER}: ([0-9]+)$`, 'm').exec(body)
@@ -1482,6 +1495,13 @@ export async function rescueAtTip(path: string): Promise<{ sha: string; files: n
   } catch {
     return null
   }
+}
+
+export async function rescueAtTip(
+  path: string,
+  project?: Project
+): Promise<{ sha: string; files: number } | null> {
+  return ((project ? driverFor(project) : null) ?? gitDriver).rescue(path)
 }
 
 /** The branch HEAD is on, or `null` when it is detached. */
@@ -1570,10 +1590,10 @@ async function rebasingBranch(path: string): Promise<string | null> {
  * through. HEAD is detached mid-rebase, so `rescueDirt` stashes it — recoverable by name — and the
  * abort then puts the branch back on its own pre-rebase tip, where every commit already made is.
  */
-async function unwindAbandonedRebase(path: string, destination: string): Promise<boolean> {
+export async function gitUnwindAbandonedRebase(path: string, destination: string): Promise<boolean> {
   const rebasing = await rebasingBranch(path)
   if (rebasing === null) return false
-  await rescueDirt(path, destination)
+  await gitRescueDirty(path, destination)
   await git(path, ['rebase', '--abort'])
   log.warn(
     `aborted an unfinished rebase of ${rebasing.replace(/^refs\/heads\//, '') || 'a detached head'} in ${path}; ` +
@@ -1614,7 +1634,7 @@ async function unwindAbandonedRebase(path: string, destination: string): Promise
  * switch below fails loudly, as it did before this existed — silently deleting somebody's work to
  * keep the scheduler moving is the one outcome worse than a task that will not start.
  */
-async function rescueDirt(path: string, destination: string): Promise<Rescue | null> {
+export async function gitRescueDirty(path: string, destination: string): Promise<Rescue | null> {
   // ⛔ First, so the status below tells the truth. A file behind `assume-unchanged` is invisible to
   // `status` and fatal to `switch`; see `unhideIndexEntries`.
   const hidden = await unhideIndexEntries(path)
@@ -1680,8 +1700,7 @@ function normalise(p: string): string {
  * later run of the same task in a different workspace. Best-effort by design; a workspace that
  * cannot be parked is still released, and the next claim re-prepares it.
  */
-export async function parkWorkspace(project: Project, path: string): Promise<Rescue | null> {
-  if (!projectUsesGitBranches(project)) return null
+export async function gitParkWorkspace(project: Project, path: string): Promise<Rescue | null> {
   // ⛔ **Never the trunk.** Parking aborts a rebase, stashes and detaches — three things that must
   // never happen to the operator's checkout, and a trunk task's claim reaches the same release paths
   // a pool member's does. Checked here, at the one function that does the damage, rather than
@@ -1700,10 +1719,22 @@ export async function parkWorkspace(project: Project, path: string): Promise<Res
     // `beginConflictResolution` leaves exactly that state on purpose and every caller is required to
     // undo it — this is the net for the time one of them does not, and for an agent that stopped
     // half-way through its own rebase (t778). The tree is rescued before the abort resets it.
-    await unwindAbandonedRebase(path, base)
-    const rescued = await rescueDirt(path, base)
+    await gitUnwindAbandonedRebase(path, base)
+    const rescued = await gitRescueDirty(path, base)
     await git(path, ['switch', '--detach', base])
     return rescued
+  } catch (err) {
+    log.warn(`could not park workspace ${path}:`, err)
+    return null
+  }
+}
+
+export async function parkWorkspace(project: Project, path: string): Promise<Rescue | null> {
+  const driver = driverFor(project)
+  if (!driver || !projectUsesGitBranches(project)) return null
+  if (samePath(path, project.root)) return null
+  try {
+    return await driver.park(project, path)
   } catch (err) {
     log.warn(`could not park workspace ${path}:`, err)
     return null
@@ -1782,10 +1813,14 @@ export interface WorkspaceState {
  * points in one finish path, and the silent one won. There is one here now, and everything that
  * asks "is this landed?" asks this.
  */
-export async function landedRef(path: string, target: string): Promise<string> {
+export async function gitLandedRef(path: string, target: string): Promise<string> {
   return (await gitOk(path, ['rev-parse', '--verify', `origin/${target}`]))
     ? `origin/${target}`
     : target
+}
+
+export async function landedRef(path: string, target: string, project?: Project): Promise<string> {
+  return ((project ? driverFor(project) : null) ?? gitDriver).landedRef(path, target)
 }
 
 /**
@@ -1818,7 +1853,7 @@ async function resolvingRefs(cwd: string, also: readonly string[], branch: strin
  *
  * ⚠️ Throws when neither ref resolves, so a caller's "could not measure" stays distinct from zero.
  */
-export async function commitsOnlyOn(
+export async function gitCommitsOnlyOn(
   cwd: string,
   branch: string,
   target: string,
@@ -1839,6 +1874,23 @@ export async function commitsOnlyOn(
   const count = Number.parseInt(await git(cwd, ['rev-list', '--count', branch, '--not', ...refs]), 10)
   if (!Number.isFinite(count)) throw new Error(`git could not count the commits on \`${branch}\``)
   return count
+}
+
+export async function commitsOnlyOn(
+  cwd: string,
+  branch: string,
+  target: string,
+  also: readonly string[] = [],
+  resolvedTargetRefs?: readonly string[],
+  project?: Project
+): Promise<number> {
+  return ((project ? driverFor(project) : null) ?? gitDriver).commitsOnlyOn(
+    cwd,
+    branch,
+    target,
+    also,
+    resolvedTargetRefs
+  )
 }
 
 /**
@@ -1933,8 +1985,7 @@ export async function branchContentLanded(
 const TARGET_REFRESH_MS = 5 * 60_000
 const lastTargetRefresh = new Map<string, number>()
 
-export async function refreshTargetRef(project: Project, target: string): Promise<boolean> {
-  if (!projectUsesGitBranches(project)) return false
+export async function gitRefreshTargetRef(project: Project, target: string): Promise<boolean> {
   const now = Date.now()
   if (now - (lastTargetRefresh.get(project.id) ?? 0) < TARGET_REFRESH_MS) return false
   lastTargetRefresh.set(project.id, now)
@@ -1944,6 +1995,12 @@ export async function refreshTargetRef(project: Project, target: string): Promis
     return false
   }
   return true
+}
+
+export async function refreshTargetRef(project: Project, target: string): Promise<boolean> {
+  const driver = driverFor(project)
+  if (!driver || !projectUsesGitBranches(project)) return false
+  return driver.refreshTarget(project, target)
 }
 
 /**
@@ -2036,7 +2093,7 @@ export async function taskBranches(project: Project, target: string): Promise<Ta
       // were listed as carrying the trunk's own unpushed history.
       let ahead: number
       try {
-        ahead = await commitsOnlyOn(project.root, branch, target, [], targetRefs)
+        ahead = await commitsOnlyOn(project.root, branch, target, [], targetRefs, project)
       } catch {
         ahead = -1
       }
@@ -2092,7 +2149,10 @@ export async function idlePoolHolder(
   const claimed = openClaims(workspacePoolId(project.id)).some(
     (claim) => typeof claim.member === 'string' && samePath(real(claim.member), real(heldBy))
   )
-  const dirty = poolMember && !claimed ? Boolean(await tryGit(heldBy, ['status', '--porcelain'])) : false
+  const dirty =
+    poolMember && !claimed
+      ? await (driverFor(project) ?? gitDriver).hasUncommittedChanges(heldBy).catch(() => false)
+      : false
   return { poolMember, claimed, dirty }
 }
 
@@ -2226,7 +2286,7 @@ export function holdsWork(state: WorkspaceState): boolean {
  * panel down. `holdsWork` on an unreadable workspace is false, and the loose-ends list shows the
  * slot with whatever it could read.
  */
-export async function workspaceState(path: string, target: string): Promise<WorkspaceState> {
+export async function gitWorkspaceState(path: string, target: string): Promise<WorkspaceState> {
   const state: WorkspaceState = {
     path,
     branch: null,
@@ -2270,7 +2330,7 @@ export async function workspaceState(path: string, target: string): Promise<Work
 
   // ⛔ Resolved before the count and kept, so the number and the ref it came from travel together.
   try {
-    state.landedRef = await landedRef(path, target)
+    state.landedRef = await gitLandedRef(path, target)
   } catch {
     // Leave it as the local target; a repo git cannot answer for gets the conservative reading.
   }
@@ -2287,7 +2347,7 @@ export async function workspaceState(path: string, target: string): Promise<Work
       // branch read as 5 unlanded commits (inkland's `main` was 5 ahead of `origin/main`), the finish
       // chose `land`, the rebase and fast-forward moved nothing, and the thread said *"Landed as
       // `ab96d6f5`"* — t729's commit. Same measure as `commitsOnlyOn`: what only this branch holds.
-      state.unlandedCommits = await commitsOnlyOn(path, state.branch, target)
+      state.unlandedCommits = await gitCommitsOnlyOn(path, state.branch, target)
     } catch {
       // A target that does not resolve - a fresh repo with no main yet - is not an error here.
     }
@@ -2316,4 +2376,12 @@ export async function workspaceState(path: string, target: string): Promise<Work
   }
 
   return state
+}
+
+export async function workspaceState(
+  path: string,
+  target: string,
+  project?: Project
+): Promise<WorkspaceState> {
+  return ((project ? driverFor(project) : null) ?? gitDriver).workspaceState(path, target)
 }

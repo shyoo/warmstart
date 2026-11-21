@@ -93,6 +93,28 @@ import type {
   LooseEnd
 } from './tasks.js'
 
+/** VCS backends that support local project migration. */
+export type MigratableVcs = 'git' | 'jj'
+
+export interface VcsMigrationRecord {
+  id: string
+  projectId: string
+  fromVcs: MigratableVcs
+  toVcs: MigratableVcs
+  status: 'completed' | 'rolled_back'
+  startedAt: number
+  finishedAt: number
+  detail: Record<string, unknown>
+}
+
+export interface VcsMigrationResult {
+  project: Project
+  migration: VcsMigrationRecord
+  warnings: string[]
+  rebuiltWorkspaces: number
+  keptJjDir: boolean
+}
+
 /**
  * What the scheduler currently believes about cost, and why.
  *
@@ -2085,6 +2107,11 @@ export interface RpcMap {
   /** **Sync from upstream** (t907): merge `upstream/<target>` into the fork's home. See `syncFromUpstream`. */
   'project.syncUpstream': { params: { id: string }; result: UpstreamSyncResult }
   'project.reload': { params: { id: string }; result: Project }
+  /** Migrate a project locally between colocated `git` and `jj` (`vcsmigration.ts`). */
+  'project.migrateVcs': {
+    params: { id: string; to: MigratableVcs; allowDirtyTrunk?: boolean; removeJjDir?: boolean }
+    result: VcsMigrationResult
+  }
   /**
    * ⛔ Refused while the project holds a task that can still dispatch, run or land
    * (`holdsProjectOpen`, t901). Prunes the managed pool only after that check passes.

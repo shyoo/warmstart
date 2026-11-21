@@ -1,15 +1,16 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
+import { errorMessage } from '@shared/errors.js'
 import type { Project } from '@shared/tasks.js'
-import { samePath } from '../fspath.js'
-import { tryGit } from '../git.js'
+import { canonicalPath, samePath } from '../fspath.js'
+import { git, tryGit } from '../git.js'
 import { log } from '../log.js'
 import type { DiffFileEntry } from '../review.js'
 import { run } from '../spawn.js'
 import { launchArgs, spawnEnv, which } from '../which.js'
 import { RESCUE_TRAILER, trunkBaseRef, type Rescue, type WorkspaceState } from '../worktrees.js'
-import type { VcsDriver, VcsWorkspaceEntry } from './driver.js'
+import type { VcsDriver, VcsRebaseResult, VcsWorkspaceEntry } from './driver.js'
 import { gitDriver } from './git.js'
 
 /** Minimum supported Jujutsu CLI version verified for flag compatibility (plan §9 row 5b). */
@@ -25,6 +26,12 @@ const JJ_MAX_BUFFER = 64 * 1024 * 1024
 const TARGET_REFRESH_MS = 5 * 60_000
 const lastTargetRefresh = new Map<string, number>()
 const verifiedVersions = new Map<string, string>()
+const pendingConflictRebaseOps = new Map<string, string>()
+
+function conflictRebaseKey(workspacePath: string): string {
+  const canonical = canonicalPath(workspacePath)
+  return process.platform === 'win32' ? canonical.toLowerCase() : canonical
+}
 
 const WS_LIST_TEMPLATE =
   '"{\\"name\\":" ++ json(self.name()) ++ ",\\"root\\":" ++ ' +
@@ -33,11 +40,14 @@ const WS_LIST_TEMPLATE =
 
 const REV_META_TEMPLATE =
   '"{\\"sha\\":" ++ json(commit_id) ++ ",\\"bookmarks\\":" ++ ' +
-  'json(local_bookmarks.map(|b| b.name())) ++ ",\\"desc\\":" ++ json(description) ++ "}\\n"'
+  'json(local_bookmarks.map(|b| b.name())) ++ ",\\"desc\\":" ++ json(description) ++ ' +
+  '",\\"conflict\\":" ++ if(conflict, "true", "false") ++ "}\\n"'
 
 const WORKING_COPY_TEMPLATE =
   '"{\\"sha\\":" ++ json(commit_id) ++ ",\\"bookmarks\\":" ++ ' +
   'json(local_bookmarks.map(|b| b.name())) ++ ",\\"desc\\":" ++ json(description) ++ ' +
+  '",\\"conflict\\":" ++ if(conflict, "true", "false") ++ ' +
+  '",\\"empty\\":" ++ if(empty, "true", "false") ++ ' +
   '",\\"files\\":[" ++ diff.files().map(|f| "{\\"status\\":" ++ json(f.status()) ++ ' +
   '",\\"path\\":" ++ json(f.path()) ++ "}").join(",") ++ "]}\\n"'
 
@@ -53,6 +63,7 @@ interface JjRevMeta {
   sha: string
   bookmarks: string[]
   desc: string
+  conflict: boolean
 }
 
 interface JjWorkingCopyFile {
@@ -61,6 +72,7 @@ interface JjWorkingCopyFile {
 }
 
 interface JjWorkingCopyRow extends JjRevMeta {
+  empty: boolean
   files: JjWorkingCopyFile[]
 }
 
@@ -73,6 +85,7 @@ interface JjBookmarkRow {
 export function _resetJjDriverCachesForTest(): void {
   verifiedVersions.clear()
   lastTargetRefresh.clear()
+  pendingConflictRebaseOps.clear()
 }
 
 /** Extract `major.minor.patch` from `jj --version` output, or `null` when unrecognized. */
@@ -343,6 +356,32 @@ function fetchBranchFromRefspec(refspec?: string): string | undefined {
   return clean
 }
 
+function quoteJjRev(rev: string): string {
+  return JSON.stringify(rev)
+}
+
+async function resolveGitSha(cwd: string, ref: string): Promise<string | null> {
+  const sha = await tryGit(cwd, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])
+  return sha && sha.length > 0 ? sha : null
+}
+
+async function describeUndescribedDirty(
+  path: string,
+  wc: JjWorkingCopyRow | null,
+  destination: string,
+  rootHint?: string
+): Promise<Rescue | null> {
+  if (!wc || wc.files.length === 0 || wc.desc.trim().length > 0) return null
+  const files = wc.files.length
+  const branch = wc.bookmarks[0] ?? null
+  const message = buildRescueDescription(wc.desc, files)
+  await execJj(path, ['-R', path, 'describe', '-r', '@', '-m', message], { rootHint })
+  const updated = await readRevMeta(path, '@', true, rootHint)
+  const sha = updated?.sha ?? wc.sha
+  log.warn(`warmstart: ${files} file(s) left in ${path} before ${destination} — described as ${sha.slice(0, 8)}`)
+  return { kind: 'commit', sha, files, branch }
+}
+
 /**
  * Report whether revision `rev` in a jj repository carries a stored conflict.
  * Landing uses this to refuse conflicted bookmarks even when files sit cleanly inside a commit.
@@ -475,10 +514,78 @@ export const jjDriver: VcsDriver = {
     return entries
   },
 
+  isWorkspace(path: string): boolean {
+    return existsSync(join(path, '.jj')) && existsSync(join(path, '.git'))
+  },
+
   async currentBranch(path: string): Promise<string | null> {
     await ensureJjReady(path)
     const at = await readRevMeta(path, '@', false)
     return branchFromWorkingCopy(path, at)
+  },
+
+  async trunkBranch(root: string, expectedTarget?: string): Promise<string | null> {
+    await ensureJjReady(root)
+    const pick = (bms: string[] | undefined): string | null => {
+      if (!bms || bms.length === 0) return null
+      return expectedTarget && bms.includes(expectedTarget) ? expectedTarget : (bms[0] ?? null)
+    }
+    const at = await readRevMeta(root, '@', false)
+    if (at && at.bookmarks.length > 0) return pick(at.bookmarks)
+    const parent = await readRevMeta(root, '@-', true)
+    return pick(parent?.bookmarks)
+  },
+
+  async trunkNotReady(root: string, target: string): Promise<string | null> {
+    try {
+      await ensureJjReady(root)
+      const wc = await readWorkingCopy(root)
+      if (!wc) return `the trunk could not be read: missing working-copy change @ in ${root}`
+      const parent = await readRevMeta(root, '@-', true)
+      const targetConflicted = await jjConflicted(root, quoteJjRev(target)).catch(() => false)
+      if (wc.conflict || targetConflicted) {
+        return (
+          `the trunk has unresolved stored conflicts on \`${target}\` or in its working copy — ` +
+          `resolve them in ${root} before merging`
+        )
+      }
+      if (wc.files.length > 0 && (wc.desc.trim().length === 0 || !wc.bookmarks.includes(target))) {
+        const untracked = wc.files.filter((f) => f.status === 'added').length
+        const tracked = wc.files.length - untracked
+        const names = wc.files.slice(0, 5).map((f) => f.path).join(', ')
+        const more = wc.files.length > 5 ? `, +${wc.files.length - 5} more` : ''
+        return (
+          `the trunk has ${wc.files.length} uncommitted file(s) in it ` +
+          `(${tracked} modified/tracked, ${untracked} untracked): ${names}${more}. ` +
+          `Commit, describe, or clear them in the trunk checkout (${root}) so the merge can run`
+        )
+      }
+      if (wc.desc.trim().length > 0 && !wc.bookmarks.includes(target)) {
+        const on = wc.bookmarks[0] ?? parent?.bookmarks[0]
+        const where = on ? `\`${on}\`` : 'an unbookmarked working-copy change'
+        return (
+          `the trunk has ${where} checked out rather than \`${target}\` — ` +
+          `run \`jj new ${target}\` in the trunk checkout to let the merge run`
+        )
+      }
+      const onTarget =
+        wc.bookmarks.includes(target) ||
+        (wc.empty &&
+          wc.files.length === 0 &&
+          wc.desc.trim().length === 0 &&
+          Boolean(parent?.bookmarks.includes(target)))
+      if (!onTarget) {
+        const current = wc.bookmarks[0] ?? parent?.bookmarks[0]
+        const desc = current ? `\`${current}\`` : 'a detached change'
+        return (
+          `the trunk is on ${desc} rather than \`${target}\` — ` +
+          `run \`jj new ${target}\` in the trunk checkout to let the merge run`
+        )
+      }
+      return null
+    } catch (err) {
+      return `the trunk could not be read: ${errorMessage(err)}`
+    }
   },
 
   async branchExists(project: Project, branch: string): Promise<boolean> {
@@ -511,11 +618,44 @@ export const jjDriver: VcsDriver = {
     cwd: string,
     branch: string,
     target: string,
-    also?: readonly string[],
+    also: readonly string[] = [],
     resolvedTargetRefs?: readonly string[]
   ): Promise<number> {
     await ensureJjReady(cwd)
-    return gitDriver.commitsOnlyOn(cwd, branch, target, also, resolvedTargetRefs)
+    const branchSha = await resolveGitSha(cwd, branch)
+    if (!branchSha) throw new Error(`\`${branch}\` does not resolve`)
+
+    const excludeShas: string[] = []
+    if (resolvedTargetRefs && resolvedTargetRefs.length > 0) {
+      for (const ref of resolvedTargetRefs) {
+        const sha = await resolveGitSha(cwd, ref)
+        if (sha) excludeShas.push(sha)
+      }
+    } else {
+      for (const ref of [target, `origin/${target}`]) {
+        const sha = await resolveGitSha(cwd, ref)
+        if (sha) excludeShas.push(sha)
+      }
+      if (excludeShas.length === 0) {
+        throw new Error(`neither \`${target}\` nor \`origin/${target}\` resolves`)
+      }
+    }
+    for (const ref of also) {
+      if (ref === branch) continue
+      const sha = await resolveGitSha(cwd, ref)
+      if (sha) excludeShas.push(sha)
+    }
+
+    const excluded = [...new Set(excludeShas)].map((sha) => `::${sha}`).join(' | ')
+    const revset = excluded
+      ? `::${branchSha} ~ (${excluded}) ~ (empty() & description(exact:""))`
+      : `::${branchSha} ~ (empty() & description(exact:""))`
+    const out = await execJj(
+      cwd,
+      ['-R', cwd, 'log', '-r', revset, '--no-graph', '-T', 'commit_id ++ "\\n"'],
+      { ignoreWorkingCopy: true }
+    )
+    return out.split(/\r?\n/).filter((line) => line.trim().length > 0).length
   },
 
   async landedRef(path: string, target: string): Promise<string> {
@@ -545,24 +685,30 @@ export const jjDriver: VcsDriver = {
     const rawBase = await trunkBaseRef(project)
     const baseRev = await resolveJjRev(project.root, rawBase)
     const wc = await readWorkingCopy(path, project.root)
-    const branch = await branchFromWorkingCopy(path, wc, project.root)
-
-    if (!wc || wc.files.length === 0) {
-      await execJj(path, ['-R', path, 'new', baseRev], { rootHint: project.root })
-      return null
-    }
-
-    const files = wc.files.length
-    const message = buildRescueDescription(wc.desc, files)
-    await execJj(path, ['-R', path, 'describe', '-r', '@', '-m', message], {
-      rootHint: project.root
-    })
-    const updated = await readRevMeta(path, '@', true, project.root)
-    const sha = updated?.sha ?? wc.sha
-
+    const rescued = await describeUndescribedDirty(path, wc, rawBase, project.root)
     await execJj(path, ['-R', path, 'new', baseRev], { rootHint: project.root })
-    log.warn(`warmstart: ${files} file(s) left in ${path} before ${rawBase} — described as ${sha.slice(0, 8)}`)
-    return { kind: 'commit', sha, files, branch }
+    return rescued
+  },
+
+  async rescueDirty(path: string, destination: string): Promise<Rescue | null> {
+    await ensureJjReady(path)
+    if (!existsSync(path)) return null
+    const wc = await readWorkingCopy(path)
+    return describeUndescribedDirty(path, wc, destination)
+  },
+
+  async catchUpEmptyBranch(path: string, branch: string, base: string): Promise<void> {
+    await ensureJjReady(path)
+    try {
+      if ((await jjDriver.commitsOnlyOn(path, branch, base)) !== 0) return
+      const wc = await readWorkingCopy(path)
+      if (!wc || wc.files.length > 0 || wc.desc.trim().length > 0) return
+      const baseRev = await resolveJjRev(path, base)
+      await execJj(path, ['-R', path, 'rebase', '-r', '@', '-d', baseRev])
+      log.info(`rebased empty jj branch ${branch} onto ${base}`)
+    } catch {
+      // Best-effort, silently: branch carries work or base does not resolve.
+    }
   },
 
   async rescue(path: string): Promise<{ sha: string; files: number } | null> {
@@ -598,9 +744,11 @@ export const jjDriver: VcsDriver = {
       const wc = await readWorkingCopy(path)
       if (wc) {
         state.branch = await branchFromWorkingCopy(path, wc)
-        for (const f of wc.files) {
-          if (f.status === 'added') state.untrackedFiles.push(f.path)
-          else state.dirtyFiles.push(f.path)
+        if (wc.desc.trim().length === 0) {
+          for (const f of wc.files) {
+            if (f.status === 'added') state.untrackedFiles.push(f.path)
+            else state.dirtyFiles.push(f.path)
+          }
         }
       }
     } catch {
@@ -615,7 +763,7 @@ export const jjDriver: VcsDriver = {
 
     if (state.branch) {
       try {
-        state.unlandedCommits = await gitDriver.commitsOnlyOn(path, state.branch, target)
+        state.unlandedCommits = await jjDriver.commitsOnlyOn(path, state.branch, target)
       } catch {
         // Leave 0 when target does not resolve yet.
       }
@@ -643,6 +791,159 @@ export const jjDriver: VcsDriver = {
     }
 
     return state
+  },
+
+  async hasUncommittedChanges(workspacePath: string, opts?: { ignoreUntracked?: boolean }): Promise<boolean> {
+    await ensureJjReady(workspacePath)
+    const wc = await readWorkingCopy(workspacePath)
+    if (!wc || wc.desc.trim().length > 0) return false
+    if (opts?.ignoreUntracked) return wc.files.some((f) => f.status !== 'added')
+    return wc.files.length > 0
+  },
+
+  async hasConflicts(cwd: string, rev: string): Promise<boolean> {
+    return jjConflicted(cwd, rev)
+  },
+
+  async conflictedPaths(cwd: string, rev = '@'): Promise<string[]> {
+    const out = await execJj(
+      cwd,
+      [
+        '-R',
+        cwd,
+        'log',
+        '-r',
+        rev,
+        '--no-graph',
+        '-T',
+        'conflicted_files.map(|f| json(f.path()) ++ "\\n").join("")'
+      ],
+      { ignoreWorkingCopy: rev !== '@' }
+    )
+    return [...new Set(parseJsonLines<string>(out))].sort()
+  },
+
+  async rebaseBranch(
+    workspacePath: string,
+    branch: string,
+    base: string,
+    opts?: { keepOnConflict?: boolean }
+  ): Promise<VcsRebaseResult> {
+    await ensureJjReady(workspacePath)
+    const branchSha = await resolveJjRev(workspacePath, branch)
+    const baseSha = await resolveJjRev(workspacePath, base)
+    const opBefore = (
+      await execJj(
+        workspacePath,
+        ['-R', workspacePath, 'op', 'log', '--limit', '1', '--no-graph', '-T', 'id'],
+        { ignoreWorkingCopy: true }
+      )
+    ).trim()
+    try {
+      await execJj(workspacePath, ['-R', workspacePath, 'rebase', '-b', branchSha, '-d', baseSha])
+    } catch (err) {
+      return {
+        ok: false,
+        conflicted: false,
+        reason: `rebase onto ${base} conflicted: ${errorMessage(err)}`
+      }
+    }
+
+    const qBranch = quoteJjRev(branch)
+    const conflictRevset = `(::${qBranch} ~ ::${baseSha}) | ${qBranch}`
+    if (await jjConflicted(workspacePath, conflictRevset)) {
+      const paths = await jjDriver.conflictedPaths(workspacePath, conflictRevset)
+      const opAfter = (
+        await execJj(
+          workspacePath,
+          ['-R', workspacePath, 'op', 'log', '--limit', '1', '--no-graph', '-T', 'id'],
+          { ignoreWorkingCopy: true }
+        )
+      ).trim()
+      if (opAfter && opAfter !== opBefore) {
+        if (opts?.keepOnConflict) {
+          pendingConflictRebaseOps.set(conflictRebaseKey(workspacePath), opAfter)
+        } else {
+          await execJj(workspacePath, ['-R', workspacePath, 'op', 'revert', opAfter])
+        }
+      }
+      const suffix = paths.length > 0 ? `: ${paths.join(', ')}` : ''
+      return {
+        ok: false,
+        conflicted: true,
+        reason: `rebase onto ${base} conflicted${suffix}`,
+        conflictedPaths: paths
+      }
+    }
+
+    pendingConflictRebaseOps.delete(conflictRebaseKey(workspacePath))
+    return { ok: true }
+  },
+
+  async abortRebase(workspacePath: string): Promise<void> {
+    const key = conflictRebaseKey(workspacePath)
+    const opId = pendingConflictRebaseOps.get(key)
+    pendingConflictRebaseOps.delete(key)
+    if (!opId) return
+    await execJj(workspacePath, ['-R', workspacePath, 'op', 'revert', opId]).catch(() => undefined)
+  },
+
+  async fastForwardTrunk(project: Project, target: string, _branch: string, commit: string): Promise<void> {
+    await ensureJjReady(project.root)
+    await git(project.root, ['merge-base', '--is-ancestor', target, commit])
+    await execJj(
+      project.root,
+      ['-R', project.root, 'bookmark', 'set', target, '-r', commit],
+      { ignoreWorkingCopy: true, rootHint: project.root }
+    )
+    const wc = await readWorkingCopy(project.root)
+    if (wc && wc.empty && wc.files.length === 0 && wc.desc.trim().length === 0) {
+      await execJj(project.root, ['-R', project.root, 'new', quoteJjRev(target)], {
+        rootHint: project.root
+      })
+    }
+  },
+
+  async fastForwardBranch(
+    project: Project,
+    workspacePath: string,
+    target: string,
+    commit: string,
+    expectedBaseSha: string | null
+  ): Promise<void> {
+    await ensureJjReady(project.root)
+    if (expectedBaseSha) {
+      const current = await resolveGitSha(project.root, `refs/heads/${target}`)
+      if (!current || current.toLowerCase() !== expectedBaseSha.toLowerCase()) {
+        throw new Error(
+          `\`${target}\` moved from ${expectedBaseSha.slice(0, 8)} to ${current?.slice(0, 8) ?? 'missing'}`
+        )
+      }
+      await git(workspacePath, ['merge-base', '--is-ancestor', expectedBaseSha, commit])
+    }
+    await execJj(
+      project.root,
+      ['-R', project.root, 'bookmark', 'set', target, '-r', commit],
+      { ignoreWorkingCopy: true, rootHint: project.root }
+    )
+  },
+
+  async pushToTarget(cwd: string, remote: string, branch: string, target: string): Promise<void> {
+    await ensureJjReady(cwd)
+    const commitSha = await resolveGitSha(cwd, branch)
+    if (!commitSha) throw new Error(`\`${branch}\` does not resolve to a commit`)
+    await gitDriver.push(cwd, remote, `${commitSha}:refs/heads/${target}`)
+    await jjDriver.fetch(cwd, remote, target)
+  },
+
+  async retireBranch(_cwd: string, project: Project, branch: string): Promise<boolean> {
+    try {
+      await jjDriver.deleteBranch(project, branch)
+      return true
+    } catch (err) {
+      log.info(`kept ${branch}: ${errorMessage(err)}`)
+      return false
+    }
   },
 
   diff: jjDiff,

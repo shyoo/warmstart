@@ -21,11 +21,13 @@ export interface VcsWorkspaceEntry {
   branch: string | null
 }
 
+/** Result returned by `rebaseBranch`. */
+export type VcsRebaseResult =
+  | { ok: true }
+  | { ok: false; conflicted: boolean; reason: string; conflictedPaths?: string[] }
+
 /**
  * Operations over a project's repositories, workspaces, branches, and diffs.
- *
- * Phase 1 extraction seam (`src/daemon/vcs/`): implemented by `gitDriver` without changing any
- * existing caller or behavior.
  */
 export interface VcsDriver {
   readonly capabilities: VcsCapabilities
@@ -38,8 +40,14 @@ export interface VcsDriver {
   pruneWorkspaces(project: Project): Promise<void>
   /** List registered workspaces for `project` along with any checked-out branch name. */
   listWorkspaces(project: Project): Promise<VcsWorkspaceEntry[]>
+  /** Report whether `path` on disk holds an initialized workspace for this driver. */
+  isWorkspace(path: string): boolean
   /** Return the checked-out branch name at `path`, or `null` when detached. */
   currentBranch(path: string): Promise<string | null>
+  /** Return the branch/bookmark name the trunk at `root` sits on, preferring `expectedTarget` when shared. */
+  trunkBranch(root: string, expectedTarget?: string): Promise<string | null>
+  /** Return a human-readable refusal if the trunk at `root` cannot accept a fast-forward onto `target`, else `null`. */
+  trunkNotReady(root: string, target: string): Promise<string | null>
   /** Switch `path` to `branch`, or create it from `createFromBase` and check it out. */
   switchBranch(path: string, branch: string, createFromBase?: string): Promise<void>
   /** Detach the workspace at `path` onto `target` so its previous branch is free. */
@@ -64,10 +72,43 @@ export interface VcsDriver {
   refreshTarget(project: Project, target: string): Promise<boolean>
   /** Preserve uncommitted edits on `path` (never trunk) and detach it from its task branch. */
   park(project: Project, path: string): Promise<Rescue | null>
-  /** Return rescued-tip metadata when HEAD at `path` carries a daemon rescue trailer, else `null`. */
+  /** Preserve uncommitted edits at `path` in-place without detaching the workspace. */
+  rescueDirty(path: string, destination: string): Promise<Rescue | null>
+  /** Advance an empty, clean task branch to `base` before work resumes on it. */
+  catchUpEmptyBranch(path: string, branch: string, base: string): Promise<void>
+  /** Return rescued-tip metadata when tip at `path` carries a daemon rescue trailer, else `null`. */
   rescue(path: string): Promise<{ sha: string; files: number } | null>
   /** Measure branch, dirty/untracked files, unlanded commits, landed ref, target lag, and stashes at `path`. */
   workspaceState(path: string, target: string): Promise<WorkspaceState>
+  /** Report whether `workspacePath` has uncommitted work that should block landing or branch switch. */
+  hasUncommittedChanges(workspacePath: string, opts?: { ignoreUntracked?: boolean }): Promise<boolean>
+  /** Report whether revision `rev` carries stored conflicts. */
+  hasConflicts(cwd: string, rev: string): Promise<boolean>
+  /** List conflicted file paths at `cwd` (and optional revision `rev`). */
+  conflictedPaths(cwd: string, rev?: string): Promise<string[]>
+  /** Rebase `branch` onto `base` cleanly, aborting or reverting on conflict unless `opts.keepOnConflict` is true. */
+  rebaseBranch(
+    workspacePath: string,
+    branch: string,
+    base: string,
+    opts?: { keepOnConflict?: boolean }
+  ): Promise<VcsRebaseResult>
+  /** Undo an unresolved conflict rebase left open by `rebaseBranch(..., { keepOnConflict: true })`. */
+  abortRebase(workspacePath: string): Promise<void>
+  /** Fast-forward the project trunk at `target` to `commit` (never rewriting history). */
+  fastForwardTrunk(project: Project, target: string, branch: string, commit: string): Promise<void>
+  /** Fast-forward target ref `target` in `project` to `commit` with compare-and-swap against `expectedBaseSha`. */
+  fastForwardBranch(
+    project: Project,
+    workspacePath: string,
+    target: string,
+    commit: string,
+    expectedBaseSha: string | null
+  ): Promise<void>
+  /** Push `branch`'s `commit` onto `remote` branch `target`. */
+  pushToTarget(cwd: string, remote: string, branch: string, target: string): Promise<void>
+  /** Detach if needed and remove branch/bookmark `branch` once its work is accounted for. */
+  retireBranch(cwd: string, project: Project, branch: string): Promise<boolean>
   /** Return changed-file numstat entries for `specs`, or a single file's patch when `path` is given. */
   diff(cwd: string, specs: string[]): Promise<DiffFileEntry[]>
   diff(cwd: string, specs: string[], path: string): Promise<string>

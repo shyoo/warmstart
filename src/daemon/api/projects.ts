@@ -9,11 +9,12 @@ import { ensurePool, landingTargetRefusal, measurePoolSizes, prunePoolWorktrees 
 import { log } from '../log.js'
 import { syncFromUpstream } from '../upstream.js'
 import { readScratchpad, saveScratchpad, setScratchpadPath } from '../scratchpad.js'
+import { migrateProjectVcs } from '../vcsmigration.js'
 import type { Api, ApiContext } from './support.js'
 
 type ProjectMethod =
   | 'project.list' | 'project.add' | 'project.relocate' | 'project.inspect' | 'project.workspaceRoot' | 'project.docTemplates'
-  | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.makeForkHome' | 'project.syncUpstream' | 'project.reload' | 'project.reorder' | 'project.archive' | 'project.unarchive' | 'project.rename' | 'project.delete' | 'project.listArchived' | 'project.writeConfig' | 'project.flow' | 'project.poolSizes'
+  | 'project.create' | 'project.cloneReadiness' | 'project.clone' | 'project.makeForkHome' | 'project.syncUpstream' | 'project.reload' | 'project.migrateVcs' | 'project.reorder' | 'project.archive' | 'project.unarchive' | 'project.rename' | 'project.delete' | 'project.listArchived' | 'project.writeConfig' | 'project.flow' | 'project.poolSizes'
   | 'project.proposeChecks' | 'project.setChecks' | 'project.setPostLanding' | 'project.setPolicy' | 'project.pruneWorktrees'
   | 'scratchpad.get' | 'scratchpad.save' | 'scratchpad.setPath'
 
@@ -42,6 +43,11 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
     'project.makeForkHome': (p) => makeForkHome(p.id),
     'project.syncUpstream': (p) => syncFromUpstream(p.id),
     'project.reload': (p) => reloadProject(p.id),
+    'project.migrateVcs': (p) =>
+      migrateProjectVcs(p.id, p.to, {
+        allowDirtyTrunk: p.allowDirtyTrunk,
+        removeJjDir: p.removeJjDir
+      }),
     'project.reorder': (p) => reorderProjects(p.ids),
     'project.listArchived': () => listArchivedProjects(),
     'project.archive': async (p) => {

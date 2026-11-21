@@ -84,9 +84,9 @@ describe('branchNameFor', () => {
 })
 
 describe('projectUsesGitBranches', () => {
-  it('returns true only for git and false for jj, none, null, and undefined', () => {
+  it('returns true for git and jj and false for none, null, and undefined', () => {
     expect(projectUsesGitBranches({ vcs: 'git' })).toBe(true)
-    expect(projectUsesGitBranches({ vcs: 'jj' })).toBe(false)
+    expect(projectUsesGitBranches({ vcs: 'jj' })).toBe(true)
     expect(projectUsesGitBranches({ vcs: 'none' })).toBe(false)
     expect(projectUsesGitBranches(null)).toBe(false)
     expect(projectUsesGitBranches(undefined)).toBe(false)

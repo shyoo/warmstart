@@ -2530,7 +2530,21 @@ const MIGRATIONS: Migration[] = [
           .run(JSON.stringify(defaults), row.id)
       }
     }
-  }
+  },
+  // 96: VCS migration history (`vcsmigration.ts`)
+  `
+    create table if not exists vcs_migrations (
+      id text primary key,
+      project_id text not null references projects(id) on delete cascade,
+      from_vcs text not null check (from_vcs in ('git', 'jj')),
+      to_vcs text not null check (to_vcs in ('git', 'jj')),
+      status text not null check (status in ('completed', 'rolled_back')),
+      started_at integer not null,
+      finished_at integer not null,
+      detail_json text not null
+    );
+    create index if not exists vcs_migrations_project on vcs_migrations (project_id, finished_at desc);
+  `
 ]
 
 /**

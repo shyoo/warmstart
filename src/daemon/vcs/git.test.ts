@@ -5,7 +5,7 @@ import { closeDb } from '../db.js'
 import { samePath } from '../fspath.js'
 import { git, makeProject, openTestDb } from '../testkit.js'
 import { commitsOnlyOn as worktreeCommitsOnlyOn, landedRef as worktreeLandedRef } from '../worktrees.js'
-import { driverFor, gitDriver } from './index.js'
+import { driverFor, gitDriver, jjDriver } from './index.js'
 
 let dataDir: string
 let repoDir: string
@@ -22,10 +22,10 @@ afterAll(() => {
 })
 
 describe('vcs/index driverFor', () => {
-  it('returns gitDriver for git and null for unsupported vcs kinds', () => {
+  it('returns the matching driver for git and jj and null for none', () => {
     expect(driverFor({ vcs: 'git' })).toBe(gitDriver)
+    expect(driverFor({ vcs: 'jj' })).toBe(jjDriver)
     expect(driverFor({ vcs: 'none' })).toBeNull()
-    expect(driverFor({ vcs: 'jj' })).toBeNull()
   })
 
   it('exposes accurate git capabilities metadata', () => {

@@ -152,7 +152,7 @@ export async function landConversationWork(
     if (level !== 'commit-and-verify' && level !== 'commit-and-merge' && level !== 'commit-and-push') {
       return { ok: false, reason: `this conversation works in the trunk, where ${level} has nothing to do` }
     }
-    const state = await workspaceState(project.root, target)
+    const state = await workspaceState(project.root, target, project)
     // ⛔ **A refusal the agent can act on** (t788 ← t786). This said *"nothing of this conversation's
     // to verify there"* and stopped, so t786's agent — told never to switch branches — asked the
     // operator for leave to push by hand. It may switch back; the reply says how, and that nothing
@@ -207,7 +207,7 @@ export async function landConversationWork(
     (session ? workspaceHeldBy(project, session.id) : null) ?? workspaceHeldBy(project, task.id)
   const target = landingTargetFor(task, project)
   const found = held
-    ? await workspaceState(held.path, target)
+    ? await workspaceState(held.path, target, project)
     : await workspaceOnBranch(project, branch, target)
   if (found) return landIn(task, project, found, branch, level, target, session, prOptions)
 
@@ -230,7 +230,7 @@ export async function landConversationWork(
   try {
     const prepared = await prepareWorkspace(project, borrowed, branch, task)
     if (!prepared.ok) return { ok: false, reason: prepared.error ?? 'could not prepare a workspace to land from' }
-    return await landIn(task, project, await workspaceState(borrowed.path, target), branch, level, target, null, prOptions)
+    return await landIn(task, project, await workspaceState(borrowed.path, target, project), branch, level, target, null, prOptions)
   } finally {
     await parkWorkspace(project, borrowed.path)
     releaseWorkspace(borrowed.claimId)
