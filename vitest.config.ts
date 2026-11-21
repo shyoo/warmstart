@@ -1,3 +1,4 @@
+import { availableParallelism } from 'node:os'
 import { resolve } from 'node:path'
 import { defineConfig } from 'vitest/config'
 import { resolveVersion } from './scripts/version.mjs'
@@ -34,6 +35,10 @@ export default defineConfig({
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     environment: 'node',
     testTimeout: 30_000,
+    hookTimeout: 30_000,
+    // Uncapped 20-worker runs starve Windows git/SQLite hook setup (`539.6s` and 11s `beforeAll`
+    // timeouts measured vs `278.2s` at 8 workers); cap at 6 while keeping smaller CI hosts intact.
+    maxWorkers: Math.min(6, availableParallelism()),
     /**
      * ⛔ **One temp root per run, removed when the run ends, and a `PATH` no vendor CLI can be
      * launched from.** Both live in this file because both are answers to the same measurement: 24,322

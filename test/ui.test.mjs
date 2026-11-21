@@ -4013,7 +4013,7 @@ try {
     defaultAfter
   )
   const effortOptions = await evaluate(
-    `[...${modelsCell}?.querySelectorAll('select[aria-label^="Default effort for"] option') ?? []].map(o => o.textContent.trim()).join('|')`
+    `[...${modelsCell}?.querySelectorAll('select[aria-label^="Effort for"] option') ?? []].map(o => o.textContent.trim()).join('|')`
   )
   check(
     'no effort control offers "CLI default"',

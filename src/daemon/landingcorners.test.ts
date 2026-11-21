@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import type { Project } from '@shared/tasks.js'
 import { messageBody } from './threadline.js'
 
@@ -115,6 +115,12 @@ beforeAll(async () => {
   finish = await import('./finish.js')
   cancel = await import('./cancel.js')
   db.openDb(join(dir, 'corners.db'))
+})
+
+afterEach(() => {
+  // Archive prior tests' seeded projects so scanLooseEnds / retireSettledBranches stay O(1)
+  // per test instead of re-scanning every preceding test's repository across corners.db.
+  db.db().prepare('update projects set archived_at = ? where archived_at is null').run(Date.now())
 })
 
 afterAll(() => {
