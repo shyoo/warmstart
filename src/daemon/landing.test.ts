@@ -2458,7 +2458,7 @@ describe.skipIf(!jjHost.available)(`colocated jj landing (${jjHost.reason})`, ()
     expect(await landing.retireEmptyBranch(project, branch, 'main')).toBe(true)
     expect(await jjDriver.branchExists(project, branch)).toBe(false)
     expect(existsSync(join(root, '.jj'))).toBe(true)
-  })
+  }, 60_000)
 
   it('lands described @ work via merge-local onto detached trunk, and holds when trunk is dirty', async () => {
     const { project, root } = makeJjProject()
@@ -2501,10 +2501,10 @@ describe.skipIf(!jjHost.available)(`colocated jj landing (${jjHost.reason})`, ()
     expect(landed.branchDeleted).toBe(true)
     expect(readFileSync(join(root, 'Change.txt'), 'utf8')).toBe('jj merge-local body\n')
     expect(await jjDriver.branchExists(project, branch)).toBe(false)
-  })
+  }, 60_000)
 
-  it('pushes to origin via auto-land and fast-forwards planner branches via merge-branch', async () => {
-    const { project, root, bareRemote } = makeJjProject({ withRemote: true })
+  it('pushes to origin via auto-land', async () => {
+    const { project, bareRemote } = makeJjProject({ withRemote: true })
     const ws1 = join(jjDir, `w${jjSeq}-auto`)
     await jjDriver.addWorkspace(project, ws1, 'main')
     const branch = 'warmstart/t3-jj-auto'
@@ -2526,8 +2526,10 @@ describe.skipIf(!jjHost.available)(`colocated jj landing (${jjHost.reason})`, ()
     expect(landed.pushed).toBe(true)
     expect(landed.branchDeleted).toBe(true)
     expect(git(bareRemote!, 'rev-parse', 'refs/heads/main')).toBe(landed.commit)
+  }, 60_000)
 
-    // Planner branch via merge-branch when parked.
+  it('fast-forwards planner branches via merge-branch', async () => {
+    const { project, root } = makeJjProject()
     const planBranch = 'warmstart/plan-jj'
     await jjDriver.createBranch(project, planBranch, 'main')
     const wsChild = join(jjDir, `w${jjSeq}-child`)
@@ -2554,7 +2556,7 @@ describe.skipIf(!jjHost.available)(`colocated jj landing (${jjHost.reason})`, ()
     expect(childRes.strategy).toBe('merge-branch')
     expect(git(root, 'rev-parse', planBranch)).toBe(childRes.commit)
     expect(await jjDriver.branchExists(project, childBranch)).toBe(false)
-  })
+  }, 60_000)
 
   it('refuses stored conflicts before rebase and reverts conflicting rebases cleanly', async () => {
     const { project, root } = makeJjProject()

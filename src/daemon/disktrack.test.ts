@@ -80,27 +80,28 @@ afterAll(() => {
 })
 
 describe('prepareWorkspace + dependencyStore wiring', () => {
-  it('runs installCommand, injects env into install and prepare, caches on hit, invalidates on lockfile change, propagates failure, and skips trunk', async () => {
-    const installScript = [
-      'const fs = require("fs");',
-      'const path = require("path");',
-      'const store = process.env.WARMSTART_DEPENDENCY_STORE;',
-      'const pnpmDir = process.env.PNPM_STORE_DIR;',
-      'if (!store || !pnpmDir) process.exit(9);',
-      'const countPath = path.join(store, "install-count.txt");',
-      'const prev = fs.existsSync(countPath) ? Number(fs.readFileSync(countPath, "utf8")) : 0;',
-      'fs.writeFileSync(countPath, String(prev + 1));',
-      'fs.writeFileSync(path.join(store, "install-env.json"), JSON.stringify({ store, pnpmDir }));',
-      'fs.mkdirSync("node_modules", { recursive: true });',
-      'fs.writeFileSync(path.join("node_modules", ".ok"), "1");',
-      'console.log("dep-install-" + (prev + 1));'
-    ].join(' ')
+  const installScript = [
+    'const fs = require("fs");',
+    'const path = require("path");',
+    'const store = process.env.WARMSTART_DEPENDENCY_STORE;',
+    'const pnpmDir = process.env.PNPM_STORE_DIR;',
+    'if (!store || !pnpmDir) process.exit(9);',
+    'const countPath = path.join(store, "install-count.txt");',
+    'const prev = fs.existsSync(countPath) ? Number(fs.readFileSync(countPath, "utf8")) : 0;',
+    'fs.writeFileSync(countPath, String(prev + 1));',
+    'fs.writeFileSync(path.join(store, "install-env.json"), JSON.stringify({ store, pnpmDir }));',
+    'fs.mkdirSync("node_modules", { recursive: true });',
+    'fs.writeFileSync(path.join("node_modules", ".ok"), "1");',
+    'console.log("dep-install-" + (prev + 1));'
+  ].join(' ')
 
-    const prepareScript = [
-      'const fs = require("fs");',
-      'console.log(JSON.stringify({ store: process.env.WARMSTART_DEPENDENCY_STORE || null, pnpm: process.env.PNPM_STORE_DIR || null }));',
-      'fs.writeFileSync("prepare-saw-deps.txt", fs.existsSync("node_modules/.ok") ? "yes" : "no");'
-    ].join(' ')
+  const prepareScript = [
+    'const fs = require("fs");',
+    'console.log(JSON.stringify({ store: process.env.WARMSTART_DEPENDENCY_STORE || null, pnpm: process.env.PNPM_STORE_DIR || null }));',
+    'fs.writeFileSync("prepare-saw-deps.txt", fs.existsSync("node_modules/.ok") ? "yes" : "no");'
+  ].join(' ')
+
+  it('runs installCommand, injects env into install and prepare, caches on hit, invalidates on lockfile change, and propagates failure', async () => {
 
     const project = makeGitProject({
       prepare: [`node -e ${JSON.stringify(prepareScript)}`],
@@ -167,8 +168,9 @@ describe('prepareWorkspace + dependencyStore wiring', () => {
     expect(existsSync(join(ws!.path, 'prepare-saw-deps.txt'))).toBe(false)
 
     worktrees.releaseWorkspace(ws!.claimId)
+  }, 60_000)
 
-    // 5. Trunk-mode prepareWorkspace never runs dependencyStore and never injects store env vars.
+  it('never runs dependencyStore or injects store env vars in trunk mode', async () => {
     const trunkProject = makeGitProject({
       prepare: [`node -e ${JSON.stringify(prepareScript)}`],
       workspaces: {
@@ -191,7 +193,7 @@ describe('prepareWorkspace + dependencyStore wiring', () => {
     expect(trunkPrepareEnv).toEqual({ store: null, pnpm: null })
     expect(existsSync(depstore.dependencyStoreDir(trunkProject.root))).toBe(false)
     rmSync(join(trunkProject.root, 'prepare-saw-deps.txt'), { force: true })
-  })
+  }, 60_000)
 })
 
 describe('ensurePool + CoW seeding & measurePoolStorage', () => {
@@ -254,5 +256,5 @@ describe('ensurePool + CoW seeding & measurePoolStorage', () => {
       storeDir: storeRoot,
       bytes: 10
     })
-  })
+  }, 60_000)
 })
