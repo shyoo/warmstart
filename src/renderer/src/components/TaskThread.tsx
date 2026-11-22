@@ -91,6 +91,7 @@ import { DelegateNotice, DelegatePill } from './thread/DelegatePill'
 import { artifactsOf, counts, DiffPanel, TaskArtifacts, useTaskDiffSummary } from './thread/DiffPanel'
 import { sameSource, useDiffPane } from '../lib/diffpane'
 import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
+import { CheckIcon, CopyIcon, InfoIcon, ReturnKeyIcon, SendArrowIcon, SlashCommandIcon, SparkleIcon } from './UiIcons'
 import { DebateBoard } from './thread/DebateBoard'
 import { CompactionRow, ReviewRow, RunRow } from './thread/RunRow'
 import { LedgerPeek } from './thread/LedgerPeek'
@@ -1536,6 +1537,26 @@ function MessageImage({ attachment }: { attachment: Attachment }): React.JSX.Ele
  * not swallow the whitespace either side of them, which is what carries the line breaks the daemon
  * wrote.
  */
+function MessageCopyButton({ text }: { text: string }): React.JSX.Element {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      type="button"
+      className="msg-action-btn"
+      title={copied ? 'Copied' : 'Copy message'}
+      aria-label={copied ? 'Copied' : 'Copy message'}
+      onClick={() => {
+        void navigator.clipboard.writeText(text).then(() => {
+          setCopied(true)
+          setTimeout(() => setCopied(false), 1800)
+        })
+      }}
+    >
+      {copied ? <CheckIcon size={12} /> : <CopyIcon size={12} />}
+    </button>
+  )
+}
+
 function MessageText({
   text,
   markdown = false,
@@ -1673,10 +1694,18 @@ const Thread = memo(function Thread({
                     `promptAnchors`) — and ⓘ for the detail a short system line keeps behind it. */}
                 <div className="msg-meta">
                   <span className="msg-when" title={new Date(m.ts).toLocaleString()}>{when(m.ts)}</span>
+                  {m.text.trim().length > 0 && <MessageCopyButton text={m.text} />}
                   {anchoredRun?.prompt && (
                     <PromptChip prompt={anchoredRun.prompt} title="The prompt this message produced" />
                   )}
-                  {m.detail && <details className="msg-detail"><summary title="Show details">ⓘ</summary><div><MessageText text={m.detail} markdown onOpenFile={onOpenFile} /></div></details>}
+                  {m.detail && (
+                    <details className="msg-detail">
+                      <summary title="Show details" aria-label="Show details">
+                        <InfoIcon size={12} />
+                      </summary>
+                      <div><MessageText text={m.detail} markdown onOpenFile={onOpenFile} /></div>
+                    </details>
+                  )}
                 </div>
               </div>
             </div>
@@ -1690,8 +1719,9 @@ const Thread = memo(function Thread({
               <div className="msg-bubble">
                 <span className="msg-text">
                   {item.lines.length === 0 ? (
-                    <span className="dim">
-                      {landing ? 'landing — rebasing, verifying and merging…' : 'waiting for the agent’s first words…'}
+                    <span className="msg-live-status dim">
+                      <SparkleIcon size={12} className="msg-live-sparkle" />
+                      <span>{landing ? 'Landing — rebasing, verifying and merging…' : 'Thinking…'}</span>
                     </span>
                   ) : (
                     item.lines.map((line, i) => (
@@ -2460,20 +2490,30 @@ function Compose({
           box, and the box has to stay the widest thing there (L3). */}
       {commandMenu.length > 0 && (
         <div className="compose-command-menu" role="listbox" aria-label="Commands">
-          {commandMenu.map((c) => (
+          {commandMenu.map((c, idx) => (
             <button
               key={c.id}
               type="button"
               role="option"
-              aria-selected={false}
-              className="compose-command-option"
+              aria-selected={idx === 0}
+              className={`compose-command-option${idx === 0 ? ' compose-command-option--active' : ''}`}
               onClick={() => {
                 setCommand(c)
                 setText('')
               }}
             >
-              <span className="compose-command-slash">{c.slash}</span>
-              <span className="dim">{c.detail}</span>
+              <span className="compose-command-icon" aria-hidden="true">
+                <SlashCommandIcon size={14} />
+              </span>
+              <span className="compose-command-text">
+                <span className="compose-command-slash">{c.slash}</span>
+                <span className="compose-command-desc dim">{c.detail}</span>
+              </span>
+              {idx === 0 && (
+                <span className="compose-command-enter" aria-hidden="true">
+                  <ReturnKeyIcon size={11} />
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -2606,7 +2646,7 @@ function Compose({
             </button>
           )}
           <button
-            className="btn btn--primary"
+            className="btn btn--primary compose-send-btn"
             disabled={!canSend}
             title={
               reassigning
@@ -2619,19 +2659,22 @@ function Compose({
             }
             onClick={() => void send()}
           >
-            {sending
-              ? reassigning
-                ? 'Reassigning…'
-                : isFailed
-                  ? 'Retrying…'
-                  : 'Sending…'
-              : reassigning
-                ? 'Reassign'
-                : resuming
-                  ? isFailed
-                    ? 'Retry'
-                    : 'Resume'
-                  : 'Send'}
+            <span>
+              {sending
+                ? reassigning
+                  ? 'Reassigning…'
+                  : isFailed
+                    ? 'Retrying…'
+                    : 'Sending…'
+                : reassigning
+                  ? 'Reassign'
+                  : resuming
+                    ? isFailed
+                      ? 'Retry'
+                      : 'Resume'
+                    : 'Send'}
+            </span>
+            {!sending && !reassigning && !resuming && <SendArrowIcon size={13} />}
           </button>
         </span>
       </div>

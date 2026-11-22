@@ -13,10 +13,10 @@ describe('PillOptions', () => {
     const html = renderToStaticMarkup(
       <PillOptions options={options} value="w1" ariaLabel="Test select" onPick={() => {}} />
     )
-    // w1 has aria-selected="true" and checkmark
+    // w1 has aria-selected="true" and checkmark icon
     expect(html).toMatch(/data-value="w1"[^>]*aria-selected="true"/)
     expect(html).toMatch(/data-value="w1"[^>]*pill-option--on/)
-    expect(html).toContain('✓')
+    expect(html).toMatch(/class="pill-option-check"[^>]*><svg\b/)
 
     // empty value (Auto) and w2 are not selected
     expect(html).toMatch(/data-value=""[^>]*aria-selected="false"/)

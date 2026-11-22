@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { SessionStreamLine } from '@shared/protocol'
 import { rpc, useDaemonEvents } from '../lib/daemon'
 import { mergeStreamLines } from '../lib/streamview'
+import { AlertIcon, ChevronDownIcon, CodeIcon, SparkleIcon } from './UiIcons'
 
 /**
  * What a dispatched agent is doing, drawn from the records it publishes.
@@ -91,7 +92,12 @@ export function SessionStream({
           toggle={() => toggle(line.seq)}
         />
       ))}
-      {live && <p className="sstream-live dim">watching…</p>}
+      {live && (
+        <p className="sstream-live dim">
+          <span className="sstream-live-dot" aria-hidden="true" />
+          <span>Working…</span>
+        </p>
+      )}
       {backfillFailed && (
         <p className="dim">
           Only lines from the moment this pane opened: this daemon does not serve the earlier ones.
@@ -122,8 +128,8 @@ function StreamRow({
   const tone = line.tone ?? 'normal'
   const body = (
     <>
-      <span className="sstream-mark" aria-hidden="true">
-        {MARKS[line.kind]}
+      <span className={`sstream-mark sstream-mark--${line.kind}`} aria-hidden="true">
+        {rowIcon(line.kind)}
       </span>
       <span className="sstream-text">
         {line.text}
@@ -131,6 +137,12 @@ function StreamRow({
           <span className="sstream-count"> · ~{compact(line.thinkingTokens)} tokens</span>
         )}
       </span>
+      {detail && (
+        <ChevronDownIcon
+          size={12}
+          className={`sstream-chevron${open ? ' sstream-chevron--open' : ''}`}
+        />
+      )}
     </>
   )
 
@@ -138,8 +150,8 @@ function StreamRow({
     return <div className={`sstream-row sstream-row--${line.kind} sstream-row--${tone}`}>{body}</div>
   }
   return (
-    <div className={`sstream-row sstream-row--${line.kind} sstream-row--${tone}`}>
-      <button className="sstream-open" onClick={toggle} aria-expanded={open}>
+    <div className={`sstream-row sstream-row--${line.kind} sstream-row--${tone} sstream-row--expandable${open ? ' sstream-row--open' : ''}`}>
+      <button type="button" className="sstream-open" onClick={toggle} aria-expanded={open}>
         {body}
       </button>
       {open && <pre className="sstream-detail">{detail}</pre>}
@@ -148,13 +160,20 @@ function StreamRow({
 }
 
 /** ⚠️ Decoration, and marked `aria-hidden`: the row's words are the content. */
-const MARKS: Record<SessionStreamLine['kind'], string> = {
-  text: '',
-  thinking: '·',
-  tool: '›',
-  rate_limit: '!',
-  result: '—',
-  note: '—'
+function rowIcon(kind: SessionStreamLine['kind']): React.ReactNode {
+  switch (kind) {
+    case 'thinking':
+      return <SparkleIcon size={12} />
+    case 'tool':
+      return <CodeIcon size={13} />
+    case 'rate_limit':
+      return <AlertIcon size={13} />
+    case 'result':
+    case 'note':
+      return '—'
+    case 'text':
+      return null
+  }
 }
 
 function compact(n: number): string {

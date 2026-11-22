@@ -1125,6 +1125,16 @@ is too large and too varied.
   (`@fontsource-variable/google-sans-code`, normal + italic) locally under SIL OFL-1.1 with system
   fallbacks (`font-src 'self'`, zero network requests; `staticContentType` serves `.woff2` for mobile).
 
+- **Agent UI components (`t1426`, 2026-11-22):** Shared monochrome stroke SVG icons (`UiIcons.tsx`)
+  replace raw emoji (`📋`, `⚡`, `ⓘ`) and ASCII stream markers (`·`, `›`, `!`) across thread messages
+  (`TaskThread.tsx`, `MessageCopyButton`), collapsible reasoning/activity disclosures (`Disclosure.tsx`),
+  `SessionStream.tsx` (expandable tool/thinking cards with rotating chevrons and a pulsing live status dot),
+  attachment cards (`pasteimages.tsx` with paperclip icon + formatted byte size), slash-command popovers
+  (icon + two-line title/description + `↵` keycap), `Pill.tsx` (`CheckIcon` + `--radius-lg`/`--shadow-menu`),
+  and `DelegatePill.tsx` (accessible `.ui-switch` pill toggles on native checkboxes). All L3 geometry
+  invariants (`.msg-when` alignment outside `.msg-bubble`, `.compose-row` input width, `.pill-menu--model`
+  380 px width) are preserved across dark and light themes.
+
 - **`.panel` caps at 1100px; `.panel--wide` does not.** The cap is a reading measure for prose and
   forms. A panel whose content is a *board* — Flow, the task table — opts out, because squeezing the
   columns a reader is comparing while half the window stays empty is worse, not calmer. ⛔ Flow, Tasks

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { menuPosition, type MenuPlacement } from '../lib/menuposition'
+import { CheckIcon } from './UiIcons'
 
 /**
  * One setting, drawn as a word you can click.
@@ -412,7 +413,7 @@ export function PillOptions({
             </span>
             {on && (
               <span className="pill-option-check" aria-hidden="true">
-                ✓
+                <CheckIcon size={13} />
               </span>
             )}
           </button>

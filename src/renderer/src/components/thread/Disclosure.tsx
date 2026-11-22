@@ -6,6 +6,7 @@
  */
 import { useState } from 'react'
 import { when } from '../../lib/format'
+import { CheckIcon, ChevronDownIcon, CopyIcon, PromptDocIcon, SparkleIcon } from '../UiIcons'
 
 /**
  * Collapsible prompt disclosure with character count and copy-to-clipboard.
@@ -33,7 +34,9 @@ export function PromptDisclosure({
     <details className="prompt-disclosure" open={defaultOpen}>
       <summary className="prompt-disclosure-summary">
         <span className="prompt-disclosure-title">
-          <span className="prompt-disclosure-icon">📋</span> {label}
+          <ChevronDownIcon size={12} className="disclosure-chevron" />
+          <PromptDocIcon size={13} className="prompt-disclosure-icon" />
+          <span>{label}</span>
         </span>
         <span className="prompt-disclosure-meta">
           <span>{prompt.length.toLocaleString()} chars</span>
@@ -43,7 +46,8 @@ export function PromptDisclosure({
             onClick={copy}
             title="Copy full prompt text"
           >
-            {copied ? 'Copied' : 'Copy'}
+            {copied ? <CheckIcon size={11} /> : <CopyIcon size={11} />}
+            <span>{copied ? 'Copied' : 'Copy'}</span>
           </button>
         </span>
       </summary>
@@ -89,7 +93,8 @@ export function PromptChip({
         aria-label={`${title}, ${count} characters`}
         onClick={() => setOpen(true)}
       >
-        📋 {count}
+        <PromptDocIcon size={12} />
+        <span>{count}</span>
       </button>
       {open && (
         <div className="confirm-shade" role="presentation" onClick={() => setOpen(false)}>
@@ -148,21 +153,24 @@ export function ActivityDisclosure({
 
   return (
     <details className="prompt-disclosure activity-disclosure" open={defaultOpen}>
-      <summary className="prompt-disclosure-summary">
+      <summary className="prompt-disclosure-summary activity-disclosure-summary">
         <span className="prompt-disclosure-title">
-          <span className="prompt-disclosure-icon">⚡</span> {label}
+          <ChevronDownIcon size={12} className="disclosure-chevron" />
+          <SparkleIcon size={12} className="activity-disclosure-sparkle" />
+          <span>{label}</span>
+          <span className="activity-disclosure-count">
+            · {activity.length} {activity.length === 1 ? 'step' : 'steps'}
+          </span>
         </span>
         <span className="prompt-disclosure-meta">
-          <span>
-            {activity.length} {activity.length === 1 ? 'step' : 'steps'}
-          </span>
           <button
             type="button"
             className="btn btn--xs btn--ghost prompt-copy-btn"
             onClick={copy}
             title="Copy intermediate activity text"
           >
-            {copied ? 'Copied' : 'Copy'}
+            {copied ? <CheckIcon size={11} /> : <CopyIcon size={11} />}
+            <span>{copied ? 'Copied' : 'Copy'}</span>
           </button>
         </span>
       </summary>
@@ -201,7 +209,8 @@ export function ActivityChip({
   return (
     <>
       <button type="button" className="prompt-chip" onClick={() => setOpen(true)} title={`${title} — ${count}. Click to read or copy it.`}>
-        ⚡ {activity.length.toLocaleString()}
+        <SparkleIcon size={12} />
+        <span>{activity.length.toLocaleString()}</span>
       </button>
       {open && (
         <div className="confirm-shade" role="presentation" onClick={() => setOpen(false)}>

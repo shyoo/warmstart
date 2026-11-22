@@ -137,8 +137,10 @@ export function DelegationMenu({
           const checked = allowedTiers.some((t) => tagKey(t) === key)
           return (
             <label key={key} className="delegation-picker-row">
+              <span className="delegation-picker-label">{tagDisplay(tier)}</span>
               <input
                 type="checkbox"
+                className="ui-switch"
                 checked={checked}
                 disabled={busy}
                 onChange={() =>
@@ -151,7 +153,6 @@ export function DelegationMenu({
                   })
                 }
               />
-              <span>{tagDisplay(tier)}</span>
             </label>
           )
         })}
@@ -164,8 +165,15 @@ export function DelegationMenu({
             const tiers = modelTiers[modelId] ?? []
             return (
               <label key={modelId} className="delegation-picker-row">
+                <span className="delegation-picker-model-info">
+                  <span className="delegation-picker-label">{modelLabel(modelId) ?? modelId}</span>
+                  {tiers.length > 0 && (
+                    <span className="delegation-picker-tiers">{tiers.map(tagDisplay).join(' · ')}</span>
+                  )}
+                </span>
                 <input
                   type="checkbox"
+                  className="ui-switch"
                   checked={checked}
                   disabled={busy}
                   onChange={() =>
@@ -178,10 +186,6 @@ export function DelegationMenu({
                     })
                   }
                 />
-                <span>{modelLabel(modelId) ?? modelId}</span>
-                {tiers.length > 0 && (
-                  <span className="delegation-picker-tiers">{tiers.map(tagDisplay).join(', ')}</span>
-                )}
               </label>
             )
           })}

@@ -57,6 +57,8 @@
   --sidebar-w: 252px;
   --radius: 6px;
   --radius-sm: 4px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
 
   /* ---- dark, the default ------------------------------------------------ */
   --color-bg: #0e1013;
@@ -89,6 +91,7 @@
   --state-idle: #6b7280;
 
   --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-menu: 0 8px 24px rgb(0 0 0 / 0.42), 0 1px 3px rgb(0 0 0 / 0.28);
 
   --motion-fast: 120ms;
   --motion: 150ms;
@@ -123,6 +126,7 @@
     --state-idle: #8b929d;
 
     --shadow-panel: 0 1px 2px rgb(16 20 28 / 0.06);
+    --shadow-menu: 0 8px 24px rgb(16 20 28 / 0.12), 0 1px 3px rgb(16 20 28 / 0.06);
   }
 }
 
@@ -149,6 +153,7 @@
   --state-pr: #7b4fc0;
   --state-idle: #8b929d;
   --shadow-panel: 0 1px 2px rgb(16 20 28 / 0.06);
+  --shadow-menu: 0 8px 24px rgb(16 20 28 / 0.12), 0 1px 3px rgb(16 20 28 / 0.06);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,6 +1,8 @@
 import React, { useCallback, useRef, useState } from 'react'
 import { rpc } from './daemon.js'
+import { formatPoolBytes } from './format.js'
 import { errorMessage } from '@shared/errors.js'
+import { PaperclipIcon } from '../components/UiIcons'
 
 /**
  * Pasting, dropping, and selecting attachments in a composer.
@@ -267,9 +269,23 @@ export function ImageChips({ paste }: { paste: PasteImages }): React.JSX.Element
     <div className="chips">
       {paste.images.map((image) => (
         <span className="chip" key={image.id}>
-          {image.preview ? <img className="chip-thumb" src={image.preview} alt="" /> : <span className="chip-size dim">{image.name}</span>}
-          {image.preview && <span className="chip-size dim">{image.width}×{image.height}</span>}
+          {image.preview ? (
+            <img className="chip-thumb" src={image.preview} alt="" />
+          ) : (
+            <PaperclipIcon size={13} className="chip-icon" />
+          )}
+          <span className="chip-meta">
+            <span className="chip-name">{image.name}</span>
+            <span className="chip-size dim">
+              {image.preview
+                ? `${image.width}×${image.height}`
+                : image.bytes > 0
+                  ? formatPoolBytes(image.bytes)
+                  : 'Folder'}
+            </span>
+          </span>
           <button
+            type="button"
             className="chip-x"
             title="Remove this attachment from the message"
             onClick={() => paste.remove(image.id)}
