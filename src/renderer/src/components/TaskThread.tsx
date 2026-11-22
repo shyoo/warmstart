@@ -91,7 +91,7 @@ import { DelegateNotice, DelegatePill } from './thread/DelegatePill'
 import { artifactsOf, counts, DiffPanel, TaskArtifacts, useTaskDiffSummary } from './thread/DiffPanel'
 import { sameSource, useDiffPane } from '../lib/diffpane'
 import { ActivityDisclosure, PromptChip } from './thread/Disclosure'
-import { CheckIcon, CopyIcon, InfoIcon, ReturnKeyIcon, SendArrowIcon, SlashCommandIcon, SparkleIcon } from './UiIcons'
+import { CheckIcon, ChevronDownIcon, CopyIcon, InfoIcon, ReturnKeyIcon, SendArrowIcon, SlashCommandIcon, SparkleIcon } from './UiIcons'
 import { DebateBoard } from './thread/DebateBoard'
 import { CompactionRow, ReviewRow, RunRow } from './thread/RunRow'
 import { LedgerPeek } from './thread/LedgerPeek'
@@ -1653,10 +1653,15 @@ const Thread = memo(function Thread({
                   <div className="msg-text">
                     {isTargetMsgForRunActivity && (
                       <details className="msg-chip-disclosure">
-                        <summary>⚙ {runForMsg.activity!.length} step{runForMsg.activity!.length === 1 ? '' : 's'}</summary>
+                        <summary>
+                          <ChevronDownIcon size={11} className="disclosure-chevron" />
+                          <SparkleIcon size={12} className="activity-disclosure-sparkle" />
+                          <span>{runForMsg.activity!.length} step{runForMsg.activity!.length === 1 ? '' : 's'}</span>
+                        </summary>
                         <ActivityDisclosure
                           activity={runForMsg.activity!}
-                          label={`Intermediate activity (${runForMsg.activity!.length} step${runForMsg.activity!.length === 1 ? '' : 's'})`}
+                          label="Intermediate activity"
+                          defaultOpen
                         />
                       </details>
                     )}

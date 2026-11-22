@@ -6850,8 +6850,28 @@ select:focus-visible,
 }
 .msg-detail, .msg-chip-disclosure { font-size: var(--text-meta); color: var(--color-text-faint); }
 .msg-detail > div { margin-top: var(--sp-2); padding-top: var(--sp-2); border-top: 1px solid var(--color-border); white-space: pre-wrap; color: var(--color-text); }
-.msg-chip-disclosure { margin: 0 0 var(--sp-1); }
-.msg-chip-disclosure summary, .msg-detail summary {
+.msg-chip-disclosure { margin: 0 0 var(--sp-2); }
+.msg-chip-disclosure > summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease), color var(--motion-fast) var(--ease);
+}
+.msg-chip-disclosure > summary::-webkit-details-marker { display: none; }
+.msg-chip-disclosure > summary:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+.msg-chip-disclosure[open] > summary .disclosure-chevron {
+  transform: rotate(0deg);
+  color: var(--color-text-dim);
+}
+.msg-detail summary {
   list-style: none;
   display: inline-flex;
   align-items: center;

@@ -241,7 +241,7 @@ line. ⛔ Neither reaches a warm session — see [`sessions.md`](sessions.md) �
 too, because a setting whose effect is *sometimes* is one an operator will otherwise test by watching
 a follow-up and conclude is broken.
 
-⛔ **A thread message renders as a chat bubble, and who wrote it decides how its text is read.** Human bubbles sit right; agent, controller and darker system bubbles sit left, with no role column (`lib/threadbubble.ts`). Under each bubble — outside it, on the bubble's own side (`.msg-body` stacks the two; t374 took the clock out of the bubble, t378 put it back beneath) — a meta line carries the time, a `📋 1,475` `PromptChip` on the **request that caused the run** — the human message that asked, or the opening message of a task an agent filed (`promptAnchors`), falling back to the run's own last answer when a retry followed no new note, and to the live bubble when the run has claimed nothing — which opens the prompt in a dialog, and ⓘ for a system line's `detail`. Intermediate activity is a `⚙ n steps` chip. ⛔ No full-width *"Prompt sent for run …"* rows, anywhere in the thread. Every message this
+⛔ **A thread message renders as a chat bubble, and who wrote it decides how its text is read.** Human bubbles sit right; agent, controller and darker system bubbles sit left, with no role column (`lib/threadbubble.ts`). Under each bubble — outside it, on the bubble's own side (`.msg-body` stacks the two; t374 took the clock out of the bubble, t378 put it back beneath) — a meta line carries the time, a `📋 1,475` `PromptChip` on the **request that caused the run** — the human message that asked, or the opening message of a task an agent filed (`promptAnchors`), falling back to the run's own last answer when a retry followed no new note, and to the live bubble when the run has claimed nothing — which opens the prompt in a dialog, and `InfoIcon` for a system line's `detail`. Intermediate activity is a monochrome sparkle `n steps` `.msg-chip-disclosure` chip above the message text (not sharing `.msg-detail summary`'s `20px` icon-button box, `t1432`). ⛔ No full-width *"Prompt sent for run …"* rows, anywhere in the thread. Every message this
 codebase writes names refs, branches, shas and files in backticks — *"Landed as `98f200ab` onto
 `main`"* — and `{m.text}` printed the backticks, which is the worst of both readings: punctuation to
 ignore, and no distinction between `main` the branch and main the adjective. `lib/codespans.ts`
@@ -1126,8 +1126,8 @@ is too large and too varied.
   fallbacks (`font-src 'self'`, zero network requests; `staticContentType` serves `.woff2` for mobile).
 
 - **Agent UI components (`t1426`, 2026-11-22):** Shared monochrome stroke SVG icons (`UiIcons.tsx`)
-  replace raw emoji (`📋`, `⚡`, `ⓘ`) and ASCII stream markers (`·`, `›`, `!`) across thread messages
-  (`TaskThread.tsx`, `MessageCopyButton`), collapsible reasoning/activity disclosures (`Disclosure.tsx`),
+  replace raw emoji (`📋`, `⚡`, `ⓘ`, `⚙`) and ASCII stream markers (`·`, `›`, `!`) across thread messages
+  (`TaskThread.tsx`, `MessageCopyButton`, single-line `.msg-chip-disclosure > summary`), collapsible reasoning/activity disclosures (`Disclosure.tsx`),
   `SessionStream.tsx` (expandable tool/thinking cards with rotating chevrons and a pulsing live status dot),
   attachment cards (`pasteimages.tsx` with paperclip icon + formatted byte size), slash-command popovers
   (icon + two-line title/description + `↵` keycap), `Pill.tsx` (`CheckIcon` + `--radius-lg`/`--shadow-menu`),

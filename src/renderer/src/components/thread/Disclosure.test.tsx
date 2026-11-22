@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { ActivityChip, ActivityDisclosure, PromptChip, PromptDisclosure } from './Disclosure'
 import { DelegationMenu } from './DelegatePill'
@@ -41,5 +43,19 @@ describe('AI agent UI kit components (t1426)', () => {
     expect(html).toContain('class="ui-switch"')
     expect(html).toContain('type="checkbox"')
     expect(html).toContain('Low')
+  })
+
+  it('keeps thread msg-chip-disclosure summary single-line and separate from .msg-detail 20px icon button (t1432)', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/renderer/src/styles/app.css'), 'utf8')
+    expect(css).not.toMatch(/\.msg-chip-disclosure summary\s*,\s*\.msg-detail summary\s*\{[^}]*width:\s*20px/)
+    const chipRule = css.match(/\.msg-chip-disclosure > summary\s*\{[^}]+\}/)?.[0] ?? ''
+    expect(chipRule).toContain('display: inline-flex;')
+    expect(chipRule).toContain('white-space: nowrap;')
+    expect(chipRule).not.toContain('width: 20px')
+
+    const threadSrc = readFileSync(resolve(process.cwd(), 'src/renderer/src/components/TaskThread.tsx'), 'utf8')
+    const chipBlock = threadSrc.match(/<details className="msg-chip-disclosure">[\s\S]*?<\/details>/)?.[0] ?? ''
+    expect(chipBlock).toContain('SparkleIcon')
+    expect(chipBlock).not.toContain('⚙')
   })
 })
