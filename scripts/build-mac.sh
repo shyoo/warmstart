@@ -468,7 +468,10 @@ if [[ "$STOP_DAEMON" -eq 1 ]]; then
   node "$CACHE_HELPER" get-repo-processes "$STOP_DAEMON" "$STOP_AGENTS"
 fi
 
-# 1. Electron runtime
+# 1. Dependencies & Electron runtime
+step_header "Dependencies (sync node_modules if package-lock.json moved)"
+run_cmd node scripts/ensure-deps.mjs
+
 step_header "Electron runtime (it does not download itself)"
 run_cmd node scripts/ensure-electron.mjs
 

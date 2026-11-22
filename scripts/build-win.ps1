@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Build Warmstart on Windows: checks, bundle, packaged app, and optionally an installer.
 
@@ -525,6 +525,10 @@ if ($StopDaemon) {
   Step "Stop this repo's app and daemon"
   Stop-RepoProcesses
 }
+
+# Not cached: ~15 ms when synced; automatically installs missing/mismatched locked packages before checks or build.
+Step "Dependencies (sync node_modules if package-lock.json moved)"
+Run "node scripts/ensure-deps.mjs"
 
 # Not cached: 0.2s when the dist is already there, and it is the one check whose whole job is to
 # notice that something outside this repo changed underneath it.

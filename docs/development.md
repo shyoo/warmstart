@@ -31,8 +31,11 @@ one agent CLI on `PATH` for anything beyond L1.
 
 **Pulling source does not refresh dependencies.** When `package.json` or `package-lock.json` changes,
 run `npm ci` before building (or `npm install` only when deliberately changing the resolved dependencies),
-then run `node scripts/ensure-electron.mjs`. An existing `node_modules` otherwise lacks newly locked
-packages and TypeScript reports the misleading-looking `Cannot find module` error.
+then run `node scripts/ensure-electron.mjs`. `scripts/ensure-deps.mjs` runs automatically at the
+start of `npm run build`, `scripts/build-win.ps1`, and `scripts/build-mac.sh` to detect missing or
+version-mismatched `node_modules` entries against `package-lock.json` (and runs `npm install` plus
+`scripts/ensure-electron.mjs` locally when stale, or refuses in `--check` / `CI` mode). An existing
+`node_modules` otherwise lacks newly locked packages and Vite/TypeScript reports missing-module errors.
 
 ### The `.codex` link
 
