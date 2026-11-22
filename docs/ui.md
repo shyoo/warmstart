@@ -550,9 +550,8 @@ than fit on one line scrolls it, the gesture already asked of the two table vari
 carried no `white-space`, so a *button's own label* ("Save as Draft") could separately wrap onto two
 lines inside itself when `.composer-send`'s row ran short of room; `.composer-send button` is now
 `white-space: nowrap` and the row itself `flex-wrap: nowrap`, so a button holds its label on one line
-and the row overflows rather than folding one in half. The modal is also modestly wider, 860px against
-760px, which lowers how often either scroll is needed without pretending a fixed width removes the
-need — a long enough label always can.
+and the row overflows rather than folding one in half. The modal is also wider (`1020px`, up from
+`860px` once `DelegateSplitPill` and model tags joined `.composer-bar`) so the ordinary Single Task row fits on desktop without scrolling, and `.split-pill` keeps `flex: 0 0 auto` in `.composer-bar` (shrinking only inside `.compose-assign-row`) so overflow never crushes the Delegate pill into `"O"`.
 
 ⛔ **The attachment picker lives inside the prompt it enriches, beside Save as Draft, Send and the
 schedule clock.** Those actions apply to all four kinds, in the order the kind pill offers them:

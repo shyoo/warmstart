@@ -3345,11 +3345,11 @@ body {
 /* The task composer is modal wherever it opens. It is deliberately narrower than a task table:
    writing a prompt benefits from a readable measure, while every row of pills — the ordinary bar
    and the Plan & Split / Debate tables alike — scrolls inside rather than needing the width of its
-   widest possible row (`.composer-bar`). 860px, not 760px: wide enough that the ordinary row seldom
-   needs that scroll at all on an average fleet, without pretending a bigger number would make the
-   scroll unnecessary — a long enough worker label always can. */
+   widest possible row (`.composer-bar`). 1020px (up from 860px once DelegateSplitPill and model
+   tags joined the row): wide enough that the ordinary Single Task row fits on desktop screens
+   without scrolling, without pretending a fixed width removes the scroll when labels grow. */
 .task-composer-modal {
-  width: min(860px, calc(100vw - 2 * var(--sp-5)));
+  width: min(1020px, calc(100vw - 2 * var(--sp-5)));
   max-height: min(720px, calc(100vh - 2 * var(--sp-5)));
   overflow-y: auto;
   background: var(--color-bg);
@@ -6502,6 +6502,11 @@ select:focus-visible,
 
 .compose-assign-pill .pill {
   max-width: 100%;
+  min-width: 0;
+}
+
+.compose-assign-row > .split-pill {
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -10163,11 +10168,14 @@ button.scratch-tag:hover {
 .delegation-picker-row { display: flex; align-items: center; gap: var(--sp-2); padding: 3px 4px; cursor: pointer; font-size: var(--text-dense); }
 .delegation-picker-row:hover { background: var(--color-surface); }
 .delegation-picker-tiers { margin-left: auto; color: var(--color-text-dim); }
-/* Split-pill delegation control `[ON/OFF | Delegate ▼]` shared by NewTask and TaskThread. */
+/* Split-pill delegation control `[ON/OFF | Delegate ▼]` shared by NewTask and TaskThread.
+   ⛔ Never shrink globally (`flex: 0 0 auto` here; shrinking is scoped to `.compose-assign-row`):
+   inside `.composer-bar` (`flex-wrap: nowrap; overflow-x: auto`), all other pills keep their
+   intrinsic min-width, so putting `flex: 0 1 auto; min-width: 0` on `.split-pill` made it absorb
+   100% of row overflow and crush `[OFF | Delegate ▼]` down to `"O"`. */
 .split-pill {
   display: inline-flex;
-  flex: 0 1 auto;
-  min-width: 0;
+  flex: 0 0 auto;
   align-items: stretch;
   border: 1px solid var(--color-border);
   border-radius: 999px;

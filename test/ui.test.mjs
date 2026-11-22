@@ -1429,7 +1429,28 @@ try {
         sendsInsideTheBox: !!ask?.querySelector('.composer-send'),
         attachmentInsideTheBox: !!ask?.querySelector('.composer-send button[aria-label="Add attachment"]'),
         clock: !!ask?.querySelector('.pill--clock button'),
-        buttons: [...(ask?.querySelectorAll('.composer-send button') ?? [])].map(b => b.innerText.trim())
+        buttons: [...(ask?.querySelectorAll('.composer-send button') ?? [])].map(b => b.innerText.trim()),
+        splitPill: (() => {
+          const s = bar?.querySelector('.split-pill');
+          const t = s?.querySelector('.split-pill-toggle');
+          const m = s?.querySelector('.split-pill-menu-trigger > .pill');
+          if (!s || !t || !m) return null;
+          return {
+            width: Math.round(s.getBoundingClientRect().width),
+            toggleClipped: t.scrollWidth > t.clientWidth + 1,
+            triggerClipped: m.scrollWidth > m.clientWidth + 1
+          };
+        })(),
+        barHeight: bar ? Math.round(bar.getBoundingClientRect().height) : -1,
+        barTopSpread: (() => {
+          if (!bar) return -1;
+          const tops = [...bar.children]
+            .filter(el => !el.classList.contains('composer-gap'))
+            .map(el => el.getBoundingClientRect().top);
+          return tops.length > 0 ? Math.round(Math.max(...tops) - Math.min(...tops)) : -1;
+        })(),
+        anyPillClipped: [...(bar?.querySelectorAll('button.pill, .split-pill-toggle') ?? [])].some(el => el.scrollWidth > el.clientWidth + 1),
+        barFitsWithoutScroll: !!bar && bar.scrollWidth <= bar.clientWidth + 1
       };
     })())
   `)
@@ -1491,6 +1512,16 @@ try {
   // ⚠️ A textarea because what goes in it is sent to an agent verbatim, and a prompt worth writing
   // has a second sentence. A single-line box that ate Enter was a lie about what it would accept.
   check('the prompt takes more than one line', f.textarea === true, filing)
+  check(
+    '⛔ the Delegate split pill is never clipped or crushed inside the composer bar',
+    !!f.splitPill && !f.splitPill.toggleClipped && !f.splitPill.triggerClipped && f.splitPill.width >= 60,
+    filing
+  )
+  check(
+    'composer bar pills sit on one unclipped row without overflowing on desktop',
+    f.barHeight > 0 && f.barHeight < 42 && f.barTopSpread >= 0 && f.barTopSpread <= 2 && f.anyPillClipped === false && f.barFitsWithoutScroll === true,
+    filing
+  )
 
   // ⛔ **Plan & Split, which is the whole of t182.** The kind pill said `Plan` and every other
   // control vanished — honest while a plan task was never dispatched and nothing would have read
