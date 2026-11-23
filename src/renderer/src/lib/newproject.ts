@@ -6,7 +6,8 @@ import {
   type ProjectDocName,
   type ProjectInspection,
   type ScaffoldingGitChoice,
-  type SessionSharingChoice
+  type SessionSharingChoice,
+  type Vcs
 } from '@shared/tasks'
 import { cloneDirectoryName } from '@shared/github'
 
@@ -83,7 +84,7 @@ export interface NewProjectDraft {
   root: string
   name: string
   createDirectory: boolean
-  gitInit: boolean
+  initVcs: Vcs
   /** Only one location is used for this project. */
   workspaceLocation: 'managed' | 'custom'
   /** Required when workspaceLocation is custom. */
@@ -114,7 +115,7 @@ export const EMPTY_DRAFT: NewProjectDraft = {
   root: '',
   name: '',
   createDirectory: false,
-  gitInit: false,
+  initVcs: 'none',
   workspaceRoot: '',
   workspaceLocation: 'managed',
   finish: 'inherit',
@@ -184,10 +185,10 @@ export function applyClone(draft: NewProjectDraft, result: ProjectCloneResult): 
  */
 export function willHaveRepo(
   inspection: ProjectInspection | null,
-  draft: Pick<NewProjectDraft, 'gitInit'>
+  draft: Pick<NewProjectDraft, 'initVcs'>
 ): boolean {
   if (projectUsesGitBranches(inspection)) return true
-  return draft.gitInit
+  return draft.initVcs === 'git' || draft.initVcs === 'jj'
 }
 
 /**
@@ -221,6 +222,9 @@ export function stepBlockers(
       blockers.push('That path is a file, not a directory.')
     }
     if (!draft.name.trim()) blockers.push('Give the project a name.')
+    if (!projectUsesGitBranches({ vcs: inspection.vcs }) && draft.initVcs === 'jj' && inspection.jjBlocked) {
+      blockers.push(inspection.jjBlocked)
+    }
     return blockers
   }
 
@@ -259,8 +263,13 @@ export function creationPlan(
   const root = inspection?.root ?? draft.root
 
   if (inspection && !inspection.exists && draft.createDirectory) plan.push(`Create ${root}.`)
-  if (draft.gitInit && !projectUsesGitBranches(inspection)) {
-    plan.push(`Run git init -b ${draft.landingTarget.trim() || 'main'} in ${root}.`)
+  if (!projectUsesGitBranches(inspection) && (draft.initVcs === 'git' || draft.initVcs === 'jj')) {
+    const target = draft.landingTarget.trim() || 'main'
+    plan.push(
+      draft.initVcs === 'jj'
+        ? `Run git init -b ${target} and initialize colocated jj in ${root}.`
+        : `Run git init -b ${target} in ${root}.`
+    )
   }
   plan.push(`Add “${draft.name.trim()}” as a project.`)
   if (draft.scaffoldingGit === 'local') {

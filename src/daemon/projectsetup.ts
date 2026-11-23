@@ -12,12 +12,20 @@ import type {
   ProjectDocDraft,
   ProjectDocName,
   ProjectInspection,
+  Vcs,
   WorkspaceRootReport,
   WorkspaceRootState
 } from '@shared/tasks.js'
 import { PROJECT_DOC_NAMES, projectFinishChoice, projectUsesGitBranches } from '@shared/tasks.js'
 import { canonicalPath, samePath, withinPath } from './fspath.js'
 import { git, remoteUrl, tryGit } from './git.js'
+import {
+  assertJjRootLength,
+  ensureJjBinary,
+  initColocatedJj,
+  probeJjBlockerSync,
+  refreshColocatedJj
+} from './vcs/jj.js'
 import { launchArgs, spawnEnv, which } from './which.js'
 import * as spawn from './spawn.js'
 import { cloneSourceFor, gitHubSlug, parseGitHubRepo } from '@shared/github.js'
@@ -180,6 +188,7 @@ export function inspectProjectDirectory(input: {
     isDirectory: directory,
     empty: directory && isEmptyProjectDir(root),
     vcs: directory ? detectVcs(root) : 'none',
+    jjBlocked: probeJjBlockerSync(root),
     alreadyAdded: registered ? { id: registered.id, name: registered.name } : null,
     suggestedName: directory ? suggestProjectName(root) : basename(root) || root,
     hasConfig: path !== null,
@@ -234,13 +243,13 @@ export function proposeProjectDocs(input: {
 export async function createProject(request: ProjectCreateRequest): Promise<ProjectCreateResult> {
   const warnings: string[] = []
   const root = canonicalPath(request.root)
+  const initVcs: Vcs = request.initVcs ?? (request.gitInit ? 'git' : 'none')
+  const existsBefore = existsSync(root)
 
-  if (!existsSync(root)) {
+  if (!existsBefore) {
     if (!request.createDirectory) {
       throw new Error(`directory does not exist: ${root}`)
     }
-    mkdirSync(root, { recursive: true })
-    log.info(`created ${root} for a new project`)
   } else if (!isDirectory(root)) {
     throw new Error(`not a directory: ${root}`)
   }
@@ -254,30 +263,8 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
     throw new Error(`${root} is already the project "${already.name}"`)
   }
 
-  const landingTarget = request.policy?.landingTarget?.trim() || 'main'
-
-  if (request.gitInit && detectVcs(root) !== 'git') {
-    try {
-      // ⚠️ `-b <target>` so the repository's first branch is the one this project is about to call
-      // its landing target. A repo initialised on `master` under a policy that lands on `main` is a
-      // landing that fails on its first task with a message about a ref that does not exist.
-      execFileSync('git', ['init', '-b', landingTarget], {
-        cwd: root,
-        stdio: ['ignore', 'ignore', 'pipe'],
-        windowsHide: true
-      })
-      log.info(`git init -b ${landingTarget} in ${root}`)
-    } catch (err) {
-      warnings.push(
-        `could not initialise a git repository: ${errorMessage(err)}`
-      )
-    }
-  }
-
-  // ⛔ Validated before the project exists. An unusable workspace root is a project that can never
-  // claim a workspace, and the form has already been told so — this is the check that makes the
-  // refusal true of the RPC and not only of the renderer.
-  const hasConfig = readProjectConfig(root).path !== null
+  // ⛔ Validated before anything is written (including creating `root` or initializing a repo).
+  const hasConfig = existsBefore && readProjectConfig(root).path !== null
   const workspaceLocation = request.workspaceLocation ??
     (request.workspaceRoot?.trim() ? 'custom' : hasConfig ? undefined : 'managed')
   if (workspaceLocation === 'custom' && !request.workspaceRoot?.trim() && !hasConfig) {
@@ -290,7 +277,60 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
     }
   }
 
-  const project = addProject({ root, name: request.name })
+  const needsRepoInit = (initVcs === 'git' || initVcs === 'jj') && (!existsBefore || detectVcs(root) !== 'git')
+  if (initVcs === 'jj' && needsRepoInit) {
+    assertJjRootLength(root)
+    await ensureJjBinary()
+  }
+
+  if (!existsBefore) {
+    mkdirSync(root, { recursive: true })
+    log.info(`created ${root} for a new project`)
+  }
+
+  const landingTarget = request.policy?.landingTarget?.trim() || 'main'
+  let jjInitialized = false
+
+  if (needsRepoInit) {
+    let gitReady = false
+    try {
+      // ⚠️ `-b <target>` so the repository's first branch is the one this project is about to call
+      // its landing target. A repo initialised on `master` under a policy that lands on `main` is a
+      // landing that fails on its first task with a message about a ref that does not exist.
+      execFileSync('git', ['init', '-b', landingTarget], {
+        cwd: root,
+        stdio: ['ignore', 'ignore', 'pipe'],
+        windowsHide: true
+      })
+      gitReady = true
+      log.info(`git init -b ${landingTarget} in ${root}`)
+    } catch (err) {
+      warnings.push(
+        `could not initialise a git repository: ${errorMessage(err)}`
+      )
+    }
+
+    if (gitReady && initVcs === 'jj') {
+      try {
+        if ((await tryGit(root, ['config', '--get', 'core.autocrlf']))?.trim() === 'true') {
+          await git(root, ['config', '--local', 'core.autocrlf', 'false'])
+        }
+        await initColocatedJj(root, landingTarget)
+        jjInitialized = true
+        log.info(`jj git init --colocate (trunk ${landingTarget}) in ${root}`)
+      } catch (err) {
+        warnings.push(
+          `could not initialise a colocated jj repository: ${errorMessage(err)}`
+        )
+      }
+    }
+  }
+
+  const project = addProject({
+    root,
+    name: request.name,
+    ...(jjInitialized ? { vcs: 'jj' as const } : {})
+  })
 
   // ⛔ **Excluded before anything is written**, so there is no moment at which the config is an
   // untracked file in somebody else's repository. `local` is for a checkout of a repo the operator
@@ -300,6 +340,7 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
 
   let configPath: string | null = null
   let configFreshlyWritten = false
+  let policyWritten = false
   try {
     // ⚠️ The starter first, so a brand-new project.json carries the whole skeleton — objective,
     // prepare, permission — rather than only the handful of keys the form happened to set. It
@@ -314,7 +355,10 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
       policy.workspaceRoot = request.workspaceRoot
     }
     if (workspaceLocation !== undefined) policy.workspaceLocation = workspaceLocation
-    if (Object.keys(policy).length > 0) await setProjectPolicyAndPool(project.id, policy)
+    if (Object.keys(policy).length > 0) {
+      setProjectPolicy(project.id, policy)
+      policyWritten = policy.poolSize !== undefined
+    }
   } catch (err) {
     // ⛔ Reported, not fatal. The project is registered; a policy that did not write is something an
     // operator can fix on the settings tab, and throwing here would leave a registered project
@@ -352,6 +396,18 @@ export async function createProject(request: ProjectCreateRequest): Promise<Proj
     // untracked, which is already what `ignore` asked for, and a later `git init` picks the rule
     // up. Silent on purpose; warning here would hold the wizard open over a choice that holds.
     ensureIgnoreEntry(project.root)
+  }
+
+  if (jjInitialized) {
+    try {
+      await refreshColocatedJj(root)
+    } catch (err) {
+      warnings.push(`could not refresh colocated jj state: ${errorMessage(err)}`)
+    }
+  }
+
+  if (policyWritten && projectUsesGitBranches(project)) {
+    await ensureProjectPoolAfterSetup(project.id)
   }
 
   return { project: reloadProject(project.id), configPath, docsWritten, warnings }
@@ -760,28 +816,22 @@ export async function makeForkHome(projectId: string): Promise<ForkHomeResult> {
 }
 
 /**
- * ⚠️ The pool follows the policy here for the same reason it does in `project.setPolicy`: `poolSize`
- * is a number in a file until `ensurePool` turns it into worktrees and a Resource capacity. A
- * project created with a pool of 5 whose Resources panel says 3 is the stale-capacity bug that hold
- * loop was cut for. Imported lazily because `worktrees.ts` reaches back into the scheduler's world.
+ * Ensure pooled workspaces after scaffolding has committed onto trunk (when the repo has at least
+ * one commit). Imported lazily because `worktrees.ts` reaches back into the scheduler's world.
  */
-async function setProjectPolicyAndPool(
-  id: string,
-  policy: NonNullable<ProjectCreateRequest['policy']>
-): Promise<Project> {
-  const project = setProjectPolicy(id, policy)
-  if (policy.poolSize !== undefined && projectUsesGitBranches(project)) {
-    try {
-      const { ensurePool } = await import('./worktrees.js')
-      const members = await ensurePool(project)
-      log.info(`${project.name}: workspace pool is now ${members.length} member(s)`)
-    } catch (err) {
-      // ⚠️ Best-effort, exactly as it is on the settings tab: the operator's choice is written
-      // either way, and the next `claimWorkspace` tries again.
-      log.error(`could not create the workspace pool for ${project.name}:`, err)
-    }
+async function ensureProjectPoolAfterSetup(id: string): Promise<void> {
+  const project = reloadProject(id)
+  if (!projectUsesGitBranches(project)) return
+  if (!(await tryGit(project.root, ['rev-parse', '--verify', '--quiet', 'HEAD']))) return
+  try {
+    const { ensurePool } = await import('./worktrees.js')
+    const members = await ensurePool(project)
+    log.info(`${project.name}: workspace pool is now ${members.length} member(s)`)
+  } catch (err) {
+    // ⚠️ Best-effort, exactly as it is on the settings tab: the operator's choice is written
+    // either way, and the next `claimWorkspace` tries again.
+    log.error(`could not create the workspace pool for ${project.name}:`, err)
   }
-  return project
 }
 
 /**

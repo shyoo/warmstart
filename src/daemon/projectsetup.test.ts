@@ -1,9 +1,29 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { proposeChecks, proposeDocs, isEmptyProjectDir, suggestProjectName, detectStack } from './projectstack.js'
+import { assertJjVersionSupported, jjDriver } from './vcs/jj.js'
+import { launchArgs, spawnEnv, which } from './which.js'
+
+const jjAvailable = (() => {
+  const binary = which('jj')
+  if (!binary) return false
+  try {
+    const launched = launchArgs(binary, ['--version'])
+    const out = execFileSync(launched.command, launched.args, {
+      env: spawnEnv(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      windowsHide: true
+    })
+    assertJjVersionSupported(out)
+    return true
+  } catch {
+    return false
+  }
+})()
 
 /**
  * Adding a project as a setup step.
@@ -513,6 +533,58 @@ describe('creating a project', () => {
     ).rejects.toThrow(/inside the project/i)
     expect(setup.inspectProjectDirectory({ root }).alreadyAdded).toBeNull()
   })
+
+  it('reports jj root length blockers in inspect and refuses oversized initVcs=jj before creating the directory', async () => {
+    const oversized = join(dir, 'j'.repeat(90))
+    const inspection = setup.inspectProjectDirectory({ root: oversized })
+    expect(inspection.jjBlocked).toMatch(/106/)
+    await expect(
+      setup.createProject({ root: oversized, createDirectory: true, initVcs: 'jj' })
+    ).rejects.toThrow(/106/)
+    expect(existsSync(oversized)).toBe(false)
+  })
+
+  it.skipIf(!jjAvailable)(
+    'initialises a colocated jj repository via initVcs=jj with pooled workspaces and clean trunk',
+    async () => {
+      const root = join(dir, `jj${(seq += 1)}`)
+      const prevAuthor = process.env.GIT_AUTHOR_NAME
+      const prevAuthorEmail = process.env.GIT_AUTHOR_EMAIL
+      const prevCommitter = process.env.GIT_COMMITTER_NAME
+      const prevCommitterEmail = process.env.GIT_COMMITTER_EMAIL
+      process.env.GIT_AUTHOR_NAME = 'Test'
+      process.env.GIT_AUTHOR_EMAIL = 'test@example.invalid'
+      process.env.GIT_COMMITTER_NAME = 'Test'
+      process.env.GIT_COMMITTER_EMAIL = 'test@example.invalid'
+      try {
+        const result = await setup.createProject({
+          root,
+          name: 'FreshJj',
+          createDirectory: true,
+          initVcs: 'jj',
+          policy: { landingTarget: 'main', poolSize: 2 }
+        })
+        expect(result.warnings).toEqual([])
+        expect(result.project.vcs).toBe('jj')
+        expect(existsSync(join(root, '.git'))).toBe(true)
+        expect(existsSync(join(root, '.jj'))).toBe(true)
+        expect(projects.reloadProject(result.project.id).vcs).toBe('jj')
+        expect(await jjDriver.trunkNotReady(result.project.root, 'main')).toBeNull()
+        const workspaces = await jjDriver.listWorkspaces(result.project)
+        expect(workspaces).toHaveLength(3)
+        expect(workspaces.map((w) => basename(w.path))).toEqual(expect.arrayContaining(['ws1', 'ws2']))
+      } finally {
+        if (prevAuthor === undefined) delete process.env.GIT_AUTHOR_NAME
+        else process.env.GIT_AUTHOR_NAME = prevAuthor
+        if (prevAuthorEmail === undefined) delete process.env.GIT_AUTHOR_EMAIL
+        else process.env.GIT_AUTHOR_EMAIL = prevAuthorEmail
+        if (prevCommitter === undefined) delete process.env.GIT_COMMITTER_NAME
+        else process.env.GIT_COMMITTER_NAME = prevCommitter
+        if (prevCommitterEmail === undefined) delete process.env.GIT_COMMITTER_EMAIL
+        else process.env.GIT_COMMITTER_EMAIL = prevCommitterEmail
+      }
+    }
+  )
 })
 
 describe('the starter templates', () => {

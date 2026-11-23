@@ -261,6 +261,8 @@ export interface ProjectInspection {
    */
   empty: boolean
   vcs: Vcs
+  /** Reason `jj (colocated)` initialization cannot run for this path, or `null` when available. */
+  jjBlocked: string | null
   /** The project already registered at this root, if there is one. Adding it again is refused. */
   alreadyAdded: { id: string; name: string } | null
   /** From the committed config, then `package.json`, then the directory's own name. */
@@ -434,6 +436,8 @@ export interface ProjectCreateRequest {
   createDirectory?: boolean
   /** `git init -b <landing target>`. Without a repo a project gets one workspace and no branches. */
   gitInit?: boolean
+  /** Repository VCS to initialize when adding a non-repo directory (`'none'`, `'git'`, or colocated `'jj'`). */
+  initVcs?: Vcs
   /**
    * `commit` stages the scaffolding beside the starter docs; `ignore` appends
    * `.warmstart/project.json` to the root `.gitignore` and commits that instead, leaving the

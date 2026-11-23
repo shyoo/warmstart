@@ -159,7 +159,7 @@ export function detectVcs(root: string): Vcs {
   }
 }
 
-export function addProject(input: { root: string; name?: string }): Project {
+export function addProject(input: { root: string; name?: string; vcs?: Vcs }): Project {
   // ⚠️ Canonical here too, because everything else is derived from it. `resolve` keeps whatever case
   // the caller supplied, and a project added from a shell sitting in `c:\Dev\…` is stored that way
   // forever.
@@ -182,7 +182,7 @@ export function addProject(input: { root: string; name?: string }): Project {
   }
 
   const { config, path } = readProjectConfig(root)
-  const vcs = config.vcs ?? detectVcs(root)
+  const vcs = input.vcs ?? config.vcs ?? detectVcs(root)
   const name = input.name?.trim() || config.name || basename(root)
   const id = randomUUID()
   const now = Date.now()

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
@@ -162,7 +163,7 @@ export function assertJjRootLength(root: string, maxLength = JJ_MAX_ROOT_LENGTH)
   }
 }
 
-async function ensureJjBinary(): Promise<string> {
+export async function ensureJjBinary(): Promise<string> {
   const binary = which('jj')
   if (!binary) {
     throw new Error('jj is not installed')
@@ -187,6 +188,59 @@ async function ensureJjBinary(): Promise<string> {
   const parsed = assertJjVersionSupported(stdout)
   verifiedVersions.set(binary, parsed)
   return binary
+}
+
+/**
+ * Synchronous preflight for the add-project inspector: returns a user-facing blocker string if
+ * colocated `jj` cannot initialize at `root` (`jj` absent, `< JJ_MIN_VERSION`, or path > 106 chars),
+ * or `null` when ready. Caches positive `--version` probes in `verifiedVersions`.
+ */
+export function probeJjBlockerSync(root: string): string | null {
+  try {
+    assertJjRootLength(root)
+    const binary = which('jj')
+    if (!binary) return 'jj is not installed or not on PATH.'
+    if (!verifiedVersions.has(binary)) {
+      const launched = launchArgs(binary, ['--version'])
+      const stdout = execFileSync(launched.command, launched.args, {
+        env: spawnEnv(),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        timeout: 5_000
+      })
+      verifiedVersions.set(binary, assertJjVersionSupported(stdout))
+    }
+    return null
+  } catch (err) {
+    return errorMessage(err)
+  }
+}
+
+/** Initialize a colocated `jj` store inside an existing git repository at `root` and configure `trunk()`. */
+export async function initColocatedJj(root: string, landingTarget: string): Promise<void> {
+  assertJjRootLength(root)
+  const binary = await ensureJjBinary()
+  const initArgs = existsSync(join(root, '.jj'))
+    ? ['-R', root, '--no-pager', 'git', 'import']
+    : ['--no-pager', 'git', 'init', '--colocate', root]
+  const initCall = launchArgs(binary, initArgs)
+  await run(initCall.command, initCall.args, {
+    cwd: root,
+    env: spawnEnv(),
+    maxBuffer: JJ_MAX_BUFFER,
+    windowsHide: true
+  })
+  await execJj(
+    root,
+    ['-R', root, 'config', 'set', '--repo', 'revset-aliases."trunk()"', JSON.stringify(landingTarget)],
+    { ignoreWorkingCopy: true, rootHint: root }
+  )
+}
+
+/** Refresh a colocated `jj` working copy after Git commits scaffolding files onto trunk. */
+export async function refreshColocatedJj(root: string): Promise<void> {
+  await execJj(root, ['-R', root, 'status'], { rootHint: root })
 }
 
 async function ensureJjReady(repoOrWorkspacePath: string): Promise<{ binary: string; repoRoot: string }> {

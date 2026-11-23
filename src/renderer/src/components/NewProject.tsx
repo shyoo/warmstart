@@ -16,7 +16,8 @@ import {
   type ProjectCloneResult,
   type ProjectInspection,
   type ScaffoldingGitChoice,
-  type SessionSharingChoice
+  type SessionSharingChoice,
+  type Vcs
 } from '@shared/tasks'
 import type { Settings } from '@shared/protocol'
 import { rpc } from '../lib/daemon'
@@ -197,8 +198,8 @@ export function NewProject({
       name: inspection.suggestedName,
       // ⚠️ Offered, not assumed, and only where it is the obvious answer: an *empty* directory with
       // no repository is a project that would otherwise get one workspace and no branches, which is
-      // almost never what somebody adding an empty project meant. Anything else starts unticked.
-      gitInit: !projectUsesGitBranches({ vcs: inspection.vcs }) && inspection.empty,
+      // almost never what somebody adding an empty project meant. Anything else starts on 'none'.
+      initVcs: !projectUsesGitBranches({ vcs: inspection.vcs }) && inspection.empty ? 'git' : 'none',
       landingTarget: inspection.config?.landing?.target ?? current.landingTarget,
       finish: inspection.config?.landing?.finish ?? current.finish,
       sessionShare: inspection.config?.session?.share ?? current.sessionShare,
@@ -280,7 +281,7 @@ export function NewProject({
         root: draft.root.trim(),
         name: draft.name.trim(),
         createDirectory: draft.createDirectory,
-        gitInit: draft.gitInit,
+        initVcs: draft.initVcs,
         workspaceRoot: draft.workspaceLocation === 'custom' ? draft.workspaceRoot.trim() : undefined,
         workspaceLocation: draft.workspaceLocation,
         policy: {
@@ -719,12 +720,32 @@ function DirectoryStep({
           )}
 
           {!projectUsesGitBranches({ vcs: inspection.vcs }) && (
-            <Checkbox
-              label="Initialise a git repository"
-              hint="Initializes a git repository for worktree branching and landing."
-              checked={draft.gitInit}
-              onChange={(gitInit) => patch({ gitInit })}
-            />
+            <div className="wizard-field">
+              <label className="wizard-label" id="new-project-init-vcs">
+                Initialize repository
+              </label>
+              <SettingButtonSelect
+                value={draft.initVcs}
+                options={[
+                  { value: 'none', label: 'None (no repository)' },
+                  { value: 'git', label: 'Git' },
+                  { value: 'jj', label: 'jj (colocated)' }
+                ]}
+                disabled={busy}
+                ariaLabel="Initialize repository"
+                onChange={(val) => patch({ initVcs: val as Vcs })}
+              />
+              <p className="wizard-sub">
+                {draft.initVcs === 'jj'
+                  ? 'Initializes a colocated jj + git repository for workspace branching and landing.'
+                  : draft.initVcs === 'git'
+                    ? 'Initializes a git repository for worktree branching and landing.'
+                    : 'No repository — tasks share one workspace with no branches or landing.'}
+              </p>
+              {draft.initVcs === 'jj' && inspection.jjBlocked && (
+                <p className="warn">{inspection.jjBlocked}</p>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -853,7 +874,7 @@ function SetupStep({
             description={
               repo
                 ? `Base branch for new tasks, landing changes against origin/${draft.landingTarget.trim() || 'main'}.`
-                : 'Target git branch for landings once a repository is initialized.'
+                : 'Target branch for landings once a repository is initialized.'
             }
             control={
               <input
@@ -932,7 +953,7 @@ function SetupStep({
             title="Workspace topology"
             description={
               !repo
-                ? 'Requires a git repository to support concurrent worktree workspaces.'
+                ? 'Requires a repository (git or jj) to support concurrent workspace branching.'
                 : draft.poolSize === 0
                   ? 'Trunk only: every task takes the trunk lease and runs serially in the checkout itself — best for small projects with occasional changes. New tasks will default to the trunk.'
                   : 'Trunk + worktrees (default): tasks run in parallel in isolated checkouts while the trunk stays free. Trunk-only suits small projects with occasional changes — no worktree directories, but one task at a time.'

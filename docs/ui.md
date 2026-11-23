@@ -152,7 +152,7 @@ rather than a method name assembled from a string, so a renamed RPC still fails 
 ⛔ **Adding a project is a wizard, and it is chrome rather than a route.** (`components/NewProject.tsx`;
 its rules are pure functions in `lib/newproject.ts`.) The sidebar's Projects group carries a `+`, and
 both it and the Projects panel's button open the same modal — the state lives in `App.tsx` so it
-cannot be opened twice. Three steps: the **directory** and what `project.inspect` found in it, then the
+cannot be opened twice. Three steps: the **directory** and what `project.inspect` found in it (when no repository exists yet, Step 1 offers **Initialize repository** with **None (no repository)**, **Git**, or **jj (colocated)** — `jj` surfaces any missing CLI, version `< 0.46.0`, or >106-character path blocker via `inspection.jjBlocked` before leaving Step 1), then the
 **workspace directory, the five policy tiers and the check list**, then the **starter files and a plain
 list of every write**. ⛔ **Nothing touches a disk until Create**: `project.inspect` and
 `project.docTemplates` are read-only, and `project.create` performs the whole sequence in the daemon,

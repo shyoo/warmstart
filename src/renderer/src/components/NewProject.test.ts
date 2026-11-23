@@ -28,6 +28,7 @@ function inspection(over: Partial<ProjectInspection> = {}): ProjectInspection {
     isDirectory: true,
     empty: false,
     vcs: 'git',
+    jjBlocked: null,
     alreadyAdded: null,
     suggestedName: 'thing',
     hasConfig: false,
@@ -146,8 +147,18 @@ describe('whether the project ends up with a repository', () => {
   it('is true for git or colocated jj repositories, and for one the wizard will initialise', () => {
     expect(willHaveRepo(inspection(), draft())).toBe(true)
     expect(willHaveRepo(inspection({ vcs: 'jj' }), draft())).toBe(true)
-    expect(willHaveRepo(inspection({ vcs: 'none' }), draft({ gitInit: true }))).toBe(true)
+    expect(willHaveRepo(inspection({ vcs: 'none' }), draft({ initVcs: 'git' }))).toBe(true)
+    expect(willHaveRepo(inspection({ vcs: 'none' }), draft({ initVcs: 'jj' }))).toBe(true)
     expect(willHaveRepo(inspection({ vcs: 'none' }), draft())).toBe(false)
+  })
+
+  it('blocks leaving the directory step when jj init is chosen and jjBlocked is set', () => {
+    expect(
+      stepBlockers('directory', draft({ initVcs: 'jj' }), inspection({ vcs: 'none', jjBlocked: 'jj is not installed' }))
+    ).toEqual(['jj is not installed'])
+    expect(
+      stepBlockers('directory', draft({ initVcs: 'git' }), inspection({ vcs: 'none', jjBlocked: 'jj is not installed' }))
+    ).toEqual([])
   })
 })
 
@@ -162,9 +173,19 @@ describe('what Create will do', () => {
   })
 
   it('treats colocated jj repositories as existing repositories without re-running git init', () => {
-    const jjPlan = creationPlan(draft({ gitInit: true }), inspection({ vcs: 'jj' }))
+    const jjPlan = creationPlan(draft({ initVcs: 'git' }), inspection({ vcs: 'jj' }))
     expect(jjPlan.join('\n')).not.toContain('Run git init')
     expect(jjPlan).toContain('Commit the scaffolding so the trunk starts clean.')
+  })
+
+  it('names colocated jj initialization when initVcs is jj', () => {
+    const plan = creationPlan(
+      draft({ createDirectory: true, initVcs: 'jj', landingTarget: 'main' }),
+      inspection({ exists: false, vcs: 'none', root: 'C:/dev/new' })
+    )
+    expect(plan).toContain('Create C:/dev/new.')
+    expect(plan).toContain('Run git init -b main and initialize colocated jj in C:/dev/new.')
+    expect(plan).toContain('Commit the scaffolding so the trunk starts clean.')
   })
 
   it('says an existing committed config is being updated, not created', () => {
@@ -204,7 +225,7 @@ describe('what Create will do', () => {
 
   it('names the directory it will create and the branch it will initialise', () => {
     const plan = creationPlan(
-      draft({ createDirectory: true, gitInit: true, landingTarget: 'trunk' }),
+      draft({ createDirectory: true, initVcs: 'git', landingTarget: 'trunk' }),
       inspection({ exists: false, vcs: 'none', root: 'C:/dev/new' })
     )
     expect(plan).toContain('Create C:/dev/new.')
