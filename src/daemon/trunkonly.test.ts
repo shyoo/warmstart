@@ -180,3 +180,56 @@ describe('a pool of zero is trunk-only', () => {
     expect(tasks.setWorkspaceMode(task.id, 'trunk').workspaceMode).toBe('trunk')
   })
 })
+
+describe('extra workslot pruning above poolSize', () => {
+  it('measures retired slots above poolSize and prunes only extras when extrasOnly is set', async () => {
+    const project = makeProject(3)
+    const [ws1, ws2, ws3] = await worktrees.ensurePool(project)
+    const shrunk = projects.setProjectPolicy(project.id, { poolSize: 1 })
+    await worktrees.ensurePool(shrunk)
+
+    const before = await worktrees.measurePoolStorage(shrunk)
+    expect(before.members.map((m) => m.path)).toEqual([ws1])
+    expect(before.extraMembers?.map((m) => m.path)).toEqual([ws2, ws3])
+
+    const claimOnShrunk = await worktrees.claimWorkspace(shrunk, 'run-active')
+    expect(claimOnShrunk?.path).toBe(ws1)
+
+    const pruned = await worktrees.prunePoolWorktrees(shrunk, { extrasOnly: true })
+    expect(pruned.removed).toEqual([ws2, ws3])
+    expect(pruned.kept).toEqual([])
+    expect(existsSync(ws1!)).toBe(true)
+    expect(existsSync(ws2!)).toBe(false)
+    expect(existsSync(ws3!)).toBe(false)
+    const listed = worktreeList(project.root)
+    expect(listed).toContain('ws1')
+    expect(listed).not.toContain('ws2')
+    expect(listed).not.toContain('ws3')
+
+    const after = await worktrees.measurePoolStorage(shrunk)
+    expect(after.extraMembers).toBeUndefined()
+    worktrees.releaseWorkspace(claimOnShrunk!.claimId)
+  })
+
+  it('rescues uncommitted dirt from an extra slot and keeps a claimed extra slot', async () => {
+    const project = makeProject(3)
+    const [ws1, ws2, ws3] = await worktrees.ensurePool(project)
+    const claim = await worktrees.claimWorkspace(project, 'run-2', ws2)
+    expect(claim?.path).toBe(ws2)
+
+    git(project.root, 'branch', 'warmstart/t99-extra-dirty')
+    git(ws3!, 'checkout', 'warmstart/t99-extra-dirty')
+    writeFileSync(join(ws3!, 'extra.txt'), 'unsaved-extra\n')
+
+    const shrunk = projects.setProjectPolicy(project.id, { poolSize: 1 })
+    const pruned = await worktrees.prunePoolWorktrees(shrunk, { extrasOnly: true })
+    expect(pruned.removed).toEqual([ws3])
+    expect(pruned.kept.map((k) => k.path)).toEqual([ws2])
+    expect(existsSync(ws1!)).toBe(true)
+    expect(existsSync(ws2!)).toBe(true)
+    expect(existsSync(ws3!)).toBe(false)
+    expect(git(project.root, 'log', '--oneline', 'warmstart/t99-extra-dirty')).toContain('wip:')
+
+    worktrees.releaseWorkspace(claim!.claimId)
+  })
+})

@@ -449,10 +449,10 @@ function PolicyPanel({
   }, [project.id, storedDepKey])
 
   const reloadStorage = useCallback(
-    async (forceProbe = false): Promise<void> => {
+    async (forceProbe = false): Promise<PoolStorageReport | null> => {
       if (trunkOnly || !hasBranches) {
         setPoolStorage(null)
-        return
+        return null
       }
       if (forceProbe) setProbingStorage(true)
       try {
@@ -462,8 +462,10 @@ function PolicyPanel({
         )
         setPoolStorage(report)
         setNowMs(Date.now())
+        return report
       } catch {
         if (!forceProbe) setPoolStorage(null)
+        return null
       } finally {
         if (forceProbe) setProbingStorage(false)
       }
@@ -514,6 +516,74 @@ function PolicyPanel({
     if (size) setLastPool(size)
   }, [project.config.workspaces?.poolSize])
 
+  const formatPruneNote = (
+    pruned: { removed: string[]; kept: Array<{ path: string; reason: string }> },
+    emptyNote: string,
+    removedSuffix = ''
+  ): string => {
+    const kept = pruned.kept.map((k) => `${k.path}: ${k.reason}`).join('; ')
+    if (pruned.removed.length > 0) {
+      return (
+        `Removed ${pruned.removed.length} worktree${pruned.removed.length === 1 ? '' : 's'}` +
+        (kept ? ` — kept ${kept}` : removedSuffix)
+      )
+    }
+    return kept ? `Nothing removed — kept ${kept}` : emptyNote
+  }
+
+  /**
+   * Remove idle workslots numbered above the configured pool size after confirmation. Kept busy
+   * slots remain untouched until their claims release; branches and stashes are never deleted.
+   */
+  const pruneExtraWorkslots = async (extraCount?: number): Promise<void> => {
+    if (busy || !hasBranches || trunkOnly) return
+    const countLabel =
+      extraCount && extraCount > 0
+        ? `${extraCount} retired extra workslot${extraCount === 1 ? '' : 's'} left over from a larger pool`
+        : 'any retired extra workslots numbered above the current pool size'
+    if (
+      !(await confirmAction(
+        `Remove ${countLabel} from disk? Busy slots are kept, and task branches and stashes are never deleted.`,
+        'Remove extra workslots'
+      ))
+    )
+      return
+    setBusy(true)
+    setNote(null)
+    try {
+      const pruned = await rpc('project.pruneWorktrees', { id: project.id, extrasOnly: true })
+      setNote(formatPruneNote(pruned, 'No extra workslots to remove.'))
+      await reloadStorage()
+      await refreshProjects()
+    } catch (err) {
+      setNote(errorMessage(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const updatePoolSize = async (next: number): Promise<void> => {
+    const prev = project.config.workspaces?.poolSize ?? 3
+    if (!Number.isFinite(next) || next === prev || busy || !hasBranches) return
+    setLastPool(next)
+    setBusy(true)
+    let report: PoolStorageReport | null = null
+    let saved = false
+    try {
+      await setPolicy({ poolSize: next })
+      saved = true
+      report = await reloadStorage()
+    } catch {
+      // `setPolicy` reports its own error banner
+    } finally {
+      setBusy(false)
+    }
+    const extraCount = report?.extraMembers?.length ?? 0
+    if (saved && next < prev && next >= 1 && extraCount > 0) {
+      await pruneExtraWorkslots(extraCount)
+    }
+  }
+
   /**
    * Flip the workspace topology. Going trunk-only couples the default workspace to the trunk —
    * a pool of zero with a worktree default would hold every new task — and then removes the idle
@@ -549,15 +619,7 @@ function PolicyPanel({
       }
       try {
         const pruned = await rpc('project.pruneWorktrees', { id: project.id })
-        const kept = pruned.kept.map((k) => `${k.path}: ${k.reason}`).join('; ')
-        setNote(
-          pruned.removed.length > 0
-            ? `Removed ${pruned.removed.length} worktree${pruned.removed.length === 1 ? '' : 's'}` +
-                (kept ? ` — kept ${kept}` : ' — the pool is gone.')
-            : kept
-              ? `Nothing removed — kept ${kept}`
-              : 'The pool is gone.'
-        )
+        setNote(formatPruneNote(pruned, 'The pool is gone.', ' — the pool is gone.'))
         await refreshProjects()
       } catch (err) {
         // The setting itself landed; only the disk cleanup failed, so say exactly that.
@@ -611,6 +673,7 @@ function PolicyPanel({
   const cowEnabled = storedCow?.enabled === true
   const cowSeedPaths = storedCow?.seedPaths ?? []
   const poolMembers = poolStorage?.members ?? []
+  const extraPoolMembers = poolStorage?.extraMembers ?? []
 
   const saveDependencyStore = (mode: DependencyStoreMode, rawCmd: string, rawLocks: string): void => {
     const installCommand = rawCmd.trim()
@@ -922,6 +985,24 @@ function PolicyPanel({
                         ))}
                       </div>
                     )}
+                    {extraPoolMembers.length > 0 && (
+                      <div className="tbl-path mono">
+                        <div>Retired slots above pool size:</div>
+                        {extraPoolMembers.map((m) => (
+                          <div key={m.path}>{formatPoolMemberSize(m, nowMs)}</div>
+                        ))}
+                        <div>
+                          <button
+                            type="button"
+                            className="btn btn--quiet"
+                            disabled={busy}
+                            onClick={() => void pruneExtraWorkslots(extraPoolMembers.length)}
+                          >
+                            Remove extra workslots
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </>
                 ) : (
                   'One workspace — this project has no repository.'
@@ -939,10 +1020,7 @@ function PolicyPanel({
                   key={project.config.workspaces?.poolSize ?? 3}
                   onBlur={(e) => {
                     const next = Number(e.target.value)
-                    if (Number.isFinite(next) && next !== (project.config.workspaces?.poolSize ?? 3)) {
-                      setLastPool(next)
-                      apply({ poolSize: next })
-                    }
+                    void updatePoolSize(next)
                   }}
                 />
               }

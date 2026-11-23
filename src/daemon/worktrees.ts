@@ -339,7 +339,10 @@ export interface PruneResult {
  * survive the directory going away and Loose ends still surfaces them. A tree that cannot be
  * made safe is kept, with the reason, rather than removed with work in it.
  */
-export async function prunePoolWorktrees(project: Project): Promise<PruneResult> {
+export async function prunePoolWorktrees(
+  project: Project,
+  opts?: { extrasOnly?: boolean }
+): Promise<PruneResult> {
   const removed: string[] = []
   const kept: Array<{ path: string; reason: string }> = []
   if (!projectUsesGitBranches(project)) throw new Error(`${project.name} has no worktree pool to remove`)
@@ -360,10 +363,9 @@ export async function prunePoolWorktrees(project: Project): Promise<PruneResult>
   const under = (dir: string, root: string): boolean =>
     samePath(dir, root) || dir.toLowerCase().startsWith(root.toLowerCase() + '/')
 
-  let index = 1
-  while (existsSync(join(policy.workspaceRoot, `ws${index}`))) {
-    const path = join(policy.workspaceRoot, `ws${index}`)
-    index++
+  const minIndex = opts?.extrasOnly ? policy.poolSize + 1 : 1
+  const candidates = await poolSlotPaths(policy.workspaceRoot, minIndex)
+  for (const path of candidates) {
     if (!driver.isWorkspace(path)) {
       // Not a workspace — something else the operator put here. Never ours to remove.
       kept.push({ path, reason: 'not a git worktree' })
@@ -409,6 +411,7 @@ export async function prunePoolWorktrees(project: Project): Promise<PruneResult>
     // Still in use, or never existed. Either way there is nothing to do.
   }
   if (removed.length > 0) {
+    clearPoolSizeCache(project.id)
     const members = (getResource(poolId)?.members ?? []).filter(
       (m) => !removed.some((r) => samePath(r, m))
     )
@@ -419,7 +422,7 @@ export async function prunePoolWorktrees(project: Project): Promise<PruneResult>
       label: `${project.name} workspaces`,
       capacity: members.length,
       members,
-      meta: { vcs: 'git', root: policy.workspaceRoot }
+      meta: { vcs: project.vcs, root: policy.workspaceRoot }
     })
   }
   return { removed, kept }
@@ -687,11 +690,38 @@ export async function awaitPoolPrunes(): Promise<void> {
 const POOL_SIZE_CACHE_TTL_MS = 10 * 60_000
 const poolSizeCache = new Map<string, { measuredAt: number; members: PoolMemberSize[] }>()
 const inFlightPoolSizes = new Map<string, Promise<PoolMemberSize[]>>()
+const extraPoolSizeCache = new Map<string, { measuredAt: number; members: PoolMemberSize[] }>()
+const inFlightExtraPoolSizes = new Map<string, Promise<PoolMemberSize[]>>()
 
 /** Clear cached pool disk-size readings (all projects, or one project id). */
 export function clearPoolSizeCache(projectId?: string): void {
-  if (projectId) poolSizeCache.delete(projectId)
-  else poolSizeCache.clear()
+  if (projectId) {
+    poolSizeCache.delete(projectId)
+    extraPoolSizeCache.delete(projectId)
+  } else {
+    poolSizeCache.clear()
+    extraPoolSizeCache.clear()
+  }
+}
+
+/** Return sorted `wsN` subdirectories inside `workspaceRoot` with `N >= minIndex`. */
+async function poolSlotPaths(workspaceRoot: string, minIndex: number): Promise<string[]> {
+  let entries
+  try {
+    entries = await readdir(workspaceRoot, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const matched: Array<{ index: number; path: string }> = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const m = /^ws([1-9]\d*)$/.exec(entry.name)
+    if (!m) continue
+    const index = Number(m[1])
+    if (index >= minIndex) matched.push({ index, path: join(workspaceRoot, entry.name) })
+  }
+  matched.sort((a, b) => a.index - b.index)
+  return matched.map((m) => m.path)
 }
 
 async function directoryBytes(rootDir: string): Promise<number> {
@@ -722,30 +752,23 @@ async function directoryBytes(rootDir: string): Promise<number> {
   return total
 }
 
-/**
- * Measure bytes on disk per pooled workspace slot via `fs` (no shelling out), computed at most
- * once per 10 minutes per project and cached in memory.
- */
-export async function measurePoolSizes(project: Project): Promise<PoolMemberSize[]> {
-  if (!projectUsesGitBranches(project)) return []
-  const policy = policyFor(project)
-  const resource = getResource(workspacePoolId(project.id))
-  if (policy.poolSize === 0 && (!resource || resource.members.length === 0)) return []
-
+async function measureMemberPathsCached(
+  project: Project,
+  cache: Map<string, { measuredAt: number; members: PoolMemberSize[] }>,
+  inFlight: Map<string, Promise<PoolMemberSize[]>>,
+  getCandidates: () => Promise<string[]> | string[]
+): Promise<PoolMemberSize[]> {
   const now = Date.now()
-  const cached = poolSizeCache.get(project.id)
+  const cached = cache.get(project.id)
   if (cached && now - cached.measuredAt < POOL_SIZE_CACHE_TTL_MS) {
     return cached.members
   }
 
-  const running = inFlightPoolSizes.get(project.id)
+  const running = inFlight.get(project.id)
   if (running) return running
 
   const promise = (async (): Promise<PoolMemberSize[]> => {
-    const candidates =
-      resource && resource.members.length > 0
-        ? resource.members
-        : Array.from({ length: policy.poolSize }, (_, i) => join(policy.workspaceRoot, `ws${i + 1}`))
+    const candidates = await getCandidates()
     const measuredAt = Date.now()
     const results: PoolMemberSize[] = []
     for (const memberPath of candidates) {
@@ -759,27 +782,59 @@ export async function measurePoolSizes(project: Project): Promise<PoolMemberSize
       const bytes = await directoryBytes(memberPath)
       results.push({ path: memberPath, bytes, measuredAt })
     }
-    poolSizeCache.set(project.id, { measuredAt, members: results })
+    cache.set(project.id, { measuredAt, members: results })
     return results
   })().finally(() => {
-    if (inFlightPoolSizes.get(project.id) === promise) inFlightPoolSizes.delete(project.id)
+    if (inFlight.get(project.id) === promise) inFlight.delete(project.id)
   })
-  inFlightPoolSizes.set(project.id, promise)
+  inFlight.set(project.id, promise)
   return promise
 }
 
 /**
- * Combined read-only pool storage snapshot: slot disk sizes, copy-on-write volume probe, and
- * shared dependency store footprint (`bytes: null` when unconfigured or not yet populated).
+ * Measure bytes on disk per pooled workspace slot via `fs` (no shelling out), computed at most
+ * once per 10 minutes per project and cached in memory.
+ */
+export async function measurePoolSizes(project: Project): Promise<PoolMemberSize[]> {
+  if (!projectUsesGitBranches(project)) return []
+  const policy = policyFor(project)
+  const resource = getResource(workspacePoolId(project.id))
+  if (policy.poolSize === 0 && (!resource || resource.members.length === 0)) return []
+
+  return measureMemberPathsCached(project, poolSizeCache, inFlightPoolSizes, () =>
+    resource && resource.members.length > 0
+      ? resource.members
+      : Array.from({ length: policy.poolSize }, (_, i) => join(policy.workspaceRoot, `ws${i + 1}`))
+  )
+}
+
+/** Measure retired extra `wsN` slot directories still on disk beyond `policy.poolSize`. */
+async function measureExtraPoolSizes(project: Project): Promise<PoolMemberSize[]> {
+  if (!projectUsesGitBranches(project)) return []
+  const policy = policyFor(project)
+  return measureMemberPathsCached(project, extraPoolSizeCache, inFlightExtraPoolSizes, () =>
+    poolSlotPaths(policy.workspaceRoot, policy.poolSize + 1)
+  )
+}
+
+/**
+ * Combined read-only pool storage snapshot: slot disk sizes, retired extra slots on disk (if any),
+ * copy-on-write volume probe, and shared dependency store footprint (`bytes: null` when unpopulated).
  */
 export async function measurePoolStorage(project: Project, forceProbe?: boolean): Promise<PoolStorageReport> {
   const policy = policyFor(project)
-  const [members, cow, dependencyStore] = await Promise.all([
+  const [members, extraMembers, cow, dependencyStore] = await Promise.all([
     measurePoolSizes(project),
+    measureExtraPoolSizes(project),
     probeCowSupport(policy.workspaceRoot, project.root, { force: forceProbe }),
     measureDependencyStore(project.root, policy.dependencyStore)
   ])
-  return { members, cow, dependencyStore }
+  return {
+    members,
+    ...(extraMembers.length > 0 ? { extraMembers } : {}),
+    cow,
+    dependencyStore
+  }
 }
 
 /**

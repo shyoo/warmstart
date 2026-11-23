@@ -2561,15 +2561,16 @@ export interface RpcMap {
    */
   'project.setPolicy': { params: { id: string } & ProjectPolicyPatch; result: Project }
   /**
-   * Remove idle pooled worktree directories from disk — the operator-confirmed second half of
-   * switching a project to trunk-only (`poolSize: 0`), which by itself only parks them.
+   * Remove idle pooled worktree directories from disk — either the whole pool when switching to
+   * trunk-only (`poolSize: 0`), or only retired extra slots (`extrasOnly: true`, `wsN` with
+   * `N > poolSize`) after reducing `poolSize`.
    *
    * ⛔ Trees something is standing in are kept, whatever was confirmed: an open claim or a live
    * session, and dirt that cannot be rescued onto its branch or a stash. Branches and stashes are
    * never deleted, so Loose ends still surfaces the work.
    */
   'project.pruneWorktrees': {
-    params: { id: string }
+    params: { id: string; extrasOnly?: boolean }
     result: { removed: string[]; kept: Array<{ path: string; reason: string }> }
   }
 

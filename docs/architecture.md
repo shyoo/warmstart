@@ -692,7 +692,10 @@ produces a question nobody can reply to.
   project so concurrent dispatches do not race against a slow `git worktree add` holding `index.lock`.
   Stale locks (`index.lock`, `HEAD.lock`) left by crashed git processes are swept before preparing or
   switching worktrees. Reducing pool size is graceful: idle extra slots are detached/parked cleanly,
-  while occupied slots are allowed to complete their claims before retiring. A pool of **zero** is
+  while occupied slots are allowed to complete their claims before retiring. Retired slots numbered
+  above `poolSize` (`wsN`, `N > poolSize`) appear in `measurePoolStorage`'s `extraMembers` and can be
+  deleted from disk via operator-confirmed `prunePoolWorktrees(project, { extrasOnly: true })` (which
+  also rescues uncommitted changes first and keeps claimed slots). A pool of **zero** is
   trunk-only: no worktrees at all, every task takes the trunk lease serially, and the idle
   directories are removed from disk by operator-confirmed `prunePoolWorktrees` — parking never
   deletes, whatever the size.
@@ -706,8 +709,8 @@ produces a question nobody can reply to.
   probes volume CoW support (`ReFS` block clone, `APFS` `cp -c`, Linux `cp --reflink=always`) and
   seeds new pool slots when supported, otherwise warning *"this volume cannot clone; slots are full
   copies"* without falling back to byte copies. `measurePoolStorage` (extending `measurePoolSizes`,
-  10-minute slot-size cache) reports slot sizes, volume CoW capability, and store bytes (`null` when
-  unpopulated).
+  10-minute slot-size cache) reports active slot sizes, any retired `extraMembers`, volume CoW
+  capability, and store bytes (`null` when unpopulated).
 
 ## 5. Layout
 

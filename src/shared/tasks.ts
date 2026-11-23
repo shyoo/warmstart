@@ -359,6 +359,8 @@ export interface CowCloneConfig {
 /** Combined read-only disk report for a project's pool slots, volume CoW probe, and shared dependency store. */
 export interface PoolStorageReport {
   members: PoolMemberSize[]
+  /** Retired extra `wsN` slot directories still on disk beyond the configured `poolSize`. */
+  extraMembers?: PoolMemberSize[]
   cow: CowCapability
   dependencyStore: DependencyStoreStatus
 }

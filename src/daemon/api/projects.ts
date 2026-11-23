@@ -5,7 +5,7 @@ import { addProject, archiveProject, archiveRefusal, deleteProject, deleteRefusa
 import { proposeChecks } from '../projectstack.js'
 import { cloneProject, cloneReadiness, createProject, inspectProjectDirectory, makeForkHome, proposeProjectDocs, workspaceRootReport } from '../projectsetup.js'
 import { flowWorkspaces } from '../flow.js'
-import { ensurePool, landingTargetRefusal, measurePoolSizes, measurePoolStorage, prunePoolWorktrees } from '../worktrees.js'
+import { clearPoolSizeCache, ensurePool, landingTargetRefusal, measurePoolSizes, measurePoolStorage, prunePoolWorktrees } from '../worktrees.js'
 import { log } from '../log.js'
 import { syncFromUpstream } from '../upstream.js'
 import { readScratchpad, saveScratchpad, setScratchpadPath } from '../scratchpad.js'
@@ -112,6 +112,7 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
       if (patch.poolSize !== undefined) {
         try {
           const members = await ensurePool(project)
+          clearPoolSizeCache(id)
           log.info(`${project.name}: workspace pool is now ${members.length} member(s)`)
         } catch (err) {
           log.error(`could not resize the workspace pool for ${project.name}:`, err)
@@ -120,8 +121,8 @@ export function apiProjects(_ctx: ApiContext): Pick<Api, ProjectMethod> {
       return project
     },
     // ⛔ Local only — see `project.setPolicy`'s note and `remote/policy.ts`. Removing worktrees
-    // from disk is the confirmed destructive half of going trunk-only; a phone never does it.
-    'project.pruneWorktrees': async (p) => prunePoolWorktrees(requireProject(p.id)),
+    // from disk is the confirmed destructive half of going trunk-only or shrinking a pool; a phone never does it.
+    'project.pruneWorktrees': async (p) => prunePoolWorktrees(requireProject(p.id), { extrasOnly: p.extrasOnly }),
     'scratchpad.get': (p) => readScratchpad(p.projectId),
     'scratchpad.save': (p) => saveScratchpad(p.projectId, p.text, p.baseVersion),
     'scratchpad.setPath': (p) => setScratchpadPath(p.projectId, p.path),

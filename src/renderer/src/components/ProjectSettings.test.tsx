@@ -363,4 +363,34 @@ describe('ProjectSettings pool storage, CoW, and dependency store', () => {
 
     expect(html).toContain('Enter an install command below and click Save to enable Hook mode.')
   })
+
+  it('shows retired extra workslots and Remove extra workslots button when extraMembers exist', () => {
+    const html = renderToStaticMarkup(
+      <ProjectSettings
+        project={makeProject({
+          config: {
+            schema_version: 1,
+            name: 'Demo',
+            workspaces: { poolSize: 1 }
+          }
+        })}
+        resources={[]}
+        refreshProjects={async () => undefined}
+        initialPoolStorage={{
+          ...baseStorage,
+          extraMembers: [
+            {
+              path: 'C:/dev/demo_workspaces/ws2',
+              bytes: 2 * 1024 * 1024,
+              measuredAt: now - 60_000
+            }
+          ]
+        }}
+      />
+    )
+
+    expect(html).toContain('Retired slots above pool size:')
+    expect(html).toContain('ws2 · 2.0 MB · measured 1 min ago')
+    expect(html).toContain('Remove extra workslots')
+  })
 })
