@@ -33,6 +33,7 @@ import { gitDriver } from './vcs/git.js'
 import {
   assertJjRootLength,
   assertJjVersionSupported,
+  isPureLineEndingDiff,
   jjConflicted,
   jjDriver
 } from './vcs/jj.js'
@@ -68,6 +69,56 @@ interface JjBookmarkRow {
 
 const JJ_MAX_BUFFER = 64 * 1024 * 1024
 const LOCAL_BOOKMARK_TEMPLATE = 'if(!remote, json(self) ++ "\\n", "")'
+const WC_SNAPSHOT_TEMPLATE =
+  '"{\\"sha\\":" ++ json(commit_id) ++ ",\\"files\\":[" ++ diff.files().map(|f| "{\\"status\\":" ++ json(f.status()) ++ ",\\"path\\":" ++ json(f.path()) ++ "}").join(",") ++ "]}\\n"'
+
+interface JjWcSnapshot {
+  sha: string
+  files: Array<{ path: string; status: string }>
+}
+
+/**
+ * Reconcile Windows `core.autocrlf=true` CRLF-only drift introduced when `jj git init --colocate`
+ * snapshots raw disk bytes against LF-stored Git blobs (t1435, 2026-11-22).
+ *
+ * ⛔ Only runs when the trunk was verified clean by Git (`!allowDirtyTrunk`), every changed path in
+ * `@` is a tracked modification (zero added/untracked/deleted files), and tree-to-tree
+ * `git diff --ignore-cr-at-eol` + `--summary` between `@-` and `@` are both empty. Any real edit
+ * leaves the working copy untouched.
+ */
+async function normalizeAutocrlfAfterJjInit(
+  root: string,
+  jjBinary: string,
+  warnings: string[]
+): Promise<{ normalizedFiles: number; disabledAutocrlf: boolean }> {
+  const wcRaw = await execJjRaw(jjBinary, root, ['-R', root, 'log', '-r', '@', '--no-graph', '-T', WC_SNAPSHOT_TEMPLATE])
+  const wcLine = wcRaw.split(/\r?\n/).find((l) => l.trim().length > 0)
+  const wc = wcLine ? (JSON.parse(wcLine) as JjWcSnapshot) : null
+  const autocrlf = ((await tryGit(root, ['config', '--get', 'core.autocrlf'])) ?? '').trim().toLowerCase()
+
+  if (wc && wc.files.length > 0 && wc.files.every((f) => f.status === 'modified')) {
+    const parentSha = (
+      await execJjRaw(jjBinary, root, ['-R', root, 'log', '-r', '@-', '--no-graph', '-T', 'commit_id'], {
+        ignoreWorkingCopy: true
+      })
+    ).trim()
+    if (parentSha && (await isPureLineEndingDiff(root, parentSha, wc.sha))) {
+      await execJjRaw(jjBinary, root, ['-R', root, 'restore'])
+      await git(root, ['config', '--local', 'core.autocrlf', 'false'])
+      await git(root, ['read-tree', 'HEAD'])
+      warnings.push(
+        `Normalized ${wc.files.length} CRLF-only tracked file(s) in trunk to match stored LF line endings and set local core.autocrlf=false so Git and jj agree.`
+      )
+      return { normalizedFiles: wc.files.length, disabledAutocrlf: true }
+    }
+  } else if ((!wc || wc.files.length === 0) && autocrlf === 'true') {
+    await git(root, ['config', '--local', 'core.autocrlf', 'false'])
+    warnings.push('Set local core.autocrlf=false so Git and jj agree on line endings.')
+    return { normalizedFiles: 0, disabledAutocrlf: true }
+  }
+
+  return { normalizedFiles: 0, disabledAutocrlf: false }
+}
 
 function toRecord(r: VcsMigrationRow): VcsMigrationRecord {
   return {
@@ -570,7 +621,12 @@ async function migrateGitToJj(
     rollback(errorMessage(err))
   }
 
-  // Bookmarks match git refs 100%; safe to replace git worktrees with jj workspaces.
+  // Bookmarks match git refs 100%; normalize any pure CRLF-only drift on clean trunks before rebuilding workspaces.
+  const lineEndingSync = opts.allowDirtyTrunk
+    ? { normalizedFiles: 0, disabledAutocrlf: false }
+    : await normalizeAutocrlfAfterJjInit(project.root, jjBinary, warnings)
+
+  // Safe to replace git worktrees with jj workspaces.
   for (const wsPath of poolDirs) {
     if (existsSync(wsPath)) {
       await gitDriver.removeWorkspace(project, wsPath, { prune: false })
@@ -599,6 +655,7 @@ async function migrateGitToJj(
       branchSnapshot: branchSnapshotRecord,
       rebuiltWorkspaces,
       keptJjDir: true,
+      ...(lineEndingSync.normalizedFiles > 0 ? { normalizedLineEndingFiles: lineEndingSync.normalizedFiles } : {}),
       warnings
     }
   }

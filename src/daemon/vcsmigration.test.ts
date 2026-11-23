@@ -482,4 +482,60 @@ describe.skipIf(!jjHost.available)(`VCS colocated migration integration (${jjHos
     expect(readFileSync(dirtyFile, 'utf8')).toBe('keep me untouched\n')
     expect(reversed.warnings.some((w) => /uncommitted changes/i.test(w))).toBe(true)
   }, 60_000)
+
+  it('normalizes core.autocrlf=true CRLF-only drift on git -> jj so trunkNotReady is clean, while preserving gitignored files (t1435)', async () => {
+    const crlfProj = makeProject({
+      dir: shortDir,
+      name: 'crlf-jj',
+      config: { vcs: 'git', workspaces: { poolSize: 1 } },
+      files: {
+        '.gitignore': 'data/\n',
+        'README.md': 'line1\nline2\n',
+        'notes.txt': 'alpha\nbeta\n'
+      }
+    })
+    // Simulate a Windows checkout under core.autocrlf=true: stored as LF in HEAD, checked out as CRLF on disk.
+    git(crlfProj.root, 'config', '--local', 'core.autocrlf', 'true')
+    rmSync(join(crlfProj.root, 'README.md'))
+    rmSync(join(crlfProj.root, 'notes.txt'))
+    git(crlfProj.root, 'checkout', '--', '.')
+    expect(readFileSync(join(crlfProj.root, 'README.md'), 'utf8')).toContain('\r\n')
+    expect(git(crlfProj.root, 'status', '--porcelain')).toBe('')
+
+    // Ignored data must survive migration untouched.
+    mkdirSync(join(crlfProj.root, 'data'), { recursive: true })
+    writeFileSync(join(crlfProj.root, 'data', 'local.json'), '{"keep":true}\r\n')
+
+    await ensurePool(crlfProj)
+    const migrated = await migrateProjectVcs(crlfProj.id, 'jj')
+    expect(migrated.project.vcs).toBe('jj')
+    expect(migrated.migration.detail.normalizedLineEndingFiles).toBeGreaterThanOrEqual(2)
+    expect(migrated.warnings.some((w) => /CRLF-only/i.test(w))).toBe(true)
+
+    // Trunk is immediately ready to land — no spurious uncommitted-files refusal.
+    expect(await jjDriver.trunkNotReady(crlfProj.root, 'main')).toBeNull()
+    expect(git(crlfProj.root, 'status', '--porcelain')).toBe('')
+    expect(git(crlfProj.root, 'config', '--local', '--get', 'core.autocrlf')).toBe('false')
+    expect(readFileSync(join(crlfProj.root, 'README.md'), 'utf8')).toBe('line1\nline2\n')
+    expect(readFileSync(join(crlfProj.root, 'data', 'local.json'), 'utf8')).toBe('{"keep":true}\r\n')
+
+    // Rebuilt pooled jj workspace is also clean under both jj and git.
+    const pool = getResource(workspacePoolId(crlfProj.id))
+    expect(pool?.members.length).toBe(1)
+    expect(git(pool!.members[0]!, 'status', '--porcelain')).toBe('')
+
+    // If CRLF-only drift is introduced later on a jj trunk, trunkNotReady still refuses (never auto-restores)
+    // and surfaces the actionable line-ending-only diagnostic hint.
+    writeFileSync(join(crlfProj.root, 'README.md'), 'line1\r\nline2\r\n')
+    const crlfRefusal = await jjDriver.trunkNotReady(crlfProj.root, 'main')
+    expect(crlfRefusal).toMatch(/line-ending-only diff/i)
+    expect(crlfRefusal).toMatch(/jj -R .* restore/)
+    expect(readFileSync(join(crlfProj.root, 'README.md'), 'utf8')).toBe('line1\r\nline2\r\n')
+
+    // Real content edits do NOT get mislabelled as line-ending-only drift.
+    writeFileSync(join(crlfProj.root, 'README.md'), 'line1\nreal change\n')
+    const realRefusal = await jjDriver.trunkNotReady(crlfProj.root, 'main')
+    expect(realRefusal).toMatch(/uncommitted file/i)
+    expect(realRefusal).not.toMatch(/line-ending-only diff/i)
+  }, 60_000)
 })

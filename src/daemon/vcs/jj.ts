@@ -383,6 +383,27 @@ async function describeUndescribedDirty(
 }
 
 /**
+ * Report whether the diff between two commits in a colocated repo consists solely of CR-at-EOL
+ * (`\r\n` vs `\n`) differences on tracked text files, with zero real content, mode, or binary changes.
+ *
+ * ⭐ Uses tree-to-tree `git diff` rather than working-tree diff so Git's index stat cache and
+ * `core.autocrlf` never mask or fabricate differences (t1435, measured 2026-11-22 on Windows 11).
+ */
+export async function isPureLineEndingDiff(
+  cwd: string,
+  parentSha: string,
+  wcSha: string
+): Promise<boolean> {
+  if (!parentSha || !wcSha || parentSha.toLowerCase() === wcSha.toLowerCase()) return false
+  const [contentDiff, summary] = await Promise.all([
+    tryGit(cwd, ['diff', '--ignore-cr-at-eol', '--name-only', parentSha, wcSha]),
+    tryGit(cwd, ['diff', '--summary', parentSha, wcSha])
+  ])
+  if (contentDiff === null || summary === null) return false
+  return contentDiff.trim().length === 0 && summary.trim().length === 0
+}
+
+/**
  * Report whether revision `rev` in a jj repository carries a stored conflict.
  * Landing uses this to refuse conflicted bookmarks even when files sit cleanly inside a commit.
  */
@@ -554,10 +575,19 @@ export const jjDriver: VcsDriver = {
         const tracked = wc.files.length - untracked
         const names = wc.files.slice(0, 5).map((f) => f.path).join(', ')
         const more = wc.files.length > 5 ? `, +${wc.files.length - 5} more` : ''
+        const crlfOnly =
+          untracked === 0 &&
+          tracked > 0 &&
+          Boolean(parent?.sha) &&
+          (await isPureLineEndingDiff(root, parent!.sha, wc.sha).catch(() => false))
+        const crlfHint = crlfOnly
+          ? ` This is a line-ending-only diff (likely Git core.autocrlf=true vs jj raw snapshots); ` +
+            `run \`jj -R "${root}" restore && git -C "${root}" config --local core.autocrlf false && git -C "${root}" read-tree HEAD\` if unintended.`
+          : ''
         return (
           `the trunk has ${wc.files.length} uncommitted file(s) in it ` +
           `(${tracked} modified/tracked, ${untracked} untracked): ${names}${more}. ` +
-          `Commit, describe, or clear them in the trunk checkout (${root}) so the merge can run`
+          `Commit, describe, or clear them in the trunk checkout (${root}) so the merge can run${crlfHint}`
         )
       }
       if (wc.desc.trim().length > 0 && !wc.bookmarks.includes(target)) {
