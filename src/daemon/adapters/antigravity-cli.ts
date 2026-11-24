@@ -45,8 +45,12 @@ import { errorMessage } from '@shared/errors.js'
  *
  * Three capability gaps drive the scheduling behaviour, and none is a special case in the scheduler:
  *
- *  1. **No `/compact`.** Cache-clock moves 4 and 5 are unavailable and preemption falls back to the
- *     handoff protocol. Exactly as plan §9 predicted.
+ *  1. **One-shot `/compact` only (`compactTransport: 'print'`).** Added in `agy` 1.2.x and measured
+ *     2026-11-23 on `agy 1.5.10`: `--conversation <id> --print=/compact --output-format stream-json`
+ *     runs an in-place checkpoint (`step_type: "checkpoint"`, `state: "DONE"`), keeping the same
+ *     `conversation_id`. However, `stream-json` stdin forwards `"/compact"` directly to the LLM
+ *     without expanding it, and there is no mid-turn interrupt (`promptDuringTurn: 'queued'`), so
+ *     live-session clock moves stay off and quota preemption still uses `handoff`.
  *  2. **No classifier-backed auto mode.** Nobody but the operator reviews, so agentyard writes a
  *     narrower allowlist and expects a higher refusal rate (§9.1).
  *  3. ⛔ **No credential isolation.** Credentials go to the OS keyring and no environment variable
@@ -213,7 +217,8 @@ const info: AdapterInfo = {
     readOnlyPermissionMode: 'plan',
     classifierBackedAuto: false,
     approvalChannel: 'settings_rules',
-    manualCompact: false,
+    manualCompact: true,
+    compactTransport: 'print',
     resumeSession: true,
     forkSession: false,
     nativeWorktree: false,
@@ -281,7 +286,8 @@ const info: AdapterInfo = {
     headlessAuthority: 'full-user',
     interruptSequence: '\x1b',
     costModelId: 'google.antigravity.2026-08',
-    // ⛔ Falls out of manualCompact: false. Preemption writes a handoff instead of compacting.
+    // ⛔ No mid-turn interrupt and stdin `/compact` goes to the model as raw text, so quota
+    // preemption always wraps up with a handoff rather than interrupting to compact.
     wrapUpProtocol: 'handoff',
     needsExplicitBudget: true,
     defaultModel: 'gemini-4-hydrogen',
@@ -636,6 +642,20 @@ function decodeStream(record: Record<string, unknown>, ctx?: DecodeContext): Str
     // answers neither "what did the turn cost" nor "how full is the window" - see `streamusage.ts`.
     const usage = asRecord(step?.usage)
     if (usage) events.push({ kind: 'usage', usage: readUsage(usage), final: false })
+    if (step && step.step_type === 'checkpoint' && step.state === 'DONE') {
+      const durationMs =
+        typeof step.duration_seconds === 'number' && Number.isFinite(step.duration_seconds)
+          ? Math.round(step.duration_seconds * 1000)
+          : null
+      const parsedUsage = usage ? readUsage(usage) : null
+      const pre = parsedUsage ? parsedUsage.input + parsedUsage.cacheRead : 0
+      events.push({
+        kind: 'compact',
+        preTokens: pre > 0 ? pre : null,
+        durationMs,
+        trigger: null
+      })
+    }
     if (events.length > 0) return events.length === 1 ? events[0]! : events
     return { kind: 'other', type: 'step_update' }
   }
@@ -1559,7 +1579,16 @@ export const antigravityCli: AgentAdapter = {
       )
     }
 
-    if (req.transport === 'stream') {
+    if (req.compact) {
+      if (!req.resumeFrom) {
+        throw new Error('antigravity-cli compact spawn requires a vendor conversation id to resume')
+      }
+      // Measured 2026-11-23 on agy 1.5.10: `--input-format stream-json` ignores `/compact` and sends
+      // it as literal text to the model, and combining `--print=/compact` with `--input-format
+      // stream-json` exits 2. Standalone one-shot `--conversation <id> --print=/compact
+      // --output-format stream-json` compacts in-place and keeps `<id>` resumable afterwards.
+      args.push('--print-timeout', '24h', '--print=/compact', '--output-format', 'stream-json')
+    } else if (req.transport === 'stream') {
       // ⛔ `--print=`, with the equals and nothing after it. **`-p` on `agy` takes the prompt as its
       // value** - `-p` / `--print` / `--prompt` are one string flag, not a boolean - so the bare
       // `-p` this used to pass swallowed the next token. Measured on agy 1.1.21, 2026-08-27, the CLI

@@ -277,8 +277,11 @@ moment, and on exactly the terms, the fleet switch would have scheduled it. It i
 button and the control says so.
 
 ⛔ **A preference is not a capability.** `capabilities.manualCompact` is the adapter's declaration
-that `/compact` exists — Codex takes one prompt per session and has none, Antigravity implements
-none — and no operator setting can talk either into having one. The task detail sends
+that `/compact` exists — Codex takes one prompt per session and has none, Muse exposes no slash
+command, and Antigravity (`agy 1.5.10`, measured 2026-11-23) supports one-shot
+`--conversation <id> --print=/compact` (`compactTransport: 'print'`) on resume (`google.antigravity.2026-08`
+remains cache-`unpriced` so TTL moves 4 & 7 stay off, with measured 162-checkpoint `post_context_tokens: 17234`
+/ `summary_output_tokens: 4500` and conservative `breakeven_context_tokens: 100000`). The task detail sends
 `compactionCapable` so the thread can say which agent cannot, rather than showing a live control that
 silently does nothing.
 

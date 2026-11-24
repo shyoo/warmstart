@@ -430,10 +430,11 @@ describe('a cost model may say it does not know', () => {
     expect(anthropic.costOfCompact(session)).toBeGreaterThan(10_000)
   })
 
-  it('a provider without compaction says so in the file as well as the adapter', () => {
-    // Belt and braces on purpose: the adapter governs whether the move is offered, the cost model
-    // governs whether it can be priced, and either alone being wrong would still refuse safely.
-    expect(costModel('google.antigravity.2026-08').canCompact()).toBe(false)
+  it('cost models match adapter compaction availability while leaving unpriced caches null-costed', () => {
+    // Belt and braces on purpose: the adapter governs whether compaction exists, the cost model
+    // declares measured compaction geometry and whether cache cost itself can be priced.
+    expect(costModel('google.antigravity.2026-08').canCompact()).toBe(true)
+    expect(costModel('google.antigravity.2026-08').costOfCompact({ contextTokens: 120_000, model: 'gemini-4-hydrogen' })).toBeNull()
     expect(costModel('openai.codex.2026-08').canCompact()).toBe(false)
     expect(costModel('anthropic.subscription.2026-08').canCompact()).toBe(true)
   })
@@ -572,6 +573,40 @@ describe('the measured surprises, kept as regressions', () => {
     expect(plan.args).toContain('--dangerously-skip-permissions')
     expect(plan.args).toContain('--print-timeout')
     expect(plan.args[plan.args.indexOf('--print-timeout') + 1]).toBe('24h')
+  })
+
+  it('agy plans one-shot --print=/compact against --conversation without --input-format stream-json', () => {
+    const ad = adapter('antigravity-cli')
+    expect(ad.info.capabilities.manualCompact).toBe(true)
+    expect(ad.info.capabilities.compactTransport).toBe('print')
+    expect(ad.info.policy.wrapUpProtocol).toBe('handoff')
+
+    const plan = ad.plan({
+      sessionId: 'ignored',
+      isolationRoot: 'C:/tmp/root',
+      cwd: 'C:/tmp/work',
+      transport: 'stream',
+      resumeFrom: '22d89a02-0e80-44f2-8469-5f8bc2fb3d7b',
+      compact: true
+    })
+    expect(plan.args).toContain('--conversation')
+    expect(plan.args).toContain('22d89a02-0e80-44f2-8469-5f8bc2fb3d7b')
+    expect(plan.args).toContain('--print=/compact')
+    expect(plan.args).toContain('--output-format')
+    expect(plan.args).not.toContain('--input-format')
+    expect(plan.args).not.toContain('--print=')
+  })
+
+  it('agy refuses a compact plan without a conversation id to resume', () => {
+    expect(() =>
+      adapter('antigravity-cli').plan({
+        sessionId: 'ignored',
+        isolationRoot: 'C:/tmp/root',
+        cwd: 'C:/tmp/work',
+        transport: 'stream',
+        compact: true
+      })
+    ).toThrow(/conversation/i)
   })
 
   it('no adapter leaks a vendor API key into a commissioned session', () => {

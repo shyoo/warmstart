@@ -45,7 +45,13 @@ import {
 } from './transcript.js'
 import { log, onLog } from './log.js'
 import { setEventSink } from './events.js'
-import { forgetStreamUsage, noteStepUsage, takeTurnUsage, takeUnfinishedTurn } from './streamusage.js'
+import {
+  forgetStreamUsage,
+  noteCompactionInUsage,
+  noteStepUsage,
+  takeTurnUsage,
+  takeUnfinishedTurn
+} from './streamusage.js'
 import { onShutdownRequest } from './lifecycle.js'
 import { noteActivity, noteReplyBoundary, noteReplyText } from './activity.js'
 import { onSettingChange } from './settings.js'
@@ -246,9 +252,22 @@ async function main(): Promise<void> {
       const requestedAt = lastRequestEvidenceAt(session.id)
       if (requestedAt !== null) touchCacheClock(session, requestedAt)
       if (event.kind === 'usage' && !event.final) noteStepUsage(session.id, event.usage)
+      if (event.kind === 'compact') {
+        noteCompactionInUsage(session.id)
+        recordCompaction(session.id, {
+          preTokens: event.preTokens,
+          durationMs: event.durationMs,
+          trigger: event.trigger
+        })
+      }
       if (event.kind === 'usage' && event.final) {
         const turn = takeTurnUsage(session.id, event.usage)
-        creditStreamTurn(session, turn.usage, turn.contextTokens ?? undefined)
+        creditStreamTurn(session, turn.usage, turn.contextTokens ?? undefined, {
+          ...(turn.tokensSinceCompactDelta !== undefined
+            ? { tokensSinceCompactDelta: turn.tokensSinceCompactDelta }
+            : {}),
+          preserveContext: turn.compacted === true && turn.contextTokens === null
+        })
       }
       // ⛔ The peephole. A running task used to show a status and a token count and nothing else, so
       // "is this working or is it stuck?" could only be answered by opening the session pane and
@@ -315,7 +334,12 @@ async function main(): Promise<void> {
       // turn was cut off. See `takeUnfinishedTurn`.
       const cutOff = finished ? takeUnfinishedTurn(sessionId) : null
       if (finished && cutOff) {
-        creditStreamTurn(finished, cutOff.usage, cutOff.contextTokens ?? undefined)
+        creditStreamTurn(finished, cutOff.usage, cutOff.contextTokens ?? undefined, {
+          ...(cutOff.tokensSinceCompactDelta !== undefined
+            ? { tokensSinceCompactDelta: cutOff.tokensSinceCompactDelta }
+            : {}),
+          preserveContext: cutOff.compacted === true && cutOff.contextTokens === null
+        })
       }
       if (finished) void onSessionExit(finished, exitCode)
       // One last pass: the final turn is often written after the process is already gone.

@@ -328,6 +328,7 @@ export function moveOutcome(session: Session, now: number): MoveOutcome {
  */
 function worthCompactingNow(session: Session, model: ReturnType<typeof costModel>): boolean {
   return (
+    model.canCompact() &&
     (session.contextTokens ?? 0) > model.compaction.breakeven_context_tokens &&
     session.tokensSinceCompact > model.compaction.min_tokens_since_compact
   )
@@ -518,8 +519,8 @@ export function compactOnResume(
   if (!info.capabilities.manualCompact) return no(`${info.label} cannot be asked to compact`)
   // ⛔ Two independent declarations, and getting this one wrong costs the run its instructions: on a
   // one-shot session `/compact` would consume the single prompt stdin has room for and the task's
-  // own prompt would never arrive. No adapter declares both today; that is not a reason to rely on it.
-  if (info.capabilities.streamPrompts === 'once') {
+  // own prompt would never arrive unless compaction uses a separate `'print'` spawn beforehand.
+  if (info.capabilities.compactTransport !== 'print' && info.capabilities.streamPrompts === 'once') {
     return no(`${info.label} takes one prompt per session, so a compaction would eat it`)
   }
   // ⛔ Off means off here too, and the task's own override is read alongside the fleet switch — see
@@ -565,8 +566,13 @@ export function compactOnResume(
     )
   }
 
+  if (!model.canCompact()) return no('this cost model does not support compaction')
   const cost = model.costOfCompact(session)
-  if (cost === null) return no('this cost model cannot price a compaction')
+  // For providers whose compaction is measurable (e.g. --print=/compact) while their cache remains
+  // unpriced, costOfCompact returns null honestly; resume compaction still proceeds on context size.
+  if (cost === null && model.canPriceCache()) {
+    return no('this cost model cannot price a compaction')
+  }
 
   return {
     compact: true,
@@ -574,7 +580,7 @@ export function compactOnResume(
       `resuming a conversation carrying ${session.contextTokens ?? 0} tokens of context, ` +
       `${session.tokensSinceCompact} of it since the last compaction - every turn of this run ` +
       'would read that prefix',
-    estimatedCost: Math.round(cost)
+    estimatedCost: cost === null ? null : Math.round(cost)
   }
 }
 
@@ -904,9 +910,10 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
     ctx.settings?.spendCreditsPastLimit ?? false,
     'context'
   )
-  const compactAllowed = caps.manualCompact && permission.allowed
-  const borrowCompactAllowed = caps.manualCompact && borrowPermission.allowed
-  const compactOff = caps.manualCompact && !permission.allowed
+  const inSessionCompact = caps.manualCompact && caps.compactTransport !== 'print'
+  const compactAllowed = inSessionCompact && permission.allowed
+  const borrowCompactAllowed = inSessionCompact && borrowPermission.allowed
+  const compactOff = inSessionCompact && !permission.allowed
 
   // Move 5 first: a reserve breach is not a preference, and it does not wait for the clock.
   //
@@ -951,7 +958,9 @@ export function decide(session: Session, ctx: ClockContext): ClockDecision {
       reason:
         (compactOff
           ? `compaction reserve at risk and ${compactionOffBecause(permission.source)} - ${reserve.reason}.`
-          : `compaction reserve at risk and this provider cannot compact - ${reserve.reason}.`) +
+          : !caps.manualCompact
+            ? `compaction reserve at risk and this provider cannot compact - ${reserve.reason}.`
+            : `compaction reserve at risk and this live session cannot compact in-stream - ${reserve.reason}.`) +
         ' Taking a handoff and releasing the session instead.',
       expectedIdleMs: null,
       estimatedCost: model.costOfKeepalive(session) ?? 0
@@ -1275,6 +1284,7 @@ async function reviveAndCompact(session: Session, decision: ClockDecision): Prom
       ? session.clockMoveAttempts
       : 0) + 1
 
+  const printCompact = info.capabilities.compactTransport === 'print'
   const revived = spawnSession({
     workerId: session.workerId,
     cwd: session.cwd,
@@ -1286,7 +1296,8 @@ async function reviveAndCompact(session: Session, decision: ClockDecision): Prom
     ...(info.capabilities.selectableEffort && session.effort ? { effort: session.effort } : {}),
     // ⛔ The same row, the same conversation. `--resume` reuses the id, which is why everything below
     // can go on addressing this session by the id it already had.
-    resume: session
+    resume: session,
+    ...(printCompact ? { compact: true } : {})
   })
 
   // ⛔ After the spawn, never before: the resume path clears `clock_move` on the way in, so a mark
@@ -1342,14 +1353,16 @@ async function reviveAndCompact(session: Session, decision: ClockDecision): Prom
     done('compacted while its prefix was still warm - closing the conversation again', true)
   )
 
-  setTimeout(() => {
-    try {
-      sendPrompt(session.id, '/compact', [], { housekeeping: true })
-    } catch (err) {
-      log.warn(`could not send /compact to the revived ${session.id.slice(0, 8)}:`, err)
-      done('the /compact could not be sent - closing the conversation again', false)
-    }
-  }, SPAWN_TO_PROMPT_MS)
+  if (!printCompact) {
+    setTimeout(() => {
+      try {
+        sendPrompt(session.id, '/compact', [], { housekeeping: true })
+      } catch (err) {
+        log.warn(`could not send /compact to the revived ${session.id.slice(0, 8)}:`, err)
+        done('the /compact could not be sent - closing the conversation again', false)
+      }
+    }, SPAWN_TO_PROMPT_MS)
+  }
 }
 
 async function execute(session: Session, decision: ClockDecision): Promise<void> {

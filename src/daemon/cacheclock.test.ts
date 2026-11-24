@@ -581,11 +581,28 @@ describe('a conversation carried across runs is compacted before the next one sp
   })
 
   it('does not ask a provider that cannot compact', () => {
-    // ⛔ Antigravity declares `manualCompact: false`. Asking anyway would spend a prompt on a
+    // local-llm declares `manualCompact: false`. Asking anyway would spend a prompt on a
     // conversation that cannot shrink and then wait four minutes for a boundary that never comes.
-    const plan = clock.compactOnResume(t92({ adapterId: 'antigravity-cli' }), settings.DEFAULT_SETTINGS)
+    const plan = clock.compactOnResume(t92({ adapterId: 'local-llm' }), settings.DEFAULT_SETTINGS)
     expect(plan.compact).toBe(false)
     expect(plan.reason).toContain('compact')
+  })
+
+  it('compacts a print-compact adapter past its breakeven with null estimatedCost', () => {
+    const plan = clock.compactOnResume(
+      t92({ adapterId: 'antigravity-cli', contextTokens: 150_000, tokensSinceCompact: 60_000, cacheExpiresAt: null }),
+      settings.DEFAULT_SETTINGS
+    )
+    expect(plan.compact).toBe(true)
+    expect(plan.estimatedCost).toBeNull()
+  })
+
+  it('declines antigravity resume compaction below its 100k breakeven', () => {
+    const plan = clock.compactOnResume(
+      t92({ adapterId: 'antigravity-cli', contextTokens: 84_254, tokensSinceCompact: 60_000, cacheExpiresAt: null }),
+      settings.DEFAULT_SETTINGS
+    )
+    expect(plan.compact).toBe(false)
   })
 
   it('the wait for the boundary is bounded by the same window a clock compaction settles in', () => {

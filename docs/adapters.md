@@ -21,11 +21,11 @@ first spawn.** That is the whole reason `AdapterInfo.verification` exists.
 | | `claude-code` | `antigravity-cli` | `openai-compatible` | `local-llm` | `muse-code` |
 |---|---|---|---|---|---|
 | Command | `claude` | `agy` | `codex` | `local-llm-bridge` (node) | `muse` — native everywhere; on Windows the installer's `muse-bin-<version>.exe`, never the `muse.cmd` shim (`museBinary`) |
-| Measured against | 2.1.223 | 1.1.20 | 0.155.1 (2026-09-20) | llama.cpp / Qwen3-Coder | 1.0.3 (Linux), 1.3.0 (Windows, 2026-09-19) |
+| Measured against | 2.1.223 | 1.5.10 (2026-11-23; probes/notes from 1.1.20+) | 0.155.1 (2026-09-20) | llama.cpp / Qwen3-Coder | 1.0.3 (Linux), 1.3.0 (Windows, 2026-09-19) |
 | **Accounts per machine** | **unlimited** (`CLAUDE_CONFIG_DIR`) | ⛔ **1** (OS keyring) | **unlimited** (`CODEX_HOME`) | **unlimited** (by endpoint URL) | **unlimited** (`XDG_CONFIG_HOME`/`XDG_DATA_HOME`) |
 | Credential lives in | a directory | ⛔ the OS keyring | a directory | ⛔ none (local HTTP) | a directory (`config/muse/auth.json`) |
 | Metered from | ⛔ transcript, **by choice** (exact, survives a restart; its stream carries usage too) | **its live stream** | **its live stream** | **its live stream** | ⛔ **its session log** — its stream carries no usage at all |
-| Can compact | ✔ — preemption interrupts the active stream turn, preserves its `aborted_tools` acknowledgement, then sends `/compact` | ⛔ | ⛔ *(conservative)* | ⛔ | ⛔ *(automatic thresholds only; no slash command)* |
+| Can compact | ✔ (`stream`) — preemption interrupts the active stream turn, preserves its `aborted_tools` acknowledgement, then sends `/compact` | ✔ (`compactTransport: 'print'`) — one-shot `--conversation <id> --print=/compact` on resume only; stdin `/compact` goes to the LLM as text and preemption stays `handoff` | ⛔ *(conservative)* | ⛔ | ⛔ *(automatic thresholds only; no slash command)* |
 | **Unattended authority** (`policy.headlessAuthority`) | ⛔ **full-user** (`bypassPermissions`) | ⛔ **full-user** (`--dangerously-skip-permissions`) | ⚠️ **sandboxed** (`--sandbox workspace-write`, widened by `grants.ts` to the shared `.git` and to a granted repository’s own) | ⛔ **full-user** *(unverified; conservative)* | ⛔ **full-user** (`--yolo` when the worker is set to Full user authority, else `--approval-mode never` + `--disable-sandbox`) |
 | Classifier reviews actions | ⚠️ `auto`, **interactive only** — unattended work runs `bypassPermissions` | ⛔ | ⛔ | ⛔ | ⚠️ `--approval-judge` — interactive only; unattended runs `--approval-mode never` |
 | Approvals | `permission_prompt_tool` | settings rules | settings rules | ⛔ none | ⛔ flags on the process, before it starts |
@@ -480,9 +480,22 @@ into the cold start it should always have been.
 ⛔ **No code anywhere asks which adapter it is looking at.** Each of these is a capability, and the
 behaviour falls out of it:
 
-- **`manualCompact: false`** → cache-clock moves 4 and 5 are unavailable, and `wrapUpProtocol` is
-  `handoff`. M5 also found the hole this left: a reserve breach on a no-compact adapter used to fall
-  through and do *nothing* — the one case the reserve exists to catch. It now hands off and closes.
+- **`manualCompact: false`** → cache-clock moves 4 and 5 and resume compaction are unavailable,
+  and `wrapUpProtocol` is `handoff`. M5 also found the hole this left: a reserve breach on a
+  no-compact adapter used to fall through and do *nothing* — the one case the reserve exists to
+  catch. It now hands off and closes.
+- **`compactTransport: 'print'`** (default `'stream'` when omitted) → `/compact` cannot be
+  injected down `--input-format stream-json` stdin, so live-session clock moves (4, 5, 5b) stay off
+  and active-turn quota preemption keeps `wrapUpProtocol: 'handoff'`; `compactOnResume` compacts a
+  closed conversation via a standalone `--print=/compact` spawn before spawning the resumed stream
+  session. Verified 2026-11-23 on `agy 1.5.10`: `stream-json` stdin forwards `"/compact"` directly
+  to the LLM (14,427 in / 326 out, no compaction) and `--print=/compact` + `--input-format
+  stream-json` exits 2, while `--conversation <id> --print=/compact --output-format stream-json`
+  runs an in-place `checkpoint` step (`step_type: "checkpoint"`, `state: "DONE"`, decoded to
+  `{ kind: 'compact' }` while keeping the checkpoint summary's tokens billable and preserving
+  `context_tokens` / `tokens_since_compact = 0` via `streamusage.ts`). Across 162 local DONE
+  checkpoints (497 DBs scanned), `agy` compressed median 261,349 → 17,234 tokens (4,500 median
+  summary output tokens).
 - **`wrapUpProtocol`** → quota preemption uses the adapter's declared safe exit: `compact` sends
   `/compact`, records the ask and waits up to five minutes for a boundary; `handoff` asks the agent
   to commit safe work, update `HANDOFF.md` when present, and record the structured handoff before a

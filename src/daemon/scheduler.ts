@@ -2049,6 +2049,24 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
     })()
   }
 
+  const printCompact =
+    resumeCompaction?.compact === true &&
+    revive !== null &&
+    adapter(worker.adapterId).info.capabilities.compactTransport === 'print'
+  if (printCompact && revive && resumeCompaction) {
+    await compactClosedBeforeResume({
+      revive,
+      worker,
+      project,
+      task,
+      plan: resumeCompaction,
+      cwd,
+      attachments: prompt.attachments,
+      model: picked.model,
+      effort: picked.effort
+    })
+  }
+
   // ⛔ **The spawn happens here, below `promptFor`, and that order is load-bearing.** A
   // `spawn-flag` adapter takes its images as argv on the process that runs the turn — codex has
   // no stdin channel to send one down afterwards — so the file list has to exist before the
@@ -2161,7 +2179,7 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   // ⛔ And a revived conversation may need shrinking before it is spoken to at all — see
   // `openConversation`. The delay is the same either way; what changes is what goes in first.
   setTimeout(() => {
-    openConversation(session, task, promptText, resumeCompaction, prompt.attachments)
+    openConversation(session, task, promptText, printCompact ? null : resumeCompaction, prompt.attachments)
   }, PROMPT_DELAY_MS)
 
   // ⚠️ The *reason* travels with it. "dispatched t5 to ClaudeSecond" says what happened; it does not
@@ -2556,15 +2574,17 @@ export function openConversation(
   // it a `/compact` this path issued would be invisible to `moveOutcome`, and the next tick that
   // found the session near expiry would happily send a second one.
   markClockMove(session.id, 'compact', session.tokensSinceCompact)
-  addMessage(task.id, 'system', `Compacting before starting (≈${plan.estimatedCost} tokens)`, null, [], {
+  const costSuffix = plan.estimatedCost !== null ? ` (≈${plan.estimatedCost} tokens)` : ''
+  const costDetail =
+    plan.estimatedCost !== null
+      ? ` This costs about ${plan.estimatedCost} tokens once, and the prompt goes in as soon as it lands.`
+      : ' The prompt goes in as soon as it lands.'
+  addMessage(task.id, 'system', `Compacting before starting${costSuffix}`, null, [], {
     event: 'compaction',
-    detail:
-      `Compacting before starting: ${plan.reason}. This costs about ${plan.estimatedCost} tokens ` +
-      'once, and the prompt goes in as soon as it lands.'
+    detail: `Compacting before starting: ${plan.reason}.${costDetail}`
   })
   log.info(
-    `t${task.seq}: compacting the resumed conversation ${session.id.slice(0, 8)} before prompting ` +
-      `(~${plan.estimatedCost} tokens)`
+    `t${task.seq}: compacting the resumed conversation ${session.id.slice(0, 8)} before prompting${costSuffix}`
   )
 
   let sent = false
@@ -2603,6 +2623,113 @@ export function openConversation(
   // ⚠️ Registered after the send, not before: the boundary cannot arrive until `/compact` has been
   // issued, and a listener left behind by a send that threw would fire on somebody else's compaction.
   stopWaiting = onCompactionLanded(session.id, () => once('the compaction landed', false))
+}
+
+/**
+ * Compact a closed conversation using a standalone one-shot `compactTransport: 'print'` spawn
+ * before spawning the resumed stream session for the incoming task prompt.
+ */
+async function compactClosedBeforeResume(input: {
+  revive: Session
+  worker: Worker
+  project: Project | null
+  task: Task
+  plan: ResumeCompaction
+  cwd: string
+  attachments: Attachment[]
+  model?: string | null
+  effort?: string | null
+}): Promise<void> {
+  const { revive, worker, project, task, plan, cwd, attachments, model, effort } = input
+  try {
+    spawnSession({
+      workerId: worker.id,
+      cwd,
+      transport: 'stream',
+      purpose: 'work',
+      projectId: project?.id ?? null,
+      attachments,
+      grantDirs: grantedDirsFor(task.id),
+      resume: revive,
+      compact: true,
+      ...(model ? { model } : {}),
+      ...(effort ? { effort } : {})
+    })
+  } catch (err) {
+    log.warn(`could not spawn pre-resume compaction for t${task.seq}:`, err)
+    return
+  }
+
+  noteCompactionAsked({
+    sessionId: revive.id,
+    taskId: task.id,
+    reason: plan.reason,
+    preTokens: revive.contextTokens
+  })
+  markClockMove(revive.id, 'compact', revive.tokensSinceCompact)
+  const costSuffix = plan.estimatedCost !== null ? ` (≈${plan.estimatedCost} tokens)` : ''
+  addMessage(task.id, 'system', `Compacting before starting${costSuffix}`, null, [], {
+    event: 'compaction',
+    detail:
+      `Compacting before starting: ${plan.reason}. Running one-shot compaction before resuming the stream session.`
+  })
+  log.info(`t${task.seq}: compacting closed conversation ${revive.id.slice(0, 8)} via one-shot print spawn${costSuffix}`)
+
+  await new Promise<void>((resolve) => {
+    let settled = false
+    let landed = false
+    let stopLanded: () => void = () => {}
+    let stopEnd: () => void = () => {}
+    let exitGrace: ReturnType<typeof setTimeout> | null = null
+
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      stopLanded()
+      stopEnd()
+      clearTimeout(timer)
+      if (exitGrace) clearTimeout(exitGrace)
+      resolve()
+    }
+
+    const timer = setTimeout(() => {
+      clearClockMove(revive.id)
+      addMessage(
+        task.id,
+        'system',
+        `Compaction did not land in ${Math.round(RESUME_COMPACT_WAIT_MS / 60000)}m — starting on the full context`,
+        null,
+        [],
+        {
+          event: 'compaction',
+          detail:
+            'The compaction did not land within ' +
+            `${Math.round(RESUME_COMPACT_WAIT_MS / 60000)} minutes, so the work is starting on the ` +
+            'full context. The request stays on the record, unlanded.'
+        }
+      )
+      void closeAndWait(revive.id).finally(finish)
+    }, RESUME_COMPACT_WAIT_MS)
+    timer.unref?.()
+
+    stopLanded = onCompactionLanded(revive.id, () => {
+      landed = true
+      // One-shot --print=/compact exits cleanly right after emitting result; wait briefly for
+      // handleExit so the stream resume never races the exiting process on the same DB.
+      exitGrace = setTimeout(() => {
+        void closeAndWait(revive.id).finally(finish)
+      }, 10_000)
+      exitGrace.unref?.()
+    })
+
+    stopEnd = onSessionEnd(revive.id, () => {
+      if (!landed) {
+        clearClockMove(revive.id)
+        log.info(`t${task.seq}: one-shot compaction exited before checkpoint landed — starting on full context`)
+      }
+      finish()
+    })
+  })
 }
 
 // ---------------------------------------------------------------------------- watchdogs

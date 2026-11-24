@@ -62,6 +62,11 @@ export interface SpawnRequest {
   /** A one-shot flow (login, doctor) supplies its own argv and ignores session options. */
   argv?: string[] | undefined
   /**
+   * Spawn this session as a standalone one-shot compaction (`/compact`) against `resumeFrom`, rather
+   * than opening a normal work turn. Only set when the adapter declares `compactTransport: 'print'`.
+   */
+  compact?: boolean | undefined
+  /**
    * The vendor's own handle for a conversation this session should continue.
    *
    * ⛔ **Only set when the adapter declares `resumeSession`**, and the flag it becomes is the

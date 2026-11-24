@@ -8,7 +8,13 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { StreamUsage } from './stream.js'
-import { forgetStreamUsage, noteStepUsage, takeTurnUsage, takeUnfinishedTurn } from './streamusage.js'
+import {
+  forgetStreamUsage,
+  noteCompactionInUsage,
+  noteStepUsage,
+  takeTurnUsage,
+  takeUnfinishedTurn
+} from './streamusage.js'
 
 const SESSION = 'aaaaaaaa-0000-4000-8000-00000000beef'
 
@@ -117,5 +123,28 @@ describe('the accumulator does not leak between turns or sessions', () => {
     noteStepUsage(other, usage(7_000))
     expect(takeTurnUsage(SESSION, usage(0)).usage.input).toBe(1_000)
     expect(takeTurnUsage(other, usage(0)).usage.input).toBe(7_000)
+  })
+
+  it('keeps checkpoint spend billable while preserving context and zeroing growth when no post-compact turn follows', () => {
+    // Standalone --print=/compact: checkpoint step runs, noteCompactionInUsage fires, then result closes turn.
+    noteStepUsage(SESSION, usage(3_425, 825, 12_370))
+    noteCompactionInUsage(SESSION)
+    const compactOnly = takeTurnUsage(SESSION, usage(18_293, 977, 12_370))
+    expect(compactOnly.usage.input).toBe(3_425)
+    expect(compactOnly.usage.output).toBe(825)
+    expect(compactOnly.usage.cacheRead).toBe(12_370)
+    expect(compactOnly.contextTokens).toBeNull()
+    expect(compactOnly.tokensSinceCompactDelta).toBe(0)
+    expect(compactOnly.compacted).toBe(true)
+
+    // Mid-turn auto-compaction followed by a resumed step reports post-compact context & delta.
+    noteStepUsage(SESSION, usage(200_000, 3_000, 60_000))
+    noteCompactionInUsage(SESSION)
+    noteStepUsage(SESSION, usage(15_000, 200, 2_000))
+    const midTurn = takeTurnUsage(SESSION, usage(215_000, 3_200, 62_000))
+    expect(midTurn.usage.input).toBe(215_000)
+    expect(midTurn.contextTokens).toBe(17_000)
+    expect(midTurn.tokensSinceCompactDelta).toBe(15_200)
+    expect(midTurn.compacted).toBe(true)
   })
 })

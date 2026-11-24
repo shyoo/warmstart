@@ -1269,6 +1269,18 @@ export interface AdapterCapabilities {
   approvalChannel: 'permission_prompt_tool' | 'settings_rules' | 'none'
   manualCompact: boolean
   /**
+   * How an explicit compaction (`/compact`) is delivered when `manualCompact` is true.
+   *
+   *  - `'stream'` (default) — write `/compact` down `--input-format stream-json` stdin into an open
+   *    conversation (`claude-code`).
+   *  - `'print'` — spawn a standalone one-shot `--print=/compact` run on a non-running conversation
+   *    (`antigravity-cli`, verified 2026-11-23 on agy 1.5.10: `stream-json` stdin feeds `"/compact"`
+   *    as raw text to the model, and combining `--print=/compact` with `--input-format stream-json`
+   *    exits 2). Because it requires closing or spawning outside an active turn, live-session moves
+   *    never inject it mid-run.
+   */
+  compactTransport?: 'stream' | 'print'
+  /**
    * This adapter's `plan` honours `SpawnRequest.resumeFrom`, so a session that has exited can be
    * started again holding the conversation it already had.
    *

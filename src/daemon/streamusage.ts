@@ -41,9 +41,13 @@ const ZERO: StreamUsage = { input: 0, output: 0, thinking: 0, cacheRead: 0, cach
 interface Accumulator {
   /** Sum over every model call seen so far in this run. */
   total: StreamUsage
-  /** Prompt size at the most recent model call — the context window fill level. */
-  lastContext: number
+  /** Sum over model calls seen since the last in-run compaction (or start of run). */
+  sinceCompactTotal: StreamUsage
+  /** Prompt size at the most recent model call — the context window fill level, cleared at compaction. */
+  lastContext: number | null
   calls: number
+  /** True once a compaction boundary/checkpoint landed during this run. */
+  compacted: boolean
 }
 
 /** Keyed by session id: a run belongs to one session, and one session runs one turn at a time. */
@@ -59,13 +63,46 @@ function add(a: StreamUsage, b: StreamUsage): StreamUsage {
   }
 }
 
+function growthTokens(u: StreamUsage): number {
+  return u.input + u.output + u.cacheWrite
+}
+
 /** Record one model call's usage, from a non-final `usage` stream event. */
 export function noteStepUsage(sessionId: string, usage: StreamUsage): void {
-  const acc = perSession.get(sessionId) ?? { total: ZERO, lastContext: 0, calls: 0 }
+  const acc = perSession.get(sessionId) ?? {
+    total: ZERO,
+    sinceCompactTotal: ZERO,
+    lastContext: null,
+    calls: 0,
+    compacted: false
+  }
   perSession.set(sessionId, {
     total: add(acc.total, usage),
+    sinceCompactTotal: add(acc.sinceCompactTotal, usage),
     lastContext: usage.input + usage.cacheRead,
-    calls: acc.calls + 1
+    calls: acc.calls + 1,
+    compacted: acc.compacted
+  })
+}
+
+/**
+ * Mark that the conversation compacted during this run: keep accumulated billable spend intact,
+ * clear any pre-compaction context measurement, and zero post-compaction growth until a later step.
+ */
+export function noteCompactionInUsage(sessionId: string): void {
+  const acc = perSession.get(sessionId) ?? {
+    total: ZERO,
+    sinceCompactTotal: ZERO,
+    lastContext: null,
+    calls: 0,
+    compacted: true
+  }
+  perSession.set(sessionId, {
+    total: acc.total,
+    sinceCompactTotal: ZERO,
+    lastContext: null,
+    calls: acc.calls,
+    compacted: true
   })
 }
 
@@ -74,10 +111,13 @@ export interface TurnUsage {
   usage: StreamUsage
   /**
    * How full the model's context window was when the turn ended, or null when the run emitted no
-   * per-call usage and there is therefore nothing to say. ⚠️ Null is a verdict — the caller falls
-   * back to the terminal record clamped to the window, and must not read null as zero.
+   * per-call usage (or only compacted with no subsequent turn) and there is nothing new to say.
    */
   contextTokens: number | null
+  /** New non-cached tokens accrued since the last compaction (0 on a compaction-only run). */
+  tokensSinceCompactDelta?: number
+  /** True when this run included a stream compaction boundary/checkpoint. */
+  compacted?: boolean
 }
 
 /**
@@ -89,8 +129,20 @@ export interface TurnUsage {
 export function takeTurnUsage(sessionId: string, final: StreamUsage): TurnUsage {
   const acc = perSession.get(sessionId)
   perSession.delete(sessionId)
-  if (!acc || acc.calls === 0) return { usage: final, contextTokens: null }
-  return { usage: acc.total, contextTokens: acc.lastContext }
+  if (!acc || (acc.calls === 0 && !acc.compacted)) {
+    return {
+      usage: final,
+      contextTokens: null,
+      tokensSinceCompactDelta: growthTokens(final),
+      compacted: false
+    }
+  }
+  return {
+    usage: acc.total,
+    contextTokens: acc.lastContext,
+    tokensSinceCompactDelta: growthTokens(acc.sinceCompactTotal),
+    compacted: acc.compacted
+  }
 }
 
 /**
@@ -112,9 +164,14 @@ export function takeTurnUsage(sessionId: string, final: StreamUsage): TurnUsage 
  */
 export function takeUnfinishedTurn(sessionId: string): TurnUsage | null {
   const acc = perSession.get(sessionId)
-  if (!acc || acc.calls === 0) return null
+  if (!acc || (acc.calls === 0 && !acc.compacted)) return null
   perSession.delete(sessionId)
-  return { usage: acc.total, contextTokens: acc.lastContext }
+  return {
+    usage: acc.total,
+    contextTokens: acc.lastContext,
+    tokensSinceCompactDelta: growthTokens(acc.sinceCompactTotal),
+    compacted: acc.compacted
+  }
 }
 
 /** Drop a session's part-built run. Called when the process exits without a terminal record. */

@@ -42,16 +42,20 @@
   },
   "compaction": {
     "$comment": [
-      "Antigravity exposes no /compact. `available: false` is what the cache clock reads, via the",
-      "adapter's manualCompact capability; the numbers below exist only so nothing downstream has to",
-      "handle a missing block, and are never used while available is false."
+      "Measured across 162 DONE checkpoints (step_type = 23, status = 3 with usage) across 497 local",
+      "Antigravity conversation DBs (2026-11-23): pre-context median 261,349 (min 256,609, max 663,449),",
+      "summary output median 4,500 (min 1,358, max 22,279), next-turn post-context median 17,234 (min",
+      "13,253, max 30,298). Live agy 1.5.10 --print=/compact probe on 15,795 tokens took 20,387 ms.",
+      "Cache remains unpriced (read_multiplier: null), so costOfCompact() returns null and TTL moves",
+      "stay off; breakeven/growth thresholds below are conservative inferred guards above the ~17.2k",
+      "post-compact baseline so resume compaction shrinks large histories without looping."
     ],
-    "available": false,
-    "summary_output_tokens": 0,
-    "post_context_tokens": 0,
-    "duration_ms": 0,
-    "breakeven_context_tokens": 0,
-    "min_tokens_since_compact": 0
+    "available": true,
+    "summary_output_tokens": 4500,
+    "post_context_tokens": 17234,
+    "duration_ms": 20387,
+    "breakeven_context_tokens": 100000,
+    "min_tokens_since_compact": 40000
   },
   "models": [
     {

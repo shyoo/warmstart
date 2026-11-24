@@ -334,11 +334,12 @@ describe('move 4: the idle conversation past the break-even', () => {
     expect(clock.decide(justCompacted, ctx({ settings: fleetOff() })).move).not.toBe('compact')
   })
 
-  it('⛔ cannot conjure a capability an adapter does not have', () => {
-    // Antigravity declares `manualCompact: false`. An override is a preference; this is not.
+  it('⛔ live-session clock does not compact an in-stream-incapable or no-compact adapter', () => {
+    // Antigravity supports one-shot `--print=/compact` on resume only (`compactTransport: 'print'`),
+    // never live-session in-stream `/compact`; `muse-code` declares `manualCompact: false`.
     owner('on')
-    const decision = clock.decide(session({ adapterId: 'antigravity-cli' }), ctx({ settings: fleetOff() }))
-    expect(decision.move).not.toBe('compact')
+    expect(clock.decide(session({ adapterId: 'antigravity-cli' }), ctx({ settings: fleetOff() })).move).not.toBe('compact')
+    expect(clock.decide(session({ adapterId: 'muse-code' }), ctx({ settings: fleetOff() })).move).not.toBe('compact')
   })
 
   it('⛔ does not get to re-ask while the first ask is still in flight', () => {
@@ -535,7 +536,25 @@ describe('compacting at the moment a run resumes into a conversation', () => {
 
   it('⛔ and an adapter with no `/compact` is still not asked for one', () => {
     owner('on')
-    const plan = clock.compactOnResume(carried({ adapterId: 'antigravity-cli' }), fleetOff())
+    const plan = clock.compactOnResume(carried({ adapterId: 'local-llm' }), fleetOff())
     expect(plan.compact).toBe(false)
+  })
+
+  it('honours task autoCompact override on print-compact adapters past breakeven', () => {
+    owner('on')
+    const yes = clock.compactOnResume(
+      carried({ adapterId: 'antigravity-cli', contextTokens: 150_000, cacheExpiresAt: null }),
+      fleetOff()
+    )
+    expect(yes.compact).toBe(true)
+    expect(yes.estimatedCost).toBeNull()
+
+    owner('off')
+    const no = clock.compactOnResume(
+      carried({ adapterId: 'antigravity-cli', contextTokens: 150_000, cacheExpiresAt: null }),
+      settings.DEFAULT_SETTINGS
+    )
+    expect(no.compact).toBe(false)
+    expect(no.reason).toContain('this task is set never to compact')
   })
 })

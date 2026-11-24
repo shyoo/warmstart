@@ -856,6 +856,11 @@ export interface SpawnOptions {
    * are none*, and suppresses the inheritance below.
    */
   grantDirs?: string[] | undefined
+  /**
+   * Spawn as a one-shot compaction (`/compact`) rather than an interactive/stream work loop.
+   * Only set for adapters declaring `compactTransport: 'print'`.
+   */
+  compact?: boolean | undefined
 }
 
 /**
@@ -1089,12 +1094,14 @@ export function spawnSession(opts: SpawnOptions): Session {
   //                never told to call `task_complete`, so it never hunts for a tool it does not have.
   //  - `work`    — the worker tier.
   const mcpConfig =
-    purpose === 'work'
-      ? writeMcpConfig(id, 'worker')
-      : purpose === 'chat'
-        ? writeMcpConfig(id, 'controller')
-        : null
-  const partialMessages = wantsPartialMessages(ad.info, purpose, transport)
+    opts.compact
+      ? null
+      : purpose === 'work'
+        ? writeMcpConfig(id, 'worker')
+        : purpose === 'chat'
+          ? writeMcpConfig(id, 'controller')
+          : null
+  const partialMessages = opts.compact ? false : wantsPartialMessages(ad.info, purpose, transport)
   const permissionMode = permissionModeFor(
     ad.info,
     purpose,
@@ -1121,13 +1128,14 @@ export function spawnSession(opts: SpawnOptions): Session {
     // exactly the question of which, and getting it backwards means handing a CLI an id it has never
     // heard of - which resumes nothing and says nothing about it.
     ...(resuming ? { resumeFrom: resuming.vendorSessionId ?? resuming.id } : {}),
-    ...(forking ? { forkFrom: forking.vendorSessionId ?? forking.id } : {})
+    ...(forking ? { forkFrom: forking.vendorSessionId ?? forking.id } : {}),
+    ...(opts.compact ? { compact: true } : {})
   })
 
   // ⛔ The worker tier for an agent with no MCP: a per-session token and the `warmstart-agent` shim on
   // its PATH, in the environment its shell commands inherit. `work` only, for the reason `mcpConfig`
   // above gives — and only where MCP is absent, or the model would be shown every tool twice.
-  if (purpose === 'work' && !ad.info.capabilities.mcp && ad.info.capabilities.agentCli) {
+  if (purpose === 'work' && !opts.compact && !ad.info.capabilities.mcp && ad.info.capabilities.agentCli) {
     const env = agentCliEnv(id, plan.env)
     if (env) plan.env = env
   }

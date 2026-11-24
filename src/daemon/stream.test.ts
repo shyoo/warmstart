@@ -423,6 +423,32 @@ describe('antigravity-cli', () => {
       message: { role: 'user', content: [{ type: 'text', text: 'hello world' }] }
     })
   })
+
+  it('decodes DONE checkpoint step_update into usage followed by compact, and ignores ERROR checkpoints', () => {
+    // Verbatim shape from `agy --conversation <id> --print=/compact --output-format stream-json` (2026-11-23, agy 1.5.10).
+    const doneCheckpoint =
+      '{"event":"step_update","step_update":{"step_index":4,"step_type":"checkpoint","state":"DONE",' +
+      '"duration_seconds":20.3871196,"usage":{"input_tokens":3425,"output_tokens":825,"thinking_tokens":87,' +
+      '"cache_read_tokens":12370,"total_tokens":4250}}}'
+    const events = parse('antigravity-cli', [doneCheckpoint])
+    expect(events).toEqual([
+      {
+        kind: 'usage',
+        usage: { input: 3425, output: 825, thinking: 87, cacheRead: 12370, cacheWrite: 0 },
+        final: false
+      },
+      {
+        kind: 'compact',
+        preTokens: 15795,
+        durationMs: 20387,
+        trigger: null
+      }
+    ])
+
+    const erroredCheckpoint =
+      '{"event":"step_update","step_update":{"step_index":4,"step_type":"checkpoint","state":"ERROR"}}'
+    expect(parse('antigravity-cli', [erroredCheckpoint]).some((e) => e.kind === 'compact')).toBe(false)
+  })
 })
 
 // ---------------------------------------------------------------------------- openai-compatible

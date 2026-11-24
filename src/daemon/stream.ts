@@ -149,6 +149,11 @@ export type StreamEvent =
    * ⚠️ Complete list each time, so a caller replaces what it held rather than adding.
    */
   | { kind: 'background_tasks'; tasks: { id: string; description: string | null }[] }
+  /**
+   * Conversation history was compacted in-place (for example Claude Code's `compact_boundary` or
+   * Antigravity's completed `checkpoint` step).
+   */
+  | { kind: 'compact'; preTokens: number | null; durationMs: number | null; trigger: string | null }
   | { kind: 'other'; type: string }
 
 /**
@@ -263,6 +268,8 @@ export function renderForHuman(event: StreamEvent, asked?: SpawnAsked): string {
       return event.category === 'blocked'
         ? dim(`— waiting on you${event.needsAction ? `: ${event.needsAction}` : ''}`) + eol
         : ''
+    case 'compact':
+      return dim('— compacted') + eol
     // ⛔ Everything else is protocol. It goes to the scheduler and not to the screen.
     case 'background_tasks':
     case 'other':
@@ -329,6 +336,13 @@ export function describeStream(
       return event.category === 'blocked'
         ? { kind: 'note', text: 'Waiting on you', detail: event.needsAction, tone: 'warn' }
         : null
+    case 'compact':
+      return {
+        kind: 'note',
+        text: 'Compacted',
+        detail: event.preTokens ? `${Math.round(event.preTokens / 1000)}k pre` : null,
+        tone: 'dim'
+      }
     case 'usage':
     case 'background_tasks':
     case 'other':

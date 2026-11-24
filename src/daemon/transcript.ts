@@ -673,7 +673,12 @@ const CLOCK_TOUCH_MS = 60 * 1000
  *   the session gauge show `2.0M/1.0M`. When omitted, `usage.input` is used as before (correct
  *   for single-request adapters like Codex where the two are identical for a given turn).
  */
-export function creditStreamTurn(session: Session, usage: StreamUsage, contextTokens?: number): void {
+export function creditStreamTurn(
+  session: Session,
+  usage: StreamUsage,
+  contextTokens?: number,
+  opts?: { tokensSinceCompactDelta?: number; preserveContext?: boolean }
+): void {
   const model = costModelFor(session.adapterId)
   const ts = Date.now()
   /**
@@ -720,6 +725,9 @@ export function creditStreamTurn(session: Session, usage: StreamUsage, contextTo
   // is being held, and the prefix is what the window holds — not the total prompted across a run.
   const expiry = model.cacheExpiryFor({ contextTokens: ctxTokens, lastRequestStartedAt: startedAt })
 
+  const preserveContext = opts?.preserveContext === true
+  const sinceCompactDelta =
+    opts?.tokensSinceCompactDelta ?? usage.input + usage.output + usage.cacheWrite
   const inserted = db()
     .prepare(
       `insert or ignore into turns
@@ -744,7 +752,7 @@ export function creditStreamTurn(session: Session, usage: StreamUsage, contextTo
       usage.cacheRead,
       usage.cacheWrite,
       0,
-      ctxTokens,
+      preserveContext ? null : ctxTokens,
       session.model ? (model.modelSpec(session.model)?.tokenizer ?? null) : null,
       model.id
     ).changes
@@ -757,13 +765,13 @@ export function creditStreamTurn(session: Session, usage: StreamUsage, contextTo
   db()
     .prepare(
       `update sessions
-          set context_tokens = ?, tokens_since_compact = tokens_since_compact + ?,
+          set context_tokens = coalesce(?, context_tokens), tokens_since_compact = tokens_since_compact + ?,
               last_request_started_at = ?, cache_expires_at = coalesce(?, cache_expires_at)
         where id = ?`
     )
     .run(
-      ctxTokens,
-      usage.input + usage.output + usage.cacheWrite,
+      preserveContext ? null : ctxTokens,
+      sinceCompactDelta,
       // ⛔ `startedAt`, not `ts`: the request start is what a TTL is measured from, and it is the
       // same number the row above was inserted with. Writing the response end here would have made
       // the session row disagree with its own newest turn.
