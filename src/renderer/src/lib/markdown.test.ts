@@ -98,6 +98,81 @@ describe('inline runs', () => {
     ])
   })
 
+  it('parses links and formatted children inside bold, italic, and strikethrough spans', () => {
+    expect(
+      inlineSpans(
+        '**Clickable Options ([Warmup.tsx](file:///C:/repo/Warmup.tsx#L160-L224), [warmup.css](file:///C:/repo/warmup.css#L1-L5)):**'
+      )
+    ).toEqual([
+      {
+        kind: 'strong',
+        text: 'Clickable Options ([Warmup.tsx](file:///C:/repo/Warmup.tsx#L160-L224), [warmup.css](file:///C:/repo/warmup.css#L1-L5)):',
+        children: [
+          { kind: 'text', text: 'Clickable Options (' },
+          { kind: 'link', text: 'Warmup.tsx', href: 'file:///C:/repo/Warmup.tsx#L160-L224' },
+          { kind: 'text', text: ', ' },
+          { kind: 'link', text: 'warmup.css', href: 'file:///C:/repo/warmup.css#L1-L5' },
+          { kind: 'text', text: '):' }
+        ]
+      }
+    ])
+    expect(inlineSpans('*see [docs](https://example.com) and `code`*')).toEqual([
+      {
+        kind: 'em',
+        text: 'see [docs](https://example.com) and `code`',
+        children: [
+          { kind: 'text', text: 'see ' },
+          { kind: 'link', text: 'docs', href: 'https://example.com' },
+          { kind: 'text', text: ' and ' },
+          { kind: 'code', text: 'code' }
+        ]
+      }
+    ])
+    expect(inlineSpans('~~old [ref](https://example.com)~~')).toEqual([
+      {
+        kind: 'strike',
+        text: 'old [ref](https://example.com)',
+        children: [
+          { kind: 'text', text: 'old ' },
+          { kind: 'link', text: 'ref', href: 'https://example.com' }
+        ]
+      }
+    ])
+  })
+
+  it('ignores intra-word underscores so snake_case names do not swallow links or identifiers', () => {
+    expect(
+      inlineSpans('See audit_warmups.ts, AI_STEER_ITEMS, and [check_warmup_flow.py](file:///C:/x/check_warmup_flow.py)')
+    ).toEqual([
+      { kind: 'text', text: 'See audit_warmups.ts, AI_STEER_ITEMS, and ' },
+      { kind: 'link', text: 'check_warmup_flow.py', href: 'file:///C:/x/check_warmup_flow.py' }
+    ])
+    expect(inlineSpans('and _still italic_ here')).toEqual([
+      { kind: 'text', text: 'and ' },
+      { kind: 'em', text: 'still italic' },
+      { kind: 'text', text: ' here' }
+    ])
+  })
+
+  it('handles bracketed code labels and prevents nested links inside bold link labels', () => {
+    expect(inlineSpans('[`items[0]`](file:///C:/a.ts)')).toEqual([
+      {
+        kind: 'link',
+        text: '`items[0]`',
+        href: 'file:///C:/a.ts',
+        children: [{ kind: 'code', text: 'items[0]' }]
+      }
+    ])
+    expect(inlineSpans('[**see https://inner.test**](https://outer.test)')).toEqual([
+      {
+        kind: 'link',
+        text: '**see https://inner.test**',
+        href: 'https://outer.test',
+        children: [{ kind: 'strong', text: 'see https://inner.test' }]
+      }
+    ])
+  })
+
   it('makes a bare URL a link, without the punctuation that ends its sentence (t401)', () => {
     const url = 'https://github.com/shyoo/awardtracker/pull/141'
     expect(inlineSpans(`Pull request opened for \`abc12345\` into \`main\`: ${url}`)).toEqual([

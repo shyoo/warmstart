@@ -266,7 +266,7 @@ a literal pipe; short rows are padded, long ones cut; the table scrolls sideways
 `dangerouslySetInnerHTML`, and the only attribute a message can reach is a link's `href`, which is
 whitelisted to `http`/`https`/`mailto`/`file`/`vscode` **at the parse** so an unsafe scheme is never a link at all.
 Links carry `target="_blank"` and are caught by `setWindowOpenHandler`, which denies the navigation
-and hands the URL to the real browser or default OS application (with URL fragments stripped from `file:` URLs for clean OS handler opening, t1330). Link labels support inline code spans and formatting without literal backtick characters. ⭐ A **bare** `http(s)` URL is a link too (t401): the PR a
+and hands the URL to the real browser or default OS application (with URL fragments stripped from `file:` URLs for clean OS handler opening, t1330). Link labels and formatting spans (`**strong**`, `*em*`/`_em_`, `~~strike~~`) parse nested inline spans cleanly (`t1443`), ignoring intra-word underscores (`snake_case`) so snake-case identifiers neither split nor swallow adjacent links, while suppressing nested links/artifacts inside an outer link. ⭐ A **bare** `http(s)` URL is a link too (t401): the PR a
 `pull-request` landing opened was printed as text nobody could click. Trailing sentence punctuation
 and an unmatched closing bracket are trimmed off it. References to `.md` files in thread messages (plain text, code backticks, or markdown links) are auto-linked as clickable artifact buttons with document icons, opening the Viewer pane at that file (t1059). ⚠️ A construct the parser does not know renders as the
 characters the agent wrote. ⚠️ A **person's** message keeps the inline-code-only reading: they typed

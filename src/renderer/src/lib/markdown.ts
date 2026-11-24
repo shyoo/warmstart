@@ -39,7 +39,7 @@ export interface Inline {
   text: string
   /** Only on `link`, and only ever an `http`, `https`, `mailto`, `file` or `vscode` URL. */
   href?: string
-  /** Optional nested inline spans for formatted link text (e.g. code spans inside links). */
+  /** Optional nested inline spans for formatted containers (`link`, `strong`, `em`, `strike`). */
   children?: Inline[]
   /** Only on `artifact`: the relative file path to view. */
   path?: string
@@ -85,7 +85,30 @@ export function normalizeArtifactPath(raw: string): string {
  * an operator typed would otherwise swallow every line up to the next one.
  */
 const INLINE =
-  /(`[^`\n]+`)|(\*\*[^\n]+?\*\*)|(~~[^\n]+?~~)|(\*[^\s*][^\n]*?\*|_[^\s_][^\n]*?_)|(\[[^\]\n]*\]\((?:<[^>\n]+>|(?:[^\s()]+|\([^\s()]+\))+|[^)\n]+)\))|(https?:\/\/[^\s<>"'`]+)|\b([a-zA-Z0-9_.-]+(?:[/\\][a-zA-Z0-9_.-]+)*\.md)\b/i
+  /(`[^`\n]+`)|(\*\*[^\n]+?\*\*)|(~~[^\n]+?~~)|(\*[^\s*][^\n]*?\*|(?<![A-Za-z0-9_])_[^\s_](?:[^\n]*?[^\s_])?_(?![A-Za-z0-9_]))|(\[(?:`[^`\n]+`|[^\]\n])*\]\((?:<[^>\n]+>|(?:[^\s()]+|\([^\s()]+\))+|[^)\n]+)\))|(https?:\/\/[^\s<>"'`]+)|\b([a-zA-Z0-9_.-]+(?:[/\\][a-zA-Z0-9_.-]+)*\.md)\b/i
+
+function splitLinkToken(token: string): [string, string] {
+  let inCode = false
+  for (let i = 1; i < token.length - 1; i += 1) {
+    if (token[i] === '`') inCode = !inCode
+    else if (!inCode && token[i] === ']' && token[i + 1] === '(') {
+      return [token.slice(1, i), token.slice(i + 2, -1)]
+    }
+  }
+  const split = token.indexOf('](')
+  return [token.slice(1, split), token.slice(split + 2, -1)]
+}
+
+function pushFormatted(
+  out: Inline[],
+  kind: 'strong' | 'em' | 'strike',
+  inner: string,
+  withinLink: boolean
+): void {
+  const children = inlineSpans(inner, withinLink)
+  const hasNested = children.some((c) => c.kind !== 'text')
+  out.push({ kind, text: inner, ...(hasNested ? { children } : {}) })
+}
 
 /**
  * ⭐ **A bare URL is a link.** *"Pull request opened for `…` into `main`: https://github.com/…/pull/141"*
@@ -120,7 +143,9 @@ export function inlineSpans(text: string, withinLink = false): Inline[] {
       // ⚠️ Only `http`/`https` can reach this alternative, so the scheme whitelist below holds for it
       // by construction; the trim can shorten the token, and what it cut is left for the next pass.
       token = trimUrl(token)
-      out.push({ kind: 'link', text: token, href: token })
+      out.push(
+        withinLink ? { kind: 'text', text: token } : { kind: 'link', text: token, href: token }
+      )
       rest = rest.slice(match.index + token.length)
       continue
     }
@@ -141,13 +166,12 @@ export function inlineSpans(text: string, withinLink = false): Inline[] {
         out.push({ kind: 'code', text: inner })
       }
     } else if (token.startsWith('**')) {
-      out.push({ kind: 'strong', text: token.slice(2, -2) })
+      pushFormatted(out, 'strong', token.slice(2, -2), withinLink)
     } else if (token.startsWith('~~')) {
-      out.push({ kind: 'strike', text: token.slice(2, -2) })
+      pushFormatted(out, 'strike', token.slice(2, -2), withinLink)
     } else if (token.startsWith('[')) {
-      const split = token.indexOf('](')
-      const label = token.slice(1, split)
-      let href = token.slice(split + 2, -1).trim()
+      const [label, rawHref] = splitLinkToken(token)
+      let href = rawHref.trim()
       if (href.startsWith('<') && href.endsWith('>')) {
         href = href.slice(1, -1).trim()
       }
@@ -160,7 +184,7 @@ export function inlineSpans(text: string, withinLink = false): Inline[] {
       }
       // ⛔ Whitelisted at the parse, not at the render: a scheme this does not know never becomes an
       // `href`, so no component downstream has to remember to check one.
-      if (SAFE_SCHEME.test(href)) {
+      if (!withinLink && SAFE_SCHEME.test(href)) {
         const text = label || href
         const children = label ? inlineSpans(label, true) : undefined
         const hasFormattedChildren = children && children.some((c) => c.kind !== 'text')
@@ -178,7 +202,7 @@ export function inlineSpans(text: string, withinLink = false): Inline[] {
         out.push({ kind: 'text', text: token })
       }
     } else {
-      out.push({ kind: 'em', text: token.slice(1, -1) })
+      pushFormatted(out, 'em', token.slice(1, -1), withinLink)
     }
     rest = rest.slice(match.index + token.length)
   }

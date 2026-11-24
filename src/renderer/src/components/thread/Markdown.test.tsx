@@ -38,4 +38,16 @@ describe('Markdown links (t1330)', () => {
     expect(html).toContain('href="file:///C:/project/interviews.ts#L10"')
     expect(html).toContain('InterviewService.runDemo()')
   })
+
+  it('renders clickable links nested inside bold bullet headings', () => {
+    const text =
+      '- **Clickable Options ([Warmup.tsx](file:///C:/repo/Warmup.tsx#L160-L224), [warmup.css](file:///C:/repo/warmup.css#L1-L5)):**'
+    const html = renderToStaticMarkup(<Markdown text={text} />)
+    expect(html).toContain('<strong>Clickable Options (')
+    expect(html).toContain('<a class="md-link" href="file:///C:/repo/Warmup.tsx#L160-L224"')
+    expect(html).toContain('>Warmup.tsx</a>')
+    expect(html).toContain('<a class="md-link" href="file:///C:/repo/warmup.css#L1-L5"')
+    expect(html).toContain('>warmup.css</a>')
+    expect(html).not.toContain('[Warmup.tsx](')
+  })
 })

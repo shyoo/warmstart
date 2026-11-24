@@ -156,6 +156,14 @@ function alignClass(align: TableAlign | undefined): string | undefined {
   return align ? `md-cell-${align}` : undefined
 }
 
+function spanContent(span: Inline, onOpenFile?: (path: string) => void): React.ReactNode {
+  return span.children && span.children.length > 0 ? (
+    <Spans spans={span.children} onOpenFile={onOpenFile} />
+  ) : (
+    span.text
+  )
+}
+
 function Spans({
   spans,
   onOpenFile
@@ -200,11 +208,11 @@ function Spans({
               </code>
             )
           case 'strong':
-            return <strong key={i}>{span.text}</strong>
+            return <strong key={i}>{spanContent(span, onOpenFile)}</strong>
           case 'em':
-            return <em key={i}>{span.text}</em>
+            return <em key={i}>{spanContent(span, onOpenFile)}</em>
           case 'strike':
-            return <s key={i}>{span.text}</s>
+            return <s key={i}>{spanContent(span, onOpenFile)}</s>
           case 'link':
             return (
               <a
@@ -215,11 +223,7 @@ function Spans({
                 rel="noreferrer"
                 title={span.href}
               >
-                {span.children && span.children.length > 0 ? (
-                  <Spans spans={span.children} onOpenFile={onOpenFile} />
-                ) : (
-                  span.text
-                )}
+                {spanContent(span, onOpenFile)}
               </a>
             )
           default:
