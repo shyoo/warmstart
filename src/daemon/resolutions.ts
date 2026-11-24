@@ -1,6 +1,18 @@
+import { existsSync, statSync } from 'node:fs'
 import type { FinishPolicy, PendingWork, ResolveRetryCause } from '@shared/tasks.js'
-import { FINISH_LABELS, finishLabel, isOpenConversation, policyLands, policyVerifies, resolveRetryCauses, resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
+import {
+  FINISH_LABELS,
+  finishLabel,
+  isOpenConversation,
+  policyLands,
+  policyVerifies,
+  resolveRetryCauses,
+  resolveWorkspaceMode,
+  trunkPolicyConflict
+} from '@shared/tasks.js'
 import type { Project, Task } from '@shared/tasks.js'
+import { createFolderAttachment, grantedDirsFor } from './attachments.js'
+import { samePath } from './fspath.js'
 import { getProject, landingTargetFor, policyFor, reloadProjectIfPresent } from './projects.js'
 import { decideFinish, landingLevel, resolveFinishPolicy } from './finish.js'
 import { landingBaseFor, hasRemote, landTask, localBaseNote, trunkNotReady, trunkOccupiedBy } from './landing.js'
@@ -321,11 +333,97 @@ export async function resolveTrunkMovedOnTask(
 }
 
 /**
+ * Hand a blocked trunk-checkout landing to an agent so it can inspect the trunk checkout
+ * (`project.root`), clean safe blockers (build/cache artifacts, CRLF drift, clean off-target branch),
+ * or ask a person when real operator edits are in the way.
+ */
+export async function resolveTrunkBlockedOnTask(
+  taskId: string
+): Promise<{ ok: boolean; reason?: string }> {
+  const task = getTask(taskId)
+  if (!task) return { ok: false, reason: 'no such task' }
+  const project = task.projectId ? reloadProjectIfPresent(task.projectId) : null
+  if (!project || !projectUsesGitBranches(project)) return { ok: false, reason: 'not a git project' }
+  if (task.status === 'running' || task.status === 'assigned') {
+    return { ok: false, reason: 'this task is already running; it will be asked when it reports' }
+  }
+  const occupied = trunkOccupiedBy(project, task.id)
+  if (occupied) {
+    return { ok: false, reason: `${occupied}; wait for it to finish before resolving the trunk` }
+  }
+
+  db().prepare('update tasks set finish_asked_at = null where id = ?').run(task.id)
+
+  const target = landingTargetFor(task, project)
+  const level = landingLevel(task, project)
+  const autoSnapshot = Boolean(driverFor(project)?.capabilities.autoSnapshot)
+  const inTrunk = resolveWorkspaceMode(task, project).mode === 'trunk'
+  const branch = task.branch
+  const checks = policyVerifies(level) ? (project.config.check ?? []) : []
+
+  const liveIssue = await trunkNotReady(project.root, target, project)
+  const msgs = messagesFor(task.id)
+  const lastSystem = [...msgs]
+    .reverse()
+    .find(
+      (m) =>
+        m.role === 'system' &&
+        /the trunk is not ready|Waiting on the trunk checkout|trunk has|detached HEAD|checked out rather than|unresolved stored conflicts|trunk could not be read/i.test(
+          messageBody(m)
+        )
+    )
+  const failureDetail = liveIssue ?? (lastSystem ? messageBody(lastSystem) : (task.holdReason ?? 'The trunk checkout is not ready to receive this landing'))
+
+  const vcsInspect = autoSnapshot
+    ? `\`jj -R "${project.root}" status\`, \`jj -R "${project.root}" diff\`, and \`jj -R "${project.root}" log -n 4\``
+    : `\`git -C "${project.root}" status\` and \`git -C "${project.root}" diff\``
+  const branchSwitchCmd = autoSnapshot
+    ? `\`jj -R "${project.root}" new ${target}\` (never force or \`jj abandon\` existing target commits)`
+    : `\`git -C "${project.root}" switch ${target}\` (never \`--force\`)`
+  const checkNote =
+    branch && checks.length > 0
+      ? `If you also update \`${branch}\` (for example \`.gitignore\`), re-run the project checks (${checks.map((c) => `\`${c}\``).join(', ')}) and ${autoSnapshot ? `describe the change on \`${branch}\`` : `commit it on \`${branch}\``}. `
+      : branch
+        ? `Keep all of this task's work intact on \`${branch}\`. `
+        : ''
+
+  const instruction =
+    `The landing could not proceed because the trunk checkout (\`${project.root}\`) is not ready to receive \`${target}\`:\n\n` +
+    `${failureDetail}\n\n` +
+    `Inspect \`${project.root}\` first (${vcsInspect}) and try to resolve the blocker cleanly:\n` +
+    `- Generated / build / cache artifacts (such as \`*.egg-info/\`, \`__pycache__/\`, build/dist folders, or temp test outputs): remove those stale generated files from \`${project.root}\` (and if tests/builds regenerate them, also ignore them cleanly on \`${branch ?? target}\` so future landings stay clean).` +
+    (autoSnapshot ? ` Then run \`jj -R "${project.root}" status\` to confirm \`@\` snapshots cleanly.` : '') +
+    '\n' +
+    '- Pure line-ending (CRLF) drift: if indicated above, follow the non-destructive restore/config command shown.\n' +
+    `- Wrong branch or detached working copy with no real uncommitted changes: switch \`${project.root}\` back to \`${target}\` with ${branchSwitchCmd}.\n` +
+    `- Real or ambiguous uncommitted work by a person: NEVER discard (\`reset --hard\`, \`checkout --\`, \`jj abandon\`), overwrite, or commit someone else's genuine edits without permission. Stop and ask the person (via \`ask_human\` / \`await_human\`, or \`NEEDS DECISION:\`) listing the exact files and options.\n\n` +
+    checkNote +
+    `Verify \`${project.root}\` is clean and on \`${target}\` before reporting complete again.`
+
+  const grantIds: string[] = []
+  if (!inTrunk && !grantedDirsFor(task.id).some((d) => samePath(d, project.root))) {
+    try {
+      if (existsSync(project.root) && statSync(project.root).isDirectory()) {
+        grantIds.push(createFolderAttachment(project.root).id)
+      }
+    } catch {
+      // Non-existent path in synthetic test fixtures: prompt still goes out cleanly without a grant row.
+    }
+  }
+
+  addMessage(task.id, 'human', instruction, null, grantIds)
+  const outcome = continueTask(task.id)
+  log.info(`t${task.seq}: asked an agent to inspect/resolve trunk blocker in ${project.root} (${outcome})`)
+  return { ok: true }
+}
+
+/**
  * The one recovery action behind every failed-landing button.
  *
  * ⚠️ The wording is deliberately broader than a conflict: a branch can need a rebase, a check fix,
- * or a deliberate commit. They all need the same thing from the scheduler — another run on the same
- * thread — and presenting them as separate recovery verbs taught people to pick the wrong one.
+ * a deliberate commit, or trunk-checkout recovery. They all need the same thing from the scheduler —
+ * another run on the same thread — and presenting them as separate recovery verbs taught people to
+ * pick the wrong one.
  */
 export async function resolveRetryOnTask(
   taskId: string,
@@ -347,7 +445,8 @@ export async function resolveRetryOnTask(
     conflicted: resolveConflictOnTask,
     checksFailed: resolveChecksOnTask,
     uncommitted: resolveCommitOnTask,
-    trunkMoved: resolveTrunkMovedOnTask
+    trunkMoved: resolveTrunkMovedOnTask,
+    trunkBlocked: resolveTrunkBlockedOnTask
   }
   const cause = resolveRetryCauses(task)[0]
   const resolver = cause ? resolvers[cause] : null
@@ -862,6 +961,7 @@ export async function landConversation(
 export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?: string }> {
   const task = getTask(taskId)
   if (!task) return { ok: false, reason: 'no such task' }
+  const initialStatus = task.status
   // ⛔ A retry is a decision a person just made. Returning a reason only to the RPC caller made the
   // button appear to bounce back: the renderer refreshes the task immediately, then has nowhere to
   // render a false `landed` result. Keep the outcome on the task as well as returning it, so it is
@@ -873,7 +973,7 @@ export async function relandTask(taskId: string): Promise<{ ok: boolean; reason?
     // "checks failed" and sent an agent back without the failing test (t347, 2026-09-11).
     // Keep the same tail the ordinary path keeps: runners put the actionable summary last.
     const detail = `Retry landing failed: ${reason}` + (checkOutput ? `\n\n${checkOutput.slice(-4000)}` : '')
-    setHoldReason(task.id, detail)
+    if (!(initialStatus !== 'ready' && getTask(task.id)?.status === 'ready')) setHoldReason(task.id, detail)
     addMessage(task.id, 'system', `Retry did not land: ${oneLine(reason)}`, null, [], { event: 'landing.failed', detail })
     return { ok: false, reason }
   }
@@ -1052,8 +1152,29 @@ export function forgetTrunkHolds(): void {
   queuedInFlight.clear()
 }
 
+/** Forget one task's trunk-hold timer when it leaves `landing_queued`. */
+export function forgetTrunkHold(taskId: string): void {
+  trunkHolds.delete(taskId)
+}
+
 /**
- * A queued landing waiting on something only the operator can do, handed to the operator.
+ * Whether a settled or held task has an undelivered follow-up human reply waiting for dispatch.
+ *
+ * ⚠️ Requires either a second human message (`idx > 0`) or prior execution/landing activity so
+ * un-dispatched synthetic test tasks seeded directly into `landing_queued` are not treated as
+ * replies to themselves.
+ */
+export function hasUndeliveredHumanFollowup(taskId: string): boolean {
+  const msgs = messagesFor(taskId)
+  if (msgs.some((m, idx) => m.role === 'human' && m.deliveredAt === null && idx > 0)) return true
+  const hasPriorActivity =
+    runsFor(taskId).length > 0 ||
+    msgs.some((m) => m.role === 'system' && (m.event === 'finish.held' || m.event === 'landing.failed'))
+  return hasPriorActivity && msgs.some((m) => m.role === 'human' && m.deliveredAt === null)
+}
+
+/**
+ * A queued landing waiting on the trunk checkout, handed to the operator (with Resolve & retry).
  *
  * ⚠️ `awaiting_human`, not `failed`, and for `handOverStandingHold`'s reasons: nothing failed. The
  * branch is intact, every commit is on it, and the task is one act away from landing. ⛔ The hold
@@ -1076,19 +1197,19 @@ function handOverTrunkHold(task: Task, project: Project, reason: string, now: nu
     event: 'landing.failed',
     detail:
       `This task's work is committed on \`${task.branch}\` and it is ready to merge, but the trunk ` +
-      `checkout (${project.root}) cannot receive it: ${reason}. That is your checkout, not this ` +
-      'task\'s workspace — nothing here will ever change it, and it has been this way for ' +
-      `${waited}m, so waiting longer will not help. Sort the trunk out and press **Retry landing**; ` +
-      'nothing has been discarded and the branch is exactly as the agent left it.'
+      `checkout (${project.root}) cannot receive it: ${reason}. It has been this way for ` +
+      `${waited}m, so waiting longer will not help. Sort the trunk out and press **Retry landing**, ` +
+      'or press **Resolve & retry** to have an agent inspect the trunk checkout and resolve safe blockers; ' +
+      'nothing has been discarded and the branch is untouched.'
   })
   setStatus(task.id, 'awaiting_human', {
     assignee: 'human',
     holdReason:
-      `the trunk is not ready to receive this: ${reason}. Nothing in the fleet can clear this — ` +
-      'the branch is intact, so press Retry landing once the trunk checkout is sorted.'
+      `the trunk is not ready to receive this: ${reason}. Sort the trunk out and press Retry landing, ` +
+      'or press Resolve & retry to let an agent inspect and clear safe blockers.'
   })
   log.warn(
-    `t${task.seq} handed to a person after ${waited}m of a queued landing nothing clears by itself: ${reason}`
+    `t${task.seq} handed to a person after ${waited}m of a queued landing waiting on trunk checkout: ${reason}`
   )
   return true
 }
@@ -1114,6 +1235,11 @@ export async function retryQueuedLandings(now = Date.now()): Promise<number> {
   }
   for (const task of listTasks().filter((t) => t.status === 'landing_queued')) {
     if (queuedInFlight.has(task.id)) continue
+    // A human reply sent to (or stranded on) a queued landing wakes the task right away.
+    if (hasUndeliveredHumanFollowup(task.id) && !isTaskLanding(task.id)) {
+      continueTask(task.id)
+      continue
+    }
     const project = task.projectId ? getProject(task.projectId) : null
     if (!project) {
       setStatus(task.id, 'awaiting_human', {

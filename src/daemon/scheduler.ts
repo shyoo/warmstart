@@ -2,8 +2,8 @@ import { sessionEnded } from '@shared/protocol.js'
 import { helperEndedLastRun } from './agentcli.js'
 import { delegationsFor, reportDelegationIfSettled } from './delegation.js'
 import { checkSubtaskBriefAlarms, onSubtaskSettledForBrief } from './subtaskbrief.js'
-import { grantedDirsFor } from './attachments.js'
-import { existsSync } from 'node:fs'
+import { bindAttachments, createFolderAttachment, grantedDirsFor } from './attachments.js'
+import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
   Attachment,
@@ -17,6 +17,8 @@ import type {
 import {
   WINDOW_7D_HIGH_WATER,
   WINDOW_HIGH_WATER,
+  isTrunkBlockedReason,
+  isTrunkLeaseReason,
   isWeeklyWindow,
   windowHighWater,
   resolveModelChoice,
@@ -276,7 +278,14 @@ import {
   MAX_OVERLOAD_ATTEMPTS,
   overloadFailureRetry
 } from './turnend.js'
-import { forgetLandAfterTurn, landAfterCommitTurn, resolveRetryOnTask, retryQueuedLandings } from './resolutions.js'
+import {
+  forgetLandAfterTurn,
+  forgetTrunkHold,
+  hasUndeliveredHumanFollowup,
+  landAfterCommitTurn,
+  resolveRetryOnTask,
+  retryQueuedLandings
+} from './resolutions.js'
 
 /**
  * The scheduler.
@@ -1979,9 +1988,19 @@ async function dispatch(task: Task, choice: WorkerChoice): Promise<void> {
   const vcsCaps = project ? (driverFor(project)?.capabilities ?? null) : null
   const trunkNotice =
     trunkSurvey && project ? trunkArrivalNotice(trunkSurvey, landingTargetFor(task, project), vcsCaps) : null
+  const trunkGranted = Boolean(
+    !trunkMode && project && grantedDirsFor(task.id).some((d) => samePath(d, project.root))
+  )
   const worktreeNotice =
     !trunkMode && project && projectUsesGitBranches(project) && workspace && !samePath(workspace.path, project.root)
-      ? worktreeArrivalNotice(workspace.path, project.root, branch, landingTargetFor(task, project), vcsCaps)
+      ? worktreeArrivalNotice(
+          workspace.path,
+          project.root,
+          branch,
+          landingTargetFor(task, project),
+          vcsCaps,
+          trunkGranted
+        )
       : null
   const rescueInspectCmd = vcsCaps?.autoSnapshot ? 'jj show' : 'git show HEAD'
   const rescueNotice = rescued
@@ -4066,7 +4085,8 @@ const CONTINUABLE_FROM: TaskStatus[] = [
   'failed',
   'paused_user',
   'paused_quota',
-  'cancelled'
+  'cancelled',
+  'landing_queued'
 ]
 
 /**
@@ -4105,6 +4125,31 @@ export function continueTask(taskId: string): 'delivered' | 'requeued' | 'queued
   for (const run of runsFor(task.id)) {
     if (!run.endedAt) {
       finishRun(run.id, 'terminated', 'task requeued for continuation')
+    }
+  }
+  forgetTrunkHold(task.id)
+  if (
+    task.projectId &&
+    (task.status === 'landing_queued' || task.status === 'awaiting_human') &&
+    isTrunkBlockedReason(task.holdReason) &&
+    !isTrunkLeaseReason(task.holdReason)
+  ) {
+    const project = getProject(task.projectId)
+    if (
+      project &&
+      resolveWorkspaceMode(task, project).mode !== 'trunk' &&
+      !grantedDirsFor(task.id).some((d) => samePath(d, project.root))
+    ) {
+      const latestHuman = messagesFor(task.id)
+        .filter((m) => m.role === 'human' && m.deliveredAt === null)
+        .at(-1)
+      try {
+        if (latestHuman && existsSync(project.root) && statSync(project.root).isDirectory()) {
+          bindAttachments([createFolderAttachment(project.root).id], task.id, latestHuman.id)
+        }
+      } catch {
+        // Synthetic paths in tests may not exist on disk; prompt still dispatches cleanly.
+      }
     }
   }
   // A parked question can leave its old run's session lease behind: its waiter timed out, so the
@@ -4485,7 +4530,12 @@ async function landCompletion(
         prBody: prOptions?.prBody ?? null
       })
       if (result.ok) setStatus(task.id, 'completed')
-      else if (!result.trunkBusy) automaticRetry = true
+      else if (
+        !result.trunkBusy ||
+        (isTrunkBlockedReason(result.reason) && !isTrunkLeaseReason(result.reason))
+      ) {
+        automaticRetry = true
+      }
     } else if (decision.kind === 'await-human') {
       // ⭐ Recorded now, not at a landing that may never come: the diff at the gate and the quality
       // review both read `task_commits`, and a trunk task has no branch to fall back to.
@@ -4697,7 +4747,12 @@ async function landCompletion(
         prBody: prOptions?.prBody ?? null
       })
       if (result.ok) setStatus(task.id, 'completed')
-      else if (!result.trunkBusy) automaticRetry = true
+      else if (
+        !result.trunkBusy ||
+        (isTrunkBlockedReason(result.reason) && !isTrunkLeaseReason(result.reason))
+      ) {
+        automaticRetry = true
+      }
     } else if (decision.kind === 'await-human') {
       addMessage(task.id, 'system', `Finished, not landed: ${oneLine(decision.reason)}`, null, [], {
         event: 'finish.held',
@@ -4798,7 +4853,35 @@ async function landCompletion(
     await releaseWorkspaceOf(sessionId)
   }
   await releaseFor(run.id, task.id, project?.id ?? null)
-  if (automaticRetry) await resolveRetryOnTask(task.id, true)
+  if (automaticRetry) {
+    const retried = await resolveRetryOnTask(task.id, true)
+    const afterRetry = getTask(task.id)
+    if (
+      !retried.ok &&
+      afterRetry?.status === 'landing_queued' &&
+      isTrunkBlockedReason(afterRetry.holdReason) &&
+      !isTrunkLeaseReason(afterRetry.holdReason)
+    ) {
+      const cleaned = (afterRetry.holdReason ?? 'the trunk is not ready')
+        .replace(
+          /\s*(?:It will land by itself once the trunk is free\.|The branch is intact — it will land by itself once the trunk is free\.|Nothing needs doing — it lands by itself\.?)\s*$/i,
+          ''
+        )
+        .trim()
+      addMessage(task.id, 'system', `Waiting on the trunk checkout: ${oneLine(cleaned)}`, null, [], {
+        event: 'landing.failed',
+        detail:
+          `${cleaned} Automatic recovery was already attempted; sort the trunk out and press ` +
+          '**Retry landing**, or press **Resolve & retry** to ask an agent again.'
+      })
+      setStatus(task.id, 'awaiting_human', {
+        assignee: 'human',
+        holdReason:
+          `${cleaned} Automatic recovery was already attempted — sort the trunk out and press ` +
+          'Retry landing, or press Resolve & retry.'
+      })
+    }
+  }
   // ⚠️ No `admitDependents` here any more: `setStatus` does it on the transition into `completed`,
   // above, for this path and for the ones that never had a call at all. It lands a moment earlier
   // than it used to — before the workspace is released — which can cost a dependent one tick.
@@ -5672,8 +5755,12 @@ export function worktreeArrivalNotice(
   root: string,
   branch: string | null,
   target: string,
-  caps?: VcsCapabilities | null
+  caps?: VcsCapabilities | null,
+  trunkGranted = false
 ): string {
+  const trunkAccessNote = trunkGranted
+    ? `\n\nNote: the trunk checkout at \`${root}\` has been granted writable access for trunk-landing recovery. Inspect it safely; clean only stale build/cache artifacts or safe blockers, keep task code commits on \`${branch ?? '<branch>'}\`, and ask before touching genuine user work in progress.`
+    : ''
   if (caps?.autoSnapshot) {
     const bookmark = branch ?? '<branch>'
     return (
@@ -5687,7 +5774,8 @@ export function worktreeArrivalNotice(
       `- Before finishing, describe your change (\`jj describe -m "<message>"\`) and point your task bookmark (\`jj bookmark set ${bookmark} -r @\`, or \`jj commit -m "<message>"\` then \`jj bookmark set ${bookmark} -r @-\`).\n` +
       `- Commands: \`jj status\`, \`jj diff\`, \`jj log\`, \`jj rebase -b ${bookmark} -d ${target}\`, \`jj squash\`, \`jj op log\`.\n` +
       `- Completion evidence: a described non-empty commit on bookmark \`${bookmark}\` with zero stored conflicts (\`jj log -r 'conflicts()'\`).\n` +
-      `- Colocated \`.git\` is present alongside \`.jj\`, so read-only git inspection works as a fallback. Never \`jj abandon\` commits already on \`${target}\` or force-push.`
+      `- Colocated \`.git\` is present alongside \`.jj\`, so read-only git inspection works as a fallback. Never \`jj abandon\` commits already on \`${target}\` or force-push.` +
+      trunkAccessNote
     )
   }
   return (
@@ -5695,7 +5783,8 @@ export function worktreeArrivalNotice(
     `not its main checkout, which lives at \`${root}\`. ` +
     (branch ? `Your branch \`${branch}\` lands` : 'Your work lands') +
     ` onto \`${target}\` in that main checkout when the finish policy runs. Nothing committed here ` +
-    'is visible there, or the reverse, until that landing happens.'
+    'is visible there, or the reverse, until that landing happens.' +
+    trunkAccessNote
   )
 }
 
@@ -5827,6 +5916,22 @@ export function reconcileTasks(): number {
         if (run.sessionId) releaseAllFor(run.sessionId)
       }
     }
+  }
+
+  // Wake any queued-landing or trunk-blocked awaiting-human tasks that already carry an undelivered
+  // follow-up human reply (for instance after upgrading from a daemon where `landing_queued` ignored replies).
+  let wokeFollowups = 0
+  for (const task of listTasks()) {
+    if (
+      (task.status === 'landing_queued' ||
+        (task.status === 'awaiting_human' && isTrunkBlockedReason(task.holdReason))) &&
+      hasUndeliveredHumanFollowup(task.id)
+    ) {
+      if (continueTask(task.id) === 'requeued') wokeFollowups += 1
+    }
+  }
+  if (wokeFollowups > 0) {
+    log.info(`requeued ${wokeFollowups} trunk-held task(s) with undelivered human replies`)
   }
 
   if (stuck.length) log.warn(`recovered ${stuck.length} task(s) interrupted by a restart`)

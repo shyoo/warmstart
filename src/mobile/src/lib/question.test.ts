@@ -97,20 +97,27 @@ describe('decisionsFor', () => {
     expect(decisionsFor(trunkBlocked, NOW)).toEqual([])
   })
 
-  it('offers Retry landing once that same hold has been handed to a person (t614)', () => {
-    // ⭐ The hand-over `retryQueuedLandings` performs after the grace period. Its wording is the
-    // daemon's; what matters here is that the one press that can land the branch is now drawn.
+  it('offers Retry landing and Resolve & retry once a trunk-checkout hold is handed to a person', () => {
+    // ⭐ The hand-over `retryQueuedLandings` performs after the grace period. Both Retry landing
+    // (once sorted by hand) and Resolve & retry (to have an agent clear safe blockers) are offered,
+    // while a lease hold (`is working in the trunk`) still withholds Resolve & retry.
     const handed = task({
       status: 'awaiting_human',
       holdReason:
         'the trunk is not ready to receive this: the trunk has 16 uncommitted file(s) in it ' +
         '(6 modified/tracked, 10 untracked): AGENTS.md, +15 more. Commit, stash, or clear them in ' +
-        'the trunk checkout (C:\\Dev\\autotrade) so the merge can run. Nothing in the fleet can ' +
-        'clear this — the branch is intact, so press Retry landing once the trunk checkout is sorted.'
+        'the trunk checkout (C:\\Dev\\autotrade) so the merge can run. Sort the trunk out and press ' +
+        'Retry landing, or press Resolve & retry to let an agent inspect and clear safe blockers.'
     })
     const out = decisionsFor(handed, NOW)
     expect(out).toContain('reland')
-    expect(out).not.toContain('retry')
+    expect(out).toContain('retry')
+
+    const leaseHeld = task({
+      status: 'awaiting_human',
+      holdReason: 'the trunk is not ready to receive this: t614 is working in the trunk.'
+    })
+    expect(decisionsFor(leaseHeld, NOW)).not.toContain('retry')
   })
 
   it('offers Commit to a conversation holding uncommitted work, and nothing else', () => {

@@ -1405,12 +1405,12 @@ describe('landing recovery actions and canRelandTask', () => {
     'research/trials.jsonl, +11 more. Commit, stash, or clear them in the trunk checkout ' +
     '(C:\\Dev\\autotrade) so the merge can run. It will land by itself once the trunk is free.'
 
-  it('does not read a dirty trunk as the agent leaving work uncommitted (t614)', () => {
-    // ⛔ The exclusion was `/the trunk has uncommitted/`, a phrase `trunkNotReady` stopped writing
-    // when it began naming the files — and its own remedy sentence says **stash**, which the
-    // positive branch matches. So t614 classified as `uncommitted`: the card would have offered a
-    // billed "Resolve & retry" sending an agent to commit changes on a branch that had none.
-    expect(resolveRetryCauses({ holdReason: T614_REASON })).toEqual([])
+  it('classifies a dirty trunk as trunkBlocked rather than uncommitted (t614)', () => {
+    // ⛔ Previously `/the trunk has uncommitted/` stopped matching when `trunkNotReady` began
+    // naming files, so `stash` misclassified trunk holds as `uncommitted` (sending agents to commit
+    // on an already-clean task branch). Now trunk checkout blockers classify strictly as
+    // `trunkBlocked` — never `uncommitted` — so the agent gets trunk-checkout recovery instructions.
+    expect(resolveRetryCauses({ holdReason: T614_REASON })).toEqual(['trunkBlocked'])
     expect(isUncommittedTask({ holdReason: T614_REASON })).toBe(false)
     expect(isTrunkBlockedReason(T614_REASON)).toBe(true)
   })
@@ -1422,7 +1422,7 @@ describe('landing recovery actions and canRelandTask', () => {
   })
 
   it('classifies every sentence a blocked trunk can write, and none that a workspace can', () => {
-    const trunk = [
+    const checkoutBlocked = [
       T614_REASON,
       'committed and verified on `b`, but not merged: the trunk has 2 uncommitted file(s) in it ' +
         '(1 modified/tracked, 1 untracked): a.txt, b.txt. Commit, stash, or clear them in the trunk ' +
@@ -1431,15 +1431,24 @@ describe('landing recovery actions and canRelandTask', () => {
         'switch the trunk checkout back to `main` to let the merge run. It will land by itself once the trunk is free.',
       'the trunk is not ready to receive this: the trunk has `wip` checked out rather than `main` — ' +
         'switch the trunk checkout back to `main` to let the merge run. It will land by itself once the trunk is free.',
-      'the trunk is not ready to receive this: t614 is working in the trunk. It will land by itself once the trunk is free.',
-      'the trunk is not ready to receive this: a trunk task is working in the trunk. It will land by itself once the trunk is free.',
       'landing failed: committed and verified on `warmstart/t80`, but not merged: the trunk has ' +
         'uncommitted changes. The branch is intact — merge it when the trunk is free.',
+      'the trunk has unresolved stored conflicts on `main` or in its working copy — resolve them in /repo before merging',
+      'the trunk is on a detached change rather than `main` — run `jj new main` in the trunk checkout to let the merge run',
       'the trunk could not be read: fatal: not a git repository'
     ]
-    for (const reason of trunk) {
+    for (const reason of checkoutBlocked) {
       expect(isTrunkBlockedReason(reason), reason).toBe(true)
-      expect(resolveRetryCauses({ holdReason: reason }), reason).not.toContain('uncommitted')
+      expect(resolveRetryCauses({ holdReason: reason }), reason).toEqual(['trunkBlocked'])
+    }
+
+    const leaseBlocked = [
+      'the trunk is not ready to receive this: t614 is working in the trunk. It will land by itself once the trunk is free.',
+      'the trunk is not ready to receive this: a trunk task is working in the trunk. It will land by itself once the trunk is free.'
+    ]
+    for (const reason of leaseBlocked) {
+      expect(isTrunkBlockedReason(reason), reason).toBe(true)
+      expect(resolveRetryCauses({ holdReason: reason }), reason).toEqual([])
     }
 
     // ⛔ And the agent's own loose ends still are the agent's: these must keep offering the agent.

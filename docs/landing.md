@@ -1000,31 +1000,36 @@ Five decisions were taken with the operator and each is enforced in code:
    with **Resolve & retry**; no agent is dispatched for a queue alone. Fatal trunk read errors also
    rest at `awaiting_human` instead of looping in queue.
 
-   ⛔ **But only a trunk *lease* is a wait; the operator's own checkout is a question** (t621 ← t614,
-   2026-09-22). `trunkOccupiedBy` names a task that will settle, so the queue really does end by
-   itself. `trunkNotReady` names uncommitted files, a switched branch or a detached HEAD in the
-   operator's checkout — and *nothing the scheduler does will ever change one of those*. ⭐ Measured
-   on t614: it reported complete at 19:42:19Z with one real commit on its branch, the trunk
-   (`C:\Dev\autotrade`) held 16 uncommitted files dated **2026-08-12**, five weeks before the
-   project was registered, and two hours later the daemon log carried no further line about it —
-   `retryQueuedLandings` had rewritten the identical hold reason on every tick, `handOverStandingHold`
-   only ever watches a task trying to *dispatch*, and both the phone (`decisionsFor`) and Flow file a
-   `landing_queued` task as busy. Nobody was asked to clear the trunk. A held status with no ender.
-   `retryQueuedLandings` now keeps a ledger of operator-only trunk holds, keyed by *kind* and not by
-   the sentence (whose file count changes as they work), and after `STANDING_HOLD_GRACE_MS` — the same
-   ten minutes `handOverStandingHold` waits, read from the same constant — hands the task to a person
-   at `awaiting_human` with a thread line naming the checkout. The branch is untouched; **Retry
-   landing** merges it in one press once the trunk is sorted.
-
-   ⛔ **And that hold reason must never read as the agent's own loose ends.** `resolveRetryCauses`
-   excluded the trunk with the literal phrase `the trunk has uncommitted` — which `trunkNotReady` has
-   not written since it began naming the files. It writes *"the trunk has 16 uncommitted file(s) in
-   it … Commit, stash, or clear them"*, whose own remedy word **stash** then matched the positive
-   branch, so t614 classified as `uncommitted`: the card offered a billed **Resolve & retry** that
-   would have sent an agent to commit nothing, and *hid* the **Retry landing** that was the one thing
-   that could work. The exclusion is now `isTrunkBlockedReason` (`shared/tasks.ts`), one predicate
-   covering every sentence `trunkNotReady` and `trunkOccupiedBy` can produce, read by
-   `resolveRetryCauses` and by `canRelandTask` — which *offers* the retry on it.
+   ⛔ **But only a trunk *lease* is a passive wait; a blocked trunk checkout (`trunkNotReady`) can
+   be resolved by an agent or handed to a person** (t621 ← t614, expanded t1446 ← t1444). `trunkOccupiedBy`
+   names a Warmstart task holding the trunk lease (`isTrunkLeaseReason`), which will settle on its
+   own — so `landing_queued` waits at zero tokens, never triggers `automaticRetry`, and never grants
+   `project.root` or offers **Resolve & retry**. `trunkNotReady` names uncommitted files (for
+   example packaging artifacts such as `*.egg-info/`), CRLF drift, a switched branch, a detached HEAD,
+   or stored `jj` conflicts in `project.root`:
+   - **One automatic agent recovery attempt first (`landCompletion`):** when `trunkNotReady` blocks an
+     initial landing (`resolveRetryAskedAt === null`), `landCompletion` triggers
+     `resolveRetryOnTask(task.id, true)` → `resolveTrunkBlockedOnTask`, which grants writable
+     `project.root` access (`folder` attachment via `grantedDirsFor`), tells the agent to inspect the
+     trunk checkout, clear unambiguously safe blockers (build/cache artifacts, CRLF drift, clean
+     off-target branch), and stop via `ask_human` / `NEEDS DECISION:` without touching genuine
+     operator work in progress. If a repeat landing still finds the trunk blocked
+     (`resolveRetryAskedAt !== null`), `landCompletion` moves straight to `awaiting_human`.
+   - **Queued hold handover (`retryQueuedLandings`):** when a task reaches `landing_queued` behind
+     `trunkNotReady` (e.g., manual **Retry landing** or a settled lease revealing a dirty trunk),
+     `retryQueuedLandings` keeps a ledger keyed by `trunkHoldKind` and after `STANDING_HOLD_GRACE_MS`
+     (10m) moves to `awaiting_human` with both **Retry landing** and **Resolve & retry**.
+   - **Replying while `landing_queued` (`continueTask`):** `landing_queued` is in `CONTINUABLE_FROM`,
+     `continueTask` clears `trunkHolds` and attaches writable `project.root` access when continuing a
+     trunk-checkout blocker in worktree mode (with `trunkGranted` notice in `worktreeArrivalNotice`),
+     `reconcileTasks` / `retryQueuedLandings` wake stranded tasks with undelivered follow-up human
+     replies (`hasUndeliveredHumanFollowup`), and `landTask` / `relandTask` preserve `'ready'` if a
+     reply arrives while a background landing is in flight.
+   - **Shared classifier (`src/shared/tasks.ts`):** `isTrunkBlockedReason` covers every
+     `trunkNotReady` / `trunkOccupiedBy` sentence (excluding `uncommitted` and `conflicted`), while
+     `resolveRetryCauses` maps non-lease `trunkNotReady` failures strictly to `'trunkBlocked'` (`[]`
+     for `isTrunkLeaseReason`), so both desktop (**Resolve & retry** + **Retry landing**) and mobile
+     (`decisionsFor`) stay aligned.
 3. **A trunk task is dispatched onto whatever the checkout holds, and told.** `surveyTrunk` reads the
    branch, uncommitted files and a merge/rebase/cherry-pick in progress; the first prompt says each
    (`trunkArrivalNotice`), and the files already there are stored on the run

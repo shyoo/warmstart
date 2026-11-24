@@ -165,7 +165,7 @@ resumeQuotaPaused()     the ONLY thing that ends a paused_quota hold (clock or a
 escalateStale()         approvals past their deadline
 askForTitle()           at most one title consult; free, changes nothing this tick
 sweepTrunkLeases()      a trunk lease whose task has settled goes back
-retryQueuedLandings()   the ONLY thing that ends a landing_queued hold (trunk free ⇒ land, in background)
+retryQueuedLandings()   ends a landing_queued hold when trunk frees (trunk free ⇒ land) or hands to human / wakes on undelivered reply (continueTask also accepts landing_queued)
 runWatchdogs()          preemption, stall, runaway, finish-overdue, `running` with no open run
                         (past RUNLESS_AFTER_MS, over to a person — t708) — BEFORE new work
   for each ready task, in schedulingOrder:

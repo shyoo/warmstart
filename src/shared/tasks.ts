@@ -3895,28 +3895,35 @@ export interface FlowWorkspace {
  * 2026-09-11: three retries each, the same test red on every landing, and the failing test's name
  * was never in what the agent was told). Both sides now read this list, in this order.
  *
- * ⚠️ *Uncommitted* deliberately excludes every trunk-checkout blocker: that is the operator's
- * own working tree in the way, not the agent's work, and an agent sent to commit on the task branch
- * would be fixing something that is not broken. ⛔ The exclusion must be `isTrunkBlockedReason` and
- * not a phrase from one of those sentences — it was `/the trunk has uncommitted/` alone, which
- * `trunkNotReady` has not written since it began naming the files: it writes *"the trunk has 16
- * uncommitted file(s) in it … Commit, stash, or clear them"*, whose own remedy word **stash** then
- * matched the positive branch. Measured on t614 (2026-09-22): its stored hold reason classified as
- * `uncommitted`, which both offered a billed *Resolve & retry* that would have sent an agent to
- * commit nothing and hid the *Retry landing* button that was the one thing that could have worked.
+ * ⚠️ *Uncommitted* deliberately excludes every trunk-checkout blocker: that is the trunk working
+ * tree rather than the task branch, so an agent sent to commit on the task branch would be fixing
+ * something that is not broken. Trunk checkout blockers (`trunkNotReady`: dirty/untracked files,
+ * CRLF drift, wrong branch, detached HEAD, stored conflicts) classify as `trunkBlocked` — never
+ * `uncommitted` or `conflicted` — so the agent receives trunk-resolution instructions and write
+ * access to `project.root`, while a live trunk-task lease (`isTrunkLeaseReason`) returns no causes
+ * and stays queued for the lease holder to settle.
  */
-export type ResolveRetryCause = 'conflicted' | 'checksFailed' | 'uncommitted' | 'trunkMoved'
+export type ResolveRetryCause = 'conflicted' | 'checksFailed' | 'uncommitted' | 'trunkMoved' | 'trunkBlocked'
+
+/**
+ * Whether a hold reason says another Warmstart task currently holds the trunk lease.
+ *
+ * ⛔ Never dispatch an agent to repair the trunk while a sibling task holds its lease — the lease
+ * settles by itself and `retryQueuedLandings` lands the queued branch automatically.
+ */
+export function isTrunkLeaseReason(reason: string | null | undefined): boolean {
+  return /is working in the trunk/i.test(reason ?? '')
+}
 
 /**
  * Whether a hold reason says the **trunk checkout** is what is in the way.
  *
  * ⛔ Every sentence `trunkNotReady` and `trunkOccupiedBy` can produce, plus the wrappers the landing
- * preflight and `retryQueuedLandings` put around them. Nothing here is the task's own workspace: a
- * reason matching this is cleared in the operator's checkout or by another task finishing, never by
- * sending this task's branch back to an agent.
+ * preflight and `retryQueuedLandings` put around them. Nothing here is uncommitted work on the
+ * task's own branch.
  */
 export function isTrunkBlockedReason(reason: string | null | undefined): boolean {
-  return /the trunk is not ready to receive this|the trunk has \d+ uncommitted file|the trunk has uncommitted|is working in the trunk|checked out rather than|the trunk is on a detached HEAD|the trunk could not be read/i.test(
+  return /the trunk is not ready to receive this|the trunk has \d+ uncommitted file|the trunk has uncommitted|the trunk has unresolved stored conflicts|is working in the trunk|checked out rather than|the trunk is on (?:a detached HEAD|.+ rather than)|the trunk could not be read/i.test(
     reason ?? ''
   )
 }
@@ -3924,10 +3931,13 @@ export function isTrunkBlockedReason(reason: string | null | undefined): boolean
 export function resolveRetryCauses(task: { holdReason: string | null }): ResolveRetryCause[] {
   const reason = task.holdReason ?? ''
   const out: ResolveRetryCause[] = []
+  if (isTrunkBlockedReason(reason)) {
+    if (!isTrunkLeaseReason(reason)) out.push('trunkBlocked')
+    return out
+  }
   if (/conflict/i.test(reason)) out.push('conflicted')
   if (/checks? failed|verification failed/i.test(reason)) out.push('checksFailed')
   if (
-    !isTrunkBlockedReason(reason) &&
     /workspace has uncommitted|file\(s\) are uncommitted|changes on .* are uncommitted|cannot be asked after its turn ends|rescue|stash/i.test(
       reason
     )

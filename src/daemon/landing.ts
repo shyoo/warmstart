@@ -2127,6 +2127,7 @@ async function runPostLandingIfMerged(
  * that says exactly why, and leaves the repository in a state a person can act on.
  */
 export async function landTask(ctx: LandingContext): Promise<LandingResult> {
+  const initialStatus = getTask(ctx.task.id)?.status ?? ctx.task.status
   beginLanding(ctx.task.id)
   // Announced, because nothing else changes on the row when a landing starts: without this the
   // Tasks table would go on saying `running` until the landing's own first status write.
@@ -2140,14 +2141,21 @@ export async function landTask(ctx: LandingContext): Promise<LandingResult> {
   const say = (text: string, detail?: string, event?: MessageEvent): void => {
     if (!ctx.quiet) addMessage(ctx.task.id, 'system', text, null, [], { ...(event ? { event } : {}), ...(detail ? { detail } : {}) })
   }
+  const continuedMidFlight = (status: Task['status'] | undefined): boolean =>
+    initialStatus !== 'ready' && status === 'ready'
   const restForHuman = (holdReason: string): void => {
-    if (!ctx.quiet) setStatus(ctx.task.id, 'awaiting_human', { assignee: 'human', holdReason })
+    if (ctx.quiet) return
+    // ⛔ A human reply during a background retry landing already requeued this task (`ready`).
+    // Leaving it in `ready` ensures the reply dispatches instead of being stranded at `awaiting_human`.
+    if (continuedMidFlight(getTask(ctx.task.id)?.status)) return
+    setStatus(ctx.task.id, 'awaiting_human', { assignee: 'human', holdReason })
   }
   // ⭐ A trunk that is merely occupied is a hold, and the tick ends it (`retryQueuedLandings`). Said
   // once, on the way in: the tick re-attempts every ten seconds and a line per attempt is a wall.
   const queueForTrunk = (reason: string): void => {
     if (ctx.quiet) return
     const current = getTask(ctx.task.id)
+    if (continuedMidFlight(current?.status)) return
     if (current?.status !== 'landing_queued') {
       say(`Queued to land: ${oneLine(reason)}`, `${reason} Nothing needs doing — it lands by itself.`, 'finish.held')
     }

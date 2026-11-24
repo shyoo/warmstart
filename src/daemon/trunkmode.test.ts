@@ -1,10 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
 import type { Project, Task } from '@shared/tasks.js'
-import { isTrunkBlockedReason, resolveRetryCauses, resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
+import { isTrunkBlockedReason, isTrunkLeaseReason, resolveRetryCauses, resolveWorkspaceMode, trunkPolicyConflict } from '@shared/tasks.js'
 
 /**
  * Trunk mode: a task that works in the project's own checkout, on the landing target itself.
@@ -28,6 +28,8 @@ let resources: typeof import('./resources.js')
 let scheduler: typeof import('./scheduler.js')
 let resolutions: typeof import('./resolutions.js')
 let conversationland: typeof import('./conversationland.js')
+let attachments: typeof import('./attachments.js')
+let workers: typeof import('./workers.js')
 
 let root: string
 let project: Project
@@ -63,6 +65,8 @@ beforeAll(async () => {
   scheduler = await import('./scheduler.js')
   resolutions = await import('./resolutions.js')
   conversationland = await import('./conversationland.js')
+  attachments = await import('./attachments.js')
+  workers = await import('./workers.js')
   db.openDb(join(dir, 'trunk.db'))
   root = freshRepo()
   project = projects.addProject({ root, name: 'trunky' })
@@ -509,16 +513,17 @@ describe('a busy trunk queues a worktree landing', () => {
       resolutions.forgetTrunkHolds()
     })
 
-    it("does not read the operator's dirty trunk as the agent leaving work uncommitted", async () => {
-      // ⛔ The defect that made t614 worse than stuck: the shared classifier turned this exact
-      // sentence into `uncommitted`, which offers a billed agent run to commit nothing and hides
-      // the Retry landing button. Asserted against the live string, not a paraphrase of it.
+    it('classifies a dirty trunk as trunkBlocked rather than uncommitted (t614)', async () => {
+      // ⛔ Must never misclassify as `uncommitted` (which would tell the agent to commit on its
+      // own already-clean branch), and instead classifies as `trunkBlocked` so the agent gets
+      // trunk-checkout recovery instructions and directory access.
       writeFileSync(join(root, 'wip.txt'), 'operator\n')
       try {
         const reason = await dirtyTrunkReason()
         expect(reason).toMatch(/uncommitted file\(s\) in it/)
         expect(isTrunkBlockedReason(reason)).toBe(true)
-        expect(resolveRetryCauses({ holdReason: reason })).toEqual([])
+        expect(isTrunkLeaseReason(reason)).toBe(false)
+        expect(resolveRetryCauses({ holdReason: reason })).toEqual(['trunkBlocked'])
       } finally {
         rmSync(join(root, 'wip.txt'))
       }
@@ -544,10 +549,11 @@ describe('a busy trunk queues a worktree landing', () => {
         const handed = tasks.getTask(task.id)!
         expect(handed.status).toBe('awaiting_human')
         expect(handed.assignee).toBe('human')
-        expect(handed.holdReason).toMatch(/Nothing in the fleet can clear this/)
+        expect(handed.holdReason).toMatch(/Resolve & retry/)
+        expect(handed.holdReason).toMatch(/Retry landing/)
         expect(handed.holdReason).not.toMatch(/land by itself/i)
-        // ⛔ And the reason it rests on must still not read as the agent's own loose ends.
-        expect(resolveRetryCauses(handed)).toEqual([])
+        // ⛔ Classifies strictly as `trunkBlocked`, never as the agent's own uncommitted branch.
+        expect(resolveRetryCauses(handed)).toEqual(['trunkBlocked'])
         expect(isTrunkBlockedReason(handed.holdReason)).toBe(true)
 
         const said = tasks.messagesFor(task.id).map((m) => m.text).join('\n')
@@ -824,5 +830,321 @@ describe('land_work in a trunk left on another branch (t788)', () => {
     expect(answer.reason).toBe('the trunk has `side` checked out rather than `main` — switch it back with `git switch main` and land again')
     // ⚠️ Still classified as the wrong-branch refusal it always was.
     expect(isTrunkBlockedReason(answer.reason ?? '')).toBe(true)
+  })
+})
+
+describe('agent recovery and continuation for blocked trunk landings (t1444)', () => {
+  beforeEach(() => {
+    resolutions.forgetTrunkHolds()
+  })
+
+  it('wakes a landing_queued task when a human replies and grants project.root for trunk blockers', async () => {
+    const repo = freshRepo()
+    const proj = projects.addProject({ root: repo, name: 'trunk-reply-wake' })
+    const task = tasks.createTask({ title: 'Fix blocked landing', projectId: proj.id })
+    const branch = `warmstart/t${task.seq}-reply-wake`
+    tasks.setTaskBranch(task.id, branch, 1)
+    // Deliver initial prompt so follow-up stands on its own.
+    const opening = tasks.messagesFor(task.id)[0]!
+    tasks.markDelivered([opening.id])
+
+    const dirtyReason =
+      'the trunk is not ready to receive this: the trunk has 6 uncommitted file(s) in it ' +
+      '(0 modified/tracked, 6 untracked): src/newsroom.egg-info/PKG-INFO. It will land by itself once the trunk is free.'
+    tasks.setStatus(task.id, 'landing_queued', { assignee: null, holdReason: dirtyReason })
+
+    // Prime the hold timer before the human replies, so we prove continuing clears it too.
+    writeFileSync(join(repo, 'wip.txt'), 'dirty\n')
+    expect(await resolutions.retryQueuedLandings(1_000_000)).toBe(0)
+
+    tasks.addMessage(task.id, 'human', 'Can you fix the trunk issue?')
+    expect(scheduler.continueTask(task.id)).toBe('requeued')
+
+    const updated = tasks.requireTask(task.id)
+    expect(updated.status).toBe('ready')
+    expect(updated.holdReason).toBeNull()
+    expect(attachments.grantedDirsFor(task.id)).toContain(repo)
+
+    const notice = scheduler.worktreeArrivalNotice(join(dir, 'ws1'), repo, branch, 'main', undefined, true)
+    expect(notice).toContain('granted writable access for trunk-landing recovery')
+    expect(scheduler.worktreeArrivalNotice(join(dir, 'ws1'), repo, branch, 'main')).not.toContain(
+      'granted writable access'
+    )
+  })
+
+  it('does not grant project.root when continuing a task queued behind another task trunk lease', () => {
+    const repo = freshRepo()
+    const proj = projects.addProject({ root: repo, name: 'trunk-lease-reply' })
+    const holder = tasks.createTask({ title: 'holder', projectId: proj.id, workspaceMode: 'trunk' })
+    const task = tasks.createTask({ title: 'waiting behind holder', projectId: proj.id })
+    tasks.setStatus(task.id, 'landing_queued', {
+      assignee: null,
+      holdReason: `the trunk is not ready to receive this: t${holder.seq} is working in the trunk. It will land by itself once the trunk is free.`
+    })
+    tasks.addMessage(task.id, 'human', 'Status check')
+    expect(scheduler.continueTask(task.id)).toBe('requeued')
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+    expect(attachments.grantedDirsFor(task.id)).toEqual([])
+  })
+
+  it('reconcileTasks and retryQueuedLandings wake trunk-held tasks carrying undelivered human replies', async () => {
+    const repo = freshRepo()
+    const proj = projects.addProject({ root: repo, name: 'trunk-stranded-reply' })
+
+    // Task A: stranded in landing_queued after a completed run and a human reply (exact t1444 DB state)
+    const tQueued = tasks.createTask({ title: 'Stranded queued', projectId: proj.id })
+    tasks.markDelivered([tasks.messagesFor(tQueued.id)[0]!.id])
+    const run = tasks.startRun({
+      taskId: tQueued.id,
+      projectId: proj.id,
+      sessionId: null,
+      workerId: 'w-test',
+      quotaUnverified: false,
+      costModelId: null
+    })
+    tasks.finishRun(run.id, 'completed', 'done')
+    tasks.setStatus(tQueued.id, 'landing_queued', {
+      assignee: null,
+      holdReason: 'the trunk is not ready to receive this: the trunk has 1 uncommitted file(s) in it: src/pkg.egg-info/PKG-INFO.'
+    })
+    tasks.addMessage(tQueued.id, 'human', 'Can you fix the trunk issue?')
+
+    // Task B: handed over to awaiting_human with an undelivered follow-up reply
+    const tAwaiting = tasks.createTask({ title: 'Stranded awaiting', projectId: proj.id })
+    tasks.markDelivered([tasks.messagesFor(tAwaiting.id)[0]!.id])
+    tasks.addMessage(tAwaiting.id, 'system', 'Waiting on the trunk checkout: dirty', null, [], {
+      event: 'landing.failed'
+    })
+    tasks.setStatus(tAwaiting.id, 'awaiting_human', {
+      assignee: 'human',
+      holdReason: 'the trunk is not ready to receive this: the trunk has 1 uncommitted file(s) in it: wip.txt.'
+    })
+    tasks.addMessage(tAwaiting.id, 'human', 'Please clean safe artifacts')
+
+    // Keep repo dirty so synthetic queued task stays queued during retryQueuedLandings
+    writeFileSync(join(repo, 'wip.txt'), 'dirty\n')
+
+    // Synthetic un-run task in landing_queued must NOT be treated as a reply
+    const tSynthetic = tasks.createTask({ title: 'Synthetic queued', projectId: proj.id })
+    tasks.setStatus(tSynthetic.id, 'landing_queued')
+
+    scheduler.reconcileTasks()
+    expect(tasks.requireTask(tQueued.id).status).toBe('ready')
+    expect(tasks.requireTask(tAwaiting.id).status).toBe('ready')
+    expect(tasks.requireTask(tSynthetic.id).status).toBe('landing_queued')
+    expect(attachments.grantedDirsFor(tQueued.id)).toContain(repo)
+    expect(attachments.grantedDirsFor(tAwaiting.id)).toContain(repo)
+
+    // Also verify retryQueuedLandings wakes an undelivered human follow-up immediately on tick
+    tasks.setStatus(tQueued.id, 'landing_queued', {
+      assignee: null,
+      holdReason: 'the trunk is not ready to receive this: the trunk has 1 uncommitted file(s) in it: wip.txt.'
+    })
+    expect(await resolutions.retryQueuedLandings(1_000_000)).toBe(0)
+    expect(tasks.requireTask(tQueued.id).status).toBe('ready')
+  })
+
+  it('resolveRetryOnTask prepares git trunk-blocker recovery with project.root access and refuses active leases', async () => {
+    const repo = freshRepo()
+    const proj = projects.addProject({ root: repo, name: 'trunk-resolve-git' })
+    mkdirSync(join(repo, 'src', 'pkg.egg-info'), { recursive: true })
+    writeFileSync(join(repo, 'src', 'pkg.egg-info', 'PKG-INFO'), 'Name: pkg\n')
+
+    const task = tasks.createTask({ title: 'Resolve git trunk', projectId: proj.id })
+    const branch = `warmstart/t${task.seq}-resolve-git`
+    tasks.setTaskBranch(task.id, branch, 1)
+    tasks.markDelivered([tasks.messagesFor(task.id)[0]!.id])
+
+    const trunkIssue = await landing.trunkNotReady(repo, 'main', proj)
+    expect(trunkIssue).toContain('uncommitted file(s) in it')
+    expect(trunkIssue).toContain('src/')
+
+    // Blocked behind another trunk task lease -> refuses
+    const holder = tasks.createTask({ title: 'holder', projectId: proj.id, workspaceMode: 'trunk' })
+    worktrees.claimTrunk(proj, holder.id)
+    tasks.setStatus(task.id, 'awaiting_human', {
+      assignee: 'human',
+      holdReason: `the trunk is not ready to receive this: ${trunkIssue}`
+    })
+    const leasedRefusal = await resolutions.resolveRetryOnTask(task.id)
+    expect(leasedRefusal.ok).toBe(false)
+    expect(leasedRefusal.reason).toContain(`t${holder.seq} is working in the trunk`)
+
+    // Release lease -> resolves into ready with writable project.root grant & safe guidance
+    tasks.setStatus(holder.id, 'completed')
+    const resolved = await resolutions.resolveRetryOnTask(task.id)
+    expect(resolved).toEqual({ ok: true })
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+    expect(attachments.grantedDirsFor(task.id)).toContain(repo)
+
+    const promptMsg = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)?.text ?? ''
+    expect(promptMsg).toContain(repo)
+    expect(promptMsg).toContain('src/')
+    expect(promptMsg).toContain(`git -C "${repo}" status`)
+    expect(promptMsg).toContain('NEVER discard')
+  })
+
+  it('landTask preserves ready if a human replies while a retry landing is running', async () => {
+    const repo = freshRepo()
+    const proj = projects.addProject({ root: repo, name: 'trunk-reland-race' })
+    const ws = join(dir, 'ws-reland-race')
+    git(repo, 'worktree', 'add', '-b', 'warmstart/t-race', ws, 'main')
+    writeFileSync(join(ws, 'work.txt'), 'committed\n')
+    git(ws, 'add', 'work.txt')
+    git(ws, 'commit', '-m', 'work')
+    writeFileSync(join(repo, 'dirty.txt'), 'uncommitted\n')
+
+    const task = tasks.createTask({ title: 'Race', projectId: proj.id })
+    tasks.setTaskBranch(task.id, 'warmstart/t-race', 1)
+    tasks.setStatus(task.id, 'landing_queued', {
+      holdReason: 'the trunk is not ready to receive this: dirty.txt'
+    })
+
+    // Start landTask while landing_queued, then simulate continueTask firing mid-flight
+    const pending = landing.landTask({
+      project: proj,
+      task: tasks.requireTask(task.id),
+      workspacePath: ws,
+      branch: 'warmstart/t-race',
+      policy: 'commit-and-merge'
+    })
+    tasks.addMessage(task.id, 'human', 'Can you fix the trunk?')
+    expect(scheduler.continueTask(task.id)).toBe('requeued')
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+
+    const res = await pending
+    expect(res.ok).toBe(false)
+    expect(res.trunkBusy).toBe(true)
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+  })
+
+  it('completeTask auto-retries once on trunkNotReady, rests on awaiting_human on repeat, and keeps leases queued', async () => {
+    const repo = freshRepo()
+    mkdirSync(join(repo, '.warmstart'), { recursive: true })
+    writeFileSync(
+      join(repo, '.warmstart', 'project.json'),
+      JSON.stringify({ schema_version: 1, name: 'trunk-auto-retry', check: ['node -e "process.exit(0)"'] })
+    )
+    git(repo, 'add', '.warmstart/project.json')
+    git(repo, 'commit', '-m', 'configure check')
+    const proj = projects.addProject({ root: repo, name: 'trunk-auto-retry' })
+    const w = workers.createWorker({ label: 'AutoRetryW', adapterId: 'openai-compatible', enabled: false })
+    await worktrees.ensurePool(proj)
+
+    const insertEndedSession = (id: string, cwd: string): void => {
+      db.db()
+        .prepare(
+          `insert into sessions (id, worker_id, adapter_id, transport, project_id, cwd, state, purpose, started_at, closed_at, tokens_since_compact)
+           values (?,?,?,?,?,?,?,?,?,?,?)`
+        )
+        .run(id, w.id, 'openai-compatible', 'stream', proj.id, cwd, 'ended', 'work', Date.now(), Date.now(), 0)
+    }
+
+    // 1. Dirty trunk triggers ONE automatic resolve-and-retry instead of sitting in landing_queued
+    const task = tasks.createTask({ title: 'Auto trunk retry', projectId: proj.id, finishPolicy: 'commit-and-merge' })
+    const branch = `warmstart/t${task.seq}-auto-trunk`
+    tasks.setTaskBranch(task.id, branch, 1)
+    const ws1 = await worktrees.claimWorkspace(proj, task.id)
+    expect(ws1).not.toBeNull()
+    await worktrees.prepareWorkspace(proj, ws1!, branch, tasks.requireTask(task.id))
+    writeFileSync(join(ws1!.path, 'feature.txt'), 'done\n')
+    git(ws1!.path, 'add', 'feature.txt')
+    git(ws1!.path, 'commit', '-m', 'feature commit')
+
+    // Dirty trunk with egg-info artifact
+    mkdirSync(join(repo, 'src', 'app.egg-info'), { recursive: true })
+    writeFileSync(join(repo, 'src', 'app.egg-info', 'PKG-INFO'), 'Name: app\n')
+
+    const s1Id = '5e550000-0000-4000-8000-000000000101'
+    insertEndedSession(s1Id, ws1!.path)
+    tasks.setStatus(task.id, 'running', { assignee: w.id })
+    const r1 = tasks.startRun({ taskId: task.id, projectId: proj.id, sessionId: s1Id, workerId: w.id, quotaUnverified: false, costModelId: null })
+    scheduler.workspaces.set(s1Id, { workspace: ws1!, projectId: proj.id })
+
+    await scheduler.completeTask(s1Id, 'Implemented feature')
+    const afterFirst = tasks.requireTask(task.id)
+    expect(afterFirst.status, afterFirst.holdReason ?? '').toBe('ready')
+    expect(afterFirst.resolveRetryAskedAt).not.toBeNull()
+    expect(attachments.grantedDirsFor(task.id)).toContain(repo)
+    expect(tasks.messagesFor(task.id).some((m) => /Retrying once automatically/.test(m.text))).toBe(true)
+
+    // 2. If a second completion still hits dirty trunk, hand straight to awaiting_human (not stuck in landing_queued)
+    const ws2 = await worktrees.claimWorkspace(proj, task.id)
+    expect(ws2).not.toBeNull()
+    await worktrees.prepareWorkspace(proj, ws2!, branch, tasks.requireTask(task.id))
+    const s2Id = '5e550000-0000-4000-8000-000000000102'
+    insertEndedSession(s2Id, ws2!.path)
+    tasks.setStatus(task.id, 'running', { assignee: w.id })
+    tasks.startRun({ taskId: task.id, projectId: proj.id, sessionId: s2Id, workerId: w.id, quotaUnverified: false, costModelId: null })
+    scheduler.workspaces.set(s2Id, { workspace: ws2!, projectId: proj.id })
+    expect(r1.id).toBeTruthy()
+
+    await scheduler.completeTask(s2Id, 'Still blocked')
+    const afterSecond = tasks.requireTask(task.id)
+    expect(afterSecond.status).toBe('awaiting_human')
+    expect(afterSecond.assignee).toBe('human')
+    expect(resolveRetryCauses(afterSecond)).toEqual(['trunkBlocked'])
+
+    // 3. Contrast: another Warmstart task holding the trunk lease STILL waits quietly in landing_queued
+    rmSync(join(repo, 'src'), { recursive: true, force: true })
+    const holder = tasks.createTask({ title: 'Trunk holder', projectId: proj.id, workspaceMode: 'trunk' })
+    worktrees.claimTrunk(proj, holder.id)
+    const leaseTask = tasks.createTask({ title: 'Behind lease', projectId: proj.id, finishPolicy: 'commit-and-merge' })
+    const leaseBranch = `warmstart/t${leaseTask.seq}-behind-lease`
+    tasks.setTaskBranch(leaseTask.id, leaseBranch, 1)
+    const ws3 = await worktrees.claimWorkspace(proj, leaseTask.id)
+    expect(ws3).not.toBeNull()
+    await worktrees.prepareWorkspace(proj, ws3!, leaseBranch, tasks.requireTask(leaseTask.id))
+    writeFileSync(join(ws3!.path, 'lease.txt'), 'ok\n')
+    git(ws3!.path, 'add', 'lease.txt')
+    git(ws3!.path, 'commit', '-m', 'lease work')
+    const s3Id = '5e550000-0000-4000-8000-000000000103'
+    insertEndedSession(s3Id, ws3!.path)
+    tasks.setStatus(leaseTask.id, 'running', { assignee: w.id })
+    tasks.startRun({ taskId: leaseTask.id, projectId: proj.id, sessionId: s3Id, workerId: w.id, quotaUnverified: false, costModelId: null })
+    scheduler.workspaces.set(s3Id, { workspace: ws3!, projectId: proj.id })
+
+    await scheduler.completeTask(s3Id, 'Done behind holder')
+    const behindLease = tasks.requireTask(leaseTask.id)
+    expect(behindLease.status).toBe('landing_queued')
+    expect(behindLease.resolveRetryAskedAt).toBeNull()
+    expect(isTrunkLeaseReason(behindLease.holdReason)).toBe(true)
+
+    tasks.setStatus(holder.id, 'completed')
+  })
+
+  it('resolveRetryOnTask formats jj-specific trunk recovery instructions on colocated jj repos', async () => {
+    let hasJj = false
+    try {
+      execFileSync('jj', ['--version'], { stdio: 'ignore' })
+      hasJj = true
+    } catch {
+      // jj not installed on host
+    }
+    if (!hasJj) return
+
+    const jjRepo = freshRepo()
+    execFileSync('jj', ['git', 'init', '--colocate'], { cwd: jjRepo, stdio: 'ignore' })
+    const jjProj = projects.addProject({ root: jjRepo, name: 'trunk-resolve-jj', vcs: 'jj' })
+    mkdirSync(join(jjRepo, 'src', 'newsroom.egg-info'), { recursive: true })
+    writeFileSync(join(jjRepo, 'src', 'newsroom.egg-info', 'PKG-INFO'), 'Name: newsroom\n')
+
+    const task = tasks.createTask({ title: 'Resolve jj trunk', projectId: jjProj.id })
+    tasks.setTaskBranch(task.id, `warmstart/t${task.seq}-jj-trunk`, 1)
+    tasks.markDelivered([tasks.messagesFor(task.id)[0]!.id])
+    const issue = await landing.trunkNotReady(jjRepo, 'main', jjProj)
+    expect(issue).toContain('src/newsroom.egg-info/PKG-INFO')
+    tasks.setStatus(task.id, 'landing_queued', {
+      assignee: null,
+      holdReason: `the trunk is not ready to receive this: ${issue}`
+    })
+
+    expect(await resolutions.resolveRetryOnTask(task.id)).toEqual({ ok: true })
+    expect(tasks.requireTask(task.id).status).toBe('ready')
+    expect(attachments.grantedDirsFor(task.id)).toContain(jjRepo)
+    const msg = tasks.messagesFor(task.id).filter((m) => m.role === 'human').at(-1)?.text ?? ''
+    expect(msg).toContain(`jj -R "${jjRepo}" status`)
+    expect(msg).toContain(`jj -R "${jjRepo}" new main`)
+    expect(msg).toContain('src/newsroom.egg-info/PKG-INFO')
   })
 })

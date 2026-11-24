@@ -602,7 +602,11 @@ export function Decide({
     trunkMoved:
       'The trunk moved and the branch is empty: sends the branch back to an agent to rebase onto the ' +
       `landing target, make sure every intended change is committed on ${task.branch}, run the ` +
-      'project checks and report complete again.'
+      'project checks and report complete again.',
+    trunkBlocked:
+      'The trunk checkout was not ready to receive this merge: gives the agent write access to ' +
+      'the trunk checkout so it can inspect the blocker, clean safe generated artifacts / CRLF drift ' +
+      'or switch a clean checkout back to the target, or ask you if operator edits are in the way.'
   }
   const resolveCauses = resolveRetryCauses(task).map((key) => resolveCauseCopy[key])
 
