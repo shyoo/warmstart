@@ -42,12 +42,14 @@ const WS_LIST_TEMPLATE =
 const REV_META_TEMPLATE =
   '"{\\"sha\\":" ++ json(commit_id) ++ ",\\"bookmarks\\":" ++ ' +
   'json(local_bookmarks.map(|b| b.name())) ++ ",\\"desc\\":" ++ json(description) ++ ' +
-  '",\\"conflict\\":" ++ if(conflict, "true", "false") ++ "}\\n"'
+  '",\\"conflict\\":" ++ if(conflict, "true", "false") ++ ' +
+  '",\\"immutable\\":" ++ if(immutable, "true", "false") ++ "}\\n"'
 
 const WORKING_COPY_TEMPLATE =
   '"{\\"sha\\":" ++ json(commit_id) ++ ",\\"bookmarks\\":" ++ ' +
   'json(local_bookmarks.map(|b| b.name())) ++ ",\\"desc\\":" ++ json(description) ++ ' +
   '",\\"conflict\\":" ++ if(conflict, "true", "false") ++ ' +
+  '",\\"immutable\\":" ++ if(immutable, "true", "false") ++ ' +
   '",\\"empty\\":" ++ if(empty, "true", "false") ++ ' +
   '",\\"files\\":[" ++ diff.files().map(|f| "{\\"status\\":" ++ json(f.status()) ++ ' +
   '",\\"path\\":" ++ json(f.path()) ++ "}").join(",") ++ "]}\\n"'
@@ -65,6 +67,7 @@ interface JjRevMeta {
   bookmarks: string[]
   desc: string
   conflict: boolean
+  immutable: boolean
 }
 
 interface JjWorkingCopyFile {
@@ -286,17 +289,26 @@ async function resolveJjRev(cwd: string, ref: string): Promise<string> {
   return sha && sha.length > 0 ? sha : ref
 }
 
-async function readRevMeta(cwd: string, rev: string, ignoreWorkingCopy: boolean, rootHint?: string): Promise<JjRevMeta | null> {
+async function readRevMetas(
+  cwd: string,
+  rev: string,
+  ignoreWorkingCopy: boolean,
+  rootHint?: string
+): Promise<JjRevMeta[]> {
   try {
     const out = await execJj(
       cwd,
       ['-R', cwd, 'log', '-r', rev, '--no-graph', '-T', REV_META_TEMPLATE],
       { ignoreWorkingCopy, rootHint }
     )
-    return parseJsonLines<JjRevMeta>(out)[0] ?? null
+    return parseJsonLines<JjRevMeta>(out)
   } catch {
-    return null
+    return []
   }
+}
+
+async function readRevMeta(cwd: string, rev: string, ignoreWorkingCopy: boolean, rootHint?: string): Promise<JjRevMeta | null> {
+  return (await readRevMetas(cwd, rev, ignoreWorkingCopy, rootHint))[0] ?? null
 }
 
 async function readWorkingCopy(cwd: string, rootHint?: string): Promise<JjWorkingCopyRow | null> {
@@ -544,22 +556,36 @@ export const jjDriver: VcsDriver = {
   /**
    * Put the workspace on `branch`, jj's way: the working-copy change **is** the bookmarked change, so
    * every snapshot lands on the task's bookmark and nothing has to be stashed or carried (the branch
-   * is the carrier, AGENTS.md). Existing bookmark: `jj edit` it. New one: `jj new <base>` and create
-   * the bookmark on that working-copy change.
+   * is the carrier, AGENTS.md).
+   *
+   * - Existing mutable bookmark with no sibling bookmarks on the same commit: `jj edit` it in place.
+   * - Existing bookmark on an immutable commit (e.g. `main`/`main@origin` after a push, tags, or
+   *   untracked remote bookmarks — t1444 hit `Error: Commit 4c97e6c0c774 is immutable` on resume) or
+   *   sharing its commit with another bookmark (`createBranch` when no remote exists): start a new
+   *   mutable `@` on top and advance `branch` onto `@` (`jj new` + `jj bookmark set`), leaving
+   *   immutable history and sibling bookmarks untouched and keeping `currentBranch` unambiguous.
+   * - New bookmark: `jj new <base>` and create the bookmark on `@`.
    *
    * ⛔ Not `jj new <bookmark>` with the bookmark left on `@-`: a fresh task bookmark cut at the trunk
    * tip shares that commit with `main`, and `currentBranch` then read `main` back (measured, jj 0.46).
-   * ⚠️ Open for wave 3: the new bookmark's working-copy change exists as a commit before anything is
-   * written in it, which landing's "a branch that carries nothing" checks will have to account for.
    */
   async switchBranch(path: string, branch: string, createFromBase?: string): Promise<void> {
     await ensureJjReady(path)
     if (createFromBase === undefined) {
-      await execJj(path, ['-R', path, 'edit', branch])
+      const targetRev = quoteJjRev(branch)
+      const metas = await readRevMetas(path, targetRev, false)
+      const meta = metas.length === 1 ? metas[0]! : null
+      if (meta && !meta.immutable && !meta.bookmarks.some((b) => b !== branch)) {
+        await execJj(path, ['-R', path, 'edit', targetRev])
+        return
+      }
+      const rev = meta?.sha ?? (await resolveJjRev(path, branch))
+      await execJj(path, ['-R', path, 'new', quoteJjRev(rev)])
+      await execJj(path, ['-R', path, 'bookmark', 'set', branch, '-r', '@'])
       return
     }
     const rev = await resolveJjRev(path, createFromBase)
-    await execJj(path, ['-R', path, 'new', rev])
+    await execJj(path, ['-R', path, 'new', quoteJjRev(rev)])
     await execJj(path, ['-R', path, 'bookmark', 'create', branch, '-r', '@'])
   },
 
@@ -786,9 +812,18 @@ export const jjDriver: VcsDriver = {
     try {
       if ((await jjDriver.commitsOnlyOn(path, branch, base)) !== 0) return
       const wc = await readWorkingCopy(path)
-      if (!wc || wc.files.length > 0 || wc.desc.trim().length > 0) return
+      if (
+        !wc ||
+        wc.files.length > 0 ||
+        wc.desc.trim().length > 0 ||
+        wc.immutable ||
+        !wc.bookmarks.includes(branch) ||
+        wc.bookmarks.some((b) => b !== branch)
+      ) {
+        return
+      }
       const baseRev = await resolveJjRev(path, base)
-      await execJj(path, ['-R', path, 'rebase', '-r', '@', '-d', baseRev])
+      await execJj(path, ['-R', path, 'rebase', '-r', '@', '-d', quoteJjRev(baseRev)])
       log.info(`rebased empty jj branch ${branch} onto ${base}`)
     } catch {
       // Best-effort, silently: branch carries work or base does not resolve.

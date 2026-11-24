@@ -461,4 +461,70 @@ describe.skipIf(!jjHost.available)(`jjDriver colocated integration (${jjHost.rea
     expect(await jjDriver.hasConflicts(wsPath, 'warmstart/conflict')).toBe(true)
     expect(await jjDriver.conflictedPaths(wsPath, 'warmstart/conflict')).toEqual(['feature.txt'])
   }, 90_000)
+
+  it('switches cleanly when an existing bookmark points to an immutable or shared commit (t1444)', async () => {
+    const bareRemote = join(shortDir, 'b-imm.git')
+    mkdirSync(bareRemote, { recursive: true })
+    git(bareRemote, 'init', '--bare', '--initial-branch=main')
+
+    const project = initColocatedProject('r-imm')
+    git(project.root, 'remote', 'add', 'origin', bareRemote)
+    git(project.root, 'push', '-u', 'origin', 'main')
+    runJjSync(project.root, 'new', 'main')
+
+    const wsPath = join(shortDir, 'w-imm')
+    await jjDriver.addWorkspace(project, wsPath, 'main')
+
+    // 1. Bookmark pointing directly at immutable main@origin (exact t1444 failure mode):
+    //    switchBranch creates a fresh mutable `@` on top and moves only the task bookmark onto `@`.
+    const mainSha = git(project.root, 'rev-parse', 'main')
+    await jjDriver.createBranch(project, 'warmstart/t1444-repro', 'main')
+    await jjDriver.switchBranch(wsPath, 'warmstart/t1444-repro')
+    expect(await jjDriver.currentBranch(wsPath)).toBe('warmstart/t1444-repro')
+    expect(git(project.root, 'rev-parse', 'main')).toBe(mainSha)
+    expect(git(wsPath, 'rev-parse', 'warmstart/t1444-repro^')).toBe(mainSha)
+    expect(await jjDriver.commitsOnlyOn(wsPath, 'warmstart/t1444-repro', 'main')).toBe(0)
+
+    // Subsequent catchUpEmptyBranch advances the fresh `@` cleanly when main moves forward.
+    writeFileSync(join(project.root, 'upstream.txt'), 'moved\n')
+    runJjSync(project.root, 'describe', '-m', 'advance main')
+    runJjSync(project.root, 'bookmark', 'set', 'main', '-r', '@')
+    runJjSync(project.root, 'new', 'main')
+    const movedMainSha = git(project.root, 'rev-parse', 'main')
+    await jjDriver.catchUpEmptyBranch(wsPath, 'warmstart/t1444-repro', 'main')
+    expect(git(wsPath, 'rev-parse', 'warmstart/t1444-repro^')).toBe(movedMainSha)
+    expect(existsSync(join(wsPath, 'upstream.txt'))).toBe(true)
+
+    // 2. Bookmark pushed directly via `git push -u` becomes an untracked remote bookmark (immutable):
+    //    switchBranch on resume creates a mutable follow-up `@` rather than failing `jj edit`.
+    await jjDriver.switchBranch(wsPath, 'warmstart/t-remote-imm', 'main')
+    writeFileSync(join(wsPath, 'pushed.txt'), 'v1\n')
+    runJjSync(wsPath, 'describe', '-m', 'feat: pushed commit')
+    runJjSync(wsPath, 'status')
+    git(wsPath, 'push', '-u', 'origin', 'warmstart/t-remote-imm')
+    const pushedSha = git(wsPath, 'rev-parse', 'warmstart/t-remote-imm')
+
+    await jjDriver.park(project, wsPath)
+    await jjDriver.switchBranch(wsPath, 'warmstart/t-remote-imm')
+    expect(await jjDriver.currentBranch(wsPath)).toBe('warmstart/t-remote-imm')
+    expect(git(wsPath, 'rev-parse', 'warmstart/t-remote-imm^')).toBe(pushedSha)
+    writeFileSync(join(wsPath, 'followup.txt'), 'v2\n')
+    runJjSync(wsPath, 'describe', '-m', 'feat: follow-up after push')
+    expect(await jjDriver.commitsOnlyOn(wsPath, 'warmstart/t-remote-imm', 'main')).toBe(2)
+
+    // 3. Repo with NO remote: `main` is mutable, so a bookmark created on `main` shares its commit
+    //    with `main`. switchBranch still cuts a fresh `@` so edits never mutate `main` and
+    //    currentBranch does not return `'main'`.
+    const noRemoteProject = initColocatedProject('r-noremote')
+    runJjSync(noRemoteProject.root, 'new', 'main')
+    const nrMainSha = git(noRemoteProject.root, 'rev-parse', 'main')
+    const nrWs = join(shortDir, 'w-nr')
+    await jjDriver.addWorkspace(noRemoteProject, nrWs, 'main')
+    await jjDriver.createBranch(noRemoteProject, 'warmstart/t-shared', 'main')
+
+    await jjDriver.switchBranch(nrWs, 'warmstart/t-shared')
+    expect(await jjDriver.currentBranch(nrWs)).toBe('warmstart/t-shared')
+    expect(git(noRemoteProject.root, 'rev-parse', 'main')).toBe(nrMainSha)
+    expect(git(nrWs, 'rev-parse', 'warmstart/t-shared^')).toBe(nrMainSha)
+  }, 90_000)
 })
