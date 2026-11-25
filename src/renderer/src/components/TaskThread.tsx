@@ -32,6 +32,7 @@ import { rpc, useActivity, useDaemonEvents, useNow, type ActivityLine, type Flee
 import { isSubmitKey, useUiSettings } from '../lib/uisettings'
 import { ImageChips, usePastedImages } from '../lib/pasteimages'
 import { Pill, PillOptions, type PillOption } from './Pill'
+import { SplitButton } from './SplitButton'
 import { TagPicker, TagsPill } from './TagControls'
 import { useIsRemote } from '../lib/target'
 import { SettingButtonSelect } from './SettingButtonSelect'
@@ -646,7 +647,15 @@ function TaskDetail({
               parsed as the closed markdown subset; nothing here renders raw HTML. */}
           <DebateBoard task={task} />
 
-          <Thread messages={messages} runs={runs} activity={activity} live={live} landing={Boolean(task.landing)} working={!turnEnded(task)} onOpenFile={onOpenFile} />
+          <Thread
+            messages={messages}
+            runs={runs}
+            activity={activity}
+            live={live}
+            landing={Boolean(task.landing)}
+            working={!turnEnded(task)}
+            onOpenFile={onOpenFile}
+          />
 
           {/* ⛔ Between the conversation and the box for replying, because that is what it is: the
               agent's turn to speak ended with a question, and this is where the answer goes. In the
@@ -1699,6 +1708,14 @@ const Thread = memo(function Thread({
                     `promptAnchors`) — and ⓘ for the detail a short system line keeps behind it. */}
                 <div className="msg-meta">
                   <span className="msg-when" title={new Date(m.ts).toLocaleString()}>{when(m.ts)}</span>
+                  {m.queued && m.deliveredAt === null && (
+                    <span
+                      className="msg-queued"
+                      title="Queued — waits until the active turn finishes before delivering"
+                    >
+                      Queued
+                    </span>
+                  )}
                   {m.text.trim().length > 0 && <MessageCopyButton text={m.text} />}
                   {anchoredRun?.prompt && (
                     <PromptChip prompt={anchoredRun.prompt} title="The prompt this message produced" />
@@ -2371,7 +2388,8 @@ function Compose({
   //    its own field — never left in the text for anything to parse back out later.
   const [command, setCommand] = useState<ThreadCommand | null>(() => draftCommand(restored))
   const commandMenu = command ? [] : commandMatches(text)
-  const [sending, setSending] = useState(false)
+  const [sendingMode, setSendingMode] = useState<'send' | 'queue' | null>(null)
+  const sending = sendingMode !== null
   const [stopping, setStopping] = useState(false)
   const [completing, setCompleting] = useState(false)
   const [outcome, setOutcome] = useState<string | null>(null)
@@ -2415,11 +2433,11 @@ function Compose({
 
   const canSend = (hasBody || reassigning || resuming) && !sending && !paste.busy
 
-  const send = async () => {
+  const send = async (delivery: 'send' | 'queue' = 'send') => {
     const body = text.trim()
     if (!body && paste.ids.length === 0 && !command && !reassigning && !resuming) return
     if (sending || paste.busy) return
-    setSending(true)
+    setSendingMode(delivery)
     setSendError(null)
     try {
       if (resuming) {
@@ -2435,7 +2453,8 @@ function Compose({
         id: task.id,
         text: body || (reassigning && !command ? 'Continue.' : ''),
         ...(paste.ids.length > 0 ? { attachmentIds: paste.ids } : {}),
-        ...(command ? { command: command.id } : {})
+        ...(command ? { command: command.id } : {}),
+        ...(delivery === 'queue' ? { delivery: 'queue' } : {})
       })
       setText('')
       setCommand(null)
@@ -2449,7 +2468,7 @@ function Compose({
     } catch (err) {
       setSendError(errorMessage(err))
     } finally {
-      setSending(false)
+      setSendingMode(null)
     }
   }
 
@@ -2650,37 +2669,74 @@ function Compose({
               {stopping ? 'Stopping…' : 'Stop'}
             </button>
           )}
-          <button
-            className="btn btn--primary compose-send-btn"
-            disabled={!canSend}
-            title={
-              reassigning
-                ? 'Moves this task to the worker, model and effort chosen below and starts its next run on this same thread, with your message if you typed one.'
-                : resuming
-                  ? isFailed
+          {reassigning || resuming ? (
+            <button
+              className="btn btn--primary compose-send-btn"
+              disabled={!canSend}
+              title={
+                reassigning
+                  ? 'Moves this task to the worker, model and effort chosen below and starts its next run on this same thread, with your message if you typed one.'
+                  : isFailed
                     ? 'Puts this failed task back in the queue to run again. Type a message first to send it with the retry.'
                     : 'Puts this task back in the queue. Type a message first to send it with the resume.'
-                  : undefined
-            }
-            onClick={() => void send()}
-          >
-            <span>
-              {sending
-                ? reassigning
-                  ? 'Reassigning…'
-                  : isFailed
-                    ? 'Retrying…'
-                    : 'Sending…'
-                : reassigning
-                  ? 'Reassign'
-                  : resuming
-                    ? isFailed
+              }
+              onClick={() => void send('send')}
+            >
+              <span>
+                {sending
+                  ? reassigning
+                    ? 'Reassigning…'
+                    : isFailed
+                      ? 'Retrying…'
+                      : 'Sending…'
+                  : reassigning
+                    ? 'Reassign'
+                    : isFailed
                       ? 'Retry'
-                      : 'Resume'
-                    : 'Send'}
-            </span>
-            {!sending && !reassigning && !resuming && <SendArrowIcon size={13} />}
-          </button>
+                      : 'Resume'}
+              </span>
+            </button>
+          ) : (
+            <SplitButton
+              className="compose-send-split"
+              tone="primary"
+              align="right"
+              caret={<ChevronDownIcon size={12} />}
+              disabled={!canSend}
+              ariaLabel="Send"
+              menuAriaLabel="Send options"
+              value="send"
+              label={
+                <span className="compose-send-label">
+                  <span>
+                    {sendingMode === 'queue'
+                      ? 'Queuing…'
+                      : sendingMode === 'send'
+                        ? 'Sending…'
+                        : 'Send'}
+                  </span>
+                  {!sending && <SendArrowIcon size={13} />}
+                </span>
+              }
+              options={[
+                {
+                  value: 'send',
+                  label: 'Send',
+                  hint: running
+                    ? 'Deliver immediately (interrupts active turn if needed)'
+                    : 'Send reply now'
+                },
+                {
+                  value: 'queue',
+                  label: 'Queue',
+                  hint: running
+                    ? 'Wait until the active turn finishes before delivering'
+                    : 'Queue for the next run'
+                }
+              ]}
+              onAct={(next) => void send(next === 'queue' ? 'queue' : 'send')}
+            />
+          )}
         </span>
       </div>
       <ImageChips paste={paste} />
@@ -2700,6 +2756,11 @@ function Compose({
       {/* ⚠️ Only after a send, and one short line: the placeholder already says what the box does. */}
       {outcome === 'requeued' && <p className="compose-hint">Queued — same thread, same session where it can.</p>}
       {outcome === 'delivered' && <p className="compose-hint">Delivered into the running turn.</p>}
+      {outcome === 'queued' && (
+        <p className="compose-hint">
+          {running ? 'Queued — waits until the current turn finishes.' : 'Queued — waits for the next run.'}
+        </p>
+      )}
       {sendError && <p className="compose-assign-error" role="alert">{sendError}</p>}
     </div>
   )

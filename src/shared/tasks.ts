@@ -1221,6 +1221,8 @@ export interface TaskMessage {
    * it twice and leave the agent unsure what is still outstanding.
    */
   deliveredAt: number | null
+  /** Whether this message was explicitly queued mid-turn to wait until the active turn finishes. */
+  queued?: boolean
   ts: number
   /**
    * Images pasted onto this message. Empty on almost every row, which is why they live in their own

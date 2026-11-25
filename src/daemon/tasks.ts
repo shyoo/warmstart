@@ -1797,11 +1797,11 @@ export function addMessage(
   text: string,
   runId: string | null = null,
   attachmentIds: string[] = [],
-  options: { event?: MessageEvent; detail?: string } = {}
+  options: { event?: MessageEvent; detail?: string; queued?: boolean } = {}
 ): number {
   const info = db()
-    .prepare('insert into task_messages (task_id, role, text, run_id, event, detail, ts) values (?,?,?,?,?,?,?)')
-    .run(taskId, role, text, runId, options.event ?? null, options.detail ?? null, Date.now())
+    .prepare('insert into task_messages (task_id, role, text, run_id, event, detail, queued, ts) values (?,?,?,?,?,?,?,?)')
+    .run(taskId, role, text, runId, options.event ?? null, options.detail ?? null, options.queued ? 1 : 0, Date.now())
   const id = Number(info.lastInsertRowid)
   if (attachmentIds.length > 0) bindAttachments(attachmentIds, taskId, id)
   markThreadMessage(taskId, id)
@@ -1828,6 +1828,7 @@ export function messagesFor(taskId: string): TaskMessage[] {
     event: MessageEvent | null
     detail: string | null
     delivered_at: number | null
+    queued?: number | null
     ts: number
   }>(db().prepare('select * from task_messages where task_id = ? order by id').all(taskId))
   // ⚠️ One query for every attachment on the thread, not one per message. This runs on the path
@@ -1842,6 +1843,7 @@ export function messagesFor(taskId: string): TaskMessage[] {
     detail: r.detail,
     runId: r.run_id,
     deliveredAt: r.delivered_at,
+    ...(r.queued ? { queued: true } : {}),
     ts: r.ts,
     attachments: attachments.get(r.id) ?? []
   }))
@@ -1861,8 +1863,16 @@ export function lastMessageId(taskId: string): number | null {
 export function markDelivered(ids: number[]): void {
   if (ids.length === 0) return
   const now = Date.now()
-  const stmt = db().prepare('update task_messages set delivered_at = ? where id = ?')
+  const stmt = db().prepare('update task_messages set delivered_at = ?, queued = 0 where id = ?')
   for (const id of ids) stmt.run(now, id)
+}
+
+/**
+ * Follow-up human messages explicitly queued during an active turn (`delivery: 'queue'`) and still
+ * awaiting delivery.
+ */
+export function queuedHumanFollowups(taskId: string): TaskMessage[] {
+  return messagesFor(taskId).filter((m) => Boolean(m.queued) && m.deliveredAt === null)
 }
 
 // ---------------------------------------------------------------------------- runs

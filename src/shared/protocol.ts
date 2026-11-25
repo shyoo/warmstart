@@ -2383,8 +2383,12 @@ export interface RpcMap {
     /**
      * `command` is a composer slash command the person picked (t704) — sent as its own field and
      * stored as the message's `event`, never parsed out of `text`. See `shared/commands.ts`.
+     *
+     * `delivery` controls mid-turn handling when a run is active (`send` default delivers or
+     * interrupts immediately; `queue` leaves the active turn uninterrupted and delivers once the
+     * turn finishes).
      */
-    params: { id: string; text: string; attachmentIds?: string[]; command?: ThreadCommandId }
+    params: { id: string; text: string; attachmentIds?: string[]; command?: ThreadCommandId; delivery?: 'send' | 'queue' }
     /**
      * `outcome` says what the message *did*, so the UI can stop guessing.
      *

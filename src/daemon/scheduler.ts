@@ -2,7 +2,7 @@ import { sessionEnded } from '@shared/protocol.js'
 import { helperEndedLastRun } from './agentcli.js'
 import { delegationsFor, reportDelegationIfSettled } from './delegation.js'
 import { checkSubtaskBriefAlarms, onSubtaskSettledForBrief } from './subtaskbrief.js'
-import { bindAttachments, createFolderAttachment, grantedDirsFor } from './attachments.js'
+import { bindAttachments, createFolderAttachment, describeAttachment, grantedDirsFor } from './attachments.js'
 import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
@@ -72,6 +72,7 @@ import {
   lastRunForSession,
   markDelivered,
   messagesFor,
+  queuedHumanFollowups,
   runForSession,
   requireRun,
   requireTask,
@@ -249,7 +250,8 @@ import {
 } from './compaction.js'
 import { costModel } from './costmodel.js'
 import { errorMessage } from '@shared/errors.js'
-import { framingLapsed, promptFor } from './prompt.js'
+import { emit } from './events.js'
+import { commandPromptFor, framingLapsed, promptFor } from './prompt.js'
 import {
   chooseTarget,
   formatScore,
@@ -4387,6 +4389,90 @@ export async function resumeWithGrant(
   }
 }
 
+/**
+ * Close the active run and put the task straight back into `ready` when queued follow-up human
+ * messages are waiting behind it, preserving the warm session and branch unless a folder grant or
+ * closed process requires a fresh spawn.
+ */
+async function requeueForQueuedFollowup(
+  sessionId: string,
+  run: Run,
+  task: Task,
+  summary: string,
+  opts?: { closeLiveSession?: boolean }
+): Promise<void> {
+  const queued = queuedHumanFollowups(task.id)
+  const hasFolder = queued.some((m) => m.attachments.some((a) => a.kind === 'folder'))
+  finishRun(run.id, 'completed', summary)
+  void captureQuotaAfter(requireRun(run.id))
+
+  const session = getSession(sessionId)
+  const mustRestart = Boolean(opts?.closeLiveSession || hasFolder)
+  if (mustRestart && session && !sessionEnded(session.state)) {
+    await closeAndWait(sessionId)
+  }
+  if (mustRestart || !session || sessionEnded(session.state)) {
+    await releaseWorkspaceOf(sessionId, task.id)
+  } else {
+    log.info(`t${task.seq} turn completed with ${queued.length} queued reply(s) waiting - keeping session warm`)
+  }
+  await releaseFor(run.id, task.id, task.projectId ?? null)
+  forgetTrunkHold(task.id)
+  for (const heldClaim of claimsForHolder(task.id)) {
+    if (heldClaim.resourceId.startsWith('session:')) release(heldClaim.id)
+  }
+  clearActivity(task.id)
+  db().prepare('update tasks set not_before = null where id = ?').run(task.id)
+  setStatus(task.id, 'ready', { assignee: null })
+}
+
+/**
+ * Deliver queued follow-up human messages once an active work turn finishes without `task_complete`.
+ * Returns true if any queued follow-ups were delivered or requeued so the idle-turn watchdog does
+ * not hold the task for 3 minutes first.
+ */
+export async function flushQueuedMessagesAtTurnEnd(
+  session: Session,
+  run: Run,
+  task: Task
+): Promise<boolean> {
+  if (backgroundTasksOf(session.id).length > 0) return false
+  if (openQuestions().some((q) => q.taskId === task.id)) return false
+  const queued = queuedHumanFollowups(task.id)
+  if (queued.length === 0) return false
+
+  const caps = adapter(session.adapterId).info.capabilities
+  const hasFolder = queued.some((m) => m.attachments.some((a) => a.kind === 'folder'))
+  if (caps.streamPrompts !== 'once' && !hasFolder) {
+    const inlineImages =
+      caps.imageInput === 'inline'
+        ? queued.flatMap((m) => m.attachments.filter((a) => a.kind === 'image'))
+        : []
+    const text = queued
+      .map((m) => {
+        const body = m.event === 'command.delegate' ? commandPromptFor(task.id, 'delegate', m.text) : m.text
+        const named = m.attachments.map(describeAttachment)
+        if (named.length === 0) return body
+        return body ? `${body}\n${named.join('\n')}` : named.join('\n')
+      })
+      .filter((part) => part.length > 0)
+      .join('\n\n')
+    try {
+      sendPrompt(session.id, text, inlineImages)
+      markDelivered(queued.map((m) => m.id))
+      const latest = getTask(task.id)
+      if (latest) emit({ type: 'task.changed', task: latest })
+      return true
+    } catch (err) {
+      log.warn(`could not deliver ${queued.length} queued reply(s) into t${task.seq}'s idle session:`, err)
+    }
+  }
+  await requeueForQueuedFollowup(session.id, run, task, 'Turn ended with queued follow-up waiting', {
+    closeLiveSession: hasFolder
+  })
+  return true
+}
+
 async function landCompletion(
   sessionId: string,
   run: Run,
@@ -4430,6 +4516,19 @@ async function landCompletion(
   const alreadyAdded = existing.some((m) => m.text.trim() === effectiveSummary.trim())
   if (!alreadyAdded) {
     addMessage(task.id, 'agent', effectiveSummary, run.id)
+  }
+
+  // Queued follow-up replies hold completion/landing so the agent continues with the queued work first.
+  const currentTask = getTask(task.id)
+  if (
+    currentTask &&
+    currentTask.status !== 'cancelling' &&
+    currentTask.status !== 'cancelled' &&
+    queuedHumanFollowups(task.id).length > 0 &&
+    !openQuestions().some((q) => q.taskId === task.id)
+  ) {
+    await requeueForQueuedFollowup(sessionId, run, task, summary)
+    return
   }
 
   // ⚠️ Keyed by the session, which is what holds the workspace. Keyed by the run this read `MISSING`
@@ -4986,6 +5085,7 @@ export async function endConversationTurn(
   // ⭐ **Unless it is waiting on work it delegated** (t713). Nothing is asked of the person then —
   // the pieces are the next thing to happen — so it rests `blocked` on the `settled` edges
   // `applySplit` wrote, and `admit` releases it to `ready` when the last one settles.
+  let parkedAtHuman = false
   if (task.status === 'running' || task.status === 'assigned') {
     const pending = unmetPrerequisites(task)
       .map((edge) => getTask(edge.dependsOn))
@@ -5012,6 +5112,7 @@ export async function endConversationTurn(
         )
       } else {
         setStatus(task.id, 'awaiting_human', { assignee: 'human', holdReason: why })
+        parkedAtHuman = true
       }
     }
   }
@@ -5029,6 +5130,17 @@ export async function endConversationTurn(
   // workspace to borrow, and awaited: the turn is over, nothing is billed, and a landing that runs
   // the project's checks must finish before the next tick can dispatch on this branch.
   await landAfterCommitTurn(task.id)
+
+  if (
+    parkedAtHuman &&
+    !openQuestions().some((q) => q.taskId === task.id) &&
+    queuedHumanFollowups(task.id).length > 0
+  ) {
+    const afterLand = getTask(task.id)
+    if (afterLand && (afterLand.status === 'awaiting_human' || afterLand.status === 'completed')) {
+      continueTask(task.id)
+    }
+  }
 }
 
 export async function endUnfinishedRun(

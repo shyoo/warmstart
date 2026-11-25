@@ -744,9 +744,18 @@ typed:
   message's `event` — the bubble draws its chip from that (`.msg-command-chip`), never from the text,
   because a person's own typed message is never reinterpreted. A chip alone is a message: the
   daemon reads it as *what you have just been discussing*.
+- **Send / Queue split button in the thread composer** (`TaskThread.tsx`, `SplitButton.tsx`). Unless
+  `Reassign` (worker/model/effort changed while resting) or empty-box `Resume`/`Retry` is shown, the
+  primary composer button is rendered as `.compose-send-split` (`SplitButton` with `tone="primary"`,
+  `align="right"`, and `<ChevronDownIcon />`): pressing **Send** delivers immediately (interrupting an
+  active `promptDuringTurn: 'queued'` turn or writing into a live session), while opening the split
+  arrow lets the operator pick **Send** or **Queue**. Picking **Queue** calls
+  `task.message { delivery: 'queue' }`, leaving any running turn uninterrupted (`deliveredAt: null`),
+  showing a `Queued` badge (`.msg-queued`) in `.msg-meta` on queued follow-ups until delivered, and
+  delivering or requeuing automatically as soon as the active turn completes.
 - **The send-outcome hint clears itself once it stops being true** (`outcomeHintStale`,
-  `lib/composeoutcome.ts`, t673). *Queued — same thread, same session where it can.* and *Delivered
-  into the running turn.* used to sit under the composer forever: the requeue they describe resolves
+  `lib/composeoutcome.ts`, t673). *Queued — same thread, same session where it can.*, *Queued — waits
+  until the current turn finishes.* and *Delivered into the running turn.* used to sit under the composer forever: the requeue they describe resolves
   on a scheduler tick the composer does not watch, so nothing ever cleared a hint the task's own
   status had already moved past. `Compose` now records the task's status at the moment it sets
   `outcome` and drops the hint the first time `task.status` differs from that recording.

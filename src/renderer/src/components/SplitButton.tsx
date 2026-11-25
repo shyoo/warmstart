@@ -30,13 +30,15 @@ export function SplitButton({
   value,
   onAct,
   disabled = false,
+  align = 'left',
+  caret,
   title,
   ariaLabel,
   menuAriaLabel,
   className
 }: {
   /** The verb, and it has to be one word: this column is 110px wide. */
-  label: string
+  label: React.ReactNode
   /**
    * Which of the fleet's button colours this action wears.
    *
@@ -49,6 +51,8 @@ export function SplitButton({
   value: string
   onAct: (value: string) => void
   disabled?: boolean
+  align?: 'left' | 'right'
+  caret?: React.ReactNode
   title?: string
   ariaLabel: string
   menuAriaLabel: string
@@ -74,8 +78,8 @@ export function SplitButton({
         ariaLabel={menuAriaLabel}
         title={menuAriaLabel}
         disabled={disabled}
-        align="left"
-        label={<span aria-hidden="true">▼</span>}
+        align={align}
+        label={caret ?? <span aria-hidden="true">▼</span>}
         menu={(close) => (
           <PillOptions
             options={options}

@@ -2559,7 +2559,15 @@ const MIGRATIONS: Migration[] = [
       updated_at integer not null
     );
     create index if not exists delegation_brief_alarms_due on delegation_brief_alarms (enabled, next_brief_at);
-  `
+  `,
+  // 98: Track follow-up messages explicitly queued mid-turn (`task.message { delivery: 'queue' }`)
+  // so turn-end handlers distinguish user-queued replies from prior retry/resolution messages.
+  // ⚠️ Guarded by `hasColumn`: `versionBefore` rewinds `user_version` and replays.
+  (conn) => {
+    if (!hasColumn(conn, 'task_messages', 'queued')) {
+      conn.exec(`alter table task_messages add column queued integer not null default 0`)
+    }
+  }
 ]
 
 /**

@@ -578,6 +578,29 @@ export function apiTasks(_ctx: ApiContext): Pick<Api, TaskMethod> {
         const before = requireTask(p.id)
         if (!delegationOn(before)) setDelegation(p.id, true)
       }
+      if (p.delivery === 'queue') {
+        const before = getTask(p.id)
+        if (!before) return { ok: true as const, outcome: 'ignored' as const }
+        const activeTurn =
+          before.status === 'running' || before.status === 'assigned' || before.status === 'cancelling'
+        addMessage(p.id, 'human', p.text, null, p.attachmentIds ?? [], {
+          ...(command ? { event: command.event } : {}),
+          ...(activeTurn ? { queued: true } : {})
+        })
+        // While a run is active or winding down, leave the message undelivered (`delivered_at = null`,
+        // `queued = 1`) without interrupting stdin or restarting the process; turn-end paths deliver
+        // or requeue it once the current turn completes.
+        if (activeTurn) {
+          emit({ type: 'task.changed', task: before })
+          return { ok: true as const, outcome: 'queued' as const }
+        }
+        const outcome = continueTask(p.id)
+        if (outcome !== 'requeued') {
+          const updated = getTask(p.id)
+          if (updated) emit({ type: 'task.changed', task: updated })
+        }
+        return { ok: true as const, outcome }
+      }
       const id = addMessage(p.id, 'human', p.text, null, p.attachmentIds ?? [], command ? { event: command.event } : {})
       // ⛔ Delivered into the live session if there is one. That is `0.1·C` and it refreshes the TTL;
       // the same note delivered by restarting the task is `2.0·C` plus everything the successor has

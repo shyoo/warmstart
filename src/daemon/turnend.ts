@@ -35,6 +35,7 @@ import {
   continueTask,
   endConversationTurn,
   endUnfinishedRun,
+  flushQueuedMessagesAtTurnEnd,
   releaseWorkspaceOf
 } from './scheduler.js'
 import {
@@ -552,8 +553,12 @@ export async function onStreamResult(
     // ⛔ **A work run whose turn ended without a completion signal is not left to be noticed.** The
     // run stays open here — that is still the contract, and `task_complete` is still the only thing
     // that may claim the work is done — but the *fact* that the agent went idle is now written down,
-    // and `runWatchdogs` reads it. See `noteIdleTurn`.
-    if (openRun && runTask && !openRun.outcome) noteIdleTurn(session, openRun, effectiveText)
+    // and `runWatchdogs` reads it. See `noteIdleTurn`. If queued follow-up messages are waiting, deliver
+    // or requeue them right away rather than waiting 3 minutes.
+    if (openRun && runTask && !openRun.outcome) {
+      if (await flushQueuedMessagesAtTurnEnd(session, openRun, runTask)) return
+      noteIdleTurn(session, openRun, effectiveText)
+    }
     return
   }
   if (completion) {

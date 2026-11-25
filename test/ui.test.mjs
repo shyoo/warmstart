@@ -6997,6 +6997,39 @@ try {
     stripShape.compose.includes('Stop') && stripShape.compose.includes('Send'),
     JSON.stringify(stripShape)
   )
+  // Verify the Send split button dropdown offers Send and Queue once text is entered, then clean up.
+  await evaluate(`
+    (() => {
+      const box = document.querySelector('.compose-input');
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(box, 'Queued check');
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    })()
+  `)
+  await evaluate(`document.querySelector('.compose-send-split .split-btn-more .pill')?.click()`)
+  await wait(120)
+  const sendMenu = JSON.parse(
+    await evaluate(`
+      JSON.stringify(
+        [...document.querySelectorAll('[role="listbox"][aria-label="Send options"] [role="option"]')]
+          .map(o => o.dataset.value)
+      )
+    `)
+  )
+  check(
+    'composer Send split button dropdown offers Send and Queue options',
+    sendMenu.includes('send') && sendMenu.includes('queue'),
+    JSON.stringify(sendMenu)
+  )
+  await evaluate(`
+    (() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      const box = document.querySelector('.compose-input');
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+      setter.call(box, '');
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+    })()
+  `)
   // ⛔ Stop parks it; only then is Complete offered, and over a dirty tree Complete still arms first.
   await evaluate(`[...document.querySelectorAll('.compose-actions .btn')].find(b => b.innerText.trim() === 'Stop')?.click()`)
   let stopped = []

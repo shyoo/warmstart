@@ -6608,6 +6608,44 @@ select:focus-visible,
   padding: 5px 12px;
 }
 
+.compose-send-split {
+  width: auto;
+  flex: 0 0 auto;
+  align-items: stretch;
+  border-radius: var(--radius-pill);
+}
+
+.compose-send-split .split-btn-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
+  border-right: 0;
+  padding: 5px 10px 5px 12px;
+}
+
+.compose-send-split .split-btn-main:disabled {
+  opacity: 0.5;
+}
+
+.compose-send-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.compose-send-split .split-btn-more {
+  display: inline-flex;
+}
+
+.compose-send-split .pill {
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
+  padding: 0 9px 0 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .compose-row .composer-attachment {
   margin-right: 0;
   flex: 0 0 auto;
@@ -6828,6 +6866,15 @@ select:focus-visible,
 .msg-meta { display: flex; align-items: center; gap: 6px; margin-top: 4px; min-height: 18px; padding: 0 2px; }
 /* The clock reads at the outer edge: first on the left, last on the right. */
 .msg--right .msg-when { order: 1; }
+.msg-queued {
+  font-size: var(--text-meta);
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border-strong);
+  color: var(--color-text-dim);
+  background: var(--color-surface);
+}
 .msg-action-btn {
   display: inline-flex;
   align-items: center;
