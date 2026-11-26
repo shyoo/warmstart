@@ -2,6 +2,7 @@ import type { Attachment } from '@shared/tasks.js'
 import type {
   AdapterDetection,
   AdapterInfo,
+  OrchestratorPreset,
   QuotaSnapshot,
   QuotaWindow,
   SessionTransport,
@@ -51,6 +52,14 @@ export interface SpawnRequest {
    * said it could act on it.
    */
   effort?: string | undefined
+  /**
+   * Custom orchestrator (planner + executor) preset resolved from the worker's `orchestratorPresets`.
+   *
+   * ⛔ Set only when the adapter declares `customOrchestrator: true` and the chosen model ID matches
+   * a preset on the worker. The adapter translates this into its own CLI flags (e.g. Antigravity's
+   * `--model gemini-pro-orchestrator --settings '{"orchestrator":{"planner":...,"executor":...}}'`).
+   */
+  orchestratorPreset?: OrchestratorPreset | undefined
   /**
    * Overrides the adapter's default mode. ⚠️ Used by the controller's chat session, which runs in the
    * operator's home directory rather than a worktree: there is no branch to throw away there, so its

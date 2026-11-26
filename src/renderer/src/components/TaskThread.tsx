@@ -945,7 +945,7 @@ function TaskDetail({
                             ? `account default (${modelLabel(assigned.defaultModel)})`
                             : 'CLI default'
                     },
-                    ...offered.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
+                    ...offered.map((m) => ({ value: m.id, label: m.label ?? modelLabel(m.id) ?? m.id }))
                   ]}
                   ariaLabel="Model"
                   title={

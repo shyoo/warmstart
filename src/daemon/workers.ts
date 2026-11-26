@@ -5,6 +5,7 @@ import { canWork } from '@shared/protocol.js'
 import { cleanTags, matchesModelTags } from '@shared/modeltags.js'
 import { modelFamily, sortModelIds } from '@shared/modelsort.js'
 import { autoCandidates, autoRoutes, modelOffered, readRoutes, tagsOnWorker, type ModelRoute } from '@shared/modelroutes.js'
+import { isOrchestratorPresetId, readOrchestratorPresets, type OrchestratorPreset } from '@shared/orchestrator.js'
 import type {
   CreditStatus,
   CreditsIntent,
@@ -45,6 +46,7 @@ interface WorkerRow {
   default_effort: string | null
   default_models_json: string | null
   model_routes_json: string | null
+  orchestrator_presets_json?: string | null
   judgment_model: string | null
   judgment_effort: string | null
   identity_json: string | null
@@ -81,6 +83,9 @@ function toWorker(r: WorkerRow): Worker {
     defaultEffort: r.default_effort,
     defaultModels: r.default_models_json ? (JSON.parse(r.default_models_json) as Record<string, string | null>) : null,
     modelRoutes: r.model_routes_json ? readRoutes(JSON.parse(r.model_routes_json)) : null,
+    orchestratorPresets: r.orchestrator_presets_json
+      ? readOrchestratorPresets(JSON.parse(r.orchestrator_presets_json))
+      : null,
     judgmentModel: r.judgment_model,
     judgmentEffort: r.judgment_effort,
     identity: (() => {
@@ -307,6 +312,7 @@ export function updateWorker(
       | 'defaultEffort'
       | 'defaultModels'
       | 'modelRoutes'
+      | 'orchestratorPresets'
       | 'judgmentModel'
       | 'judgmentEffort'
       | 'unattendedAuthority'
@@ -328,29 +334,89 @@ export function updateWorker(
   // above its newly lowered cap while its existing work finishes; terminating those sessions would
   // turn a harmless settings edit into lost work.
   const maxConcurrent = boundedConcurrency(patch.maxConcurrent, current.maxConcurrent)
-  const defaultModelsJson =
-    patch.defaultModels === undefined
-      ? current.defaultModels ? JSON.stringify(current.defaultModels) : null
-      : patch.defaultModels ? JSON.stringify(patch.defaultModels) : null
+  const nextPresets: OrchestratorPreset[] | null =
+    patch.orchestratorPresets === undefined
+      ? (current.orchestratorPresets ?? null)
+      : patch.orchestratorPresets && patch.orchestratorPresets.length > 0
+        ? patch.orchestratorPresets.map((p) => ({
+            id: p.id.trim(),
+            label: p.label.trim(),
+            plannerModel: p.plannerModel.trim(),
+            plannerEffort: p.plannerEffort?.trim() || null,
+            executorModel: p.executorModel.trim(),
+            executorEffort: p.executorEffort?.trim() || null
+          }))
+        : null
+  const removedPresetIds =
+    patch.orchestratorPresets === undefined
+      ? new Set<string>()
+      : new Set(
+          (current.orchestratorPresets ?? [])
+            .map((p) => p.id)
+            .filter((pid) => !(nextPresets ?? []).some((p) => p.id === pid))
+        )
+  const dropRemoved = (model: string | null | undefined): string | null =>
+    model && removedPresetIds.has(model) ? null : (model ?? null)
+
+  const rawDefaultModels =
+    patch.defaultModels === undefined ? (current.defaultModels ?? null) : (patch.defaultModels ?? null)
+  const cleanedDefaultModels =
+    rawDefaultModels && removedPresetIds.size > 0
+      ? (() => {
+          const entries = Object.entries(rawDefaultModels).filter(([, m]) => !m || !removedPresetIds.has(m))
+          return entries.length > 0 ? Object.fromEntries(entries) : null
+        })()
+      : rawDefaultModels
+  const defaultModelsJson = cleanedDefaultModels ? JSON.stringify(cleanedDefaultModels) : null
+
   const requestedRoutes = normaliseRoutes(current.adapterId, patch.modelRoutes)
-  const requestedSummaryModel = patch.summarisingModel === undefined ? (current.summarisingModel ?? null) : patch.summarisingModel
+  const effectiveRoutes =
+    patch.modelRoutes === undefined
+      ? current.modelRoutes && removedPresetIds.size > 0
+        ? current.modelRoutes.filter((r) => !removedPresetIds.has(r.model))
+        : (current.modelRoutes ?? null)
+      : (requestedRoutes ?? null)
+  const requestedDefaultModel = dropRemoved(patch.defaultModel === undefined ? current.defaultModel : patch.defaultModel)
+  const requestedDefaultEffort =
+    requestedDefaultModel === null && (patch.defaultModel === undefined ? current.defaultModel : patch.defaultModel) !== null
+      ? null
+      : patch.defaultEffort === undefined
+        ? current.defaultEffort
+        : patch.defaultEffort
+  const requestedJudgmentModel = dropRemoved(patch.judgmentModel === undefined ? current.judgmentModel : patch.judgmentModel)
+  const requestedJudgmentEffort =
+    requestedJudgmentModel === null && (patch.judgmentModel === undefined ? current.judgmentModel : patch.judgmentModel) !== null
+      ? null
+      : patch.judgmentEffort === undefined
+        ? (current.judgmentEffort ?? null)
+        : patch.judgmentEffort
+  const requestedGradingModel = dropRemoved(patch.gradingModel === undefined ? current.gradingModel : patch.gradingModel)
+  const requestedGradingEffort =
+    requestedGradingModel === null && (patch.gradingModel === undefined ? current.gradingModel : patch.gradingModel) !== null
+      ? null
+      : patch.gradingEffort === undefined
+        ? (current.gradingEffort ?? null)
+        : patch.gradingEffort
+  const requestedSummaryModel = dropRemoved(
+    patch.summarisingModel === undefined ? (current.summarisingModel ?? null) : patch.summarisingModel
+  )
   const requestedSummaryEffort = normaliseEffort(
     current.adapterId,
     requestedSummaryModel,
-    patch.summarisingEffort === undefined ? (current.summarisingEffort ?? null) : patch.summarisingEffort
+    requestedSummaryModel === null
+      ? null
+      : patch.summarisingEffort === undefined
+        ? (current.summarisingEffort ?? null)
+        : patch.summarisingEffort
   )
-  const modelRoutesJson =
-    patch.modelRoutes === undefined
-      ? current.modelRoutes && current.modelRoutes.length > 0 ? JSON.stringify(current.modelRoutes) : null
-      : requestedRoutes && requestedRoutes.length > 0
-        ? JSON.stringify(requestedRoutes)
-        : null
+  const modelRoutesJson = effectiveRoutes && effectiveRoutes.length > 0 ? JSON.stringify(effectiveRoutes) : null
+  const orchestratorPresetsJson = nextPresets && nextPresets.length > 0 ? JSON.stringify(nextPresets) : null
 
   db()
     .prepare(
       `update workers set label = ?, enabled = ?, human_occupied = ?, max_concurrent = ?, role = ?,
                           default_model = ?, default_effort = ?, default_models_json = ?,
-                          model_routes_json = ?, judgment_model = ?, judgment_effort = ?,
+                          model_routes_json = ?, orchestrator_presets_json = ?, judgment_model = ?, judgment_effort = ?,
                           grading_model = ?, summarising_model = ?, summarising_effort = ?, grading_effort = ?, grading_enabled = ?,
                           unattended_authority = ?, pricing_override_json = ?
        where id = ?`
@@ -364,21 +430,23 @@ export function updateWorker(
       // ⛔ `undefined` means "not mentioned", `null` means "clear it". Collapsing the two with `??`
       // would make the default unclearable: every attempt to go back to the CLI's own choice would
       // silently re-save the value being cleared.
-      patch.defaultModel === undefined ? current.defaultModel : patch.defaultModel,
-      patch.defaultEffort === undefined ? current.defaultEffort : patch.defaultEffort,
+      requestedDefaultModel,
+      requestedDefaultEffort,
       defaultModelsJson,
       modelRoutesJson,
-      patch.judgmentModel === undefined ? (current.judgmentModel ?? null) : patch.judgmentModel,
-      patch.judgmentEffort === undefined ? (current.judgmentEffort ?? null) : patch.judgmentEffort,
-      patch.gradingModel === undefined ? (current.gradingModel ?? null) : patch.gradingModel,
+      orchestratorPresetsJson,
+      requestedJudgmentModel,
+      requestedJudgmentEffort,
+      requestedGradingModel,
       requestedSummaryModel,
       requestedSummaryEffort,
-      patch.gradingEffort === undefined ? (current.gradingEffort ?? null) : patch.gradingEffort,
+      requestedGradingEffort,
       (patch.gradingEnabled ?? current.gradingEnabled) ? 1 : 0,
       patch.unattendedAuthority ?? current.unattendedAuthority,
       (patch.pricingOverride === undefined ? current.pricingOverride : patch.pricingOverride) ? JSON.stringify(patch.pricingOverride === undefined ? current.pricingOverride : patch.pricingOverride) : null,
       id
     )
+  if (patch.orchestratorPresets !== undefined) syncOrchestratorPresets()
   // A lower limit is an admission gate, not a preemption order. Sessions already using the account
   // keep working; only the next dispatch waits until the number of live work sessions falls below it.
   if (maxConcurrent < current.maxConcurrent) {
@@ -472,7 +540,15 @@ export function knownModelIds(adapterId: string, workerId?: string | null): stri
   // ⛔ One worker's own picker is narrowed to what its plan offers; the adapter-wide list stays the
   // union a task's model constraint reads, and `checkConstraints` refuses the pairing that fails.
   const offeredTo = workerId ? getWorker(workerId) : null
-  if (offeredTo) for (const id of ids) if (!modelOffered(offeredTo, id)) ids.delete(id)
+  if (offeredTo) {
+    for (const id of ids) {
+      if (!modelOffered(offeredTo, id)) ids.delete(id)
+      // Also drop presets belonging to a *different* worker on the same adapter.
+      if (isOrchestratorPresetId(id) && !(offeredTo.orchestratorPresets ?? []).some((p) => p.id === id)) {
+        ids.delete(id)
+      }
+    }
+  }
   if (cm.dynamicModelPrefix()) {
     for (const w of listWorkers(true)) {
       if (w.adapterId !== adapterId || w.retiredAt) continue
@@ -521,6 +597,33 @@ export function syncDiscoveredModels(): void {
     const added = accepted.filter((id) => !before.has(id))
     if (added.length > 0) log.info(`${cm.id}: the CLI lists model(s) this release does not: ${added.join(', ')}`)
     for (const r of refused) log.warn(`${cm.id}: not offering discovered model ${r.id}: ${r.reason}`)
+  }
+}
+
+/**
+ * Hand every cost model the named custom orchestrator presets configured on its live workers (t1451).
+ *
+ * Called at boot (right after `syncDiscoveredModels`, so presets referencing discovered models
+ * resolve their pool/window cleanly) and whenever a worker's `orchestratorPresets` change or a
+ * worker is retired.
+ */
+export function syncOrchestratorPresets(): void {
+  const byCostModel = new Map<string, OrchestratorPreset[]>()
+  for (const w of listWorkers(true)) {
+    if (w.retiredAt || !hasAdapter(w.adapterId)) continue
+    const presets = w.orchestratorPresets
+    if (!presets?.length) continue
+    const info = adapter(w.adapterId).info
+    if (!info.capabilities.customOrchestrator) continue
+    const cmId = info.policy.costModelId
+    const into = byCostModel.get(cmId) ?? []
+    for (const p of presets) {
+      if (!into.some((existing) => existing.id === p.id)) into.push(p)
+    }
+    byCostModel.set(cmId, into)
+  }
+  for (const cm of costModels()) {
+    cm.setPresets(byCostModel.get(cm.id) ?? [])
   }
 }
 
@@ -803,6 +906,7 @@ export function watchReadiness(workerId: string, onReady: () => void): () => voi
  */
 export function retireWorker(id: string): Worker {
   db().prepare('update workers set retired_at = ?, enabled = 0 where id = ?').run(Date.now(), id)
+  syncOrchestratorPresets()
   const w = requireWorker(id)
   log.info(`retired worker ${w.label}; isolation root left at ${w.isolationRoot}`)
   return announce(w)
@@ -1002,7 +1106,10 @@ export async function refreshIdentity(
     checkedAt: Date.now()
   }
   db().prepare('update workers set identity_json = ? where id = ?').run(JSON.stringify(identity), id)
-  if (identity.discoveredModels) syncDiscoveredModels()
+  if (identity.discoveredModels) {
+    syncDiscoveredModels()
+    syncOrchestratorPresets()
+  }
 
   if (lift && getWorker(id)?.health) {
     const health = getWorker(id)!.health

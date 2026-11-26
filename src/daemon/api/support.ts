@@ -3,6 +3,7 @@ import type { RpcMethod, RpcParams, RpcResult, Worker } from '@shared/protocol.j
 import { canWork } from '@shared/protocol.js'
 import { checkTags, inferredTags, tagsFromLegacyClass, tagsLabel, withExclusiveTier } from '@shared/modeltags.js'
 import { modelOffered, notOffered, routeLabel, type ModelRoute } from '@shared/modelroutes.js'
+import { isOrchestratorModelId, isOrchestratorPresetId, type OrchestratorPreset } from '@shared/orchestrator.js'
 import type { ChildDefaults, Task, TaskConstraints } from '@shared/tasks.js'
 import { windowsForPool } from '@shared/tasks.js'
 import { adapter } from '../adapters/index.js'
@@ -105,6 +106,7 @@ export function checkWorkerDefaults(
     defaultEffort?: string | null
     defaultModels?: Record<string, string | null> | null
     modelRoutes?: ModelRoute[] | null
+    orchestratorPresets?: OrchestratorPreset[] | null
     judgmentModel?: string | null
     judgmentEffort?: string | null
   }
@@ -121,14 +123,66 @@ export function checkWorkerDefaults(
         : `'${m}' is not a model ${info.label} can be priced for`
     )
 
-  if (patch.defaultModel && !cm.modelSpec(patch.defaultModel)) throw refused(patch.defaultModel)
-  if (patch.gradingModel && !cm.modelSpec(patch.gradingModel)) throw refused(patch.gradingModel)
-  if (patch.summarisingModel && !cm.modelSpec(patch.summarisingModel)) throw refused(patch.summarisingModel)
+  const pendingPresets = new Map<string, { effort_levels: string[]; pool?: string }>()
+  if (patch.orchestratorPresets !== undefined && patch.orchestratorPresets !== null) {
+    if (patch.orchestratorPresets.length > 0 && !info.capabilities.customOrchestrator) {
+      throw new Error(`${info.label} does not support custom orchestrator presets`)
+    }
+    const seen = new Set<string>()
+    for (const p of patch.orchestratorPresets) {
+      const id = typeof p?.id === 'string' ? p.id.trim() : ''
+      if (!isOrchestratorPresetId(id)) {
+        throw new Error(`custom orchestrator preset id '${id}' must start with 'orchestrator:'`)
+      }
+      if (seen.has(id)) throw new Error(`custom orchestrator preset '${id}' is listed twice`)
+      seen.add(id)
+      const label = typeof p.label === 'string' ? p.label.trim() : ''
+      if (!label || label.length > 80) {
+        throw new Error(`custom orchestrator preset '${id}' needs a name (1–80 characters)`)
+      }
+      const plannerModel = typeof p.plannerModel === 'string' ? p.plannerModel.trim() : ''
+      const executorModel = typeof p.executorModel === 'string' ? p.executorModel.trim() : ''
+      if (!plannerModel || isOrchestratorModelId(plannerModel)) {
+        throw new Error(`preset '${label}' needs a non-orchestrator planner model`)
+      }
+      if (!executorModel || isOrchestratorModelId(executorModel)) {
+        throw new Error(`preset '${label}' needs a non-orchestrator executor model`)
+      }
+      const plannerSpec = cm.modelSpec(plannerModel)
+      if (!plannerSpec) throw refused(plannerModel)
+      const executorSpec = cm.modelSpec(executorModel)
+      if (!executorSpec) throw refused(executorModel)
+      if (p.plannerEffort) {
+        if (!info.capabilities.selectableEffort) {
+          throw new Error(`${info.label} takes no effort flag, so '${plannerModel}' has no effort to set`)
+        }
+        if (Array.isArray(plannerSpec.effort_levels) && !plannerSpec.effort_levels.includes(p.plannerEffort)) {
+          throw new Error(`'${plannerModel}' has no effort level '${p.plannerEffort}'`)
+        }
+      }
+      if (p.executorEffort) {
+        if (!info.capabilities.selectableEffort) {
+          throw new Error(`${info.label} takes no effort flag, so '${executorModel}' has no effort to set`)
+        }
+        if (Array.isArray(executorSpec.effort_levels) && !executorSpec.effort_levels.includes(p.executorEffort)) {
+          throw new Error(`'${executorModel}' has no effort level '${p.executorEffort}'`)
+        }
+      }
+      const pool = plannerSpec.pool ?? executorSpec.pool
+      pendingPresets.set(id, { effort_levels: [], ...(pool ? { pool } : {}) })
+    }
+  }
+
+  const specOf = (m: string) => pendingPresets.get(m) ?? cm.modelSpec(m)
+
+  if (patch.defaultModel && !specOf(patch.defaultModel)) throw refused(patch.defaultModel)
+  if (patch.gradingModel && !specOf(patch.gradingModel)) throw refused(patch.gradingModel)
+  if (patch.summarisingModel && !specOf(patch.summarisingModel)) throw refused(patch.summarisingModel)
 
   if (patch.defaultModels) {
     for (const [pool, m] of Object.entries(patch.defaultModels)) {
       if (m) {
-        const spec = cm.modelSpec(m)
+        const spec = specOf(m)
         if (!spec) throw refused(m)
         const matchesPool =
           spec.pool === pool ||
@@ -146,7 +200,7 @@ export function checkWorkerDefaults(
       // ⛔ The same rule `'model.options'` documents: a model that can be chosen is one that can be
       // priced, gated and estimated for. A row the cost model does not declare is refused on write,
       // never stored — `routableCandidatesFor` and the scorer both trust that every row is legal.
-      const spec = cm.modelSpec(r.model)
+      const spec = specOf(r.model)
       if (!spec) throw refused(r.model)
       // ⛔ Tags are bounded at the door: an over-long tag is refused, never truncated into another tag.
       // An old window still sends `modelClass` on a row (`null` = the built-in): read as its one tag.
@@ -172,12 +226,12 @@ export function checkWorkerDefaults(
     }
   }
 
-  if (patch.judgmentModel && !cm.modelSpec(patch.judgmentModel)) throw refused(patch.judgmentModel)
+  if (patch.judgmentModel && !specOf(patch.judgmentModel)) throw refused(patch.judgmentModel)
   if (patch.judgmentEffort) {
     if (!info.capabilities.selectableEffort) {
       throw new Error(`${info.label} takes no effort flag, so it has no judgment effort to set`)
     }
-    const spec = patch.judgmentModel ? cm.modelSpec(patch.judgmentModel) : null
+    const spec = patch.judgmentModel ? specOf(patch.judgmentModel) : null
     if (!spec) throw new Error('set a judgment model before choosing its effort')
     if (!spec.effort_levels.includes(patch.judgmentEffort)) {
       throw new Error(`'${patch.judgmentModel}' has no effort level '${patch.judgmentEffort}'`)
@@ -188,7 +242,7 @@ export function checkWorkerDefaults(
     if (!info.capabilities.selectableEffort) {
       throw new Error(`${info.label} takes no effort flag, so it has no grading effort to set`)
     }
-    const gradingSpec = patch.gradingModel ? cm.modelSpec(patch.gradingModel) : null
+    const gradingSpec = patch.gradingModel ? specOf(patch.gradingModel) : null
     if (!gradingSpec) {
       throw new Error('set a grading model before choosing its effort')
     }
@@ -201,7 +255,7 @@ export function checkWorkerDefaults(
     if (!info.capabilities.selectableEffort) {
       throw new Error(`${info.label} takes no effort flag, so it has no title-summary effort to set`)
     }
-    const summarisingSpec = patch.summarisingModel ? cm.modelSpec(patch.summarisingModel) : null
+    const summarisingSpec = patch.summarisingModel ? specOf(patch.summarisingModel) : null
     if (!summarisingSpec) throw new Error('set a title-summary model before choosing its effort')
     if (!summarisingSpec.effort_levels.includes(patch.summarisingEffort)) {
       throw new Error(`'${patch.summarisingModel}' has no effort level '${patch.summarisingEffort}'`)
@@ -217,7 +271,7 @@ export function checkWorkerDefaults(
     // The effort has to be legal for the model it will be sent with, and that is the default model
     // unless a task overrides both. ⚠️ Checked against the *stored* model only when one is set here;
     // a task that pins a different model is checked again by `checkConstraints` on its own way in.
-    const spec = patch.defaultModel ? cm.modelSpec(patch.defaultModel) : null
+    const spec = patch.defaultModel ? specOf(patch.defaultModel) : null
     if (spec && !spec.effort_levels.includes(patch.defaultEffort)) {
       throw new Error(`'${patch.defaultModel}' has no effort level '${patch.defaultEffort}'`)
     }

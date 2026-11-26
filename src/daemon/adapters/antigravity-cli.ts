@@ -248,6 +248,10 @@ const info: AdapterInfo = {
     // and Claude Sonnet/Opus 5.5 list low/medium/high variants; GPT-OSS 120B lists medium only.
     // Base models are used without baked-in effort suffix so effort is chosen via `--effort`.
     selectableEffort: true,
+    // ⭐ Measured 2026-11-26 on agy 1.5.18 (`agy 1.5.14+`): `--model gemini-pro-orchestrator` paired
+    // with `--settings '{"orchestrator":{"planner":"<slug>","executor":"<slug>"}}'` runs a custom
+    // planner/executor pair for that session only without modifying ~/.gemini/antigravity-cli/settings.json.
+    customOrchestrator: true,
     // ⭐ It has one after all, as of 2026-08-27. `/usage` typed into the TUI is a client-side
     // slash command - free, no turn - and the panel it draws is the only place the number exists.
     // See parseUsageScreen for why reading a screen is defensible here and nowhere else.
@@ -1555,11 +1559,26 @@ export const antigravityCli: AgentAdapter = {
     // ⚠️ The id is the vendor's `conversation_id` off the `init` record, never agentyard's session
     // id: this CLI names its own conversations, which is what `mintsSessionId: false` says.
     if (req.resumeFrom) args.push('--conversation', req.resumeFrom)
-    if (req.model) args.push('--model', req.model)
-    // ⚠️ Only ever set when this adapter declares `selectableEffort` — the scheduler drops it
-    // otherwise (adapters/types.ts), so this line is inert until the capability is promoted on
-    // measured evidence rather than on the flag existing in `--help`.
-    if (req.effort) args.push('--effort', req.effort)
+    if (req.orchestratorPreset) {
+      // Measured 2026-11-26 on agy 1.5.18 (`agy 1.5.14+`): custom planner/executor pairs are passed
+      // per-session via `--settings` alongside `--model gemini-pro-orchestrator`. Each role encodes
+      // its own effort suffix (`<model>-<effort>`), so `--effort` is intentionally omitted.
+      const p = req.orchestratorPreset
+      const planner = p.plannerEffort ? `${p.plannerModel}-${p.plannerEffort}` : p.plannerModel
+      const executor = p.executorEffort ? `${p.executorModel}-${p.executorEffort}` : p.executorModel
+      args.push(
+        '--model',
+        'gemini-pro-orchestrator',
+        '--settings',
+        JSON.stringify({ orchestrator: { planner, executor } })
+      )
+    } else {
+      if (req.model) args.push('--model', req.model)
+      // ⚠️ Only ever set when this adapter declares `selectableEffort` — the scheduler drops it
+      // otherwise (adapters/types.ts), so this line is inert until the capability is promoted on
+      // measured evidence rather than on the flag existing in `--help`.
+      if (req.effort) args.push('--effort', req.effort)
+    }
 
     const mode = req.permissionMode ?? info.policy.defaultPermissionMode
     if (mode === 'dangerously-skip-permissions') {

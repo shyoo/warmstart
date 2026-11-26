@@ -61,7 +61,7 @@ import { retireSettledBranches } from './branchsweep.js'
 import { augmentPath } from './which.js'
 import { noteTurnFailure } from './accountcheck.js'
 import { APP_VERSION } from '@shared/version.js'
-import { syncDiscoveredModels } from './workers.js'
+import { syncDiscoveredModels, syncOrchestratorPresets } from './workers.js'
 
 // On macOS/Linux GUI launches, process.env.PATH is minimal (/usr/bin:/bin:...).
 // Augment it so orchestratord and any subprocesses reading process.env find Homebrew/local tools.
@@ -93,6 +93,7 @@ async function main(): Promise<void> {
   // ⚠️ After both: a model a CLI listed last time (t1401) is named by tasks and defaults already, and
   // has to resolve before the first tick rather than after the first identity sweep.
   syncDiscoveredModels()
+  syncOrchestratorPresets()
 
   // ⚠️ After the adapters, because a factor is priced by the cost model its adapter names. Logged
   // rather than merely computed: a routing or runaway decision that looks wrong later is checked

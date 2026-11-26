@@ -1,5 +1,6 @@
 import { defaultModelClass, MODEL_CLASSES, type ModelClass } from './modelclass.js'
 import { asTierTag, BUILTIN_TAGS, classTag, cleanTags, inferredTags, isTierTag, matchesModelTags, tagKey } from './modeltags.js'
+import { isOrchestratorPresetId, type OrchestratorPreset } from './orchestrator.js'
 
 /**
  * One row of a worker's model table: a model, the effort it runs at, the tags the operator put on
@@ -67,14 +68,26 @@ export function readRoutes(raw: unknown): ModelRoute[] {
  * a free ChatGPT account answers `400 The 'gpt-6-sol' model is not supported when using Codex with a
  * ChatGPT account`, measured t866).
  */
-type OfferHolder = { identity?: { availableModels?: string[] | null } | null } | null | undefined
+type OfferHolder =
+  | {
+      identity?: { availableModels?: string[] | null } | null
+      orchestratorPresets?: OrchestratorPreset[] | null
+    }
+  | null
+  | undefined
 
 type RoutesHolder = ({ modelRoutes?: ModelRoute[] | null } & OfferHolder) | null | undefined
 
 /** Does this worker's plan offer `model`? True wherever the account never said what it offers. */
 export function modelOffered(worker: OfferHolder, model: string | null | undefined): boolean {
+  if (!model) return true
+  if (isOrchestratorPresetId(model)) {
+    const preset = worker?.orchestratorPresets?.find((p) => p.id === model)
+    if (!preset) return false
+    return modelOffered(worker, preset.plannerModel) && modelOffered(worker, preset.executorModel)
+  }
   const offered = worker?.identity?.availableModels
-  if (!model || !offered || offered.length === 0) return true
+  if (!offered || offered.length === 0) return true
   return offered.includes(model)
 }
 

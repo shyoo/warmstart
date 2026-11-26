@@ -397,7 +397,7 @@ export function useReassignChoice(
 
   const concreteModelOptions: PillOption[] = offeredModels.map((m) => ({
     value: m.id,
-    label: modelLabel(m.id) ?? m.id
+    label: m.label ?? modelLabel(m.id) ?? m.id
   }))
 
   const fleetModelOptions: FleetModelChoice[] = !workerId
@@ -412,7 +412,7 @@ export function useReassignChoice(
             workerId: e.worker.id,
             workerLabel: e.worker.label,
             modelId: m.id,
-            label: modelLabel(m.id) ?? m.id
+            label: m.label ?? modelLabel(m.id) ?? m.id
           }))
         })
     : []

@@ -3699,6 +3699,77 @@ body {
 .worker-models-foot { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); }
 .worker-models-add { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
 .worker-models-help { margin: 0; font-size: var(--text-meta); color: var(--color-text-dim); max-width: 72ch; }
+.worker-presets {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding-top: var(--sp-2);
+  border-top: 1px solid var(--color-border);
+}
+.worker-presets-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  font-size: var(--text-meta);
+}
+.worker-presets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.worker-preset-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-sm);
+  background: var(--color-surface-2);
+  font-size: var(--text-dense);
+}
+.worker-preset-info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+.worker-preset-name { font-weight: 500; }
+.worker-preset-pair { font-size: var(--text-meta); }
+.worker-preset-actions { display: flex; align-items: center; gap: var(--sp-2); flex-shrink: 0; }
+.worker-preset-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-sm);
+  background: var(--color-surface-2);
+}
+.worker-preset-input {
+  width: 100%;
+  box-sizing: border-box;
+  font-size: var(--text-dense);
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+.worker-preset-role-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.worker-preset-role-label {
+  width: 4.5rem;
+  font-size: var(--text-meta);
+  flex-shrink: 0;
+}
+.worker-preset-form-actions { display: flex; align-items: center; gap: var(--sp-2); }
 
 /*
  * Tags (t1042). ⛔ The closed control is one line with a content-sized width: two short

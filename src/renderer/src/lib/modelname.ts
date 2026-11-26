@@ -1,4 +1,5 @@
 import { isLocalModelId, localModelLabel } from '@shared/localmodel'
+import { isOrchestratorPresetId, orchestratorPresetLabel } from '@shared/orchestrator'
 
 /**
  * Model ids, written the way a person says them.
@@ -66,6 +67,7 @@ export function modelLabel(model: string | null | undefined, effort?: string | n
   // ⚠️ Kept as the server spells it otherwise: `Qwen3-Coder-30B-A3B-Instruct-UD-Q3_K_XL` is
   // exact where a title-cased rewrite of it would be a guess at the quant's spelling.
   if (isLocalModelId(model)) return localModelLabel(model)
+  if (isOrchestratorPresetId(model)) return orchestratorPresetLabel(model)
   // ⚠️ `org/model` is how an openai-compatible endpoint names one. The org is where the model is
   // being reached, not part of what it is called. ⛔ Split on `/` only — a dot is *inside* a version
   // (`gpt-5.6-terra`), so treating it as a separator would render that model as `6 Terra`.
@@ -130,7 +132,7 @@ const COMPACT_WORD_MAX = 6
  */
 export function compactModelLabel(model: string | null | undefined, effort?: string | null): string | null {
   const full = modelLabel(model, effort)
-  if (!full || (model && isLocalModelId(model))) return full
+  if (!full || (model && (isLocalModelId(model) || isOrchestratorPresetId(model)))) return full
   const words = full.split(' ')
   const version = words.findIndex((w) => /^\d+(\.\d+)*$/.test(w))
   if (version <= 0) return full

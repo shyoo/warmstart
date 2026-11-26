@@ -866,6 +866,9 @@ export function Workers({
                         onPatch={(patch) =>
                           void guard(`models:${worker.id}`, async () => {
                             applyWorker(await rpc('worker.update', { id: worker.id, ...patch }))
+                            if (patch.orchestratorPresets !== undefined) {
+                              setModelOptions(await rpc('model.options'))
+                            }
                           }, false)
                         }
                       />

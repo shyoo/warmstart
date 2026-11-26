@@ -2567,6 +2567,13 @@ const MIGRATIONS: Migration[] = [
     if (!hasColumn(conn, 'task_messages', 'queued')) {
       conn.exec(`alter table task_messages add column queued integer not null default 0`)
     }
+  },
+  // 99: Named custom orchestrator presets per worker (`orchestrator_presets_json`, t1451).
+  // ⚠️ Guarded by `hasColumn`: `versionBefore` rewinds `user_version` and replays.
+  (conn) => {
+    if (!hasColumn(conn, 'workers', 'orchestrator_presets_json')) {
+      conn.exec(`alter table workers add column orchestrator_presets_json text`)
+    }
   }
 ]
 

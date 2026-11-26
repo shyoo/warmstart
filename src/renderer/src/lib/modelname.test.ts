@@ -121,9 +121,11 @@ describe('compactModelLabel', () => {
     expect(compactModelLabel('claude-haiku-4-5-20251001')).toBe('Haiku 4.5')
   })
 
-  it('leaves a name with no version, and a local model, as modelLabel writes them', () => {
+  it('leaves a name with no version, a local model, and an orchestrator preset as modelLabel writes them', () => {
     expect(compactModelLabel('gpt-oss')).toBe(modelLabel('gpt-oss'))
     expect(compactModelLabel('local-llm:Qwen3-Coder-30B.gguf')).toBe(modelLabel('local-llm:Qwen3-Coder-30B.gguf'))
+    expect(modelLabel('orchestrator:neon-sonnet')).toBe('Orchestrator: Neon Sonnet')
+    expect(compactModelLabel('orchestrator:neon-sonnet')).toBe('Orchestrator: Neon Sonnet')
     expect(compactModelLabel(null)).toBeNull()
   })
 })

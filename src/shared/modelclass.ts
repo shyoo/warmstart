@@ -96,6 +96,7 @@ export function defaultModelClass(modelId: string | null | undefined): ModelClas
     lower.includes('sol') ||
     lower.includes('ultra') ||
     lower.includes('pro') ||
+    lower.includes('orchestrator') ||
     lower.includes('flash-high') ||
     lower.endsWith('-high') ||
     lower.endsWith('_high') ||

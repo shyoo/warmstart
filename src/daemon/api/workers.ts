@@ -1,6 +1,7 @@
 /** Accounts, adapters, sessions and the daemon's own housekeeping. */
 import type { AdapterInfo, AutoModelTier, DoctorReport, ModelOptions, Settings } from '@shared/protocol.js'
 import { routesFromAutoModelTiers, tiersFromWorkers } from '@shared/modelroutes.js'
+import { isOrchestratorPresetId } from '@shared/orchestrator.js'
 import type { WorkerStatusFacts } from '@shared/workerstatus.js'
 import { existsSync } from 'node:fs'
 import { adapter, adapters } from '../adapters/index.js'
@@ -276,33 +277,62 @@ export function apiWorkers(ctx: ApiContext): Pick<Api, WorkerMethod> {
         try {
           const cm = costModel(a.info.policy.costModelId)
           const pools = cm.pools()
-          const options = (ids: string[], workerId?: string): ModelOptions => ({
-            adapterId: a.info.id,
-            ...(workerId ? { workerId } : {}),
-            costModelId: cm.id,
-            selectableEffort: a.info.capabilities.selectableEffort,
-            models: ids.map((id) => {
-              const spec = cm.modelSpec(id)
-              return {
-                id,
-                contextWindow: spec?.context_window ?? null,
-                effortLevels: spec?.effort_levels ?? [],
-                ...(spec?.pool ? { pool: spec.pool } : {}),
-                ...(spec?.discovered ? { discovered: spec.discovered } : {})
+          const liveForAdapter = listWorkers().filter((w) => w.adapterId === a.info.id && !w.retiredAt)
+          const presetDetail = (p: {
+            plannerModel: string
+            plannerEffort: string | null
+            executorModel: string
+            executorEffort: string | null
+          }): string => {
+            const fmt = (m: string, e: string | null) => (e ? `${m} (${e})` : m)
+            return `Planner: ${fmt(p.plannerModel, p.plannerEffort)} · Executor: ${fmt(p.executorModel, p.executorEffort)}`
+          }
+          const options = (ids: string[], workerId?: string): ModelOptions => {
+            const presetMap = new Map<string, { label: string; detail: string }>()
+            for (const w of liveForAdapter) {
+              if (workerId && w.id !== workerId) continue
+              for (const p of w.orchestratorPresets ?? []) {
+                if (!presetMap.has(p.id)) presetMap.set(p.id, { label: p.label, detail: presetDetail(p) })
               }
-            }),
-            ...(pools.length > 0 ? { pools } : {})
-          })
+            }
+            return {
+              adapterId: a.info.id,
+              ...(workerId ? { workerId } : {}),
+              costModelId: cm.id,
+              selectableEffort: a.info.capabilities.selectableEffort,
+              ...(a.info.capabilities.customOrchestrator ? { customOrchestrator: true } : {}),
+              models: ids.map((id) => {
+                const spec = cm.modelSpec(id)
+                const meta = presetMap.get(id)
+                return {
+                  id,
+                  ...(meta ? { label: meta.label, detail: meta.detail } : {}),
+                  contextWindow: spec?.context_window ?? null,
+                  effortLevels: spec?.effort_levels ?? [],
+                  ...(spec?.pool ? { pool: spec.pool } : {}),
+                  ...(spec?.discovered ? { discovered: spec.discovered } : {})
+                }
+              }),
+              ...(pools.length > 0
+                ? {
+                    pools: pools.map((p) => ({
+                      ...p,
+                      models: p.models.filter((m) => !isOrchestratorPresetId(m) || presetMap.has(m))
+                    }))
+                  }
+                : {})
+            }
+          }
           // The adapter-wide list (a task's model constraint reaches any worker), then - where the
           // models are a server's - one entry per worker naming what *its* endpoint reported.
-          // ⭐ Also for a worker whose plan lists what it offers (Codex's models_cache.json): its table
-          // must not draw a model it would be refused (`WorkerIdentity.availableModels`).
-          const perWorker = listWorkers()
+          // ⭐ Also for a worker whose plan lists what it offers (Codex's models_cache.json) or that
+          // defines custom orchestrator presets: its table must reflect exactly what it offers.
+          const perWorker = liveForAdapter
             .filter(
               (w) =>
-                w.adapterId === a.info.id &&
-                !w.retiredAt &&
-                (cm.dynamicModelPrefix() || (w.identity?.availableModels?.length ?? 0) > 0)
+                cm.dynamicModelPrefix() ||
+                (w.identity?.availableModels?.length ?? 0) > 0 ||
+                (w.orchestratorPresets?.length ?? 0) > 0
             )
             .map((w) => options(knownModelIds(a.info.id, w.id), w.id))
           return [options(knownModelIds(a.info.id)), ...perWorker]

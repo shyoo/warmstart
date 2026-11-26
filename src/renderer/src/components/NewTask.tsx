@@ -700,8 +700,8 @@ export function NewTask({
       const catalog = options.find((o) => o.workerId === w.id) ?? options.find((o) => o.adapterId === w.adapterId && !o.workerId)
       return (catalog?.models ?? []).map((m) => ({
         value: pinned ? m.id : JSON.stringify([w.id, m.id]),
-        label: modelLabel(m.id) ?? m.id,
-        hint: pinned ? m.id : `${w.label} · selects this worker`
+        label: m.label ?? modelLabel(m.id) ?? m.id,
+        hint: pinned ? (m.detail ?? m.id) : `${w.label} · ${m.detail ? `${m.detail} · ` : ''}selects this worker`
       }))
     })
   ]
@@ -2210,7 +2210,7 @@ function ExecutorRouting({
           { value: '', label: 'Auto Model', hint: 'Scheduler selects a model and effort matching the tags' },
           { value: MODEL_INHERIT, label: 'Inherit — account default' },
           ...candidates.flatMap((w) => (catalogFor(w)?.models ?? []).map((m) => ({
-            value: JSON.stringify([w.id, m.id]), label: modelLabel(m.id) ?? m.id,
+            value: JSON.stringify([w.id, m.id]), label: m.label ?? modelLabel(m.id) ?? m.id,
             hint: `${w.label}${selectedWorkerIds.length === 0 ? ' · selects this worker' : ''}`
           })))
         ]}
@@ -2362,7 +2362,7 @@ function DebateRoster({
                         </option>
                         {models.map((m) => (
                           <option key={m.id} value={m.id}>
-                            {modelLabel(m.id) ?? m.id}
+                            {m.label ?? modelLabel(m.id) ?? m.id}
                           </option>
                         ))}
                       </select>

@@ -290,7 +290,7 @@ export function QuotaDecide({
                         options={[
                           { value: '', label: preemptDefault ? `Account default (${modelLabel(preemptDefault) ?? preemptDefault})` : 'CLI default model' },
                           { value: '__auto__', label: 'Auto Model' },
-                          ...preemptModels.map((m) => ({ value: m.id, label: modelLabel(m.id) ?? m.id }))
+                          ...preemptModels.map((m) => ({ value: m.id, label: m.label ?? modelLabel(m.id) ?? m.id }))
                         ]}
                         onChange={(value) => {
                           setPreemptModel(value)

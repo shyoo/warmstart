@@ -79,8 +79,11 @@ export function AutoModelSettings({
     return [...seen.values()]
   }, [options])
 
-  const nameOf = (model: string): string =>
-    isLocalModelId(model) ? localModelLabel(model) : (modelLabel(model) ?? model)
+  const nameOf = (model: string): string => {
+    const custom = options.flatMap((o) => o.models).find((m) => m.id === model)?.label
+    if (custom) return custom
+    return isLocalModelId(model) ? localModelLabel(model) : (modelLabel(model) ?? model)
+  }
 
   const entryChipLabel = (entry: AutoModelTierEntry): string => {
     const base = nameOf(entry.model)

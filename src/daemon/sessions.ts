@@ -1109,6 +1109,11 @@ export function spawnSession(opts: SpawnOptions): Session {
     opts.permissionMode,
     worker.unattendedAuthority
   )
+  const effectiveModel = opts.model ?? resuming?.model
+  const orchestratorPreset =
+    ad.info.capabilities.customOrchestrator && effectiveModel
+      ? worker.orchestratorPresets?.find((p) => p.id === effectiveModel)
+      : undefined
   const plan = ad.plan({
     sessionId: id,
     isolationRoot: worker.isolationRoot,
@@ -1116,6 +1121,7 @@ export function spawnSession(opts: SpawnOptions): Session {
     transport,
     model: opts.model,
     effort: opts.effort,
+    ...(orchestratorPreset ? { orchestratorPreset } : {}),
     partialMessages,
     permissionMode,
     mcpConfig,

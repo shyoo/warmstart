@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { paths } from './paths.js'
 import { log } from './log.js'
-import type { CostModelSummary, SpendMeter } from '@shared/protocol.js'
+import type { CostModelSummary, OrchestratorPreset, SpendMeter } from '@shared/protocol.js'
 import { modelFamily, sortModelIds } from '@shared/modelsort.js'
 import builtinAnthropic from '../../costmodels/anthropic.subscription.2026-08.json' with { type: 'json' }
 import builtinGoogle from '../../costmodels/google.antigravity.2026-08.json' with { type: 'json' }
@@ -259,6 +259,13 @@ export interface DiscoveredModelInput {
  */
 const discoveredByModel = new Map<string, Map<string, ModelSpec>>()
 
+/**
+ * Named custom orchestrator preset specs per cost model id (t1451).
+ * Same lifetime as `discoveredByModel`: survives `loadCostModels` reloads and is replaced whenever
+ * `syncOrchestratorPresets` runs after a worker update or boot.
+ */
+const presetsByModel = new Map<string, Map<string, ModelSpec>>()
+
 export class CostModel {
   readonly id: string
   readonly provider: string
@@ -427,6 +434,9 @@ export class CostModel {
     // A model the CLI listed and this file does not (t1401). After the file's own, never before it.
     const discovered = this.discovered().get(id)
     if (discovered) return discovered
+    // A named custom orchestrator preset configured on a worker (t1451).
+    const preset = this.presets().get(id)
+    if (preset) return preset
     // Backward compatibility: if an id carried a legacy effort suffix (e.g. -high, -medium, -med, -low)
     // from before effort was separated into selectable levels, resolve against the base model id.
     const suffixMatch = /^(.*)-(high|medium|med|low)$/.exec(id)
@@ -455,13 +465,21 @@ export class CostModel {
    * models a CLI listed that the file does not (`discovered_models`, t1401), under their own ids.
    */
   modelIds(): string[] {
-    return [...(this.data.models?.map((m) => m.id) ?? []), ...this.discovered().keys()]
+    return [
+      ...(this.data.models?.map((m) => m.id) ?? []),
+      ...this.discovered().keys(),
+      ...this.presets().keys()
+    ]
   }
 
   /** `modelIds` minus the models the vendor has stopped listing: what a picker may offer. */
   offeredModelIds(): string[] {
     const familyOrder = (this.data.models ?? []).map((m) => modelFamily(m.id))
-    const ids = [...(this.data.models?.filter((m) => !m.retired).map((m) => m.id) ?? []), ...this.discovered().keys()]
+    const ids = [
+      ...(this.data.models?.filter((m) => !m.retired).map((m) => m.id) ?? []),
+      ...this.discovered().keys(),
+      ...this.presets().keys()
+    ]
     return sortModelIds(ids, familyOrder)
   }
 
@@ -473,6 +491,45 @@ export class CostModel {
   /** The discovered specs currently accepted, by id. Empty where the file accepts none. */
   discovered(): Map<string, ModelSpec> {
     return discoveredByModel.get(this.id) ?? new Map<string, ModelSpec>()
+  }
+
+  /** Named custom orchestrator preset specs currently registered for this cost model (t1451). */
+  presets(): Map<string, ModelSpec> {
+    return presetsByModel.get(this.id) ?? new Map<string, ModelSpec>()
+  }
+
+  /**
+   * Replace the registered custom orchestrator presets for this cost model.
+   *
+   * Pool and context window are derived honestly from the preset's planner and executor specs:
+   * pool follows the planner (falling back to executor), context window takes the smaller known
+   * window so context-budget math never over-estimates, and `effort_levels` is empty because each
+   * role carries its own effort inside the preset.
+   */
+  setPresets(presets: readonly OrchestratorPreset[]): void {
+    const next = new Map<string, ModelSpec>()
+    for (const p of presets) {
+      if (!p.id || next.has(p.id)) continue
+      const plannerSpec = this.modelSpec(p.plannerModel)
+      const executorSpec = this.modelSpec(p.executorModel)
+      const pool = plannerSpec?.pool ?? executorSpec?.pool
+      const windows = [plannerSpec?.context_window, executorSpec?.context_window].filter(
+        (w): w is number => typeof w === 'number' && w > 0
+      )
+      const contextWindow = windows.length > 0 ? Math.min(...windows) : null
+      next.set(p.id, {
+        id: p.id,
+        context_window: contextWindow,
+        input_per_mtok: null,
+        output_per_mtok: null,
+        tokenizer: plannerSpec?.tokenizer ?? executorSpec?.tokenizer ?? 'unknown',
+        context_awareness: false,
+        effort_levels: [],
+        ...(pool ? { pool } : {})
+      })
+    }
+    if (next.size > 0) presetsByModel.set(this.id, next)
+    else presetsByModel.delete(this.id)
   }
 
   /**
@@ -539,7 +596,7 @@ export class CostModel {
     }
 
     if (this.data.models) {
-      for (const m of [...this.data.models, ...this.discovered().values()]) {
+      for (const m of [...this.data.models, ...this.discovered().values(), ...this.presets().values()]) {
         if (m.pool) {
           const targetPool =
             m.pool === 'gpt' && poolMap.has('claude')

@@ -2,9 +2,11 @@ import type { ManualReview, QualityReview } from './review.js'
 import type { ModelClass } from './modelclass.js'
 import type { ThreadCommandId } from './commands.js'
 import type { AutoModelTier, ModelRoute } from './modelroutes.js'
+import type { OrchestratorPreset } from './orchestrator.js'
 import type { WorkerBilling } from './billing.js'
 import type { WorkerStatusFacts } from './workerstatus.js'
 export type { AutoModelTier, AutoModelTierEntry, ModelRoute } from './modelroutes.js'
+export type { OrchestratorPreset } from './orchestrator.js'
 
 export type { ModelClass } from './modelclass.js'
 import type {
@@ -497,6 +499,13 @@ export interface Worker {
    * rather than stored. So is an effort the model does not declare, and a repeated pair.
    */
   modelRoutes?: ModelRoute[] | null
+  /**
+   * Named custom orchestrator presets (planner + executor model/effort pairs, t1451).
+   *
+   * ⛔ Supported only on adapters declaring `customOrchestrator: true`. Each preset is addressed
+   * everywhere in Warmstart by its `orchestrator:<slug>` model ID.
+   */
+  orchestratorPresets?: OrchestratorPreset[] | null
   /**
    * Model and effort this account's judgment consults (routing, plans, questions) run on.
    * `null` is the CLI's own default — what every consult ran on before this existed. Title
@@ -1356,6 +1365,14 @@ export interface AdapterCapabilities {
    * the choice was being made. The moment an adapter can honestly take a level, the control appears.
    */
   selectableEffort: boolean
+  /**
+   * Can this CLI be handed a custom orchestrator (planner + executor model pair) per session?
+   *
+   * Measured 2026-11-26 on agy 1.5.18 (`agy 1.5.14+`): `--model gemini-pro-orchestrator` paired
+   * with `--settings '{"orchestrator":{"planner":"<slug>","executor":"<slug>"}}'` runs a custom
+   * planner/executor pair for that session only without writing to `settings.json`.
+   */
+  customOrchestrator?: boolean
   quotaProbe: 'cli' | 'api' | 'none'
   /**
    * Where this adapter's **money** reading comes from, if it has one at all.
@@ -1798,12 +1815,24 @@ export interface ModelOptions {
   costModelId: string
   /** ⚠️ False means this adapter takes no effort flag; the form offers no effort control for it. */
   selectableEffort: boolean
+  /** True when this adapter supports named custom orchestrator (planner + executor) presets. */
+  customOrchestrator?: boolean
   /**
    * ⚠️ `contextWindow` is null where nobody has read the figure — unknown, never 0. `discovered` is
    * set on a model this release's cost model does not list but the CLI does (t1401), and says when it
    * was last seen; such a model has no list price and no known window until a cost model names it.
    */
-  models: Array<{ id: string; contextWindow: number | null; effortLevels: string[]; pool?: string; discovered?: string }>
+  models: Array<{
+    id: string
+    /** Operator-chosen display name (e.g. for a custom orchestrator preset). */
+    label?: string
+    /** Short detail shown beside or on hover (e.g. planner/executor pair). */
+    detail?: string
+    contextWindow: number | null
+    effortLevels: string[]
+    pool?: string
+    discovered?: string
+  }>
   /** Multi-pool definitions if this cost model partitions models into separately metered pools. */
   pools?: ModelPoolInfo[]
 }
@@ -1953,6 +1982,7 @@ export interface RpcMap {
         | 'defaultEffort'
         | 'defaultModels'
         | 'modelRoutes'
+        | 'orchestratorPresets'
         | 'judgmentModel'
         | 'judgmentEffort'
         | 'unattendedAuthority'
