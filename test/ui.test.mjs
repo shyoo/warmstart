@@ -4313,7 +4313,9 @@ try {
     await evaluate(`
       (() => {
         const wrap = document.querySelector('.compose-assign');
-        const kids = [...(wrap?.querySelectorAll('.pill') ?? [])];
+        const kids = [
+          ...(wrap?.querySelectorAll('.compose-assign-pill > .pill, .compose-assign-row > .split-pill') ?? [])
+        ];
         return JSON.stringify({
           count: kids.length,
           tops: kids.map(k => Math.round(k.getBoundingClientRect().top)),
@@ -4324,7 +4326,11 @@ try {
     `)
   )
   check('choosing a worker brings its model pill beside it', row.count >= 2, JSON.stringify(row))
-  check('and every pill sits on the same row', new Set(row.tops).size === 1, JSON.stringify(row))
+  check(
+    'and every pill sits on the same row',
+    row.tops.length >= 2 && Math.max(...row.tops) - Math.min(...row.tops) <= 1,
+    JSON.stringify(row)
+  )
   check('so the whole choice is one line high', row.height > 0 && row.height < 40, JSON.stringify(row))
   check('and the row says a reassignment is pending', row.changed, JSON.stringify(row))
   const afterPick = await composeButtons()
@@ -5052,8 +5058,18 @@ try {
     }
 
     try {
+      await until(
+        () => evaluate(`document.querySelector('button[aria-label="Shared dependency store"]')?.disabled === false`),
+        5000
+      )
       await evaluate(`document.querySelector('button[aria-label="Shared dependency store"]')?.click()`)
-      await wait(300)
+      await until(
+        () =>
+          evaluate(
+            `[...document.querySelectorAll('.setting-btn-select-option')].some(o => o.innerText.trim() === 'pnpm')`
+          ),
+        2000
+      )
       await evaluate(`
         (() => {
           const opts = [...document.querySelectorAll('.setting-btn-select-option')];

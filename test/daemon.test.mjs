@@ -1132,10 +1132,18 @@ try {
   const codex = all.find((a) => a.id === 'openai-compatible')
 
   // ---- the capability consequences, read from the daemon rather than from the source ----
+  const withoutCompact = all.filter((a) => !a.capabilities.manualCompact)
   check(
     'an adapter without compaction falls back to a handoff wrap-up',
-    agy?.capabilities.manualCompact === false && agy?.policy.wrapUpProtocol === 'handoff',
+    withoutCompact.length > 0 && withoutCompact.every((a) => a.policy.wrapUpProtocol === 'handoff'),
     'plan §9: no /compact is not a special case - it removes two cache-clock moves'
+  )
+  check(
+    'one-shot /compact adapters keep a handoff wrap-up when they cannot compact mid-turn',
+    agy?.capabilities.manualCompact === true &&
+      agy?.capabilities.compactTransport === 'print' &&
+      agy?.policy.wrapUpProtocol === 'handoff',
+    't1445: agy supports one-shot --print=/compact while wrapUpProtocol stays handoff'
   )
   check(
     'a classifier-less adapter never defaults to an auto mode',
